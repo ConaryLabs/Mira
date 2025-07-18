@@ -1,87 +1,36 @@
 use axum::{
-    extract::Json,
     routing::post,
     Router,
-    response::IntoResponse,
-    http::StatusCode,
+    extract::Extension,
 };
-use serde::{Deserialize, Serialize};
-use std::env;
-use serde_json::json;
-use tracing::{info, error};
+use tokio::net::TcpListener;
+use std::sync::Arc;
+use tracing::info;
 
-#[derive(Deserialize)]
-struct ChatRequest {
-    message: String,
-}
-
-#[derive(Serialize)]
-struct ChatResponse {
-    output: String,
-}
+mod persona;
+mod prompt;
+mod llm;
+mod session;
+mod handlers;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
+    // Init session store and pool
+    let session_store = Arc::new(session::SessionStore::new("sqlite://backend/mira.db").await?);
+
     let app = Router::new()
-        .route("/chat", post(chat_handler))
-        .nest_service("/", tower_http::services::ServeDir::new("frontend"));
+        .route("/chat", post(handlers::chat_handler))
+        .nest_service("/", tower_http::services::ServeDir::new("frontend"))
+        .layer(Extension(session_store.clone()));
 
     let port = 8080;
-    info!("Listening on http://0.0.0.0:{port}");
+    let addr = format!("0.0.0.0:{port}");
+    info!("Listening on http://{addr}");
 
-    axum::Server::bind(&format!("0.0.0.0:{port}").parse().unwrap())
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
-}
-
-async fn chat_handler(Json(payload): Json<ChatRequest>) -> impl IntoResponse {
-    let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-    let client = reqwest::Client::new();
-    let body = json!({
-        "model": "gpt-4.1",
-        "response_format": { "type": "json_object" },
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are Mira, a warm, witty, irreverent AI friend. Reply ONLY as a JSON object {\"output\": \"...\"}. No boilerplate, no apologies. Use playful banter if appropriate."
-            },
-            {
-                "role": "user",
-                "content": payload.message
-            }
-        ]
-    });
-
-    let res = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .bearer_auth(api_key)
-        .json(&body)
-        .send()
-        .await;
-
-    match res {
-        Ok(resp) => {
-            let result: serde_json::Value = match resp.json().await {
-                Ok(val) => val,
-                Err(_) => return (StatusCode::BAD_GATEWAY, Json(ChatResponse { output: "OpenAI output parse error.".to_string() })),
-            };
-
-            let output = result["choices"][0]["message"]["content"].as_str().unwrap_or("Malformed OpenAI response.").to_string();
-
-            // Parse output as JSON if possible, else just use string
-            let output_json: Result<ChatResponse, _> = serde_json::from_str(&output);
-            match output_json {
-                Ok(chat) => (StatusCode::OK, Json(chat)),
-                Err(_) => (StatusCode::OK, Json(ChatResponse { output }))
-            }
-        }
-        Err(e) => {
-            error!("OpenAI call failed: {:?}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ChatResponse { output: "API call failed.".to_string() }))
-        }
-    }
+    let listener = TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+    Ok(())
 }
