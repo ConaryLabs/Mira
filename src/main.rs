@@ -1,3 +1,5 @@
+// src/main.rs
+
 use axum::{
     routing::post,
     Router,
@@ -24,7 +26,6 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/chat", post(handlers::chat_handler))
-        .nest_service("/", tower_http::services::ServeDir::new("frontend"))
         .layer(Extension(session_store.clone()));
 
     let port = 8080;
