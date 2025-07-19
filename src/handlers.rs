@@ -1,6 +1,7 @@
 use axum::{
     extract::{Extension, Json},
-    http::{HeaderMap, header::SET_COOKIE, StatusCode},
+    http::{HeaderMap, header::SET_COOKIE},
+    response::{IntoResponse, Response},
 };
 use std::sync::Arc;
 use crate::session;
@@ -13,12 +14,11 @@ pub struct ChatRequest {
     pub message: String,
 }
 
-#[axum::debug_handler]
 pub async fn chat_handler(
     Extension(session_store): Extension<Arc<session::SessionStore>>,
     headers: HeaderMap,
     Json(payload): Json<ChatRequest>,
-) -> (HeaderMap, axum::http::StatusCode, axum::Json<ChatIntent>) {
+) -> Response {
     // 1. Try to get session ID from cookie, else generate new
     let session_id = headers
         .get(axum::http::header::COOKIE)
@@ -67,16 +67,17 @@ pub async fn chat_handler(
 
     let function_schema = llm::chat_intent_function_schema();
 
+    // Pass the full messages array (with history) to OpenAI
     let llm_result = llm::call_openai_with_function(
-        &system_prompt,
-        &payload.message,
+        &messages,
         &function_schema,
     ).await;
 
-    let (chat, status): (ChatIntent, axum::http::StatusCode) = match llm_result {
+    // Process the result - use u16 to avoid any StatusCode type inference
+    let (chat, status_code) = match llm_result {
         Ok(raw) => {
             let chat = llm::ChatIntent::from_function_result(&raw);
-            (chat, axum::http::StatusCode::OK)
+            (chat, 200u16)
         }
         Err(e) => (
             ChatIntent {
@@ -84,7 +85,7 @@ pub async fn chat_handler(
                 persona: "Default".to_string(),
                 mood: "neutral".to_string(),
             },
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            500u16,
         ),
     };
 
@@ -92,14 +93,20 @@ pub async fn chat_handler(
     let _ = session_store.save_message(&session_id, "user", &payload.message).await;
     let _ = session_store.save_message(&session_id, "assistant", &chat.output).await;
 
-    // 7. Set session cookie (so browser keeps same ID on next load)
-    let mut header_map = HeaderMap::new();
-    header_map.insert(
+    // 7. Build response manually
+    let mut response = Json(chat).into_response();
+    
+    // Set status code
+    *response.status_mut() = axum::http::StatusCode::from_u16(status_code)
+        .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    
+    // Set cookie header
+    response.headers_mut().insert(
         SET_COOKIE,
         format!("mira_session={}; Path=/; HttpOnly; SameSite=Lax", session_id)
             .parse()
             .unwrap(),
     );
 
-    (header_map, status, axum::Json(chat))
+    response
 }

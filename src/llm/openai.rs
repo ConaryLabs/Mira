@@ -4,11 +4,10 @@ use serde_json::json;
 use reqwest::Client;
 use std::env;
 
-/// Sends a prompt and user message to OpenAI GPT-4.1 with the provided function schema.
+/// Sends a full conversation (with history) to OpenAI GPT-4.1 with the provided function schema.
 /// Returns the full JSON result from OpenAI.
 pub async fn call_openai_with_function(
-    prompt: &str,
-    user_message: &str,
+    messages: &[serde_json::Value],
     function_schema: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let api_key = env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set".to_string())?;
@@ -16,10 +15,7 @@ pub async fn call_openai_with_function(
 
     let body = json!({
         "model": "gpt-4.1",
-        "messages": [
-            { "role": "system", "content": prompt },
-            { "role": "user",   "content": user_message }
-        ],
+        "messages": messages,
         "functions": function_schema,
         "function_call": { "name": "format_response" }
     });

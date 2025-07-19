@@ -19,7 +19,8 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     // Init session store and pool
-    let session_store = Arc::new(session::SessionStore::new("sqlite://backend/mira.db").await?);
+    // Use a local path relative to the current directory
+    let session_store = Arc::new(session::SessionStore::new("sqlite://mira.db").await?);
 
     let app = Router::new()
         .route("/chat", post(handlers::chat_handler))

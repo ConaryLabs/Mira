@@ -1,6 +1,6 @@
 // src/session.rs
 
-use sqlx::{Sqlite, SqlitePool, Row};
+use sqlx::{SqlitePool, Row};
 use uuid::Uuid;
 
 pub struct SessionStore {
