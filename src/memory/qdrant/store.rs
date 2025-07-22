@@ -1,7 +1,9 @@
+// src/memory/qdrant/store.rs
+
 //! Implements MemoryStore for Qdrant (semantic/embedding-based memory).
 
 use crate::memory::traits::MemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryType, MemoryTag};
+use crate::memory::types::{MemoryEntry, MemoryType};
 use async_trait::async_trait;
 use anyhow::{Result, anyhow};
 use reqwest::Client;

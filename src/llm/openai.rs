@@ -10,7 +10,7 @@ use std::env;
 
 use crate::llm::schema::{EvaluateMemoryRequest, EvaluateMemoryResponse};
 use crate::api::ws::message::WsServerMessage;
-use futures::stream::{Stream, StreamExt};
+use futures::stream::Stream;
 use std::pin::Pin;
 
 #[derive(Clone)]
@@ -225,6 +225,7 @@ Use only the message, its context, and your intuition—do not rely on keywords.
                                                 if !as_str.is_empty() {
                                                     yield WsServerMessage::Aside {
                                                         emotional_cue: as_str.to_string(),
+                                                        intensity: None,
                                                     };
                                                     seen_emotional_cue = true;
                                                 }
