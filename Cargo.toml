@@ -8,7 +8,7 @@ name = "mira_backend"
 path = "src/lib.rs"
 
 [dependencies]
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "ws"] }
 tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
@@ -23,3 +23,10 @@ uuid = { version = "1.8", features = ["v4"] }
 anyhow = "1.0.98"
 chrono = { version = "0.4.41", features = ["serde"] }
 async-trait = "0.1.88"
+futures = "0.3"
+async-stream = "0.3"
+
+[dev-dependencies]
+tokio-tungstenite = "0.27.0"
+url = "2.5.0"
+tower = "0.5.2"

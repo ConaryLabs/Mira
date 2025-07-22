@@ -14,6 +14,8 @@ use mira_backend::memory::qdrant::store::QdrantMemoryStore;
 use mira_backend::memory;
 use mira_backend::handlers::{chat_handler, AppState};
 use mira_backend::llm::OpenAIClient;
+// CORRECT: Use the library crate's API module, NOT `mod api;`
+use mira_backend::api::ws::ws_router;
 
 use sqlx::SqlitePool;
 use reqwest::Client;
@@ -31,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     // --- Initialize Qdrant memory store ---
     let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
     let qdrant_collection = std::env::var("QDRANT_COLLECTION").unwrap_or_else(|_| "mira-memory".to_string());
-    
+
     // Create collection if it doesn't exist
     let client = Client::new();
     let create_collection_url = format!("{}/collections/{}", qdrant_url, qdrant_collection);
@@ -44,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
         }))
         .send()
         .await;
-    
+
     let qdrant_store = Arc::new(QdrantMemoryStore::new(
         client.clone(),
         qdrant_url,
@@ -61,9 +63,11 @@ async fn main() -> anyhow::Result<()> {
         llm_client,
     });
 
-    // --- Build Axum app with routes ---
+    // --- Build Axum app with REST and WebSocket routes ---
     let app = Router::new()
         .route("/chat", post(chat_handler))
+        // NEW: All /ws/* endpoints via ws_router (from your lib crate)
+        .nest("/ws", ws_router(app_state.clone()))
         .layer(Extension(app_state));
 
     // --- Start the server ---
