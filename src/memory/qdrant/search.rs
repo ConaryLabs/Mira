@@ -3,7 +3,7 @@
 //! Qdrant search and filter helpers for semantic recall.
 
 use crate::memory::types::{MemoryEntry, MemoryType, MemoryTag};
-use chrono::{DateTime, Utc, NaiveDateTime};
+use chrono::{DateTime, Utc};
 
 /// Builds the JSON filter block for a session (and, optionally, tags/salience).
 pub fn build_session_filter(session_id: &str) -> serde_json::Value {
@@ -36,13 +36,10 @@ pub fn build_advanced_filter(session_id: &str, tags: Option<&[MemoryTag]>, min_s
     serde_json::json!({ "must": must })
 }
 
-/// Safely convert milliseconds to DateTime<Utc> (with fallback to Unix epoch).
+/// Safely convert milliseconds to DateTime<Utc>
 fn millis_to_datetime(ms: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp_millis(ms)
-            .unwrap_or_else(|| NaiveDateTime::from_timestamp(0, 0)),
-        Utc,
-    )
+    DateTime::from_timestamp_millis(ms)
+        .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap())
 }
 
 /// Parses a single Qdrant point/payload result into a MemoryEntry.

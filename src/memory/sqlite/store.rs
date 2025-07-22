@@ -6,7 +6,7 @@ use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryType, MemoryTag};
 use async_trait::async_trait;
 use sqlx::{SqlitePool, Row};
-use chrono::{DateTime, Utc, NaiveDateTime};
+use chrono::{Utc, NaiveDateTime, TimeZone};
 use anyhow::Result;
 use serde_json;
 
@@ -133,7 +133,7 @@ impl MemoryStore for SqliteMemoryStore {
                 session_id,
                 role,
                 content,
-                timestamp: DateTime::from_utc(timestamp, Utc),
+                timestamp: Utc.from_utc_datetime(&timestamp),
                 embedding,
                 salience,
                 tags: tags_vec,
@@ -145,7 +145,7 @@ impl MemoryStore for SqliteMemoryStore {
             });
         }
 
-        // They’re ordered DESC, but usually you want most recent last
+        // They're ordered DESC, but usually you want most recent last
         entries.reverse();
 
         Ok(entries)

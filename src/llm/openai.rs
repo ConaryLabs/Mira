@@ -4,7 +4,6 @@
 //! No wrappers; just reqwest and Rust, as the universe intended.
 
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use serde_json::json;
 use std::env;
@@ -13,9 +12,9 @@ use crate::llm::schema::{EvaluateMemoryRequest, EvaluateMemoryResponse};
 
 #[derive(Clone)]
 pub struct OpenAIClient {
-    client: Client,
-    api_key: String,
-    api_base: String, // Default "https://api.openai.com/v1", but can be overridden
+    pub client: Client,
+    pub api_key: String,
+    pub api_base: String, // Default "https://api.openai.com/v1", but can be overridden
 }
 
 impl OpenAIClient {
@@ -87,7 +86,7 @@ impl OpenAIClient {
     pub async fn evaluate_memory(&self, req: &EvaluateMemoryRequest) -> Result<EvaluateMemoryResponse> {
         let url = format!("{}/chat/completions", self.api_base);
 
-        // Compose the system prompt (feel free to refine this for your project’s voice)
+        // Compose the system prompt (feel free to refine this for your project's voice)
         let system_prompt = r#"You are an emotionally intelligent AI. For every message you receive, extract the following:
 - Salience (how important is this to the user's emotional world, 1-10)
 - Tags (context, relationships, mood)
@@ -103,7 +102,7 @@ Use only the message, its context, and your intuition—do not rely on keywords.
         let function_schema = req.function_schema.clone();
 
         let body = json!({
-            "model": "gpt-4-1106-preview", // Or "gpt-4o" if you want, per roadmap
+            "model": "gpt-4.1",
             "messages": messages,
             "functions": [function_schema],
             "function_call": { "name": "evaluate_memory" },

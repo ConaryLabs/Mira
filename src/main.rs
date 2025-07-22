@@ -9,12 +9,14 @@ use tokio::net::TcpListener;
 use std::sync::Arc;
 use tracing::info;
 
-// All modules are brought in from the library crate (lib.rs)
 use mira_backend::memory::sqlite::store::SqliteMemoryStore;
+use mira_backend::memory::qdrant::store::QdrantMemoryStore;
 use mira_backend::memory;
-use mira_backend::handlers;
+use mira_backend::handlers::{chat_handler, AppState};
+use mira_backend::llm::OpenAIClient;
 
 use sqlx::SqlitePool;
+use reqwest::Client;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,22 +25,53 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Initialize SQLite pool and memory store ---
     let pool = SqlitePool::connect("sqlite://mira.db").await?;
-    // Run DB migrations to ensure schema matches code
     memory::sqlite::migration::run_migrations(&pool).await?;
+    let sqlite_store = Arc::new(SqliteMemoryStore::new(pool));
 
-    // Initialize the memory store with the pool
-    let sqlite_store = SqliteMemoryStore::new(pool);
-    let memory_store = Arc::new(sqlite_store);
+    // --- Initialize Qdrant memory store ---
+    let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+    let qdrant_collection = std::env::var("QDRANT_COLLECTION").unwrap_or_else(|_| "mira-memory".to_string());
+    
+    // Create collection if it doesn't exist
+    let client = Client::new();
+    let create_collection_url = format!("{}/collections/{}", qdrant_url, qdrant_collection);
+    let _ = client.put(&create_collection_url)
+        .json(&serde_json::json!({
+            "vectors": {
+                "size": 1536,
+                "distance": "Cosine"
+            }
+        }))
+        .send()
+        .await;
+    
+    let qdrant_store = Arc::new(QdrantMemoryStore::new(
+        client.clone(),
+        qdrant_url,
+        qdrant_collection,
+    ));
 
-    // --- Build Axum app with /chat route and injected store ---
+    // --- Initialize LLM client ---
+    let llm_client = Arc::new(OpenAIClient::new());
+
+    // --- Create shared app state ---
+    let app_state = Arc::new(AppState {
+        sqlite_store,
+        qdrant_store,
+        llm_client,
+    });
+
+    // --- Build Axum app with routes ---
     let app = Router::new()
-        .route("/chat", post(handlers::chat_handler))
-        .layer(Extension(memory_store.clone()));
+        .route("/chat", post(chat_handler))
+        .layer(Extension(app_state));
 
     // --- Start the server ---
     let port = 8080;
     let addr = format!("0.0.0.0:{port}");
-    info!("Listening on http://{addr}");
+    info!("🚀 Mira backend listening on http://{addr}");
+    info!("📦 SQLite: mira.db");
+    info!("🔍 Qdrant: {}", std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string()));
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

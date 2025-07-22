@@ -12,26 +12,68 @@ pub struct ChatIntent {
 impl ChatIntent {
     /// Parse and normalize the ChatIntent from the OpenAI function_call result.
     pub fn from_function_result(raw: &serde_json::Value) -> Self {
-        let func_call = &raw["choices"][0]["message"]["function_call"];
-        let args = func_call["arguments"].as_str().unwrap_or("{}");
-
-        serde_json::from_str(args).unwrap_or_else(|_| ChatIntent {
-            output: "Parse error in function output.".to_string(),
-            persona: "Default".to_string(),
-            mood: "neutral".to_string(),
-        })
+        // Try to get the function call from the response
+        let func_call = raw
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|choice| choice.get("message"))
+            .and_then(|msg| msg.get("function_call"));
+        
+        if let Some(fc) = func_call {
+            let args = fc.get("arguments")
+                .and_then(|a| a.as_str())
+                .unwrap_or("{}");
+            
+            match serde_json::from_str::<ChatIntent>(args) {
+                Ok(intent) => intent,
+                Err(_) => {
+                    // Try to get content from regular message
+                    let content = raw
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|choice| choice.get("message"))
+                        .and_then(|msg| msg.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("I'm having trouble formulating my response.");
+                    
+                    ChatIntent {
+                        output: content.to_string(),
+                        persona: "Default".to_string(),
+                        mood: "confused".to_string(),
+                    }
+                }
+            }
+        } else {
+            // No function call found, try to get regular content
+            let content = raw
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|choice| choice.get("message"))
+                .and_then(|msg| msg.get("content"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("I couldn't process my response properly.");
+            
+            ChatIntent {
+                output: content.to_string(),
+                persona: "Default".to_string(),
+                mood: "uncertain".to_string(),
+            }
+        }
     }
 }
 
 /// Provides the canonical function schema for intent/persona extraction.
 pub fn chat_intent_function_schema() -> serde_json::Value {
-    serde_json::json!([{
+    serde_json::json!({
         "name": "format_response",
-        "description": "Return chat as JSON with an 'output' field (the reply), a 'persona' field (overlay: Default, Forbidden, Hallow, or Haven), and a 'mood' field.",
+        "description": "Format Mira's response with persona and mood information",
         "parameters": {
             "type": "object",
             "properties": {
-                "output": { "type": "string" },
+                "output": { 
+                    "type": "string",
+                    "description": "Mira's actual response to the user"
+                },
                 "persona": {
                     "type": "string",
                     "enum": ["Default", "Forbidden", "Hallow", "Haven"],
@@ -39,10 +81,10 @@ pub fn chat_intent_function_schema() -> serde_json::Value {
                 },
                 "mood": {
                     "type": "string",
-                    "description": "The emotional tone (e.g., 'flirty', 'horny', 'soothing', etc.)"
+                    "description": "The emotional tone of the response (e.g., 'playful', 'caring', 'sassy', 'thoughtful')"
                 }
             },
             "required": ["output", "persona", "mood"]
         }
-    }])
+    })
 }
