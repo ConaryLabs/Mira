@@ -11,6 +11,7 @@ use std::env;
 use crate::llm::schema::{EvaluateMemoryRequest, EvaluateMemoryResponse};
 use crate::api::ws::message::WsServerMessage;
 use futures::stream::Stream;
+use futures::StreamExt;
 use std::pin::Pin;
 
 #[derive(Clone)]
@@ -140,7 +141,7 @@ Use only the message, its context, and your intuition—do not rely on keywords.
     }
 
     /// Streams GPT-4.1 response for chat (WebSocket streaming).
-    /// Each chunk is sent as a WsServerMessage, with asides for emotional_cue.
+    /// Uses a robust marker-based approach for extracting mood and emotional cues.
     pub async fn stream_gpt4_ws_messages(
         &self,
         prompt: String,
@@ -162,92 +163,194 @@ Use only the message, its context, and your intuition—do not rely on keywords.
             "model": model,
             "messages": messages,
             "stream": true,
-            "max_tokens": 32768 // FULL SEND for GPT-4.1
+            "max_tokens": 32768,
+            "temperature": 0.9
         });
 
         let api_key = self.api_key.clone();
         let client = self.client.clone();
 
-        let request = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&req_body);
-
-        let resp = match request.send().await {
-            Ok(res) => res,
-            Err(err) => {
-                let err_stream = futures::stream::once(async move {
-                    WsServerMessage::Chunk {
-                        content: format!("Error: failed to reach LLM API: {err}"),
+        let stream = async_stream::stream! {
+            let resp = match client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&req_body)
+                .send()
+                .await 
+            {
+                Ok(res) => res,
+                Err(err) => {
+                    yield WsServerMessage::Chunk {
+                        content: format!("Error: failed to reach LLM API: {}", err),
                         persona: persona_string,
                         mood: Some("error".to_string()),
-                    }
-                });
-                return Box::pin(err_stream);
-            }
-        };
+                    };
+                    return;
+                }
+            };
 
-        let stream = async_stream::stream! {
-            let mut buffer = String::new();
-            let mut seen_emotional_cue = false;
-            let mut response = resp;
-            while let Ok(Some(chunk)) = response.chunk().await {
-                for line in chunk.split(|b| *b == b'\n') {
-                    if line.starts_with(b"data: ") {
-                        let json_str = &line[6..];
-                        if json_str == b"[DONE]" {
-                            yield WsServerMessage::Done;
-                            return;
+            if !resp.status().is_success() {
+                yield WsServerMessage::Chunk {
+                    content: format!("Error: API returned status {}", resp.status()),
+                    persona: persona_string.clone(),
+                    mood: Some("error".to_string()),
+                };
+                return;
+            }
+
+            let mut text_buffer = String::new();
+            let mut current_mood: Option<String> = None;
+            let mut in_mood_marker = false;
+            let mut in_aside_marker = false;
+            let mut mood_buffer = String::new();
+            let mut aside_buffer = String::new();
+            let mut partial_line = String::new();
+
+            // Convert response to text stream
+            let mut byte_stream = resp.bytes_stream();
+            
+            while let Some(chunk_result) = byte_stream.next().await {
+                let bytes = match chunk_result {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Error reading stream: {}", e);
+                        break;
+                    }
+                };
+
+                let chunk_str = match std::str::from_utf8(&bytes) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                // Handle partial lines from streaming
+                partial_line.push_str(chunk_str);
+                
+                while let Some(newline_pos) = partial_line.find('\n') {
+                    let line = partial_line[..newline_pos].to_string();
+                    partial_line = partial_line[newline_pos + 1..].to_string();
+
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        // Flush any remaining content
+                        if !text_buffer.is_empty() {
+                            yield WsServerMessage::Chunk {
+                                content: text_buffer.clone(),
+                                persona: persona_string.clone(),
+                                mood: current_mood.clone(),
+                            };
                         }
-                        let json_val: Value = match serde_json::from_slice(json_str) {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
-                        let choices = json_val["choices"].as_array();
-                        if let Some(choices) = choices {
-                            for choice in choices {
-                                if let Some(content) = choice["delta"]["content"].as_str() {
-                                    buffer.push_str(content);
+                        yield WsServerMessage::Done;
+                        return;
+                    }
+
+                    let json_val: Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                    if let Some(content) = json_val["choices"][0]["delta"]["content"].as_str() {
+                        // Process content character by character to detect markers
+                        for ch in content.chars() {
+                            if ch == '⟨' && !in_mood_marker && !in_aside_marker {
+                                // Start mood marker
+                                if !text_buffer.is_empty() {
                                     yield WsServerMessage::Chunk {
-                                        content: content.to_string(),
+                                        content: text_buffer.clone(),
                                         persona: persona_string.clone(),
-                                        mood: None,
+                                        mood: current_mood.clone(),
+                                    };
+                                    text_buffer.clear();
+                                }
+                                in_mood_marker = true;
+                                mood_buffer.clear();
+                            } else if ch == '⟩' && in_mood_marker {
+                                // End of mood marker - extract mood but don't include in output
+                                in_mood_marker = false;
+                                if !mood_buffer.is_empty() {
+                                    current_mood = Some(mood_buffer.clone());
+                                    // Don't add the mood text to the buffer
+                                }
+                            } else if ch == '⟦' && !in_aside_marker && !in_mood_marker {
+                                // Start aside marker
+                                if !text_buffer.is_empty() {
+                                    yield WsServerMessage::Chunk {
+                                        content: text_buffer.clone(),
+                                        persona: persona_string.clone(),
+                                        mood: current_mood.clone(),
+                                    };
+                                    text_buffer.clear();
+                                }
+                                in_aside_marker = true;
+                                aside_buffer.clear();
+                            } else if ch == '⟧' && in_aside_marker {
+                                // End of aside marker
+                                in_aside_marker = false;
+                                if !aside_buffer.is_empty() {
+                                    let intensity = calculate_emotional_intensity(&aside_buffer);
+                                    yield WsServerMessage::Aside {
+                                        emotional_cue: aside_buffer.clone(),
+                                        intensity: Some(intensity),
                                     };
                                 }
-                                if let Some(fn_args) = choice["delta"]["function_call"]["arguments"].as_str() {
-                                    if let Ok(args_json) = serde_json::from_str::<Value>(fn_args) {
-                                        let output = args_json["output"].as_str().unwrap_or("").to_string();
-                                        let persona_field = args_json["persona"].as_str().unwrap_or("Default").to_string();
-                                        let mood = args_json["mood"].as_str().map(|s| s.to_string());
-                                        if !seen_emotional_cue {
-                                            if let Some(as_str) = args_json.get("emotional_cue").and_then(|v| v.as_str()) {
-                                                if !as_str.is_empty() {
-                                                    yield WsServerMessage::Aside {
-                                                        emotional_cue: as_str.to_string(),
-                                                        intensity: None,
-                                                    };
-                                                    seen_emotional_cue = true;
-                                                }
-                                            }
-                                        }
-                                        if !output.is_empty() {
-                                            yield WsServerMessage::Chunk {
-                                                content: output,
-                                                persona: persona_field,
-                                                mood,
-                                            };
-                                        }
-                                        yield WsServerMessage::Done;
-                                        return;
-                                    }
-                                }
+                            } else if in_mood_marker {
+                                mood_buffer.push(ch);
+                            } else if in_aside_marker {
+                                aside_buffer.push(ch);
+                            } else {
+                                text_buffer.push(ch);
                             }
+                        }
+
+                        // Yield accumulated content periodically
+                        if text_buffer.len() > 50 && !in_mood_marker && !in_aside_marker {
+                            yield WsServerMessage::Chunk {
+                                content: text_buffer.clone(),
+                                persona: persona_string.clone(),
+                                mood: current_mood.clone(),
+                            };
+                            text_buffer.clear();
                         }
                     }
                 }
             }
+
+            // Final cleanup
+            if !text_buffer.is_empty() {
+                yield WsServerMessage::Chunk {
+                    content: text_buffer,
+                    persona: persona_string.clone(),
+                    mood: current_mood,
+                };
+            }
         };
+
         Box::pin(stream)
     }
+}
+
+/// Calculate emotional intensity based on cue content
+fn calculate_emotional_intensity(cue: &str) -> f32 {
+    let cue_lower = cue.to_lowercase();
+    
+    // High intensity indicators
+    if cue_lower.contains("fuck") || cue_lower.contains("damn") || 
+       cue_lower.contains("shit") || cue_lower.contains("!") ||
+       cue_lower.contains("...") {
+        return 0.8;
+    }
+    
+    // Medium intensity
+    if cue_lower.contains("really") || cue_lower.contains("very") ||
+       cue_lower.contains("so ") || cue_lower.contains("?") {
+        return 0.5;
+    }
+    
+    // Default low intensity
+    0.3
 }

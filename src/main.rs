@@ -1,13 +1,14 @@
 // src/main.rs
 
 use axum::{
-    routing::post,
+    routing::{get, post},
     Router,
     extract::Extension,
 };
 use tokio::net::TcpListener;
 use std::sync::Arc;
 use tracing::info;
+use tower_http::cors::{CorsLayer, Any};
 
 use mira_backend::memory::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::qdrant::store::QdrantMemoryStore;
@@ -63,12 +64,21 @@ async fn main() -> anyhow::Result<()> {
         llm_client,
     });
 
+    // --- Build CORS layer ---
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     // --- Build Axum app with REST and WebSocket routes ---
     let app = Router::new()
+        .route("/", get(|| async { "Mira backend is running!" }))
+        .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
         .route("/chat", post(chat_handler))
         // NEW: All /ws/* endpoints via ws_router (from your lib crate)
         .nest("/ws", ws_router(app_state.clone()))
-        .layer(Extension(app_state));
+        .layer(Extension(app_state))
+        .layer(cors);
 
     // --- Start the server ---
     let port = 8080;
@@ -76,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
     info!("🚀 Mira backend listening on http://{addr}");
     info!("📦 SQLite: mira.db");
     info!("🔍 Qdrant: {}", std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string()));
+    info!("🌐 WebSocket endpoint: ws://localhost:{}/ws/chat", port);
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

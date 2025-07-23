@@ -11,5 +11,10 @@ use crate::handlers::AppState;
 
 pub fn ws_router(app_state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/chat", get(chat::ws_chat_handler).with_state(app_state))
+        .route("/test", get(|| async { 
+            eprintln!("HTTP GET to /ws/test");
+            "WebSocket routes are loaded!" 
+        }))
+        .route("/chat", get(chat::ws_chat_handler))
+        .with_state(app_state)
 }

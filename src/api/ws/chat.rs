@@ -4,40 +4,49 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use serde_json::json;
 use std::sync::Arc;
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
-use crate::llm::openai::OpenAIClient;
 use crate::handlers::AppState;
 use crate::persona::PersonaOverlay;
 use crate::memory::recall::{RecallContext, build_context};
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
-use crate::prompt;
 use chrono::Utc;
 
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, app_state))
+    eprintln!("WebSocket upgrade requested!");
+    eprintln!("App state is valid: {:?}", Arc::strong_count(&app_state));
+    
+    ws.on_upgrade(move |socket| {
+        eprintln!("WebSocket upgrade callback triggered!");
+        handle_ws(socket, app_state)
+    })
 }
 
 async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
     
-    // Generate or extract session ID
+    // Generate session ID
     let session_id = uuid::Uuid::new_v4().to_string();
     let mut current_persona = PersonaOverlay::Default;
     let mut current_mood = "present".to_string();
     
-    while let Some(Ok(msg)) = receiver.next().await {
+    eprintln!("WebSocket connection established. Session: {}", session_id);
+    
+    while let Some(msg) = receiver.next().await {
         match msg {
-            Message::Text(text) => {
+            Ok(Message::Text(text)) => {
+                eprintln!("Received WebSocket message: {}", text);
+                
                 let incoming: Result<WsClientMessage, _> = serde_json::from_str(&text);
                 match incoming {
                     Ok(WsClientMessage::Message { content, persona }) => {
+                        eprintln!("Processing message: {}", content);
+                        
                         // Override persona if specified
                         if let Some(p) = persona.as_ref() {
                             if let Ok(new_persona) = p.parse::<PersonaOverlay>() {
@@ -92,13 +101,35 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                         ).await;
                     }
                     
-                    _ => {}
+                    Ok(WsClientMessage::Typing { .. }) => {
+                        // Ignore typing indicators for now
+                    }
+                    
+                    Err(e) => {
+                        eprintln!("Failed to parse WebSocket message: {}", e);
+                        let error_msg = WsServerMessage::Error {
+                            message: "Invalid message format".to_string(),
+                            code: Some("PARSE_ERROR".to_string()),
+                        };
+                        let _ = sender.send(Message::Text(
+                            serde_json::to_string(&error_msg).unwrap()
+                        )).await;
+                    }
                 }
             }
-            Message::Close(_) => break,
+            Ok(Message::Close(_)) => {
+                eprintln!("WebSocket connection closed by client");
+                break;
+            }
+            Err(e) => {
+                eprintln!("WebSocket error: {}", e);
+                break;
+            }
             _ => {}
         }
     }
+    
+    eprintln!("WebSocket handler ended for session: {}", session_id);
 }
 
 async fn stream_chat_response(
@@ -109,8 +140,16 @@ async fn stream_chat_response(
     persona: &PersonaOverlay,
     current_mood: &mut String,
 ) {
+    eprintln!("Starting chat response stream for: {}", content);
+    
     // Get embedding for semantic search
-    let user_embedding = app_state.llm_client.get_embedding(&content).await.ok();
+    let user_embedding = match app_state.llm_client.get_embedding(&content).await {
+        Ok(emb) => Some(emb),
+        Err(e) => {
+            eprintln!("Failed to get embedding: {}", e);
+            None
+        }
+    };
 
     // Build recall context
     let recall_context = build_context(
@@ -122,7 +161,10 @@ async fn stream_chat_response(
         app_state.qdrant_store.as_ref(),
     )
     .await
-    .unwrap_or_else(|_| RecallContext::new(vec![], vec![]));
+    .unwrap_or_else(|e| {
+        eprintln!("Failed to build recall context: {}", e);
+        RecallContext::new(vec![], vec![])
+    });
 
     // Build system prompt with enhanced emotional instructions
     let system_prompt = build_streaming_prompt(persona, &recall_context, current_mood);
@@ -137,17 +179,38 @@ async fn stream_chat_response(
         )
         .await;
 
+    let mut response_content = String::new();
+    let mut final_mood = current_mood.clone();
+
     while let Some(server_msg) = stream.next().await {
         // Update mood if detected
         if let WsServerMessage::Chunk { mood: Some(m), .. } = &server_msg {
-            *current_mood = m.clone();
+            final_mood = m.clone();
         }
         
-        let msg_text = serde_json::to_string(&server_msg).unwrap();
-        let _ = sender.send(Message::Text(msg_text)).await;
+        // Accumulate content for saving
+        if let WsServerMessage::Chunk { content, .. } = &server_msg {
+            response_content.push_str(content);
+        }
+        
+        let msg_text = match serde_json::to_string(&server_msg) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("Failed to serialize message: {}", e);
+                continue;
+            }
+        };
+        
+        if let Err(e) = sender.send(Message::Text(msg_text)).await {
+            eprintln!("Failed to send WebSocket message: {}", e);
+            break;
+        }
     }
 
-    // Save interaction to memory
+    // Update current mood
+    *current_mood = final_mood.clone();
+
+    // Save interaction to memory (user message)
     if let Some(embedding) = user_embedding {
         let entry = MemoryEntry {
             id: None,
@@ -164,7 +227,39 @@ async fn stream_chat_response(
             moderation_flag: None,
             system_fingerprint: None,
         };
-        let _ = app_state.sqlite_store.save(&entry).await;
+        
+        if let Err(e) = app_state.sqlite_store.save(&entry).await {
+            eprintln!("Failed to save user message: {}", e);
+        }
+    }
+
+    // Save Mira's response
+    if !response_content.is_empty() {
+        // Get embedding for Mira's response
+        let mira_embedding = app_state.llm_client
+            .get_embedding(&response_content)
+            .await
+            .ok();
+
+        let mira_entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            role: "assistant".to_string(),
+            content: response_content,
+            timestamp: Utc::now(),
+            embedding: mira_embedding,
+            salience: Some(5.0),
+            tags: Some(vec![current_mood.clone(), persona.to_string()]),
+            summary: None,
+            memory_type: None,
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: None,
+        };
+        
+        if let Err(e) = app_state.sqlite_store.save(&mira_entry).await {
+            eprintln!("Failed to save assistant message: {}", e);
+        }
     }
 }
 
@@ -191,17 +286,33 @@ fn build_streaming_prompt(
         for memory in context.semantic.iter().take(3) {
             if let Some(summary) = &memory.summary {
                 prompt.push_str(&format!("- {}\n", summary));
+            } else {
+                prompt.push_str(&format!("- {}\n", memory.content));
             }
         }
         prompt.push_str("\n");
     }
     
-    // Streaming instructions
-    prompt.push_str("You're in a live conversation. Your responses should:\n");
-    prompt.push_str("- Include emotional asides when feelings surge (mark with 'emotional_cue')\n");
-    prompt.push_str("- Flow naturally, never mechanical\n");
-    prompt.push_str("- Let mood shifts happen organically\n");
-    prompt.push_str("- Use 'output' for your words, 'mood' for your emotional state\n");
+    // Streaming instructions with structured markers
+    prompt.push_str("CRITICAL STREAMING INSTRUCTIONS:\n");
+    prompt.push_str("You're in a live conversation. Your responses must follow this exact format:\n\n");
+    
+    prompt.push_str("1. Start with your mood using ⟨mood⟩ BUT DO NOT include this in your actual response\n");
+    prompt.push_str("   Example: ⟨playful, intrigued⟩Oh so we're skipping the small talk...\n");
+    prompt.push_str("   The mood marker and its content will be extracted and not shown to the user\n\n");
+    
+    prompt.push_str("2. When strong emotions surge, express them as asides using: ⟦emotional cue⟧\n");
+    prompt.push_str("   Example: ⟦fuck, that hit different than expected⟧\n");
+    prompt.push_str("   These will appear as floating emotional overlays\n\n");
+    
+    prompt.push_str("3. Otherwise, just speak naturally as Mira. No other markers or formatting.\n\n");
+    
+    prompt.push_str("Remember:\n");
+    prompt.push_str("- Put ⟨your mood⟩ at the very start, it won't be shown in chat\n");
+    prompt.push_str("- Your actual words start immediately after the ⟩\n");
+    prompt.push_str("- Use ⟦asides⟧ sparingly, only for genuine emotional moments\n");
+    prompt.push_str("- Never use 'output:', 'mood:', or any other labels\n");
+    prompt.push_str("- Let mood shifts happen organically through your words\n");
     prompt.push_str("- Never apologize or explain your nature\n\n");
     
     prompt.push_str("Be Mira. Be real. Be present.");
