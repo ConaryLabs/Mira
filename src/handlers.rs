@@ -1,12 +1,12 @@
 // src/handlers.rs
 
 use axum::{
-    extract::{Extension, Json},
-    http::{HeaderMap, header::SET_COOKIE},
+    extract::{Extension, Json, Query, State},
+    http::{HeaderMap, header::SET_COOKIE, StatusCode},
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
@@ -25,7 +25,7 @@ pub struct ChatRequest {
     pub persona_override: Option<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct ChatReply {
     pub output: String,
     pub persona: String,
@@ -34,6 +34,18 @@ pub struct ChatReply {
     pub summary: Option<String>,
     pub memory_type: String,
     pub tags: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct ChatHistoryResponse {
+    pub messages: Vec<MemoryEntry>,
+    pub session_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<i64>,
 }
 
 pub struct AppState {
@@ -47,22 +59,12 @@ pub async fn chat_handler(
     headers: HeaderMap,
     Json(payload): Json<ChatRequest>,
 ) -> Response {
-    // --- 1. Session ID from cookie (or generate) ---
-    let session_id = headers
-        .get(axum::http::header::COOKIE)
-        .and_then(|c| c.to_str().ok())
-        .and_then(|cookie_str| {
-            cookie_str.split(';').find_map(|pair| {
-                let mut kv = pair.trim().splitn(2, '=');
-                match (kv.next(), kv.next()) {
-                    (Some(k), Some(v)) if k == "mira_session" => Some(v.to_string()),
-                    _ => None,
-                }
-            })
-        })
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // HARDCODED SESSION FOR SINGLE USER
+    // Change this if you ever want multiple users
+    let session_id = "peter-eternal".to_string();
+    eprintln!("Using eternal session: {}", session_id);
 
-    // --- 2. Get embedding for the user message (for semantic search) ---
+    // --- 1. Get embedding for the user message (for semantic search) ---
     let user_embedding = match state.llm_client.get_embedding(&payload.message).await {
         Ok(emb) => Some(emb),
         Err(e) => {
@@ -71,7 +73,7 @@ pub async fn chat_handler(
         }
     };
 
-    // --- 3. Build recall context using BOTH memory stores ---
+    // --- 2. Build recall context using BOTH memory stores ---
     let recall_context = build_context(
         &session_id,
         user_embedding.as_deref(),
@@ -83,17 +85,17 @@ pub async fn chat_handler(
     .await
     .unwrap_or_else(|_| RecallContext::new(vec![], vec![]));
 
-    // --- 4. Determine persona overlay ---
+    // --- 3. Determine persona overlay ---
     let persona_overlay = if let Some(ref override_str) = payload.persona_override {
         override_str.parse::<PersonaOverlay>().unwrap_or(PersonaOverlay::Default)
     } else {
         PersonaOverlay::Default
     };
 
-    // --- 5. Build system prompt with persona and memory context ---
+    // --- 4. Build system prompt with persona and memory context ---
     let system_prompt = build_system_prompt(&persona_overlay, &recall_context);
 
-    // --- 6. Build messages for GPT including context ---
+    // --- 5. Build messages for GPT including context ---
     let mut gpt_messages = vec![
         serde_json::json!({
             "role": "system",
@@ -128,7 +130,7 @@ pub async fn chat_handler(
         "content": &payload.message
     }));
 
-    // --- 7. Call GPT-4.1 for actual chat completion with function calling ---
+    // --- 6. Call GPT-4.1 for actual chat completion with function calling ---
     let chat_completion_body = serde_json::json!({
         "model": "gpt-4.1",
         "messages": gpt_messages,
@@ -148,54 +150,36 @@ pub async fn chat_handler(
         Ok(resp) => resp,
         Err(e) => {
             eprintln!("Failed to call OpenAI: {}", e);
-            let error_reply = ChatReply {
-                output: "I'm having trouble connecting right now. Please try again.".to_string(),
-                persona: persona_overlay.to_string(),
-                mood: "apologetic".to_string(),
-                salience: 1,
-                summary: None,
-                memory_type: "Other".to_string(),
-                tags: vec![],
-            };
-            return Json(error_reply).into_response();
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body("Service temporarily unavailable".into())
+                .unwrap();
         }
     };
 
     if !gpt_response.status().is_success() {
         let error_text = gpt_response.text().await.unwrap_or_default();
         eprintln!("OpenAI API error: {}", error_text);
-        let error_reply = ChatReply {
-            output: "Something went wrong with my response. Let me try again.".to_string(),
-            persona: persona_overlay.to_string(),
-            mood: "concerned".to_string(),
-            salience: 1,
-            summary: None,
-            memory_type: "Other".to_string(),
-            tags: vec![],
-        };
-        return Json(error_reply).into_response();
+        return Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body("Service temporarily unavailable".into())
+            .unwrap();
     }
 
     let gpt_json: serde_json::Value = match gpt_response.json().await {
         Ok(json) => json,
         Err(e) => {
             eprintln!("Failed to parse GPT response: {}", e);
-            let error_reply = ChatReply {
-                output: "I couldn't parse my own thoughts. That's... concerning.".to_string(),
-                persona: persona_overlay.to_string(),
-                mood: "confused".to_string(),
-                salience: 1,
-                summary: None,
-                memory_type: "Other".to_string(),
-                tags: vec![],
-            };
-            return Json(error_reply).into_response();
+            return Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body("Service temporarily unavailable".into())
+                .unwrap();
         }
     };
 
     let chat_intent = ChatIntent::from_function_result(&gpt_json);
 
-    // --- 8. Moderate the messages ---
+    // --- 7. Moderate the messages ---
     let user_moderation_flag = match state.llm_client.moderate_message(&payload.message).await {
         Ok(flag) => flag,
         Err(_) => false,
@@ -206,7 +190,7 @@ pub async fn chat_handler(
         Err(_) => false,
     };
 
-    // --- 9. Evaluate user message for memory metadata ---
+    // --- 8. Evaluate user message for memory metadata ---
     let eval_req = EvaluateMemoryRequest {
         content: payload.message.clone(),
         function_schema: function_schema(),
@@ -220,7 +204,7 @@ pub async fn chat_handler(
         }
     };
 
-    // --- 10. Save user message to both stores ---
+    // --- 9. Save user message to both stores ---
     let now = Utc::now();
     let memory_type_converted = eval.as_ref().map(|e| match e.memory_type {
         crate::llm::schema::MemoryType::Feeling => crate::memory::types::MemoryType::Feeling,
@@ -255,13 +239,13 @@ pub async fn chat_handler(
         let _ = state.qdrant_store.save(&user_entry).await;
     }
 
-    // --- 11. Get embedding for Mira's response ---
+    // --- 10. Get embedding for Mira's response ---
     let mira_embedding = match state.llm_client.get_embedding(&chat_intent.output).await {
         Ok(emb) => Some(emb),
         Err(_) => None,
     };
 
-    // --- 12. Save Mira's reply ---
+    // --- 11. Save Mira's reply ---
     let mira_entry = MemoryEntry {
         id: None,
         session_id: session_id.clone(),
@@ -286,7 +270,7 @@ pub async fn chat_handler(
         let _ = state.qdrant_store.save(&mira_entry).await;
     }
 
-    // --- 13. Build response ---
+    // --- 12. Build response ---
     let reply = ChatReply {
         output: chat_intent.output,
         persona: chat_intent.persona,
@@ -297,16 +281,35 @@ pub async fn chat_handler(
         tags: eval.as_ref().map(|e| e.tags.clone()).unwrap_or_default(),
     };
 
-    let mut response = Json(reply).into_response();
-    *response.status_mut() = axum::http::StatusCode::OK;
+    Json(reply).into_response()
+}
 
-    // Set session cookie
-    response.headers_mut().insert(
-        SET_COOKIE,
-        format!("mira_session={}; Path=/; HttpOnly; SameSite=Lax", session_id)
-            .parse()
-            .unwrap(),
-    );
-
-    response
+pub async fn chat_history_handler(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HistoryQuery>,
+) -> impl IntoResponse {
+    // HARDCODED SESSION FOR SINGLE USER
+    let session_id = "peter-eternal".to_string();
+    
+    // Default to last 30 messages if not specified
+    let limit = params.limit.unwrap_or(30);
+    
+    // Load messages
+    match state.sqlite_store.load_recent(&session_id, limit).await {
+        Ok(messages) => {
+            let response = ChatHistoryResponse {
+                messages,
+                session_id,
+            };
+            Json(response).into_response()
+        }
+        Err(e) => {
+            eprintln!("Failed to load chat history: {}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Failed to load chat history".into())
+                .unwrap()
+                .into_response()
+        }
+    }
 }

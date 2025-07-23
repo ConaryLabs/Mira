@@ -36,7 +36,7 @@ impl OpenAIClient {
         ("Authorization", format!("Bearer {}", self.api_key))
     }
 
-    /// Gets OpenAI text embedding (1536d) for a string.
+    /// Gets OpenAI text embedding (3072d) for a string.
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
         let url = format!("{}/embeddings", self.api_base);
         let req_body = json!({
@@ -55,7 +55,7 @@ impl OpenAIClient {
             return Err(anyhow!("OpenAI embedding failed: {}", resp.text().await.unwrap_or_default()));
         }
         let resp_json: serde_json::Value = resp.json().await?;
-        // Extract embedding (1536 floats)
+        // Extract embedding (3072 floats)
         let embedding = resp_json["data"][0]["embedding"]
             .as_array()
             .ok_or_else(|| anyhow!("No embedding in OpenAI response"))?
@@ -191,8 +191,10 @@ Use only the message, its context, and your intuition—do not rely on keywords.
             };
 
             if !resp.status().is_success() {
+                let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                eprintln!("OpenAI API error: {}", error_text);
                 yield WsServerMessage::Chunk {
-                    content: format!("Error: API returned status {}", resp.status()),
+                    content: format!("Error: API returned error: {}", error_text),
                     persona: persona_string.clone(),
                     mood: Some("error".to_string()),
                 };
@@ -206,6 +208,7 @@ Use only the message, its context, and your intuition—do not rely on keywords.
             let mut mood_buffer = String::new();
             let mut aside_buffer = String::new();
             let mut partial_line = String::new();
+            let mut last_was_space = false;
 
             // Convert response to text stream
             let mut byte_stream = resp.bytes_stream();
@@ -237,13 +240,17 @@ Use only the message, its context, and your intuition—do not rely on keywords.
 
                     let data = &line[6..];
                     if data == "[DONE]" {
-                        // Flush any remaining content
+                        // Flush any remaining content, but clean up trailing punctuation
                         if !text_buffer.is_empty() {
-                            yield WsServerMessage::Chunk {
-                                content: text_buffer.clone(),
-                                persona: persona_string.clone(),
-                                mood: current_mood.clone(),
-                            };
+                            // Trim trailing whitespace and single punctuation
+                            let trimmed = text_buffer.trim_end();
+                            if !trimmed.is_empty() && trimmed.len() > 1 {
+                                yield WsServerMessage::Chunk {
+                                    content: trimmed.to_string(),
+                                    persona: persona_string.clone(),
+                                    mood: current_mood.clone(),
+                                };
+                            }
                         }
                         yield WsServerMessage::Done;
                         return;
@@ -304,29 +311,41 @@ Use only the message, its context, and your intuition—do not rely on keywords.
                                 aside_buffer.push(ch);
                             } else {
                                 text_buffer.push(ch);
+                                
+                                // Track if we just added a space
+                                last_was_space = ch.is_whitespace();
                             }
                         }
 
-                        // Yield accumulated content periodically
-                        if text_buffer.len() > 50 && !in_mood_marker && !in_aside_marker {
-                            yield WsServerMessage::Chunk {
-                                content: text_buffer.clone(),
-                                persona: persona_string.clone(),
-                                mood: current_mood.clone(),
-                            };
-                            text_buffer.clear();
+                        // Just accumulate - no chunking needed!
+                    }
+                }
+            }
+
+            // Final cleanup - handle any partial SSE line
+            if !partial_line.is_empty() && partial_line.starts_with("data: ") {
+                let data = &partial_line[6..];
+                if data != "[DONE]" {
+                    if let Ok(json_val) = serde_json::from_str::<Value>(data) {
+                        if let Some(content) = json_val["choices"][0]["delta"]["content"].as_str() {
+                            text_buffer.push_str(content);
                         }
                     }
                 }
             }
 
-            // Final cleanup
+            // Final cleanup of remaining buffer
             if !text_buffer.is_empty() {
-                yield WsServerMessage::Chunk {
-                    content: text_buffer,
-                    persona: persona_string.clone(),
-                    mood: current_mood,
-                };
+                let trimmed = text_buffer.trim();
+                // Don't send single punctuation marks as their own message
+                if !trimmed.is_empty() && 
+                   !(trimmed.len() == 1 && trimmed.chars().next().unwrap().is_ascii_punctuation()) {
+                    yield WsServerMessage::Chunk {
+                        content: trimmed.to_string(),
+                        persona: persona_string.clone(),
+                        mood: current_mood,
+                    };
+                }
             }
         };
 
