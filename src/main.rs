@@ -11,7 +11,7 @@ use tower_http::cors::{CorsLayer, Any};
 use mira_backend::memory::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::qdrant::store::QdrantMemoryStore;
 use mira_backend::memory;
-use mira_backend::handlers::{chat_handler, AppState};
+use mira_backend::handlers::{chat_handler, chat_history_handler, AppState};
 use mira_backend::llm::OpenAIClient;
 // CORRECT: Use the library crate's API module, NOT `mod api;`
 use mira_backend::api::ws::ws_router;
@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(|| async { "Mira backend is running!" }))
         .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
         .route("/chat", post(chat_handler))
+        .route("/chat/history", get(chat_history_handler))  // NEW: Add history endpoint
         // NEW: All /ws/* endpoints via ws_router (from your lib crate)
         .nest("/ws", ws_router(app_state.clone()))
         .layer(Extension(app_state))
@@ -84,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     info!("📦 SQLite: mira.db");
     info!("🔍 Qdrant: {}", std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string()));
     info!("🌐 WebSocket endpoint: ws://localhost:{}/ws/chat", port);
+    info!("📜 Chat history endpoint: http://localhost:{}/chat/history", port);
     
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

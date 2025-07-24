@@ -11,13 +11,14 @@ use anyhow::Result;
 use serde_json;
 
 pub struct SqliteMemoryStore {
-    pool: SqlitePool,
+    pub pool: SqlitePool,  // Make pool public so handlers can access it
 }
 
 impl SqliteMemoryStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
+    
     // Helper to convert Vec<f32> to Vec<u8> for BLOB storage
     fn embedding_to_blob(embedding: &Option<Vec<f32>>) -> Option<Vec<u8>> {
         embedding.as_ref().map(|vec| {
@@ -26,6 +27,7 @@ impl SqliteMemoryStore {
                 .collect::<Vec<u8>>()
         })
     }
+    
     // Helper to convert BLOB (Vec<u8>) to Vec<f32>
     fn blob_to_embedding(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
         blob.map(|bytes| {

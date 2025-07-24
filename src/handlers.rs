@@ -1,3 +1,4 @@
+// src/handlers.rs
 use axum::{
     extract::{Extension, Json, Query, State},
     http::{HeaderMap, StatusCode},
@@ -11,10 +12,11 @@ use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::memory::recall::{build_context, RecallContext};
-use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, MiraStructuredReply, function_schema, emotional_weight};
+use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, function_schema, emotional_weight};
 use crate::persona::{PersonaOverlay};
 use crate::prompt::builder::build_system_prompt;
-use chrono::Utc;
+use chrono::{Utc, TimeZone};
+use sqlx::Row;
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
@@ -120,7 +122,8 @@ pub async fn chat_handler(
             return Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
                 .body(axum::body::Body::from("Service temporarily unavailable"))
-                .unwrap();
+                .unwrap()
+                .into_response();
         }
     };
 
@@ -223,13 +226,79 @@ pub async fn chat_history_handler(
 ) -> impl IntoResponse {
     let session_id = "peter-eternal".to_string();
     let limit = params.limit.unwrap_or(30);
+    let offset = params.offset.unwrap_or(0);
 
-    match state.sqlite_store.load_recent(&session_id, limit).await {
-        Ok(messages) => {
+    // Custom query that doesn't reverse the messages
+    // We want DESC order for the frontend (newest first)
+    let query = r#"
+        SELECT id, session_id, role, content, timestamp, embedding, salience, tags, summary, memory_type,
+               logprobs, moderation_flag, system_fingerprint
+        FROM chat_history
+        WHERE session_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ? OFFSET ?
+    "#;
+    
+    match sqlx::query(query)
+        .bind(&session_id)
+        .bind(limit as i64)
+        .bind(offset)
+        .fetch_all(&state.sqlite_store.pool)
+        .await
+    {
+        Ok(rows) => {
+            let mut messages = Vec::new();
+            
+            for row in rows {
+                let id: i64 = row.get("id");
+                let session_id: String = row.get("session_id");
+                let role: String = row.get("role");
+                let content: String = row.get("content");
+                let timestamp: chrono::NaiveDateTime = row.get("timestamp");
+                let salience: Option<f32> = row.get("salience");
+                let tags: Option<String> = row.get("tags");
+                let summary: Option<String> = row.get("summary");
+                let memory_type: Option<String> = row.get("memory_type");
+                let moderation_flag: Option<bool> = row.get("moderation_flag");
+                let system_fingerprint: Option<String> = row.get("system_fingerprint");
+
+                // Deserialize tags
+                let tags_vec = tags
+                    .as_ref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+
+                let memory_type_enum = memory_type.as_ref().and_then(|mt| match mt.as_str() {
+                    "Feeling" => Some(crate::memory::types::MemoryType::Feeling),
+                    "Fact" => Some(crate::memory::types::MemoryType::Fact),
+                    "Joke" => Some(crate::memory::types::MemoryType::Joke),
+                    "Promise" => Some(crate::memory::types::MemoryType::Promise),
+                    "Event" => Some(crate::memory::types::MemoryType::Event),
+                    _ => Some(crate::memory::types::MemoryType::Other),
+                });
+
+                messages.push(MemoryEntry {
+                    id: Some(id),
+                    session_id,
+                    role,
+                    content,
+                    timestamp: Utc.from_utc_datetime(&timestamp),
+                    embedding: None, // Skip embedding for API response
+                    salience,
+                    tags: tags_vec,
+                    summary,
+                    memory_type: memory_type_enum,
+                    logprobs: None,
+                    moderation_flag,
+                    system_fingerprint,
+                });
+            }
+            
+            // DON'T reverse - keep them in DESC order (newest first) for the frontend
             let response = ChatHistoryResponse {
                 messages,
                 session_id,
             };
+            
             Json(response).into_response()
         }
         Err(e) => {
