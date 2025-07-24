@@ -1,23 +1,28 @@
-//! Barrel file: exports all LLM-related modules/types/functions for easy use.
+// src/llm/mod.rs
 
-pub mod openai;
+//! LLM module - OpenAI integration split into focused submodules
+
+pub mod client;
+pub mod chat;
+pub mod embeddings;
+pub mod moderation;
+pub mod memory_eval;
+pub mod streaming;
 pub mod schema;
 pub mod intent;
-pub mod emotional_weight; // NEW: for emotional weight detection
+pub mod emotional_weight;
 
-// Re-export commonly used items
-pub use openai::OpenAIClient;
+// Re-export the main client and commonly used types
+pub use client::OpenAIClient;
+pub use moderation::ModerationResult;
 pub use schema::{
     EvaluateMemoryRequest,
     EvaluateMemoryResponse,
     MemoryType,
     function_schema,
-    MiraStructuredReply, // add this so you can use crate::llm::MiraStructuredReply everywhere!
+    MiraStructuredReply,
 };
 pub use intent::{
     ChatIntent,
     chat_intent_function_schema,
 };
-
-// --- No broken moderation helper ---
-// To log moderation results, just use client.moderate(message).await in your handler.

@@ -5,6 +5,7 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
+use tokio::time::{interval, timeout, Duration};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::handlers::AppState;
@@ -30,7 +31,8 @@ pub async fn ws_chat_handler(
 }
 
 async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
+    let (sender, mut receiver) = socket.split();
+    let sender = Arc::new(tokio::sync::Mutex::new(sender));
     
     // Use peter-eternal for consistency with REST endpoint
     let session_id = "peter-eternal".to_string();
@@ -38,6 +40,21 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     let mut current_mood = "present".to_string();
     
     eprintln!("WebSocket connection established. Session: {}", session_id);
+    
+    // Spawn a heartbeat task
+    let heartbeat_sender = sender.clone();
+    let heartbeat_handle = tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            let mut sender = heartbeat_sender.lock().await;
+            if sender.send(Message::Ping(vec![])).await.is_err() {
+                eprintln!("Heartbeat failed, connection likely closed");
+                break;
+            }
+            eprintln!("Sent WebSocket ping");
+        }
+    });
     
     while let Some(msg) = receiver.next().await {
         match msg {
@@ -56,9 +73,23 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                             }
                         }
                         
+                        // Send immediate acknowledgment
+                        let thinking_msg = WsServerMessage::Chunk {
+                            content: "".to_string(),
+                            persona: current_persona.to_string(),
+                            mood: Some("thinking".to_string()),
+                        };
+                        
+                        {
+                            let mut sender_guard = sender.lock().await;
+                            let _ = sender_guard.send(Message::Text(
+                                serde_json::to_string(&thinking_msg).unwrap()
+                            )).await;
+                        }
+                        
                         // Handle the message
                         stream_chat_response(
-                            &mut sender,
+                            sender.clone(),
                             &app_state,
                             &session_id,
                             content,
@@ -76,7 +107,8 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                                     &new_persona,
                                     &current_mood,
                                 );
-                                let _ = sender.send(Message::Text(
+                                let mut sender_guard = sender.lock().await;
+                                let _ = sender_guard.send(Message::Text(
                                     serde_json::to_string(&transition_msg).unwrap()
                                 )).await;
                             }
@@ -89,7 +121,8 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                                 mood: Some(current_mood.clone()),
                                 transition_note: None,
                             };
-                            let _ = sender.send(Message::Text(
+                            let mut sender_guard = sender.lock().await;
+                            let _ = sender_guard.send(Message::Text(
                                 serde_json::to_string(&update).unwrap()
                             )).await;
                         }
@@ -97,7 +130,7 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                     
                     Ok(WsClientMessage::GetMemoryStats { session_id: query_session }) => {
                         send_memory_stats(
-                            &mut sender,
+                            sender.clone(),
                             &app_state,
                             &query_session.unwrap_or(session_id.clone()),
                         ).await;
@@ -105,6 +138,7 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                     
                     Ok(WsClientMessage::Typing { .. }) => {
                         // Ignore typing indicators for now
+                        eprintln!("Received typing indicator");
                     }
                     
                     Err(e) => {
@@ -113,11 +147,15 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                             message: "Invalid message format".to_string(),
                             code: Some("PARSE_ERROR".to_string()),
                         };
-                        let _ = sender.send(Message::Text(
+                        let mut sender_guard = sender.lock().await;
+                        let _ = sender_guard.send(Message::Text(
                             serde_json::to_string(&error_msg).unwrap()
                         )).await;
                     }
                 }
+            }
+            Ok(Message::Pong(_)) => {
+                eprintln!("Received pong");
             }
             Ok(Message::Close(_)) => {
                 eprintln!("WebSocket connection closed by client");
@@ -131,24 +169,33 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
         }
     }
     
+    // Clean up heartbeat task
+    heartbeat_handle.abort();
     eprintln!("WebSocket handler ended for session: {}", session_id);
 }
 
 async fn stream_chat_response(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     app_state: &Arc<AppState>,
     session_id: &str,
     content: String,
     persona: &PersonaOverlay,
     current_mood: &mut String,
 ) {
-    eprintln!("Starting chat response stream for: {}", content);
+    eprintln!("[{}] Starting chat response stream for: {}", Utc::now(), content);
     
     // Get embedding for semantic search
-    let user_embedding = match app_state.llm_client.get_embedding(&content).await {
-        Ok(emb) => Some(emb),
-        Err(e) => {
-            eprintln!("Failed to get embedding: {}", e);
+    let user_embedding = match timeout(
+        Duration::from_secs(10),
+        app_state.llm_client.get_embedding(&content)
+    ).await {
+        Ok(Ok(emb)) => Some(emb),
+        Ok(Err(e)) => {
+            eprintln!("[{}] Failed to get embedding: {}", Utc::now(), e);
+            None
+        }
+        Err(_) => {
+            eprintln!("[{}] Embedding timeout", Utc::now());
             None
         }
     };
@@ -171,11 +218,22 @@ async fn stream_chat_response(
     // Use the SAME system prompt as REST for structured JSON
     let system_prompt = build_system_prompt(persona, &recall_context);
 
-    // Get emotional weight for model routing
-    let emotional_weight = match emotional_weight::classify(&app_state.llm_client, &content).await {
-        Ok(val) => val,
-        Err(e) => {
-            eprintln!("Failed to classify emotional weight: {}", e);
+    // Get emotional weight for model routing with timeout
+    eprintln!("[{}] Starting emotional weight classification", Utc::now());
+    let emotional_weight = match timeout(
+        Duration::from_secs(5),
+        emotional_weight::classify(&app_state.llm_client, &content)
+    ).await {
+        Ok(Ok(val)) => {
+            eprintln!("[{}] Emotional weight: {}", Utc::now(), val);
+            val
+        }
+        Ok(Err(e)) => {
+            eprintln!("[{}] Failed to classify emotional weight: {}", Utc::now(), e);
+            0.0
+        }
+        Err(_) => {
+            eprintln!("[{}] Emotional weight timeout - using default", Utc::now());
             0.0
         }
     };
@@ -188,21 +246,41 @@ async fn stream_chat_response(
         "gpt-4.1"
     };
 
-    // Get the complete structured response first
-    let mira_reply = match app_state.llm_client.chat_with_model(&content, model).await {
-        Ok(resp) => resp,
-        Err(e) => {
-            eprintln!("Failed to call OpenAI: {}", e);
+    eprintln!("[{}] Calling LLM with model: {}", Utc::now(), model);
+    
+    // Get the complete structured response first with timeout
+    let mira_reply = match timeout(
+        Duration::from_secs(30),
+        app_state.llm_client.chat_with_custom_prompt(&content, model, &system_prompt)
+    ).await {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            eprintln!("[{}] Failed to call OpenAI: {}", Utc::now(), e);
             let error_msg = WsServerMessage::Error {
                 message: "Service temporarily unavailable".to_string(),
                 code: Some("LLM_ERROR".to_string()),
             };
-            let _ = sender.send(Message::Text(
+            let mut sender_guard = sender.lock().await;
+            let _ = sender_guard.send(Message::Text(
+                serde_json::to_string(&error_msg).unwrap()
+            )).await;
+            return;
+        }
+        Err(_) => {
+            eprintln!("[{}] LLM call timeout", Utc::now());
+            let error_msg = WsServerMessage::Error {
+                message: "Request timed out".to_string(),
+                code: Some("TIMEOUT".to_string()),
+            };
+            let mut sender_guard = sender.lock().await;
+            let _ = sender_guard.send(Message::Text(
                 serde_json::to_string(&error_msg).unwrap()
             )).await;
             return;
         }
     };
+
+    eprintln!("[{}] Got LLM response, streaming chunks", Utc::now());
 
     // Update mood
     *current_mood = mira_reply.mood.clone();
@@ -226,19 +304,26 @@ async fn stream_chat_response(
             mood: if is_first { Some(mira_reply.mood.clone()) } else { None },
         };
         
+        let mut sender_guard = sender.lock().await;
         if let Ok(msg_text) = serde_json::to_string(&ws_chunk) {
-            let _ = sender.send(Message::Text(msg_text)).await;
+            if sender_guard.send(Message::Text(msg_text)).await.is_err() {
+                eprintln!("Failed to send chunk, connection likely closed");
+                return;
+            }
             
             // Small delay to simulate typing
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 
     // Send done message
     let done = WsServerMessage::Done;
     if let Ok(msg_text) = serde_json::to_string(&done) {
-        let _ = sender.send(Message::Text(msg_text)).await;
+        let mut sender_guard = sender.lock().await;
+        let _ = sender_guard.send(Message::Text(msg_text)).await;
     }
+
+    eprintln!("[{}] Finished streaming response", Utc::now());
 
     // Save interaction to memory (same as REST endpoint)
     // Save user message
@@ -311,7 +396,7 @@ fn create_persona_transition(
 }
 
 async fn send_memory_stats(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     app_state: &Arc<AppState>,
     session_id: &str,
 ) {
@@ -323,7 +408,8 @@ async fn send_memory_stats(
         mood_distribution: std::collections::HashMap::new(),
     };
     
+    let mut sender_guard = sender.lock().await;
     if let Ok(msg_text) = serde_json::to_string(&stats) {
-        let _ = sender.send(Message::Text(msg_text)).await;
+        let _ = sender_guard.send(Message::Text(msg_text)).await;
     }
 }

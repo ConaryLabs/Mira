@@ -10,14 +10,16 @@ pub async fn classify(client: &OpenAIClient, message: &str) -> Result<f32, Error
         message
     );
 
-    // Use the structured output method and grab .output (which is just the string the model returns)
+    // Build a minimal system prompt for this specific task
+    let system_prompt = "You are an emotional weight classifier. Reply with only a single decimal number between 0.0 and 1.0.";
+
+    // Use the simple_chat method that doesn't enforce JSON format
     let response = client
-        .chat_with_model(&prompt, "gpt-4.1")
+        .simple_chat(&prompt, "gpt-4.1", system_prompt)
         .await?;
 
     // Try to parse the LLM's reply as a float (be forgiving of whitespace)
     let val: f32 = response
-        .output
         .trim()
         .parse()
         .map_err(|_| Error::msg("Failed to parse emotional weight"))?;
