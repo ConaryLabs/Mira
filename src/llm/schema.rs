@@ -1,7 +1,5 @@
-// src/llm/schema.rs
-
-//! Types and function schemas for LLM (GPT-4.1) function-calling.
-//! Enforces strict, structured JSON responses for memory evaluation.
+//! Types and function schemas for LLM (GPT-4.1+) function-calling and structured outputs.
+//! Enforces strict, structured JSON responses for memory evaluation and main chat replies.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -68,4 +66,19 @@ pub fn function_schema() -> Value {
             "required": ["salience", "tags", "memory_type"]
         }
     })
+}
+
+/// The main strict-JSON chat reply struct: ALL fields must be filled by the LLM in every reply.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MiraStructuredReply {
+    pub output: String,                     // Mira’s actual reply to the user
+    pub persona: String,                    // Persona name or overlay (e.g. "Default", "Forbidden")
+    pub mood: String,                       // Current emotional tone (e.g. "playful", "soft")
+    pub salience: u8,                       // How emotionally important is this reply? (0-10)
+    pub summary: Option<String>,            // A short summary of the reply/context
+    pub memory_type: String,                // "feeling", "fact", "joke", etc.
+    pub tags: Vec<String>,                  // Context/mood tags (can be empty)
+    pub intent: String,                     // Mira’s intended purpose for this reply (can be general)
+    pub monologue: Option<String>,          // Mira’s “inner thoughts” (hidden from user by default)
+    pub reasoning_summary: Option<String>,  // Reasoning/chain-of-thought for reasoning models
 }

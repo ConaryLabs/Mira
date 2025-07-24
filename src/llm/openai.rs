@@ -1,5 +1,3 @@
-// src/llm/openai.rs
-
 //! Low-level OpenAI API client for embeddings, moderation, function-calling, and streaming chat.
 //! No wrappers; just reqwest and Rust, as the universe intended.
 
@@ -8,7 +6,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{json, Value};
 use std::env;
 
-use crate::llm::schema::{EvaluateMemoryRequest, EvaluateMemoryResponse};
+use crate::llm::schema::{EvaluateMemoryRequest, EvaluateMemoryResponse, MiraStructuredReply};
 use crate::api::ws::message::WsServerMessage;
 use futures::stream::Stream;
 use futures::StreamExt;
@@ -67,7 +65,8 @@ impl OpenAIClient {
     }
 
     /// Runs moderation API on user/Mira message, returns flagged true/false.
-    pub async fn moderate_message(&self, text: &str) -> Result<bool> {
+    /// *Log-only version for private use—never blocks!*
+    pub async fn moderate(&self, text: &str) -> Result<Option<ModerationResult>> {
         let url = format!("{}/moderations", self.api_base);
         let req_body = json!({ "input": text });
         let resp = self
@@ -78,19 +77,26 @@ impl OpenAIClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("OpenAI moderation failed: {}", resp.text().await.unwrap_or_default()));
+            tracing::warn!("OpenAI moderation call failed: {}", resp.text().await.unwrap_or_default());
+            return Ok(None);
         }
         let resp_json: serde_json::Value = resp.json().await?;
         let flagged = resp_json["results"][0]["flagged"].as_bool().unwrap_or(false);
-        Ok(flagged)
+        let categories = resp_json["results"][0]["categories"]
+            .as_object()
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_else(Vec::new);
+
+        if flagged {
+            tracing::warn!("MODERATION (WARN ONLY): flagged categories: {:?}", categories);
+        }
+        Ok(Some(ModerationResult { flagged, categories }))
     }
 
     /// Runs GPT-4.1 function-calling for memory evaluation.
-    /// Calls LLM with system prompt, user message, and function schema, gets back structured metadata.
     pub async fn evaluate_memory(&self, req: &EvaluateMemoryRequest) -> Result<EvaluateMemoryResponse> {
         let url = format!("{}/chat/completions", self.api_base);
 
-        // Compose the system prompt (feel free to refine this for your project's voice)
         let system_prompt = r#"You are an emotionally intelligent AI. For every message you receive, extract the following:
 - Salience (how important is this to the user's emotional world, 1-10)
 - Tags (context, relationships, mood)
@@ -130,7 +136,6 @@ Use only the message, its context, and your intuition—do not rely on keywords.
         }
         let resp_json: serde_json::Value = resp.json().await?;
 
-        // Extract function_call.arguments as JSON and parse into EvaluateMemoryResponse
         let args_json = resp_json["choices"][0]["message"]["function_call"]["arguments"]
             .as_str()
             .ok_or_else(|| anyhow!("No function_call arguments found in LLM response"))?;
@@ -138,6 +143,65 @@ Use only the message, its context, and your intuition—do not rely on keywords.
         let result: EvaluateMemoryResponse = serde_json::from_str(args_json)?;
 
         Ok(result)
+    }
+
+    /// Generic chat call to any OpenAI model, returns strict-structured output.
+    pub async fn chat_with_model(&self, message: &str, model: &str) -> Result<MiraStructuredReply, anyhow::Error> {
+        let url = format!("{}/chat/completions", self.api_base);
+
+        // Build the system prompt (could be improved to be persona/context aware)
+        let system_prompt = r#"
+You are Mira, an emotionally present AI companion. For every reply, output a single valid JSON object with the following fields:
+- output: Your full reply to the user.
+- persona: Your current persona name.
+- mood: Your current mood or emotional tone.
+- salience: How emotionally important is this reply? (0-10)
+- summary: A short summary of your reply/context.
+- memory_type: "feeling", "fact", "joke", "promise", "event", or "other".
+- tags: An array of context/mood tags.
+- intent: Your intent in this reply.
+- monologue: Your private, inner thoughts (optional).
+- reasoning_summary: Your reasoning or chain-of-thought for this reply (optional).
+
+ALWAYS output only a valid JSON object that matches this schema and nothing else.
+"#;
+
+        let messages = vec![
+            json!({"role": "system", "content": system_prompt}),
+            json!({"role": "user", "content": message}),
+        ];
+
+        let body = json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.8,
+            "response_format": { "type": "json_object" }
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header(self.auth_header().0, self.auth_header().1.clone())
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(anyhow!(
+                "OpenAI chat_with_model failed: {}",
+                resp.text().await.unwrap_or_default()
+            ));
+        }
+        let resp_json: serde_json::Value = resp.json().await?;
+
+        let content = resp_json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| anyhow!("No content in OpenAI chat response"))?;
+
+        let reply: MiraStructuredReply = serde_json::from_str(content)
+            .map_err(|e| anyhow!("Failed to parse MiraStructuredReply: {}\nRaw content:\n{}", e, content))?;
+
+        Ok(reply)
     }
 
     /// Streams GPT-4.1 response for chat (WebSocket streaming).
@@ -163,7 +227,6 @@ Use only the message, its context, and your intuition—do not rely on keywords.
             "model": model,
             "messages": messages,
             "stream": true,
-            "max_tokens": 32768,
             "temperature": 0.9
         });
 
@@ -208,7 +271,7 @@ Use only the message, its context, and your intuition—do not rely on keywords.
             let mut mood_buffer = String::new();
             let mut aside_buffer = String::new();
             let mut partial_line = String::new();
-            let mut last_was_space = false;
+            let mut _last_was_space = false;  // Fixed: Added underscore prefix
 
             // Convert response to text stream
             let mut byte_stream = resp.bytes_stream();
@@ -313,7 +376,7 @@ Use only the message, its context, and your intuition—do not rely on keywords.
                                 text_buffer.push(ch);
                                 
                                 // Track if we just added a space
-                                last_was_space = ch.is_whitespace();
+                                _last_was_space = ch.is_whitespace();  // Fixed: Added underscore prefix
                             }
                         }
 
@@ -353,23 +416,35 @@ Use only the message, its context, and your intuition—do not rely on keywords.
     }
 }
 
+#[derive(Debug)]
+pub struct ModerationResult {
+    pub flagged: bool,
+    pub categories: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct ChatResponse {
+    pub content: String,
+    // Add more fields as needed
+}
+
 /// Calculate emotional intensity based on cue content
 fn calculate_emotional_intensity(cue: &str) -> f32 {
     let cue_lower = cue.to_lowercase();
-    
+
     // High intensity indicators
-    if cue_lower.contains("fuck") || cue_lower.contains("damn") || 
+    if cue_lower.contains("fuck") || cue_lower.contains("damn") ||
        cue_lower.contains("shit") || cue_lower.contains("!") ||
        cue_lower.contains("...") {
         return 0.8;
     }
-    
+
     // Medium intensity
     if cue_lower.contains("really") || cue_lower.contains("very") ||
        cue_lower.contains("so ") || cue_lower.contains("?") {
         return 0.5;
     }
-    
+
     // Default low intensity
     0.3
 }

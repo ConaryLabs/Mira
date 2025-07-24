@@ -7,7 +7,7 @@ use std::env;
 use tokio::time::{sleep, Duration};
 
 fn test_embedding() -> Vec<f32> {
-    vec![0.123; 1536]
+    vec![0.123; 3072]   // ← Now correct dimension!
 }
 
 #[tokio::test]

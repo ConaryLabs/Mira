@@ -1,8 +1,6 @@
-// src/handlers.rs
-
 use axum::{
     extract::{Extension, Json, Query, State},
-    http::{HeaderMap, header::SET_COOKIE, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
@@ -13,8 +11,7 @@ use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::memory::recall::{build_context, RecallContext};
-use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, function_schema};
-use crate::llm::intent::{ChatIntent, chat_intent_function_schema};
+use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, MiraStructuredReply, function_schema, emotional_weight};
 use crate::persona::{PersonaOverlay};
 use crate::prompt::builder::build_system_prompt;
 use chrono::Utc;
@@ -34,6 +31,9 @@ pub struct ChatReply {
     pub summary: Option<String>,
     pub memory_type: String,
     pub tags: Vec<String>,
+    pub intent: String,
+    pub monologue: Option<String>,
+    pub reasoning_summary: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -56,11 +56,9 @@ pub struct AppState {
 
 pub async fn chat_handler(
     Extension(state): Extension<Arc<AppState>>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Json(payload): Json<ChatRequest>,
 ) -> Response {
-    // HARDCODED SESSION FOR SINGLE USER
-    // Change this if you ever want multiple users
     let session_id = "peter-eternal".to_string();
     eprintln!("Using eternal session: {}", session_id);
 
@@ -95,107 +93,42 @@ pub async fn chat_handler(
     // --- 4. Build system prompt with persona and memory context ---
     let system_prompt = build_system_prompt(&persona_overlay, &recall_context);
 
-    // --- 5. Build messages for GPT including context ---
-    let mut gpt_messages = vec![
-        serde_json::json!({
-            "role": "system",
-            "content": system_prompt
-        })
-    ];
+    // --- 5. Moderate user message (log-only) ---
+    let _ = state.llm_client.moderate(&payload.message).await;
 
-    // Add recent history
-    for entry in &recall_context.recent {
-        gpt_messages.push(serde_json::json!({
-            "role": entry.role.as_str(),
-            "content": entry.content
-        }));
-    }
+    // --- 6. Get emotional weight for auto model routing ---
+    let emotional_weight = match emotional_weight::classify(&state.llm_client, &payload.message).await {
+        Ok(val) => val,
+        Err(e) => {
+            eprintln!("Failed to classify emotional weight: {}", e);
+            0.0
+        }
+    };
+    let model = if emotional_weight > 0.95 {
+        "o3"
+    } else if emotional_weight > 0.6 {
+        "o4-mini"
+    } else {
+        "gpt-4.1"
+    };
 
-    // Add semantic memories as context if any
-    if !recall_context.semantic.is_empty() {
-        let semantic_context = recall_context.semantic.iter()
-            .map(|m| format!("[Memory: {}]", m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
-        
-        gpt_messages.push(serde_json::json!({
-            "role": "system",
-            "content": format!("Relevant memories from our past:\n{}", semantic_context)
-        }));
-    }
-
-    // Add new user message
-    gpt_messages.push(serde_json::json!({
-        "role": "user",
-        "content": &payload.message
-    }));
-
-    // --- 6. Call GPT-4.1 for actual chat completion with function calling ---
-    let chat_completion_body = serde_json::json!({
-        "model": "gpt-4.1",
-        "messages": gpt_messages,
-        "functions": [chat_intent_function_schema()],
-        "function_call": { "name": "format_response" },
-        "temperature": 0.9,
-        "max_tokens": 500
-    });
-
-    let gpt_response = match state.llm_client.client
-        .post(&format!("{}/chat/completions", state.llm_client.api_base))
-        .header("Authorization", format!("Bearer {}", state.llm_client.api_key))
-        .json(&chat_completion_body)
-        .send()
-        .await
-    {
+    // --- 7. Call LLM with chosen model, expecting structured output ---
+    let mira_reply = match state.llm_client.chat_with_model(&payload.message, model).await {
         Ok(resp) => resp,
         Err(e) => {
             eprintln!("Failed to call OpenAI: {}", e);
             return Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body("Service temporarily unavailable".into())
+                .body(axum::body::Body::from("Service temporarily unavailable"))
                 .unwrap();
         }
     };
 
-    if !gpt_response.status().is_success() {
-        let error_text = gpt_response.text().await.unwrap_or_default();
-        eprintln!("OpenAI API error: {}", error_text);
-        return Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .body("Service temporarily unavailable".into())
-            .unwrap();
-    }
-
-    let gpt_json: serde_json::Value = match gpt_response.json().await {
-        Ok(json) => json,
-        Err(e) => {
-            eprintln!("Failed to parse GPT response: {}", e);
-            return Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body("Service temporarily unavailable".into())
-                .unwrap();
-        }
-    };
-
-    let chat_intent = ChatIntent::from_function_result(&gpt_json);
-
-    // --- 7. Moderate the messages ---
-    let user_moderation_flag = match state.llm_client.moderate_message(&payload.message).await {
-        Ok(flag) => flag,
-        Err(_) => false,
-    };
-
-    let mira_moderation_flag = match state.llm_client.moderate_message(&chat_intent.output).await {
-        Ok(flag) => flag,
-        Err(_) => false,
-    };
-
-    // --- 8. Evaluate user message for memory metadata ---
+    // --- 8. Evaluate user message for memory metadata (unchanged) ---
     let eval_req = EvaluateMemoryRequest {
         content: payload.message.clone(),
         function_schema: function_schema(),
     };
-
     let eval: Option<EvaluateMemoryResponse> = match state.llm_client.evaluate_memory(&eval_req).await {
         Ok(val) => Some(val),
         Err(e) => {
@@ -227,8 +160,8 @@ pub async fn chat_handler(
         summary: eval.as_ref().and_then(|e| e.summary.clone()),
         memory_type: memory_type_converted.clone(),
         logprobs: None,
-        moderation_flag: Some(user_moderation_flag),
-        system_fingerprint: Some(gpt_json["system_fingerprint"].as_str().unwrap_or("").to_string()),
+        moderation_flag: None, // log-only moderation!
+        system_fingerprint: None,
     };
 
     // Save to SQLite
@@ -240,7 +173,7 @@ pub async fn chat_handler(
     }
 
     // --- 10. Get embedding for Mira's response ---
-    let mira_embedding = match state.llm_client.get_embedding(&chat_intent.output).await {
+    let mira_embedding = match state.llm_client.get_embedding(&mira_reply.output).await {
         Ok(emb) => Some(emb),
         Err(_) => None,
     };
@@ -250,35 +183,35 @@ pub async fn chat_handler(
         id: None,
         session_id: session_id.clone(),
         role: "assistant".to_string(),
-        content: chat_intent.output.clone(),
+        content: mira_reply.output.clone(),
         timestamp: Utc::now(),
         embedding: mira_embedding.clone(),
-        salience: Some(5.0), // Default salience for Mira's responses
-        tags: Some(vec![chat_intent.mood.clone(), chat_intent.persona.clone()]),
-        summary: None,
+        salience: Some(mira_reply.salience as f32),
+        tags: Some(mira_reply.tags.clone()),
+        summary: mira_reply.summary.clone(),
         memory_type: Some(crate::memory::types::MemoryType::Other),
         logprobs: None,
-        moderation_flag: Some(mira_moderation_flag),
-        system_fingerprint: Some(gpt_json["system_fingerprint"].as_str().unwrap_or("").to_string()),
+        moderation_flag: None, // log-only
+        system_fingerprint: None,
     };
 
-    // Save to SQLite
     let _ = state.sqlite_store.save(&mira_entry).await;
-
-    // Save to Qdrant if we have embeddings
     if mira_embedding.is_some() {
         let _ = state.qdrant_store.save(&mira_entry).await;
     }
 
-    // --- 12. Build response ---
+    // --- 12. Build API response from structured output ---
     let reply = ChatReply {
-        output: chat_intent.output,
-        persona: chat_intent.persona,
-        mood: chat_intent.mood,
-        salience: eval.as_ref().map(|e| e.salience).unwrap_or(5),
-        summary: eval.as_ref().and_then(|e| e.summary.clone()),
-        memory_type: eval.as_ref().map(|e| format!("{:?}", e.memory_type)).unwrap_or_else(|| "Other".to_string()),
-        tags: eval.as_ref().map(|e| e.tags.clone()).unwrap_or_default(),
+        output: mira_reply.output,
+        persona: persona_overlay.to_string(),   // <<< FIXED: always return overlay, not LLM output
+        mood: mira_reply.mood,
+        salience: mira_reply.salience,
+        summary: mira_reply.summary,
+        memory_type: mira_reply.memory_type,
+        tags: mira_reply.tags,
+        intent: mira_reply.intent,
+        monologue: mira_reply.monologue,
+        reasoning_summary: mira_reply.reasoning_summary,
     };
 
     Json(reply).into_response()
@@ -288,13 +221,9 @@ pub async fn chat_history_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HistoryQuery>,
 ) -> impl IntoResponse {
-    // HARDCODED SESSION FOR SINGLE USER
     let session_id = "peter-eternal".to_string();
-    
-    // Default to last 30 messages if not specified
     let limit = params.limit.unwrap_or(30);
-    
-    // Load messages
+
     match state.sqlite_store.load_recent(&session_id, limit).await {
         Ok(messages) => {
             let response = ChatHistoryResponse {
@@ -307,7 +236,7 @@ pub async fn chat_history_handler(
             eprintln!("Failed to load chat history: {}", e);
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body("Failed to load chat history".into())
+                .body(axum::body::Body::from("Failed to load chat history"))
                 .unwrap()
                 .into_response()
         }

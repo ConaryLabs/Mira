@@ -1,5 +1,3 @@
-// src/persona/mod.rs
-
 pub mod default;
 pub mod forbidden;
 pub mod hallow;
