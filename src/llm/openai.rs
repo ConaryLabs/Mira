@@ -146,10 +146,11 @@ Use only the message, its context, and your intuition—do not rely on keywords.
     }
 
     /// Generic chat call to any OpenAI model, returns strict-structured output.
+    /// Now accepts an optional system_prompt parameter for persona-aware responses.
     pub async fn chat_with_model(&self, message: &str, model: &str) -> Result<MiraStructuredReply, anyhow::Error> {
         let url = format!("{}/chat/completions", self.api_base);
 
-        // Build the system prompt (could be improved to be persona/context aware)
+        // Build the system prompt (basic fallback if not provided)
         let system_prompt = r#"
 You are Mira, an emotionally present AI companion. For every reply, output a single valid JSON object with the following fields:
 - output: Your full reply to the user.
@@ -165,6 +166,53 @@ You are Mira, an emotionally present AI companion. For every reply, output a sin
 
 ALWAYS output only a valid JSON object that matches this schema and nothing else.
 "#;
+
+        let messages = vec![
+            json!({"role": "system", "content": system_prompt}),
+            json!({"role": "user", "content": message}),
+        ];
+
+        let body = json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.8,
+            "response_format": { "type": "json_object" }
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header(self.auth_header().0, self.auth_header().1.clone())
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(anyhow!(
+                "OpenAI chat_with_model failed: {}",
+                resp.text().await.unwrap_or_default()
+            ));
+        }
+        let resp_json: serde_json::Value = resp.json().await?;
+
+        let content = resp_json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| anyhow!("No content in OpenAI chat response"))?;
+
+        let reply: MiraStructuredReply = serde_json::from_str(content)
+            .map_err(|e| anyhow!("Failed to parse MiraStructuredReply: {}\nRaw content:\n{}", e, content))?;
+
+        Ok(reply)
+    }
+
+    /// Chat with model using a custom system prompt (for persona-aware responses)
+    pub async fn chat_with_custom_prompt(
+        &self, 
+        message: &str, 
+        model: &str,
+        system_prompt: &str
+    ) -> Result<MiraStructuredReply, anyhow::Error> {
+        let url = format!("{}/chat/completions", self.api_base);
 
         let messages = vec![
             json!({"role": "system", "content": system_prompt}),

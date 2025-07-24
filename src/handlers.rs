@@ -112,8 +112,8 @@ pub async fn chat_handler(
         "gpt-4.1"
     };
 
-    // --- 7. Call LLM with chosen model, expecting structured output ---
-    let mira_reply = match state.llm_client.chat_with_model(&payload.message, model).await {
+    // --- 7. Call LLM with chosen model and persona-aware system prompt ---
+    let mira_reply = match state.llm_client.chat_with_custom_prompt(&payload.message, model, &system_prompt).await {
         Ok(resp) => resp,
         Err(e) => {
             eprintln!("Failed to call OpenAI: {}", e);

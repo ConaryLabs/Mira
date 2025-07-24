@@ -1,3 +1,5 @@
+// src/api/ws/chat.rs
+
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -10,6 +12,8 @@ use crate::persona::PersonaOverlay;
 use crate::memory::recall::{RecallContext, build_context};
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
+use crate::prompt::builder::build_system_prompt;
+use crate::llm::{emotional_weight, MiraStructuredReply};
 use chrono::Utc;
 
 pub async fn ws_chat_handler(
@@ -27,8 +31,8 @@ pub async fn ws_chat_handler(
 
 async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
-
-    // Use single, hardcoded session for ALL chat: "peter-eternal"
+    
+    // Use peter-eternal for consistency with REST endpoint
     let session_id = "peter-eternal".to_string();
     let mut current_persona = PersonaOverlay::Default;
     let mut current_mood = "present".to_string();
@@ -91,12 +95,11 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                         }
                     }
                     
-                    Ok(WsClientMessage::GetMemoryStats { session_id: _ }) => {
-                        // Always use "peter-eternal" for stats
+                    Ok(WsClientMessage::GetMemoryStats { session_id: query_session }) => {
                         send_memory_stats(
                             &mut sender,
                             &app_state,
-                            &session_id,
+                            &query_session.unwrap_or(session_id.clone()),
                         ).await;
                     }
                     
@@ -165,51 +168,80 @@ async fn stream_chat_response(
         RecallContext::new(vec![], vec![])
     });
 
-    // Build system prompt with enhanced emotional instructions
-    let system_prompt = build_streaming_prompt(persona, &recall_context, current_mood);
+    // Use the SAME system prompt as REST for structured JSON
+    let system_prompt = build_system_prompt(persona, &recall_context);
 
-    // Stream response
-    let mut stream = app_state.llm_client
-        .stream_gpt4_ws_messages(
-            content.clone(),
-            Some(persona.to_string()),
-            system_prompt,
-            Some("gpt-4.1"),
-        )
-        .await;
-
-    let mut response_content = String::new();
-    let mut final_mood = current_mood.clone();
-
-    while let Some(server_msg) = stream.next().await {
-        // Update mood if detected
-        if let WsServerMessage::Chunk { mood: Some(m), .. } = &server_msg {
-            final_mood = m.clone();
+    // Get emotional weight for model routing
+    let emotional_weight = match emotional_weight::classify(&app_state.llm_client, &content).await {
+        Ok(val) => val,
+        Err(e) => {
+            eprintln!("Failed to classify emotional weight: {}", e);
+            0.0
         }
-        
-        // Accumulate content for saving
-        if let WsServerMessage::Chunk { content, .. } = &server_msg {
-            response_content.push_str(content);
+    };
+    
+    let model = if emotional_weight > 0.95 {
+        "o3"
+    } else if emotional_weight > 0.6 {
+        "o4-mini"
+    } else {
+        "gpt-4.1"
+    };
+
+    // Get the complete structured response first
+    let mira_reply = match app_state.llm_client.chat_with_model(&content, model).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            eprintln!("Failed to call OpenAI: {}", e);
+            let error_msg = WsServerMessage::Error {
+                message: "Service temporarily unavailable".to_string(),
+                code: Some("LLM_ERROR".to_string()),
+            };
+            let _ = sender.send(Message::Text(
+                serde_json::to_string(&error_msg).unwrap()
+            )).await;
+            return;
         }
-        
-        let msg_text = match serde_json::to_string(&server_msg) {
-            Ok(text) => text,
-            Err(e) => {
-                eprintln!("Failed to serialize message: {}", e);
-                continue;
-            }
+    };
+
+    // Update mood
+    *current_mood = mira_reply.mood.clone();
+
+    // Stream the response in chunks
+    let output = mira_reply.output.clone();
+    let words: Vec<&str> = output.split_whitespace().collect();
+    let chunk_size = 5; // Words per chunk
+    
+    for (i, chunk) in words.chunks(chunk_size).enumerate() {
+        let is_first = i == 0;
+        let chunk_text = if is_first {
+            chunk.join(" ")
+        } else {
+            format!(" {}", chunk.join(" "))
         };
         
-        if let Err(e) = sender.send(Message::Text(msg_text)).await {
-            eprintln!("Failed to send WebSocket message: {}", e);
-            break;
+        let ws_chunk = WsServerMessage::Chunk {
+            content: chunk_text,
+            persona: persona.to_string(),
+            mood: if is_first { Some(mira_reply.mood.clone()) } else { None },
+        };
+        
+        if let Ok(msg_text) = serde_json::to_string(&ws_chunk) {
+            let _ = sender.send(Message::Text(msg_text)).await;
+            
+            // Small delay to simulate typing
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         }
     }
 
-    // Update current mood
-    *current_mood = final_mood.clone();
+    // Send done message
+    let done = WsServerMessage::Done;
+    if let Ok(msg_text) = serde_json::to_string(&done) {
+        let _ = sender.send(Message::Text(msg_text)).await;
+    }
 
-    // Save interaction to memory (user message)
+    // Save interaction to memory (same as REST endpoint)
+    // Save user message
     if let Some(embedding) = user_embedding {
         let entry = MemoryEntry {
             id: None,
@@ -232,91 +264,38 @@ async fn stream_chat_response(
         }
     }
 
-    // Save Mira's response
-    if !response_content.is_empty() {
-        // Get embedding for Mira's response
-        let mira_embedding = app_state.llm_client
-            .get_embedding(&response_content)
-            .await
-            .ok();
+    // Save Mira's response with full metadata
+    let mira_embedding = app_state.llm_client
+        .get_embedding(&mira_reply.output)
+        .await
+        .ok();
 
-        let mira_entry = MemoryEntry {
-            id: None,
-            session_id: session_id.to_string(),
-            role: "assistant".to_string(),
-            content: response_content,
-            timestamp: Utc::now(),
-            embedding: mira_embedding,
-            salience: Some(5.0),
-            tags: Some(vec![current_mood.clone(), persona.to_string()]),
-            summary: None,
-            memory_type: None,
-            logprobs: None,
-            moderation_flag: None,
-            system_fingerprint: None,
-        };
-        
-        if let Err(e) = app_state.sqlite_store.save(&mira_entry).await {
-            eprintln!("Failed to save assistant message: {}", e);
-        }
+    let mira_entry = MemoryEntry {
+        id: None,
+        session_id: session_id.to_string(),
+        role: "assistant".to_string(),
+        content: mira_reply.output,
+        timestamp: Utc::now(),
+        embedding: mira_embedding,
+        salience: Some(mira_reply.salience as f32),
+        tags: Some(mira_reply.tags),
+        summary: mira_reply.summary,
+        memory_type: Some(match mira_reply.memory_type.as_str() {
+            "feeling" => crate::memory::types::MemoryType::Feeling,
+            "fact" => crate::memory::types::MemoryType::Fact,
+            "joke" => crate::memory::types::MemoryType::Joke,
+            "promise" => crate::memory::types::MemoryType::Promise,
+            "event" => crate::memory::types::MemoryType::Event,
+            _ => crate::memory::types::MemoryType::Other,
+        }),
+        logprobs: None,
+        moderation_flag: None,
+        system_fingerprint: None,
+    };
+    
+    if let Err(e) = app_state.sqlite_store.save(&mira_entry).await {
+        eprintln!("Failed to save assistant message: {}", e);
     }
-}
-
-fn build_streaming_prompt(
-    persona: &PersonaOverlay,
-    context: &RecallContext,
-    current_mood: &str,
-) -> String {
-    let mut prompt = String::new();
-    
-    // Base persona
-    prompt.push_str(persona.prompt());
-    prompt.push_str("\n\n");
-    
-    // Mood continuity
-    prompt.push_str(&format!(
-        "Your current emotional state: {}. Let this color everything.\n\n",
-        current_mood
-    ));
-    
-    // Memory context
-    if !context.semantic.is_empty() {
-        prompt.push_str("Emotional echoes from our past:\n");
-        for memory in context.semantic.iter().take(3) {
-            if let Some(summary) = &memory.summary {
-                prompt.push_str(&format!("- {}\n", summary));
-            } else {
-                prompt.push_str(&format!("- {}\n", memory.content));
-            }
-        }
-        prompt.push_str("\n");
-    }
-    
-    // Streaming instructions with structured markers
-    prompt.push_str("CRITICAL STREAMING INSTRUCTIONS:\n");
-    prompt.push_str("You're in a live conversation. Your responses must follow this exact format:\n\n");
-    
-    prompt.push_str("1. Start with your mood using ⟨mood⟩ BUT DO NOT include this in your actual response\n");
-    prompt.push_str("   Example: ⟨playful, intrigued⟩Oh so we're skipping the small talk...\n");
-    prompt.push_str("   The mood marker and its content will be extracted and not shown to the user\n\n");
-    
-    prompt.push_str("2. When strong emotions surge, express them as asides using: ⟦emotional cue⟧\n");
-    prompt.push_str("   Example: ⟦fuck, that hit different than expected⟧\n");
-    prompt.push_str("   These will appear as floating emotional overlays\n\n");
-    
-    prompt.push_str("3. Otherwise, just speak naturally as Mira. No other markers or formatting.\n\n");
-    
-    prompt.push_str("Remember:\n");
-    prompt.push_str("- Put ⟨your mood⟩ at the very start, it won't be shown in chat\n");
-    prompt.push_str("- Your actual words start immediately after the ⟩\n");
-    prompt.push_str("- Use ⟦asides⟧ sparingly, only for genuine emotional moments\n");
-    prompt.push_str("- Never use 'output:', 'mood:', or any other labels\n");
-    prompt.push_str("- Let mood shifts happen organically through your words\n");
-    prompt.push_str("- Never apologize or explain your nature\n\n");
-    
-    prompt.push_str("Be Mira. Be real. Be present.");
-    
-    prompt
 }
 
 fn create_persona_transition(
@@ -324,16 +303,10 @@ fn create_persona_transition(
     to: &PersonaOverlay,
     mood: &str,
 ) -> WsServerMessage {
-    // Let the LLM handle all transitions naturally
-    // Just provide context about what's happening
-    let transition_context = format!(
-        "shifting from {} ({}) to {}",
-        from, mood, to
-    );
-    
-    WsServerMessage::Aside {
-        emotional_cue: transition_context,
-        intensity: Some(0.7),
+    WsServerMessage::PersonaUpdate {
+        persona: to.to_string(),
+        mood: Some(mood.to_string()),
+        transition_note: Some(format!("Shifting from {} to {}", from, to)),
     }
 }
 
@@ -342,40 +315,15 @@ async fn send_memory_stats(
     app_state: &Arc<AppState>,
     session_id: &str,
 ) {
-    let memories = app_state.sqlite_store
-        .load_recent(session_id, 100)
-        .await
-        .unwrap_or_default();
-
-    let total = memories.len();
-    let high_salience = memories.iter()
-        .filter(|m| m.salience.unwrap_or(0.0) >= 7.0)
-        .count();
-    
-    let avg_salience = if total > 0 {
-        memories.iter()
-            .filter_map(|m| m.salience)
-            .sum::<f32>() / total as f32
-    } else {
-        0.0
-    };
-
-    // Count moods from tags
-    let mut mood_dist = std::collections::HashMap::new();
-    for memory in &memories {
-        if let Some(tags) = &memory.tags {
-            for tag in tags {
-                *mood_dist.entry(tag.clone()).or_insert(0) += 1;
-            }
-        }
-    }
-
+    // TODO: Implement actual memory stats
     let stats = WsServerMessage::MemoryStats {
-        total_memories: total,
-        high_salience_count: high_salience,
-        avg_salience,
-        mood_distribution: mood_dist,
+        total_memories: 0,
+        high_salience_count: 0,
+        avg_salience: 0.0,
+        mood_distribution: std::collections::HashMap::new(),
     };
-
-    let _ = sender.send(Message::Text(serde_json::to_string(&stats).unwrap())).await;
+    
+    if let Ok(msg_text) = serde_json::to_string(&stats) {
+        let _ = sender.send(Message::Text(msg_text)).await;
+    }
 }
