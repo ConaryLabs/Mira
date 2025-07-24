@@ -1,5 +1,3 @@
-// src/api/ws/chat.rs
-
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -29,9 +27,9 @@ pub async fn ws_chat_handler(
 
 async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
-    
-    // Generate session ID
-    let session_id = uuid::Uuid::new_v4().to_string();
+
+    // Use single, hardcoded session for ALL chat: "peter-eternal"
+    let session_id = "peter-eternal".to_string();
     let mut current_persona = PersonaOverlay::Default;
     let mut current_mood = "present".to_string();
     
@@ -93,11 +91,12 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                         }
                     }
                     
-                    Ok(WsClientMessage::GetMemoryStats { session_id: query_session }) => {
+                    Ok(WsClientMessage::GetMemoryStats { session_id: _ }) => {
+                        // Always use "peter-eternal" for stats
                         send_memory_stats(
                             &mut sender,
                             &app_state,
-                            &query_session.unwrap_or(session_id.clone()),
+                            &session_id,
                         ).await;
                     }
                     
