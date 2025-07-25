@@ -13,6 +13,9 @@ use chrono::Utc;
 
 /// Helper function to create test app state
 async fn create_test_state() -> Arc<AppState> {
+    // Load .env file for tests
+    dotenv::dotenv().ok();
+    
     // Use in-memory SQLite for tests
     let pool = SqlitePool::connect(":memory:").await
         .expect("Failed to create in-memory SQLite pool");
@@ -46,6 +49,9 @@ async fn create_test_state() -> Arc<AppState> {
 #[tokio::test]
 async fn test_message_persistence() {
     println!("🧪 Testing message persistence...");
+    
+    // Load .env file
+    dotenv::dotenv().ok();
     
     let state = create_test_state().await;
     let session_id = "test-persistence";
@@ -109,6 +115,9 @@ async fn test_message_persistence() {
 #[tokio::test]
 async fn test_chat_history_api() {
     println!("🧪 Testing chat history API functionality...");
+    
+    // Load .env file
+    dotenv::dotenv().ok();
     
     let state = create_test_state().await;
     let session_id = "peter-eternal"; // Use the hardcoded session from handlers
@@ -175,6 +184,9 @@ async fn test_chat_history_api() {
 #[tokio::test]
 async fn test_memory_recall_context() {
     println!("🧪 Testing memory recall context building...");
+    
+    // Load .env file
+    dotenv::dotenv().ok();
     
     let state = create_test_state().await;
     let session_id = "test-recall";

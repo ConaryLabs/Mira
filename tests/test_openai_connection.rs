@@ -55,9 +55,11 @@ async fn test_openai_api_key_and_embedding() {
         }
     }
     
-    // Test a simple chat completion
-    println!("\n🧪 Testing chat completion...");
-    let system_prompt = "You are a helpful assistant. Respond with exactly: 'Test passed'";
+    // Test a simple chat completion with JSON format
+    println!("\n🧪 Testing chat completion with JSON format...");
+    // The system prompt MUST contain the word "json" when using json_object response format
+    let system_prompt = "You are a helpful assistant. You must respond in JSON format with exactly these fields: output (string), persona (string), mood (string), salience (number), tags (array of strings), memory_type (string), intent (string), monologue (string or null), reasoning_summary (string or null). Set output to 'Test passed', mood to 'happy', and fill other fields appropriately.";
+    
     match client.chat_with_custom_prompt("Say test passed", "gpt-4.1", system_prompt).await {
         Ok(response) => {
             println!("✅ Chat completion successful!");
@@ -66,6 +68,18 @@ async fn test_openai_api_key_and_embedding() {
         }
         Err(e) => {
             println!("❌ Failed to get chat completion: {:?}", e);
+        }
+    }
+    
+    // Test simple chat (non-JSON)
+    println!("\n🧪 Testing simple chat (non-JSON)...");
+    match client.simple_chat("What is 2+2?", "gpt-4.1", "You are a helpful math tutor.").await {
+        Ok(response) => {
+            println!("✅ Simple chat successful!");
+            println!("   Response: {}", response.trim());
+        }
+        Err(e) => {
+            println!("❌ Failed simple chat: {:?}", e);
         }
     }
     

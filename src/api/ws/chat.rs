@@ -6,6 +6,7 @@ use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::time::{interval, timeout, Duration};
+use tokio::sync::Mutex;
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::handlers::AppState;
@@ -32,7 +33,7 @@ pub async fn ws_chat_handler(
 
 async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     let (sender, mut receiver) = socket.split();
-    let sender = Arc::new(tokio::sync::Mutex::new(sender));
+    let sender = Arc::new(Mutex::new(sender));
     
     // Use peter-eternal for consistency with REST endpoint
     let session_id = "peter-eternal".to_string();
@@ -41,21 +42,40 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     
     eprintln!("WebSocket connection established. Session: {}", session_id);
     
-    // Spawn a heartbeat task
+    // Create a channel for heartbeat cancellation
+    let (heartbeat_shutdown_tx, mut heartbeat_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    
+    // Spawn a heartbeat task with proper shutdown handling
     let heartbeat_sender = sender.clone();
     let heartbeat_handle = tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(30));
         loop {
-            interval.tick().await;
-            let mut sender = heartbeat_sender.lock().await;
-            if sender.send(Message::Ping(vec![])).await.is_err() {
-                eprintln!("Heartbeat failed, connection likely closed");
-                break;
+            tokio::select! {
+                _ = interval.tick() => {
+                    // Check if we can still send before attempting
+                    let mut sender_guard = heartbeat_sender.lock().await;
+                    match sender_guard.send(Message::Ping(vec![])).await {
+                        Ok(_) => {
+                            eprintln!("Sent WebSocket ping");
+                        }
+                        Err(e) => {
+                            eprintln!("Heartbeat failed: {}, stopping heartbeat", e);
+                            break;
+                        }
+                    }
+                    // Drop the guard immediately after use
+                    drop(sender_guard);
+                }
+                _ = heartbeat_shutdown_rx.recv() => {
+                    eprintln!("Heartbeat shutdown signal received");
+                    break;
+                }
             }
-            eprintln!("Sent WebSocket ping");
         }
+        eprintln!("Heartbeat task ended");
     });
     
+    // Main message handling loop
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
@@ -82,9 +102,12 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                         
                         {
                             let mut sender_guard = sender.lock().await;
-                            let _ = sender_guard.send(Message::Text(
+                            if let Err(e) = sender_guard.send(Message::Text(
                                 serde_json::to_string(&thinking_msg).unwrap()
-                            )).await;
+                            )).await {
+                                eprintln!("Failed to send thinking message: {}", e);
+                                break; // Connection is broken, exit the loop
+                            }
                         }
                         
                         // Handle the message
@@ -108,9 +131,12 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                                     &current_mood,
                                 );
                                 let mut sender_guard = sender.lock().await;
-                                let _ = sender_guard.send(Message::Text(
+                                if let Err(e) = sender_guard.send(Message::Text(
                                     serde_json::to_string(&transition_msg).unwrap()
-                                )).await;
+                                )).await {
+                                    eprintln!("Failed to send transition message: {}", e);
+                                    break;
+                                }
                             }
                             
                             current_persona = new_persona;
@@ -122,9 +148,12 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                                 transition_note: None,
                             };
                             let mut sender_guard = sender.lock().await;
-                            let _ = sender_guard.send(Message::Text(
+                            if let Err(e) = sender_guard.send(Message::Text(
                                 serde_json::to_string(&update).unwrap()
-                            )).await;
+                            )).await {
+                                eprintln!("Failed to send persona update: {}", e);
+                                break;
+                            }
                         }
                     }
                     
@@ -148,9 +177,12 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                             code: Some("PARSE_ERROR".to_string()),
                         };
                         let mut sender_guard = sender.lock().await;
-                        let _ = sender_guard.send(Message::Text(
+                        if let Err(e) = sender_guard.send(Message::Text(
                             serde_json::to_string(&error_msg).unwrap()
-                        )).await;
+                        )).await {
+                            eprintln!("Failed to send error message: {}", e);
+                            break;
+                        }
                     }
                 }
             }
@@ -169,13 +201,17 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
         }
     }
     
-    // Clean up heartbeat task
-    heartbeat_handle.abort();
+    // Signal heartbeat to stop
+    let _ = heartbeat_shutdown_tx.send(()).await;
+    
+    // Wait for heartbeat task to finish (with timeout)
+    let _ = tokio::time::timeout(Duration::from_secs(1), heartbeat_handle).await;
+    
     eprintln!("WebSocket handler ended for session: {}", session_id);
 }
 
 async fn stream_chat_response(
-    sender: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
+    sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     app_state: &Arc<AppState>,
     session_id: &str,
     content: String,
@@ -298,29 +334,47 @@ async fn stream_chat_response(
             format!(" {}", chunk.join(" "))
         };
         
-        let ws_chunk = WsServerMessage::Chunk {
+        let chunk_msg = WsServerMessage::Chunk {
             content: chunk_text,
             persona: persona.to_string(),
-            mood: if is_first { Some(mira_reply.mood.clone()) } else { None },
+            mood: Some(current_mood.clone()),
         };
         
-        let mut sender_guard = sender.lock().await;
-        if let Ok(msg_text) = serde_json::to_string(&ws_chunk) {
-            if sender_guard.send(Message::Text(msg_text)).await.is_err() {
-                eprintln!("Failed to send chunk, connection likely closed");
-                return;
+        {
+            let mut sender_guard = sender.lock().await;
+            if let Err(e) = sender_guard.send(Message::Text(
+                serde_json::to_string(&chunk_msg).unwrap()
+            )).await {
+                eprintln!("Failed to send chunk: {}", e);
+                return; // Stop streaming if connection is broken
             }
-            
-            // Small delay to simulate typing
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        
+        // Small delay between chunks for streaming effect
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    
+    // Send emotional asides if present
+    if let Some(monologue) = &mira_reply.monologue {
+        if !monologue.is_empty() {
+            let aside_msg = WsServerMessage::Aside {
+                emotional_cue: monologue.clone(),
+                intensity: Some(mira_reply.salience as f32 / 10.0),
+            };
+            let mut sender_guard = sender.lock().await;
+            let _ = sender_guard.send(Message::Text(
+                serde_json::to_string(&aside_msg).unwrap()
+            )).await;
         }
     }
-
+    
     // Send done message
-    let done = WsServerMessage::Done;
-    if let Ok(msg_text) = serde_json::to_string(&done) {
+    let done_msg = WsServerMessage::Done;
+    {
         let mut sender_guard = sender.lock().await;
-        let _ = sender_guard.send(Message::Text(msg_text)).await;
+        let _ = sender_guard.send(Message::Text(
+            serde_json::to_string(&done_msg).unwrap()
+        )).await;
     }
 
     eprintln!("[{}] Finished streaming response", Utc::now());
@@ -361,7 +415,7 @@ async fn stream_chat_response(
         role: "assistant".to_string(),
         content: mira_reply.output,
         timestamp: Utc::now(),
-        embedding: mira_embedding,
+        embedding: mira_embedding.clone(),
         salience: Some(mira_reply.salience as f32),
         tags: Some(mira_reply.tags),
         summary: mira_reply.summary,
@@ -378,8 +432,16 @@ async fn stream_chat_response(
         system_fingerprint: None,
     };
     
+    // Save to SQLite
     if let Err(e) = app_state.sqlite_store.save(&mira_entry).await {
-        eprintln!("Failed to save assistant message: {}", e);
+        eprintln!("Failed to save assistant message to SQLite: {}", e);
+    }
+    
+    // Save to Qdrant if embedding exists
+    if mira_embedding.is_some() {
+        if let Err(e) = app_state.qdrant_store.save(&mira_entry).await {
+            eprintln!("Failed to save assistant message to Qdrant: {}", e);
+        }
     }
 }
 
@@ -396,7 +458,7 @@ fn create_persona_transition(
 }
 
 async fn send_memory_stats(
-    sender: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
+    sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     _app_state: &Arc<AppState>,
     _session_id: &str,
 ) {
