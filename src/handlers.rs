@@ -1,6 +1,6 @@
 // src/handlers.rs
 use axum::{
-    extract::{Extension, Json, Query, State},
+    extract::{Json, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -57,7 +57,7 @@ pub struct AppState {
 }
 
 pub async fn chat_handler(
-    Extension(state): Extension<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     _headers: HeaderMap,
     Json(payload): Json<ChatRequest>,
 ) -> Response {
@@ -65,10 +65,14 @@ pub async fn chat_handler(
     eprintln!("Using eternal session: {}", session_id);
 
     // --- 1. Get embedding for the user message (for semantic search) ---
+    eprintln!("📊 Getting embedding for user message...");
     let user_embedding = match state.llm_client.get_embedding(&payload.message).await {
-        Ok(emb) => Some(emb),
+        Ok(emb) => {
+            eprintln!("✅ Embedding generated successfully (length: {})", emb.len());
+            Some(emb)
+        },
         Err(e) => {
-            eprintln!("Failed to get embedding: {}", e);
+            eprintln!("❌ Failed to get embedding: {:?}", e);
             None
         }
     };
@@ -77,13 +81,44 @@ pub async fn chat_handler(
     let recall_context = build_context(
         &session_id,
         user_embedding.as_deref(),
-        15,  // recent messages
-        5,   // semantic matches
+        30,  // INCREASED - recent messages
+        15,  // INCREASED - semantic matches
         state.sqlite_store.as_ref(),
         state.qdrant_store.as_ref(),
     )
     .await
-    .unwrap_or_else(|_| RecallContext::new(vec![], vec![]));
+    .unwrap_or_else(|e| {
+        eprintln!("⚠️ Failed to build recall context: {:?}", e);
+        RecallContext::new(vec![], vec![])
+    });
+
+    eprintln!("📚 Recall context: {} recent, {} semantic", 
+        recall_context.recent.len(), 
+        recall_context.semantic.len()
+    );
+    
+    // Log the recent messages to see what's being loaded
+    eprintln!("📜 Recent messages in context:");
+    for (i, msg) in recall_context.recent.iter().enumerate() {
+        eprintln!("  {}. [{}] {} - {}", 
+            i+1, 
+            msg.role, 
+            msg.timestamp.format("%H:%M:%S"),
+            msg.content.chars().take(80).collect::<String>()
+        );
+    }
+    
+    // Also log semantic matches if any
+    if !recall_context.semantic.is_empty() {
+        eprintln!("🔍 Semantic matches:");
+        for (i, msg) in recall_context.semantic.iter().take(5).enumerate() {
+            eprintln!("  {}. [salience: {}] {}", 
+                i+1, 
+                msg.salience.unwrap_or(0.0),
+                msg.content.chars().take(80).collect::<String>()
+            );
+        }
+    }
 
     // --- 3. Determine persona overlay ---
     let persona_overlay = if let Some(ref override_str) = payload.persona_override {
@@ -100,7 +135,10 @@ pub async fn chat_handler(
 
     // --- 6. Get emotional weight for auto model routing ---
     let emotional_weight = match emotional_weight::classify(&state.llm_client, &payload.message).await {
-        Ok(val) => val,
+        Ok(val) => {
+            eprintln!("🎭 Emotional weight: {}", val);
+            val
+        },
         Err(e) => {
             eprintln!("Failed to classify emotional weight: {}", e);
             0.0
@@ -113,6 +151,8 @@ pub async fn chat_handler(
     } else {
         "gpt-4.1"
     };
+
+    eprintln!("🤖 Using model: {}", model);
 
     // --- 7. Call LLM with chosen model and persona-aware system prompt ---
     let mira_reply = match state.llm_client.chat_with_custom_prompt(&payload.message, model, &system_prompt).await {
@@ -142,6 +182,8 @@ pub async fn chat_handler(
 
     // --- 9. Save user message to both stores ---
     let now = Utc::now();
+    eprintln!("⏰ Current timestamp: {}", now);
+    
     let memory_type_converted = eval.as_ref().map(|e| match e.memory_type {
         crate::llm::schema::MemoryType::Feeling => crate::memory::types::MemoryType::Feeling,
         crate::llm::schema::MemoryType::Fact => crate::memory::types::MemoryType::Fact,
@@ -168,17 +210,36 @@ pub async fn chat_handler(
     };
 
     // Save to SQLite
-    let _ = state.sqlite_store.save(&user_entry).await;
+    eprintln!("💾 Saving user message to SQLite...");
+    match state.sqlite_store.save(&user_entry).await {
+        Ok(_) => eprintln!("✅ User message saved to SQLite"),
+        Err(e) => eprintln!("❌ FAILED to save user message to SQLite: {:?}", e),
+    }
 
     // Save to Qdrant if we have embeddings and meaningful salience
     if user_embedding.is_some() && eval.as_ref().map(|e| e.salience >= 3).unwrap_or(false) {
-        let _ = state.qdrant_store.save(&user_entry).await;
+        eprintln!("🔍 Saving user message to Qdrant (salience: {:?})...", 
+            eval.as_ref().map(|e| e.salience)
+        );
+        match state.qdrant_store.save(&user_entry).await {
+            Ok(_) => eprintln!("✅ User message saved to Qdrant"),
+            Err(e) => eprintln!("❌ FAILED to save user message to Qdrant: {:?}", e),
+        }
+    } else {
+        eprintln!("⏭️ Skipping Qdrant save (no embedding or low salience)");
     }
 
     // --- 10. Get embedding for Mira's response ---
+    eprintln!("📊 Getting embedding for Mira's response...");
     let mira_embedding = match state.llm_client.get_embedding(&mira_reply.output).await {
-        Ok(emb) => Some(emb),
-        Err(_) => None,
+        Ok(emb) => {
+            eprintln!("✅ Mira embedding generated (length: {})", emb.len());
+            Some(emb)
+        },
+        Err(e) => {
+            eprintln!("❌ Failed to get Mira embedding: {:?}", e);
+            None
+        }
     };
 
     // --- 11. Save Mira's reply ---
@@ -198,9 +259,18 @@ pub async fn chat_handler(
         system_fingerprint: None,
     };
 
-    let _ = state.sqlite_store.save(&mira_entry).await;
+    eprintln!("💾 Saving Mira's response to SQLite...");
+    match state.sqlite_store.save(&mira_entry).await {
+        Ok(_) => eprintln!("✅ Mira's response saved to SQLite"),
+        Err(e) => eprintln!("❌ FAILED to save Mira's response to SQLite: {:?}", e),
+    }
+    
     if mira_embedding.is_some() {
-        let _ = state.qdrant_store.save(&mira_entry).await;
+        eprintln!("🔍 Saving Mira's response to Qdrant...");
+        match state.qdrant_store.save(&mira_entry).await {
+            Ok(_) => eprintln!("✅ Mira's response saved to Qdrant"),
+            Err(e) => eprintln!("❌ FAILED to save Mira's response to Qdrant: {:?}", e),
+        }
     }
 
     // --- 12. Build API response from structured output ---
@@ -217,6 +287,7 @@ pub async fn chat_handler(
         reasoning_summary: mira_reply.reasoning_summary,
     };
 
+    eprintln!("🎉 Chat handler complete, returning response");
     Json(reply).into_response()
 }
 
@@ -227,6 +298,10 @@ pub async fn chat_history_handler(
     let session_id = "peter-eternal".to_string();
     let limit = params.limit.unwrap_or(30);
     let offset = params.offset.unwrap_or(0);
+
+    eprintln!("📜 Loading chat history: session={}, limit={}, offset={}", 
+        session_id, limit, offset
+    );
 
     // Custom query that doesn't reverse the messages
     // We want DESC order for the frontend (newest first)
@@ -247,6 +322,7 @@ pub async fn chat_history_handler(
         .await
     {
         Ok(rows) => {
+            eprintln!("✅ Found {} messages in history", rows.len());
             let mut messages = Vec::new();
             
             for row in rows {
@@ -302,7 +378,7 @@ pub async fn chat_history_handler(
             Json(response).into_response()
         }
         Err(e) => {
-            eprintln!("Failed to load chat history: {}", e);
+            eprintln!("❌ Failed to load chat history: {:?}", e);
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(axum::body::Body::from("Failed to load chat history"))

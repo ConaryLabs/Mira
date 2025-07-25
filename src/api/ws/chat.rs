@@ -14,7 +14,7 @@ use crate::memory::recall::{RecallContext, build_context};
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::prompt::builder::build_system_prompt;
-use crate::llm::{emotional_weight, MiraStructuredReply};
+use crate::llm::emotional_weight;
 use chrono::Utc;
 
 pub async fn ws_chat_handler(
@@ -397,8 +397,8 @@ fn create_persona_transition(
 
 async fn send_memory_stats(
     sender: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
-    app_state: &Arc<AppState>,
-    session_id: &str,
+    _app_state: &Arc<AppState>,
+    _session_id: &str,
 ) {
     // TODO: Implement actual memory stats
     let stats = WsServerMessage::MemoryStats {

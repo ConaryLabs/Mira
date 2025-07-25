@@ -2,7 +2,6 @@
 use axum::{
     routing::{get, post},
     Router,
-    extract::Extension,
 };
 use tokio::net::TcpListener;
 use std::sync::Arc;
@@ -75,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/chat/history", get(chat_history_handler))  // NEW: Add history endpoint
         // NEW: All /ws/* endpoints via ws_router (from your lib crate)
         .nest("/ws", ws_router(app_state.clone()))
-        .layer(Extension(app_state))
+        .with_state(app_state)
         .layer(cors);
     
     // --- Start the server ---

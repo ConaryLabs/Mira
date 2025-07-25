@@ -7,7 +7,7 @@ use axum::Router;
 use std::sync::Arc;
 use crate::handlers::AppState;
 
-pub fn api_router(app_state: Arc<AppState>) -> Router {
+pub fn api_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .nest("/ws", ws::ws_router(app_state.clone()))
 }

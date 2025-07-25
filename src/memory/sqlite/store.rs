@@ -147,8 +147,8 @@ impl MemoryStore for SqliteMemoryStore {
             });
         }
 
-        // They're ordered DESC, but usually you want most recent last
-        entries.reverse();
+        // FIXED: Removed the reverse() that was messing up the order!
+        // We want DESC order (newest first) to stay as-is so the LLM sees recent context first
 
         Ok(entries)
     }
