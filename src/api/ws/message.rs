@@ -1,7 +1,6 @@
 // src/api/ws/message.rs
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
@@ -9,21 +8,12 @@ pub enum WsClientMessage {
     #[serde(rename = "message")]
     Message {
         content: String,
-        persona: Option<String>, // Client can still request a persona internally
+        persona: Option<String>, // DEPRECATED - personas emerge naturally from context
         project_id: Option<String>,
     },
     #[serde(rename = "typing")]
     Typing {
         active: bool,
-    },
-    #[serde(rename = "switch_persona")]
-    SwitchPersona {
-        persona: String,
-        smooth_transition: bool, // Internal use only
-    },
-    #[serde(rename = "get_memory_stats")]
-    GetMemoryStats {
-        session_id: Option<String>,
     },
 }
 
@@ -41,14 +31,7 @@ pub enum WsServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         intensity: Option<f32>,
     },
-    // No more PersonaUpdate messages - personas work silently
-    #[serde(rename = "memory_stats")]
-    MemoryStats {
-        total_memories: usize,
-        high_salience_count: usize,
-        avg_salience: f32,
-        mood_distribution: HashMap<String, usize>,
-    },
+    // No more PersonaUpdate or MemoryStats - keeping it real
     #[serde(rename = "error")]
     Error {
         message: String,

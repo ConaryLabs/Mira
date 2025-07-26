@@ -37,7 +37,7 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     
     // Use peter-eternal for consistency with REST endpoint
     let session_id = "peter-eternal".to_string();
-    let mut current_persona = PersonaOverlay::Default;
+    let current_persona = PersonaOverlay::Default;  // Fixed: removed mut
     let mut current_mood = "present".to_string();
     let mut active_project_id: Option<String> = None;
     
@@ -84,16 +84,10 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                 
                 let incoming: Result<WsClientMessage, _> = serde_json::from_str(&text);
                 match incoming {
-                    Ok(WsClientMessage::Message { content, persona, project_id }) => {
+                    Ok(WsClientMessage::Message { content, persona: _, project_id }) => {
                         eprintln!("Processing message: {}", content);
                         
-                        // Override persona if specified (internally only)
-                        if let Some(p) = persona.as_ref() {
-                            if let Ok(new_persona) = p.parse::<PersonaOverlay>() {
-                                current_persona = new_persona;
-                                eprintln!("Internal persona set to: {}", current_persona);
-                            }
-                        }
+                        // NOTE: Ignoring persona field - personas emerge naturally
                         
                         // Update active project if specified
                         if project_id.is_some() {
@@ -125,23 +119,6 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                             &current_persona,
                             &mut current_mood,
                             active_project_id.as_deref(),
-                        ).await;
-                    }
-                    
-                    Ok(WsClientMessage::SwitchPersona { persona, .. }) => {
-                        // Handle internally only - no UI updates
-                        if let Ok(new_persona) = persona.parse::<PersonaOverlay>() {
-                            current_persona = new_persona;
-                            eprintln!("Internal persona switched to: {}", current_persona);
-                            // No messages sent to client
-                        }
-                    }
-                    
-                    Ok(WsClientMessage::GetMemoryStats { session_id: query_session }) => {
-                        send_memory_stats(
-                            sender.clone(),
-                            &app_state,
-                            &query_session.unwrap_or(session_id.clone()),
                         ).await;
                     }
                     
@@ -425,24 +402,5 @@ async fn stream_chat_response(
         if let Err(e) = app_state.qdrant_store.save(&mira_entry).await {
             eprintln!("Failed to save assistant message to Qdrant: {}", e);
         }
-    }
-}
-
-async fn send_memory_stats(
-    sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
-    _app_state: &Arc<AppState>,
-    _session_id: &str,
-) {
-    // TODO: Implement actual memory stats
-    let stats = WsServerMessage::MemoryStats {
-        total_memories: 0,
-        high_salience_count: 0,
-        avg_salience: 0.0,
-        mood_distribution: std::collections::HashMap::new(),
-    };
-    
-    let mut sender_guard = sender.lock().await;
-    if let Ok(msg_text) = serde_json::to_string(&stats) {
-        let _ = sender_guard.send(Message::Text(msg_text)).await;
     }
 }
