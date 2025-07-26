@@ -39,6 +39,7 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
     let session_id = "peter-eternal".to_string();
     let mut current_persona = PersonaOverlay::Default;
     let mut current_mood = "present".to_string();
+    let mut active_project_id: Option<String> = None;
     
     eprintln!("WebSocket connection established. Session: {}", session_id);
     
@@ -83,20 +84,25 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                 
                 let incoming: Result<WsClientMessage, _> = serde_json::from_str(&text);
                 match incoming {
-                    Ok(WsClientMessage::Message { content, persona }) => {
+                    Ok(WsClientMessage::Message { content, persona, project_id }) => {
                         eprintln!("Processing message: {}", content);
                         
-                        // Override persona if specified
+                        // Override persona if specified (internally only)
                         if let Some(p) = persona.as_ref() {
                             if let Ok(new_persona) = p.parse::<PersonaOverlay>() {
                                 current_persona = new_persona;
+                                eprintln!("Internal persona set to: {}", current_persona);
                             }
                         }
                         
-                        // Send immediate acknowledgment
+                        // Update active project if specified
+                        if project_id.is_some() {
+                            active_project_id = project_id.clone();
+                        }
+                        
+                        // Send immediate acknowledgment (no persona shown)
                         let thinking_msg = WsServerMessage::Chunk {
                             content: "".to_string(),
-                            persona: current_persona.to_string(),
                             mood: Some("thinking".to_string()),
                         };
                         
@@ -118,42 +124,16 @@ async fn handle_ws(socket: WebSocket, app_state: Arc<AppState>) {
                             content,
                             &current_persona,
                             &mut current_mood,
+                            active_project_id.as_deref(),
                         ).await;
                     }
                     
-                    Ok(WsClientMessage::SwitchPersona { persona, smooth_transition }) => {
+                    Ok(WsClientMessage::SwitchPersona { persona, .. }) => {
+                        // Handle internally only - no UI updates
                         if let Ok(new_persona) = persona.parse::<PersonaOverlay>() {
-                            // Send transition if switching
-                            if new_persona != current_persona && smooth_transition {
-                                let transition_msg = create_persona_transition(
-                                    &current_persona,
-                                    &new_persona,
-                                    &current_mood,
-                                );
-                                let mut sender_guard = sender.lock().await;
-                                if let Err(e) = sender_guard.send(Message::Text(
-                                    serde_json::to_string(&transition_msg).unwrap()
-                                )).await {
-                                    eprintln!("Failed to send transition message: {}", e);
-                                    break;
-                                }
-                            }
-                            
                             current_persona = new_persona;
-                            
-                            // Send update confirmation
-                            let update = WsServerMessage::PersonaUpdate {
-                                persona: current_persona.to_string(),
-                                mood: Some(current_mood.clone()),
-                                transition_note: None,
-                            };
-                            let mut sender_guard = sender.lock().await;
-                            if let Err(e) = sender_guard.send(Message::Text(
-                                serde_json::to_string(&update).unwrap()
-                            )).await {
-                                eprintln!("Failed to send persona update: {}", e);
-                                break;
-                            }
+                            eprintln!("Internal persona switched to: {}", current_persona);
+                            // No messages sent to client
                         }
                     }
                     
@@ -217,8 +197,10 @@ async fn stream_chat_response(
     content: String,
     persona: &PersonaOverlay,
     current_mood: &mut String,
+    _project_id: Option<&str>,  // TODO: Use for project context injection in Sprint 3
 ) {
     eprintln!("[{}] Starting chat response stream for: {}", Utc::now(), content);
+    eprintln!("Using persona internally: {}", persona);
     
     // Get embedding for semantic search
     let user_embedding = match timeout(
@@ -274,6 +256,7 @@ async fn stream_chat_response(
         }
     };
     
+    // Use ORIGINAL model selection logic
     let model = if emotional_weight > 0.95 {
         "o3"
     } else if emotional_weight > 0.6 {
@@ -334,9 +317,9 @@ async fn stream_chat_response(
             format!(" {}", chunk.join(" "))
         };
         
+        // Send chunk WITHOUT persona info
         let chunk_msg = WsServerMessage::Chunk {
             content: chunk_text,
-            persona: persona.to_string(),
             mood: Some(current_mood.clone()),
         };
         
@@ -442,18 +425,6 @@ async fn stream_chat_response(
         if let Err(e) = app_state.qdrant_store.save(&mira_entry).await {
             eprintln!("Failed to save assistant message to Qdrant: {}", e);
         }
-    }
-}
-
-fn create_persona_transition(
-    from: &PersonaOverlay,
-    to: &PersonaOverlay,
-    mood: &str,
-) -> WsServerMessage {
-    WsServerMessage::PersonaUpdate {
-        persona: to.to_string(),
-        mood: Some(mood.to_string()),
-        transition_note: Some(format!("Shifting from {} to {}", from, to)),
     }
 }
 

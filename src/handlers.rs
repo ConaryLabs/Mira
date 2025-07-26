@@ -12,9 +12,10 @@ use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::memory::recall::{build_context, RecallContext};
-use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, function_schema, emotional_weight};
+use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, emotional_weight, function_schema};
 use crate::persona::{PersonaOverlay};
 use crate::prompt::builder::build_system_prompt;
+use crate::project::store::ProjectStore;
 use chrono::{Utc, TimeZone};
 use sqlx::Row;
 
@@ -22,6 +23,7 @@ use sqlx::Row;
 pub struct ChatRequest {
     pub message: String,
     pub persona_override: Option<String>,
+    pub project_id: Option<String>, // NEW: Optional project context
 }
 
 #[derive(Serialize)]
@@ -48,12 +50,15 @@ pub struct ChatHistoryResponse {
 pub struct HistoryQuery {
     pub limit: Option<usize>,
     pub offset: Option<i64>,
+    pub project_id: Option<String>, // NEW: Filter by project
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub sqlite_store: Arc<SqliteMemoryStore>,
     pub qdrant_store: Arc<QdrantMemoryStore>,
     pub llm_client: Arc<OpenAIClient>,
+    pub project_store: Arc<ProjectStore>, // NEW: Add project store
 }
 
 pub async fn chat_handler(
@@ -167,82 +172,86 @@ pub async fn chat_handler(
         }
     };
 
-    // --- 8. Evaluate user message for memory metadata (unchanged) ---
-    let eval_req = EvaluateMemoryRequest {
-        content: payload.message.clone(),
-        function_schema: function_schema(),
-    };
-    let eval: Option<EvaluateMemoryResponse> = match state.llm_client.evaluate_memory(&eval_req).await {
-        Ok(val) => Some(val),
-        Err(e) => {
-            eprintln!("Failed to evaluate memory: {}", e);
-            None
-        }
-    };
-
-    // --- 9. Save user message to both stores ---
-    let now = Utc::now();
-    eprintln!("⏰ Current timestamp: {}", now);
-    
-    let memory_type_converted = eval.as_ref().map(|e| match e.memory_type {
-        crate::llm::schema::MemoryType::Feeling => crate::memory::types::MemoryType::Feeling,
-        crate::llm::schema::MemoryType::Fact => crate::memory::types::MemoryType::Fact,
-        crate::llm::schema::MemoryType::Joke => crate::memory::types::MemoryType::Joke,
-        crate::llm::schema::MemoryType::Promise => crate::memory::types::MemoryType::Promise,
-        crate::llm::schema::MemoryType::Event => crate::memory::types::MemoryType::Event,
-        _ => crate::memory::types::MemoryType::Other,
-    });
-
+    // --- 8. Save user message to both stores ---
+    eprintln!("💾 Saving user message to memory stores...");
     let user_entry = MemoryEntry {
         id: None,
         session_id: session_id.clone(),
         role: "user".to_string(),
         content: payload.message.clone(),
-        timestamp: now,
+        timestamp: Utc::now(),
         embedding: user_embedding.clone(),
-        salience: eval.as_ref().map(|e| e.salience as f32),
-        tags: eval.as_ref().map(|e| e.tags.clone()),
-        summary: eval.as_ref().and_then(|e| e.summary.clone()),
-        memory_type: memory_type_converted.clone(),
+        salience: None,
+        tags: None,
+        summary: None,
+        memory_type: None,
         logprobs: None,
-        moderation_flag: None, // log-only moderation!
+        moderation_flag: None,
         system_fingerprint: None,
     };
 
-    // Save to SQLite
-    eprintln!("💾 Saving user message to SQLite...");
+    // Save to SQLite (always)
     match state.sqlite_store.save(&user_entry).await {
         Ok(_) => eprintln!("✅ User message saved to SQLite"),
         Err(e) => eprintln!("❌ FAILED to save user message to SQLite: {:?}", e),
     }
 
-    // Save to Qdrant if we have embeddings and meaningful salience
-    if user_embedding.is_some() && eval.as_ref().map(|e| e.salience >= 3).unwrap_or(false) {
-        eprintln!("🔍 Saving user message to Qdrant (salience: {:?})...", 
-            eval.as_ref().map(|e| e.salience)
-        );
-        match state.qdrant_store.save(&user_entry).await {
-            Ok(_) => eprintln!("✅ User message saved to Qdrant"),
-            Err(e) => eprintln!("❌ FAILED to save user message to Qdrant: {:?}", e),
-        }
-    } else {
-        eprintln!("⏭️ Skipping Qdrant save (no embedding or low salience)");
-    }
+    // --- 9. Evaluate Mira's reply for metadata (salience, summary, etc.) ---
+    eprintln!("📝 Evaluating Mira's reply...");
+    let eval_request = EvaluateMemoryRequest {
+        content: format!(
+            "User: {}\nMira: {}",
+            &payload.message, &mira_reply.output
+        ),
+        function_schema: function_schema(), // Use the default schema function
+    };
 
-    // --- 10. Get embedding for Mira's response ---
-    eprintln!("📊 Getting embedding for Mira's response...");
-    let mira_embedding = match state.llm_client.get_embedding(&mira_reply.output).await {
-        Ok(emb) => {
-            eprintln!("✅ Mira embedding generated (length: {})", emb.len());
-            Some(emb)
-        },
+    let eval_response = match state.llm_client.evaluate_memory(&eval_request).await {
+        Ok(resp) => {
+            eprintln!("✅ Memory evaluation complete - salience: {}, memory_type: {:?}", 
+                resp.salience, resp.memory_type
+            );
+            resp
+        }
         Err(e) => {
-            eprintln!("❌ Failed to get Mira embedding: {:?}", e);
-            None
+            eprintln!("⚠️ Memory evaluation failed: {:?}", e);
+            EvaluateMemoryResponse {
+                salience: 0,
+                summary: None,
+                memory_type: crate::llm::schema::MemoryType::Other,
+                tags: vec![],
+            }
         }
     };
 
-    // --- 11. Save Mira's reply ---
+    // --- 10. Get embedding for Mira's reply (if salience >= 7) ---
+    let mira_embedding = if eval_response.salience >= 7 {
+        eprintln!("🌟 High salience response ({}), generating embedding...", eval_response.salience);
+        match state.llm_client.get_embedding(&mira_reply.output).await {
+            Ok(emb) => {
+                eprintln!("✅ Embedding generated for Mira's response");
+                Some(emb)
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to get embedding for Mira's response: {:?}", e);
+                None
+            }
+        }
+    } else {
+        eprintln!("💭 Low salience response ({}), skipping embedding", eval_response.salience);
+        None
+    };
+
+    // --- 11. Save Mira's reply to memory stores ---
+    let memory_type_for_db = match eval_response.memory_type {
+        crate::llm::schema::MemoryType::Feeling => crate::memory::types::MemoryType::Feeling,
+        crate::llm::schema::MemoryType::Fact => crate::memory::types::MemoryType::Fact,
+        crate::llm::schema::MemoryType::Joke => crate::memory::types::MemoryType::Joke,
+        crate::llm::schema::MemoryType::Promise => crate::memory::types::MemoryType::Promise,
+        crate::llm::schema::MemoryType::Event => crate::memory::types::MemoryType::Event,
+        crate::llm::schema::MemoryType::Other => crate::memory::types::MemoryType::Other,
+    };
+
     let mira_entry = MemoryEntry {
         id: None,
         session_id: session_id.clone(),
@@ -250,15 +259,16 @@ pub async fn chat_handler(
         content: mira_reply.output.clone(),
         timestamp: Utc::now(),
         embedding: mira_embedding.clone(),
-        salience: Some(mira_reply.salience as f32),
-        tags: Some(mira_reply.tags.clone()),
-        summary: mira_reply.summary.clone(),
-        memory_type: Some(crate::memory::types::MemoryType::Other),
+        salience: Some(eval_response.salience as f32),
+        tags: Some(eval_response.tags.clone()),
+        summary: eval_response.summary.clone(),
+        memory_type: Some(memory_type_for_db),
         logprobs: None,
-        moderation_flag: None, // log-only
+        moderation_flag: None,
         system_fingerprint: None,
     };
 
+    // Always save to SQLite
     eprintln!("💾 Saving Mira's response to SQLite...");
     match state.sqlite_store.save(&mira_entry).await {
         Ok(_) => eprintln!("✅ Mira's response saved to SQLite"),
@@ -303,24 +313,48 @@ pub async fn chat_history_handler(
         session_id, limit, offset
     );
 
-    // Custom query that doesn't reverse the messages
-    // We want DESC order for the frontend (newest first)
-    let query = r#"
-        SELECT id, session_id, role, content, timestamp, embedding, salience, tags, summary, memory_type,
-               logprobs, moderation_flag, system_fingerprint
+    // Clone project_id to avoid move issues
+    let project_id_filter = params.project_id.clone();
+
+    // Build query with optional project filter
+    let query = if project_id_filter.is_some() {
+        r#"
+        SELECT id, session_id, role, content, timestamp, embedding, salience, tags, 
+               summary, memory_type, logprobs, moderation_flag, system_fingerprint
+        FROM chat_history
+        WHERE session_id = ? AND project_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ? OFFSET ?
+        "#
+    } else {
+        r#"
+        SELECT id, session_id, role, content, timestamp, embedding, salience, tags, 
+               summary, memory_type, logprobs, moderation_flag, system_fingerprint
         FROM chat_history
         WHERE session_id = ?
         ORDER BY timestamp DESC
         LIMIT ? OFFSET ?
-    "#;
+        "#
+    };
     
-    match sqlx::query(query)
-        .bind(&session_id)
-        .bind(limit as i64)
-        .bind(offset)
-        .fetch_all(&state.sqlite_store.pool)
-        .await
-    {
+    let rows = if let Some(ref project_id) = params.project_id {
+        sqlx::query(query)
+            .bind(&session_id)
+            .bind(project_id)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&state.sqlite_store.pool)
+            .await
+    } else {
+        sqlx::query(query)
+            .bind(&session_id)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&state.sqlite_store.pool)
+            .await
+    };
+
+    match rows {
         Ok(rows) => {
             eprintln!("✅ Found {} messages in history", rows.len());
             let mut messages = Vec::new();

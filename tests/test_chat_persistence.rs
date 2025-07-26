@@ -6,6 +6,7 @@ use mira_backend::memory::traits::MemoryStore;
 use mira_backend::memory::types::MemoryEntry;
 use mira_backend::handlers::AppState;
 use mira_backend::llm::OpenAIClient;
+use mira_backend::project::store::ProjectStore;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use reqwest::Client;
@@ -24,7 +25,10 @@ async fn create_test_state() -> Arc<AppState> {
     mira_backend::memory::sqlite::migration::run_migrations(&pool).await
         .expect("Failed to run migrations");
     
-    let sqlite_store = Arc::new(SqliteMemoryStore::new(pool));
+    let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
+    
+    // Create project store with the same pool
+    let project_store = Arc::new(ProjectStore::new(pool));
     
     // For tests, we'll use the real Qdrant if available, or skip those parts
     let qdrant_url = std::env::var("QDRANT_URL")
@@ -43,6 +47,7 @@ async fn create_test_state() -> Arc<AppState> {
         sqlite_store,
         qdrant_store,
         llm_client,
+        project_store,
     })
 }
 

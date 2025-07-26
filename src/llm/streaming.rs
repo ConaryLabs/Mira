@@ -20,7 +20,7 @@ impl OpenAIClient {
         let url = format!("{}/chat/completions", self.api_base);
 
         let model = model.unwrap_or("gpt-4.1");
-        let persona_string = persona.clone().unwrap_or_else(|| "Default".to_string());
+        let _persona_string = persona.clone().unwrap_or_else(|| "Default".to_string());
 
         let messages = vec![
             json!({"role": "system", "content": system_prompt}),
@@ -50,7 +50,6 @@ impl OpenAIClient {
                 Err(err) => {
                     yield WsServerMessage::Chunk {
                         content: format!("Error: failed to reach LLM API: {}", err),
-                        persona: persona_string,
                         mood: Some("error".to_string()),
                     };
                     return;
@@ -62,7 +61,6 @@ impl OpenAIClient {
                 eprintln!("OpenAI API error: {}", error_text);
                 yield WsServerMessage::Chunk {
                     content: format!("Error: API returned error: {}", error_text),
-                    persona: persona_string.clone(),
                     mood: Some("error".to_string()),
                 };
                 return;
@@ -113,7 +111,6 @@ impl OpenAIClient {
                                !(trimmed.len() == 1 && trimmed.chars().next().unwrap().is_ascii_punctuation()) {
                                 yield WsServerMessage::Chunk {
                                     content: trimmed.to_string(),
-                                    persona: persona_string.clone(),
                                     mood: current_mood,
                                 };
                             }
@@ -135,7 +132,6 @@ impl OpenAIClient {
                                 if !text_buffer.is_empty() {
                                     yield WsServerMessage::Chunk {
                                         content: text_buffer.clone(),
-                                        persona: persona_string.clone(),
                                         mood: current_mood.clone(),
                                     };
                                     text_buffer.clear();
@@ -153,7 +149,6 @@ impl OpenAIClient {
                                 if !text_buffer.is_empty() {
                                     yield WsServerMessage::Chunk {
                                         content: text_buffer.clone(),
-                                        persona: persona_string.clone(),
                                         mood: current_mood.clone(),
                                     };
                                     text_buffer.clear();
@@ -164,10 +159,9 @@ impl OpenAIClient {
                                 // End of aside marker
                                 in_aside_marker = false;
                                 if !aside_buffer.is_empty() {
-                                    let intensity = calculate_emotional_intensity(&aside_buffer);
                                     yield WsServerMessage::Aside {
                                         emotional_cue: aside_buffer.clone(),
-                                        intensity: Some(intensity),
+                                        intensity: Some(0.5), // Default intensity
                                     };
                                 }
                             } else if in_mood_marker {
@@ -182,53 +176,98 @@ impl OpenAIClient {
                 }
             }
 
-            // Handle any remaining partial line
-            if !partial_line.is_empty() && partial_line.starts_with("data: ") {
-                let data = &partial_line[6..];
-                if data != "[DONE]" {
-                    if let Ok(json_val) = serde_json::from_str::<Value>(data) {
-                        if let Some(content) = json_val["choices"][0]["delta"]["content"].as_str() {
-                            text_buffer.push_str(content);
-                        }
-                    }
-                }
-            }
-
-            // Final cleanup
+            // Handle any remaining partial content
             if !text_buffer.is_empty() {
-                let trimmed = text_buffer.trim();
-                if !trimmed.is_empty() && 
-                   !(trimmed.len() == 1 && trimmed.chars().next().unwrap().is_ascii_punctuation()) {
-                    yield WsServerMessage::Chunk {
-                        content: trimmed.to_string(),
-                        persona: persona_string.clone(),
-                        mood: current_mood,
-                    };
-                }
+                yield WsServerMessage::Chunk {
+                    content: text_buffer,
+                    mood: current_mood,
+                };
             }
         };
 
         Box::pin(stream)
     }
-}
 
-/// Calculate emotional intensity based on cue content
-fn calculate_emotional_intensity(cue: &str) -> f32 {
-    let cue_lower = cue.to_lowercase();
+    /// Streams the chat response as simple text chunks (for internal use)
+    pub async fn stream_chat(
+        &self,
+        message: &str,
+        model: &str,
+        system_prompt: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, anyhow::Error>> + Send>>, anyhow::Error> {
+        let url = format!("{}/chat/completions", self.api_base);
 
-    // High intensity indicators
-    if cue_lower.contains("fuck") || cue_lower.contains("damn") ||
-       cue_lower.contains("shit") || cue_lower.contains("!") ||
-       cue_lower.contains("...") {
-        return 0.8;
+        let messages = vec![
+            json!({"role": "system", "content": system_prompt}),
+            json!({"role": "user", "content": message}),
+        ];
+
+        let req_body = json!({
+            "model": model,
+            "messages": messages,
+            "stream": true,
+            "temperature": 0.9
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&req_body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let error_text = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+        }
+
+        let stream = async_stream::stream! {
+            let mut byte_stream = resp.bytes_stream();
+            let mut partial_line = String::new();
+            
+            while let Some(chunk_result) = byte_stream.next().await {
+                let bytes = match chunk_result {
+                    Ok(b) => b,
+                    Err(e) => {
+                        yield Err(anyhow::anyhow!("Stream error: {}", e));
+                        break;
+                    }
+                };
+
+                let chunk_str = match std::str::from_utf8(&bytes) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                partial_line.push_str(chunk_str);
+                
+                while let Some(newline_pos) = partial_line.find('\n') {
+                    let line = partial_line[..newline_pos].to_string();
+                    partial_line = partial_line[newline_pos + 1..].to_string();
+
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        break;
+                    }
+
+                    let json_val: Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                    if let Some(content) = json_val["choices"][0]["delta"]["content"].as_str() {
+                        yield Ok(content.to_string());
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(stream))
     }
-
-    // Medium intensity
-    if cue_lower.contains("really") || cue_lower.contains("very") ||
-       cue_lower.contains("so ") || cue_lower.contains("?") {
-        return 0.5;
-    }
-
-    // Default low intensity
-    0.3
 }

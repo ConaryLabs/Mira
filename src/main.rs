@@ -12,8 +12,8 @@ use mira_backend::memory::qdrant::store::QdrantMemoryStore;
 use mira_backend::memory;
 use mira_backend::handlers::{chat_handler, chat_history_handler, AppState};
 use mira_backend::llm::OpenAIClient;
-// CORRECT: Use the library crate's API module, NOT `mod api;`
 use mira_backend::api::ws::ws_router;
+use mira_backend::project::{project_router, store::ProjectStore};
 use sqlx::SqlitePool;
 use reqwest::Client;
 
@@ -25,7 +25,10 @@ async fn main() -> anyhow::Result<()> {
     // --- Initialize SQLite pool and memory store ---
     let pool = SqlitePool::connect("sqlite://mira.db").await?;
     memory::sqlite::migration::run_migrations(&pool).await?;
-    let sqlite_store = Arc::new(SqliteMemoryStore::new(pool));
+    let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
+    
+    // --- Initialize Project store (shares the same pool) ---
+    let project_store = Arc::new(ProjectStore::new(pool));
     
     // --- Initialize Qdrant memory store ---
     let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
@@ -37,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = client.put(&create_collection_url)
         .json(&serde_json::json!({
             "vectors": {
-                "size": 3072,  // 🔥 UNLEASHED! Was 1536, now FULL POWER
+                "size": 3072,  // GPT-4 embedding size
                 "distance": "Cosine"
             }
         }))
@@ -58,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         sqlite_store,
         qdrant_store,
         llm_client,
+        project_store: project_store.clone(),
     });
     
     // --- Build CORS layer ---
@@ -66,13 +70,15 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
     
-    // --- Build Axum app with REST and WebSocket routes ---
+    // --- Build Axum app with REST, WebSocket, and Project routes ---
     let app = Router::new()
         .route("/", get(|| async { "Mira backend is running!" }))
         .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
         .route("/chat", post(chat_handler))
-        .route("/chat/history", get(chat_history_handler))  // NEW: Add history endpoint
-        // NEW: All /ws/* endpoints via ws_router (from your lib crate)
+        .route("/chat/history", get(chat_history_handler))
+        // Merge project routes
+        .merge(project_router())
+        // WebSocket routes
         .nest("/ws", ws_router(app_state.clone()))
         .with_state(app_state)
         .layer(cors);
@@ -85,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
     info!("🔍 Qdrant: {}", std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string()));
     info!("🌐 WebSocket endpoint: ws://localhost:{}/ws/chat", port);
     info!("📜 Chat history endpoint: http://localhost:{}/chat/history", port);
+    info!("📁 Project API: http://localhost:{}/projects", port);
     
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

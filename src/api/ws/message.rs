@@ -9,7 +9,8 @@ pub enum WsClientMessage {
     #[serde(rename = "message")]
     Message {
         content: String,
-        persona: Option<String>,
+        persona: Option<String>, // Client can still request a persona internally
+        project_id: Option<String>,
     },
     #[serde(rename = "typing")]
     Typing {
@@ -18,8 +19,7 @@ pub enum WsClientMessage {
     #[serde(rename = "switch_persona")]
     SwitchPersona {
         persona: String,
-        #[serde(default)]
-        smooth_transition: bool,  // If true, blend mood gradually
+        smooth_transition: bool, // Internal use only
     },
     #[serde(rename = "get_memory_stats")]
     GetMemoryStats {
@@ -33,22 +33,15 @@ pub enum WsServerMessage {
     #[serde(rename = "chunk")]
     Chunk {
         content: String,
-        persona: String,
-        mood: Option<String>,
+        mood: Option<String>, // Mood is visible, persona is not
     },
     #[serde(rename = "aside")]
     Aside {
         emotional_cue: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        intensity: Option<f32>,  // 0.0-1.0 for emotional intensity
+        intensity: Option<f32>,
     },
-    #[serde(rename = "persona_update")]
-    PersonaUpdate {
-        persona: String,
-        mood: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        transition_note: Option<String>,  // e.g. "*shifts to a warmer tone*"
-    },
+    // No more PersonaUpdate messages - personas work silently
     #[serde(rename = "memory_stats")]
     MemoryStats {
         total_memories: usize,
