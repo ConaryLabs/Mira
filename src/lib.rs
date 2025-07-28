@@ -1,5 +1,3 @@
-// src/lib.rs
-
 pub mod api;
 pub mod handlers;
 pub mod llm;
@@ -9,6 +7,7 @@ pub mod prompt;
 pub mod session;
 pub mod project;
 pub mod tools;
+pub mod git; // <--- add this line!
 
 // Optional: export commonly used items
 pub use handlers::AppState;

@@ -1,4 +1,3 @@
-// src/handlers.rs
 use axum::{
     extract::{Json, Query, State},
     http::{HeaderMap, StatusCode},
@@ -59,6 +58,8 @@ pub struct AppState {
     pub qdrant_store: Arc<QdrantMemoryStore>,
     pub llm_client: Arc<OpenAIClient>,
     pub project_store: Arc<ProjectStore>, // NEW: Add project store
+    pub git_store: crate::git::GitStore,
+    pub git_client: crate::git::GitClient,
 }
 
 pub async fn chat_handler(

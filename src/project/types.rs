@@ -1,5 +1,3 @@
-// src/project/types.rs
-
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 

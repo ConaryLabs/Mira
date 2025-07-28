@@ -1,5 +1,3 @@
-// src/project/store.rs
-
 use crate::project::types::{Project, Artifact, ArtifactType};
 use sqlx::{SqlitePool, Row};
 use chrono::{Utc, NaiveDateTime, TimeZone};
@@ -7,7 +5,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 pub struct ProjectStore {
-    pool: SqlitePool,
+    pub pool: SqlitePool,
 }
 
 impl ProjectStore {

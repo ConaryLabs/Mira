@@ -1,4 +1,3 @@
-// src/main.rs
 use axum::{
     routing::{get, post},
     Router,
@@ -13,7 +12,9 @@ use mira_backend::memory;
 use mira_backend::handlers::{chat_handler, chat_history_handler, AppState};
 use mira_backend::llm::OpenAIClient;
 use mira_backend::api::ws::ws_router;
-use mira_backend::project::{project_router, store::ProjectStore};
+use mira_backend::api::http::{http_router, project_router};
+use mira_backend::git::{GitStore, GitClient};
+use mira_backend::project::store::ProjectStore;
 use sqlx::SqlitePool;
 use reqwest::Client;
 
@@ -28,8 +29,13 @@ async fn main() -> anyhow::Result<()> {
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
     
     // --- Initialize Project store (shares the same pool) ---
-    let project_store = Arc::new(ProjectStore::new(pool));
+    let project_store = Arc::new(ProjectStore::new(pool.clone()));
     
+    // --- Initialize Git store and client ---
+    let git_store = GitStore::new(pool.clone());
+    // Set your desired clone directory (could be config/env if you want)
+    let git_client = GitClient::new("./repos", git_store.clone());
+
     // --- Initialize Qdrant memory store ---
     let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
     let qdrant_collection = std::env::var("QDRANT_COLLECTION").unwrap_or_else(|_| "mira-memory".to_string());
@@ -62,6 +68,8 @@ async fn main() -> anyhow::Result<()> {
         qdrant_store,
         llm_client,
         project_store: project_store.clone(),
+        git_store,
+        git_client,
     });
     
     // --- Build CORS layer ---
@@ -76,8 +84,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
         .route("/chat", post(chat_handler))
         .route("/chat/history", get(chat_history_handler))
-        // Merge project routes
+        // Classic project & artifact REST endpoints
         .merge(project_router())
+        // Unified endpoints: project details, git, etc.
+        .merge(http_router())
         // WebSocket routes
         .nest("/ws", ws_router(app_state.clone()))
         .with_state(app_state)
