@@ -75,15 +75,29 @@ pub struct SyncRepoResponse {
     pub error: Option<String>,
 }
 
+// Full implementation without debug handler
 pub async fn sync_repo_handler(
-    State(state): State<Arc<AppState>>,
+    State(app_state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
     Json(payload): Json<SyncRepoPayload>,
-) -> impl IntoResponse {
-    let client = &state.git_client;
-    let store = &state.git_store;
-    match store.get_attachment_by_id(&attachment_id).await {
-        Ok(Some(attachment)) if attachment.project_id == project_id => {
+) -> Json<SyncRepoResponse> {
+    let client = &app_state.git_client;
+    let store = &app_state.git_store;
+    
+    // Get the attachment
+    let attachment_result = store.get_attachment_by_id(&attachment_id).await;
+    
+    match attachment_result {
+        Ok(Some(attachment)) => {
+            // Check if attachment belongs to the project
+            if attachment.project_id != project_id {
+                return Json(SyncRepoResponse {
+                    status: "not_found".to_string(),
+                    error: Some("Attachment not found".to_string()),
+                });
+            }
+            
+            // Try to sync changes
             match client.sync_changes(&attachment, &payload.commit_message).await {
                 Ok(_) => Json(SyncRepoResponse {
                     status: "synced".to_string(),
@@ -95,7 +109,7 @@ pub async fn sync_repo_handler(
                 }),
             }
         }
-        Ok(_) => Json(SyncRepoResponse {
+        Ok(None) => Json(SyncRepoResponse {
             status: "not_found".to_string(),
             error: Some("Attachment not found".to_string()),
         }),
