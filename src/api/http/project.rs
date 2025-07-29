@@ -1,7 +1,9 @@
+// src/api/http/project.rs
+
 use axum::{
     extract::{State, Path},
     response::IntoResponse,
-    Json, routing::get, Router,
+    Json,
 };
 use std::sync::Arc;
 use crate::handlers::AppState;
@@ -35,14 +37,4 @@ pub async fn project_details_handler(
     };
 
     Json(ProjectDetailsResponse { project, attached_repos }).into_response()
-}
-
-// Only use this router if you want a *separate* subrouter for project details.
-// Otherwise, register `project_details_handler` directly in http_router() as you are now.
-pub fn project_router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route(
-            "/projects/:project_id/details",
-            get(project_details_handler),
-        )
 }

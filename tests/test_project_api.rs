@@ -1,5 +1,7 @@
 // tests/test_project_api.rs
 
+mod test_helpers;
+
 use axum::http::{Request, StatusCode};
 use axum::body::Body;
 use tower::ServiceExt;
@@ -10,45 +12,7 @@ use mira_backend::project::types::{
 
 /// Helper to create a test app
 async fn create_test_app() -> axum::Router {
-    // Load environment variables
-    dotenv::dotenv().ok();
-    
-    // Create in-memory database
-    let pool = sqlx::SqlitePool::connect(":memory:")
-        .await
-        .expect("Failed to create test database");
-    
-    // Run migrations
-    mira_backend::memory::sqlite::migration::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
-    
-    // Create app state
-    let sqlite_store = std::sync::Arc::new(
-        mira_backend::memory::sqlite::store::SqliteMemoryStore::new(pool.clone())
-    );
-    let project_store = std::sync::Arc::new(
-        mira_backend::project::store::ProjectStore::new(pool)
-    );
-    
-    // Mock stores for testing (we don't need real Qdrant for project tests)
-    let qdrant_store = std::sync::Arc::new(
-        mira_backend::memory::qdrant::store::QdrantMemoryStore::new(
-            reqwest::Client::new(),
-            "http://localhost:6333".to_string(),
-            "test".to_string(),
-        )
-    );
-    let llm_client = std::sync::Arc::new(
-        mira_backend::llm::OpenAIClient::new()
-    );
-    
-    let app_state = std::sync::Arc::new(mira_backend::handlers::AppState {
-        sqlite_store,
-        qdrant_store,
-        llm_client,
-        project_store,
-    });
+    let app_state = test_helpers::create_test_app_state().await;
     
     // Build the app with project routes
     axum::Router::new()
@@ -92,12 +56,12 @@ async fn test_project_api_endpoints() {
     println!("✅ Project created: {}", created_project.id);
     
     // Test 2: Get project by ID
-    println!("\n📮 GET /project/{}", created_project.id);
+    println!("\n📮 GET /projects/{}", created_project.id);
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/project/{}", created_project.id))
+                .uri(format!("/projects/{}", created_project.id))
                 .body(Body::empty())
                 .unwrap()
         )
@@ -105,7 +69,15 @@ async fn test_project_api_endpoints() {
         .unwrap();
     
     assert_eq!(response.status(), StatusCode::OK);
-    println!("✅ Project retrieved");
+    
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let fetched_project: Project = serde_json::from_slice(&body).unwrap();
+    
+    assert_eq!(fetched_project.id, created_project.id);
+    assert_eq!(fetched_project.name, created_project.name);
+    println!("✅ Project fetched successfully");
     
     // Test 3: List all projects
     println!("\n📮 GET /projects");
@@ -125,25 +97,25 @@ async fn test_project_api_endpoints() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let list_response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let project_list: mira_backend::project::types::ProjectsResponse = serde_json::from_slice(&body).unwrap();
     
-    assert_eq!(list_response["total"], 1);
-    assert_eq!(list_response["projects"][0]["id"], created_project.id);
-    println!("✅ Projects listed");
+    assert_eq!(project_list.total, 1);
+    assert_eq!(project_list.projects.len(), 1);
+    println!("✅ Project list retrieved");
     
     // Test 4: Update project
-    println!("\n📮 PUT /project/{}", created_project.id);
+    println!("\n📮 PUT /projects/{}", created_project.id);
     let update_request = UpdateProjectRequest {
         name: Some("Updated API Project".to_string()),
         description: Some("Updated via API test".to_string()),
-        tags: None,
+        tags: Some(vec!["updated".to_string()]),
     };
     
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri(format!("/project/{}", created_project.id))
+                .uri(format!("/projects/{}", created_project.id))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&update_request).unwrap()))
                 .unwrap()
@@ -162,19 +134,19 @@ async fn test_project_api_endpoints() {
     println!("✅ Project updated");
     
     // Test 5: Create artifact
-    println!("\n📮 POST /artifact");
+    println!("\n📮 POST /artifacts");
     let artifact_request = CreateArtifactRequest {
         project_id: created_project.id.clone(),
-        name: "test.md".to_string(),
-        artifact_type: mira_backend::project::types::ArtifactType::Markdown,
-        content: Some("# Test Artifact\n\nCreated via API".to_string()),
+        name: "test_api.rs".to_string(),
+        artifact_type: mira_backend::project::types::ArtifactType::Code,
+        content: Some("// API test artifact".to_string()),
     };
     
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/artifact")
+                .uri("/artifacts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&artifact_request).unwrap()))
                 .unwrap()
@@ -192,12 +164,12 @@ async fn test_project_api_endpoints() {
     println!("✅ Artifact created: {}", created_artifact.id);
     
     // Test 6: List project artifacts
-    println!("\n📮 GET /project/{}/artifacts", created_project.id);
+    println!("\n📮 GET /projects/{}/artifacts", created_project.id);
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/project/{}/artifacts", created_project.id))
+                .uri(format!("/projects/{}/artifacts", created_project.id))
                 .body(Body::empty())
                 .unwrap()
         )
@@ -209,18 +181,18 @@ async fn test_project_api_endpoints() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let artifacts_response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let artifacts_list: mira_backend::project::types::ArtifactsResponse = serde_json::from_slice(&body).unwrap();
     
-    assert_eq!(artifacts_response["total"], 1);
+    assert_eq!(artifacts_list.total, 1);
     println!("✅ Artifacts listed");
     
-    // Test 7: Delete project (should cascade delete artifacts)
-    println!("\n📮 DELETE /project/{}", created_project.id);
+    // Test 7: Delete project
+    println!("\n📮 DELETE /projects/{}", created_project.id);
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(format!("/project/{}", created_project.id))
+                .uri(format!("/projects/{}", created_project.id))
                 .body(Body::empty())
                 .unwrap()
         )
@@ -231,12 +203,12 @@ async fn test_project_api_endpoints() {
     println!("✅ Project deleted");
     
     // Test 8: Verify project is gone
-    println!("\n📮 GET /project/{} (should 404)", created_project.id);
+    println!("\n📮 GET /projects/{} (should 404)", created_project.id);
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/project/{}", created_project.id))
+                .uri(format!("/projects/{}", created_project.id))
                 .body(Body::empty())
                 .unwrap()
         )
@@ -254,12 +226,12 @@ async fn test_invalid_requests() {
     println!("🚫 Testing error handling...");
     
     // Test 1: Get non-existent project
-    println!("\n📮 GET /project/non-existent-id");
+    println!("\n📮 GET /projects/non-existent-id");
     let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/project/non-existent-id")
+                .uri("/projects/non-existent-id")
                 .body(Body::empty())
                 .unwrap()
         )
@@ -270,7 +242,7 @@ async fn test_invalid_requests() {
     println!("✅ 404 for non-existent project");
     
     // Test 2: Create artifact for non-existent project
-    println!("\n📮 POST /artifact (invalid project)");
+    println!("\n📮 POST /artifacts (invalid project)");
     let artifact_request = CreateArtifactRequest {
         project_id: "non-existent-project".to_string(),
         name: "test.txt".to_string(),
@@ -282,7 +254,7 @@ async fn test_invalid_requests() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/artifact")
+                .uri("/artifacts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_string(&artifact_request).unwrap()))
                 .unwrap()

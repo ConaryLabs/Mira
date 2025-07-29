@@ -1,3 +1,5 @@
+// src/handlers.rs
+
 use axum::{
     extract::{Json, Query, State},
     http::{HeaderMap, StatusCode},
@@ -8,13 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
-use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
-use crate::memory::recall::{build_context, RecallContext};
-use crate::llm::{OpenAIClient, EvaluateMemoryRequest, EvaluateMemoryResponse, emotional_weight, function_schema};
-use crate::persona::{PersonaOverlay};
-use crate::prompt::builder::build_system_prompt;
+use crate::llm::OpenAIClient;
+use crate::persona::PersonaOverlay;
 use crate::project::store::ProjectStore;
+use crate::services::{ChatService, MemoryService, ContextService};
 use chrono::{Utc, TimeZone};
 use sqlx::Row;
 
@@ -22,7 +22,7 @@ use sqlx::Row;
 pub struct ChatRequest {
     pub message: String,
     pub persona_override: Option<String>,
-    pub project_id: Option<String>, // NEW: Optional project context
+    pub project_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -49,7 +49,7 @@ pub struct ChatHistoryResponse {
 pub struct HistoryQuery {
     pub limit: Option<usize>,
     pub offset: Option<i64>,
-    pub project_id: Option<String>, // NEW: Filter by project
+    pub project_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -57,9 +57,14 @@ pub struct AppState {
     pub sqlite_store: Arc<SqliteMemoryStore>,
     pub qdrant_store: Arc<QdrantMemoryStore>,
     pub llm_client: Arc<OpenAIClient>,
-    pub project_store: Arc<ProjectStore>, // NEW: Add project store
+    pub project_store: Arc<ProjectStore>,
     pub git_store: crate::git::GitStore,
     pub git_client: crate::git::GitClient,
+    
+    // Add services
+    pub chat_service: Arc<ChatService>,
+    pub memory_service: Arc<MemoryService>,
+    pub context_service: Arc<ContextService>,
 }
 
 pub async fn chat_handler(
@@ -69,237 +74,50 @@ pub async fn chat_handler(
 ) -> Response {
     let session_id = "peter-eternal".to_string();
     eprintln!("Using eternal session: {}", session_id);
-
-    // --- 1. Get embedding for the user message (for semantic search) ---
-    eprintln!("📊 Getting embedding for user message...");
-    let user_embedding = match state.llm_client.get_embedding(&payload.message).await {
-        Ok(emb) => {
-            eprintln!("✅ Embedding generated successfully (length: {})", emb.len());
-            Some(emb)
-        },
-        Err(e) => {
-            eprintln!("❌ Failed to get embedding: {:?}", e);
-            None
-        }
-    };
-
-    // --- 2. Build recall context using BOTH memory stores ---
-    let recall_context = build_context(
-        &session_id,
-        user_embedding.as_deref(),
-        30,  // INCREASED - recent messages
-        15,  // INCREASED - semantic matches
-        state.sqlite_store.as_ref(),
-        state.qdrant_store.as_ref(),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        eprintln!("⚠️ Failed to build recall context: {:?}", e);
-        RecallContext::new(vec![], vec![])
-    });
-
-    eprintln!("📚 Recall context: {} recent, {} semantic", 
-        recall_context.recent.len(), 
-        recall_context.semantic.len()
-    );
     
-    // Log the recent messages to see what's being loaded
-    eprintln!("📜 Recent messages in context:");
-    for (i, msg) in recall_context.recent.iter().enumerate() {
-        eprintln!("  {}. [{}] {} - {}", 
-            i+1, 
-            msg.role, 
-            msg.timestamp.format("%H:%M:%S"),
-            msg.content.chars().take(80).collect::<String>()
-        );
-    }
+    // Parse persona
+    let persona = payload.persona_override
+        .as_deref()
+        .and_then(|s| s.parse::<PersonaOverlay>().ok())
+        .unwrap_or(PersonaOverlay::Default);
     
-    // Also log semantic matches if any
-    if !recall_context.semantic.is_empty() {
-        eprintln!("🔍 Semantic matches:");
-        for (i, msg) in recall_context.semantic.iter().take(5).enumerate() {
-            eprintln!("  {}. [salience: {}] {}", 
-                i+1, 
-                msg.salience.unwrap_or(0.0),
-                msg.content.chars().take(80).collect::<String>()
-            );
+    // Call service
+    match state.chat_service
+        .process_message(
+            &session_id,
+            &payload.message,
+            &persona,
+            payload.project_id.as_deref(),
+        )
+        .await
+    {
+        Ok(response) => {
+            // Convert service response to API response
+            let reply = ChatReply {
+                output: response.output,
+                persona: response.persona,
+                mood: response.mood,
+                salience: response.salience,
+                summary: response.summary,
+                memory_type: response.memory_type,
+                tags: response.tags,
+                intent: response.intent,
+                monologue: response.monologue,
+                reasoning_summary: response.reasoning_summary,
+            };
+            
+            eprintln!("🎉 Chat handler complete, returning response");
+            Json(reply).into_response()
         }
-    }
-
-    // --- 3. Determine persona overlay ---
-    let persona_overlay = if let Some(ref override_str) = payload.persona_override {
-        override_str.parse::<PersonaOverlay>().unwrap_or(PersonaOverlay::Default)
-    } else {
-        PersonaOverlay::Default
-    };
-
-    // --- 4. Build system prompt with persona and memory context ---
-    let system_prompt = build_system_prompt(&persona_overlay, &recall_context);
-
-    // --- 5. Moderate user message (log-only) ---
-    let _ = state.llm_client.moderate(&payload.message).await;
-
-    // --- 6. Get emotional weight for auto model routing ---
-    let emotional_weight = match emotional_weight::classify(&state.llm_client, &payload.message).await {
-        Ok(val) => {
-            eprintln!("🎭 Emotional weight: {}", val);
-            val
-        },
         Err(e) => {
-            eprintln!("Failed to classify emotional weight: {}", e);
-            0.0
-        }
-    };
-    let model = if emotional_weight > 0.95 {
-        "o3"
-    } else if emotional_weight > 0.6 {
-        "o4-mini"
-    } else {
-        "gpt-4.1"
-    };
-
-    eprintln!("🤖 Using model: {}", model);
-
-    // --- 7. Call LLM with chosen model and persona-aware system prompt ---
-    let mira_reply = match state.llm_client.chat_with_custom_prompt(&payload.message, model, &system_prompt).await {
-        Ok(resp) => resp,
-        Err(e) => {
-            eprintln!("Failed to call OpenAI: {}", e);
-            return Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body(axum::body::Body::from("Service temporarily unavailable"))
+            eprintln!("Chat service error: {:?}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::from("Internal server error"))
                 .unwrap()
-                .into_response();
-        }
-    };
-
-    // --- 8. Save user message to both stores ---
-    eprintln!("💾 Saving user message to memory stores...");
-    let user_entry = MemoryEntry {
-        id: None,
-        session_id: session_id.clone(),
-        role: "user".to_string(),
-        content: payload.message.clone(),
-        timestamp: Utc::now(),
-        embedding: user_embedding.clone(),
-        salience: None,
-        tags: None,
-        summary: None,
-        memory_type: None,
-        logprobs: None,
-        moderation_flag: None,
-        system_fingerprint: None,
-    };
-
-    // Save to SQLite (always)
-    match state.sqlite_store.save(&user_entry).await {
-        Ok(_) => eprintln!("✅ User message saved to SQLite"),
-        Err(e) => eprintln!("❌ FAILED to save user message to SQLite: {:?}", e),
-    }
-
-    // --- 9. Evaluate Mira's reply for metadata (salience, summary, etc.) ---
-    eprintln!("📝 Evaluating Mira's reply...");
-    let eval_request = EvaluateMemoryRequest {
-        content: format!(
-            "User: {}\nMira: {}",
-            &payload.message, &mira_reply.output
-        ),
-        function_schema: function_schema(), // Use the default schema function
-    };
-
-    let eval_response = match state.llm_client.evaluate_memory(&eval_request).await {
-        Ok(resp) => {
-            eprintln!("✅ Memory evaluation complete - salience: {}, memory_type: {:?}", 
-                resp.salience, resp.memory_type
-            );
-            resp
-        }
-        Err(e) => {
-            eprintln!("⚠️ Memory evaluation failed: {:?}", e);
-            EvaluateMemoryResponse {
-                salience: 0,
-                summary: None,
-                memory_type: crate::llm::schema::MemoryType::Other,
-                tags: vec![],
-            }
-        }
-    };
-
-    // --- 10. Get embedding for Mira's reply (if salience >= 7) ---
-    let mira_embedding = if eval_response.salience >= 7 {
-        eprintln!("🌟 High salience response ({}), generating embedding...", eval_response.salience);
-        match state.llm_client.get_embedding(&mira_reply.output).await {
-            Ok(emb) => {
-                eprintln!("✅ Embedding generated for Mira's response");
-                Some(emb)
-            }
-            Err(e) => {
-                eprintln!("❌ Failed to get embedding for Mira's response: {:?}", e);
-                None
-            }
-        }
-    } else {
-        eprintln!("💭 Low salience response ({}), skipping embedding", eval_response.salience);
-        None
-    };
-
-    // --- 11. Save Mira's reply to memory stores ---
-    let memory_type_for_db = match eval_response.memory_type {
-        crate::llm::schema::MemoryType::Feeling => crate::memory::types::MemoryType::Feeling,
-        crate::llm::schema::MemoryType::Fact => crate::memory::types::MemoryType::Fact,
-        crate::llm::schema::MemoryType::Joke => crate::memory::types::MemoryType::Joke,
-        crate::llm::schema::MemoryType::Promise => crate::memory::types::MemoryType::Promise,
-        crate::llm::schema::MemoryType::Event => crate::memory::types::MemoryType::Event,
-        crate::llm::schema::MemoryType::Other => crate::memory::types::MemoryType::Other,
-    };
-
-    let mira_entry = MemoryEntry {
-        id: None,
-        session_id: session_id.clone(),
-        role: "assistant".to_string(),
-        content: mira_reply.output.clone(),
-        timestamp: Utc::now(),
-        embedding: mira_embedding.clone(),
-        salience: Some(eval_response.salience as f32),
-        tags: Some(eval_response.tags.clone()),
-        summary: eval_response.summary.clone(),
-        memory_type: Some(memory_type_for_db),
-        logprobs: None,
-        moderation_flag: None,
-        system_fingerprint: None,
-    };
-
-    // Always save to SQLite
-    eprintln!("💾 Saving Mira's response to SQLite...");
-    match state.sqlite_store.save(&mira_entry).await {
-        Ok(_) => eprintln!("✅ Mira's response saved to SQLite"),
-        Err(e) => eprintln!("❌ FAILED to save Mira's response to SQLite: {:?}", e),
-    }
-    
-    if mira_embedding.is_some() {
-        eprintln!("🔍 Saving Mira's response to Qdrant...");
-        match state.qdrant_store.save(&mira_entry).await {
-            Ok(_) => eprintln!("✅ Mira's response saved to Qdrant"),
-            Err(e) => eprintln!("❌ FAILED to save Mira's response to Qdrant: {:?}", e),
+                .into_response()
         }
     }
-
-    // --- 12. Build API response from structured output ---
-    let reply = ChatReply {
-        output: mira_reply.output,
-        persona: persona_overlay.to_string(),   // <<< FIXED: always return overlay, not LLM output
-        mood: mira_reply.mood,
-        salience: mira_reply.salience,
-        summary: mira_reply.summary,
-        memory_type: mira_reply.memory_type,
-        tags: mira_reply.tags,
-        intent: mira_reply.intent,
-        monologue: mira_reply.monologue,
-        reasoning_summary: mira_reply.reasoning_summary,
-    };
-
-    eprintln!("🎉 Chat handler complete, returning response");
-    Json(reply).into_response()
 }
 
 pub async fn chat_history_handler(

@@ -9,6 +9,12 @@ async fn ws_connects_and_accepts_message() {
     let url = "ws://localhost:8080/ws/chat";
     let (mut ws, _resp) = connect_async(url).await.expect("WS connect failed");
 
+    // First, consume the greeting message
+    if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+        let _greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        // Greeting received, now send our message
+    }
+
     let client_msg = json!({
         "type": "message",
         "content": "Hey Mira, are you alive?",
@@ -41,53 +47,49 @@ async fn ws_rejects_malformed_input() {
     let url = "ws://localhost:8080/ws/chat";
     let (mut ws, _resp) = connect_async(url).await.expect("WS connect failed");
 
+    // First, consume the greeting message
+    if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+        let _greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        // Greeting received, now send malformed JSON
+    }
+
     ws.send(tokio_tungstenite::tungstenite::Message::Text("not json".to_string().into())).await.unwrap();
 
-    // Use timeout to prevent hanging
-    let timeout = tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
-        ws.next()
-    ).await;
+    // Look for error response, might need to skip other messages
+    let mut found_error = false;
+    for _ in 0..5 {
+        let timeout = tokio::time::timeout(
+            tokio::time::Duration::from_secs(1),
+            ws.next()
+        ).await;
 
-    match timeout {
-        Ok(Some(Ok(msg))) => {
-            match msg {
-                tokio_tungstenite::tungstenite::Message::Text(text) => {
-                    // The handler sends an error response for malformed JSON
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                        assert_eq!(v["type"], "error");
-                        assert_eq!(v["code"], "PARSE_ERROR");
-                    } else {
-                        // If we can't parse the response, fail the test
-                        panic!("Expected JSON error response, got: {}", text);
+        match timeout {
+            Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))) => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if v["type"] == "error" && v["code"] == "PARSE_ERROR" {
+                        found_error = true;
+                        break;
                     }
-                }
-                tokio_tungstenite::tungstenite::Message::Close(_) => {
-                    // Server closed connection on malformed input - this is also acceptable
-                }
-                _ => {
-                    // Any other message type is acceptable for error handling
-                    // The server might send different types of messages
+                    // Skip any other messages (like chunks)
                 }
             }
-        }
-        Ok(Some(Err(_))) => {
-            // Connection error - also acceptable for malformed input
-        }
-        Ok(None) => {
-            // Connection closed - acceptable
-        }
-        Err(_) => {
-            // Timeout - the handler doesn't respond to malformed input
-            // This is actually fine behavior - just ignore bad messages
+            _ => break, // Connection closed or timeout
         }
     }
+    
+    assert!(found_error, "Expected error response for malformed JSON");
 }
 
 #[tokio::test]
 async fn ws_handles_typing_indicator() {
     let url = "ws://localhost:8080/ws/chat";
     let (mut ws, _resp) = connect_async(url).await.expect("WS connect failed");
+
+    // First, consume the greeting message
+    if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
+        let _greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        // Greeting received, now send typing indicator
+    }
 
     let typing_msg = serde_json::json!({
         "type": "typing",

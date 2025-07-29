@@ -1,4 +1,8 @@
-// tests/sprint2_features.rs - Updated persona switching test
+// tests/sprint2_features.rs
+
+use serde_json::json;
+use tokio_tungstenite::connect_async;
+use futures::{StreamExt, SinkExt};
 
 #[tokio::test]
 #[ignore] // Requires running server with full WebSocket implementation

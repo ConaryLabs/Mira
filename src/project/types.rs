@@ -1,3 +1,5 @@
+// src/project/types.rs
+
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
@@ -93,13 +95,13 @@ pub struct UpdateArtifactRequest {
     pub content: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProjectsResponse {
     pub projects: Vec<Project>,
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ArtifactsResponse {
     pub artifacts: Vec<Artifact>,
     pub total: usize,
