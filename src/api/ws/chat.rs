@@ -1,5 +1,3 @@
-// src/api/ws/chat.rs
-
 use axum::{
     extract::{WebSocketUpgrade, State},
     response::IntoResponse,
@@ -9,7 +7,6 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
-// Removed unused imports
 use chrono::Utc;
 
 use crate::handlers::AppState;
@@ -29,21 +26,21 @@ pub async fn ws_chat_handler(
 async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     let session_id = "peter-eternal".to_string();
     eprintln!("WebSocket connected for session: {}", session_id);
-    
+
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
-    
+
     // Track connection state
     let mut current_mood = "attentive".to_string();
     let current_persona = PersonaOverlay::Default;
     let mut active_project_id: Option<String> = None;
-    
+
     // Send initial greeting chunk instead of Connected message
     let greeting_msg = WsServerMessage::Chunk {
         content: "Connected! How can I help you today?".to_string(),
         mood: Some("attentive".to_string()),
     };
-    
+
     {
         let mut sender_guard = sender.lock().await;
         if let Err(e) = sender_guard.send(Message::Text(
@@ -53,7 +50,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
             return;
         }
     }
-    
+
     // Setup heartbeat
     let sender_clone = sender.clone();
     let (heartbeat_shutdown_tx, mut heartbeat_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -72,7 +69,6 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             break;
                         }
                     }
-                    // Drop the guard immediately after use
                     drop(sender_guard);
                 }
                 _ = heartbeat_shutdown_rx.recv() => {
@@ -83,41 +79,41 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
         }
         eprintln!("Heartbeat task ended");
     });
-    
+
     // Main message handling loop
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
                 eprintln!("Received WebSocket message: {}", text);
-                
+
                 let incoming: Result<WsClientMessage, _> = serde_json::from_str(&text);
                 match incoming {
                     Ok(WsClientMessage::Message { content, persona: _, project_id }) => {
                         eprintln!("Processing message: {}", content);
-                        
+
                         // NOTE: Ignoring persona field - personas emerge naturally
-                        
+
                         // Update active project if specified
                         if project_id.is_some() {
                             active_project_id = project_id.clone();
                         }
-                        
+
                         // Send immediate acknowledgment (no persona shown)
                         let thinking_msg = WsServerMessage::Chunk {
                             content: "".to_string(),
                             mood: Some("thinking".to_string()),
                         };
-                        
+
                         {
                             let mut sender_guard = sender.lock().await;
                             if let Err(e) = sender_guard.send(Message::Text(
                                 serde_json::to_string(&thinking_msg).unwrap()
                             )).await {
                                 eprintln!("Failed to send thinking message: {}", e);
-                                break; // Connection is broken, exit the loop
+                                break;
                             }
                         }
-                        
+
                         // Handle the message
                         stream_chat_response(
                             sender.clone(),
@@ -129,12 +125,11 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             active_project_id.as_deref(),
                         ).await;
                     }
-                    
+
                     Ok(WsClientMessage::Typing { .. }) => {
-                        // Ignore typing indicators for now
                         eprintln!("Received typing indicator");
                     }
-                    
+
                     Err(e) => {
                         eprintln!("Failed to parse WebSocket message: {}", e);
                         let error_msg = WsServerMessage::Error {
@@ -165,13 +160,13 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
             _ => {}
         }
     }
-    
+
     // Signal heartbeat to stop
     let _ = heartbeat_shutdown_tx.send(()).await;
-    
+
     // Wait for heartbeat task to finish (with timeout)
     let _ = tokio::time::timeout(Duration::from_secs(1), heartbeat_handle).await;
-    
+
     eprintln!("WebSocket handler ended for session: {}", session_id);
 }
 
@@ -186,7 +181,7 @@ async fn stream_chat_response(
 ) {
     eprintln!("[{}] Starting chat response stream for: {}", Utc::now(), content);
     eprintln!("Using persona internally: {}", persona);
-    
+
     // Use the chat service with timeout
     let response = match timeout(
         Duration::from_secs(30),
@@ -233,7 +228,7 @@ async fn stream_chat_response(
     let output = response.output.clone();
     let words: Vec<&str> = output.split_whitespace().collect();
     let chunk_size = 5; // Words per chunk
-    
+
     for (i, chunk) in words.chunks(chunk_size).enumerate() {
         let is_first = i == 0;
         let chunk_text = if is_first {
@@ -241,33 +236,32 @@ async fn stream_chat_response(
         } else {
             format!(" {}", chunk.join(" "))
         };
-        
+
         // Send chunk WITHOUT persona info
         let chunk_msg = WsServerMessage::Chunk {
             content: chunk_text,
             mood: Some(current_mood.clone()),
         };
-        
+
         {
             let mut sender_guard = sender.lock().await;
             if let Err(e) = sender_guard.send(Message::Text(
                 serde_json::to_string(&chunk_msg).unwrap()
             )).await {
                 eprintln!("Failed to send chunk: {}", e);
-                return; // Stop streaming if connection is broken
+                return;
             }
         }
-        
-        // Small delay between chunks for streaming effect
+
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    
-    // Send emotional asides if present
+
+    // Send emotional asides if present (with correct Option<f32> type!)
     if let Some(monologue) = &response.monologue {
         if !monologue.is_empty() {
             let aside_msg = WsServerMessage::Aside {
                 emotional_cue: monologue.clone(),
-                intensity: response.aside_intensity,
+                intensity: Some(response.aside_intensity.unwrap_or(0.0)),
             };
             let mut sender_guard = sender.lock().await;
             let _ = sender_guard.send(Message::Text(
@@ -275,7 +269,7 @@ async fn stream_chat_response(
             )).await;
         }
     }
-    
+
     // Send done message
     let done_msg = WsServerMessage::Done;
     {

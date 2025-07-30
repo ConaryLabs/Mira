@@ -95,4 +95,17 @@ pub struct MiraStructuredReply {
     pub intent: String,                     // User's intent (e.g. "seeking advice", "casual chat", "emotional support")
     pub monologue: Option<String>,          // Internal thought/aside (e.g., "*heart fluttering*" or "*voice catching*")
     pub reasoning_summary: Option<String>,  // Summary of Mira's reasoning process
+    pub aside_intensity: Option<i32>,       // Emotional intensity of aside (None if not present)
+}
+
+/// Alias: for backward compatibility in service/handler code
+pub type ChatResponse = MiraStructuredReply;
+
+/// Standard chat request struct for handler/service usage.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChatRequest {
+    pub session_id: String,
+    pub message: String,
+    pub persona_override: Option<String>,
+    pub project_id: Option<String>,
 }
