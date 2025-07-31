@@ -11,6 +11,7 @@ pub mod streaming;
 pub mod schema;
 pub mod intent;
 pub mod emotional_weight;
+pub mod assistant;
 
 // Re-export the main client and commonly used types
 pub use client::OpenAIClient;
@@ -25,4 +26,11 @@ pub use schema::{
 pub use intent::{
     ChatIntent,
     chat_intent_function_schema,
+};
+
+// Re-export assistant module types for convenience
+pub use assistant::{
+    AssistantManager,
+    VectorStoreManager,
+    ThreadManager,
 };

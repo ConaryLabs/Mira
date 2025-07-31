@@ -259,9 +259,14 @@ async fn stream_chat_response(
     // Send emotional asides if present (with correct Option<f32> type!)
     if let Some(monologue) = &response.monologue {
         if !monologue.is_empty() {
+            // Fix: Convert Option<i32> to Option<f32>
+            let intensity = response.aside_intensity
+                .map(|i| i as f32)  // Convert i32 to f32
+                .unwrap_or(0.0);    // Default to 0.0 if None
+            
             let aside_msg = WsServerMessage::Aside {
                 emotional_cue: monologue.clone(),
-                intensity: Some(response.aside_intensity.unwrap_or(0.0)),
+                intensity: Some(intensity),
             };
             let mut sender_guard = sender.lock().await;
             let _ = sender_guard.send(Message::Text(

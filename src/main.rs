@@ -99,10 +99,9 @@ async fn main() -> anyhow::Result<()> {
         qdrant_store.clone(),
     ));
 
+    // Fix: ChatService::new() only takes llm_client
     let chat_service = Arc::new(ChatService::new(
         llm_client.clone(),
-        memory_service.clone(),
-        context_service.clone(),
     ));
 
     // --- Create App State ---
