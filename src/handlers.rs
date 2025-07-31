@@ -12,9 +12,10 @@ use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::llm::OpenAIClient;
+use crate::llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager};
 use crate::persona::PersonaOverlay;
 use crate::project::store::ProjectStore;
-use crate::services::{ChatService, MemoryService, ContextService};
+use crate::services::{ChatService, MemoryService, ContextService, HybridMemoryService, DocumentService};
 use chrono::{Utc, TimeZone};
 use sqlx::Row;
 
@@ -54,6 +55,7 @@ pub struct HistoryQuery {
 
 #[derive(Clone)]
 pub struct AppState {
+    // Existing storage fields
     pub sqlite_store: Arc<SqliteMemoryStore>,
     pub qdrant_store: Arc<QdrantMemoryStore>,
     pub llm_client: Arc<OpenAIClient>,
@@ -61,10 +63,17 @@ pub struct AppState {
     pub git_store: crate::git::GitStore,
     pub git_client: crate::git::GitClient,
     
-    // Add services
+    // Service layer
     pub chat_service: Arc<ChatService>,
     pub memory_service: Arc<MemoryService>,
     pub context_service: Arc<ContextService>,
+    
+    // New hybrid memory components
+    pub assistant_manager: Arc<AssistantManager>,
+    pub vector_store_manager: Arc<VectorStoreManager>,
+    pub thread_manager: Arc<ThreadManager>,
+    pub hybrid_service: Arc<HybridMemoryService>,
+    pub document_service: Arc<DocumentService>,
 }
 
 pub async fn chat_handler(
@@ -81,16 +90,30 @@ pub async fn chat_handler(
         .and_then(|s| s.parse::<PersonaOverlay>().ok())
         .unwrap_or(PersonaOverlay::Default);
     
-    // Call service
-    match state.chat_service
-        .process_message(
-            &session_id,
-            &payload.message,
-            &persona,
-            payload.project_id.as_deref(),
-        )
-        .await
-    {
+    // Use hybrid processing if project context exists
+    let response = if payload.project_id.is_some() {
+        eprintln!("🔄 Using hybrid memory for project: {:?}", payload.project_id);
+        state.hybrid_service
+            .process_with_hybrid_memory(
+                &session_id,
+                &payload.message,
+                &persona,
+                payload.project_id.as_deref(),
+            )
+            .await
+    } else {
+        // Use regular flow for non-project conversations
+        state.chat_service
+            .process_message(
+                &session_id,
+                &payload.message,
+                &persona,
+                None,
+            )
+            .await
+    };
+    
+    match response {
         Ok(response) => {
             // Convert service response to API response
             let reply = ChatReply {

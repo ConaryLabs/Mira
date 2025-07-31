@@ -37,7 +37,7 @@ pub struct VectorStoreResponse {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct UploadFileResponse {
+pub struct FileResponse {
     pub id: String,
     // Add more as needed
 }
@@ -101,52 +101,73 @@ impl VectorStoreManager {
         project_id: &str,
         file_path: PathBuf,
     ) -> Result<String> {
+        // First, get the vector store ID
         let stores = self.stores.read().await;
         let store_info = stores.get(project_id)
-            .ok_or_else(|| anyhow::anyhow!("No vector store for project"))?;
-
-        // Upload file to OpenAI files endpoint (multipart)
-        let file = tokio::fs::File::open(&file_path).await?;
-        let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("upload");
+            .ok_or_else(|| anyhow::anyhow!("Vector store not found for project: {}", project_id))?;
+        let store_id = store_info.id.clone();
+        drop(stores);
+        
+        // Read file content
+        let file_content = tokio::fs::read(&file_path).await
+            .context("Failed to read file")?;
+        
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("document");
+        
+        // Create multipart form for file upload
         let form = reqwest::multipart::Form::new()
-            .file("file", &file_path)
-            .context("Failed to create multipart file form")?
-            .text("purpose", "assistants");
-
-        let upload_res = self.client
+            .text("purpose", "assistants")
+            .part("file", reqwest::multipart::Part::bytes(file_content)
+                .file_name(file_name.to_string()));
+        
+        // Use the request_multipart method from OpenAIClient
+        let file_res = self.client
             .request_multipart("files")
             .multipart(form)
             .send()
             .await
-            .context("Failed to send file upload request")?
+            .context("Failed to upload file")?
             .error_for_status()
-            .context("Non-2xx from OpenAI on file upload")?
-            .json::<UploadFileResponse>()
+            .context("Non-2xx from OpenAI when uploading file")?
+            .json::<FileResponse>()
             .await
             .context("Failed to parse file upload response")?;
-
-        // Attach file to the vector store
+        
+        // Add file to vector store
         let add_req = AddFileToVectorStoreRequest {
-            file_id: upload_res.id.clone(),
+            file_id: file_res.id.clone(),
         };
+        
         self.client
-            .request(Method::POST, &format!("vector_stores/{}/files", store_info.id))
+            .request(Method::POST, &format!("vector_stores/{}/files", store_id))
             .json(&add_req)
             .send()
             .await
-            .context("Failed to attach file to vector store")?
+            .context("Failed to add file to vector store")?
             .error_for_status()
-            .context("Non-2xx from OpenAI on add file to vector store")?;
-
-        // (Optional: update file_ids in memory)
-        drop(stores); // release read lock before write
+            .context("Non-2xx from OpenAI when adding file to vector store")?;
+        
+        // Update our local tracking
         let mut stores = self.stores.write().await;
-        if let Some(store) = stores.get_mut(project_id) {
-            store.file_ids.push(upload_res.id.clone());
+        if let Some(info) = stores.get_mut(project_id) {
+            info.file_ids.push(file_res.id.clone());
         }
-
-        Ok(upload_res.id)
+        
+        Ok(file_res.id)
     }
-
-    // Optional: Add more management methods as needed.
+    
+    /// Get vector store info for a project
+    pub async fn get_store_info(&self, project_id: &str) -> Option<VectorStoreInfo> {
+        self.stores.read().await.get(project_id).cloned()
+    }
+    
+    /// List all vector stores
+    pub async fn list_stores(&self) -> Vec<(String, VectorStoreInfo)> {
+        self.stores.read().await
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
 }

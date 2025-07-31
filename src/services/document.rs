@@ -2,8 +2,9 @@
 
 use crate::llm::assistant::VectorStoreManager;
 use crate::services::{MemoryService, ChatService};
+use crate::llm::schema::MiraStructuredReply;
 use std::sync::Arc;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use anyhow::{Result, Context};
 use serde::{Serialize, Deserialize};
 
@@ -15,12 +16,14 @@ pub enum DocumentDestination {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct RoutingPrompt<'a> {
     file_name: &'a str,
     preview: &'a str,
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct RoutingResponse {
     destination: String,
 }
@@ -50,7 +53,7 @@ impl DocumentService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<()> {
-        let destination = self.llm_analyze_and_route(file_path, content).await?;
+        let destination = self.analyze_and_route(file_path, content).await?;
 
         match destination {
             DocumentDestination::PersonalMemory => {
@@ -82,7 +85,57 @@ impl DocumentService {
         Ok(())
     }
 
-    /// LLM-powered, robust routing based on file name and preview.
+    /// Analyze document and determine routing destination
+    async fn analyze_and_route(
+        &self,
+        file_path: &Path,
+        content: &str,
+    ) -> Result<DocumentDestination> {
+        let extension = file_path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        
+        let file_name = file_path.file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("document");
+        
+        // Simple heuristic-based routing (can be enhanced with LLM later)
+        
+        // Personal notes patterns
+        if file_name.contains("diary") || 
+           file_name.contains("personal") ||
+           file_name.contains("journal") ||
+           content.contains("diary") || 
+           content.contains("personal journal") {
+            return Ok(DocumentDestination::PersonalMemory);
+        }
+        
+        // Technical documentation patterns
+        if extension == "md" || 
+           extension == "pdf" || 
+           extension == "txt" ||
+           extension == "rs" ||
+           extension == "js" ||
+           extension == "py" {
+            // Check if it has personal markers
+            if content.len() < 1000 && content.contains("personal") {
+                return Ok(DocumentDestination::PersonalMemory);
+            }
+            return Ok(DocumentDestination::ProjectVectorStore);
+        }
+        
+        // Important mixed content
+        if content.len() > 5000 && 
+           (content.contains("insight") || content.contains("reflection")) {
+            return Ok(DocumentDestination::Both);
+        }
+        
+        // Default to project store
+        Ok(DocumentDestination::ProjectVectorStore)
+    }
+
+    /// LLM-powered routing (optional enhancement)
+    #[allow(dead_code)]
     async fn llm_analyze_and_route(
         &self,
         file_path: &Path,
@@ -102,25 +155,38 @@ impl DocumentService {
             file_name, preview
         );
 
-        // Use your existing LLM/chat pipeline.
-        let routing_raw = self.chat_service
-            .run_routing_inference(system_prompt, &user_prompt)
-            .await?;
-
-        // Expect a clean answer: "PersonalMemory", "ProjectVectorStore", or "Both"
-        let routing = routing_raw.trim().replace('\"', "");
-
-        match routing.as_str() {
-            "PersonalMemory" => Ok(DocumentDestination::PersonalMemory),
-            "ProjectVectorStore" => Ok(DocumentDestination::ProjectVectorStore),
-            "Both" => Ok(DocumentDestination::Both),
-            other => Err(anyhow::anyhow!("Invalid routing decision: {}", other)),
-        }
+        // This would need a proper inference method in ChatService
+        // For now, we'll use the heuristic method above
+        let _ = (system_prompt, user_prompt); // Suppress unused warnings
+        
+        // Fallback to heuristic routing
+        self.analyze_and_route(file_path, content).await
     }
 
-    /// Example: process for Qdrant (personal memory)
+    /// Process document content for personal memory storage
     async fn process_for_personal_memory(&self, content: &str) -> Result<()> {
-        self.memory_service.ingest_personal_note(content).await?;
+        // Create a MiraStructuredReply to save through MemoryService
+        let doc_response = MiraStructuredReply {
+            output: content.to_string(),
+            persona: "system".to_string(),
+            mood: "neutral".to_string(),
+            salience: 7, // High salience for documents
+            summary: Some("Imported document".to_string()),
+            memory_type: "fact".to_string(),
+            tags: vec!["document".to_string(), "imported".to_string()],
+            intent: "document_import".to_string(),
+            monologue: None,
+            reasoning_summary: None,
+            aside_intensity: None,
+        };
+        
+        // Use the memory service's evaluate_and_save_response method
+        self.memory_service.evaluate_and_save_response(
+            "document-import",
+            &doc_response,
+            None, // No project_id for personal memory
+        ).await?;
+        
         Ok(())
     }
 }

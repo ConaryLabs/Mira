@@ -1,74 +1,14 @@
 // src/services/hybrid.rs
 
 use crate::llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager};
-use crate::llm::persona::PersonaOverlay;
+use crate::llm::assistant::manager::ResponseMessage;
+use crate::persona::PersonaOverlay;
 use crate::services::{ChatService, MemoryService, ContextService};
-use crate::memory::types::MemoryEntry;
-use crate::llm::schema::{ChatResponse, MemoryType};
-use chrono::Utc;
+use crate::memory::recall::RecallContext;
+use crate::llm::schema::{ChatResponse, MiraStructuredReply};
 use anyhow::{Result, Context as AnyhowContext};
 use std::sync::Arc;
 use reqwest::Method;
-use serde::{Serialize, Deserialize};
-use tokio::time::{sleep, Duration};
-use std::time::Instant;
-
-#[derive(Serialize)]
-struct CreateMessageRequest {
-    pub role: String,
-    pub content: String,
-    // You could add additional fields like `attachments` here if needed.
-}
-
-#[derive(Deserialize)]
-struct MessageResponse {
-    pub id: String,
-    // ... more as needed
-}
-
-#[derive(Serialize)]
-struct CreateRunRequest {
-    pub assistant_id: String,
-    // Optionally, you could set instructions, tools, etc.
-}
-
-#[derive(Deserialize)]
-struct RunResponse {
-    pub id: String,
-    pub status: String,
-    // ... more as needed
-}
-
-#[derive(Deserialize)]
-struct RunStatusResponse {
-    pub status: String,
-    pub last_error: Option<RunError>,
-    // ... more as needed
-}
-
-#[derive(Deserialize)]
-struct RunError {
-    pub message: Option<String>,
-    // ... more as needed
-}
-
-#[derive(Deserialize)]
-struct ListMessagesResponse {
-    pub data: Vec<ThreadMessage>,
-}
-
-#[derive(Deserialize)]
-struct ThreadMessage {
-    pub role: String,
-    pub content: Vec<ThreadContent>,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", content = "text", rename_all = "snake_case")]
-enum ThreadContent {
-    Text(String),
-    // Add more variants if using images, etc.
-}
 
 pub struct HybridMemoryService {
     chat_service: Arc<ChatService>,
@@ -155,133 +95,121 @@ impl HybridMemoryService {
     fn enrich_message_with_context(
         &self,
         content: &str,
-        context: &str,
+        context: &RecallContext,
     ) -> String {
-        if context.is_empty() {
+        let mut context_parts = Vec::new();
+        
+        if !context.recent.is_empty() {
+            let recent_texts: Vec<String> = context.recent.iter()
+                .take(3)
+                .map(|m| format!("[{}]: {}", m.role, m.content.chars().take(100).collect::<String>()))
+                .collect();
+            context_parts.push(format!("Recent conversation:\n{}", recent_texts.join("\n")));
+        }
+        
+        if !context.semantic.is_empty() {
+            let semantic_texts: Vec<String> = context.semantic.iter()
+                .take(3)
+                .map(|m| format!("- {}", m.content.chars().take(100).collect::<String>()))
+                .collect();
+            context_parts.push(format!("Related memories:\n{}", semantic_texts.join("\n")));
+        }
+        
+        if context_parts.is_empty() {
             content.to_string()
         } else {
-            format!("{}\n\n[Personal Context:]\n{}", content, context)
+            format!("{}\n\n[Personal Context:]\n{}", content, context_parts.join("\n\n"))
         }
     }
 
-    /// FULLY IMPLEMENTED: Posts message to assistant thread, runs, polls for completion, and extracts LLM output.
+    /// Updated to use Responses API instead of deprecated Assistant API
     async fn run_assistant_with_context(
         &self,
-        thread_id: &str,
+        thread_id: &str,  // This is now just the session_id
         message: &str,
         _persona: &PersonaOverlay,
     ) -> Result<ChatResponse> {
-        let client = &self.chat_service.llm_client;
-
-        // 1. Post message to thread
-        let msg_req = CreateMessageRequest {
+        // 1. Get conversation history
+        let mut messages = self.thread_manager.get_conversation(thread_id).await;
+        
+        // 2. Add system message if history is empty
+        if messages.is_empty() {
+            messages.push(ResponseMessage {
+                role: "system".to_string(),
+                content: "You are a helpful document search assistant. Search through available documents to provide accurate and relevant information.".to_string(),
+            });
+        }
+        
+        // 3. Add the new user message
+        let user_msg = ResponseMessage {
             role: "user".to_string(),
             content: message.to_string(),
         };
-        let msg_res = client
-            .request(Method::POST, &format!("threads/{}/messages", thread_id))
-            .json(&msg_req)
-            .send()
-            .await
-            .context("Failed to post message to thread")?
-            .error_for_status()
-            .context("Non-2xx from OpenAI when posting message")?
-            .json::<MessageResponse>()
-            .await
-            .context("Failed to parse thread message response")?;
-
-        // 2. Start a run
-        let assistant_id = self
-            .assistant_manager
-            .get_assistant_id()
-            .ok_or_else(|| anyhow::anyhow!("Assistant ID not available"))?
-            .to_string();
-
-        let run_req = CreateRunRequest {
-            assistant_id,
-        };
-        let run_res = client
-            .request(Method::POST, &format!("threads/{}/runs", thread_id))
-            .json(&run_req)
-            .send()
-            .await
-            .context("Failed to start assistant run")?
-            .error_for_status()
-            .context("Non-2xx from OpenAI when starting run")?
-            .json::<RunResponse>()
-            .await
-            .context("Failed to parse run response")?;
-
-        // 3. Poll for run completion
-        let poll_start = Instant::now();
-        let mut status = run_res.status.clone();
-        let mut last_error: Option<RunError> = None;
-        let mut run_id = run_res.id.clone();
-        let max_wait = Duration::from_secs(60);
-
-        while status != "completed" && status != "failed" && poll_start.elapsed() < max_wait {
-            sleep(Duration::from_millis(900)).await;
-
-            let run_status = client
-                .request(Method::GET, &format!("threads/{}/runs/{}", thread_id, run_id))
+        messages.push(user_msg.clone());
+        self.thread_manager.add_message(thread_id, user_msg).await?;
+        
+        // 4. Get vector stores for this session
+        let vector_store_ids = self.thread_manager.get_session_stores(thread_id).await;
+        
+        // 5. Create response
+        let assistant_message = if !vector_store_ids.is_empty() {
+            eprintln!("🔍 Using Responses API with {} vector stores", vector_store_ids.len());
+            let response = self.assistant_manager
+                .create_response_with_vector_stores(messages, vector_store_ids)
+                .await?;
+                
+            response.choices
+                .first()
+                .map(|choice| choice.message.content.clone())
+                .unwrap_or_else(|| "I couldn't generate a response.".to_string())
+        } else {
+            eprintln!("💬 Using regular chat completion");
+            // If no vector stores, just use regular chat completion
+            let req = serde_json::json!({
+                "model": "gpt-4.1",
+                "messages": messages,
+                "temperature": 0.3,
+            });
+            
+            let response = self.chat_service.llm_client
+                .request(Method::POST, "chat/completions")
+                .json(&req)
                 .send()
                 .await
-                .context("Failed to poll run status")?
-                .error_for_status()
-                .context("Non-2xx from OpenAI when polling run status")?
-                .json::<RunStatusResponse>()
-                .await
-                .context("Failed to parse run status response")?;
-
-            status = run_status.status;
-            last_error = run_status.last_error;
-        }
-
-        if status != "completed" {
-            let msg = last_error
-                .and_then(|e| e.message)
-                .unwrap_or_else(|| "Unknown error or timeout from Assistant API".to_string());
-            return Err(anyhow::anyhow!(
-                "Assistant run failed or timed out: {}",
-                msg
-            ));
-        }
-
-        // 4. Fetch latest messages from the thread
-        let msgs = client
-            .request(Method::GET, &format!("threads/{}/messages?limit=10", thread_id))
-            .send()
-            .await
-            .context("Failed to fetch thread messages")?
-            .error_for_status()
-            .context("Non-2xx from OpenAI when fetching messages")?
-            .json::<ListMessagesResponse>()
-            .await
-            .context("Failed to parse messages response")?;
-
-        // 5. Extract assistant's response (latest non-user message)
-        let llm_message = msgs.data
-            .iter()
-            .rev()
-            .find(|m| m.role == "assistant")
-            .and_then(|m| m.content.iter().find_map(|c| match c {
-                ThreadContent::Text(txt) => Some(txt),
-                //_ => None,
-            }))
-            .cloned()
-            .unwrap_or_else(|| "No assistant response found".to_string());
-
-        // 6. Return as ChatResponse (populate only output for now; you can expand as needed)
+                .context("Failed to send chat request")?;
+                
+            if !response.status().is_success() {
+                let error_text = response.text().await?;
+                return Err(anyhow::anyhow!("Chat API error: {}", error_text));
+            }
+            
+            let result: serde_json::Value = response.json().await?;
+            result["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("I couldn't generate a response.")
+                .to_string()
+        };
+        
+        // 6. Save assistant response to conversation
+        let assistant_msg = ResponseMessage {
+            role: "assistant".to_string(),
+            content: assistant_message.clone(),
+        };
+        self.thread_manager.add_message(thread_id, assistant_msg).await?;
+        
+        // 7. Return as ChatResponse
         Ok(ChatResponse {
-            output: llm_message,
-            persona: Some("Assistant".to_string()),
-            mood: None,
-            salience: 5, // You can add LLM-driven scoring here if desired
-            tags: vec![],
-            memory_type: None,
-            intent: None,
+            output: assistant_message,
+            persona: "Assistant".to_string(),
+            mood: "neutral".to_string(),
+            salience: 5,
             summary: None,
+            memory_type: "general".to_string(),
+            tags: vec![],
+            intent: "response".to_string(),
             monologue: None,
+            reasoning_summary: None,
+            aside_intensity: None,
         })
     }
 
@@ -292,27 +220,33 @@ impl HybridMemoryService {
         project_id: Option<&str>,
     ) -> Result<()> {
         if response.salience >= 7 {
-            let insight = MemoryEntry {
-                id: None,
-                session_id: session_id.to_string(),
-                role: "system".to_string(),
-                content: format!(
+            eprintln!("💡 High-salience response ({}), syncing insight to personal memory", response.salience);
+            
+            let insight_response = MiraStructuredReply {
+                output: format!(
                     "Insight from project {}: {}",
                     project_id.unwrap_or("general"),
                     response.summary.as_ref().unwrap_or(&response.output)
                 ),
-                timestamp: Utc::now(),
-                embedding: self.chat_service.llm_client
-                    .get_embedding(&response.output)
-                    .await
-                    .ok(),
-                salience: Some(response.salience as f32),
-                tags: Some(vec!["insight".to_string(), "synced".to_string()]),
-                memory_type: Some(MemoryType::Event),
-                ..Default::default()
+                persona: "system".to_string(),
+                mood: "neutral".to_string(),
+                salience: response.salience,
+                summary: Some("Synced insight from assistant interaction".to_string()),
+                memory_type: "event".to_string(),
+                tags: vec!["insight".to_string(), "synced".to_string()],
+                intent: "system".to_string(),
+                monologue: None,
+                reasoning_summary: None,
+                aside_intensity: None,
             };
-            self.memory_service.qdrant_store.save(&insight).await?;
+            
+            self.memory_service.evaluate_and_save_response(
+                session_id,
+                &insight_response,
+                project_id,
+            ).await?;
         }
+        
         Ok(())
     }
 }

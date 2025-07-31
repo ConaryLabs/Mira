@@ -22,6 +22,7 @@ pub use schema::{
     MemoryType,
     function_schema,
     MiraStructuredReply,
+    ChatResponse,  // Also export ChatResponse since it's used in services
 };
 pub use intent::{
     ChatIntent,

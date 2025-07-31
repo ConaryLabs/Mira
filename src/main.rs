@@ -12,6 +12,7 @@ use mira_backend::{
     api::http::http_router,
     handlers::{AppState, chat_handler, chat_history_handler},
     llm::OpenAIClient,
+    llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager},
     memory::{
         sqlite::store::SqliteMemoryStore,
         qdrant::store::QdrantMemoryStore,
@@ -21,7 +22,7 @@ use mira_backend::{
         project_router,  // Import from project module, not handlers
     },
     git::{GitStore, GitClient},
-    services::{ChatService, MemoryService, ContextService},
+    services::{ChatService, MemoryService, ContextService, HybridMemoryService, DocumentService},
 };
 use tokio::net::TcpListener;
 use sqlx::SqlitePool;
@@ -104,6 +105,32 @@ async fn main() -> anyhow::Result<()> {
         llm_client.clone(),
     ));
 
+    // --- Initialize OpenAI Assistant Components ---
+    info!("🤖 Initializing OpenAI Assistant components...");
+    let mut assistant_manager = AssistantManager::new(llm_client.clone());
+    assistant_manager.create_assistant().await?;
+    let assistant_manager = Arc::new(assistant_manager);
+    
+    let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
+    let thread_manager = Arc::new(ThreadManager::new(llm_client.clone()));
+
+    // --- Initialize Hybrid Services ---
+    info!("🔄 Initializing hybrid memory services...");
+    let hybrid_service = Arc::new(HybridMemoryService::new(
+        chat_service.clone(),
+        memory_service.clone(),
+        context_service.clone(),
+        assistant_manager.clone(),
+        vector_store_manager.clone(),
+        thread_manager.clone(),
+    ));
+
+    let document_service = Arc::new(DocumentService::new(
+        vector_store_manager.clone(),
+        memory_service.clone(),
+        chat_service.clone(),
+    ));
+
     // --- Create App State ---
     let app_state = Arc::new(AppState {
         sqlite_store,
@@ -115,6 +142,11 @@ async fn main() -> anyhow::Result<()> {
         chat_service,
         memory_service,
         context_service,
+        assistant_manager,
+        vector_store_manager,
+        thread_manager,
+        hybrid_service,
+        document_service,
     });
 
     // --- Configure CORS ---
@@ -150,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
     info!("🚀 Mira backend listening on http://{addr}");
     info!("📦 SQLite: mira.db");
     info!("🔍 Qdrant: {}", qdrant_url);
+    info!("🤖 OpenAI Assistant: Initialized with file search");
     info!("🌐 WebSocket endpoint: ws://localhost:{}/ws/chat", port);
     info!("📜 Chat history endpoint: http://localhost:{}/chat/history", port);
     info!("📁 Project API: http://localhost:{}/projects", port);
