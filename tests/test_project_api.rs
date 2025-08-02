@@ -9,6 +9,7 @@ use mira_backend::project::types::{
     CreateProjectRequest, UpdateProjectRequest, 
     CreateArtifactRequest, Project, Artifact
 };
+use dotenv::dotenv;
 
 /// Helper to create a test app
 async fn create_test_app() -> axum::Router {
@@ -22,6 +23,9 @@ async fn create_test_app() -> axum::Router {
 
 #[tokio::test]
 async fn test_project_api_endpoints() {
+    // Load environment variables
+    dotenv().ok();
+    
     let app = create_test_app().await;
     
     println!("🌐 Testing Project REST API...");
@@ -221,6 +225,9 @@ async fn test_project_api_endpoints() {
 
 #[tokio::test]
 async fn test_invalid_requests() {
+    // Load environment variables
+    dotenv().ok();
+    
     let app = create_test_app().await;
     
     println!("🚫 Testing error handling...");

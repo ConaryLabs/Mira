@@ -1,13 +1,15 @@
 // tests/test_chat_persistence.rs
-
 mod test_helpers;
-
 use mira_backend::memory::traits::MemoryStore;
 use mira_backend::memory::types::MemoryEntry;
 use chrono::Utc;
+use dotenv::dotenv;
 
 #[tokio::test]
 async fn test_message_persistence() {
+    // Load environment variables from .env file
+    dotenv().ok();
+    
     println!("🧪 Testing message persistence...");
     
     let state = test_helpers::create_test_app_state().await;

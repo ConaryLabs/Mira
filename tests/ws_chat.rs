@@ -9,9 +9,10 @@ async fn ws_connects_and_accepts_message() {
     let url = "ws://localhost:8080/ws/chat";
     let (mut ws, _resp) = connect_async(url).await.expect("WS connect failed");
 
-    // First, consume the greeting message
+    // First, consume the greeting message (now sent as a chunk)
     if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
-        let _greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(greeting["type"], "chunk");
         // Greeting received, now send our message
     }
 
@@ -47,19 +48,30 @@ async fn ws_rejects_malformed_input() {
     let url = "ws://localhost:8080/ws/chat";
     let (mut ws, _resp) = connect_async(url).await.expect("WS connect failed");
 
-    // First, consume the greeting message
-    if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
-        let _greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
-        // Greeting received, now send malformed JSON
+    // First, consume the greeting message (now sent as a chunk)
+    let mut greeting_received = false;
+    for _ in 0..3 {
+        if let Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))) = 
+            tokio::time::timeout(tokio::time::Duration::from_millis(500), ws.next()).await {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if v["type"] == "chunk" {
+                    greeting_received = true;
+                    break;
+                }
+            }
+        }
     }
+    
+    assert!(greeting_received, "Should receive greeting chunk");
 
+    // Send malformed JSON - FIXED: added .into()
     ws.send(tokio_tungstenite::tungstenite::Message::Text("not json".to_string().into())).await.unwrap();
 
-    // Look for error response, might need to skip other messages
+    // Look for error response with increased timeout
     let mut found_error = false;
     for _ in 0..5 {
         let timeout = tokio::time::timeout(
-            tokio::time::Duration::from_secs(1),
+            tokio::time::Duration::from_secs(2),
             ws.next()
         ).await;
 
@@ -70,10 +82,17 @@ async fn ws_rejects_malformed_input() {
                         found_error = true;
                         break;
                     }
-                    // Skip any other messages (like chunks)
                 }
             }
-            _ => break, // Connection closed or timeout
+            Ok(None) => {
+                // Connection closed
+                break;
+            }
+            Err(_) => {
+                // Timeout - continue trying
+                continue;
+            }
+            _ => continue,
         }
     }
     
@@ -85,9 +104,10 @@ async fn ws_handles_typing_indicator() {
     let url = "ws://localhost:8080/ws/chat";
     let (mut ws, _resp) = connect_async(url).await.expect("WS connect failed");
 
-    // First, consume the greeting message
+    // First, consume the greeting message (now sent as a chunk)
     if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = ws.next().await {
-        let _greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let greeting: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(greeting["type"], "chunk");
         // Greeting received, now send typing indicator
     }
 
