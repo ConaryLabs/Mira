@@ -127,16 +127,37 @@ impl HybridMemoryService {
         &self,
         thread_id: &str,  // This is now just the session_id
         message: &str,
-        _persona: &PersonaOverlay,
+        persona: &PersonaOverlay,  // FIXED: No underscore, actually use the persona!
     ) -> Result<ChatResponse> {
         // 1. Get conversation history
         let mut messages = self.thread_manager.get_conversation(thread_id).await;
         
-        // 2. Add system message if history is empty
+        // 2. Add system message if history is empty - USE MIRA'S PERSONALITY!
         if messages.is_empty() {
+            // Build the full system prompt with persona AND output requirements
+            let mut system_prompt = String::new();
+            
+            // Add Mira's persona
+            system_prompt.push_str(persona.prompt());
+            system_prompt.push_str("\n\n");
+            
+            // Add structured output requirements
+            system_prompt.push_str("CRITICAL: Your entire reply MUST be a single valid JSON object with these fields:\n");
+            system_prompt.push_str("- output: Your actual reply to the user (string)\n");
+            system_prompt.push_str("- persona: The persona overlay in use (string)\n");
+            system_prompt.push_str("- mood: The emotional tone of your reply (string)\n");
+            system_prompt.push_str("- salience: How emotionally important this reply is (integer 0-10)\n");
+            system_prompt.push_str("- summary: Short summary of your reply/context (string or null)\n");
+            system_prompt.push_str("- memory_type: \"feeling\", \"fact\", \"joke\", \"promise\", \"event\", or \"other\" (string)\n");
+            system_prompt.push_str("- tags: List of context/mood tags (array of strings)\n");
+            system_prompt.push_str("- intent: Your intent in this reply (string)\n");
+            system_prompt.push_str("- monologue: Your private inner thoughts, not shown to user (string or null)\n");
+            system_prompt.push_str("- reasoning_summary: Your reasoning/chain-of-thought, if any (string or null)\n\n");
+            system_prompt.push_str("Never add anything before or after the JSON. No markdown, no natural language, no commentary—just the JSON object.\n");
+            
             messages.push(ResponseMessage {
                 role: "system".to_string(),
-                content: "You are a helpful document search assistant. Search through available documents to provide accurate and relevant information.".to_string(),
+                content: system_prompt,
             });
         }
         
@@ -163,12 +184,13 @@ impl HybridMemoryService {
                 .map(|choice| choice.message.content.clone())
                 .unwrap_or_else(|| "I couldn't generate a response.".to_string())
         } else {
-            eprintln!("💬 Using regular chat completion");
-            // If no vector stores, just use regular chat completion
+            eprintln!("💬 Using regular chat completion with Mira's personality");
+            // If no vector stores, use regular chat completion but WITH JSON format
             let req = serde_json::json!({
                 "model": "gpt-4.1",
                 "messages": messages,
-                "temperature": 0.3,
+                "temperature": 0.8,
+                "response_format": { "type": "json_object" }  // Ensure JSON response
             });
             
             let response = self.chat_service.llm_client
@@ -190,27 +212,38 @@ impl HybridMemoryService {
                 .to_string()
         };
         
-        // 6. Save assistant response to conversation
+        // 6. Parse the JSON response into ChatResponse
+        let chat_response: ChatResponse = match serde_json::from_str(&assistant_message) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                eprintln!("⚠️ Failed to parse structured response: {}", e);
+                eprintln!("Raw response: {}", assistant_message);
+                // Fallback response if parsing fails
+                ChatResponse {
+                    output: assistant_message.clone(),
+                    persona: persona.to_string(),
+                    mood: "confused".to_string(),
+                    salience: 5,
+                    summary: None,
+                    memory_type: "general".to_string(),
+                    tags: vec![],
+                    intent: "response".to_string(),
+                    monologue: Some("Something went wrong with my response format...".to_string()),
+                    reasoning_summary: None,
+                    aside_intensity: None,
+                }
+            }
+        };
+        
+        // 7. Save assistant response to conversation
         let assistant_msg = ResponseMessage {
             role: "assistant".to_string(),
-            content: assistant_message.clone(),
+            content: serde_json::to_string(&chat_response).unwrap_or(assistant_message),
         };
         self.thread_manager.add_message(thread_id, assistant_msg).await?;
         
-        // 7. Return as ChatResponse
-        Ok(ChatResponse {
-            output: assistant_message,
-            persona: "Assistant".to_string(),
-            mood: "neutral".to_string(),
-            salience: 5,
-            summary: None,
-            memory_type: "general".to_string(),
-            tags: vec![],
-            intent: "response".to_string(),
-            monologue: None,
-            reasoning_summary: None,
-            aside_intensity: None,
-        })
+        // 8. Return the properly typed response
+        Ok(chat_response)
     }
 
     async fn sync_insights_to_personal_memory(
