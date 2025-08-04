@@ -4,9 +4,8 @@ use crate::services::{MemoryService, ChatService};
 use crate::llm::schema::MiraStructuredReply;
 use crate::llm::assistant::VectorStoreManager;
 use std::sync::Arc;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Copy)]
 pub enum DocumentDestination {

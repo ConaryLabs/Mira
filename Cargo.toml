@@ -2,9 +2,11 @@
 name = "mira-backend"
 version = "0.3.0"
 edition = "2024"
+
 [lib]
 name = "mira_backend"
 path = "src/lib.rs"
+
 [dependencies]
 axum = { version = "0.7", features = ["macros", "ws"] }
 tokio = { version = "1.38", features = ["full"] }
@@ -26,10 +28,13 @@ async-stream = "0.3"
 clap = { version = "4.5", features = ["derive"] }  # <-- Added for CLI parsing
 git2 = "0.18.3"
 walkdir = "2.5.0"
+thiserror = "1.0"  # <-- Added for web search error handling
+
 [dev-dependencies]
 tokio-tungstenite = "0.27.0"
 url = "2.5.0"
 tower = "0.5.2"
+
 [[bin]]
 name = "mira-import"
 path = "src/tools/mira_import/main.rs"
