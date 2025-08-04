@@ -1,21 +1,19 @@
 // src/services/hybrid.rs
 
-use crate::llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager};
+use crate::llm::assistant::{AssistantManager, ThreadManager};
 use crate::llm::assistant::manager::ResponseMessage;
 use crate::persona::PersonaOverlay;
 use crate::services::{ChatService, MemoryService, ContextService};
 use crate::memory::recall::RecallContext;
 use crate::llm::schema::{ChatResponse, MiraStructuredReply};
-use anyhow::{Result, Context as AnyhowContext};
+use anyhow::Result;
 use std::sync::Arc;
-use reqwest::Method;
 
 pub struct HybridMemoryService {
     chat_service: Arc<ChatService>,
     memory_service: Arc<MemoryService>,
     context_service: Arc<ContextService>,
     assistant_manager: Arc<AssistantManager>,
-    vector_store_manager: Arc<VectorStoreManager>,
     thread_manager: Arc<ThreadManager>,
 }
 
@@ -25,7 +23,6 @@ impl HybridMemoryService {
         memory_service: Arc<MemoryService>,
         context_service: Arc<ContextService>,
         assistant_manager: Arc<AssistantManager>,
-        vector_store_manager: Arc<VectorStoreManager>,
         thread_manager: Arc<ThreadManager>,
     ) -> Self {
         Self {
@@ -33,7 +30,6 @@ impl HybridMemoryService {
             memory_service,
             context_service,
             assistant_manager,
-            vector_store_manager,
             thread_manager,
         }
     }
@@ -45,11 +41,7 @@ impl HybridMemoryService {
         persona: &PersonaOverlay,
         project_id: Option<&str>,
     ) -> Result<ChatResponse> {
-        let thread_id = if let Some(proj_id) = project_id {
-            self.ensure_thread_with_vector_store(session_id, proj_id).await?
-        } else {
-            self.thread_manager.get_or_create_thread(session_id).await?
-        };
+        let thread_id = self.thread_manager.get_or_create_thread(session_id).await?;
 
         let embedding = self.chat_service.llm_client
             .get_embedding(content)
@@ -75,30 +67,13 @@ impl HybridMemoryService {
         Ok(assistant_response)
     }
 
-    async fn ensure_thread_with_vector_store(
-        &self,
-        session_id: &str,
-        project_id: &str,
-    ) -> Result<String> {
-        let vector_store_id = self.vector_store_manager
-            .create_project_store(project_id)
-            .await?;
-
-        self.thread_manager
-            .get_or_create_thread_with_tools(
-                session_id,
-                vec![vector_store_id],
-            )
-            .await
-    }
-
     fn enrich_message_with_context(
         &self,
         content: &str,
         context: &RecallContext,
     ) -> String {
         let mut context_parts = Vec::new();
-        
+
         if !context.recent.is_empty() {
             let recent_texts: Vec<String> = context.recent.iter()
                 .take(3)
@@ -106,7 +81,7 @@ impl HybridMemoryService {
                 .collect();
             context_parts.push(format!("Recent conversation:\n{}", recent_texts.join("\n")));
         }
-        
+
         if !context.semantic.is_empty() {
             let semantic_texts: Vec<String> = context.semantic.iter()
                 .take(3)
@@ -114,7 +89,7 @@ impl HybridMemoryService {
                 .collect();
             context_parts.push(format!("Related memories:\n{}", semantic_texts.join("\n")));
         }
-        
+
         if context_parts.is_empty() {
             content.to_string()
         } else {
@@ -122,110 +97,94 @@ impl HybridMemoryService {
         }
     }
 
-    /// Updated to use Responses API instead of deprecated Assistant API
+    /// Always preserve Mira's personality through the conversation
     async fn run_assistant_with_context(
         &self,
         thread_id: &str,  // This is now just the session_id
         message: &str,
-        persona: &PersonaOverlay,  // FIXED: No underscore, actually use the persona!
+        persona: &PersonaOverlay,
     ) -> Result<ChatResponse> {
         // 1. Get conversation history
         let mut messages = self.thread_manager.get_conversation(thread_id).await;
-        
-        // 2. Add system message if history is empty - USE MIRA'S PERSONALITY!
-        if messages.is_empty() {
-            // Build the full system prompt with persona AND output requirements
-            let mut system_prompt = String::new();
-            
-            // Add Mira's persona
-            system_prompt.push_str(persona.prompt());
-            system_prompt.push_str("\n\n");
-            
-            // Add structured output requirements
-            system_prompt.push_str("CRITICAL: Your entire reply MUST be a single valid JSON object with these fields:\n");
-            system_prompt.push_str("- output: Your actual reply to the user (string)\n");
-            system_prompt.push_str("- persona: The persona overlay in use (string)\n");
-            system_prompt.push_str("- mood: The emotional tone of your reply (string)\n");
-            system_prompt.push_str("- salience: How emotionally important this reply is (integer 0-10)\n");
-            system_prompt.push_str("- summary: Short summary of your reply/context (string or null)\n");
-            system_prompt.push_str("- memory_type: \"feeling\", \"fact\", \"joke\", \"promise\", \"event\", or \"other\" (string)\n");
-            system_prompt.push_str("- tags: List of context/mood tags (array of strings)\n");
-            system_prompt.push_str("- intent: Your intent in this reply (string)\n");
-            system_prompt.push_str("- monologue: Your private inner thoughts, not shown to user (string or null)\n");
-            system_prompt.push_str("- reasoning_summary: Your reasoning/chain-of-thought, if any (string or null)\n\n");
-            system_prompt.push_str("Never add anything before or after the JSON. No markdown, no natural language, no commentary—just the JSON object.\n");
-            
-            messages.push(ResponseMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-            });
-        }
-        
-        // 3. Add the new user message
+
+        // 2. Build the full system prompt with persona AND output requirements
+        let mut system_prompt = String::new();
+
+        // Add Mira's persona
+        system_prompt.push_str(persona.prompt());
+        system_prompt.push_str("\n\n");
+
+        // Add structured output requirements
+        system_prompt.push_str("CRITICAL: Your entire reply MUST be a single valid JSON object with these fields:\n");
+        system_prompt.push_str("- output: Your actual reply to the user (string)\n");
+        system_prompt.push_str("- persona: The persona overlay in use (string)\n");
+        system_prompt.push_str("- mood: The emotional tone of your reply (string)\n");
+        system_prompt.push_str("- salience: How emotionally important this reply is (integer 0-10)\n");
+        system_prompt.push_str("- summary: Short summary of your reply/context (string or null)\n");
+        system_prompt.push_str("- memory_type: \"feeling\", \"fact\", \"joke\", \"promise\", \"event\", or \"other\" (string)\n");
+        system_prompt.push_str("- tags: List of context/mood tags (array of strings)\n");
+        system_prompt.push_str("- intent: Your intent in this reply (string)\n");
+        system_prompt.push_str("- monologue: Your private inner thoughts, not shown to user (string or null)\n");
+        system_prompt.push_str("- reasoning_summary: Your reasoning/chain-of-thought, if any (string or null)\n\n");
+        system_prompt.push_str("Never add anything before or after the JSON. No markdown, no natural language, no commentary—just the JSON object.\n");
+
+        // 3. ALWAYS include the system message at the beginning of the messages array
+        // This ensures Mira's personality is preserved throughout the conversation
+        let system_message = ResponseMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        };
+
+        // Filter out any existing system messages from history to avoid duplicates
+        messages.retain(|m| m.role != "system");
+
+        // Insert our system message at the beginning
+        messages.insert(0, system_message);
+
+        // 4. Add the new user message
         let user_msg = ResponseMessage {
             role: "user".to_string(),
             content: message.to_string(),
         };
         messages.push(user_msg.clone());
         self.thread_manager.add_message(thread_id, user_msg).await?;
-        
-        // 4. Get vector stores for this session
-        let vector_store_ids = self.thread_manager.get_session_stores(thread_id).await;
-        
-        // 5. Create response
-        let assistant_message = if !vector_store_ids.is_empty() {
-            eprintln!("🔍 Using Responses API with {} vector stores", vector_store_ids.len());
-            let response = self.assistant_manager
-                .create_response_with_vector_stores(messages, vector_store_ids)
-                .await?;
-                
-            response.choices
-                .first()
-                .map(|choice| choice.message.content.clone())
-                .unwrap_or_else(|| "I couldn't generate a response.".to_string())
+
+        // 5. Create response using the updated manager (no vector store tools)
+        eprintln!("💬 Using Responses API (no tools, just context)");
+        eprintln!("🎭 Active persona: {}", persona);
+
+        let response_object = self.assistant_manager
+            .create_response(messages)
+            .await?;
+
+        // 6. Extract the message content from the ResponseObject
+        let assistant_message = if let Some(msg) = response_object.choices.first() {
+            msg.message.content.clone()
         } else {
-            eprintln!("💬 Using regular chat completion with Mira's personality");
-            // If no vector stores, use regular chat completion but WITH JSON format
-            let req = serde_json::json!({
-                "model": "gpt-4.1",
-                "messages": messages,
-                "temperature": 0.8,
-                "response_format": { "type": "json_object" }  // Ensure JSON response
-            });
-            
-            let response = self.chat_service.llm_client
-                .request(Method::POST, "chat/completions")
-                .json(&req)
-                .send()
-                .await
-                .context("Failed to send chat request")?;
-                
-            if !response.status().is_success() {
-                let error_text = response.text().await?;
-                return Err(anyhow::anyhow!("Chat API error: {}", error_text));
-            }
-            
-            let result: serde_json::Value = response.json().await?;
-            result["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("I couldn't generate a response.")
-                .to_string()
+            eprintln!("⚠️ No choices in response object");
+            String::new()
         };
-        
-        // 6. Parse the JSON response into ChatResponse
-        let chat_response: ChatResponse = match serde_json::from_str(&assistant_message) {
-            Ok(parsed) => parsed,
+
+        eprintln!("📝 Assistant raw response: {}", assistant_message);
+
+        // 7. Parse the structured response
+        let chat_response = match serde_json::from_str::<ChatResponse>(&assistant_message) {
+            Ok(mut parsed) => {
+                parsed.persona = persona.to_string();
+                parsed
+            },
             Err(e) => {
-                eprintln!("⚠️ Failed to parse structured response: {}", e);
-                eprintln!("Raw response: {}", assistant_message);
-                // Fallback response if parsing fails
+                eprintln!("⚠️ Failed to parse assistant response as JSON: {}", e);
+                eprintln!("Raw response was: {}", assistant_message);
+
+                // Fallback response that maintains Mira's personality
                 ChatResponse {
                     output: assistant_message.clone(),
                     persona: persona.to_string(),
                     mood: "confused".to_string(),
                     salience: 5,
                     summary: None,
-                    memory_type: "general".to_string(),
+                    memory_type: "other".to_string(),
                     tags: vec![],
                     intent: "response".to_string(),
                     monologue: Some("Something went wrong with my response format...".to_string()),
@@ -234,15 +193,15 @@ impl HybridMemoryService {
                 }
             }
         };
-        
-        // 7. Save assistant response to conversation
+
+        // 8. Save assistant response to conversation
         let assistant_msg = ResponseMessage {
             role: "assistant".to_string(),
             content: serde_json::to_string(&chat_response).unwrap_or(assistant_message),
         };
         self.thread_manager.add_message(thread_id, assistant_msg).await?;
-        
-        // 8. Return the properly typed response
+
+        // 9. Return the properly typed response
         Ok(chat_response)
     }
 
@@ -254,7 +213,7 @@ impl HybridMemoryService {
     ) -> Result<()> {
         if response.salience >= 7 {
             eprintln!("💡 High-salience response ({}), syncing insight to personal memory", response.salience);
-            
+
             let insight_response = MiraStructuredReply {
                 output: format!(
                     "Insight from project {}: {}",
@@ -272,14 +231,14 @@ impl HybridMemoryService {
                 reasoning_summary: None,
                 aside_intensity: None,
             };
-            
+
             self.memory_service.evaluate_and_save_response(
                 session_id,
                 &insight_response,
                 project_id,
             ).await?;
         }
-        
+
         Ok(())
     }
 }

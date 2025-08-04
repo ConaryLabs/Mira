@@ -1,5 +1,3 @@
-// src/main.rs
-
 use std::sync::Arc;
 use axum::{
     Router,
@@ -19,7 +17,7 @@ use mira_backend::{
     },
     project::{
         store::ProjectStore,
-        project_router,  // Import from project module, not handlers
+        project_router,
     },
     git::{GitStore, GitClient},
     services::{ChatService, MemoryService, ContextService, HybridMemoryService, DocumentService},
@@ -30,39 +28,36 @@ use reqwest::Client;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize environment and logging
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
     // --- Initialize SQLite pool ---
     info!("🚀 Initializing SQLite database...");
     let pool = SqlitePool::connect("sqlite://mira.db").await?;
-    
-    // Run migrations
     mira_backend::memory::sqlite::migration::run_migrations(&pool).await?;
-    
+
     // --- Initialize Memory Stores ---
     info!("📦 Initializing memory stores...");
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
-    
+
     let qdrant_url = std::env::var("QDRANT_URL")
         .unwrap_or_else(|_| "http://localhost:6333".to_string());
     let qdrant_collection = std::env::var("QDRANT_COLLECTION")
         .unwrap_or_else(|_| "mira-memory".to_string());
-    
+
     // Create Qdrant collection if it doesn't exist
     let client = Client::new();
     let create_collection_url = format!("{}/collections/{}", qdrant_url, qdrant_collection);
     let _ = client.put(&create_collection_url)
         .json(&serde_json::json!({
             "vectors": {
-                "size": 3072,  // GPT-4 embedding size
+                "size": 3072,
                 "distance": "Cosine"
             }
         }))
         .send()
         .await;
-    
+
     let qdrant_store = Arc::new(QdrantMemoryStore::new(
         client.clone(),
         qdrant_url.clone(),
@@ -78,11 +73,10 @@ async fn main() -> anyhow::Result<()> {
     // --- Initialize Project Store ---
     info!("📁 Initializing project store...");
     let project_store = Arc::new(ProjectStore::new(pool.clone()));
-    
+
     // --- Initialize Git stores ---
     info!("🐙 Initializing Git stores...");
     let git_store = GitStore::new(pool.clone());
-    // Set git directory for cloned repos
     let git_dir = std::env::var("GIT_REPOS_DIR")
         .unwrap_or_else(|_| "./repos".to_string());
     let git_client = GitClient::new(&git_dir, git_store.clone());
@@ -100,7 +94,6 @@ async fn main() -> anyhow::Result<()> {
         qdrant_store.clone(),
     ));
 
-    // Fix: ChatService::new() only takes llm_client
     let chat_service = Arc::new(ChatService::new(
         llm_client.clone(),
     ));
@@ -110,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
     let mut assistant_manager = AssistantManager::new(llm_client.clone());
     assistant_manager.create_assistant().await?;
     let assistant_manager = Arc::new(assistant_manager);
-    
+
     let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(llm_client.clone()));
 
@@ -121,14 +114,13 @@ async fn main() -> anyhow::Result<()> {
         memory_service.clone(),
         context_service.clone(),
         assistant_manager.clone(),
-        vector_store_manager.clone(),
-        thread_manager.clone(),
+        thread_manager.clone(), // <-- no vector_store_manager here
     ));
 
     let document_service = Arc::new(DocumentService::new(
-        vector_store_manager.clone(),
         memory_service.clone(),
         chat_service.clone(),
+        vector_store_manager.clone(),
     ));
 
     // --- Create App State ---
@@ -157,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Build the app ---
     let app = Router::new()
-        .route("/health", get(|| async { 
+        .route("/health", get(|| async {
             serde_json::json!({
                 "status": "healthy",
                 "version": env!("CARGO_PKG_VERSION"),
@@ -167,28 +159,25 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
         .route("/chat", post(chat_handler))
         .route("/chat/history", get(chat_history_handler))
-        // Classic project & artifact REST endpoints
         .merge(project_router())
-        // Unified endpoints: project details, git, etc.
         .merge(http_router())
-        // WebSocket routes
         .nest("/ws", ws_router(app_state.clone()))
         .with_state(app_state)
         .layer(cors);
-    
+
     // --- Start the server ---
     let port = 8080;
     let addr = format!("0.0.0.0:{port}");
     info!("🚀 Mira backend listening on http://{addr}");
     info!("📦 SQLite: mira.db");
     info!("🔍 Qdrant: {}", qdrant_url);
-    info!("🤖 OpenAI Assistant: Initialized with file search");
+    info!("🤖 OpenAI Assistant: Initialized");
     info!("🌐 WebSocket endpoint: ws://localhost:{}/ws/chat", port);
     info!("📜 Chat history endpoint: http://localhost:{}/chat/history", port);
     info!("📁 Project API: http://localhost:{}/projects", port);
-    
+
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }

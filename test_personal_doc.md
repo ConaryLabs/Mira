@@ -1,0 +1,1 @@
+Dear diary, today I learned about Rust memory management.

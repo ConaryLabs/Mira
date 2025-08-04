@@ -1,4 +1,4 @@
-// src/llm/assistant/manager.rs - Updated to use Responses API
+// src/llm/assistant/manager.rs - Modern Responses API, no tool support
 
 use crate::llm::client::OpenAIClient;
 use reqwest::Method;
@@ -6,15 +6,11 @@ use serde::{Serialize, Deserialize};
 use anyhow::{Result, Context};
 use std::sync::Arc;
 
-/// Request for creating a response with file search
+/// Request for creating a response (no tools, context injected via messages)
 #[derive(Serialize, Debug)]
 pub struct CreateResponseRequest {
     pub model: String,
     pub messages: Vec<ResponseMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_resources: Option<ToolResources>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
 }
@@ -25,31 +21,13 @@ pub struct ResponseMessage {
     pub content: String,
 }
 
-#[derive(Serialize, Debug)]
-#[serde(tag = "type")]
-pub enum Tool {
-    #[serde(rename = "file_search")]
-    FileSearch,
-}
-
-#[derive(Serialize, Debug)]
-pub struct ToolResources {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_search: Option<FileSearchResources>,
-}
-
-#[derive(Serialize, Debug)]
-pub struct FileSearchResources {
-    pub vector_store_ids: Vec<String>,
-}
-
 #[derive(Deserialize, Debug)]
 pub struct ResponseObject {
     pub id: String,
     pub object: String,
-    pub created_at: i64,
     pub model: String,
     pub choices: Vec<ResponseChoice>,
+    pub created_at: Option<i64>, // <-- Now optional
 }
 
 #[derive(Deserialize, Debug)]
@@ -59,7 +37,7 @@ pub struct ResponseChoice {
     pub finish_reason: Option<String>,
 }
 
-/// Manager for the new Responses API
+/// Manager for the new Responses API (tooling deprecated)
 pub struct AssistantManager {
     client: Arc<OpenAIClient>,
     pub assistant_id: Option<String>,
@@ -69,7 +47,6 @@ impl AssistantManager {
     pub fn new(client: Arc<OpenAIClient>) -> Self {
         Self {
             client,
-            // We don't actually create an assistant anymore
             assistant_id: Some("responses-api-v1".to_string()),
         }
     }
@@ -77,43 +54,29 @@ impl AssistantManager {
     /// "Create assistant" now just returns success since we use Responses API
     pub async fn create_assistant(&mut self) -> Result<()> {
         eprintln!("🤖 Initializing Responses API manager (no assistant creation needed)...");
-        // No actual assistant to create with the new API
-        // We'll use the responses endpoint directly
         Ok(())
     }
 
-    /// Create a response with access to vector stores
-    pub async fn create_response_with_vector_stores(
+    /// Create a response using OpenAI Responses API (no tools/context only)
+    pub async fn create_response(
         &self,
         messages: Vec<ResponseMessage>,
-        vector_store_ids: Vec<String>,
     ) -> Result<ResponseObject> {
         let req = CreateResponseRequest {
-            model: "gpt-4.1".to_string(),
+            model: "gpt-4.1".to_string(), // Update to latest model if needed
             messages,
-            tools: Some(vec![Tool::FileSearch]),
-            tool_resources: Some(ToolResources {
-                file_search: Some(FileSearchResources {
-                    vector_store_ids,
-                }),
-            }),
             temperature: Some(0.3),
         };
 
-        eprintln!("📤 Creating response with {} vector stores", 
-            req.tool_resources.as_ref()
-                .and_then(|tr| tr.file_search.as_ref())
-                .map(|fs| fs.vector_store_ids.len())
-                .unwrap_or(0)
-        );
+        eprintln!("📤 Creating response via Responses API");
 
         let response = self.client
-            .request(Method::POST, "chat/completions") // Using chat completions with tools
+            .request(Method::POST, "chat/completions")
             .json(&req)
             .send()
             .await
             .context("Failed to send response request")?;
-            
+
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());

@@ -1,5 +1,3 @@
-// tests/test_helpers.rs
-
 use mira_backend::{
     handlers::AppState,
     llm::OpenAIClient,
@@ -59,7 +57,7 @@ pub async fn create_test_app_state() -> Arc<AppState> {
         qdrant_store.clone(),
     ));
     
-    // Fix: ChatService now only takes llm_client
+    // ChatService now only takes llm_client
     let chat_service = Arc::new(ChatService::new(
         llm_client.clone(),
     ));
@@ -72,20 +70,19 @@ pub async fn create_test_app_state() -> Arc<AppState> {
     let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(llm_client.clone()));
     
-    // Create hybrid services
+    // Create hybrid services (now only 5 args)
     let hybrid_service = Arc::new(HybridMemoryService::new(
         chat_service.clone(),
         memory_service.clone(),
         context_service.clone(),
         assistant_manager.clone(),
-        vector_store_manager.clone(),
         thread_manager.clone(),
     ));
     
     let document_service = Arc::new(DocumentService::new(
-        vector_store_manager.clone(),
         memory_service.clone(),
         chat_service.clone(),
+        vector_store_manager.clone(),
     ));
     
     Arc::new(AppState {

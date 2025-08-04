@@ -1,5 +1,3 @@
-// src/memory/qdrant/store.rs
-
 //! Implements MemoryStore for Qdrant (semantic/embedding-based memory).
 
 use crate::memory::traits::MemoryStore;
@@ -22,6 +20,43 @@ impl QdrantMemoryStore {
             client,
             base_url: base_url.into(),
             collection: collection.into(),
+        }
+    }
+
+    /// Ensures that a Qdrant collection exists with the correct vector size/config for Mira.
+    /// Safe to call multiple times; will only create if missing.
+    pub async fn ensure_collection(&self, name: &str) -> Result<()> {
+        // 1. Check if collection exists (GET)
+        let url = format!("{}/collections/{}", self.base_url, name);
+        let resp = self.client.get(&url).send().await?;
+        if resp.status().is_success() {
+            // Collection already exists, nothing to do.
+            return Ok(());
+        }
+
+        // 2. Try to create the collection (PUT /collections/{name})
+        let create_url = format!("{}/collections/{}", self.base_url, name);
+        let req_body = json!({
+            "vectors": {
+                "size": 3072,
+                "distance": "Cosine"
+            }
+        });
+
+        let resp = self.client
+            .put(&create_url)
+            .json(&req_body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let err_body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 409 || err_body.contains("already exists") {
+            Ok(())
+        } else if status.is_success() {
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to create Qdrant collection: {}", err_body))
         }
     }
 }

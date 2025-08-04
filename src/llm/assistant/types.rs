@@ -2,7 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 
-/// Message role in a thread
+/// Message role in a thread or conversation
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
@@ -10,7 +10,7 @@ pub enum MessageRole {
     Assistant,
 }
 
-/// Request to create a message in a thread
+/// Request to create a message (for OpenAI chat)
 #[derive(Serialize, Debug)]
 pub struct CreateMessageRequest {
     pub role: String,
@@ -40,7 +40,7 @@ pub struct TextContent {
     pub annotations: Vec<serde_json::Value>,
 }
 
-/// Request to create a run
+/// Request to create a run (obsolete in Responses API, but kept for legacy support)
 #[derive(Serialize, Debug)]
 pub struct CreateRunRequest {
     pub assistant_id: String,
@@ -54,7 +54,7 @@ pub struct RunResponse {
     pub thread_id: String,
 }
 
-/// Run status values
+/// Run status values (mostly deprecated, but safe to leave for API compatibility)
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
@@ -73,17 +73,4 @@ pub enum RunStatus {
 pub struct ListMessagesResponse {
     pub data: Vec<MessageResponse>,
     pub has_more: bool,
-}
-
-/// Tool resources for threads
-#[derive(Serialize, Debug)]
-pub struct ToolResources {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_search: Option<FileSearchResource>,
-}
-
-/// File search resource configuration
-#[derive(Serialize, Debug)]
-pub struct FileSearchResource {
-    pub vector_store_ids: Vec<String>,
 }

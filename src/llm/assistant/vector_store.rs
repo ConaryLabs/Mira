@@ -1,4 +1,4 @@
-// src/llm/assistant/vector_store.rs - UPDATED VERSION with datetime fix
+// src/llm/assistant/vector_store.rs
 
 use crate::llm::client::OpenAIClient;
 use reqwest::Method;
@@ -74,10 +74,12 @@ pub struct AddFileToVectorStoreRequest {
 
 pub struct VectorStoreManager {
     client: Arc<OpenAIClient>,
-    stores: Arc<RwLock<HashMap<String, VectorStoreInfo>>>, // project_id → VectorStoreInfo
+    stores: Arc<RwLock<HashMap<String, VectorStoreInfo>>>, // key → VectorStoreInfo (project_id or PERSONAL_STORE_KEY)
 }
 
 impl VectorStoreManager {
+    pub const PERSONAL_STORE_KEY: &'static str = "__personal";
+
     pub fn new(client: Arc<OpenAIClient>) -> Self {
         Self {
             client,
@@ -85,7 +87,7 @@ impl VectorStoreManager {
         }
     }
 
-    /// Create a new vector store for a project (returns vector store id).
+    /// Create a new vector store for a project or for personal docs (returns vector store id).
     pub async fn create_project_store(&self, project_id: &str) -> Result<String> {
         let req = CreateVectorStoreRequest {
             name: format!("Project: {}", project_id),
@@ -120,15 +122,23 @@ impl VectorStoreManager {
         Ok(res.id)
     }
 
-    /// Upload a document and attach to the given project's vector store.
-    pub async fn add_document(&self, project_id: &str, file_path: PathBuf) -> Result<String> {
-        // Vector store must exist
-        let stores = self.stores.read().await;
-        let store_info = stores.get(project_id)
-            .ok_or_else(|| anyhow::anyhow!("Vector store not found for project: {}", project_id))?;
-        
-        let store_id = store_info.id.clone();
-        drop(stores);
+    /// Get or create the default personal vector store (for non-project docs).
+    pub async fn get_or_create_personal_store(&self) -> Result<String> {
+        if let Some(info) = self.get_store_info(Self::PERSONAL_STORE_KEY).await {
+            Ok(info.id)
+        } else {
+            self.create_project_store(Self::PERSONAL_STORE_KEY).await
+        }
+    }
+
+    /// Upload a document and attach to the given vector store (project or personal).
+    pub async fn add_document(&self, project_id_or_personal: &str, file_path: PathBuf) -> Result<String> {
+        // Ensure vector store exists
+        let store_id = if let Some(store_info) = self.get_store_info(project_id_or_personal).await {
+            store_info.id
+        } else {
+            self.create_project_store(project_id_or_personal).await?
+        };
 
         // Upload file to OpenAI
         let file_content = tokio::fs::read(&file_path).await
@@ -172,15 +182,15 @@ impl VectorStoreManager {
 
         // Update local store info
         let mut stores = self.stores.write().await;
-        if let Some(store_info) = stores.get_mut(project_id) {
+        if let Some(store_info) = stores.get_mut(project_id_or_personal) {
             store_info.file_ids.push(file_response.id.clone());
         }
 
         Ok(file_response.id)
     }
 
-    /// Get vector store info for a project
-    pub async fn get_store_info(&self, project_id: &str) -> Option<VectorStoreInfo> {
-        self.stores.read().await.get(project_id).cloned()
+    /// Get vector store info for a project or personal store
+    pub async fn get_store_info(&self, key: &str) -> Option<VectorStoreInfo> {
+        self.stores.read().await.get(key).cloned()
     }
 }

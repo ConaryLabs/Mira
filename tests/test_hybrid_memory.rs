@@ -1,131 +1,139 @@
-// tests/test_hybrid_memory.rs
 mod test_helpers;
+
 use dotenv::dotenv;
 use std::fs;
 use std::path::Path;
+use mira_backend::persona::PersonaOverlay;
 
 #[tokio::test]
 async fn test_hybrid_memory_integration() {
-    // Load environment variables from .env file
     dotenv().ok();
-    
     println!("\n🧪 HYBRID MEMORY INTEGRATION TEST\n");
-    println!("📦 Initializing components...");
-    
-    // Use the test helper which creates an in-memory database
+    println!("📦 Initializing app state (in-memory DB + test Qdrant collection)...");
+
     let state = test_helpers::create_test_app_state().await;
-    
-    // Store context message
+
+    // Ensure Qdrant collection exists for this test (prevents "not found" error)
+    state.qdrant_store
+        .ensure_collection("mira-memory")
+        .await
+        .expect("Failed to ensure Qdrant test collection");
+
     let session_id = "test-hybrid-session";
-    let context_msg = "My favorite programming language is Rust. I've been using it for 3 years.";
-    
-    // Save the message using the state's hybrid service
+    let input = "My favorite programming language is Rust. I've been using it for 3 years.";
+
+    // Store message using hybrid memory service (uses Responses API)
     state.hybrid_service.process_with_hybrid_memory(
         session_id,
-        context_msg,
-        &mira_backend::persona::PersonaOverlay::Default,
+        input,
+        &PersonaOverlay::Default,
         None,
-    ).await.expect("Failed to save context message");
-    
-    println!("✅ Context message saved");
-    
-    // Test recall with semantic relevance
+    ).await.expect("Failed to save initial context message");
+
+    println!("✅ Context message saved to hybrid memory");
+
+    // Semantic recall test: ask a related question
     let query = "What programming languages do I know?";
     let response = state.hybrid_service.process_with_hybrid_memory(
         session_id,
         query,
-        &mira_backend::persona::PersonaOverlay::Default,
+        &PersonaOverlay::Default,
         None,
-    ).await.expect("Failed to get response");
-    
-    println!("🔍 Query: {}", query);
-    println!("📝 Retrieved response: {}", response.output);
-    
-    assert!(response.output.contains("Rust") || response.output.contains("rust"), 
-        "Response should mention Rust");
-    
-    println!("\n✅ Hybrid memory integration test PASSED!");
+    ).await.expect("Failed to get response from hybrid memory");
+
+    println!("🔍 Query: {query}");
+    println!("📝 Mira's recall response: {}", response.output);
+
+    assert!(
+        response.output.to_lowercase().contains("rust"),
+        "Response should mention Rust"
+    );
+
+    println!("✅ Hybrid memory recall test PASSED!\n");
 }
 
 #[tokio::test]
 async fn test_document_routing() {
-    // Load environment variables from .env file
     dotenv().ok();
-    
     println!("\n🧪 DOCUMENT ROUTING TEST\n");
-    
+
     let state = test_helpers::create_test_app_state().await;
-    
-    // First, create a test project
+
+    // -- SETUP: create a test project and vector store
     let project = state.project_store.create_project(
         "test-doc-project".to_string(),
         Some("Test project for document routing".to_string()),
         Some(vec!["test".to_string()]),
         None,
     ).await.expect("Failed to create test project");
-    
+
     println!("📁 Created test project: {}", project.id);
-    
-    // Create a vector store for the project first
+
+    // Ensure the per-project vector store exists in Qdrant
+    state.qdrant_store
+        .ensure_collection(&project.id)
+        .await
+        .expect("Failed to ensure project Qdrant collection");
+
     state.vector_store_manager
         .create_project_store(&project.id)
         .await
-        .expect("Failed to create vector store for project");
-    
+        .expect("Failed to create project vector store");
+
     println!("📦 Created vector store for project");
-    
-    // Test 1: Process a personal document (should go to personal memory)
-    let personal_doc_path = Path::new("test_personal_doc.md");
-    let personal_content = "Dear diary, today I learned about Rust memory management.";
-    
-    // Write test file
-    fs::write(&personal_doc_path, personal_content).expect("Failed to write personal document");
-    
-    // Process the document - personal content should work without project ID
+
+    // --- TEST 1: Route a personal document using a real asset file
+    let asset_path = Path::new("tests/assets/test_upload.txt");
+    let asset_content = fs::read_to_string(&asset_path)
+        .expect("Failed to read asset file for personal document test");
+
+    // Copy to a new file to avoid any potential file lock issues
+    let personal_doc_path = Path::new("test_upload_runtime_copy.txt");
+    fs::write(&personal_doc_path, &asset_content).expect("Failed to copy asset for upload test");
+
     state.document_service.process_document(
         &personal_doc_path,
-        personal_content,
-        None, // No project ID - should route to personal memory
+        &asset_content,
+        None, // no project_id = route to personal memory
     ).await.expect("Failed to process personal document");
-    
-    println!("✅ Personal document processed (routed to personal memory)");
-    
-    // Test 2: Process a technical document with project ID
-    let tech_doc_path = Path::new("test_tech_doc.md");
-    let tech_content = "# API Documentation\n\nThis is technical documentation for the API.";
-    
-    fs::write(&tech_doc_path, tech_content).expect("Failed to write tech document");
-    
-    // Process with project ID - should succeed now that vector store exists
+
+    println!("✅ Personal document processed (saved to personal memory)");
+
+    // --- TEST 2: Route a technical document using the same asset, but as a project doc
+    let tech_doc_path = Path::new("test_tech_upload_runtime_copy.txt");
+    fs::write(&tech_doc_path, &asset_content).expect("Failed to write tech doc file");
+
     state.document_service.process_document(
         &tech_doc_path,
-        tech_content,
-        Some(&project.id), // With project ID
+        &asset_content,
+        Some(&project.id),
     ).await.expect("Failed to process technical document with project ID");
-    
-    println!("✅ Technical document processed with project ID (routed to vector store)");
-    
-    // Test 3: Try technical document without project ID - should fail
-    let tech_doc_2_path = Path::new("test_tech_doc_2.md");
-    fs::write(&tech_doc_2_path, tech_content).expect("Failed to write tech document 2");
-    
+
+    println!("✅ Technical document processed (routed to project vector store)");
+
+    // --- TEST 3: Route a technical doc with no project ID (should fail)
+    let tech_doc2_path = Path::new("test_tech_upload_runtime_copy_2.md");
+    // Here's the trick: NO personal marker, pure technical content!
+    let purely_technical_content = "# API Documentation\n\nNothing personal here, just business logic and endpoints.";
+    fs::write(&tech_doc2_path, &purely_technical_content).expect("Failed to write tech doc 2 file");
+
     let result = state.document_service.process_document(
-        &tech_doc_2_path,
-        tech_content,
-        None, // No project ID
+        &tech_doc2_path,
+        &purely_technical_content,
+        None,
     ).await;
-    
-    // Technical docs without project ID should error
-    assert!(result.is_err(), "Technical docs should require project ID");
+
+    assert!(
+        result.is_err(),
+        "Technical docs without a project ID should error"
+    );
     println!("✅ Technical document without project ID correctly rejected");
-    
-    // Clean up test files
+
+    // -- CLEANUP
     let _ = fs::remove_file(&personal_doc_path);
     let _ = fs::remove_file(&tech_doc_path);
-    let _ = fs::remove_file(&tech_doc_2_path);
-    
-    // Clean up test project
+    let _ = fs::remove_file(&tech_doc2_path);
     state.project_store.delete_project(&project.id).await.ok();
-    
-    println!("\n✅ Document routing test PASSED!");
+
+    println!("✅ Document routing test PASSED!\n");
 }

@@ -182,7 +182,39 @@ async fn stream_chat_response(
     eprintln!("[{}] Starting chat response stream for: {}", Utc::now(), content);
     eprintln!("Using persona internally: {}", persona);
 
-    // Use the chat service with timeout
+    // STEP 1: Save the user's message FIRST
+    eprintln!("💾 Saving user message...");
+    
+    // Get embedding for the user message (optional - don't block on failure)
+    let user_embedding = match app_state.chat_service.llm_client
+        .get_embedding(&content)
+        .await {
+        Ok(emb) => {
+            eprintln!("✅ Got embedding for user message");
+            Some(emb)
+        }
+        Err(e) => {
+            eprintln!("⚠️ Failed to get embedding for user message: {:?}", e);
+            None
+        }
+    };
+    
+    // Save user message to memory
+    if let Err(e) = app_state.memory_service
+        .save_user_message(
+            session_id,
+            &content,
+            user_embedding,
+            project_id,
+        )
+        .await {
+        eprintln!("❌ Failed to save user message: {:?}", e);
+        // Continue anyway - don't block the conversation
+    } else {
+        eprintln!("✅ User message saved to memory");
+    }
+
+    // STEP 2: Process the message and get response
     let response = match timeout(
         Duration::from_secs(30),
         app_state.chat_service.process_message(
@@ -219,12 +251,44 @@ async fn stream_chat_response(
         }
     };
 
-    eprintln!("[{}] Got chat response, streaming chunks", Utc::now());
+    eprintln!("[{}] Got chat response, saving to memory...", Utc::now());
+
+    // STEP 3: Save Mira's response to memory
+    // Convert ChatResponse to MiraStructuredReply for saving
+    let mira_reply = crate::llm::schema::MiraStructuredReply {
+        output: response.output.clone(),
+        persona: response.persona.clone(),
+        mood: response.mood.clone(),
+        salience: response.salience,
+        summary: response.summary.clone(),
+        memory_type: response.memory_type.clone(),
+        tags: response.tags.clone(),
+        intent: response.intent.clone(),
+        monologue: response.monologue.clone(),
+        reasoning_summary: response.reasoning_summary.clone(),
+        aside_intensity: response.aside_intensity,
+    };
+    
+    // Save assistant response
+    if let Err(e) = app_state.memory_service
+        .evaluate_and_save_response(
+            session_id,
+            &mira_reply,
+            project_id,
+        )
+        .await {
+        eprintln!("❌ Failed to save assistant response: {:?}", e);
+        // Continue anyway - still send the response to user
+    } else {
+        eprintln!("✅ Assistant response saved to memory");
+    }
 
     // Update mood
     *current_mood = response.mood.clone();
 
-    // Stream the response in chunks
+    eprintln!("[{}] Streaming response chunks to client...", Utc::now());
+
+    // STEP 4: Stream the response in chunks
     let output = response.output.clone();
     let words: Vec<&str> = output.split_whitespace().collect();
     let chunk_size = 5; // Words per chunk
