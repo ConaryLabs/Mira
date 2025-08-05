@@ -1,3 +1,5 @@
+// src/git/types.rs
+
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 
@@ -31,3 +33,17 @@ pub struct GitRepoAttachment {
     pub last_imported_at: Option<DateTime<Utc>>,
     pub last_sync_at: Option<DateTime<Utc>>,
 }
+
+// Re-export the Phase 3 types from client.rs
+pub use super::client::{
+    FileNode,
+    FileNodeType,
+    BranchInfo,
+    CommitInfo,
+    DiffInfo,
+    FileDiff,
+    DiffStatus,
+    DiffHunk,
+    DiffLine,
+    DiffLineType,
+};
