@@ -1,5 +1,3 @@
-// src/git/client.rs
-
 use anyhow::{Result, Context};
 use git2::{Repository, BranchType, Oid, ObjectType, TreeWalkMode, TreeWalkResult};
 use std::fs;
@@ -20,7 +18,7 @@ pub struct FileNode {
     pub size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileNodeType {
     File,

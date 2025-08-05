@@ -1,5 +1,3 @@
-// src/api/http/git.rs
-
 use axum::{
     extract::{State, Path, Json, Query},
     response::IntoResponse,
@@ -7,7 +5,7 @@ use axum::{
 };
 use std::sync::Arc;
 use crate::handlers::AppState;
-use crate::git::{GitRepoAttachment, BranchInfo, CommitInfo, DiffInfo};
+use crate::git::{GitRepoAttachment, BranchInfo, CommitInfo, DiffInfo, FileNodeType};
 use serde::{Deserialize, Serialize};
 use std::path::Path as StdPath;
 
@@ -78,7 +76,6 @@ pub struct SyncRepoResponse {
     pub error: Option<String>,
 }
 
-// Full implementation without debug handler
 pub async fn sync_repo_handler(
     State(app_state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
@@ -87,20 +84,16 @@ pub async fn sync_repo_handler(
     let client = &app_state.git_client;
     let store = &app_state.git_store;
     
-    // Get the attachment
     let attachment_result = store.get_attachment_by_id(&attachment_id).await;
     
     match attachment_result {
         Ok(Some(attachment)) => {
-            // Check if attachment belongs to the project
             if attachment.project_id != project_id {
                 return Json(SyncRepoResponse {
                     status: "not_found".to_string(),
                     error: Some("Attachment not found".to_string()),
                 });
             }
-            
-            // Try to sync changes
             match client.sync_changes(&attachment, &payload.commit_message).await {
                 Ok(_) => Json(SyncRepoResponse {
                     status: "synced".to_string(),
@@ -123,14 +116,13 @@ pub async fn sync_repo_handler(
     }
 }
 
-// File tree and content handlers
-
 #[derive(Serialize, Debug, Clone)]
 pub struct FileNode {
     pub name: String,
     pub path: String,
     #[serde(rename = "type")]
     pub node_type: String,
+    pub size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<FileNode>>,
 }
@@ -148,7 +140,45 @@ pub struct FileContent {
     pub encoding: Option<String>,
 }
 
-// UPDATED: Now with debug logging and fixed tree building
+use walkdir::WalkDir;
+
+// Recursive repo scanner, with Option<u64> for size
+fn scan_repo_file_tree(repo_root: &str) -> Vec<crate::git::FileNode> {
+    let mut nodes = Vec::new();
+    let root = StdPath::new(repo_root);
+
+    for entry in WalkDir::new(repo_root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let file_name = e.file_name().to_string_lossy();
+            file_name != ".git" && !file_name.starts_with('.')
+        })
+    {
+        let path = entry.path();
+        if path == root { continue; }
+        let rel_path = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let node_type = if entry.file_type().is_dir() {
+            crate::git::FileNodeType::Directory
+        } else {
+            crate::git::FileNodeType::File
+        };
+        let size = if node_type == crate::git::FileNodeType::File {
+            Some(std::fs::metadata(path).map(|m| m.len()).unwrap_or(0))
+        } else {
+            None
+        };
+        nodes.push(crate::git::FileNode {
+            name,
+            path: rel_path,
+            node_type,
+            size,
+        });
+    }
+    nodes
+}
+
 pub async fn get_file_tree_handler(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
@@ -156,31 +186,21 @@ pub async fn get_file_tree_handler(
     eprintln!("🌳 Getting file tree for project {} attachment {}", project_id, attachment_id);
     
     let store = &state.git_store;
-    
-    // Get the attachment to verify it belongs to the project
     match store.get_attachment_by_id(&attachment_id).await {
         Ok(Some(attachment)) => {
             if attachment.project_id != project_id {
                 eprintln!("❌ Attachment doesn't belong to project");
                 return Json(FileTreeResponse { files: vec![] });
             }
-            
-            // Use the new git client method to get the file tree
-            match state.git_client.get_file_tree(&attachment) {
-                Ok(git_nodes) => {
-                    eprintln!("✅ Got {} nodes from git", git_nodes.len());
-                    
-                    // Convert from git FileNode to our API FileNode format
-                    let files = convert_git_nodes_to_api_nodes(git_nodes);
-                    
-                    eprintln!("📁 Returning {} root nodes", files.len());
-                    Json(FileTreeResponse { files })
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to get file tree: {}", e);
-                    Json(FileTreeResponse { files: vec![] })
-                }
-            }
+
+            let git_nodes = scan_repo_file_tree(&attachment.local_path);
+
+            eprintln!("✅ Got {} nodes from walkdir", git_nodes.len());
+
+            let files = convert_git_nodes_to_api_nodes(git_nodes);
+
+            eprintln!("📁 Returning {} root nodes", files.len());
+            Json(FileTreeResponse { files })
         }
         _ => {
             eprintln!("❌ Attachment not found");
@@ -189,7 +209,6 @@ pub async fn get_file_tree_handler(
     }
 }
 
-// Helper function to convert flat git nodes to nested tree structure
 fn convert_git_nodes_to_api_nodes(git_nodes: Vec<crate::git::FileNode>) -> Vec<FileNode> {
     use std::collections::HashMap;
     
@@ -208,29 +227,21 @@ fn convert_git_nodes_to_api_nodes(git_nodes: Vec<crate::git::FileNode>) -> Vec<F
         }
         
         fn add_node(&mut self, git_node: crate::git::FileNode) {
-            // Skip .git directory
             if git_node.path.starts_with(".git") {
                 return;
             }
-            
-            // The git client returns FileNode with node_type as FileNodeType enum
-            // We need to convert it to string for the API
             let node_type_str = match git_node.node_type {
                 crate::git::FileNodeType::File => "file".to_string(),
                 crate::git::FileNodeType::Directory => "directory".to_string(),
             };
-            
             let api_node = FileNode {
                 name: git_node.name.clone(),
                 path: git_node.path.clone(),
                 node_type: node_type_str.clone(),
+                size: git_node.size,
                 children: None,
             };
-            
-            // Store the node
             self.nodes.insert(git_node.path.clone(), api_node);
-            
-            // Register with parent
             if let Some(parent_path) = self.get_parent_path(&git_node.path) {
                 self.children.entry(parent_path)
                     .or_insert_with(Vec::new)
@@ -244,15 +255,11 @@ fn convert_git_nodes_to_api_nodes(git_nodes: Vec<crate::git::FileNode>) -> Vec<F
         
         fn build_tree(&mut self) -> Vec<FileNode> {
             let mut roots = Vec::new();
-            
-            // Find root nodes
             for path in self.nodes.keys() {
                 if !path.contains('/') {
                     roots.push(path.clone());
                 }
             }
-            
-            // Build tree for each root
             roots.into_iter()
                 .filter_map(|path| self.build_node_tree(&path))
                 .collect()
@@ -260,16 +267,12 @@ fn convert_git_nodes_to_api_nodes(git_nodes: Vec<crate::git::FileNode>) -> Vec<F
         
         fn build_node_tree(&mut self, path: &str) -> Option<FileNode> {
             let mut node = self.nodes.get(path)?.clone();
-            
             if node.node_type == "directory" {
                 if let Some(child_paths) = self.children.get(path) {
-                    // Clone the child paths to avoid borrow checker issues
                     let child_paths_vec: Vec<String> = child_paths.clone();
                     let mut children: Vec<FileNode> = child_paths_vec.iter()
                         .filter_map(|child_path| self.build_node_tree(child_path))
                         .collect();
-                    
-                    // Sort: directories first, then files, alphabetically
                     children.sort_by(|a, b| {
                         match (a.node_type.as_str(), b.node_type.as_str()) {
                             ("directory", "file") => std::cmp::Ordering::Less,
@@ -277,28 +280,19 @@ fn convert_git_nodes_to_api_nodes(git_nodes: Vec<crate::git::FileNode>) -> Vec<F
                             _ => a.name.cmp(&b.name),
                         }
                     });
-                    
                     node.children = Some(children);
                 } else {
                     node.children = Some(Vec::new());
                 }
             }
-            
             Some(node)
         }
     }
-    
     let mut builder = TreeBuilder::new();
-    
-    // Add all nodes to the builder
     for git_node in git_nodes {
         builder.add_node(git_node);
     }
-    
-    // Build and return the tree
     let mut tree = builder.build_tree();
-    
-    // Sort root level
     tree.sort_by(|a, b| {
         match (a.node_type.as_str(), b.node_type.as_str()) {
             ("directory", "file") => std::cmp::Ordering::Less,
@@ -306,7 +300,6 @@ fn convert_git_nodes_to_api_nodes(git_nodes: Vec<crate::git::FileNode>) -> Vec<F
             _ => a.name.cmp(&b.name),
         }
     });
-    
     tree
 }
 
@@ -356,7 +349,6 @@ pub async fn update_file_content_handler(
             
             let full_path = StdPath::new(&attachment.local_path).join(&file_path);
             
-            // Write the updated content
             match std::fs::write(&full_path, &payload.content) {
                 Ok(_) => {
                     let response = FileContent {
@@ -449,8 +441,6 @@ pub struct FileContentAtCommitResponse {
     pub commit_id: String,
 }
 
-/// GET /projects/:project_id/git/:attachment_id/branches
-/// List all branches in the repository
 pub async fn list_branches(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
@@ -475,8 +465,6 @@ pub async fn list_branches(
     }
 }
 
-/// POST /projects/:project_id/git/:attachment_id/branches/switch
-/// Switch to a different branch
 pub async fn switch_branch(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
@@ -507,8 +495,6 @@ pub async fn switch_branch(
     }
 }
 
-/// GET /projects/:project_id/git/:attachment_id/commits
-/// Get commit history
 pub async fn get_commit_history(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
@@ -534,8 +520,6 @@ pub async fn get_commit_history(
     }
 }
 
-/// GET /projects/:project_id/git/:attachment_id/commits/:commit_id/diff
-/// Get diff for a specific commit
 pub async fn get_commit_diff(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id, commit_id)): Path<(String, String, String)>,
@@ -560,8 +544,6 @@ pub async fn get_commit_diff(
     }
 }
 
-/// GET /projects/:project_id/git/:attachment_id/file_at_commit
-/// Get file content at a specific commit
 pub async fn get_file_at_commit(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
