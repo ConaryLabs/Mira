@@ -59,7 +59,7 @@ impl ChatService {
     /// Process message with optional tool support
     pub async fn process_message(
         &self,
-        session_id: &str,
+        _session_id: &str,
         content: &str,
         persona: &PersonaOverlay,
         project_id: Option<&str>,

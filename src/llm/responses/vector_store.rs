@@ -1,4 +1,4 @@
-// src/llm/assistant/vector_store.rs
+// src/llm/responses/vector_store.rs
 
 use crate::llm::client::OpenAIClient;
 use reqwest::Method;
@@ -150,7 +150,7 @@ impl VectorStoreManager {
 
         // Create multipart form for file upload
         let form = reqwest::multipart::Form::new()
-            .text("purpose", "assistants")
+            .text("purpose", "responsess")
             .part("file", reqwest::multipart::Part::bytes(file_content)
                 .file_name(file_name.to_string()));
 

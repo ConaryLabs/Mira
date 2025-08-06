@@ -6,11 +6,14 @@ pub mod llm;
 pub mod memory;
 pub mod persona;
 pub mod prompt;
-pub mod session;
 pub mod project;
 pub mod tools;
 pub mod git;
-pub mod services; // <--- add this line!
+pub mod services;
+pub mod state;     // Add the new state module
+// Removed: pub mod session (empty directory)
+// Removed: pub mod db (empty directory)
+// Removed: pub mod context (doesn't exist)
 
 // Optional: export commonly used items
-pub use handlers::AppState;
+pub use state::AppState;  // Changed from handlers::AppState

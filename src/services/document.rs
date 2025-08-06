@@ -2,7 +2,7 @@
 
 use crate::services::{MemoryService, ChatService};
 use crate::llm::schema::MiraStructuredReply;
-use crate::llm::assistant::VectorStoreManager;
+use crate::llm::responses::VectorStoreManager;
 use std::sync::Arc;
 use std::path::Path;
 use anyhow::Result;

@@ -1,8 +1,8 @@
 // src/api/http/mod.rs
 
-use axum::{Router, routing::{get, post, put}};
+use axum::{Router, routing::{get, post}};
 use std::sync::Arc;
-use crate::handlers::AppState;
+use crate::state::AppState;
 
 mod git;
 mod project;

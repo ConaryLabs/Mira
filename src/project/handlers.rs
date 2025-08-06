@@ -1,3 +1,4 @@
+use crate::project::types::{Project, Artifact};
 // src/project/handlers.rs
 
 use axum::{
@@ -7,7 +8,7 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
-use crate::handlers::AppState;
+use crate::state::AppState;
 use crate::project::types::{
     CreateProjectRequest, UpdateProjectRequest, 
     CreateArtifactRequest, UpdateArtifactRequest,
@@ -39,7 +40,7 @@ pub async fn get_project_handler(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match app_state.project_store.get_project(&id).await {
-        Ok(Some(project)) => Json(project).into_response(),
+        Ok(Some(project)) => Json::<Project>(project).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Project not found").into_response(),
         Err(e) => {
             eprintln!("Failed to get project: {:?}", e);
@@ -77,7 +78,7 @@ pub async fn update_project_handler(
         payload.description,
         payload.tags,
     ).await {
-        Ok(Some(project)) => Json(project).into_response(),
+        Ok(Some(project)) => Json::<Project>(project).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Project not found").into_response(),
         Err(e) => {
             eprintln!("Failed to update project: {:?}", e);
@@ -125,7 +126,7 @@ pub async fn get_artifact_handler(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match app_state.project_store.get_artifact(&id).await {
-        Ok(Some(artifact)) => Json(artifact).into_response(),
+        Ok(Some(artifact)) => Json::<Artifact>(artifact).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Artifact not found").into_response(),
         Err(e) => {
             eprintln!("Failed to get artifact: {:?}", e);
@@ -163,7 +164,7 @@ pub async fn update_artifact_handler(
         payload.name,
         payload.content,
     ).await {
-        Ok(Some(artifact)) => Json(artifact).into_response(),
+        Ok(Some(artifact)) => Json::<Artifact>(artifact).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Artifact not found").into_response(),
         Err(e) => {
             eprintln!("Failed to update artifact: {:?}", e);

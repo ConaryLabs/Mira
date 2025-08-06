@@ -1,4 +1,4 @@
-// src/llm/assistant/thread.rs - Modernized for OpenAI Responses API (no tools, no file_search)
+// src/llm/responses/thread.rs - Modernized for OpenAI Responses API (no tools, no file_search)
 
 use crate::llm::client::OpenAIClient;
 use std::collections::HashMap;

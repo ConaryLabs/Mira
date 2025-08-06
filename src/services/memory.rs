@@ -3,7 +3,8 @@
 use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
-use crate::llm::{OpenAIClient, EvaluateMemoryRequest, MiraStructuredReply};
+use crate::llm::OpenAIClient;
+use crate::llm::schema::{EvaluateMemoryRequest, MiraStructuredReply, EvaluateMemoryResponse, function_schema};
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::traits::MemoryStore;
@@ -89,7 +90,7 @@ impl MemoryService {
         // Evaluate memory importance
         let eval_request = EvaluateMemoryRequest {
             content: response.output.clone(),
-            function_schema: crate::llm::function_schema(),
+            function_schema: function_schema(),
         };
         
         let evaluation = self.llm_client
@@ -97,7 +98,7 @@ impl MemoryService {
             .await
             .unwrap_or_else(|e| {
                 eprintln!("❌ Memory evaluation failed: {:?}, using defaults", e);
-                crate::llm::EvaluateMemoryResponse {
+                EvaluateMemoryResponse {
                     salience: 5,
                     tags: vec!["response".to_string()],
                     memory_type: crate::llm::schema::MemoryType::Other,

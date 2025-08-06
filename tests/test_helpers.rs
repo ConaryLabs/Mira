@@ -1,7 +1,7 @@
 use mira_backend::{
-    handlers::AppState,
+    state::AppState,
     llm::OpenAIClient,
-    llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager},
+    llm::responses::{ResponsesManager, VectorStoreManager, ThreadManager},
     memory::{
         sqlite::store::SqliteMemoryStore,
         qdrant::store::QdrantMemoryStore,
@@ -63,9 +63,9 @@ pub async fn create_test_app_state() -> Arc<AppState> {
     ));
     
     // Create assistant components
-    let assistant_manager = AssistantManager::new(llm_client.clone());
+    let responses_manager = ResponsesManager::new(llm_client.clone());
     // Don't actually create assistant in tests unless needed
-    let assistant_manager = Arc::new(assistant_manager);
+    let responses_manager = Arc::new(responses_manager);
     
     let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(llm_client.clone()));
@@ -75,7 +75,7 @@ pub async fn create_test_app_state() -> Arc<AppState> {
         chat_service.clone(),
         memory_service.clone(),
         context_service.clone(),
-        assistant_manager.clone(),
+        responses_manager.clone(),
         thread_manager.clone(),
     ));
     
@@ -95,7 +95,7 @@ pub async fn create_test_app_state() -> Arc<AppState> {
         chat_service,
         memory_service,
         context_service,
-        assistant_manager,
+        responses_manager,
         vector_store_manager,
         thread_manager,
         hybrid_service,

@@ -8,15 +8,10 @@ use axum::{
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::qdrant::store::QdrantMemoryStore;
+use crate::state::AppState;  // Import from new location
 use crate::memory::types::MemoryEntry;
-use crate::llm::OpenAIClient;
-use crate::llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager};
 use crate::persona::PersonaOverlay;
-use crate::project::store::ProjectStore;
-use crate::services::{ChatService, MemoryService, ContextService, HybridMemoryService, DocumentService};
-use chrono::{Utc, TimeZone};
+use chrono::{Utc, TimeZone};  // Added TimeZone
 use sqlx::Row;
 
 #[derive(Deserialize)]
@@ -51,29 +46,6 @@ pub struct HistoryQuery {
     pub limit: Option<usize>,
     pub offset: Option<i64>,
     pub project_id: Option<String>,
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    // Existing storage fields
-    pub sqlite_store: Arc<SqliteMemoryStore>,
-    pub qdrant_store: Arc<QdrantMemoryStore>,
-    pub llm_client: Arc<OpenAIClient>,
-    pub project_store: Arc<ProjectStore>,
-    pub git_store: crate::git::GitStore,
-    pub git_client: crate::git::GitClient,
-    
-    // Service layer
-    pub chat_service: Arc<ChatService>,
-    pub memory_service: Arc<MemoryService>,
-    pub context_service: Arc<ContextService>,
-    
-    // New hybrid memory components
-    pub assistant_manager: Arc<AssistantManager>,
-    pub vector_store_manager: Arc<VectorStoreManager>,
-    pub thread_manager: Arc<ThreadManager>,
-    pub hybrid_service: Arc<HybridMemoryService>,
-    pub document_service: Arc<DocumentService>,
 }
 
 pub async fn chat_handler(
@@ -117,7 +89,7 @@ pub async fn chat_handler(
         Ok(response) => {
             // Convert service response to API response
             let reply = ChatReply {
-                output: response.output,
+                output: response.output,  // Field is 'output' not 'response'
                 persona: response.persona,
                 mood: response.mood,
                 salience: response.salience,

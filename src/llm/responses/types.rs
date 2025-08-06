@@ -1,4 +1,4 @@
-// src/llm/assistant/types.rs
+// src/llm/responses/types.rs
 
 use serde::{Serialize, Deserialize};
 
@@ -43,7 +43,7 @@ pub struct TextContent {
 /// Request to create a run (obsolete in Responses API, but kept for legacy support)
 #[derive(Serialize, Debug)]
 pub struct CreateRunRequest {
-    pub assistant_id: String,
+    pub responses_id: String,
 }
 
 /// Response from creating a run

@@ -2,7 +2,7 @@ use anyhow::{Result, Context};
 use git2::{Repository, BranchType, Oid, ObjectType, TreeWalkMode, TreeWalkResult};
 use std::fs;
 use std::path::{Path, PathBuf};
-use chrono::{Utc, DateTime};
+use chrono::{Utc};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 

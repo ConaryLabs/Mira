@@ -109,3 +109,5 @@ pub struct ChatRequest {
     pub persona_override: Option<String>,
     pub project_id: Option<String>,
 }
+
+// Export for services

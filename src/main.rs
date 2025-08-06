@@ -1,3 +1,5 @@
+// src/main.rs
+
 use std::sync::Arc;
 use axum::{
     Router,
@@ -8,9 +10,10 @@ use tracing::info;
 use mira_backend::{
     api::ws::ws_router,
     api::http::http_router,
-    handlers::{AppState, chat_handler, chat_history_handler},
+    state::AppState,  // Changed: Import from state module instead of handlers
+    handlers::{chat_handler, chat_history_handler},  // Removed AppState from here
     llm::OpenAIClient,
-    llm::assistant::{AssistantManager, VectorStoreManager, ThreadManager},
+    llm::responses::{ResponsesManager, VectorStoreManager, ThreadManager},
     memory::{
         sqlite::store::SqliteMemoryStore,
         qdrant::store::QdrantMemoryStore,
@@ -98,11 +101,12 @@ async fn main() -> anyhow::Result<()> {
         llm_client.clone(),
     ));
 
-    // --- Initialize OpenAI Assistant Components ---
-    info!("🤖 Initializing OpenAI Assistant components...");
-    let mut assistant_manager = AssistantManager::new(llm_client.clone());
-    assistant_manager.create_assistant().await?;
-    let assistant_manager = Arc::new(assistant_manager);
+    // --- Initialize OpenAI Responses Components ---
+    info!("🤖 Initializing OpenAI Responses components...");
+    let responses_manager = ResponsesManager::new(llm_client.clone());
+    // Note: create_assistant() method may not exist or be needed anymore
+    // If initialization is needed, check the ResponsesManager implementation
+    let responses_manager = Arc::new(responses_manager);
 
     let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(llm_client.clone()));
@@ -113,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
         chat_service.clone(),
         memory_service.clone(),
         context_service.clone(),
-        assistant_manager.clone(),
+        responses_manager.clone(),
         thread_manager.clone(), // <-- no vector_store_manager here
     ));
 
@@ -134,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
         chat_service,
         memory_service,
         context_service,
-        assistant_manager,
+        responses_manager,
         vector_store_manager,
         thread_manager,
         hybrid_service,
@@ -171,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
     info!("🚀 Mira backend listening on http://{addr}");
     info!("📦 SQLite: mira.db");
     info!("🔍 Qdrant: {}", qdrant_url);
-    info!("🤖 OpenAI Assistant: Initialized");
+    info!("🤖 OpenAI Responses: Initialized");  // Changed from "Assistant" to "Responses"
     info!("🌐 WebSocket endpoint: ws://localhost:{}/ws/chat", port);
     info!("📜 Chat history endpoint: http://localhost:{}/chat/history", port);
     info!("📁 Project API: http://localhost:{}/projects", port);

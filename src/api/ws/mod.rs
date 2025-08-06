@@ -8,7 +8,7 @@ pub mod session_state;
 
 use axum::{Router, routing::get};
 use std::sync::Arc;
-use crate::handlers::AppState;
+use crate::state::AppState;
 
 // Export session state types for use elsewhere
 pub use session_state::{WsSessionState, WsSessionManager};

@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use chrono::Utc;
 
-use crate::handlers::AppState;
+use crate::state::AppState;
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::persona::PersonaOverlay;
 

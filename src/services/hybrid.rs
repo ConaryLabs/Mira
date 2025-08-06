@@ -1,7 +1,7 @@
 // src/services/hybrid.rs
 
-use crate::llm::assistant::{AssistantManager, ThreadManager};
-use crate::llm::assistant::manager::ResponseMessage;
+use crate::llm::responses::{ResponsesManager, ThreadManager};
+use crate::llm::responses::manager::ResponseMessage;
 use crate::persona::PersonaOverlay;
 use crate::services::{ChatService, MemoryService, ContextService};
 use crate::memory::recall::RecallContext;
@@ -13,7 +13,7 @@ pub struct HybridMemoryService {
     chat_service: Arc<ChatService>,
     memory_service: Arc<MemoryService>,
     context_service: Arc<ContextService>,
-    assistant_manager: Arc<AssistantManager>,
+    responses_manager: Arc<ResponsesManager>,
     thread_manager: Arc<ThreadManager>,
 }
 
@@ -22,14 +22,14 @@ impl HybridMemoryService {
         chat_service: Arc<ChatService>,
         memory_service: Arc<MemoryService>,
         context_service: Arc<ContextService>,
-        assistant_manager: Arc<AssistantManager>,
+        responses_manager: Arc<ResponsesManager>,
         thread_manager: Arc<ThreadManager>,
     ) -> Self {
         Self {
             chat_service,
             memory_service,
             context_service,
-            assistant_manager,
+            responses_manager,
             thread_manager,
         }
     }
@@ -153,7 +153,7 @@ impl HybridMemoryService {
         eprintln!("💬 Using Responses API (no tools, just context)");
         eprintln!("🎭 Active persona: {}", persona);
 
-        let response_object = self.assistant_manager
+        let response_object = self.responses_manager
             .create_response(messages)
             .await?;
 

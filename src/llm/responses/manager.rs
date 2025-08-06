@@ -1,4 +1,4 @@
-// src/llm/assistant/manager.rs - Modern Responses API, no tool support
+// src/llm/responses/manager.rs - Modern Responses API, no tool support
 
 use crate::llm::client::OpenAIClient;
 use reqwest::Method;
@@ -38,22 +38,22 @@ pub struct ResponseChoice {
 }
 
 /// Manager for the new Responses API (tooling deprecated)
-pub struct AssistantManager {
+pub struct ResponsesManager {
     client: Arc<OpenAIClient>,
-    pub assistant_id: Option<String>,
+    pub responses_id: Option<String>,
 }
 
-impl AssistantManager {
+impl ResponsesManager {
     pub fn new(client: Arc<OpenAIClient>) -> Self {
         Self {
             client,
-            assistant_id: Some("responses-api-v1".to_string()),
+            responses_id: Some("responses-api-v1".to_string()),
         }
     }
 
-    /// "Create assistant" now just returns success since we use Responses API
-    pub async fn create_assistant(&mut self) -> Result<()> {
-        eprintln!("🤖 Initializing Responses API manager (no assistant creation needed)...");
+    /// "Create responses" now just returns success since we use Responses API
+    pub async fn create_responses(&mut self) -> Result<()> {
+        eprintln!("🤖 Initializing Responses API manager (no responses creation needed)...");
         Ok(())
     }
 
@@ -92,8 +92,8 @@ impl AssistantManager {
         Ok(result)
     }
 
-    /// Get the assistant ID (kept for compatibility)
-    pub fn get_assistant_id(&self) -> Option<&str> {
-        self.assistant_id.as_deref()
+    /// Get the responses ID (kept for compatibility)
+    pub fn get_responses_id(&self) -> Option<&str> {
+        self.responses_id.as_deref()
     }
 }
