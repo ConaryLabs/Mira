@@ -2,13 +2,15 @@
 
 use std::sync::Arc;
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{Utc, TimeZone};  // Add TimeZone import
+use sqlx::Row;  // Add this import
 use crate::llm::OpenAIClient;
 use crate::llm::schema::{EvaluateMemoryRequest, MiraStructuredReply, EvaluateMemoryResponse, function_schema};
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::MemoryMessage;
 
 #[derive(Clone)]
 pub struct MemoryService {
@@ -173,5 +175,184 @@ impl MemoryService {
             crate::llm::schema::MemoryType::Event => MemoryType::Event,
             crate::llm::schema::MemoryType::Other => MemoryType::Other,
         }
+    }
+
+    // Add methods needed by ChatService
+    
+    pub async fn store_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        project_id: Option<&str>,
+    ) -> Result<()> {
+        // Route to appropriate method based on role
+        if role == "user" {
+            // Get embedding for user messages if important enough
+            let embedding = match self.llm_client.get_embedding(content).await {
+                Ok(emb) => Some(emb),
+                Err(_) => None,
+            };
+            self.save_user_message(session_id, content, embedding, project_id).await
+        } else {
+            // For assistant messages, create a structured reply
+            let reply = MiraStructuredReply {
+                salience: 5,  // Changed from 5.0 to 5 (u8)
+                summary: Some(content.to_string()),  // Wrapped in Some
+                memory_type: "conversation".to_string(),
+                tags: vec!["assistant_message".to_string()],
+                intent: "response".to_string(),
+                mood: "present".to_string(),
+                persona: "default".to_string(),
+                output: content.to_string(),
+                // Add missing fields
+                aside_intensity: None,
+                monologue: None,
+                reasoning_summary: None,
+            };
+            self.evaluate_and_save_response(session_id, &reply, project_id).await?;
+            Ok(())
+        }
+    }
+    
+    pub async fn get_recent_messages(
+        &self,
+        session_id: &str,
+        limit: usize,
+        _project_id: Option<&str>,
+    ) -> Result<Vec<MemoryMessage>> {
+        // Retrieve recent messages from SQLite store
+        // For now, use a direct query since get_recent doesn't exist
+        let query = r#"
+            SELECT role, content, timestamp
+            FROM chat_history
+            WHERE session_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        "#;
+        
+        let rows = sqlx::query(query)
+            .bind(session_id)
+            .bind(limit as i64)
+            .fetch_all(&self.sqlite_store.pool)
+            .await?;
+        
+        Ok(rows.into_iter().map(|row| MemoryMessage {
+            role: row.get("role"),
+            content: row.get("content"),
+            timestamp: Utc.from_utc_datetime(&row.get::<chrono::NaiveDateTime, _>("timestamp")),
+        }).collect())
+    }
+    
+    pub async fn store_memory(
+        &self,
+        session_id: &str,
+        content: &str,
+        memory_type: &str,
+        salience: f32,
+        _project_id: Option<&str>,
+    ) -> Result<()> {
+        // Convert string memory type to enum
+        let mem_type = match memory_type {
+            "feeling" => MemoryType::Feeling,
+            "fact" => MemoryType::Fact,
+            "joke" => MemoryType::Joke,
+            "promise" => MemoryType::Promise,
+            "event" => MemoryType::Event,
+            _ => MemoryType::Other,
+        };
+        
+        // Get embedding if important
+        let embedding = if salience >= 7.0 {
+            match self.llm_client.get_embedding(content).await {
+                Ok(emb) => Some(emb),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        
+        let entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            role: "system".to_string(),
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            embedding,
+            salience: Some(salience),
+            tags: Some(vec![memory_type.to_string()]),
+            summary: None,
+            memory_type: Some(mem_type),
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: None,
+        };
+        
+        self.sqlite_store.save(&entry).await?;
+        
+        if entry.embedding.is_some() {
+            let _ = self.qdrant_store.save(&entry).await;
+        }
+        
+        Ok(())
+    }
+    
+    pub async fn recall_memories(
+        &self,
+        session_id: &str,
+        _query: &str,
+        limit: usize,
+        _project_id: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
+        // For now, just get recent memories from SQLite using direct query
+        let query = r#"
+            SELECT id, session_id, role, content, timestamp, salience, tags, 
+                   summary, memory_type, moderation_flag, system_fingerprint
+            FROM chat_history
+            WHERE session_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        "#;
+        
+        let rows = sqlx::query(query)
+            .bind(session_id)
+            .bind(limit as i64)
+            .fetch_all(&self.sqlite_store.pool)
+            .await?;
+        
+        let mut entries = Vec::new();
+        for row in rows {
+            let tags_str: Option<String> = row.get("tags");
+            let tags_vec = tags_str
+                .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok());
+            
+            let memory_type_str: Option<String> = row.get("memory_type");
+            let memory_type_enum = memory_type_str.and_then(|mt| match mt.as_str() {
+                "Feeling" => Some(MemoryType::Feeling),
+                "Fact" => Some(MemoryType::Fact),
+                "Joke" => Some(MemoryType::Joke),
+                "Promise" => Some(MemoryType::Promise),
+                "Event" => Some(MemoryType::Event),
+                _ => Some(MemoryType::Other),
+            });
+            
+            entries.push(MemoryEntry {
+                id: row.get("id"),
+                session_id: row.get("session_id"),
+                role: row.get("role"),
+                content: row.get("content"),
+                timestamp: Utc.from_utc_datetime(&row.get::<chrono::NaiveDateTime, _>("timestamp")),
+                embedding: None,  // Skip for performance
+                salience: row.get("salience"),
+                tags: tags_vec,
+                summary: row.get("summary"),
+                memory_type: memory_type_enum,
+                logprobs: None,
+                moderation_flag: row.get("moderation_flag"),
+                system_fingerprint: row.get("system_fingerprint"),
+            });
+        }
+        
+        Ok(entries)
     }
 }

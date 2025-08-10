@@ -1,326 +1,432 @@
 // src/services/chat.rs
 
-use crate::llm::client::OpenAIClient;
+use crate::llm::anthropic_client::{AnthropicClient, Message, MessageContent};
+use crate::llm::claude_system::{ClaudeSystem, ActionType};
+use crate::llm::OpenAIClient;
+use crate::services::midjourney_client::MidjourneyClient;
+use crate::services::midjourney_personas::MidjourneyPersonaEngine;
 use crate::persona::PersonaOverlay;
-use crate::llm::schema::{ChatResponse, MiraStructuredReply};
-use crate::tools::web_search::{
-    web_search_tool_definition, 
-    WebSearchConfig,
-    ToolCall,
-};
-use crate::tools::WebSearchHandler;  // Import from tools module directly
-use anyhow::{Result, Context};
-use serde_json::{json, Value};
-use reqwest::Method;
+use crate::llm::schema::MiraStructuredReply;
+use crate::services::ContextService;
+use crate::services::MemoryService;
+use crate::memory::MemoryMessage;
+use anyhow::Result;
 use std::sync::Arc;
-
-pub const DEFAULT_LLM_MODEL: &str = "gpt-4.1";  // Keep as gpt-4.1
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 #[derive(Clone)]
 pub struct ChatService {
-    pub llm_client: Arc<OpenAIClient>,
-    pub web_search_handler: Option<Arc<WebSearchHandler>>,
+    pub anthropic_client: Arc<AnthropicClient>,
+    pub midjourney_engine: Arc<MidjourneyPersonaEngine>,
+    pub context_service: Option<Arc<ContextService>>,
+    pub memory_service: Option<Arc<MemoryService>>,
+    pub llm_client: Arc<OpenAIClient>,  // Keep for backward compatibility
+    claude_system: ClaudeSystem,
 }
 
 impl ChatService {
-    pub fn new(llm_client: Arc<OpenAIClient>) -> Self {
-        // Initialize web search if API key is available
-        // Load .env if not already loaded (for tests and main app)
-        dotenv::dotenv().ok();
+    pub fn new(
+        anthropic_client: Arc<AnthropicClient>,
+        midjourney_client: Arc<MidjourneyClient>,
+    ) -> Self {
+        eprintln!("🚀 Mira initialized:");
+        eprintln!("  🧠 Claude Sonnet 4.0 orchestrates everything");
+        eprintln!("  🎨 Midjourney v6.5 for all visuals");
+        eprintln!("  ✨ Fully autonomous decision-making");
         
-        let web_search_handler = if let Ok(api_key) = std::env::var("TAVILY_API_KEY") {
-            let config = WebSearchConfig {
-                provider: crate::tools::web_search::SearchProvider::Tavily,
-                api_key: Some(api_key),
-                ..Default::default()
-            };
-            
-            match WebSearchHandler::new(config) {
-                Ok(handler) => {
-                    eprintln!("✅ Web search tool initialized with Tavily");
-                    Some(Arc::new(handler))
-                },
-                Err(e) => {
-                    eprintln!("⚠️ Failed to initialize web search: {:?}", e);
-                    None
-                }
-            }
-        } else {
-            eprintln!("ℹ️ Web search disabled (no TAVILY_API_KEY)");
-            None
-        };
-
-        Self { 
+        // Create OpenAI client for backward compatibility
+        let llm_client = Arc::new(OpenAIClient::new());
+        
+        Self {
+            anthropic_client: anthropic_client.clone(),
+            midjourney_engine: Arc::new(MidjourneyPersonaEngine::new(midjourney_client)),
+            context_service: None,
+            memory_service: None,
             llm_client,
-            web_search_handler,
+            claude_system: ClaudeSystem::new(anthropic_client),
         }
     }
 
-    /// Process message with optional tool support
+    pub fn set_context_service(&mut self, context_service: Arc<ContextService>) {
+        self.context_service = Some(context_service);
+    }
+
+    pub fn set_memory_service(&mut self, memory_service: Arc<MemoryService>) {
+        self.memory_service = Some(memory_service);
+    }
+
+    /// SINGLE ENTRY POINT - Claude orchestrates everything
     pub async fn process_message(
         &self,
-        _session_id: &str,
+        session_id: &str,
         content: &str,
         persona: &PersonaOverlay,
         project_id: Option<&str>,
-    ) -> Result<ChatResponse> {
-        eprintln!("🎭 ChatService using persona: {}", persona);
+        images: Option<Vec<String>>,
+        pdfs: Option<Vec<String>>,
+    ) -> Result<MiraStructuredReply> {
+        // Build orchestration prompt
+        let system_prompt = self.build_orchestration_prompt(persona, project_id).await?;
         
-        // Build system prompt with Mira's personality
-        let mut system_prompt = String::new();
-        system_prompt.push_str(persona.prompt());
-        system_prompt.push_str("\n\n");
+        // Get memory context
+        let memory_messages = self.get_memory_messages(session_id, project_id).await?;
         
-        // Add web search guidance if available
-        if self.web_search_handler.is_some() {
-            system_prompt.push_str("You have access to a web_search tool. Use it when:\n");
-            system_prompt.push_str("- The user asks about current events, news, or recent happenings\n");
-            system_prompt.push_str("- You need information from after January 2025 (your knowledge cutoff)\n");
-            system_prompt.push_str("- The question involves real-time data (prices, scores, weather, etc.)\n");
-            system_prompt.push_str("- You're unsure if your information is current or accurate\n");
-            system_prompt.push_str("- The user explicitly asks you to search or look something up\n\n");
-            system_prompt.push_str("Don't search for:\n");
-            system_prompt.push_str("- Historical facts that don't change\n");
-            system_prompt.push_str("- Basic knowledge (math, science concepts, programming)\n");
-            system_prompt.push_str("- Personal advice or creative tasks\n\n");
-        }
+        // Claude analyzes and decides
+        let decision = self.claude_system.analyze_and_decide(
+            &system_prompt,
+            content,
+            memory_messages.clone(),
+            images.clone(),
+            pdfs.clone(),
+        ).await?;
         
-        // Add structured output requirements for final response
-        system_prompt.push_str("When providing your FINAL response (not during tool use), format it as a JSON object with these fields:\n");
-        system_prompt.push_str("- output: Your actual reply to the user (string)\n");
-        system_prompt.push_str("- persona: The persona overlay in use (string)\n");
-        system_prompt.push_str("- mood: The emotional tone of your reply (string)\n");
-        system_prompt.push_str("- salience: How emotionally important this reply is (integer 0-10)\n");
-        system_prompt.push_str("- summary: Short summary of your reply/context (string or null)\n");
-        system_prompt.push_str("- memory_type: \"feeling\", \"fact\", \"joke\", \"promise\", \"event\", or \"other\" (string)\n");
-        system_prompt.push_str("- tags: List of context/mood tags (array of strings)\n");
-        system_prompt.push_str("- intent: Your intent in this reply (string)\n");
-        system_prompt.push_str("- monologue: Your private inner thoughts, not shown to user (string or null)\n");
-        system_prompt.push_str("- reasoning_summary: Your reasoning/chain-of-thought, if any (string or null)\n");
-
-        // Include project context if available
-        let user_message = if let Some(proj_id) = project_id {
-            format!("[Project: {}]\n{}", proj_id, content)
-        } else {
-            content.to_string()
-        };
-
-        // Build messages
-        let mut messages = vec![
-            json!({"role": "system", "content": system_prompt}),
-            json!({"role": "user", "content": user_message}),
-        ];
-
-        // Build tools array if web search is available
-        let tools = if self.web_search_handler.is_some() {
-            vec![web_search_tool_definition()]
-        } else {
-            vec![]
-        };
-
-        // Call OpenAI with tools
-        let response = if !tools.is_empty() {
-            self.process_with_tools(&mut messages, tools, persona.to_string()).await?
-        } else {
-            // Fallback to simple chat without tools
-            self.process_without_tools(&messages, persona.to_string()).await?
-        };
-
-        Ok(response)
-    }
-
-    /// Process chat with tool support
-    async fn process_with_tools(
-        &self,
-        messages: &mut Vec<Value>,
-        tools: Vec<Value>,
-        persona: String,
-    ) -> Result<ChatResponse> {
-        eprintln!("🔧 Processing with tools enabled");
+        eprintln!("🧠 Claude decided: {:?} (confidence: {})", 
+                  decision.action, decision.confidence);
         
-        // First API call - model may request tool use
-        let first_response = self.llm_client
-            .chat_with_tools(
-                messages.clone(),
-                tools.clone(),
-                None, // Let model decide
-                Some(DEFAULT_LLM_MODEL),
-            )
-            .await?;
-
-        // Check if model wants to use tools
-        if let Some(tool_calls) = first_response["choices"][0]["message"]["tool_calls"].as_array() {
-            eprintln!("🔍 Model requested {} tool call(s)", tool_calls.len());
-            
-            // Add assistant's message with tool calls to history
-            messages.push(first_response["choices"][0]["message"].clone());
-            
-            // Process each tool call
-            for tool_call_json in tool_calls {
-                let tool_call: ToolCall = serde_json::from_value(tool_call_json.clone())
-                    .context("Failed to parse tool call")?;
-                
-                if tool_call.function.name == "web_search" {
-                    if let Some(handler) = &self.web_search_handler {
-                        eprintln!("🌐 Executing web search: {}", tool_call.function.arguments);
-                        
-                        match handler.handle_tool_call(&tool_call).await {
-                            Ok(result) => {
-                                // Add tool result to messages
-                                messages.push(json!({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": result.content,
-                                }));
-                            }
-                            Err(e) => {
-                                eprintln!("❌ Tool call failed: {:?}", e);
-                                messages.push(json!({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": format!("Search failed: {}", e),
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Second API call with tool results - request JSON response
-            eprintln!("📤 Sending tool results back to model");
-            
-            // Add a user message to ensure JSON format
-            messages.push(json!({
-                "role": "user",
-                "content": "Now provide your complete response based on the search results. Format as the specified JSON object."
-            }));
-            
-            let final_response = self.llm_client
-                .chat_with_tools(
-                    messages.clone(),
-                    vec![], // No tools this time
-                    None,
-                    Some(DEFAULT_LLM_MODEL),
-                )
-                .await?;
-            
-            self.parse_llm_response(final_response, persona)
-        } else {
-            // Model didn't use tools, parse direct response
-            self.parse_llm_response(first_response, persona)
-        }
-    }
-
-    /// Process without tools (backward compatibility)
-    async fn process_without_tools(
-        &self,
-        messages: &Vec<Value>,
-        persona: String,
-    ) -> Result<ChatResponse> {
-        let payload = json!({
-            "model": DEFAULT_LLM_MODEL,
-            "messages": messages,
-            "temperature": 0.9,
-            "response_format": { "type": "json_object" },
-        });
-
-        let res = self.llm_client
-            .request(Method::POST, "chat/completions")
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed to call OpenAI chat API")?;
-
-        if !res.status().is_success() {
-            let error_text = res.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
-        }
-
-        let response_json: Value = res.json().await
-            .context("Failed to parse OpenAI response")?;
-
-        self.parse_llm_response(response_json, persona)
-    }
-
-    /// Parse LLM response into ChatResponse
-    fn parse_llm_response(&self, response_json: Value, persona: String) -> Result<ChatResponse> {
-        let content = response_json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("");
-
-        eprintln!("📥 Raw LLM response: {}", content);
-
-        // Try to parse as JSON
-        let chat_response = serde_json::from_str::<MiraStructuredReply>(content)
-            .map(|reply| ChatResponse {
-                output: reply.output,
-                persona: reply.persona,
-                mood: reply.mood,
-                salience: reply.salience,
-                summary: reply.summary,
-                memory_type: reply.memory_type,
-                tags: reply.tags,
-                intent: reply.intent,
-                monologue: reply.monologue,
-                reasoning_summary: reply.reasoning_summary,
-                aside_intensity: None,
-            })
-            .unwrap_or_else(|e| {
-                eprintln!("⚠️ Failed to parse JSON response: {:?}", e);
-                eprintln!("Raw content was: {}", content);
-                
-                // Fallback response
-                ChatResponse {
-                    output: content.to_string(),
+        // Execute Claude's decision
+        match decision.action {
+            ActionType::Conversation => {
+                let response = self.claude_system.respond(
                     persona,
-                    mood: "confused".to_string(),
-                    salience: 5,
-                    summary: Some("Failed to parse structured response".to_string()),
-                    memory_type: "other".to_string(),
-                    tags: vec!["fallback".to_string()],
-                    intent: "chat".to_string(),
-                    monologue: Some("My JSON formatting got messed up, but I'm still here!".to_string()),
-                    reasoning_summary: None,
-                    aside_intensity: None,
+                    content,
+                    memory_messages,
+                    images,
+                    pdfs,
+                ).await?;
+                
+                // Store in memory
+                if let Some(mem_service) = &self.memory_service {
+                    mem_service.store_message(
+                        session_id,
+                        "user",
+                        content,
+                        project_id,
+                    ).await?;
+                    
+                    mem_service.store_message(
+                        session_id,
+                        "assistant",
+                        &response.get_text(),
+                        project_id,
+                    ).await?;
                 }
-            });
-
-        Ok(chat_response)
+                
+                let text = response.get_text();
+                Ok(MiraStructuredReply {
+                    salience: 5,  // u8
+                    summary: Some(text.clone()),  // Option<String>
+                    memory_type: "conversation".to_string(),
+                    tags: vec![persona.name().to_string()],
+                    intent: "response".to_string(),
+                    mood: persona.current_mood(),
+                    persona: persona.name().to_string(),
+                    output: text,
+                    aside_intensity: None,
+                    monologue: None,
+                    reasoning_summary: Some(decision.reasoning.clone()),
+                })
+            },
+            
+            ActionType::GenerateImage => {
+                let urls = self.midjourney_engine.generate_with_persona(
+                    &decision.image_prompt.unwrap_or_else(|| content.to_string()),
+                    persona,
+                    decision.style_params,
+                ).await?;
+                
+                self.format_image_response(urls, persona, &decision.context).await
+            },
+            
+            ActionType::DescribeImage => {
+                if let Some(imgs) = images {
+                    // Decode first image and describe
+                    let image_data = BASE64.decode(&imgs[0])?;
+                    let description = self.midjourney_engine.client
+                        .describe(&image_data)
+                        .await?;
+                    
+                    self.format_description_response(description, persona).await
+                } else {
+                    // Even error messages go through Claude
+                    self.claude_respond_to_missing_image(persona).await
+                }
+            },
+            
+            ActionType::BlendImages => {
+                if let Some(imgs) = images {
+                    if imgs.len() < 2 {
+                        return self.claude_respond_to_insufficient_images_for_blend(persona).await;
+                    }
+                    
+                    let decoded: Vec<Vec<u8>> = imgs.iter()
+                        .map(|img| BASE64.decode(img).unwrap())
+                        .collect();
+                    
+                    let job = self.midjourney_engine.client
+                        .blend(decoded)
+                        .await?;
+                    
+                    let urls = self.midjourney_engine.client
+                        .wait_for_completion(&job.job_id, 60)
+                        .await?;
+                    
+                    self.format_blend_response(urls, persona).await
+                } else {
+                    self.claude_respond_to_missing_images_for_blend(persona).await
+                }
+            },
+            
+            ActionType::CreateLogo => {
+                // Extract company name from context
+                let company_name = decision.context.split_whitespace()
+                    .next()
+                    .unwrap_or("Company");
+                
+                let urls = self.midjourney_engine.generate_logo(
+                    company_name,
+                    &decision.image_prompt.unwrap_or_else(|| "modern tech company".to_string()),
+                ).await?;
+                
+                self.format_logo_response(urls, company_name, persona).await
+            },
+            
+            ActionType::WeirdMode => {
+                eprintln!("🌀 WEIRD MODE ACTIVATED BY CLAUDE!");
+                
+                let urls = self.midjourney_engine.generate_weird_mode(
+                    &decision.image_prompt.unwrap_or_else(|| content.to_string()),
+                ).await?;
+                
+                self.format_weird_response(urls, persona).await
+            },
+            
+            ActionType::Video => {
+                let url = self.midjourney_engine.generate_video(
+                    &decision.image_prompt.unwrap_or_else(|| content.to_string()),
+                ).await?;
+                
+                self.format_video_response(url, persona).await
+            },
+            
+            ActionType::MultiStep => {
+                // Box the recursive call to avoid infinite size
+                Box::pin(self.execute_multi_step(
+                    decision.steps.unwrap_or_default(),
+                    persona,
+                    session_id,
+                    project_id,
+                )).await
+            },
+        }
     }
 
-    /// LLM-powered helper: Use GPT-4 to route a document upload
-    pub async fn run_routing_inference(
+    async fn build_orchestration_prompt(&self, persona: &PersonaOverlay, project_id: Option<&str>) -> Result<String> {
+        let mut context_info = String::new();
+        
+        if let Some(pid) = project_id {
+            if let Some(_ctx_service) = &self.context_service {
+                // Get project context if available
+                context_info = format!("Project context: {}", pid);
+            }
+        }
+        
+        Ok(format!(
+            "You are orchestrating as Mira with persona: {}\nMood: {}\n{}",
+            persona.name(),
+            persona.current_mood(),
+            context_info
+        ))
+    }
+
+    async fn get_memory_messages(&self, session_id: &str, project_id: Option<&str>) -> Result<Vec<Message>> {
+        if let Some(mem_service) = &self.memory_service {
+            let memories = mem_service.get_recent_messages(session_id, 10, project_id).await?;
+            
+            Ok(memories.into_iter().map(|m: MemoryMessage| Message {
+                role: m.role,
+                content: MessageContent::Text(m.content),
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    async fn execute_multi_step(
         &self,
-        system_prompt: &str,
-        user_prompt: &str,
-    ) -> Result<String> {
-        let payload = json!({
-            "model": DEFAULT_LLM_MODEL,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": user_prompt }
-            ],
-            "temperature": 0.3,
-            "stream": false,
-        });
+        steps: Vec<String>,
+        persona: &PersonaOverlay,
+        session_id: &str,
+        project_id: Option<&str>,
+    ) -> Result<MiraStructuredReply> {
+        let mut results = Vec::new();
+        
+        for step in steps {
+            eprintln!("📋 Executing step: {}", step);
+            // Box the recursive call to avoid infinite size
+            let step_result = Box::pin(self.process_message(
+                session_id,
+                &step,
+                persona,
+                project_id,
+                None,
+                None,
+            )).await?;
+            results.push(step_result.output);
+        }
+        
+        // Have Claude synthesize all results
+        let synthesis_prompt = format!(
+            "Synthesize these results into a cohesive response:\n{}",
+            results.join("\n\n")
+        );
+        
+        self.claude_respond(persona, &synthesis_prompt, vec![]).await
+    }
 
-        let res = self.llm_client
-            .request(Method::POST, "chat/completions")
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed to call OpenAI chat API for routing")?
-            .error_for_status()
-            .context("Non-2xx from OpenAI chat/completions for routing")?
-            .json::<serde_json::Value>()
-            .await
-            .context("Failed to parse OpenAI routing response")?;
+    // Response formatting methods - ALL go through Claude for personality
 
-        let output = res["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+    async fn format_image_response(
+        &self,
+        urls: Vec<String>,
+        persona: &PersonaOverlay,
+        context: &str,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = format!(
+            "I just created {} image(s) for the user. URLs: {:?}\n\
+            Context: {}\n\
+            Share this creation in your unique voice with enthusiasm.",
+            urls.len(), urls, context
+        );
+        self.claude_respond(persona, &prompt, vec![]).await
+    }
 
-        Ok(output)
+    async fn format_description_response(
+        &self,
+        description: crate::services::midjourney_client::DescribeResponse,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = format!(
+            "I analyzed an image. Here's what I found:\n\
+            Descriptions: {:?}\n\
+            Tags: {:?}\n\
+            Style: {}\n\
+            Mood: {}\n\
+            Describe this analysis in your voice.",
+            description.descriptions, description.tags, 
+            description.style, description.mood
+        );
+        self.claude_respond(persona, &prompt, vec![]).await
+    }
+
+    async fn format_blend_response(
+        &self,
+        urls: Vec<String>,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = format!(
+            "I blended the images together! Result: {:?}\n\
+            Express excitement about this creative blend.",
+            urls
+        );
+        self.claude_respond(persona, &prompt, vec![]).await
+    }
+
+    async fn format_logo_response(
+        &self,
+        urls: Vec<String>,
+        company: &str,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = format!(
+            "Created a logo for {}! URLs: {:?}\n\
+            Share this professional design with appropriate commentary.",
+            company, urls
+        );
+        self.claude_respond(persona, &prompt, vec![]).await
+    }
+
+    async fn format_weird_response(
+        &self,
+        urls: Vec<String>,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = format!(
+            "MAXIMUM WEIRD MODE produced this insanity: {:?}\n\
+            React to this bizarre creation in character!",
+            urls
+        );
+        self.claude_respond(persona, &prompt, vec![]).await
+    }
+
+    async fn format_video_response(
+        &self,
+        url: String,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = format!(
+            "Created a video: {}\n\
+            Share this exciting creation in your voice.",
+            url
+        );
+        self.claude_respond(persona, &prompt, vec![]).await
+    }
+    
+    async fn claude_respond_to_missing_image(
+        &self,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = "User asked me to describe an image but didn't provide one. \
+                     Respond naturally about needing an image.";
+        self.claude_respond(persona, prompt, vec![]).await
+    }
+    
+    async fn claude_respond_to_missing_images_for_blend(
+        &self,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = "User wants to blend images but didn't provide any. \
+                     Respond naturally about needing at least 2 images.";
+        self.claude_respond(persona, prompt, vec![]).await
+    }
+
+    async fn claude_respond_to_insufficient_images_for_blend(
+        &self,
+        persona: &PersonaOverlay,
+    ) -> Result<MiraStructuredReply> {
+        let prompt = "User wants to blend images but only provided one. \
+                     Explain naturally that blending needs at least 2 images.";
+        self.claude_respond(persona, prompt, vec![]).await
+    }
+    
+    /// Helper to always go through Claude
+    async fn claude_respond(
+        &self,
+        persona: &PersonaOverlay,
+        prompt: &str,
+        context: Vec<Message>,
+    ) -> Result<MiraStructuredReply> {
+        let response = self.claude_system.respond(
+            persona,
+            prompt,
+            context,
+            None,
+            None,
+        ).await?;
+        
+        let text = response.get_text();
+        
+        Ok(MiraStructuredReply {
+            salience: 5,  // u8
+            summary: Some(text.clone()),  // Option<String>
+            memory_type: "conversation".to_string(),
+            tags: vec![persona.name().to_string()],
+            intent: "response".to_string(),
+            mood: persona.current_mood(),
+            persona: persona.name().to_string(),
+            output: text,
+            aside_intensity: None,
+            monologue: None,
+            reasoning_summary: None,
+        })
     }
 }

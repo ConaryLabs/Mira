@@ -10,10 +10,7 @@ pub mod project;
 pub mod tools;
 pub mod git;
 pub mod services;
-pub mod state;     // Add the new state module
-// Removed: pub mod session (empty directory)
-// Removed: pub mod db (empty directory)
-// Removed: pub mod context (doesn't exist)
+pub mod state;
 
-// Optional: export commonly used items
-pub use state::AppState;  // Changed from handlers::AppState
+// Export commonly used items
+pub use state::AppState;

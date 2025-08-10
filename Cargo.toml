@@ -1,6 +1,6 @@
 [package]
 name = "mira-backend"
-version = "0.3.0"
+version = "0.4.1"
 edition = "2024"
 
 [lib]
@@ -8,6 +8,7 @@ name = "mira_backend"
 path = "src/lib.rs"
 
 [dependencies]
+# Web framework
 axum = { version = "0.7", features = ["macros", "ws"] }
 tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0.203", features = ["derive"] }
@@ -25,10 +26,17 @@ chrono = { version = "0.4.41", features = ["serde"] }
 async-trait = "0.1.88"
 futures = "0.3"
 async-stream = "0.3"
-clap = { version = "4.5", features = ["derive"] }  # <-- Added for CLI parsing
+clap = { version = "4.5", features = ["derive"] }
 git2 = "0.18.3"
 walkdir = "2.5.0"
-thiserror = "1.0"  # <-- Added for web search error handling
+thiserror = "1.0"
+
+# New dependencies for Claude + Midjourney
+base64 = "0.22"  # For image encoding/decoding
+tokio-stream = { version = "0.1", features = ["net"] }  # For streaming responses
+bytes = "1.5"  # For handling byte streams
+governor = "0.6"  # For rate limiting
+backoff = { version = "0.4", features = ["tokio"] }  # For exponential backoff
 
 [dev-dependencies]
 tokio-tungstenite = "0.27.0"

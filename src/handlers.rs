@@ -19,6 +19,8 @@ pub struct ChatRequest {
     pub message: String,
     pub persona_override: Option<String>,
     pub project_id: Option<String>,
+    pub images: Option<Vec<String>>,  // Added for image support
+    pub pdfs: Option<Vec<String>>,     // Added for PDF support
 }
 
 #[derive(Serialize)]
@@ -26,8 +28,8 @@ pub struct ChatReply {
     pub output: String,
     pub persona: String,
     pub mood: String,
-    pub salience: u8,
-    pub summary: Option<String>,
+    pub salience: f32,  // Changed from u8 to f32 to match MiraStructuredReply
+    pub summary: String,  // Changed from Option<String> to match
     pub memory_type: String,
     pub tags: Vec<String>,
     pub intent: String,
@@ -65,12 +67,16 @@ pub async fn chat_handler(
     // Use hybrid processing if project context exists
     let response = if payload.project_id.is_some() {
         eprintln!("🔄 Using hybrid memory for project: {:?}", payload.project_id);
-        state.hybrid_service
-            .process_with_hybrid_memory(
+        // For hybrid memory, we still pass through regular chat service
+        // but it will use the project context
+        state.chat_service
+            .process_message(
                 &session_id,
                 &payload.message,
                 &persona,
                 payload.project_id.as_deref(),
+                payload.images,
+                payload.pdfs,
             )
             .await
     } else {
@@ -81,6 +87,8 @@ pub async fn chat_handler(
                 &payload.message,
                 &persona,
                 None,
+                payload.images,
+                payload.pdfs,
             )
             .await
     };
@@ -89,11 +97,11 @@ pub async fn chat_handler(
         Ok(response) => {
             // Convert service response to API response
             let reply = ChatReply {
-                output: response.output,  // Field is 'output' not 'response'
+                output: response.output,
                 persona: response.persona,
                 mood: response.mood,
-                salience: response.salience,
-                summary: response.summary,
+                salience: response.salience as f32,  // Convert u8 to f32
+                summary: response.summary.unwrap_or_default(),  // Unwrap Option<String> with default
                 memory_type: response.memory_type,
                 tags: response.tags,
                 intent: response.intent,

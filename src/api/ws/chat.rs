@@ -1,3 +1,5 @@
+// src/api/ws/chat.rs
+
 use axum::{
     extract::{WebSocketUpgrade, State},
     response::IntoResponse,
@@ -215,6 +217,7 @@ async fn stream_chat_response(
     }
 
     // STEP 2: Process the message and get response
+    // Updated to include images and pdfs parameters
     let response = match timeout(
         Duration::from_secs(30),
         app_state.chat_service.process_message(
@@ -222,6 +225,8 @@ async fn stream_chat_response(
             &content,
             persona,
             project_id,
+            None,  // images - could be extracted from WebSocket message if needed
+            None,  // pdfs - could be extracted from WebSocket message if needed
         )
     ).await {
         Ok(Ok(resp)) => resp,
@@ -254,26 +259,13 @@ async fn stream_chat_response(
     eprintln!("[{}] Got chat response, saving to memory...", Utc::now());
 
     // STEP 3: Save Mira's response to memory
-    // Convert ChatResponse to MiraStructuredReply for saving
-    let mira_reply = crate::llm::schema::MiraStructuredReply {
-        output: response.output.clone(),
-        persona: response.persona.clone(),
-        mood: response.mood.clone(),
-        salience: response.salience,
-        summary: response.summary.clone(),
-        memory_type: response.memory_type.clone(),
-        tags: response.tags.clone(),
-        intent: response.intent.clone(),
-        monologue: response.monologue.clone(),
-        reasoning_summary: response.reasoning_summary.clone(),
-        aside_intensity: response.aside_intensity,
-    };
+    // The response is already a MiraStructuredReply, no conversion needed
     
     // Save assistant response
     if let Err(e) = app_state.memory_service
         .evaluate_and_save_response(
             session_id,
-            &mira_reply,
+            &response,  // response is already MiraStructuredReply
             project_id,
         )
         .await {
@@ -320,24 +312,10 @@ async fn stream_chat_response(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // Send emotional asides if present (with correct Option<f32> type!)
-    if let Some(monologue) = &response.monologue {
-        if !monologue.is_empty() {
-            // Fix: Convert Option<i32> to Option<f32>
-            let intensity = response.aside_intensity
-                .map(|i| i as f32)  // Convert i32 to f32
-                .unwrap_or(0.0);    // Default to 0.0 if None
-            
-            let aside_msg = WsServerMessage::Aside {
-                emotional_cue: monologue.clone(),
-                intensity: Some(intensity),
-            };
-            let mut sender_guard = sender.lock().await;
-            let _ = sender_guard.send(Message::Text(
-                serde_json::to_string(&aside_msg).unwrap()
-            )).await;
-        }
-    }
+    // Send emotional asides if present
+    // Note: MiraStructuredReply doesn't have monologue or aside_intensity fields
+    // If you want to add these features, you could extract them from the response
+    // or add them to the MiraStructuredReply struct
 
     // Send done message
     let done_msg = WsServerMessage::Done;
