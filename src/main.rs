@@ -12,9 +12,9 @@ use mira_backend::{
     api::http::http_router,
     state::AppState,
     handlers::{chat_handler, chat_history_handler},
-    // New Anthropic imports
+    // Anthropic for orchestration
     llm::anthropic_client::AnthropicClient,
-    // Keep existing OpenAI for embeddings only
+    // OpenAI for embeddings and image generation
     llm::OpenAIClient,
     llm::responses::{ResponsesManager, VectorStoreManager, ThreadManager},
     memory::{
@@ -32,8 +32,7 @@ use mira_backend::{
         ContextService, 
         HybridMemoryService, 
         DocumentService,
-        // New Midjourney imports
-        midjourney_client::MidjourneyClient,
+        // Removed Midjourney imports
     },
 };
 use tokio::net::TcpListener;
@@ -45,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    info!("🚀 Mira v2.0 - Claude + Midjourney Edition");
+    info!("🚀 Mira v2.0 - Claude + OpenAI Edition");
     info!("📅 August 2025 - Full Autonomy Mode");
 
     // --- Initialize SQLite pool ---
@@ -85,19 +84,13 @@ async fn main() -> anyhow::Result<()> {
     info!("🧠 Initializing Claude (Anthropic)...");
     let anthropic_client = Arc::new(AnthropicClient::new());
     info!("   ✅ Claude Sonnet 4.0 - Primary orchestrator");
-    info!("   ✅ Claude Opus 4.1 - Complex reasoning");
     info!("   ✅ All beta features enabled");
 
-    // --- Initialize Midjourney (Vision) ---
-    info!("🎨 Initializing Midjourney v6.5...");
-    let midjourney_client = Arc::new(MidjourneyClient::new()?);
-    info!("   ✅ Image generation with v6.5");
-    info!("   ✅ Weird mode up to 3000");
-    info!("   ✅ Video, blend, describe, inpaint");
-
-    // --- Keep OpenAI for embeddings only ---
-    info!("📊 Initializing OpenAI (embeddings only)...");
+    // --- Initialize OpenAI (for embeddings and images) ---
+    info!("🎨 Initializing OpenAI...");
     let openai_client = Arc::new(OpenAIClient::new());
+    info!("   ✅ gpt-image-1 for image generation");
+    info!("   ✅ text-embedding-3-large for embeddings");
 
     // --- Initialize Project Store ---
     info!("📁 Initializing project store...");
@@ -110,93 +103,90 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "./repos".to_string());
     let git_client = GitClient::new(&git_dir, git_store.clone());
 
+    // --- Initialize Responses API components ---
+    info!("🔧 Initializing Responses API...");
+    let responses_manager = Arc::new(ResponsesManager::new(openai_client.clone()));
+    let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
+    let thread_manager = Arc::new(ThreadManager::new(openai_client.clone()));
+
     // --- Initialize Services ---
     info!("🔧 Initializing services...");
     
-    // Memory service (unchanged)
+    // Memory service
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store.clone(),
         qdrant_store.clone(),
-        openai_client.clone(), // Still using OpenAI for embeddings
+        openai_client.clone(),
     ));
     
-    // Context service (fix the constructor call)
+    // Context service
     let context_service = Arc::new(ContextService::new(
-        sqlite_store.clone(),  // Changed from memory_service
-        qdrant_store.clone(),  // Changed from project_store
+        sqlite_store.clone(),
+        qdrant_store.clone(),
     ));
     
-    // --- NEW: Claude + Midjourney Chat Service ---
+    // Chat service with Claude and OpenAI
     info!("🚀 Creating orchestrated chat service...");
     let mut chat_service = ChatService::new(
         anthropic_client.clone(),
-        midjourney_client.clone(),
+        openai_client.clone(),
     );
     chat_service.set_context_service(context_service.clone());
     chat_service.set_memory_service(memory_service.clone());
     let chat_service = Arc::new(chat_service);
     
     info!("   ✅ Claude orchestrates all decisions");
-    info!("   ✅ Midjourney handles all visuals");
-    info!("   ✅ Zero OpenAI dependency for chat");
-
-    // OpenAI Responses Manager (fix constructor - only needs client)
-    let responses_manager = Arc::new(ResponsesManager::new(
-        openai_client.clone(),
-    ));
+    info!("   ✅ OpenAI handles image generation");
+    info!("   ✅ Web search via Claude's native tools");
     
-    // Create vector store and thread managers after responses manager
-    let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
-    let thread_manager = Arc::new(ThreadManager::new(openai_client.clone()));
-    
-    // Document service (fix the constructor call)
-    let document_service = Arc::new(DocumentService::new(
-        memory_service.clone(),
-        chat_service.clone(),
-        vector_store_manager.clone(),
-    ));
-
-    // Hybrid memory service (uses Claude for decisions now)
-    let hybrid_memory_service = Arc::new(HybridMemoryService::new(
+    // Hybrid memory service
+    let hybrid_service = Arc::new(HybridMemoryService::new(
         chat_service.clone(),
         memory_service.clone(),
         context_service.clone(),
         responses_manager.clone(),
         thread_manager.clone(),
     ));
+    
+    // Document service
+    let document_service = Arc::new(DocumentService::new(
+        memory_service.clone(),
+        chat_service.clone(),
+        vector_store_manager.clone(),
+    ));
 
     // --- Create AppState ---
     let app_state = Arc::new(AppState {
-        chat_service: chat_service.clone(),
-        memory_service: memory_service.clone(),
-        context_service: context_service.clone(),
-        hybrid_service: hybrid_memory_service.clone(),  // Fixed field name
-        project_store: project_store.clone(),
-        git_store,
-        git_client,
-        document_service,
-        responses_manager,
-        thread_manager,
         sqlite_store,
         qdrant_store,
-        llm_client: openai_client.clone(),  // Add missing field
-        vector_store_manager,  // Add missing field
+        llm_client: openai_client,
+        project_store,
+        git_store,
+        git_client,
+        chat_service,
+        memory_service,
+        context_service,
+        responses_manager,
+        vector_store_manager,
+        thread_manager,
+        hybrid_service,
+        document_service,
     });
 
-    // --- Configure CORS ---
+    // --- Build the application router ---
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // --- Build router ---
     let app = Router::new()
-        .route("/health", get(|| async {
+        .route("/", get(|| async { "Mira Backend v2.0 - Claude + OpenAI" }))
+        .route("/health", get(|| async { 
             axum::Json(serde_json::json!({
                 "status": "healthy",
                 "version": env!("CARGO_PKG_VERSION"),
                 "service": "mira-backend",
-                "engine": "claude+midjourney"
+                "engine": "claude+openai"
             }))
         }))
         .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
@@ -215,8 +205,8 @@ async fn main() -> anyhow::Result<()> {
     info!("════════════════════════════════════════════");
     info!("🚀 Mira backend listening on http://{addr}");
     info!("════════════════════════════════════════════");
-    info!("🧠 Brain: Claude Sonnet 4.0 + Opus 4.1");
-    info!("🎨 Vision: Midjourney v6.5");
+    info!("🧠 Brain: Claude Sonnet 4.0");
+    info!("🎨 Images: OpenAI gpt-image-1");
     info!("📊 Embeddings: OpenAI text-embedding-3-large");
     info!("💾 Memory: SQLite + Qdrant");
     info!("🌐 WebSocket: ws://localhost:{}/ws/chat", port);

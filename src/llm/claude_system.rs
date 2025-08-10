@@ -5,8 +5,9 @@ use super::anthropic_client::{
     ContentBlock, CacheControl, ImageSource, DocumentSource, MessageResponse
 };
 use crate::persona::PersonaOverlay;
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -114,11 +115,9 @@ Respond with valid JSON only."#,
 
         let response = self.client.create_message(request).await?;
         let json_text = response.get_text();
-        
-        // Parse the JSON response
-        let decision: ClaudeDecision = serde_json::from_str(&json_text)
-            .map_err(|e| anyhow::anyhow!("Failed to parse decision: {} - Raw: {}", e, json_text))?;
-        
+
+        // Tolerant parse (case-insensitive action + graceful fallback)
+        let decision = parse_decision_tolerant(&json_text)?;
         Ok(decision)
     }
 
@@ -247,19 +246,11 @@ Remember: You're not just answering questions, you're having a real conversation
     }
 }
 
-// Decision structure from Claude
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ClaudeDecision {
-    pub action: ActionType,
-    pub reasoning: String,
-    pub confidence: f32,
-    pub image_prompt: Option<String>,
-    pub style_params: Option<StyleParams>,
-    pub context: String,
-    pub steps: Option<Vec<String>>,
-}
+// --------------------- Decision parsing (tolerant) ---------------------
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Action variants your router supports.
+/// Deserialize case-insensitively and default to Conversation on unknowns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionType {
     Conversation,
@@ -272,10 +263,93 @@ pub enum ActionType {
     MultiStep,
 }
 
+impl<'de> Deserialize<'de> for ActionType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        // Normalize: lowercase and strip spaces/underscores for tolerant matching
+        let s_norm = s.trim().to_ascii_lowercase().replace(' ', "").replace('_', "");
+
+        let mapped = match s_norm.as_str() {
+            "conversation" => ActionType::Conversation,
+            "generateimage" => ActionType::GenerateImage,
+            "describeimage" => ActionType::DescribeImage,
+            "blendimages" => ActionType::BlendImages,
+            "createlogo" => ActionType::CreateLogo,
+            "weirdmode" => ActionType::WeirdMode,
+            "video" => ActionType::Video,
+            "multistep" => ActionType::MultiStep,
+            other => {
+                eprintln!("⚠️ Unknown action variant '{}', defaulting to conversation", other);
+                ActionType::Conversation
+            }
+        };
+
+        Ok(mapped)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClaudeDecision {
+    pub action: ActionType,
+    #[serde(default)]
+    pub reasoning: String,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default)]
+    pub image_prompt: Option<String>,
+    #[serde(default)]
+    pub style_params: Option<StyleParams>,
+    #[serde(default)]
+    pub context: String,
+    #[serde(default)]
+    pub steps: Option<Vec<String>>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StyleParams {
     pub weird: Option<u32>,
     pub chaos: Option<u8>,
     pub stylize: Option<u32>,
     pub quality: Option<f32>,
+}
+
+/// Parse a model JSON string into ClaudeDecision, case-insensitive and resilient.
+/// On parse failure, returns a best-effort Decision with action=Conversation.
+pub fn parse_decision_tolerant(raw_json: &str) -> Result<ClaudeDecision> {
+    // First try direct parse
+    if let Ok(d) = serde_json::from_str::<ClaudeDecision>(raw_json) {
+        return Ok(d);
+    }
+
+    eprintln!("ℹ️ Primary decision parse failed. Attempting tolerant parse.");
+    // Tolerant path: parse as Value, normalize `action`, then parse again
+    let mut v: Value = serde_json::from_str(raw_json)
+        .map_err(|e| anyhow!("Decision JSON not parseable: {e}. Raw: {raw_json}"))?;
+
+    if let Some(action) = v.get_mut("action") {
+        if let Some(s) = action.as_str() {
+            let s_norm = s.trim().to_ascii_lowercase().replace(' ', "").replace('_', "");
+            *action = Value::String(s_norm);
+        }
+    }
+
+    match serde_json::from_value::<ClaudeDecision>(v.clone()) {
+        Ok(d) => Ok(d),
+        Err(e2) => {
+            eprintln!("⚠️ Tolerant parse failed: {}. Raw (possibly normalized): {}", e2, v);
+            // Final graceful fallback
+            Ok(ClaudeDecision {
+                action: ActionType::Conversation,
+                reasoning: String::new(),
+                confidence: 0.0,
+                image_prompt: None,
+                style_params: None,
+                context: String::new(),
+                steps: None,
+            })
+        }
+    }
 }

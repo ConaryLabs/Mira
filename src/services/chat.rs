@@ -9,7 +9,9 @@ use crate::services::ContextService;
 use crate::services::MemoryService;
 use crate::memory::MemoryMessage;
 use anyhow::Result;
+use serde_json::Value;
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
 #[derive(Clone)]
 pub struct ChatService {
@@ -58,11 +60,50 @@ impl ChatService {
         pdfs: Option<Vec<String>>,
     ) -> Result<MiraStructuredReply> {
         eprintln!("📨 Processing message: {}", content);
-        
+
+        // --- BLOCKING USER EMBEDDING (with simple exponential backoff) ---
+        if let Some(mem_service) = &self.memory_service {
+            let mut attempt = 0u32;
+            let max_attempts = 6u32;
+            let embedding = loop {
+                match self.llm_client.get_embedding(content).await {
+                    Ok(v) => break Some(v),
+                    Err(e) => {
+                        attempt += 1;
+                        if attempt >= max_attempts {
+                            eprintln!("❌ Embedding failed after {} attempts: {:?}", max_attempts, e);
+                            break None; // final fallback: save without embedding (but never drop the turn)
+                        }
+                        let delay_ms = (300u64 * (1u64 << (attempt - 1))).min(5_000);
+                        eprintln!(
+                            "⏳ Embedding attempt {} failed: {:?}. Retrying in {}ms...",
+                            attempt, e, delay_ms
+                        );
+                        sleep(Duration::from_millis(delay_ms)).await;
+                    }
+                }
+            };
+
+            // Compute status BEFORE moving `embedding`
+            let status = if attempt == 0 {
+                "ok"
+            } else if embedding.is_some() {
+                "ok after retries"
+            } else {
+                "missing"
+            };
+
+            let _ = mem_service
+                .save_user_message(session_id, content, embedding, project_id)
+                .await;
+            eprintln!("✅ User message saved to memory (ingest, embedding: {})", status);
+        }
+        // ------------------------------------------------------------------
+
         // Build orchestration prompt
         let system_prompt = self.build_orchestration_prompt(persona, project_id).await?;
         
-        // Get memory context
+        // Get memory context (recent messages)
         let memory_messages = self.get_memory_messages(session_id, project_id).await?;
         
         // Claude analyzes and decides
@@ -76,8 +117,8 @@ impl ChatService {
         
         eprintln!("🧠 Claude decided: {:?} (confidence: {})", 
                   decision.action, decision.confidence);
-        
-        // Execute Claude's decision - SIMPLIFIED to just what we support
+
+        // Execute Claude's decision - supported branches
         match decision.action {
             ActionType::Conversation => {
                 let response = self.claude_system.respond(
@@ -88,13 +129,11 @@ impl ChatService {
                     pdfs,
                 ).await?;
                 
-                // Store in memory if available
-                if let Some(mem_service) = &self.memory_service {
-                    let _ = mem_service.store_message(session_id, "user", content, project_id).await;
-                    let _ = mem_service.store_message(session_id, "assistant", &response.get_text(), project_id).await;
-                }
-                
-                let text = response.get_text();
+                // sanitize and store assistant once
+                let raw_text = response.get_text();
+                let text = extract_user_facing_text(&raw_text);
+                self.store_assistant(session_id, &text, project_id).await;
+
                 Ok(MiraStructuredReply {
                     salience: 5,
                     summary: Some(text.clone()),
@@ -109,9 +148,9 @@ impl ChatService {
                     reasoning_summary: Some(decision.reasoning.clone()),
                 })
             },
-            
+
             ActionType::GenerateImage => {
-                let prompt = decision.image_prompt.unwrap_or_else(|| content.to_string());
+                let prompt = decision.image_prompt.clone().unwrap_or_else(|| content.to_string());
                 eprintln!("🎨 Generating image with OpenAI: {}", prompt);
                 
                 match self.llm_client.generate_image(&prompt, Some("hd")).await {
@@ -122,19 +161,30 @@ impl ChatService {
                             urls.join(", "),
                             prompt
                         );
-                        self.claude_respond(persona, &response_text, vec![]).await
+
+                        // Use Claude to wrap in persona voice
+                        let reply = self.claude_respond(persona, &response_text, vec![]).await?;
+                        let cleaned = extract_user_facing_text(&reply.output);
+                        self.store_assistant(session_id, &cleaned, project_id).await;
+
+                        Ok(MiraStructuredReply { output: cleaned, ..reply })
                     },
                     Err(e) => {
                         eprintln!("❌ Image generation failed: {:?}", e);
                         let error_msg = format!(
-                            "I wanted to create an image of '{}' but encountered a technical issue. Let me describe it instead: {}",
+                            "I wanted to create an image of '{}' but hit a snag. Let me describe it instead: {}",
                             prompt, decision.context
                         );
-                        self.claude_respond(persona, &error_msg, vec![]).await
+
+                        let reply = self.claude_respond(persona, &error_msg, vec![]).await?;
+                        let cleaned = extract_user_facing_text(&reply.output);
+                        self.store_assistant(session_id, &cleaned, project_id).await;
+
+                        Ok(MiraStructuredReply { output: cleaned, ..reply })
                     }
                 }
             },
-            
+
             ActionType::DescribeImage => {
                 if let Some(imgs) = images {
                     // Have Claude describe the image using its vision capabilities
@@ -145,8 +195,11 @@ impl ChatService {
                         Some(imgs),
                         None,
                     ).await?;
-                    
-                    let text = response.get_text();
+
+                    let raw_text = response.get_text();
+                    let text = extract_user_facing_text(&raw_text);
+                    self.store_assistant(session_id, &text, project_id).await;
+
                     Ok(MiraStructuredReply {
                         salience: 5,
                         summary: Some(text.clone()),
@@ -162,10 +215,14 @@ impl ChatService {
                     })
                 } else {
                     let msg = "I'd need you to provide an image for me to describe. Please upload one and I'll tell you what I see!";
-                    self.claude_respond(persona, msg, vec![]).await
+                    let reply = self.claude_respond(persona, msg, vec![]).await?;
+                    let cleaned = extract_user_facing_text(&reply.output);
+                    self.store_assistant(session_id, &cleaned, project_id).await;
+
+                    Ok(MiraStructuredReply { output: cleaned, ..reply })
                 }
             },
-            
+
             // For any unsupported action, just treat it as conversation
             _ => {
                 eprintln!("⚠️ Unsupported action {:?}, falling back to conversation", decision.action);
@@ -177,7 +234,10 @@ impl ChatService {
                     pdfs,
                 ).await?;
                 
-                let text = response.get_text();
+                let raw_text = response.get_text();
+                let text = extract_user_facing_text(&raw_text);
+                self.store_assistant(session_id, &text, project_id).await;
+
                 Ok(MiraStructuredReply {
                     salience: 5,
                     summary: Some(text.clone()),
@@ -214,7 +274,7 @@ impl ChatService {
 
     async fn get_memory_messages(&self, session_id: &str, project_id: Option<&str>) -> Result<Vec<Message>> {
         if let Some(mem_service) = &self.memory_service {
-            let memories = mem_service.get_recent_messages(session_id, 10, project_id).await?;
+            let memories = mem_service.get_recent_messages(session_id, 20, project_id).await?;
             
             Ok(memories.into_iter().map(|m: MemoryMessage| Message {
                 role: m.role,
@@ -222,6 +282,20 @@ impl ChatService {
             }).collect())
         } else {
             Ok(vec![])
+        }
+    }
+
+    /// Single-writer: persist the ASSISTANT message exactly once per turn.
+    async fn store_assistant(
+        &self,
+        session_id: &str,
+        assistant_text: &str,
+        project_id: Option<&str>,
+    ) {
+        if let Some(mem_service) = &self.memory_service {
+            let _ = mem_service
+                .store_message(session_id, "assistant", assistant_text, project_id)
+                .await;
         }
     }
     
@@ -240,7 +314,8 @@ impl ChatService {
             None,
         ).await?;
         
-        let text = response.get_text();
+        let raw = response.get_text();
+        let text = extract_user_facing_text(&raw);
         
         Ok(MiraStructuredReply {
             salience: 5,
@@ -256,4 +331,33 @@ impl ChatService {
             reasoning_summary: None,
         })
     }
+}
+
+/// Strip `json { ... }`, ```json blocks, and return user-facing text.
+/// If it’s already plain text, returns unchanged.
+fn extract_user_facing_text(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
+
+    // ```json ... ``` or ``` ... ```
+    if s.starts_with("```") {
+        if let Some(start) = s.find('\n') {
+            if let Some(end) = s.rfind("```") {
+                s = s[start + 1..end].trim().to_string();
+            }
+        }
+    }
+
+    // Leading "json "
+    if s.to_ascii_lowercase().starts_with("json ") {
+        s = s[4..].trim().to_string();
+    }
+
+    // Try to parse as {"response": "..."}
+    if let Ok(v) = serde_json::from_str::<Value>(&s) {
+        if let Some(resp) = v.get("response").and_then(|x| x.as_str()) {
+            return resp.to_string();
+        }
+    }
+
+    s
 }

@@ -1433,6 +1433,7 @@ dependencies = [
  "chrono",
  "clap",
  "dotenv",
+ "fastrand",
  "futures",
  "git2",
  "governor",

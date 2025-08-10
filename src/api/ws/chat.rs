@@ -37,7 +37,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     let current_persona = PersonaOverlay::Default;
     let mut active_project_id: Option<String> = None;
 
-    // Send initial greeting chunk instead of Connected message
+    // Send initial greeting chunk
     let greeting_msg = WsServerMessage::Chunk {
         content: "Connected! How can I help you today?".to_string(),
         mood: Some("attentive".to_string()),
@@ -93,14 +93,12 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                     Ok(WsClientMessage::Message { content, persona: _, project_id }) => {
                         eprintln!("Processing message: {}", content);
 
-                        // NOTE: Ignoring persona field - personas emerge naturally
-
                         // Update active project if specified
                         if project_id.is_some() {
                             active_project_id = project_id.clone();
                         }
 
-                        // Send immediate acknowledgment (no persona shown)
+                        // Send immediate acknowledgment (typing indicator)
                         let thinking_msg = WsServerMessage::Chunk {
                             content: "".to_string(),
                             mood: Some("thinking".to_string()),
@@ -116,7 +114,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             }
                         }
 
-                        // Handle the message
+                        // Handle the message using Claude
                         stream_chat_response(
                             sender.clone(),
                             &app_state,
@@ -172,6 +170,37 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     eprintln!("WebSocket handler ended for session: {}", session_id);
 }
 
+/// Extractor to strip `json { ... }` or ```json blocks and return user-facing text.
+fn extract_user_facing_text(raw: &str) -> String {
+    use serde_json::Value;
+
+    let mut s = raw.trim().to_string();
+
+    // ```json ... ``` or ``` ... ```
+    if s.starts_with("```") {
+        if let Some(start) = s.find('\n') {
+            if let Some(end) = s.rfind("```") {
+                s = s[start + 1..end].trim().to_string();
+            }
+        }
+    }
+
+    // Leading "json "
+    if s.to_ascii_lowercase().starts_with("json ") {
+        s = s[4..].trim().to_string();
+    }
+
+    // Try to parse as {"response": "..."}
+    if let Ok(v) = serde_json::from_str::<Value>(&s) {
+        if let Some(resp) = v.get("response").and_then(|x| x.as_str()) {
+            return resp.to_string();
+        }
+    }
+
+    s
+}
+
+/// Streams chat response using Claude-based ChatService
 async fn stream_chat_response(
     sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     app_state: &Arc<AppState>,
@@ -182,42 +211,13 @@ async fn stream_chat_response(
     project_id: Option<&str>,
 ) {
     eprintln!("[{}] Starting chat response stream for: {}", Utc::now(), content);
-    eprintln!("Using persona internally: {}", persona);
+    eprintln!("Using persona: {}", persona);
 
-    // STEP 1: Save the user's message FIRST
-    eprintln!("💾 Saving user message...");
-    
-    // Get embedding for the user message (optional - don't block on failure)
-    let user_embedding = match app_state.chat_service.llm_client
-        .get_embedding(&content)
-        .await {
-        Ok(emb) => {
-            eprintln!("✅ Got embedding for user message");
-            Some(emb)
-        }
-        Err(e) => {
-            eprintln!("⚠️ Failed to get embedding for user message: {:?}", e);
-            None
-        }
-    };
-    
-    // Save user message to memory
-    if let Err(e) = app_state.memory_service
-        .save_user_message(
-            session_id,
-            &content,
-            user_embedding,
-            project_id,
-        )
-        .await {
-        eprintln!("❌ Failed to save user message: {:?}", e);
-        // Continue anyway - don't block the conversation
-    } else {
-        eprintln!("✅ User message saved to memory");
-    }
+    // NOTE: Persistence is now owned by ChatService to avoid double-writes.
+    // This WS layer no longer saves user/assistant messages.
 
-    // STEP 2: Process the message and get response
-    // Updated to include images and pdfs parameters
+    // STEP: Process with Claude-based ChatService (it will handle memory/embeddings)
+    eprintln!("🧠 Processing with Claude...");
     let response = match timeout(
         Duration::from_secs(30),
         app_state.chat_service.process_message(
@@ -225,8 +225,8 @@ async fn stream_chat_response(
             &content,
             persona,
             project_id,
-            None,  // images - could be extracted from WebSocket message if needed
-            None,  // pdfs - could be extracted from WebSocket message if needed
+            None,  // images
+            None,  // pdfs
         )
     ).await {
         Ok(Ok(resp)) => resp,
@@ -256,33 +256,14 @@ async fn stream_chat_response(
         }
     };
 
-    eprintln!("[{}] Got chat response, saving to memory...", Utc::now());
-
-    // STEP 3: Save Mira's response to memory
-    // The response is already a MiraStructuredReply, no conversion needed
-    
-    // Save assistant response
-    if let Err(e) = app_state.memory_service
-        .evaluate_and_save_response(
-            session_id,
-            &response,  // response is already MiraStructuredReply
-            project_id,
-        )
-        .await {
-        eprintln!("❌ Failed to save assistant response: {:?}", e);
-        // Continue anyway - still send the response to user
-    } else {
-        eprintln!("✅ Assistant response saved to memory");
-    }
-
-    // Update mood
+    // Update mood for UI
     *current_mood = response.mood.clone();
 
     eprintln!("[{}] Streaming response chunks to client...", Utc::now());
 
-    // STEP 4: Stream the response in chunks
-    let output = response.output.clone();
-    let words: Vec<&str> = output.split_whitespace().collect();
+    // Sanitize output in case upstream wrapped it in JSON
+    let cleaned_output = extract_user_facing_text(&response.output);
+    let words: Vec<&str> = cleaned_output.split_whitespace().collect();
     let chunk_size = 5; // Words per chunk
 
     for (i, chunk) in words.chunks(chunk_size).enumerate() {
@@ -293,7 +274,6 @@ async fn stream_chat_response(
             format!(" {}", chunk.join(" "))
         };
 
-        // Send chunk WITHOUT persona info
         let chunk_msg = WsServerMessage::Chunk {
             content: chunk_text,
             mood: Some(current_mood.clone()),
@@ -309,15 +289,11 @@ async fn stream_chat_response(
             }
         }
 
+        // Small delay for natural streaming effect
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // Send emotional asides if present
-    // Note: MiraStructuredReply doesn't have monologue or aside_intensity fields
-    // If you want to add these features, you could extract them from the response
-    // or add them to the MiraStructuredReply struct
-
-    // Send done message
+    // Send completion signal
     let done_msg = WsServerMessage::Done;
     {
         let mut sender_guard = sender.lock().await;

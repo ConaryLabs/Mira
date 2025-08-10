@@ -161,6 +161,77 @@ impl OpenAIClient {
         Ok(stream)
     }
 
+    /// Generate images using gpt-image-1 via Responses API
+    pub async fn generate_image(
+        &self,
+        prompt: &str,
+        quality: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let quality = quality.unwrap_or("standard");
+        
+        let payload = json!({
+            "model": "gpt-image-1",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "modalities": ["text", "image"],
+            "image_generation": {
+                "n": 1,
+                "size": "1024x1024",
+                "quality": quality,
+                "style": "vivid",
+                "response_format": "url"
+            }
+        });
+
+        eprintln!("🎨 Generating image with gpt-image-1: {}", prompt);
+
+        let response = self
+            .request(Method::POST, "chat/completions")
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to send image generation request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            eprintln!("❌ Image generation failed: {}", error_text);
+            return Err(anyhow::anyhow!("Image generation failed ({}): {}", status, error_text));
+        }
+
+        let response_json: Value = response.json().await.context("Failed to parse image response")?;
+        
+        // Extract image URLs from the response
+        let mut urls = Vec::new();
+        
+        if let Some(choices) = response_json["choices"].as_array() {
+            for choice in choices {
+                if let Some(message) = choice.get("message") {
+                    if let Some(content) = message["content"].as_array() {
+                        for item in content {
+                            if item["type"] == "image_url" {
+                                if let Some(url) = item["image_url"]["url"].as_str() {
+                                    urls.push(url.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if urls.is_empty() {
+            return Err(anyhow::anyhow!("No images generated in response"));
+        }
+
+        eprintln!("✅ Generated {} image(s). URLs valid for 60 minutes.", urls.len());
+        Ok(urls)
+    }
+
     // Note: simple_chat method is in src/llm/chat.rs, not here
     // This avoids duplicate definitions
 }
