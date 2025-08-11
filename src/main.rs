@@ -1,5 +1,4 @@
 // src/main.rs
-
 use std::sync::Arc;
 use axum::{
     Router,
@@ -12,9 +11,7 @@ use mira_backend::{
     api::http::http_router,
     state::AppState,
     handlers::{chat_handler, chat_history_handler},
-    // Anthropic for orchestration
-    llm::anthropic_client::AnthropicClient,
-    // OpenAI for embeddings and image generation
+    // OpenAI for GPT‑5 chat, embeddings, and images
     llm::OpenAIClient,
     llm::responses::{ResponsesManager, VectorStoreManager, ThreadManager},
     memory::{
@@ -32,7 +29,6 @@ use mira_backend::{
         ContextService, 
         HybridMemoryService, 
         DocumentService,
-        // Removed Midjourney imports
     },
 };
 use tokio::net::TcpListener;
@@ -44,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    info!("🚀 Mira v2.0 - Claude + OpenAI Edition");
+    info!("🚀 Mira v2.0 - GPT‑5 Edition");
     info!("📅 August 2025 - Full Autonomy Mode");
 
     // --- Initialize SQLite pool ---
@@ -80,15 +76,10 @@ async fn main() -> anyhow::Result<()> {
         qdrant_collection,
     ));
 
-    // --- Initialize Anthropic (Primary Brain) ---
-    info!("🧠 Initializing Claude (Anthropic)...");
-    let anthropic_client = Arc::new(AnthropicClient::new());
-    info!("   ✅ Claude Sonnet 4.0 - Primary orchestrator");
-    info!("   ✅ All beta features enabled");
-
-    // --- Initialize OpenAI (for embeddings and images) ---
-    info!("🎨 Initializing OpenAI...");
+    // --- Initialize OpenAI (GPT‑5 + embeddings + images) ---
+    info!("🧠 Initializing OpenAI (GPT‑5)...");
     let openai_client = Arc::new(OpenAIClient::new());
+    info!("   ✅ gpt-5 for conversation");
     info!("   ✅ gpt-image-1 for image generation");
     info!("   ✅ text-embedding-3-large for embeddings");
 
@@ -104,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     let git_client = GitClient::new(&git_dir, git_store.clone());
 
     // --- Initialize Responses API components ---
-    info!("🔧 Initializing Responses API...");
+    info!("🔧 Initializing Responses API managers...");
     let responses_manager = Arc::new(ResponsesManager::new(openai_client.clone()));
     let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(openai_client.clone()));
@@ -125,19 +116,12 @@ async fn main() -> anyhow::Result<()> {
         qdrant_store.clone(),
     ));
     
-    // Chat service with Claude and OpenAI
-    info!("🚀 Creating orchestrated chat service...");
-    let mut chat_service = ChatService::new(
-        anthropic_client.clone(),
-        openai_client.clone(),
-    );
+    // Chat service (GPT‑5 only)
+    info!("🚀 Creating GPT‑5 chat service...");
+    let mut chat_service = ChatService::new(openai_client.clone());
     chat_service.set_context_service(context_service.clone());
     chat_service.set_memory_service(memory_service.clone());
     let chat_service = Arc::new(chat_service);
-    
-    info!("   ✅ Claude orchestrates all decisions");
-    info!("   ✅ OpenAI handles image generation");
-    info!("   ✅ Web search via Claude's native tools");
     
     // Hybrid memory service
     let hybrid_service = Arc::new(HybridMemoryService::new(
@@ -180,13 +164,13 @@ async fn main() -> anyhow::Result<()> {
         .allow_headers(Any);
 
     let app = Router::new()
-        .route("/", get(|| async { "Mira Backend v2.0 - Claude + OpenAI" }))
+        .route("/", get(|| async { "Mira Backend v2.0 - GPT‑5" }))
         .route("/health", get(|| async { 
             axum::Json(serde_json::json!({
                 "status": "healthy",
                 "version": env!("CARGO_PKG_VERSION"),
                 "service": "mira-backend",
-                "engine": "claude+openai"
+                "engine": "gpt-5"
             }))
         }))
         .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
@@ -205,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
     info!("════════════════════════════════════════════");
     info!("🚀 Mira backend listening on http://{addr}");
     info!("════════════════════════════════════════════");
-    info!("🧠 Brain: Claude Sonnet 4.0");
+    info!("🧠 Brain: GPT‑5");
     info!("🎨 Images: OpenAI gpt-image-1");
     info!("📊 Embeddings: OpenAI text-embedding-3-large");
     info!("💾 Memory: SQLite + Qdrant");

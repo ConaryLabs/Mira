@@ -11,6 +11,13 @@ pub struct OpenAIClient {
     pub api_base: String,
 }
 
+// -------------------- GPT‑5 Responses return type (module scope) --------------------
+pub struct Gpt5Response {
+    pub raw: Value,
+    pub text: String,
+}
+// ------------------------------------------------------------------------------------
+
 impl OpenAIClient {
     pub fn new() -> Self {
         let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
@@ -43,116 +50,136 @@ impl OpenAIClient {
         self.client
             .post(format!("{}/{}", self.api_base.trim_end_matches('/'), path.trim_start_matches('/')))
             .header("Authorization", format!("Bearer {}", self.api_key))
-        // Don't set Content-Type: multipart is handled by reqwest
     }
 
-    /// Chat completion with function calling support
-    pub async fn chat_with_tools(
+    // =========================================================================
+    // GPT‑5 Responses API (canonical path)
+    // =========================================================================
+
+    /// Non‑streaming call to /v1/responses using model "gpt-5".
+    /// - `messages` here is the Responses **input** (array of role/content parts)
+    /// - `instructions` is your persona/system text
+    pub async fn respond_gpt5(
         &self,
-        messages: Vec<Value>,
-        tools: Vec<Value>,
-        tool_choice: Option<Value>,
-        model: Option<&str>,
-    ) -> Result<Value> {
-        let model = model.unwrap_or("gpt-4.1");
-        
-        let mut payload = json!({
-            "model": model,
-            "messages": messages,
-            "temperature": 0.7,
+        messages: Value,
+        instructions: Option<&str>,
+        functions: Option<Value>,
+        reasoning_effort: Option<&str>,
+        verbosity: Option<&str>,
+        encrypted_reasoning: Option<Value>,
+        max_tokens: Option<u32>,
+    ) -> Result<Gpt5Response> {
+        let mut body = json!({
+            "model": "gpt-5",
+            "input": messages, // Responses API expects `input`
         });
 
-        // Add tools if provided
-        if !tools.is_empty() {
-            payload["tools"] = json!(tools);
-            
-            // Add tool_choice if specified
-            if let Some(choice) = tool_choice {
-                payload["tool_choice"] = choice;
-            } else {
-                // Default to auto
-                payload["tool_choice"] = json!("auto");
+        if let Some(instr) = instructions {
+            body["instructions"] = json!(instr);
+        }
+        if let Some(fns) = functions {
+            body["functions"] = fns;
+        }
+        if let Some(effort) = reasoning_effort {
+            body["reasoning"] = json!({ "effort": effort });
+        }
+        if let Some(v) = verbosity {
+            // moved per API: text.verbosity
+            if body.get("text").is_none() {
+                body["text"] = json!({});
             }
+            body["text"]["verbosity"] = json!(v);
+        }
+        if let Some(r) = encrypted_reasoning {
+            body["reasoning"]["encrypted_content"] = r;
+        }
+        if let Some(mt) = max_tokens {
+            body["max_tokens"] = json!(mt);
         }
 
         let response = self
-            .request(Method::POST, "chat/completions")
-            .json(&payload)
+            .request(Method::POST, "responses")
+            .json(&body)
             .send()
             .await
-            .context("Failed to send chat request with tools")?;
+            .context("Failed to send GPT-5 responses request")?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!(%status, body=%error_text, "OpenAI /responses error");
             return Err(anyhow::anyhow!("OpenAI API error {}: {}", status, error_text));
         }
 
-        let response_json: Value = response.json().await.context("Failed to parse response")?;
-        Ok(response_json)
+        let raw: Value = response.json().await.context("Failed to parse GPT-5 response JSON")?;
+        let text = extract_text_from_responses(&raw).unwrap_or_default();
+
+        Ok(Gpt5Response { raw, text })
     }
 
-    /// Stream chat completion with function calling support
-    pub async fn stream_chat_with_tools(
+    /// Streaming call to /v1/responses using model "gpt-5".
+    /// Returns a stream of JSON chunks; you decide how to surface tokens.
+    pub async fn respond_stream_gpt5(
         &self,
-        messages: Vec<Value>,
-        tools: Vec<Value>,
-        tool_choice: Option<Value>,
-        model: Option<&str>,
+        messages: Value,
+        instructions: Option<&str>,
+        functions: Option<Value>,
+        reasoning_effort: Option<&str>,
+        verbosity: Option<&str>,
+        encrypted_reasoning: Option<Value>,
+        max_tokens: Option<u32>,
     ) -> Result<impl futures::Stream<Item = Result<Value>>> {
         use futures::StreamExt;
-        
-        let model = model.unwrap_or("gpt-4.1");
-        
-        let mut payload = json!({
-            "model": model,
-            "messages": messages,
-            "temperature": 0.7,
-            "stream": true,
+
+        let mut body = json!({
+            "model": "gpt-5",
+            "input": messages, // Responses API expects `input`
+            "stream": true
         });
 
-        // Add tools if provided
-        if !tools.is_empty() {
-            payload["tools"] = json!(tools);
-            
-            if let Some(choice) = tool_choice {
-                payload["tool_choice"] = choice;
-            } else {
-                payload["tool_choice"] = json!("auto");
-            }
+        if let Some(instr) = instructions {
+            body["instructions"] = json!(instr);
         }
+        if let Some(fns) = functions { body["functions"] = fns; }
+        if let Some(effort) = reasoning_effort { body["reasoning"] = json!({ "effort": effort }); }
+        if let Some(v) = verbosity {
+            if body.get("text").is_none() {
+                body["text"] = json!({});
+            }
+            body["text"]["verbosity"] = json!(v);
+        }
+        if let Some(r) = encrypted_reasoning { body["reasoning"]["encrypted_content"] = r; }
+        if let Some(mt) = max_tokens { body["max_tokens"] = json!(mt); }
 
         let response = self
-            .request(Method::POST, "chat/completions")
-            .json(&payload)
+            .request(Method::POST, "responses")
+            .json(&body)
             .send()
             .await
-            .context("Failed to send streaming chat request with tools")?;
+            .context("Failed to send streaming GPT-5 request")?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!(%status, body=%error_text, "OpenAI /responses(stream) error");
             return Err(anyhow::anyhow!("OpenAI API error {}: {}", status, error_text));
         }
 
         let stream = response.bytes_stream().map(move |chunk| {
             match chunk {
                 Ok(bytes) => {
+                    // Typical SSE lines prefixed by "data: "
                     let text = String::from_utf8_lossy(&bytes);
-                    // Parse SSE format
-                    let mut result = json!({});
                     for line in text.lines() {
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-                            if data != "[DONE]" {
-                                if let Ok(json_data) = serde_json::from_str::<Value>(data) {
-                                    result = json_data;
-                                    break;
+                        if let Some(rest) = line.strip_prefix("data: ") {
+                            if rest != "[DONE]" {
+                                if let Ok(json_data) = serde_json::from_str::<Value>(rest) {
+                                    return Ok(json_data);
                                 }
                             }
                         }
                     }
-                    Ok(result)
+                    Ok(json!({})) // ignore keep‑alives/empty lines
                 }
                 Err(e) => Err(anyhow::anyhow!("Stream error: {}", e))
             }
@@ -161,7 +188,56 @@ impl OpenAIClient {
         Ok(stream)
     }
 
-    /// Generate images using gpt-image-1 via Responses API
+    // =========================================================================
+    // Compatibility shims (no import changes elsewhere)
+    // These now delegate to GPT‑5 Responses API.
+    // =========================================================================
+
+    /// Kept for call-sites: now maps to GPT‑5 Responses with functions.
+    pub async fn chat_with_tools(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        _tool_choice: Option<Value>,
+        _model: Option<&str>,
+    ) -> Result<Value> {
+        let functions = if tools.is_empty() { None } else { Some(Value::Array(tools)) };
+
+        let resp = self.respond_gpt5(
+            Value::Array(messages),
+            None,            // instructions
+            functions,
+            Some("medium"),
+            Some("medium"),
+            None,
+            None
+        ).await?;
+
+        Ok(resp.raw)
+    }
+
+    /// Kept for call-sites: now maps to GPT‑5 Responses (stream).
+    pub async fn stream_chat_with_tools(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        _tool_choice: Option<Value>,
+        _model: Option<&str>,
+    ) -> Result<impl futures::Stream<Item = Result<Value>>> {
+        let functions = if tools.is_empty() { None } else { Some(Value::Array(tools)) };
+        let stream = self.respond_stream_gpt5(
+            Value::Array(messages),
+            None,            // instructions
+            functions,
+            Some("medium"),
+            Some("medium"),
+            None,
+            None
+        ).await?;
+        Ok(stream)
+    }
+
+    /// Generate images using gpt-image-1 (kept stable; callers expect urls)
     pub async fn generate_image(
         &self,
         prompt: &str,
@@ -169,13 +245,11 @@ impl OpenAIClient {
     ) -> Result<Vec<String>> {
         let quality = quality.unwrap_or("standard");
         
+        // Left on chat/completions to avoid breaking downstream parsing logic.
         let payload = json!({
             "model": "gpt-image-1",
             "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                { "role": "user", "content": prompt }
             ],
             "modalities": ["text", "image"],
             "image_generation": {
@@ -187,8 +261,6 @@ impl OpenAIClient {
             }
         });
 
-        eprintln!("🎨 Generating image with gpt-image-1: {}", prompt);
-
         let response = self
             .request(Method::POST, "chat/completions")
             .json(&payload)
@@ -199,7 +271,6 @@ impl OpenAIClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            eprintln!("❌ Image generation failed: {}", error_text);
             return Err(anyhow::anyhow!("Image generation failed ({}): {}", status, error_text));
         }
 
@@ -207,14 +278,15 @@ impl OpenAIClient {
         
         // Extract image URLs from the response
         let mut urls = Vec::new();
-        
         if let Some(choices) = response_json["choices"].as_array() {
             for choice in choices {
                 if let Some(message) = choice.get("message") {
                     if let Some(content) = message["content"].as_array() {
                         for item in content {
                             if item["type"] == "image_url" {
-                                if let Some(url) = item["image_url"]["url"].as_str() {
+                                if let Some(url) = item.get("image_url")
+                                                      .and_then(|x| x.get("url"))
+                                                      .and_then(|x| x.as_str()) {
                                     urls.push(url.to_string());
                                 }
                             }
@@ -228,10 +300,52 @@ impl OpenAIClient {
             return Err(anyhow::anyhow!("No images generated in response"));
         }
 
-        eprintln!("✅ Generated {} image(s). URLs valid for 60 minutes.", urls.len());
         Ok(urls)
     }
+}
 
-    // Note: simple_chat method is in src/llm/chat.rs, not here
-    // This avoids duplicate definitions
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+/// Extract assistant text from Responses API payloads.
+/// Supports multiple shapes defensively.
+pub fn extract_text_from_responses(v: &Value) -> Option<String> {
+    // 1) New-style: { output: [ { type: "message", content: [ {type:"output_text"| "text", text:"..."} ] } ] }
+    if let Some(arr) = v.get("output").and_then(|o| o.as_array()) {
+        for item in arr {
+            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                    let mut buf = String::new();
+                    for part in content {
+                        let t = part.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+                        if t == "output_text" || t == "text" {
+                            if let Some(txt) = part.get("text").and_then(|x| x.as_str()) {
+                                if !buf.is_empty() { buf.push('\n'); }
+                                buf.push_str(txt);
+                            }
+                        }
+                    }
+                    if !buf.is_empty() { return Some(buf); }
+                }
+            }
+        }
+    }
+
+    // 2) Chat-completions-like fallback: choices[0].message.content (string)
+    if let Some(s) = v.pointer("/choices/0/message/content").and_then(|x| x.as_str()) {
+        return Some(s.to_string());
+    }
+
+    // 3) Chat-completions-like fallback: choices[0].delta/content (string)
+    if let Some(s) = v.pointer("/choices/0/delta/content").and_then(|x| x.as_str()) {
+        return Some(s.to_string());
+    }
+
+    // 4) Generic: top-level "output_text" (some SDKs expose this)
+    if let Some(s) = v.get("output_text").and_then(|x| x.as_str()) {
+        return Some(s.to_string());
+    }
+
+    None
 }

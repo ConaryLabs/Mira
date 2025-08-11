@@ -1,37 +1,37 @@
-// src/llm/chat.rs
-
 use crate::llm::client::OpenAIClient;
 use crate::llm::schema::MiraStructuredReply;
 use anyhow::{Result, anyhow};
 use serde_json::json;
 
 impl OpenAIClient {
-    /// Chat with model using a custom system prompt (for persona-aware responses)
-    /// This version enforces JSON output format
+    /// Persona-aware JSON reply via Responses API.
+    /// Uses `instructions` for persona (cleaner than a system turn) and enforces JSON.
     pub async fn chat_with_custom_prompt(
-        &self, 
-        message: &str, 
+        &self,
+        message: &str,
         model: &str,
-        system_prompt: &str
+        system_prompt: &str,
     ) -> Result<MiraStructuredReply, anyhow::Error> {
-        let url = format!("{}/chat/completions", self.api_base);
-
-        let messages = vec![
-            json!({"role": "system", "content": system_prompt}),
-            json!({"role": "user", "content": message}),
-        ];
+        // Build Responses API payload
+        let input = json!([
+            {
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": message }
+                ]
+            }
+        ]);
 
         let body = json!({
-            "model": model,
-            "messages": messages,
-            "temperature": 0.8,
-            "response_format": { "type": "json_object" }
+            "model": model,                 // expected to be "gpt-5"
+            "input": input,
+            "instructions": system_prompt,  // persona lives here
+            "response_format": { "type": "json_object" },
+            "text": { "verbosity": "medium" }
         });
 
         let resp = self
-            .client
-            .post(&url)
-            .header(self.auth_header().0, self.auth_header().1.clone())
+            .request(reqwest::Method::POST, "responses")
             .json(&body)
             .send()
             .await?;
@@ -42,45 +42,50 @@ impl OpenAIClient {
                 resp.text().await.unwrap_or_default()
             ));
         }
-        
+
         let resp_json: serde_json::Value = resp.json().await?;
 
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| anyhow!("No content in OpenAI chat response"))?;
+        // Extract unified output text from Responses payload
+        let content = crate::llm::client::extract_text_from_responses(&resp_json)
+            .ok_or_else(|| anyhow!("No content in GPT-5 Responses output"))?;
 
-        let reply: MiraStructuredReply = serde_json::from_str(content)
+        // Parse into your structured schema; if it fails, surface the raw content
+        let reply: MiraStructuredReply = serde_json::from_str(&content)
             .map_err(|e| anyhow!("Failed to parse MiraStructuredReply: {}\nRaw content:\n{}", e, content))?;
 
         Ok(reply)
     }
 
-    /// Simple chat method for utility functions that returns plain text
-    /// Does NOT enforce JSON format
+    /// Simple text chat via Responses API (no JSON schema required).
     pub async fn simple_chat(
         &self,
         message: &str,
         model: &str,
-        system_prompt: &str
+        system_prompt: &str,
     ) -> Result<String, anyhow::Error> {
-        let url = format!("{}/chat/completions", self.api_base);
-
-        let messages = vec![
-            json!({"role": "system", "content": system_prompt}),
-            json!({"role": "user", "content": message}),
-        ];
+        let input = json!([
+            {
+                "role": "system",
+                "content": [
+                    { "type": "input_text", "text": system_prompt }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": message }
+                ]
+            }
+        ]);
 
         let body = json!({
-            "model": model,
-            "messages": messages,
-            "temperature": 0.2,  // Lower temperature for utility functions
-            // NO response_format here!
+            "model": model,  // "gpt-5"
+            "input": input,
+            "text": { "verbosity": "medium" }
         });
 
         let resp = self
-            .client
-            .post(&url)
-            .header(self.auth_header().0, self.auth_header().1.clone())
+            .request(reqwest::Method::POST, "responses")
             .json(&body)
             .send()
             .await?;
@@ -93,12 +98,62 @@ impl OpenAIClient {
         }
 
         let resp_json: serde_json::Value = resp.json().await?;
-
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| anyhow!("No content in OpenAI chat response"))?
-            .to_string();
+        let content = crate::llm::client::extract_text_from_responses(&resp_json)
+            .ok_or_else(|| anyhow!("No content in GPT-5 Responses output"))?;
 
         Ok(content)
+    }
+
+    /// New GPT-5 Responses API chat helper for structured persona prompts.
+    /// Wraps text in `input_text` parts and enforces JSON; resilient to API shape.
+    pub async fn chat_with_gpt5_responses(
+        &self,
+        message: &str,
+        system_prompt: &str,
+    ) -> Result<MiraStructuredReply, anyhow::Error> {
+        let input = json!([
+            {
+                "role": "system",
+                "content": [
+                    { "type": "input_text", "text": system_prompt }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": message }
+                ]
+            }
+        ]);
+
+        let body = json!({
+            "model": "gpt-5",
+            "input": input,
+            "response_format": { "type": "json_object" },
+            "text": { "verbosity": "medium" }
+        });
+
+        let resp = self
+            .request(reqwest::Method::POST, "responses")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(anyhow!(
+                "OpenAI chat_with_gpt5_responses failed: {}",
+                resp.text().await.unwrap_or_default()
+            ));
+        }
+
+        let resp_json: serde_json::Value = resp.json().await?;
+
+        let content = crate::llm::client::extract_text_from_responses(&resp_json)
+            .ok_or_else(|| anyhow!("No content in GPT-5 Responses output"))?;
+
+        let reply: MiraStructuredReply = serde_json::from_str(&content)
+            .map_err(|e| anyhow!("Failed to parse MiraStructuredReply: {}\nRaw content:\n{}", e, content))?;
+
+        Ok(reply)
     }
 }
