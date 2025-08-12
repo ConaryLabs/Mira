@@ -7,7 +7,7 @@ use anyhow::Result;
 use chrono::{Utc, TimeZone};  // Add TimeZone import
 use sqlx::Row;  // Add this import
 
-use crate::llm::OpenAIClient;
+use crate::llm::client::OpenAIClient; // <-- updated path
 use crate::llm::schema::{EvaluateMemoryRequest, MiraStructuredReply, EvaluateMemoryResponse, function_schema};
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
@@ -194,8 +194,9 @@ impl MemoryService {
             function_schema: function_schema(),
         };
 
+        // IMPORTANT: pass by value (method signature changed in Phase 2)
         let evaluation = self.llm_client
-            .evaluate_memory(&eval_request)
+            .evaluate_memory(eval_request)
             .await
             .unwrap_or_else(|e| {
                 eprintln!("❌ Memory evaluation failed: {:?}, using defaults", e);

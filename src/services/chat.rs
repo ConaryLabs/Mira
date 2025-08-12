@@ -1,207 +1,199 @@
-use crate::llm::OpenAIClient;
-use crate::persona::PersonaOverlay;
-use crate::llm::schema::MiraStructuredReply;
-use crate::services::ContextService;
-use crate::services::MemoryService;
-use crate::memory::MemoryMessage;
-use anyhow::Result;
-use serde_json::Value;
+use std::env;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
+
+use crate::llm::client::OpenAIClient;
+use crate::llm::responses::thread::{ResponseMessage, ThreadManager};
+use crate::persona::PersonaOverlay;
 
 #[derive(Clone)]
 pub struct ChatService {
-    pub context_service: Option<Arc<ContextService>>,
-    pub memory_service: Option<Arc<MemoryService>>,
-    pub llm_client: Arc<OpenAIClient>, // embeddings, images, and GPT-5 chat
+    client: Arc<OpenAIClient>,
+    threads: Arc<ThreadManager>,
+    persona: PersonaOverlay,
+    model: String,
+    default_verbosity: String,       // "low" | "medium" | "high"
+    default_reasoning: String,       // "minimal" | "medium" | "high"
+    default_max_output_tokens: u32,
+    history_message_cap: usize,
 }
 
 impl ChatService {
-    pub fn new(openai_client: Arc<OpenAIClient>) -> Self {
+    pub fn new(
+        client: Arc<OpenAIClient>,
+        threads: Arc<ThreadManager>,
+        persona: PersonaOverlay,
+    ) -> Self {
+        let model = env::var("MIRA_MODEL").unwrap_or_else(|_| "gpt-5".to_string());
+        let default_verbosity =
+            env::var("MIRA_VERBOSITY").unwrap_or_else(|_| "medium".to_string());
+        let default_reasoning =
+            env::var("MIRA_REASONING_EFFORT").unwrap_or_else(|_| "medium".to_string());
+        let default_max_output_tokens: u32 = env::var("MIRA_MAX_OUTPUT_TOKENS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024);
+        let history_message_cap: usize = env::var("MIRA_HISTORY_CAP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(24);
+
         Self {
-            context_service: None,
-            memory_service: None,
-            llm_client: openai_client,
+            client,
+            threads,
+            persona,
+            model,
+            default_verbosity,
+            default_reasoning,
+            default_max_output_tokens,
+            history_message_cap,
         }
     }
 
-    pub fn set_context_service(&mut self, context_service: Arc<ContextService>) {
-        self.context_service = Some(context_service);
-    }
-
-    pub fn set_memory_service(&mut self, memory_service: Arc<MemoryService>) {
-        self.memory_service = Some(memory_service);
-    }
-
-    /// Compatibility shim for existing call sites.
     pub async fn process_message(
         &self,
-        session_id: &str,
-        content: &str,
-        persona: &PersonaOverlay,
-        project_id: Option<&str>,
-        images: Option<Vec<String>>,
-        pdfs: Option<Vec<String>>,
-    ) -> Result<MiraStructuredReply> {
-        self.process_message_gpt5(session_id, content, persona, project_id, images, pdfs).await
-    }
-
-    /// GPT-5 path: persona + memory -> Responses API (model gpt-5) -> persist -> reply
-    pub async fn process_message_gpt5(
-        &self,
-        session_id: &str,
-        content: &str,
-        persona: &PersonaOverlay,
-        project_id: Option<&str>,
-        _images: Option<Vec<String>>,
-        _pdfs: Option<Vec<String>>,
-    ) -> Result<MiraStructuredReply> {
-        // Persist + embed the user turn with simple exponential backoff
-        if let Some(mem_service) = &self.memory_service {
-            let mut attempt = 0u32;
-            let max_attempts = 6u32;
-            let embedding = loop {
-                match self.llm_client.get_embedding(content).await {
-                    Ok(v) => break Some(v),
-                    Err(_) => {
-                        attempt += 1;
-                        if attempt >= max_attempts {
-                            break None; // never drop the turn
-                        }
-                        let delay_ms = (300u64 * (1u64 << (attempt - 1))).min(5_000);
-                        sleep(Duration::from_millis(delay_ms)).await;
-                    }
-                }
-            };
-            let _ = mem_service
-                .save_user_message(session_id, content, embedding, project_id)
-                .await;
-        }
-
-        // Persona instructions come STRICTLY from src/persona
-        let instructions: String = persona.prompt().to_string();
-
-        // Pull recent messages from memory
-        let memory_messages = self.get_memory_messages(session_id, project_id).await?;
-
-        // Assemble Responses API input (prior turns + current user turn; persona is in `instructions`)
-        let input = self.build_gpt5_input(&memory_messages, content);
-
-        // Call GPT-5 via OpenAIClient
-        let llm_resp = self
-            .llm_client
-            .respond_gpt5(
-                input,
-                Some(instructions.as_str()),
-                None,
-                Some("medium"),
-                Some("medium"),
-                None,
-                None,
-            )
+        thread_id: &str,
+        user_text: &str,
+        structured_json: bool,
+    ) -> Result<ChatResult> {
+        self.threads
+            .add_message(thread_id, ResponseMessage::user(user_text))
             .await?;
 
-        let cleaned = extract_user_facing_text(&llm_resp.text);
+        // Old signature only takes &str; we fetch all then cap locally.
+        let mut history = self.threads.get_conversation(thread_id).await;
+        if history.len() > self.history_message_cap {
+            let start = history.len() - self.history_message_cap;
+            history = history.split_off(start);
+        }
 
-        // Persist assistant once
-        self.store_assistant(session_id, &cleaned, project_id).await;
+        let input_messages = self.build_gpt5_input(&history)?;
+        let instructions = self.persona.prompt();
 
-        Ok(MiraStructuredReply {
-            salience: 5,
-            summary: Some(cleaned.clone()),
-            memory_type: "conversation".to_string(),
-            tags: vec![persona.name().to_string()],
-            intent: "response".to_string(),
-            mood: persona.current_mood(),
-            persona: persona.name().to_string(),
-            output: cleaned,
-            aside_intensity: None,
-            monologue: None,
-            reasoning_summary: None,
+        let parameters = json!({
+            "verbosity": self.default_verbosity,
+            "reasoning_effort": self.default_reasoning,
+            "max_output_tokens": self.default_max_output_tokens,
+            "persona": self.persona.name(),
+            "temperature": self.persona.temperature()
+        });
+
+        let response_format = if structured_json {
+            json!({ "type": "json_object" })
+        } else {
+            json!({ "type": "text" })
+        };
+
+        let body = json!({
+            "model": self.model,
+            "input": input_messages,
+            "instructions": instructions,
+            "parameters": parameters,
+            "response_format": response_format
+        });
+
+        let v = self.client.post_response(body).await?;
+
+        let text = extract_output_text(&v)
+            .or_else(|| extract_message_text(&v))
+            .unwrap_or_default();
+
+        if text.is_empty() {
+            return Err(anyhow!(
+                "GPT‑5 returned no output text for thread '{}'",
+                thread_id
+            ));
+        }
+
+        self.threads
+            .add_message(thread_id, ResponseMessage::assistant(&text))
+            .await?;
+
+        Ok(ChatResult {
+            thread_id: thread_id.to_string(),
+            text,
+            raw: v,
         })
     }
 
-    async fn get_memory_messages(
+    pub async fn process_message_gpt5(
         &self,
-        session_id: &str,
-        project_id: Option<&str>,
-    ) -> Result<Vec<MemoryMessage>> {
-        if let Some(mem_service) = &self.memory_service {
-            Ok(mem_service.get_recent_messages(session_id, 20, project_id).await?)
-        } else {
-            Ok(vec![])
-        }
+        thread_id: &str,
+        user_text: &str,
+        structured_json: bool,
+    ) -> Result<ChatResult> {
+        self.process_message(thread_id, user_text, structured_json).await
     }
 
-    /// Build the Responses API `input` array with correct content-part types.
-    /// - user turns -> input_text
-    /// - assistant turns -> output_text
-    /// Persona is provided via `instructions`.
-    fn build_gpt5_input(
-        &self,
-        memory_messages: &Vec<MemoryMessage>,
-        user_content: &str,
-    ) -> serde_json::Value {
-        let mut msgs: Vec<serde_json::Value> = Vec::with_capacity(memory_messages.len() + 1);
-
-        // Prior turns
-        for m in memory_messages {
-            let (role, part_type) = if m.role == "assistant" {
-                ("assistant", "output_text")
-            } else {
-                ("user", "input_text")
-            };
-
-            msgs.push(serde_json::json!({
+    fn build_gpt5_input(&self, history: &[ResponseMessage]) -> Result<Vec<Value>> {
+        let mut out = Vec::with_capacity(history.len());
+        for msg in history {
+            let role = if msg.role == "user" { "user" } else { "assistant" };
+            let text = msg
+                .content
+                .as_deref()
+                .ok_or_else(|| anyhow!("empty message content in history"))?;
+            out.push(json!({
                 "role": role,
-                "content": [ { "type": part_type, "text": m.content } ]
+                "content": [
+                    { "type": if role == "user" { "input_text" } else { "output_text" }, "text": text }
+                ]
             }));
         }
-
-        // Current user turn
-        msgs.push(serde_json::json!({
-            "role": "user",
-            "content": [ { "type": "input_text", "text": user_content } ]
-        }));
-
-        Value::Array(msgs)
-    }
-
-    async fn store_assistant(
-        &self,
-        session_id: &str,
-        assistant_text: &str,
-        project_id: Option<&str>,
-    ) {
-        if let Some(mem_service) = &self.memory_service {
-            let _ = mem_service
-                .store_message(session_id, "assistant", assistant_text, project_id)
-                .await;
-        }
+        Ok(out)
     }
 }
 
-/// Strip `json { ... }`, ```json blocks, and return user-facing text.
-fn extract_user_facing_text(raw: &str) -> String {
-    let mut s = raw.trim().to_string();
+pub struct ChatResult {
+    pub thread_id: String,
+    pub text: String,
+    pub raw: Value,
+}
 
-    if s.starts_with("```") {
-        if let Some(start) = s.find('\n') {
-            if let Some(end) = s.rfind("```") {
-                s = s[start + 1..end].trim().to_string();
+fn extract_output_text(v: &Value) -> Option<String> {
+    let arr = v.get("output")?.as_array()?;
+    let mut buf = String::new();
+    for item in arr {
+        let is_text = item
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "output_text")
+            .unwrap_or(false);
+        if is_text {
+            if let Some(s) = item.get("text").and_then(|t| t.as_str()) {
+                buf.push_str(s);
             }
         }
     }
+    if buf.is_empty() { None } else { Some(buf) }
+}
 
-    if s.to_ascii_lowercase().starts_with("json ") {
-        s = s[4..].trim().to_string();
-    }
-
-    if let Ok(v) = serde_json::from_str::<Value>(&s) {
-        if let Some(resp) = v.get("response").and_then(|x| x.as_str()) {
-            return resp.to_string();
+fn extract_message_text(v: &Value) -> Option<String> {
+    let parts = v.pointer("/choices/0/message/content")?.as_array()?;
+    let mut buf = String::new();
+    for part in parts {
+        let is_text = part
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "output_text")
+            .unwrap_or(false);
+        if is_text {
+            if let Some(s) = part.get("text").and_then(|t| t.as_str()) {
+                buf.push_str(s);
+            }
         }
     }
+    if buf.is_empty() { None } else { Some(buf) }
+}
 
-    s
+// convenience constructors if you don't already have them
+impl ResponseMessage {
+    pub fn user(text: &str) -> Self {
+        Self { role: "user".into(), content: Some(text.to_string()) }
+    }
+    pub fn assistant(text: &str) -> Self {
+        Self { role: "assistant".into(), content: Some(text.to_string()) }
+    }
 }

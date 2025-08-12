@@ -1,4 +1,3 @@
-// src/api/ws/chat.rs
 use axum::{
     extract::{WebSocketUpgrade, State},
     response::IntoResponse,
@@ -11,7 +10,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::state::AppState;
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
-use crate::persona::PersonaOverlay;
+use crate::persona::PersonaOverlay; // kept for local tracking only
 
 /// Main WebSocket handler for chat connections
 pub async fn ws_chat_handler(
@@ -30,8 +29,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
 
     // Track connection state
     let mut current_mood = "attentive".to_string();
-    let current_persona = PersonaOverlay::Default;
-    let mut active_project_id: Option<String> = None;
+    let _current_persona = PersonaOverlay::Default; // persona is injected at ChatService construction
 
     // Send initial greeting chunk
     let greeting_msg = WsServerMessage::Chunk {
@@ -77,18 +75,12 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
             Ok(Message::Text(text)) => {
                 let incoming: Result<WsClientMessage, _> = serde_json::from_str(&text);
                 match incoming {
-                    Ok(WsClientMessage::Message { content, persona: _, project_id }) => {
-                        // Update active project if specified
-                        if project_id.is_some() {
-                            active_project_id = project_id.clone();
-                        }
-
-                        // Send immediate acknowledgment (typing indicator)
+                    Ok(WsClientMessage::Message { content, persona: _, project_id: _ }) => {
+                        // Immediate “thinking” indicator
                         let thinking_msg = WsServerMessage::Chunk {
                             content: "".to_string(),
                             mood: Some("thinking".to_string()),
                         };
-
                         {
                             let mut sender_guard = sender.lock().await;
                             if sender_guard
@@ -100,20 +92,17 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             }
                         }
 
-                        // Process with GPT-5-based ChatService (handles memory/embeddings/tooling)
+                        // Call GPT‑5 via ChatService (WS: plain text, not strict JSON)
                         let response = match timeout(
                             Duration::from_secs(30),
                             app_state.chat_service.process_message_gpt5(
                                 session_id.as_str(),
                                 &content,
-                                &current_persona,
-                                active_project_id.as_deref(),
-                                None,  // images
-                                None,  // pdfs
+                                /* structured_json = */ false,
                             )
                         ).await {
-                            Ok(Ok(resp)) => resp,
-                            Ok(Err(_)) => {
+                            Ok(Ok(res)) => res,
+                            Ok(Err(_e)) => {
                                 let error_msg = WsServerMessage::Error {
                                     message: "Failed to process message".to_string(),
                                     code: Some("PROCESSING_ERROR".to_string()),
@@ -137,13 +126,14 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             }
                         };
 
-                        // Update mood for UI (fix: assign to String, not &str)
-                        current_mood = response.mood.clone();
+                        // Keep mood simple for WS; REST path handles structured mood
+                        // If you later want mood here, switch to structured_json=true and parse it.
+                        current_mood = "present".to_string();
 
-                        // Sanitize output in case upstream wrapped it in JSON
-                        let cleaned_output = extract_user_facing_text(&response.output);
+                        // Stream chunks for a natural feel
+                        let cleaned_output = extract_user_facing_text(&response.text);
                         let words: Vec<&str> = cleaned_output.split_whitespace().collect();
-                        let chunk_size = 5; // Words per chunk
+                        let chunk_size = 5; // words per chunk
 
                         for (i, chunk) in words.chunks(chunk_size).enumerate() {
                             let is_first = i == 0;
@@ -203,15 +193,9 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                     }
                 }
             }
-            Ok(Message::Pong(_)) => {
-                // no-op
-            }
-            Ok(Message::Close(_)) => {
-                break;
-            }
-            Err(_) => {
-                break;
-            }
+            Ok(Message::Pong(_)) => { /* no-op */ }
+            Ok(Message::Close(_)) => { break; }
+            Err(_) => { break; }
             _ => {}
         }
     }
@@ -243,7 +227,7 @@ fn extract_user_facing_text(raw: &str) -> String {
         s = s[4..].trim().to_string();
     }
 
-    // Try to parse as {"response": "..."}
+    // Try to parse as {"response": "..."} (legacy protection)
     if let Ok(v) = serde_json::from_str::<Value>(&s) {
         if let Some(resp) = v.get("response").and_then(|x| x.as_str()) {
             return resp.to_string();

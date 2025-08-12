@@ -1,46 +1,91 @@
 // src/llm/moderation.rs
 
-use crate::llm::client::OpenAIClient;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use reqwest::Method;
+use serde_json::Value;
 use serde_json::json;
+
+use crate::llm::client::OpenAIClient;
 
 #[derive(Debug)]
 pub struct ModerationResult {
     pub flagged: bool,
-    pub categories: Vec<String>,
+    pub categories: Vec<String>, // only categories that evaluated to true
 }
 
 impl OpenAIClient {
-    /// Runs moderation API on user/Mira message, returns flagged true/false.
-    /// *Log-only version for private use—never blocks!*
+    /// Run OpenAI Moderation on `text`.
+    /// Warn‑only: returns `Ok(None)` on API issues; never blocks user flow.
     pub async fn moderate(&self, text: &str) -> Result<Option<ModerationResult>> {
-        let url = format!("{}/moderations", self.api_base);
-        let req_body = json!({ "input": text });
-        
+        let model = std::env::var("MODERATION_MODEL")
+            .unwrap_or_else(|_| "omni-moderation-latest".to_string());
+
+        let body = json!({
+            "model": model,
+            "input": text,
+        });
+
         let resp = self
-            .client
-            .post(&url)
-            .header(self.auth_header().0, self.auth_header().1.clone())
-            .json(&req_body)
+            .request(Method::POST, "moderations")
+            .json(&body)
             .send()
-            .await?;
-            
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("OpenAI moderation request failed: {}", e);
+                return Ok(None);
+            }
+        };
+
         if !resp.status().is_success() {
-            tracing::warn!("OpenAI moderation call failed: {}", resp.text().await.unwrap_or_default());
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            tracing::warn!("OpenAI moderation error {}: {}", status, text);
             return Ok(None);
         }
-        
-        let resp_json: serde_json::Value = resp.json().await?;
-        let flagged = resp_json["results"][0]["flagged"].as_bool().unwrap_or(false);
-        let categories = resp_json["results"][0]["categories"]
-            .as_object()
-            .map(|map| map.keys().cloned().collect())
-            .unwrap_or_else(Vec::new);
+
+        let v: Value = resp
+            .json()
+            .await
+            .context("Invalid JSON from /v1/moderations")?;
+
+        // Shape (typical):
+        // {
+        //   "id": "...",
+        //   "model": "...",
+        //   "results": [
+        //     {
+        //       "flagged": bool,
+        //       "categories": { "violence": bool, "hate": bool, ... },
+        //       "category_scores": { ... }
+        //     }
+        //   ]
+        // }
+        let first = v
+            .get("results")
+            .and_then(|r| r.as_array())
+            .and_then(|arr| arr.get(0));
+
+        let flagged = first
+            .and_then(|o| o.get("flagged"))
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+
+        let mut categories = Vec::new();
+        if let Some(obj) = first.and_then(|o| o.get("categories")).and_then(|c| c.as_object()) {
+            for (k, val) in obj {
+                if val.as_bool().unwrap_or(false) {
+                    categories.push(k.clone());
+                }
+            }
+        }
 
         if flagged {
             tracing::warn!("MODERATION (WARN ONLY): flagged categories: {:?}", categories);
         }
-        
+
         Ok(Some(ModerationResult { flagged, categories }))
     }
 }

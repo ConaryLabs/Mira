@@ -1,10 +1,10 @@
 // src/services/document.rs
 
-use crate::services::{MemoryService, ChatService};
+use crate::services::MemoryService;
 use crate::llm::schema::MiraStructuredReply;
 use crate::llm::responses::VectorStoreManager;
-use std::sync::Arc;
 use std::path::Path;
+use std::sync::Arc;
 use anyhow::Result;
 
 #[derive(Debug, Clone, Copy)]
@@ -16,19 +16,16 @@ pub enum DocumentDestination {
 
 pub struct DocumentService {
     memory_service: Arc<MemoryService>,
-    chat_service: Arc<ChatService>,
     vector_store_manager: Arc<VectorStoreManager>,
 }
 
 impl DocumentService {
     pub fn new(
         memory_service: Arc<MemoryService>,
-        chat_service: Arc<ChatService>,
         vector_store_manager: Arc<VectorStoreManager>,
     ) -> Self {
         Self {
             memory_service,
-            chat_service,
             vector_store_manager,
         }
     }
@@ -46,15 +43,16 @@ impl DocumentService {
                 self.process_for_personal_memory(content).await?;
             }
             DocumentDestination::ProjectVectorStore => {
-                let store_key = project_id.expect("Project ID required for project vector store upload");
+                let store_key = project_id
+                    .expect("Project ID required for project vector store upload");
                 self.vector_store_manager
                     .add_document(store_key, file_path.to_path_buf())
                     .await?;
-
                 self.process_for_project_vector_store(content, project_id).await?;
             }
             DocumentDestination::Both => {
-                let store_key = project_id.expect("Project ID required for vector store upload (Both)");
+                let store_key = project_id
+                    .expect("Project ID required for vector store upload (Both)");
                 self.vector_store_manager
                     .add_document(store_key, file_path.to_path_buf())
                     .await?;
@@ -72,27 +70,31 @@ impl DocumentService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<DocumentDestination> {
-        let extension = file_path.extension()
+        let extension = file_path
+            .extension()
             .and_then(|e| e.to_str())
-            .unwrap_or("");
-        
-        let file_name = file_path.file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("document");
+            .unwrap_or("")
+            .to_ascii_lowercase();
 
-        // 1. STRICTLY personal: filename or content markers (check *first*)
-        if file_name.to_lowercase().contains("diary")
-            || file_name.to_lowercase().contains("personal")
-            || file_name.to_lowercase().contains("journal")
-            || content.to_lowercase().contains("dear diary")
-            || content.to_lowercase().contains("personal journal")
+        let file_name = file_path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("document")
+            .to_ascii_lowercase();
+
+        // 1) STRICTLY personal: filename or content markers (check *first*)
+        if file_name.contains("diary")
+            || file_name.contains("personal")
+            || file_name.contains("journal")
+            || content.to_ascii_lowercase().contains("dear diary")
+            || content.to_ascii_lowercase().contains("personal journal")
         {
             return Ok(DocumentDestination::PersonalMemory);
         }
 
-        // 2. Technical file extensions REQUIRE project ID
+        // 2) Technical file extensions REQUIRE project ID
         let technical_exts = ["md", "pdf", "txt", "rs", "js", "py"];
-        if technical_exts.contains(&extension) {
+        if technical_exts.contains(&extension.as_str()) {
             if project_id.is_none() {
                 return Err(anyhow::anyhow!(
                     "Technical documents require a project ID for vector storage"
@@ -101,8 +103,10 @@ impl DocumentService {
             return Ok(DocumentDestination::ProjectVectorStore);
         }
 
-        // 3. Large "both" content (still must require project ID for upload)
-        if content.len() > 5000 && (content.contains("insight") || content.contains("reflection")) {
+        // 3) Large "both" content (still must require project ID for upload)
+        if content.len() > 5000
+            && (content.contains("insight") || content.contains("reflection"))
+        {
             if project_id.is_none() {
                 return Err(anyhow::anyhow!(
                     "Both destination requires a project ID for vector storage"
@@ -111,7 +115,7 @@ impl DocumentService {
             return Ok(DocumentDestination::Both);
         }
 
-        // 4. By default, route to project vector store (if and only if project ID is set)
+        // 4) By default, route to project vector store (iff project ID is set)
         if project_id.is_some() {
             Ok(DocumentDestination::ProjectVectorStore)
         } else {
@@ -136,7 +140,8 @@ impl DocumentService {
             aside_intensity: None,
         };
 
-        self.memory_service
+        self
+            .memory_service
             .evaluate_and_save_response("document-import", &doc_response, None)
             .await?;
 
@@ -155,14 +160,19 @@ impl DocumentService {
             salience: 7,
             summary: Some("Imported project document".to_string()),
             memory_type: "fact".to_string(),
-            tags: vec!["document".to_string(), "imported".to_string(), "project".to_string()],
+            tags: vec![
+                "document".to_string(),
+                "imported".to_string(),
+                "project".to_string(),
+            ],
             intent: "project_document_import".to_string(),
             monologue: None,
             reasoning_summary: None,
             aside_intensity: None,
         };
 
-        self.memory_service
+        self
+            .memory_service
             .evaluate_and_save_response("document-import", &doc_response, project_id)
             .await?;
 

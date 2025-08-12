@@ -1,99 +1,83 @@
-// src/llm/responses/manager.rs - Modern Responses API, no tool support
-
-use crate::llm::client::OpenAIClient;
-use reqwest::Method;
-use serde::{Serialize, Deserialize};
-use anyhow::{Result, Context};
 use std::sync::Arc;
 
-/// Request for creating a response (no tools, context injected via messages)
-#[derive(Serialize, Debug)]
-pub struct CreateResponseRequest {
-    pub model: String,
-    pub messages: Vec<ResponseMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-}
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ResponseMessage {
-    pub role: String,
-    pub content: String,
-}
+use crate::llm::client::OpenAIClient;
 
-#[derive(Deserialize, Debug)]
-pub struct ResponseObject {
-    pub id: String,
-    pub object: String,
-    pub model: String,
-    pub choices: Vec<ResponseChoice>,
-    pub created_at: Option<i64>, // <-- Now optional
-}
-
-#[derive(Deserialize, Debug)]
-pub struct ResponseChoice {
-    pub index: i32,
-    pub message: ResponseMessage,
-    pub finish_reason: Option<String>,
-}
-
-/// Manager for the new Responses API (tooling deprecated)
+#[derive(Clone)]
 pub struct ResponsesManager {
     client: Arc<OpenAIClient>,
-    pub responses_id: Option<String>,
+    responses_id: Option<String>,
 }
 
 impl ResponsesManager {
     pub fn new(client: Arc<OpenAIClient>) -> Self {
-        Self {
-            client,
-            responses_id: Some("responses-api-v1".to_string()),
-        }
+        Self { client, responses_id: None }
     }
 
-    /// "Create responses" now just returns success since we use Responses API
-    pub async fn create_responses(&mut self) -> Result<()> {
-        eprintln!("🤖 Initializing Responses API manager (no responses creation needed)...");
-        Ok(())
-    }
-
-    /// Create a response using OpenAI Responses API (no tools/context only)
     pub async fn create_response(
         &self,
-        messages: Vec<ResponseMessage>,
+        model: &str,
+        messages: Vec<Value>,
+        instructions: Option<String>,
+        response_format: Option<Value>,
+        parameters: Option<Value>,
     ) -> Result<ResponseObject> {
-        let req = CreateResponseRequest {
-            model: "gpt-4.1".to_string(), // Update to latest model if needed
-            messages,
-            temperature: Some(0.3),
-        };
+        let mut body = json!({ "model": model, "input": messages });
+        if let Some(instr) = instructions { body["instructions"] = Value::String(instr); }
+        if let Some(fmt) = response_format { body["response_format"] = fmt; }
+        if let Some(params) = parameters { body["parameters"] = params; }
 
-        eprintln!("📤 Creating response via Responses API");
+        let v = self.client.post_response(body).await?;
 
-        let response = self.client
-            .request(Method::POST, "chat/completions")
-            .json(&req)
-            .send()
-            .await
-            .context("Failed to send response request")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            eprintln!("❌ Responses API error: {}", error_text);
-            return Err(anyhow::anyhow!("HTTP {} from OpenAI: {}", status, error_text));
+        if let Some(output_val) = v.get("output").cloned() {
+            let text = extract_text_from_output(&output_val);
+            return Ok(ResponseObject { raw: v, text });
         }
 
-        let result: ResponseObject = response
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let text = v
+            .pointer("/choices/0/message/content")
+            .and_then(|c| c.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|part| {
+                        if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                            part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        } else { None }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
 
-        Ok(result)
+        Ok(ResponseObject { raw: v, text })
     }
 
-    /// Get the responses ID (kept for compatibility)
     pub fn get_responses_id(&self) -> Option<&str> {
         self.responses_id.as_deref()
     }
+}
+
+fn extract_text_from_output(output: &Value) -> String {
+    if let Some(arr) = output.as_array() {
+        let mut s = String::new();
+        for item in arr {
+            if item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                    s.push_str(t);
+                }
+            }
+        }
+        return s;
+    }
+    String::new()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseObject {
+    pub text: String,
+    #[serde(skip)]
+    pub raw: Value,
 }

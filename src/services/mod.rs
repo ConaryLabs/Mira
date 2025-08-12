@@ -3,12 +3,10 @@
 pub mod chat;
 pub mod memory;
 pub mod context;
-pub mod hybrid;
 pub mod document;
 
 pub use chat::ChatService;
 pub use crate::llm::schema::ChatResponse;
 pub use memory::MemoryService;
 pub use context::ContextService;
-pub use hybrid::HybridMemoryService;
 pub use document::DocumentService;
