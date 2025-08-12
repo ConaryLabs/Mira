@@ -12,8 +12,6 @@ pub mod prompts;
 pub mod responses;  // Renamed from assistant
 pub mod schema;
 pub mod streaming;
-pub mod anthropic_client;  // New - Anthropic/Claude client
-pub mod claude_system;      // New - Claude orchestration system
 
 pub use client::OpenAIClient;
 pub use responses::{
@@ -24,6 +22,3 @@ pub use responses::{
 // Re-export schema types for services
 pub use schema::{EvaluateMemoryRequest, MiraStructuredReply, EvaluateMemoryResponse, function_schema};
 
-// New exports for Claude/Anthropic
-pub use anthropic_client::AnthropicClient;
-pub use claude_system::{ClaudeSystem, ClaudeDecision, ActionType};

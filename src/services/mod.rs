@@ -5,7 +5,6 @@ pub mod memory;
 pub mod context;
 pub mod hybrid;
 pub mod document;
-// Removed midjourney modules - we're using OpenAI's gpt-image-1 instead
 
 pub use chat::ChatService;
 pub use crate::llm::schema::ChatResponse;
