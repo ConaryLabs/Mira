@@ -1,28 +1,25 @@
+// src/handlers.rs
+// Phase 7: Unified REST handler using ChatService
+
 use axum::{
     extract::{Json, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
-
-use chrono::{TimeZone, Utc};
+use tracing::{info, error};
 
 use crate::memory::types::MemoryEntry;
-use crate::persona::PersonaOverlay;
-use crate::services::chat::ChatService;
+use crate::llm::schema::ChatResponse;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
-    /// Persona override is **not allowed** in this phase.
-    /// If provided, we fail loudly so it's obvious something is mis‑wired.
-    pub persona_override: Option<String>,
-    /// Reserved for future retrieval (Phase 6)
+    /// Project ID for vector store retrieval (Phase 6)
     pub project_id: Option<String>,
-    /// Reserved for future multimodal (Phase 5+)
+    /// Reserved for future multimodal support
     pub images: Option<Vec<String>>,
     pub pdfs: Option<Vec<String>>,
 }
@@ -32,13 +29,32 @@ pub struct ChatReply {
     pub output: String,
     pub persona: String,
     pub mood: String,
-    pub salience: f32,
-    pub summary: String,
+    pub salience: u8,
+    pub summary: Option<String>,
     pub memory_type: String,
     pub tags: Vec<String>,
     pub intent: String,
     pub monologue: Option<String>,
     pub reasoning_summary: Option<String>,
+    pub aside_intensity: Option<u8>,
+}
+
+impl From<ChatResponse> for ChatReply {
+    fn from(response: ChatResponse) -> Self {
+        Self {
+            output: response.output,
+            persona: response.persona,
+            mood: response.mood,
+            salience: response.salience,
+            summary: response.summary,
+            memory_type: response.memory_type,
+            tags: response.tags,
+            intent: response.intent,
+            monologue: response.monologue,
+            reasoning_summary: response.reasoning_summary,
+            aside_intensity: response.aside_intensity,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -54,204 +70,168 @@ pub struct HistoryQuery {
     pub project_id: Option<String>,
 }
 
-/// Internal: shape we expect back when we request `response_format: { type: "json_object" }`.
-/// This mirrors `ChatReply` so we can parse the model JSON and then map it 1:1.
-#[derive(Deserialize)]
-struct StructuredModelReply {
-    pub output: String,
-    pub persona: String,
-    pub mood: String,
-    pub salience: f32,
-    pub summary: String,
-    pub memory_type: String,
-    pub tags: Vec<String>,
-    pub intent: String,
-    pub monologue: Option<String>,
-    pub reasoning_summary: Option<String>,
-}
-
+/// Main REST chat handler - Phase 7 unified implementation
 pub async fn chat_handler(
     State(state): State<Arc<AppState>>,
     _headers: HeaderMap,
     Json(payload): Json<ChatRequest>,
 ) -> Response {
+    // Use consistent session ID with WebSocket
     let session_id = "peter-eternal".to_string();
-    eprintln!("Using eternal session: {}", session_id);
-
-    // Persona policy: full-on or fail. No silent overrides.
-    if let Some(ref override_str) = payload.persona_override {
-        // We error loudly if the client tries to override persona at request time.
-        return Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body(axum::body::Body::from(format!(
-                "persona_override is not supported in this phase (got: {})",
-                override_str
-            )))
-            .unwrap()
-            .into_response();
+    info!("📮 REST chat request for session: {}", session_id);
+    
+    if let Some(ref project_id) = payload.project_id {
+        info!("📁 Using project context: {}", project_id);
     }
 
-    // Call the unified GPT‑5 flow and request **strict JSON** so we can fill ChatReply.
-    // NOTE: hybrid/project/images/pdfs are ignored in Phase 2; retrieval returns in Phase 6.
+    // Call the unified ChatService
     let result = state
         .chat_service
-        .process_message(&session_id, &payload.message, /* structured_json = */ true)
+        .process_message(
+            &session_id,
+            &payload.message,
+            payload.project_id.as_deref(),
+            true, // Request structured JSON for consistent response
+        )
         .await;
 
     match result {
-        Ok(res) => {
-            // `res.text` SHOULD be JSON because we set structured_json=true.
-            let parsed: StructuredModelReply = match serde_json::from_str(&res.text) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("❌ Failed to parse structured model JSON: {}", e);
-                    // Return a minimal, safe response so the UI isn't bricked.
-                    return Response::builder()
-                        .status(StatusCode::BAD_GATEWAY)
-                        .body(axum::body::Body::from("Model did not return valid JSON"))
-                        .unwrap()
-                        .into_response();
-                }
-            };
-
-            let reply = ChatReply {
-                output: parsed.output,
-                persona: parsed.persona,
-                mood: parsed.mood,
-                salience: parsed.salience,
-                summary: parsed.summary,
-                memory_type: parsed.memory_type,
-                tags: parsed.tags,
-                intent: parsed.intent,
-                monologue: parsed.monologue,
-                reasoning_summary: parsed.reasoning_summary,
-            };
-
-            eprintln!("🎉 Chat handler complete, returning response");
+        Ok(chat_response) => {
+            info!("✅ Chat response generated successfully");
+            
+            // Log key metrics
+            info!("   Salience: {}/10", chat_response.salience);
+            info!("   Mood: {}", chat_response.mood);
+            if !chat_response.tags.is_empty() {
+                info!("   Tags: {:?}", chat_response.tags);
+            }
+            
+            // Convert to API response format
+            let reply: ChatReply = chat_response.into();
+            
             Json(reply).into_response()
         }
         Err(e) => {
-            eprintln!("Chat service error: {:?}", e);
+            error!("Chat service error: {:?}", e);
+            
+            // Return user-friendly error
+            let error_response = serde_json::json!({
+                "error": "Failed to process message",
+                "code": "CHAT_ERROR",
+                "details": if cfg!(debug_assertions) {
+                    Some(e.to_string())
+                } else {
+                    None
+                }
+            });
+            
             Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(axum::body::Body::from("Internal model error"))
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(error_response.to_string()))
                 .unwrap()
                 .into_response()
         }
     }
 }
 
+/// Get chat history for a session
 pub async fn chat_history_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HistoryQuery>,
 ) -> impl IntoResponse {
     let session_id = "peter-eternal".to_string();
-    let limit = params.limit.unwrap_or(30);
+    let limit = params.limit.unwrap_or(30).min(100); // Cap at 100
     let offset = params.offset.unwrap_or(0);
 
-    eprintln!(
-        "📜 Loading chat history: session={}, limit={}, offset={}",
-        session_id, limit, offset
-    );
+    info!("📜 Fetching chat history: session={}, limit={}, offset={}", 
+          session_id, limit, offset);
 
-    // Optional project filter (kept for API continuity; hybrid path returns later)
-    let project_id_filter = params.project_id.clone();
-
-    let query = if project_id_filter.is_some() {
-        r#"
-        SELECT id, session_id, role, content, timestamp, embedding, salience, tags,
-               summary, memory_type, logprobs, moderation_flag, system_fingerprint
-        FROM chat_history
-        WHERE session_id = ? AND project_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ? OFFSET ?
-        "#
-    } else {
-        r#"
-        SELECT id, session_id, role, content, timestamp, embedding, salience, tags,
-               summary, memory_type, logprobs, moderation_flag, system_fingerprint
-        FROM chat_history
-        WHERE session_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ? OFFSET ?
-        "#
-    };
-
-    let rows = if let Some(ref project_id) = params.project_id {
-        sqlx::query(query)
-            .bind(&session_id)
-            .bind(project_id)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(&state.sqlite_store.pool)
-            .await
-    } else {
-        sqlx::query(query)
-            .bind(&session_id)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(&state.sqlite_store.pool)
-            .await
-    };
-
-    match rows {
-        Ok(rows) => {
-            eprintln!("✅ Found {} messages in history", rows.len());
-            let mut messages = Vec::with_capacity(rows.len());
-
-            for row in rows {
-                let id: i64 = row.get("id");
-                let session_id: String = row.get("session_id");
-                let role: String = row.get("role");
-                let content: String = row.get("content");
-                let timestamp: chrono::NaiveDateTime = row.get("timestamp");
-                let salience: Option<f32> = row.get("salience");
-                let tags: Option<String> = row.get("tags");
-                let summary: Option<String> = row.get("summary");
-                let memory_type: Option<String> = row.get("memory_type");
-                let moderation_flag: Option<bool> = row.get("moderation_flag");
-                let system_fingerprint: Option<String> = row.get("system_fingerprint");
-
-                let tags_vec = tags
-                    .as_ref()
-                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
-
-                let memory_type_enum = memory_type.as_ref().and_then(|mt| match mt.as_str() {
-                    "Feeling" => Some(crate::memory::types::MemoryType::Feeling),
-                    "Fact" => Some(crate::memory::types::MemoryType::Fact),
-                    "Joke" => Some(crate::memory::types::MemoryType::Joke),
-                    "Promise" => Some(crate::memory::types::MemoryType::Promise),
-                    "Event" => Some(crate::memory::types::MemoryType::Event),
-                    _ => Some(crate::memory::types::MemoryType::Other),
-                });
-
-                messages.push(MemoryEntry {
-                    id: Some(id),
-                    session_id,
-                    role,
-                    content,
-                    timestamp: Utc.from_utc_datetime(&timestamp),
-                    embedding: None,
-                    salience,
-                    tags: tags_vec,
-                    summary,
-                    memory_type: memory_type_enum,
-                    logprobs: None,
-                    moderation_flag,
-                    system_fingerprint,
-                });
-            }
-
-            let response = ChatHistoryResponse { messages, session_id };
+    // Get messages from memory service
+    match state.memory_service.get_recent_messages(&session_id, limit).await {
+        Ok(messages) => {
+            info!("✅ Retrieved {} messages", messages.len());
+            
+            let response = ChatHistoryResponse {
+                messages,
+                session_id,
+            };
+            
             Json(response).into_response()
         }
         Err(e) => {
-            eprintln!("❌ Failed to load chat history: {:?}", e);
+            error!("Failed to fetch chat history: {:?}", e);
+            
+            let error_response = serde_json::json!({
+                "error": "Failed to retrieve chat history",
+                "code": "HISTORY_ERROR"
+            });
+            
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::from("Failed to load chat history"))
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(error_response.to_string()))
                 .unwrap()
                 .into_response()
         }
+    }
+}
+
+/// Health check endpoint
+pub async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "healthy",
+        "model": "gpt-5",
+        "api": "unified",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+/// Get system status
+pub async fn status_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Could expand this to check various system components
+    let vector_stores = state.vector_store_manager
+        .list_stores()
+        .await
+        .unwrap_or_else(|_| vec![]);
+    
+    Json(serde_json::json!({
+        "status": "operational",
+        "model": "gpt-5",
+        "services": {
+            "chat": "active",
+            "memory": "active",
+            "context": "active",
+            "document": "active",
+            "vector_stores": vector_stores.len()
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_response_conversion() {
+        let chat_response = ChatResponse {
+            output: "Test output".to_string(),
+            persona: "assistant".to_string(),
+            mood: "helpful".to_string(),
+            salience: 7,
+            summary: Some("Test summary".to_string()),
+            memory_type: "fact".to_string(),
+            tags: vec!["test".to_string()],
+            intent: "inform".to_string(),
+            monologue: None,
+            reasoning_summary: None,
+            aside_intensity: None,
+        };
+
+        let reply: ChatReply = chat_response.into();
+        assert_eq!(reply.output, "Test output");
+        assert_eq!(reply.salience, 7);
+        assert_eq!(reply.tags, vec!["test"]);
     }
 }

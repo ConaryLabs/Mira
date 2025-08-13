@@ -1,4 +1,6 @@
 // src/main.rs
+// Phase 3: Remove HybridMemoryService, properly initialize unified ChatService
+
 use std::sync::Arc;
 
 use axum::{
@@ -15,7 +17,7 @@ use mira_backend::{
     api::http::http_router,
     api::ws::ws_router,
     git::{GitClient, GitStore},
-    llm::client::OpenAIClient, // <- Phase 2 path
+    llm::client::OpenAIClient,
     llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager},
     memory::{
         qdrant::store::QdrantMemoryStore,
@@ -112,15 +114,18 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(PersonaOverlay::Default);
     info!("🧬 Persona overlay: {}", persona.name());
 
-    // Chat service (GPT‑5 via /responses)
-    info!("🚀 Creating GPT‑5 chat service...");
+    // Chat service (Unified GPT‑5 via /responses) - Phase 6 update with vector store
+    info!("🚀 Creating unified GPT‑5 chat service with vector store retrieval...");
     let chat_service = Arc::new(ChatService::new(
         openai_client.clone(),
         thread_manager.clone(),
+        memory_service.clone(),
+        context_service.clone(),
+        vector_store_manager.clone(),
         persona,
     ));
 
-    // Document service (no chat_service arg)
+    // Document service
     let document_service = Arc::new(DocumentService::new(
         memory_service.clone(),
         vector_store_manager.clone(),
@@ -146,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         memory_service,
         context_service,
         document_service,
+        // REMOVED: hybrid_service
     });
 
     // --- Build the application router ---
@@ -163,32 +169,21 @@ async fn main() -> anyhow::Result<()> {
             axum::Json(serde_json::json!({
                 "status": "healthy",
                 "version": env!("CARGO_PKG_VERSION"),
-                "service": "mira-backend",
-                "engine": "gpt-5"
+                "model": "gpt-5",
+                "timestamp": chrono::Utc::now().to_rfc3339()
             }))
         }))
-        .route("/ws-test", get(|| async { "WebSocket routes loaded!" }))
-        .route("/chat", post(mira_backend::handlers::chat_handler))
-        .route("/chat/history", get(mira_backend::handlers::chat_history_handler))
-        .merge(project_router())
-        .merge(http_router())
-        .nest("/ws", ws_router(app_state.clone()))
-        .with_state(app_state.clone())
-        .layer(cors);
+        .nest("/api", http_router())
+        .nest("/ws", ws_router())
+        .nest("/projects", project_router())
+        .layer(cors)
+        .with_state(app_state);
 
-    // --- Start the server ---
-    info!("════════════════════════════════════════════");
-    info!("🚀 Mira backend listening on http://{addr}");
-    info!("════════════════════════════════════════════");
-    info!("🧠 Brain: GPT‑5");
-    info!("🎨 Images: OpenAI gpt-image-1");
-    info!("📊 Embeddings: OpenAI text-embedding-3-large");
-    info!("💾 Memory: SQLite + Qdrant");
-    info!("🌐 WebSocket: ws://localhost:{}/ws/chat", port);
-    info!("════════════════════════════════════════════");
-    info!("✨ Mira is fully autonomous and ready!");
+    info!("✨ Mira server starting on {}", addr);
+    info!("🌐 WebSocket endpoint: ws://{}/ws/chat", addr);
+    info!("🔗 REST endpoint: http://{}/api/chat", addr);
 
-    let listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())

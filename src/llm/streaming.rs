@@ -1,29 +1,30 @@
 // src/llm/streaming.rs
+// Phase 9: Streaming support for GPT-5 responses
 
-use crate::api::ws::message::WsServerMessage;
-use futures::stream::Stream;
+use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
-// Minimal streaming implementation
-// The actual chat logic is handled by ChatService (using Claude)
-// These methods are kept for any legacy code that might still reference them
+// The actual chat logic is handled by ChatService using GPT-5
+pub struct EmptyStream;
 
-impl crate::llm::client::OpenAIClient {
-    /// Legacy streaming method - not used with Claude orchestration
-    pub async fn stream_gpt4_ws(
-        &self,
-        _prompt: String,
-        _system_prompt: String,
-        _model: Option<&str>,
-    ) -> Pin<Box<dyn Stream<Item = WsServerMessage> + Send + 'static>> {
-        // Return empty stream since we use ChatService with Claude
-        let stream = async_stream::stream! {
-            yield WsServerMessage::Done;
-        };
-        Box::pin(stream)
+impl EmptyStream {
+    /// Legacy streaming method - replaced by GPT-5 streaming in ChatService
+    pub fn new() -> Self {
+        Self
     }
 }
 
-// Note: Real chat processing happens through:
-// 1. ChatService.process_message() which uses Claude for orchestration
-// 2. WebSocket handler in src/api/ws/chat.rs streams the response
+impl Stream for EmptyStream {
+    type Item = Result<String, anyhow::Error>;
+    
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Return empty stream since we use ChatService with GPT-5
+        // Real streaming is handled in WebSocket handler
+        Poll::Ready(None)
+    }
+}
+
+// Note: Actual streaming implementation is in:
+// 1. ChatService.process_message() which uses GPT-5 for processing
+// 2. WebSocket handler which streams responses to clients

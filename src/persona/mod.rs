@@ -28,7 +28,7 @@ impl PersonaOverlay {
         }
     }
     
-    // Add methods needed by ChatService and ClaudeSystem
+    // Add methods needed by ChatService and GPT-5System
     pub fn name(&self) -> &str {
         match self {
             PersonaOverlay::Default => "default",
@@ -44,7 +44,7 @@ impl PersonaOverlay {
     }
     
     pub fn temperature(&self) -> f32 {
-        // Different personas have different temperatures for Claude
+        // Different personas have different temperatures for GPT-5
         match self {
             PersonaOverlay::Default => 0.7,
             PersonaOverlay::Forbidden => 0.9,

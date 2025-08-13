@@ -1,219 +1,210 @@
-// backend/src/tools/mira_import/openai.rs
+// src/tools/mira_import/openai.rs
+// Phase 9: Updated to use GPT-5 Functions API
 
-//! Batch OpenAI memory_eval runner for import (GPT-4.1, strict, retcon)
-//! - Prepares batch jobs for all messages
-//! - Submits to OpenAI /v1/batch API
-//! - Collects results and aligns with original messages
-//! - Falls back to live API if batch is unavailable
+//! Batch OpenAI memory_eval runner for import (GPT-5, strict, retcon)
 
 use super::schema::MiraMessage;
+use anyhow::Result;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
-use reqwest::{Client, StatusCode};
-use tokio::time::sleep;
+use std::collections::HashMap;
+use std::env;
 
-/// Result of running memory_eval on a message
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MemoryEvalResult {
-    pub persona: String,
-    pub mood: String,
     pub salience: f32,
     pub tags: Vec<String>,
     pub memory_type: String,
     pub embedding: Vec<f32>,
-    pub eval_cost: Option<f32>,
-    pub embedding_cost: Option<f32>,
 }
 
-/// Submit all messages to OpenAI batch endpoint, return results keyed by message_id
-pub async fn batch_memory_eval(
+/// Batch evaluate messages using GPT-5 Functions API for memory metadata
+pub async fn batch_evaluate_messages(
     messages: &[MiraMessage],
-    api_key: &str,
-) -> anyhow::Result<HashMap<String, MemoryEvalResult>> {
-    // Build batch job JSON (max 10,000 jobs per batch)
-    let jobs: Vec<_> = messages
-        .iter()
-        .map(|m| {
-            serde_json::json!({
-                "custom_id": m.message_id,
-                "method": "POST",
-                "url": "https://api.openai.com/v1/chat/completions",
-                "body": {
-                    "model": "gpt-4.1",
-                    "messages": [
-                        {"role": &m.role, "content": &m.content}
-                    ],
-                    "tools": [{
-                        "type": "function",
-                        "function": {
-                            "name": "memory_eval",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "persona": {"type": "string"},
-                                    "mood": {"type": "string"},
-                                    "salience": {"type": "number"},
-                                    "tags": {"type": "array", "items": {"type": "string"}},
-                                    "memory_type": {"type": "string"}
-                                },
-                                "required": ["persona", "mood", "salience", "tags", "memory_type"]
-                            }
-                        }
-                    }],
-                    "tool_choice": {"type": "function", "function": {"name": "memory_eval"}},
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.25,
-                    "max_tokens": 512,
-                    "stream": false,
-                    "seed": 42,
-                    "strict": true
-                }
-            })
-        })
-        .collect();
-
+) -> Result<HashMap<String, MemoryEvalResult>> {
+    let api_key = env::var("OPENAI_API_KEY")?;
     let client = Client::new();
-    let batch_job = serde_json::json!({
-        "input": jobs,
-        "endpoint": "/v1/chat/completions"
-    });
+    let mut results = HashMap::new();
 
-    let res = client
-        .post("https://api.openai.com/v1/batch")
-        .bearer_auth(api_key)
-        .json(&batch_job)
-        .send()
-        .await?;
+    for msg in messages {
+        // Skip system messages
+        if msg.role == "system" {
+            continue;
+        }
 
-    if res.status() != StatusCode::OK {
-        anyhow::bail!("Batch job failed: {:?}", res.text().await?);
-    }
-    let resp: serde_json::Value = res.json().await?;
-    let batch_id = resp
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing batch ID"))?;
+        // Build the Functions API request for memory evaluation
+        let request_body = serde_json::json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": format!("Evaluate this message for memory storage: \"{}\"", msg.content)
+                    }]
+                }
+            ],
+            "functions": [
+                {
+                    "name": "memory_eval",
+                    "description": "Evaluate a message for memory storage metadata",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "salience": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 10,
+                                "description": "Emotional importance (1-10)"
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Contextual tags for this memory"
+                            },
+                            "memory_type": {
+                                "type": "string",
+                                "enum": ["feeling", "fact", "joke", "promise", "event", "other"],
+                                "description": "Type of memory"
+                            }
+                        },
+                        "required": ["salience", "tags", "memory_type"]
+                    }
+                }
+            ],
+            "function_call": {"name": "memory_eval"},  // Force this function to be called
+            "parameters": {
+                "verbosity": "low",
+                "reasoning_effort": "minimal",
+                "max_output_tokens": 256
+            }
+        });
 
-    // Poll batch status until done
-    loop {
-        let status_res = client
-            .get(&format!(
-                "https://api.openai.com/v1/batch/{}",
-                batch_id
-            ))
-            .bearer_auth(api_key)
+        // Make the API call to /v1/responses
+        let response = client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
             .send()
             .await?;
 
-        let status_json: serde_json::Value = status_res.json().await?;
-        if status_json.get("status").and_then(|s| s.as_str()) == Some("completed") {
-            break;
-        }
-        sleep(Duration::from_secs(5)).await;
+        let response_json: serde_json::Value = response.json().await?;
+
+        // Parse the function call result from various possible formats
+        let eval_result = parse_function_response(&response_json)?;
+
+        // Get embedding for the message
+        let embedding = get_embedding(&client, &api_key, &msg.content).await?;
+
+        results.insert(
+            msg.message_id.clone(),
+            MemoryEvalResult {
+                salience: eval_result.salience,
+                tags: eval_result.tags,
+                memory_type: eval_result.memory_type,
+                embedding,
+            },
+        );
+
+        // Small delay to avoid rate limiting
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
-    // Download results
-    let results_res = client
-        .get(&format!(
-            "https://api.openai.com/v1/batch/{}/output",
-            batch_id
-        ))
-        .bearer_auth(api_key)
-        .send()
-        .await?;
-
-    let results_json: serde_json::Value = results_res.json().await?;
-
-    // Parse and align results to message IDs
-    let mut eval_map = HashMap::new();
-    for entry in results_json.as_array().unwrap_or(&vec![]) {
-        if let (Some(custom_id), Some(out)) = (
-            entry.get("custom_id").and_then(|v| v.as_str()),
-            entry.get("response"),
-        ) {
-            // Parse memory_eval result
-            if let Some(fn_result) = out
-                .get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("tool_calls"))
-                .and_then(|tc| tc.get(0))
-                .and_then(|tc| tc.get("function"))
-                .and_then(|f| f.get("arguments"))
-            {
-                // Parse as MemoryEvalResult
-                if let Ok(res) = serde_json::from_value::<MemoryEvalResult>(fn_result.clone()) {
-                    eval_map.insert(custom_id.to_string(), res);
-                }
-            }
-        }
-    }
-
-    Ok(eval_map)
+    Ok(results)
 }
 
-/// Single-message fallback (not usually used, but good for testing)
-pub async fn live_memory_eval(
-    msg: &MiraMessage,
-    api_key: &str,
-) -> anyhow::Result<MemoryEvalResult> {
-    let client = Client::new();
-
-    let body = serde_json::json!({
-        "model": "gpt-4.1",
-        "messages": [
-            {"role": &msg.role, "content": &msg.content}
-        ],
-        "tools": [{
-            "type": "function",
-            "function": {
-                "name": "memory_eval",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "persona": {"type": "string"},
-                        "mood": {"type": "string"},
-                        "salience": {"type": "number"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "memory_type": {"type": "string"}
-                    },
-                    "required": ["persona", "mood", "salience", "tags", "memory_type"]
+/// Parse function response from various GPT-5 response formats
+fn parse_function_response(response: &serde_json::Value) -> Result<MemoryEvalResult> {
+    // Try unified output format first
+    if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
+        for item in output {
+            if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
+                if let Some(function) = item.get("function") {
+                    if function.get("name").and_then(|n| n.as_str()) == Some("memory_eval") {
+                        if let Some(args_str) = function.get("arguments").and_then(|a| a.as_str()) {
+                            return parse_eval_args(args_str);
+                        }
+                    }
                 }
             }
-        }],
-        "tool_choice": {"type": "function", "function": {"name": "memory_eval"}},
-        "response_format": {"type": "json_object"},
-        "temperature": 0.25,
-        "max_tokens": 512,
-        "stream": false,
-        "seed": 42,
-        "strict": true
+        }
+    }
+
+    // Try tool_calls format (newer format)
+    if let Some(tool_calls) = response
+        .pointer("/choices/0/message/tool_calls")
+        .and_then(|tc| tc.as_array())
+    {
+        for tool_call in tool_calls {
+            if let Some(function) = tool_call.get("function") {
+                if function.get("name").and_then(|n| n.as_str()) == Some("memory_eval") {
+                    if let Some(args_str) = function.get("arguments").and_then(|a| a.as_str()) {
+                        return parse_eval_args(args_str);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback defaults
+    Ok(MemoryEvalResult {
+        salience: 5.0,
+        tags: vec!["imported".to_string()],
+        memory_type: "other".to_string(),
+        embedding: vec![],
+    })
+}
+
+/// Parse evaluation arguments from JSON string
+fn parse_eval_args(args_str: &str) -> Result<MemoryEvalResult> {
+    let args: serde_json::Value = serde_json::from_str(args_str)?;
+    
+    Ok(MemoryEvalResult {
+        salience: args.get("salience")
+            .and_then(|s| s.as_f64())
+            .unwrap_or(5.0) as f32,
+        tags: args.get("tags")
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["imported".to_string()]),
+        memory_type: args.get("memory_type")
+            .and_then(|m| m.as_str())
+            .unwrap_or("other")
+            .to_string(),
+        embedding: vec![], // Will be filled by get_embedding
+    })
+}
+
+/// Get embedding for text using text-embedding-3-large
+async fn get_embedding(client: &Client, api_key: &str, text: &str) -> Result<Vec<f32>> {
+    let request_body = serde_json::json!({
+        "model": "text-embedding-3-large",
+        "input": text,
+        "dimensions": 3072
     });
 
-    let res = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .bearer_auth(api_key)
-        .json(&body)
+    let response = client
+        .post("https://api.openai.com/v1/embeddings")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
         .send()
         .await?;
 
-    if res.status() != StatusCode::OK {
-        anyhow::bail!("Live memory_eval failed: {:?}", res.text().await?);
-    }
+    let response_json: serde_json::Value = response.json().await?;
+    
+    let embedding = response_json
+        .pointer("/data/0/embedding")
+        .and_then(|e| e.as_array())
+        .ok_or_else(|| anyhow::anyhow!("No embedding in response"))?
+        .iter()
+        .filter_map(|v| v.as_f64().map(|f| f as f32))
+        .collect::<Vec<_>>();
 
-    let resp_json: serde_json::Value = res.json().await?;
-    if let Some(fn_result) = resp_json
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("tool_calls"))
-        .and_then(|tc| tc.get(0))
-        .and_then(|tc| tc.get("function"))
-        .and_then(|f| f.get("arguments"))
-    {
-        let eval = serde_json::from_value::<MemoryEvalResult>(fn_result.clone())?;
-        Ok(eval)
-    } else {
-        anyhow::bail!("No tool_calls result in response: {resp_json:#?}")
-    }
+    Ok(embedding)
 }

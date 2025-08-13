@@ -60,7 +60,7 @@ async fn test_openai_api_key_and_embedding() {
     // The system prompt MUST contain the word "json" when using json_object response format
     let system_prompt = "You are a helpful assistant. You must respond in JSON format with exactly these fields: output (string), persona (string), mood (string), salience (number), tags (array of strings), memory_type (string), intent (string), monologue (string or null), reasoning_summary (string or null). Set output to 'Test passed', mood to 'happy', and fill other fields appropriately.";
     
-    match client.chat_with_custom_prompt("Say test passed", "gpt-4.1", system_prompt).await {
+    match client.chat_with_custom_prompt("Say test passed", "gpt-5", system_prompt).await {
         Ok(response) => {
             println!("✅ Chat completion successful!");
             println!("   Response output: {}", response.output.chars().take(50).collect::<String>());
@@ -73,7 +73,7 @@ async fn test_openai_api_key_and_embedding() {
     
     // Test simple chat (non-JSON)
     println!("\n🧪 Testing simple chat (non-JSON)...");
-    match client.simple_chat("What is 2+2?", "gpt-4.1", "You are a helpful math tutor.").await {
+    match client.simple_chat("What is 2+2?", "gpt-5", "You are a helpful math tutor.").await {
         Ok(response) => {
             println!("✅ Simple chat successful!");
             println!("   Response: {}", response.trim());

@@ -15,7 +15,7 @@ pub async fn classify(client: &OpenAIClient, message: &str) -> Result<f32, Error
 
     // Use the simple_chat method that doesn't enforce JSON format
     let response = client
-        .simple_chat(&prompt, "gpt-4.1", system_prompt)
+        .simple_chat(&prompt, "gpt-5", system_prompt)
         .await?;
 
     // Try to parse the LLM's reply as a float (be forgiving of whitespace)
