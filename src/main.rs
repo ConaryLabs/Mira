@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         openai_client.clone(),
     ));
 
-    // Context service
+    // Context service (kept available for other code paths that may use it)
     let context_service = Arc::new(ContextService::new(
         sqlite_store.clone(),
         qdrant_store.clone(),
@@ -99,13 +99,12 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(PersonaOverlay::Default);
     info!("🧬 Persona overlay: {}", persona.name());
 
-    // Chat service (Unified GPT‑5 via /responses) - Phase 6 update with vector store
+    // Chat service (Unified GPT‑5 via /responses) - updated signature: no ContextService arg
     info!("🚀 Creating unified GPT‑5 chat service with vector store retrieval...");
     let chat_service = Arc::new(ChatService::new(
         openai_client.clone(),
         thread_manager.clone(),
         memory_service.clone(),
-        context_service.clone(),
         vector_store_manager.clone(),
         persona,
     ));

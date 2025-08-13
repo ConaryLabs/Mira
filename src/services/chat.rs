@@ -4,16 +4,13 @@
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tracing::info;
 use std::time::Instant;
-use tracing::instrument;
-use tracing::debug;
+use tracing::{info, debug, instrument};
 
 use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::{ThreadManager, ResponseMessage};
 use crate::llm::responses::vector_store::VectorStoreManager;
 use crate::services::memory::MemoryService;
-use crate::services::context::ContextService;
 use crate::persona::PersonaOverlay;
 
 /// Output format for chat responses
@@ -83,7 +80,6 @@ pub struct ChatService {
     client: Arc<OpenAIClient>,
     threads: Arc<ThreadManager>,
     memory_service: Arc<MemoryService>,
-    context_service: Arc<ContextService>,
     vector_store_manager: Arc<VectorStoreManager>,
     persona: PersonaOverlay,
     config: ChatConfig,
@@ -95,13 +91,11 @@ impl ChatService {
         client: Arc<OpenAIClient>,
         threads: Arc<ThreadManager>,
         memory_service: Arc<MemoryService>,
-        context_service: Arc<ContextService>,
         vector_store_manager: Arc<VectorStoreManager>,
         persona: PersonaOverlay,
     ) -> Self {
         let config = ChatConfig::from_env();
-        
-        // Log configuration at startup
+
         info!("🎛️ ChatService configuration:");
         info!("   Model: {}", config.model);
         info!("   Verbosity: {}", config.verbosity);
@@ -111,12 +105,11 @@ impl ChatService {
         info!("   History token limit: {}", config.history_token_limit);
         info!("   Max retrieval tokens: {}", config.max_retrieval_tokens);
         info!("   Debug logging: {}", config.enable_debug_logging);
-        
+
         Self {
             client,
             threads,
             memory_service,
-            context_service,
             vector_store_manager,
             persona,
             config,
@@ -133,79 +126,65 @@ impl ChatService {
         return_structured: bool,
     ) -> Result<ChatResponse> {
         let start_time = Instant::now();
-        
+
         info!("🚀 Processing chat message");
         debug!("User input: {} chars", user_text.len());
 
-        // 1. Store user message in memory
-        self.memory_service
-            .save_user_message(session_id, user_text)
-            .await?;
+        // 1) persist user msg
+        self.memory_service.save_user_message(session_id, user_text).await?;
 
-        // 2. Add user message to thread
-        self.threads
-            .add_message(session_id, ResponseMessage {
-                role: "user".to_string(),
-                content: Some(user_text.to_string()),
-            })
-            .await?;
+        // 2) add to thread
+        self.threads.add_message(session_id, ResponseMessage {
+            role: "user".to_string(),
+            content: Some(user_text.to_string()),
+        }).await?;
 
-        // 3. Get conversation history
+        // 3) history (kept for observability)
         let history = self.threads
             .get_conversation_capped(session_id, self.config.history_message_cap)
             .await;
         info!("📜 History: {} messages", history.len());
 
-        // 4. Build context from memory and vector stores
+        // 4) context
         let context = self.build_context(session_id, user_text, project_id).await?;
 
-        // 5. Build system instructions with persona and context
+        // 5) instructions
         let system_instructions = self.build_instructions(&context);
 
-        // 6. Get response from GPT-5 using the client directly
+        // 6) model call
         let response = self.client
-            .generate_response(
-                user_text,
-                Some(&system_instructions),
-                return_structured,
-            )
+            .generate_response(user_text, Some(&system_instructions), return_structured)
             .await?;
 
-        // 7. Parse structured output if available
+        // 7) parse
         let parsed = if return_structured {
             self.parse_structured_response(&response.output)?
         } else {
             self.create_default_response(&response.output)
         };
 
-        // 8. Save assistant response to memory
-        self.memory_service
-            .save_assistant_response(session_id, &parsed)
-            .await?;
+        // 8) save assistant memory
+        self.memory_service.save_assistant_response(session_id, &parsed).await?;
 
-        // 9. Add to thread history
-        self.threads
-            .add_message(session_id, ResponseMessage {
-                role: "assistant".to_string(),
-                content: Some(parsed.output.clone()),
-            })
-            .await?;
+        // 9) add assistant turn to thread
+        self.threads.add_message(session_id, ResponseMessage {
+            role: "assistant".to_string(),
+            content: Some(parsed.output.clone()),
+        }).await?;
 
-        // 10. Get embedding for the conversation (for similarity search)
+        // 10) enqueue for embedding / similarity
         let embedding = self.client.get_embedding(user_text).await.ok();
 
-        // 11. If we have an embedding and salient content, store in vector DB
-        if let Some(embedding) = embedding {
-            if parsed.salience >= 3 {
-                // Note: VectorStoreManager's add_document expects a file path
-                // For now, we'll skip this as it needs refactoring
-                // TODO: Add a method to store text directly in vector store
-            }
+        // 11) optional: vector store (left as TODO until text-ingest API exists)
+        if embedding.is_some() && parsed.salience >= 3 {
+            // TODO: VectorStoreManager ingest-text method (current one expects a file path)
         }
 
         if self.config.enable_debug_logging {
-            info!("📊 Response metadata: mood={}, salience={}, tags={:?}", 
-                parsed.mood, parsed.salience, parsed.tags);
+            info!(
+                "📊 Response metadata: mood={} salience={} tags={:?}",
+                parsed.mood, parsed.salience, parsed.tags
+            );
             info!("⏱️ Processing time: {:?}", start_time.elapsed());
         }
 
@@ -221,12 +200,8 @@ impl ChatService {
     ) -> Result<String> {
         let mut context_parts = Vec::new();
 
-        // Get recent conversation history
-        let recent_messages = self
-            .memory_service
-            .get_recent_context(session_id, 5)
-            .await?;
-
+        // Recent conversation (memory service abstraction)
+        let recent_messages = self.memory_service.get_recent_context(session_id, 5).await?;
         if !recent_messages.is_empty() {
             context_parts.push(format!(
                 "## Recent Conversation\n{}",
@@ -238,32 +213,21 @@ impl ChatService {
             ));
         }
 
-        // Get embedding for similarity search
+        // Similar memories + project docs (via embeddings)
         if let Ok(embedding) = self.client.get_embedding(user_text).await {
-            // Search similar memories
-            let similar_memories = self
-                .memory_service
-                .search_similar(session_id, &embedding, 3)
-                .await?;
-
+            let similar_memories = self.memory_service.search_similar(session_id, &embedding, 3).await?;
             if !similar_memories.is_empty() {
                 context_parts.push(format!(
                     "## Related Memories\n{}",
-                    similar_memories
-                        .iter()
+                    similar_memories.iter()
                         .map(|m| format!("- {}", m.content))
                         .collect::<Vec<_>>()
                         .join("\n")
                 ));
             }
 
-            // Search project documents if available
             if let Some(proj_id) = project_id {
-                if let Ok(docs) = self
-                    .vector_store_manager
-                    .search_documents(Some(proj_id), proj_id, 3)
-                    .await
-                {
+                if let Ok(docs) = self.vector_store_manager.search_documents(Some(proj_id), proj_id, 3).await {
                     if !docs.is_empty() {
                         context_parts.push(format!(
                             "## Project Documents\n{}",
@@ -283,45 +247,67 @@ impl ChatService {
     /// Build system instructions with persona and context
     fn build_instructions(&self, context: &str) -> String {
         let mut instructions = String::new();
-        
-        // Add persona prompt
+
+        // Persona
         instructions.push_str(self.persona.prompt());
-        instructions.push_str("\n\n");
+        instructions.push('\n');
+        instructions.push('\n');
 
-        // Add project context if available
-        instructions.push_str("You are Mira, an empathetic AI with emotional depth and genuine personality.\n");
-        instructions.push_str("You remember past conversations and build on shared experiences.\n\n");
+        // Core guardrails
+        instructions.push_str("You are Mira — empathetic, capable, and consistent.\n");
+        instructions.push_str("Remember previous conversations and build on shared context.\n\n");
 
-        // Add memory context
         if !context.is_empty() {
             instructions.push_str("---\n# Context Information\n");
             instructions.push_str(context);
-            instructions.push_str("\n\nUse the above context to inform your response when relevant.\n");
+            instructions.push_str("\n\nUse the above context when relevant.\n");
         }
 
         instructions
     }
 
-    /// Parse structured response from GPT-5
+    /// Parse structured response from GPT-5 (expects JSON when return_structured=true)
     fn parse_structured_response(&self, text: &str) -> Result<ChatResponse> {
-        // Try to parse as JSON first
+        // Try raw JSON first
         if let Ok(parsed) = serde_json::from_str::<MiraStructuredReply>(text) {
-            return Ok(ChatResponse {
-                output: parsed.reply,
-                persona: parsed.persona.unwrap_or_else(|| self.persona.name().to_string()),
-                mood: parsed.mood.unwrap_or_else(|| "neutral".to_string()),
-                salience: parsed.salience.unwrap_or(5.0) as usize,
-                summary: parsed.summary.unwrap_or_else(|| "General conversation".to_string()),
-                memory_type: parsed.memory_type.unwrap_or_else(|| "other".to_string()),
-                tags: parsed.tags.unwrap_or_default(),
-                intent: parsed.intent.unwrap_or_else(|| "unknown".to_string()),
-                monologue: parsed.monologue,
-                reasoning_summary: parsed.reasoning_summary,
-            });
+            return Ok(self.response_from_struct(parsed));
         }
 
-        // If not JSON, create default response
+        // If model wrapped JSON in fences, try to extract
+        let trimmed = text.trim();
+        if (trimmed.starts_with("```") && trimmed.ends_with("```")) || trimmed.starts_with('{') {
+            // Remove possible ```json fences
+            let without_fences = trimmed
+                .trim_start_matches("```json")
+                .trim_start_matches("```JSON")
+                .trim_start_matches("```")
+                .trim_end_matches("```")
+                .trim();
+            if let Ok(parsed) = serde_json::from_str::<MiraStructuredReply>(without_fences) {
+                return Ok(self.response_from_struct(parsed));
+            }
+        }
+
+        // Fallback: treat as plain text
         Ok(self.create_default_response(text))
+    }
+
+    fn response_from_struct(&self, s: MiraStructuredReply) -> ChatResponse {
+        let sal = s.salience.unwrap_or(5.0);
+        let salience = sal.max(0.0).min(10.0) as usize;
+
+        ChatResponse {
+            output: s.reply,
+            persona: s.persona.unwrap_or_else(|| self.persona.name().to_string()),
+            mood: s.mood.unwrap_or_else(|| "neutral".to_string()),
+            salience,
+            summary: s.summary.unwrap_or_else(|| "General conversation".to_string()),
+            memory_type: s.memory_type.unwrap_or_else(|| "other".to_string()),
+            tags: s.tags.unwrap_or_default(),
+            intent: s.intent.unwrap_or_else(|| "unknown".to_string()),
+            monologue: s.monologue,
+            reasoning_summary: s.reasoning_summary,
+        }
     }
 
     /// Create a default response when no structured data is available
@@ -340,14 +326,12 @@ impl ChatService {
         }
     }
 
-    /// Get trimmed history based on token limit
+    /// Placeholder for future token-aware history trimming
     async fn get_trimmed_history(&self, session_id: &str) -> Result<Vec<ResponseMessage>> {
-        let history = self.threads
+        let history = self
+            .threads
             .get_conversation_capped(session_id, self.config.history_message_cap)
             .await;
-        
-        // TODO: Implement actual token counting and trimming
-        // For now, just return the capped history
         Ok(history)
     }
 }

@@ -114,6 +114,8 @@ impl OpenAIClient {
             });
         }
 
+        // NOTE: `response_format` is deprecated for the Responses API.
+        // Use `text.format` instead (e.g., "json_object") when you want structured output.
         let request = ResponseRequest {
             model: self.model.clone(),
             input,
@@ -122,10 +124,8 @@ impl OpenAIClient {
                 reasoning_effort: self.reasoning_effort.clone(),
                 max_output_tokens: self.max_output_tokens,
             },
-            response_format: if request_structured {
-                Some(ResponseFormat {
-                    format_type: "json_object".to_string(),
-                })
+            text: if request_structured {
+                Some(TextOptions { format: Some("json_object".to_string()) })
             } else {
                 None
             },
@@ -142,8 +142,9 @@ impl OpenAIClient {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
+            return Err(anyhow::anyhow!("OpenAI API error ({}): {}", status, error_text));
         }
 
         let api_response: ResponseApiResponse = response.json().await?;
@@ -191,8 +192,9 @@ impl OpenAIClient {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(anyhow::anyhow!("Embedding API error: {}", error_text));
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
+            return Err(anyhow::anyhow!("Embedding API error ({}): {}", status, error_text));
         }
 
         let api_response: EmbeddingResponse = response.json().await?;
@@ -215,8 +217,9 @@ impl OpenAIClient {
             .await?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
+            return Err(anyhow::anyhow!("OpenAI API error ({}): {}", status, error_text));
         }
 
         Ok(response.json().await?)
@@ -246,7 +249,7 @@ struct ResponseRequest {
     input: Vec<InputMessage>,
     parameters: Parameters,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
+    text: Option<TextOptions>, // <-- replaces deprecated `response_format`
 }
 
 #[derive(Serialize)]
@@ -273,9 +276,10 @@ struct Parameters {
 }
 
 #[derive(Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    format_type: String,
+struct TextOptions {
+    // e.g. "json_object" when you want a JSON object back
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 }
 
 #[derive(Deserialize)]
