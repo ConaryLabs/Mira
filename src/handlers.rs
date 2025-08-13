@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tracing::{info, error};
 
 use crate::memory::types::MemoryEntry;
-use crate::llm::schema::ChatResponse;
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -39,8 +38,28 @@ pub struct ChatReply {
     pub aside_intensity: Option<u8>,
 }
 
-impl From<ChatResponse> for ChatReply {
-    fn from(response: ChatResponse) -> Self {
+// Convert from services::chat::ChatResponse to ChatReply
+impl From<crate::services::chat::ChatResponse> for ChatReply {
+    fn from(response: crate::services::chat::ChatResponse) -> Self {
+        Self {
+            output: response.output,
+            persona: response.persona,
+            mood: response.mood,
+            salience: response.salience as u8,
+            summary: Some(response.summary),
+            memory_type: response.memory_type,
+            tags: response.tags,
+            intent: response.intent,
+            monologue: response.monologue,
+            reasoning_summary: response.reasoning_summary,
+            aside_intensity: None, // Not used in services::chat::ChatResponse
+        }
+    }
+}
+
+// Also handle conversion from llm::schema::ChatResponse if needed
+impl From<crate::llm::schema::ChatResponse> for ChatReply {
+    fn from(response: crate::llm::schema::ChatResponse) -> Self {
         Self {
             output: response.output,
             persona: response.persona,
@@ -106,132 +125,64 @@ pub async fn chat_handler(
                 info!("   Tags: {:?}", chat_response.tags);
             }
             
-            // Convert to API response format
+            // Convert to ChatReply
             let reply: ChatReply = chat_response.into();
             
             Json(reply).into_response()
         }
         Err(e) => {
-            error!("Chat service error: {:?}", e);
-            
-            // Return user-friendly error
-            let error_response = serde_json::json!({
-                "error": "Failed to process message",
-                "code": "CHAT_ERROR",
-                "details": if cfg!(debug_assertions) {
-                    Some(e.to_string())
-                } else {
-                    None
-                }
-            });
-            
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(error_response.to_string()))
-                .unwrap()
+            error!("❌ Chat processing failed: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to process chat message",
+                    "details": e.to_string()
+                })),
+            )
                 .into_response()
         }
     }
 }
 
-/// Get chat history for a session
-pub async fn chat_history_handler(
+/// Get chat history - Phase 7 implementation
+pub async fn get_chat_history(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HistoryQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let session_id = "peter-eternal".to_string();
-    let limit = params.limit.unwrap_or(30).min(100); // Cap at 100
-    let offset = params.offset.unwrap_or(0);
-
-    info!("📜 Fetching chat history: session={}, limit={}, offset={}", 
-          session_id, limit, offset);
-
-    // Get messages from memory service
+    let limit = params.limit.unwrap_or(20).min(100);
+    
+    info!("📖 Fetching chat history for session: {} (limit: {})", session_id, limit);
+    
     match state.memory_service.get_recent_messages(&session_id, limit).await {
         Ok(messages) => {
             info!("✅ Retrieved {} messages", messages.len());
-            
-            let response = ChatHistoryResponse {
+            Json(ChatHistoryResponse {
                 messages,
                 session_id,
-            };
-            
-            Json(response).into_response()
+            })
+            .into_response()
         }
         Err(e) => {
-            error!("Failed to fetch chat history: {:?}", e);
-            
-            let error_response = serde_json::json!({
-                "error": "Failed to retrieve chat history",
-                "code": "HISTORY_ERROR"
-            });
-            
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(error_response.to_string()))
-                .unwrap()
+            error!("❌ Failed to fetch history: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to fetch chat history",
+                    "details": e.to_string()
+                })),
+            )
                 .into_response()
         }
     }
 }
 
 /// Health check endpoint
-pub async fn health_handler() -> impl IntoResponse {
+pub async fn health_check() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "healthy",
-        "model": "gpt-5",
-        "api": "unified",
-        "timestamp": chrono::Utc::now().to_rfc3339()
+        "service": "mira-backend",
+        "version": "0.4.1",
+        "model": "gpt-5"
     }))
-}
-
-/// Get system status
-pub async fn status_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Could expand this to check various system components
-    let vector_stores = state.vector_store_manager
-        .list_stores()
-        .await
-        .unwrap_or_else(|_| vec![]);
-    
-    Json(serde_json::json!({
-        "status": "operational",
-        "model": "gpt-5",
-        "services": {
-            "chat": "active",
-            "memory": "active",
-            "context": "active",
-            "document": "active",
-            "vector_stores": vector_stores.len()
-        },
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_chat_response_conversion() {
-        let chat_response = ChatResponse {
-            output: "Test output".to_string(),
-            persona: "assistant".to_string(),
-            mood: "helpful".to_string(),
-            salience: 7,
-            summary: Some("Test summary".to_string()),
-            memory_type: "fact".to_string(),
-            tags: vec!["test".to_string()],
-            intent: "inform".to_string(),
-            monologue: None,
-            reasoning_summary: None,
-            aside_intensity: None,
-        };
-
-        let reply: ChatReply = chat_response.into();
-        assert_eq!(reply.output, "Test output");
-        assert_eq!(reply.salience, 7);
-        assert_eq!(reply.tags, vec!["test"]);
-    }
 }

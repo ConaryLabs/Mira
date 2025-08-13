@@ -191,6 +191,84 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             .send(Message::Text(serde_json::to_string(&status_msg).unwrap()))
                             .await;
                     }
+                    
+                    // Handle legacy message format
+                    WsClientMessage::Message { content, project_id, .. } => {
+                        // Forward to Chat handler for backward compatibility
+                        info!("💬 Processing legacy message format");
+                        
+                        // Same processing as Chat variant
+                        ws_state.set_project(project_id.clone());
+                        ws_state.mark_active();
+
+                        let typing_msg = WsServerMessage::Status {
+                            message: "thinking".to_string(),
+                            detail: Some("Processing your message...".to_string()),
+                        };
+                        {
+                            let mut sender_guard = sender.lock().await;
+                            let _ = sender_guard
+                                .send(Message::Text(serde_json::to_string(&typing_msg).unwrap()))
+                                .await;
+                        }
+
+                        let chat_future = app_state.chat_service.process_message(
+                            &session_id,
+                            &content,
+                            project_id.as_deref(),
+                            true,
+                        );
+
+                        let response = match timeout(Duration::from_secs(30), chat_future).await {
+                            Ok(Ok(chat_response)) => {
+                                current_mood = chat_response.mood.clone();
+                                ws_state.set_mood(current_mood.clone());
+                                chat_response
+                            }
+                            Ok(Err(e)) => {
+                                error!("ChatService error: {:?}", e);
+                                let error_msg = WsServerMessage::Error {
+                                    message: "Failed to process message".to_string(),
+                                    code: Some("CHAT_ERROR".to_string()),
+                                };
+                                let mut sender_guard = sender.lock().await;
+                                let _ = sender_guard
+                                    .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
+                                    .await;
+                                continue;
+                            }
+                            Err(_) => {
+                                warn!("Chat request timed out");
+                                let error_msg = WsServerMessage::Error {
+                                    message: "Request timed out".to_string(),
+                                    code: Some("TIMEOUT".to_string()),
+                                };
+                                let mut sender_guard = sender.lock().await;
+                                let _ = sender_guard
+                                    .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
+                                    .await;
+                                continue;
+                            }
+                        };
+
+                        stream_response(&sender, &response.output, &current_mood).await;
+
+                        let completion_msg = WsServerMessage::Complete {
+                            mood: Some(response.mood),
+                            salience: Some(response.salience as f32),
+                            tags: if response.tags.is_empty() { None } else { Some(response.tags) },
+                        };
+                        
+                        let mut sender_guard = sender.lock().await;
+                        let _ = sender_guard
+                            .send(Message::Text(serde_json::to_string(&completion_msg).unwrap()))
+                            .await;
+                    }
+                    
+                    WsClientMessage::Typing { .. } => {
+                        // Acknowledge typing indicator
+                        ws_state.mark_active();
+                    }
                 }
             }
             
@@ -220,7 +298,11 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
 }
 
 /// Stream response text in chunks for natural conversation feel
-async fn stream_response(sender: &Arc<Mutex<WebSocket>>, text: &str, mood: &str) {
+async fn stream_response(
+    sender: &Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
+    text: &str,
+    mood: &str,
+) {
     let words: Vec<&str> = text.split_whitespace().collect();
     let chunk_size = 5; // words per chunk
 
@@ -253,11 +335,11 @@ async fn stream_response(sender: &Arc<Mutex<WebSocket>>, text: &str, mood: &str)
 
 /// Handle WebSocket commands
 async fn handle_command(
-    sender: &Arc<Mutex<WebSocket>>,
+    sender: &Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
     command: &str,
     args: Option<serde_json::Value>,
     ws_state: &mut WsSessionState,
-    app_state: &Arc<AppState>,
+    _app_state: &Arc<AppState>,
 ) {
     match command {
         "ping" => {
@@ -272,8 +354,14 @@ async fn handle_command(
         }
         
         "set_project" => {
-            if let Some(project_id) = args.and_then(|a| a.get("project_id").and_then(|p| p.as_str())) {
-                ws_state.set_project(Some(project_id.to_string()));
+            let project_id = args.and_then(|a| {
+                a.get("project_id")
+                    .and_then(|p| p.as_str())
+                    .map(|s| s.to_string())
+            });
+            
+            if let Some(project_id) = project_id {
+                ws_state.set_project(Some(project_id.clone()));
                 info!("📁 Project set to: {}", project_id);
                 
                 let status_msg = WsServerMessage::Status {

@@ -19,6 +19,15 @@ pub struct MemoryEvalResult {
 }
 
 /// Batch evaluate messages using GPT-5 Functions API for memory metadata
+/// This is the main export for the import tool
+pub async fn batch_memory_eval(
+    messages: &[MiraMessage],
+    api_key: &str,
+) -> Result<HashMap<String, MemoryEvalResult>> {
+    batch_evaluate_messages(messages).await
+}
+
+/// Batch evaluate messages using GPT-5 Functions API for memory metadata
 pub async fn batch_evaluate_messages(
     messages: &[MiraMessage],
 ) -> Result<HashMap<String, MemoryEvalResult>> {
@@ -81,15 +90,37 @@ pub async fn batch_evaluate_messages(
         });
 
         // Make the API call to /v1/responses
-        let response = client
-            .post("https://api.openai.com/v1/responses")
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&request_body)
-            .send()
-            .await?;
-
-        let response_json: serde_json::Value = response.json().await?;
+        let mut retry_count = 0;
+        let max_retries = 3;
+        
+        let response_json = loop {
+            let response = client
+                .post("https://api.openai.com/v1/responses")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&request_body)
+                .send()
+                .await?;
+            
+            if response.status().is_success() {
+                break response.json().await?;
+            } else if response.status() == 429 || response.status().is_server_error() {
+                // Rate limit or server error - retry with backoff
+                if retry_count < max_retries {
+                    retry_count += 1;
+                    let jitter = std::time::Duration::from_millis(100 * retry_count);
+                    tokio::time::sleep(jitter).await;
+                    continue;
+                }
+            }
+            
+            // If we get here, it's a non-retryable error
+            return Err(anyhow::anyhow!(
+                "OpenAI API error: {} - {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            ));
+        };
 
         // Parse the function call result from various possible formats
         let eval_result = parse_function_response(&response_json)?;

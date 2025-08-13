@@ -3,11 +3,7 @@
 
 use std::sync::Arc;
 
-use axum::{
-    routing::{get, post},
-    Router,
-};
-use reqwest::Client;
+use axum::{routing::get, Router};
 use sqlx::SqlitePool;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -51,26 +47,15 @@ async fn main() -> anyhow::Result<()> {
     let qdrant_collection =
         std::env::var("QDRANT_COLLECTION").unwrap_or_else(|_| "mira-memory".to_string());
 
-    // Ensure Qdrant collection exists (best-effort)
-    let http = Client::new();
-    let create_collection_url = format!("{}/collections/{}", qdrant_url, qdrant_collection);
-    let _ = http
-        .put(&create_collection_url)
-        .json(&serde_json::json!({
-            "vectors": { "size": 3072, "distance": "Cosine" }
-        }))
-        .send()
-        .await;
-
-    let qdrant_store = Arc::new(QdrantMemoryStore::new(
-        http.clone(),
-        qdrant_url.clone(),
-        qdrant_collection,
-    ));
+    // Initialize Qdrant store (constructor ensures/creates the collection)
+    let qdrant_store = Arc::new(
+        QdrantMemoryStore::new(&qdrant_url, &qdrant_collection).await?
+    );
 
     // --- Initialize OpenAI (GPT‑5 + embeddings + images) ---
     info!("🧠 Initializing OpenAI (GPT‑5)...");
-    let openai_client = Arc::new(OpenAIClient::new()?);
+    // NOTE: OpenAIClient::new() already returns Arc<Self>
+    let openai_client = OpenAIClient::new()?;
     info!("   ✅ gpt-5 for conversation");
     info!("   ✅ gpt-image-1 for image generation");
     info!("   ✅ text-embedding-3-large for embeddings");
@@ -151,7 +136,6 @@ async fn main() -> anyhow::Result<()> {
         memory_service,
         context_service,
         document_service,
-        // REMOVED: hybrid_service
     });
 
     // --- Build the application router ---
@@ -174,8 +158,10 @@ async fn main() -> anyhow::Result<()> {
             }))
         }))
         .nest("/api", http_router())
-        .nest("/ws", ws_router())
-        .nest("/projects", project_router())
+        // ws_router requires AppState; pass a clone
+        .nest("/ws", ws_router(app_state.clone()))
+        // project_router already contains /projects/* paths; merge instead of double-prefixed nest
+        .merge(project_router())
         .layer(cors)
         .with_state(app_state);
 

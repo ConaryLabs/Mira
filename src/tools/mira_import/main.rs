@@ -5,11 +5,10 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use clap::Parser;
-use mira_backend::tools::mira_import::{import_conversations, schema};
-use mira_backend::memory::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::qdrant::store::QdrantMemoryStore;
+use mira_backend::memory::sqlite::store::SqliteMemoryStore;
+use mira_backend::tools::mira_import::{import_conversations, schema};
 use sqlx::SqlitePool;
-use reqwest::Client;
 
 #[derive(Parser)]
 #[command(name = "mira-import")]
@@ -53,13 +52,8 @@ async fn main() -> anyhow::Result<()> {
     let pool = SqlitePool::connect(&cli.sqlite).await?;
     let sqlite_store = SqliteMemoryStore::new(pool);
 
-    // Connect to Qdrant
-    let client = Client::new();
-    let qdrant_store = QdrantMemoryStore::new(
-        client,
-        cli.qdrant_url.clone(),
-        cli.qdrant_collection.clone(),
-    );
+    // Connect to Qdrant (constructor is async and takes &strs)
+    let qdrant_store = QdrantMemoryStore::new(&cli.qdrant_url, &cli.qdrant_collection).await?;
 
     // Load export
     let file = File::open(cli.input)?;

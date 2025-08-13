@@ -197,7 +197,7 @@ impl VectorStoreManager {
             .await
             .context("Failed to parse search response")?;
 
-        let results = search_response.results
+        let results: Vec<SearchResult> = search_response.results
             .into_iter()
             .map(|r| SearchResult {
                 content: r.content,

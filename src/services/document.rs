@@ -1,11 +1,12 @@
 // src/services/document.rs
 
-use crate::services::MemoryService;
-use crate::llm::schema::MiraStructuredReply;
-use crate::llm::responses::VectorStoreManager;
+use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
-use anyhow::Result;
+
+use crate::llm::responses::VectorStoreManager;
+use crate::services::chat::ChatResponse;
+use crate::services::MemoryService;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DocumentDestination {
@@ -126,22 +127,21 @@ impl DocumentService {
     }
 
     async fn process_for_personal_memory(&self, content: &str) -> Result<()> {
-        let doc_response = MiraStructuredReply {
+        // Build a ChatResponse, since MemoryService::evaluate_and_save_response expects that type
+        let doc_response = ChatResponse {
             output: content.to_string(),
             persona: "system".to_string(),
             mood: "neutral".to_string(),
             salience: 7,
-            summary: Some("Imported document".to_string()),
+            summary: "Imported document".to_string(),
             memory_type: "fact".to_string(),
-            tags: vec!["document".to_string(), "imported".to_string()],
+            tags: vec!["document".into(), "imported".into()],
             intent: "document_import".to_string(),
             monologue: None,
             reasoning_summary: None,
-            aside_intensity: None,
         };
 
-        self
-            .memory_service
+        self.memory_service
             .evaluate_and_save_response("document-import", &doc_response, None)
             .await?;
 
@@ -153,26 +153,20 @@ impl DocumentService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<()> {
-        let doc_response = MiraStructuredReply {
+        let doc_response = ChatResponse {
             output: content.to_string(),
             persona: "system".to_string(),
             mood: "neutral".to_string(),
             salience: 7,
-            summary: Some("Imported project document".to_string()),
+            summary: "Imported project document".to_string(),
             memory_type: "fact".to_string(),
-            tags: vec![
-                "document".to_string(),
-                "imported".to_string(),
-                "project".to_string(),
-            ],
+            tags: vec!["document".into(), "imported".into(), "project".into()],
             intent: "project_document_import".to_string(),
             monologue: None,
             reasoning_summary: None,
-            aside_intensity: None,
         };
 
-        self
-            .memory_service
+        self.memory_service
             .evaluate_and_save_response("document-import", &doc_response, project_id)
             .await?;
 
