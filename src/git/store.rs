@@ -1,6 +1,7 @@
 use anyhow::{Result, Context};
 use sqlx::SqlitePool;
 use super::types::{GitRepoAttachment, GitImportStatus};
+use chrono::{DateTime, Utc, NaiveDateTime};
 
 #[derive(Clone)]
 pub struct GitStore {
@@ -13,8 +14,8 @@ impl GitStore {
     }
 
     pub async fn create_attachment(&self, attachment: &GitRepoAttachment) -> Result<()> {
-        // Use let bindings to avoid temporary value errors
-        let import_status = attachment.import_status as i64;
+        // Store status as string and timestamps as ISO8601 strings
+        let import_status = attachment.import_status.to_string();
         let last_imported_at = attachment.last_imported_at.map(|dt| dt.to_rfc3339());
         let last_sync_at = attachment.last_sync_at.map(|dt| dt.to_rfc3339());
 
@@ -53,16 +54,28 @@ impl GitStore {
         .await
         .context("Failed to fetch git repo attachments")?;
 
-        Ok(rows.into_iter().map(|r| GitRepoAttachment {
-            id: r.id,
-            project_id: r.project_id,
-            repo_url: r.repo_url,
-            local_path: r.local_path,
-            import_status: GitImportStatus::from(r.import_status),
-            last_imported_at: r.last_imported_at
-                .and_then(|dt| dt.parse::<chrono::DateTime<chrono::Utc>>().ok()),
-            last_sync_at: r.last_sync_at
-                .and_then(|dt| dt.parse::<chrono::DateTime<chrono::Utc>>().ok()),
+        Ok(rows.into_iter().map(|r| {
+            // Parse status from string
+            let import_status = r.import_status
+                .parse::<GitImportStatus>()
+                .unwrap_or(GitImportStatus::Pending);
+            
+            // Parse timestamps - SQLite stores them as INTEGER (Unix timestamp)
+            let last_imported_at = r.last_imported_at
+                .and_then(|ts| DateTime::from_timestamp(ts, 0));
+            
+            let last_sync_at = r.last_sync_at
+                .and_then(|ts| DateTime::from_timestamp(ts, 0));
+
+            GitRepoAttachment {
+                id: r.id,
+                project_id: r.project_id,
+                repo_url: r.repo_url,
+                local_path: r.local_path,
+                import_status,
+                last_imported_at,
+                last_sync_at,
+            }
         }).collect())
     }
 
@@ -80,28 +93,40 @@ impl GitStore {
         .await
         .context("Failed to fetch git repo attachment by id")?;
 
-        Ok(r.map(|r| GitRepoAttachment {
-            id: r.id,
-            project_id: r.project_id,
-            repo_url: r.repo_url,
-            local_path: r.local_path,
-            import_status: GitImportStatus::from(r.import_status),
-            last_imported_at: r.last_imported_at
-                .and_then(|dt| dt.parse::<chrono::DateTime<chrono::Utc>>().ok()),
-            last_sync_at: r.last_sync_at
-                .and_then(|dt| dt.parse::<chrono::DateTime<chrono::Utc>>().ok()),
+        Ok(r.map(|r| {
+            // Parse status from string
+            let import_status = r.import_status
+                .parse::<GitImportStatus>()
+                .unwrap_or(GitImportStatus::Pending);
+            
+            // Parse timestamps - SQLite stores them as INTEGER (Unix timestamp)
+            let last_imported_at = r.last_imported_at
+                .and_then(|ts| DateTime::from_timestamp(ts, 0));
+            
+            let last_sync_at = r.last_sync_at
+                .and_then(|ts| DateTime::from_timestamp(ts, 0));
+
+            GitRepoAttachment {
+                id: r.id,
+                project_id: r.project_id,
+                repo_url: r.repo_url,
+                local_path: r.local_path,
+                import_status,
+                last_imported_at,
+                last_sync_at,
+            }
         }))
     }
 
     pub async fn update_import_status(&self, attachment_id: &str, status: GitImportStatus) -> Result<()> {
-        let status = status as i64;
+        let status_str = status.to_string();
         sqlx::query!(
             r#"
             UPDATE git_repo_attachments
             SET import_status = ?
             WHERE id = ?
             "#,
-            status,
+            status_str,
             attachment_id
         )
         .execute(&self.pool)
@@ -111,15 +136,15 @@ impl GitStore {
         Ok(())
     }
 
-    pub async fn update_last_sync(&self, attachment_id: &str, dt: chrono::DateTime<chrono::Utc>) -> Result<()> {
-        let dt_str = dt.to_rfc3339();
+    pub async fn update_last_sync(&self, attachment_id: &str, dt: DateTime<Utc>) -> Result<()> {
+        let timestamp = dt.timestamp();
         sqlx::query!(
             r#"
             UPDATE git_repo_attachments
             SET last_sync_at = ?
             WHERE id = ?
             "#,
-            dt_str,
+            timestamp,
             attachment_id
         )
         .execute(&self.pool)

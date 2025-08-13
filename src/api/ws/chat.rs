@@ -38,21 +38,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     let mut ws_state = WsSessionState::new(session_id.clone());
     let mut current_mood = "attentive".to_string();
 
-    // Initial greeting
-    {
-        let greeting = WsServerMessage::Chunk {
-            content: "Connected! How can I help you today?".to_string(),
-            mood: Some(current_mood.clone()),
-        };
-        let mut guard = sender.lock().await;
-        if guard
-            .send(Message::Text(serde_json::to_string(&greeting).unwrap()))
-            .await
-            .is_err()
-        {
-            return;
-        }
-    }
+    // NO GREETING - just wait for user input
 
     // Heartbeat: keep connections healthy behind proxies
     let sender_clone = sender.clone();
@@ -94,9 +80,13 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                 };
 
                 match client_msg {
-                    // Preferred modern shape
+                    WsClientMessage::Command { command, args } => {
+                        debug!("🎮 Processing command: {}", command);
+                        handle_command(&sender, &command, args, &mut ws_state, &app_state).await;
+                    }
+
                     WsClientMessage::Chat { content, project_id } => {
-                        info!("💬 Processing chat message via unified ChatService");
+                        debug!("💬 Processing chat message");
                         handle_chat_turn(
                             &app_state,
                             &sender,
@@ -109,25 +99,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                         .await;
                     }
 
-                    // Commands (debug or control)
-                    WsClientMessage::Command { command, args } => {
-                        info!("📟 Processing command: {}", command);
-                        handle_command(&sender, &command, args, &mut ws_state, &app_state).await;
-                    }
-
-                    // Simple acks / keep-alive from client
-                    WsClientMessage::Status { .. } => {
-                        ws_state.mark_active();
-                        let ok = WsServerMessage::Status {
-                            message: "acknowledged".to_string(),
-                            detail: None,
-                        };
-                        let mut guard = sender.lock().await;
-                        let _ =
-                            guard.send(Message::Text(serde_json::to_string(&ok).unwrap())).await;
-                    }
-
-                    // Legacy payload (kept for backward compatibility)
+                    // Legacy format support
                     WsClientMessage::Message { content, project_id, .. } => {
                         debug!("💬 Processing legacy message format");
                         handle_chat_turn(
@@ -144,6 +116,11 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
 
                     WsClientMessage::Typing { .. } => {
                         // No-op; used only to update last-active time
+                        ws_state.mark_active();
+                    }
+                    
+                    WsClientMessage::Status { .. } => {
+                        // Status messages from client - just mark as active
                         ws_state.mark_active();
                     }
                 }
@@ -310,14 +287,11 @@ async fn handle_command(
         }
 
         "set_project" => {
-            let project_id = args.and_then(|a| a.get("project_id").and_then(|p| p.as_str()).map(|s| s.to_string()));
-            if let Some(pid) = project_id {
-                ws_state.set_project(Some(pid.clone()));
-                info!("📁 Project set to: {}", pid);
-
+            if let Some(project_id) = args.as_ref().and_then(|v| v["project_id"].as_str()) {
+                ws_state.set_project(Some(project_id.to_string()));
                 let status = WsServerMessage::Status {
-                    message: "project_set".to_string(),
-                    detail: Some(format!("Active project: {}", pid)),
+                    message: format!("Project set: {}", project_id),
+                    detail: None,
                 };
                 let mut guard = sender.lock().await;
                 let _ = guard
@@ -327,25 +301,23 @@ async fn handle_command(
         }
 
         "get_status" => {
-            let status = json!({
-                "session_id": ws_state.session_id,
-                "current_mood": ws_state.current_mood,
-                "active_project": ws_state.active_project_id,
-                "last_active": ws_state.last_active.to_rfc3339(),
-            });
-
-            let msg = WsServerMessage::Status {
-                message: "session_status".to_string(),
-                detail: Some(status.to_string()),
+            let status = WsServerMessage::Status {
+                message: "Connected".to_string(),
+                detail: Some(json!({
+                    "session_id": ws_state.session_id,
+                    "project": ws_state.active_project_id.as_ref(),  // Use active_project_id
+                    "mood": ws_state.current_mood,
+                    "last_active": ws_state.last_active.to_rfc3339(),
+                })
+                .to_string()),
             };
             let mut guard = sender.lock().await;
             let _ = guard
-                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
+                .send(Message::Text(serde_json::to_string(&status).unwrap()))
                 .await;
         }
 
         _ => {
-            warn!("Unknown command: {}", command);
             let err = WsServerMessage::Error {
                 message: format!("Unknown command: {}", command),
                 code: Some("UNKNOWN_COMMAND".to_string()),

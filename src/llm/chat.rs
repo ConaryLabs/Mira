@@ -26,8 +26,15 @@ impl OpenAIClient {
             "model": model,                 // expected to be "gpt-5"
             "input": input,
             "instructions": system_prompt,  // persona lives here
-            "response_format": { "type": "json_object" },
-            "text": { "verbosity": "medium" }
+            "text": { 
+                "format": "json_object",     // Use text.format instead of response_format
+                "verbosity": "medium" 
+            },
+            "parameters": {                  // Add proper parameters
+                "verbosity": "medium",
+                "reasoning_effort": "medium",
+                "max_output_tokens": 128000  // Maximum for GPT-5
+            }
         });
 
         let resp = self
@@ -81,7 +88,12 @@ impl OpenAIClient {
         let body = json!({
             "model": model,  // "gpt-5"
             "input": input,
-            "text": { "verbosity": "medium" }
+            "text": { "verbosity": "medium" },
+            "parameters": {
+                "verbosity": "medium",
+                "reasoning_effort": "medium",
+                "max_output_tokens": 128000  // Maximum
+            }
         });
 
         let resp = self
@@ -129,8 +141,15 @@ impl OpenAIClient {
         let body = json!({
             "model": "gpt-5",
             "input": input,
-            "response_format": { "type": "json_object" },
-            "text": { "verbosity": "medium" }
+            "text": { 
+                "format": "json_object",     // Use text.format instead of response_format
+                "verbosity": "medium" 
+            },
+            "parameters": {                  // Add proper parameters
+                "verbosity": "medium",
+                "reasoning_effort": "medium",
+                "max_output_tokens": 128000  // Maximum
+            }
         });
 
         let resp = self

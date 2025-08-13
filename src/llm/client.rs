@@ -1,60 +1,24 @@
-// src/llm/client.rs
-// Phase 5-9: GPT-5 Responses API client implementation
-
+use std::sync::Arc;
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use serde_json;
 use tracing::{info, debug};
 
-/// Extract text from GPT-5 responses JSON
-pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<String> {
-    // Try unified output format first
-    if let Some(output) = resp_json.get("output").and_then(|o| o.as_array()) {
-        for item in output {
-            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
-                if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
-                    for block in content {
-                        if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                return Some(text.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Try choices format (older format)
-    if let Some(choices) = resp_json.get("choices").and_then(|c| c.as_array()) {
-        if let Some(first_choice) = choices.first() {
-            if let Some(message) = first_choice.get("message") {
-                if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                    return Some(content.to_string());
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Main OpenAI client for GPT-5 Responses API
 pub struct OpenAIClient {
-    pub client: Client,
-    pub api_key: String,
-    pub base_url: String,
-    pub model: String,
-    pub verbosity: String,
-    pub reasoning_effort: String,
-    pub max_output_tokens: usize,
+    client: Client,
+    api_key: String,
+    base_url: String,
+    model: String,
+    verbosity: String,
+    reasoning_effort: String,
+    max_output_tokens: usize,
 }
 
 impl OpenAIClient {
-    /// Create a new OpenAI client configured for GPT-5
     pub fn new() -> Result<Arc<Self>> {
-        let api_key = std::env::var("OPENAI_API_KEY")?;
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .expect("OPENAI_API_KEY must be set");
         let model = std::env::var("MIRA_MODEL")
             .unwrap_or_else(|_| "gpt-5".to_string());
         let verbosity = std::env::var("MIRA_VERBOSITY")
@@ -62,13 +26,13 @@ impl OpenAIClient {
         let reasoning_effort = std::env::var("MIRA_REASONING_EFFORT")
             .unwrap_or_else(|_| "medium".to_string());
         let max_output_tokens = std::env::var("MIRA_MAX_OUTPUT_TOKENS")
-            .unwrap_or_else(|_| "1024".to_string())
+            .unwrap_or_else(|_| "128000".to_string())  // 128k tokens - maximum for GPT-5
             .parse()
-            .unwrap_or(1024);
+            .unwrap_or(128000);
 
         info!(
-            "🚀 Initializing GPT-5 client (model={}, verbosity={}, reasoning={})",
-            model, verbosity, reasoning_effort
+            "🚀 Initializing GPT-5 client (model={}, verbosity={}, reasoning={}, max_tokens={})",
+            model, verbosity, reasoning_effort, max_output_tokens
         );
 
         Ok(Arc::new(Self {
@@ -321,4 +285,56 @@ struct EmbeddingResponse {
 #[derive(Deserialize)]
 struct EmbeddingData {
     embedding: Vec<f32>,
+}
+
+/// Helper function to extract text from GPT-5 Responses API output
+pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<String> {
+    // Try unified output format first
+    if let Some(output) = resp_json.get("output").and_then(|o| o.as_array()) {
+        let mut text_parts = vec![];
+        for item in output {
+            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                    for content_item in content {
+                        if content_item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                            if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
+                                text_parts.push(text.to_string());
+                            }
+                        }
+                    }
+                }
+            } else if item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    text_parts.push(text.to_string());
+                }
+            }
+        }
+        if !text_parts.is_empty() {
+            return Some(text_parts.join("\n"));
+        }
+    }
+
+    // Fallback to legacy format
+    resp_json
+        .pointer("/choices/0/message/content")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|part| {
+                    if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                        part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .or_else(|| {
+            // Even more legacy fallback - just get content as string
+            resp_json
+                .pointer("/choices/0/message/content")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string())
+        })
 }
