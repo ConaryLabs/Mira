@@ -24,12 +24,6 @@ pub enum StreamEvent {
 }
 
 /// Start a streaming response for a single user turn.
-///
-/// Signature is aligned with `ws/chat.rs`:
-///     start_response_stream(client, session_id, user_text, project_id, structured_json)
-///
-/// - `structured_json = false` streams plain text deltas.
-/// - If `true`, we still stream text tokens, but you can extend the parser below to surface JSON parts.
 pub async fn start_response_stream(
     client: std::sync::Arc<OpenAIClient>,
     _session_id: String,
@@ -38,26 +32,23 @@ pub async fn start_response_stream(
     structured_json: bool,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
     // Minimal streaming body for the Responses API.
-    // IMPORTANT: do NOT send a top-level `parameters` object.
     let input = vec![serde_json::json!({
         "role": "user",
         "content": [{ "type": "input_text", "text": user_text }]
     })];
 
+    // Build request with **sanitized** verbosity + reasoning.effort.
     let mut body = serde_json::json!({
         "model": client.model(),
         "input": input,
-        "verbosity": client.verbosity(),
-        "reasoning": { "effort": client.reasoning_effort() },
+        "text": { "verbosity": sanitize_verbosity(client.verbosity()) },
+        "reasoning": { "effort": sanitize_reasoning(client.reasoning_effort()) },
         "max_output_tokens": client.max_output_tokens(),
         "stream": true
     });
 
     if structured_json {
-        // Enforce JSON output via the official field.
-        body.as_object_mut()
-            .unwrap()
-            .insert("response_format".to_string(), serde_json::json!({ "type": "json_object" }));
+        body["text"]["format"] = serde_json::json!({ "type": "json_object" });
     }
 
     let sse: ResponseStream = client.post_response_stream(body).await?;
@@ -98,7 +89,7 @@ pub async fn start_response_stream(
                                 return Ok(StreamEvent::Delta(full_txt));
                             }
 
-                            // Unknown/unsupported frame — ignore (emit no-op delta for visibility, then drop it below)
+                            // Unknown/unsupported frame — ignore
                             debug!("(stream) unrecognized SSE frame: {}", v);
                             Ok(StreamEvent::Delta(String::new()))
                         }
@@ -107,7 +98,6 @@ pub async fn start_response_stream(
                 }
             }
         })
-        // Drop empty no-op deltas so the client only sees meaningful chunks.
         .filter_map(|res| async move {
             match &res {
                 Ok(StreamEvent::Delta(s)) if s.is_empty() => None,
@@ -118,14 +108,25 @@ pub async fn start_response_stream(
     Ok(Box::pin(mapped))
 }
 
+/// Normalize verbosity to allowed values.
+fn sanitize_verbosity(v: &str) -> &'static str {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "low" => "low",
+        "high" => "high",
+        _ => "medium",
+    }
+}
+
+/// Normalize reasoning effort to allowed values.
+fn sanitize_reasoning(v: &str) -> &'static str {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "low" | "minimal" => "low",
+        "high" => "high",
+        _ => "medium",
+    }
+}
+
 /// Try to pull a small text delta from a streaming Responses JSON frame.
-/// Covers several common shapes.
-///
-/// Supported examples:
-/// 1) { "output_text": { "delta": "..." } }
-/// 2) { "message": { "content": [ { "type":"output_text", "delta":"..." } ] } }
-///    (and it may send "text" instead of "delta")
-/// 3) Top-level array: [ { "type":"output_text", "delta":"..." } ]
 fn extract_output_text_delta(v: &Value) -> Option<String> {
     // 1) { "output_text": { "delta": "..." } }
     if let Some(s) = v

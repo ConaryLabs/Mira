@@ -10,8 +10,6 @@ use serde_json::{self, json, Value};
 use tracing::{debug, info};
 
 /// Stream of JSON payloads from the OpenAI Responses SSE.
-/// Each item is a single `data:` frame already parsed to JSON.
-/// We emit `{ "done": true }` for the terminal [DONE] event.
 pub type ResponseStream = Pin<Box<dyn Stream<Item = Result<Value>> + Send>>;
 
 pub struct OpenAIClient {
@@ -87,23 +85,16 @@ impl OpenAIClient {
             );
         }
 
-        let request = ResponseRequest {
-            model: self.model.clone(),
-            input,
-            parameters: Parameters {
-                verbosity: self.verbosity.clone(),
-                reasoning_effort: self.reasoning_effort.clone(),
-                max_output_tokens: self.max_output_tokens,
-            },
-            text: if request_structured {
-                Some(TextOptions {
-                    format: Some("json_object".to_string()),
-                })
-            } else {
-                None
-            },
-            stream: None, // non-streaming
-        };
+        let mut request = json!({
+            "model": self.model,
+            "input": input,
+            "text": { "verbosity": sanitize_verbosity(&self.verbosity) },
+            "reasoning": { "effort": sanitize_reasoning(&self.reasoning_effort) },
+            "max_output_tokens": self.max_output_tokens
+        });
+        if request_structured {
+            request["text"]["format"] = json!({ "type": "json_object" });
+        }
 
         debug!("📤 Sending request to GPT-5 Responses API");
 
@@ -131,17 +122,12 @@ impl OpenAIClient {
             .filter_map(|item| {
                 if item.output_type == "message" {
                     item.content.as_ref().and_then(|content| {
-                        content
-                            .iter()
-                            .filter_map(|block| {
-                                let ContentBlock::Text { text, .. } = block;
-                                Some(text.clone())
-                            })
-                            .next()
+                        content.iter().filter_map(|block| {
+                            let ContentBlock::Text { text, .. } = block;
+                            Some(text.clone())
+                        }).next()
                     })
-                } else {
-                    None
-                }
+                } else { None }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -180,25 +166,19 @@ impl OpenAIClient {
             );
         }
 
-        let request = ResponseRequest {
-            model: self.model.clone(),
-            input,
-            parameters: Parameters {
-                verbosity: self.verbosity.clone(),
-                reasoning_effort: self.reasoning_effort.clone(),
-                max_output_tokens: self.max_output_tokens,
-            },
-            text: if request_structured {
-                Some(TextOptions {
-                    format: Some("json_object".to_string()),
-                })
-            } else {
-                None
-            },
-            stream: Some(true),
-        };
+        let mut request = json!({
+            "model": self.model,
+            "input": input,
+            "text": { "verbosity": sanitize_verbosity(&self.verbosity) },
+            "reasoning": { "effort": sanitize_reasoning(&self.reasoning_effort) },
+            "max_output_tokens": self.max_output_tokens,
+            "stream": true
+        });
+        if request_structured {
+            request["text"]["format"] = json!({ "type": "json_object" });
+        }
 
-        self.post_response_stream(serde_json::to_value(request)?).await
+        self.post_response_stream(request).await
     }
 
     /// Low-level helper to POST a Responses request and return an SSE JSON stream.
@@ -260,7 +240,6 @@ impl OpenAIClient {
     }
 
     // ====== Embeddings ======
-    /// Get embeddings for text using text-embedding-3-large
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
         let request = EmbeddingRequest {
             model: "text-embedding-3-large".to_string(),
@@ -296,17 +275,6 @@ impl OpenAIClient {
 // ===== Request/Response types =====
 
 #[derive(Serialize)]
-struct ResponseRequest {
-    model: String,
-    input: Vec<InputMessage>,
-    parameters: Parameters,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<TextOptions>, // replaces deprecated `response_format`
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>, // when true, server streams SSE `data:` chunks
-}
-
-#[derive(Serialize)]
 struct InputMessage {
     role: String,
     content: Vec<ContentBlock>,
@@ -320,19 +288,6 @@ enum ContentBlock {
         text_type: String,
         text: String,
     },
-}
-
-#[derive(Serialize)]
-struct Parameters {
-    verbosity: String,
-    reasoning_effort: String,
-    max_output_tokens: usize,
-}
-
-#[derive(Serialize)]
-struct TextOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -379,7 +334,6 @@ struct EmbeddingData {
 // ===== Helpers =====
 
 /// Turn an HTTP bytes stream (SSE) into a stream of JSON Values.
-/// Emits `{ "done": true }` when encountering `[DONE]`.
 fn sse_json_stream<S>(mut raw: S) -> impl Stream<Item = Result<Value>> + Send
 where
     S: Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -398,9 +352,7 @@ where
                         if let Some(pos) = find_frame_boundary(&buf) {
                             let frame = buf.split_to(pos);
                             // Drop the "\n\n"
-                            if buf.remaining() >= 2 {
-                                let _ = buf.split_to(2);
-                            }
+                            if buf.remaining() >= 2 { let _ = buf.split_to(2); }
 
                             let text = String::from_utf8(frame.to_vec())
                                 .unwrap_or_else(|_| String::new());
@@ -415,9 +367,7 @@ where
                                 }
                             }
 
-                            if data_lines.is_empty() {
-                                continue;
-                            }
+                            if data_lines.is_empty() { continue; }
 
                             let data_joined = data_lines.join("\n");
 
@@ -430,14 +380,10 @@ where
                                 Ok(v) => yield Ok(v),
                                 Err(e) => yield Err(anyhow!("SSE data parse error: {e}; raw={}", data_joined)),
                             }
-                        } else {
-                            break;
-                        }
+                        } else { break; }
                     }
                 }
-                Err(e) => {
-                    yield Err(anyhow!("SSE transport error: {e}"));
-                }
+                Err(e) => { yield Err(anyhow!("SSE transport error: {e}")); }
             }
         }
     }
@@ -449,23 +395,17 @@ fn find_frame_boundary(buf: &bytes::BytesMut) -> Option<usize> {
     if let Some(i) = fourwin(buf, b'\r', b'\n', b'\r', b'\n') { return Some(i); }
     None
 }
-
 fn twowin(buf: &bytes::BytesMut, a: u8, b: u8) -> Option<usize> {
     let bytes = &buf[..];
     for i in 0..bytes.len().saturating_sub(1) {
-        if bytes[i] == a && bytes[i + 1] == b {
-            return Some(i);
-        }
+        if bytes[i] == a && bytes[i + 1] == b { return Some(i); }
     }
     None
 }
-
 fn fourwin(buf: &bytes::BytesMut, a: u8, b: u8, c: u8, d: u8) -> Option<usize> {
     let bytes = &buf[..];
     for i in 0..bytes.len().saturating_sub(3) {
-        if bytes[i] == a && bytes[i + 1] == b && bytes[i + 2] == c && bytes[i + 3] == d {
-            return Some(i);
-        }
+        if bytes[i] == a && bytes[i + 1] == b && bytes[i + 2] == c && bytes[i + 3] == d { return Some(i); }
     }
     None
 }
@@ -491,9 +431,7 @@ pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<Stri
                 }
             }
         }
-        if !text_parts.is_empty() {
-            return Some(text_parts.join("\n"));
-        }
+        if !text_parts.is_empty() { return Some(text_parts.join("\n")); }
     }
 
     resp_json
@@ -504,9 +442,7 @@ pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<Stri
                 .filter_map(|part| {
                     if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                         part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .collect::<Vec<_>>()
                 .join("")
@@ -517,4 +453,20 @@ pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<Stri
                 .and_then(|c| c.as_str())
                 .map(|s| s.to_string())
         })
+}
+
+fn sanitize_verbosity(v: &str) -> &'static str {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "low" => "low",
+        "high" => "high",
+        _ => "medium",
+    }
+}
+
+fn sanitize_reasoning(v: &str) -> &'static str {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "low" | "minimal" => "low",
+        "high" => "high",
+        _ => "medium",
+    }
 }

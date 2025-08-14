@@ -10,7 +10,7 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{Duration};
+use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
@@ -202,7 +202,7 @@ async fn handle_chat_turn(
                 }
 
                 let chunk_msg = WsServerMessage::Chunk {
-                    content: if first_chunk { token.clone() } else { token.clone() },
+                    content: token.clone(),
                     mood: if first_chunk { Some(current_mood.clone()) } else { None },
                 };
                 first_chunk = false;

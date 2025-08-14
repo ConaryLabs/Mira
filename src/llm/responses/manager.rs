@@ -63,6 +63,7 @@ impl ResponsesManager {
         }
 
         // ---- Text / format -------------------------------------------------------------------
+        // Always include a "text" object; set "format" only if caller asked for JSON.
         let mut text_obj = json!({ "verbosity": verbosity });
 
         if let Some(fmt) = response_format {
@@ -86,13 +87,12 @@ impl ResponsesManager {
         info!("   Has format: {}", text_obj.get("format").is_some());
         info!("   Input messages count: {}", messages.len());
 
-        if let Some(first_msg) = messages.first() {
-            debug!("   First message: {}", first_msg.to_string());
+        if let Some(first_msg) = body.get("input").and_then(|i| i.as_array()).and_then(|a| a.first()) {
+            debug!("   First message: {}", first_msg);
         }
-        debug!(
-            "📤 Full request body: {}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
-        );
+        if let Ok(pretty) = serde_json::to_string_pretty(&body) {
+            debug!("📤 Full request body: {}", pretty);
+        }
 
         // ---- Call API (non-streaming) --------------------------------------------------------
         let v = match self.client.post_response(body).await {
