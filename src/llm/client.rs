@@ -64,36 +64,89 @@ impl OpenAIClient {
         system_prompt: Option<&str>,
         request_structured: bool,
     ) -> Result<ResponseOutput> {
-        let mut input = vec![InputMessage {
-            role: "user".to_string(),
-            content: vec![ContentBlock::Text {
-                text_type: "input_text".to_string(),
-                text: user_text.to_string(),
-            }],
-        }];
+        let mut input = vec![json!({
+            "role": "user",
+            "content": [{ "type": "input_text", "text": user_text }]
+        })];
 
         if let Some(system) = system_prompt {
             input.insert(
                 0,
-                InputMessage {
-                    role: "system".to_string(),
-                    content: vec![ContentBlock::Text {
-                        text_type: "input_text".to_string(),
-                        text: system.to_string(),
-                    }],
-                },
+                json!({
+                    "role": "system",
+                    "content": [{ "type": "input_text", "text": system }]
+                }),
             );
         }
 
         let mut request = json!({
             "model": self.model,
             "input": input,
-            "text": { "verbosity": sanitize_verbosity(&self.verbosity) },
-            "reasoning": { "effort": sanitize_reasoning(&self.reasoning_effort) },
+            "text": {
+                "verbosity": sanitize_verbosity(&self.verbosity)
+            },
+            "reasoning": {
+                "effort": sanitize_reasoning(&self.reasoning_effort)
+            },
             "max_output_tokens": self.max_output_tokens
         });
+        
         if request_structured {
-            request["text"]["format"] = json!({ "type": "json_object" });
+            // For GPT-5 Responses API, structured output uses this format with schema
+            request["text"]["format"] = json!({
+                "type": "json_schema",
+                "name": "mira_response",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "output": {
+                            "type": "string",
+                            "description": "The main response text"
+                        },
+                        "mood": {
+                            "type": "string",
+                            "description": "The emotional tone of the response"
+                        },
+                        "salience": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Importance score from 1-10"
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "Brief summary of the interaction"
+                        },
+                        "memory_type": {
+                            "type": "string",
+                            "enum": ["event", "fact", "emotion", "preference", "context"],
+                            "description": "Category of memory"
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Relevant tags for this interaction"
+                        },
+                        "intent": {
+                            "type": "string",
+                            "description": "The user's apparent intent"
+                        },
+                        "monologue": {
+                            "type": ["string", "null"],
+                            "description": "Internal reasoning or thoughts"
+                        },
+                        "reasoning_summary": {
+                            "type": ["string", "null"],
+                            "description": "Summary of reasoning process"
+                        }
+                    },
+                    "required": ["output", "mood", "salience", "summary", "memory_type", "tags", "intent", "monologue", "reasoning_summary"],
+                    "additionalProperties": false
+                },
+                "strict": true
+            });
         }
 
         debug!("📤 Sending request to GPT-5 Responses API");
@@ -113,28 +166,17 @@ impl OpenAIClient {
             return Err(anyhow!("OpenAI API error ({}): {}", status, error_text));
         }
 
-        let api_response: ResponseApiResponse = response.json().await?;
+        let api_response: Value = response.json().await?;
 
-        // Extract the text from the unified output format
-        let output_text = api_response
-            .output
-            .iter()
-            .filter_map(|item| {
-                if item.output_type == "message" {
-                    item.content.as_ref().and_then(|content| {
-                        content.iter().filter_map(|block| {
-                            let ContentBlock::Text { text, .. } = block;
-                            Some(text.clone())
-                        }).next()
-                    })
-                } else { None }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Extract the text from the response
+        let output_text = extract_text_from_responses(&api_response)
+            .unwrap_or_default();
 
         Ok(ResponseOutput {
             output: output_text,
-            reasoning_summary: api_response.reasoning_summary,
+            reasoning_summary: api_response.get("reasoning_summary")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         })
     }
 
@@ -145,37 +187,90 @@ impl OpenAIClient {
         system_prompt: Option<&str>,
         request_structured: bool,
     ) -> Result<ResponseStream> {
-        let mut input = vec![InputMessage {
-            role: "user".to_string(),
-            content: vec![ContentBlock::Text {
-                text_type: "input_text".to_string(),
-                text: user_text.to_string(),
-            }],
-        }];
+        let mut input = vec![json!({
+            "role": "user",
+            "content": [{ "type": "input_text", "text": user_text }]
+        })];
 
         if let Some(system) = system_prompt {
             input.insert(
                 0,
-                InputMessage {
-                    role: "system".to_string(),
-                    content: vec![ContentBlock::Text {
-                        text_type: "input_text".to_string(),
-                        text: system.to_string(),
-                    }],
-                },
+                json!({
+                    "role": "system",
+                    "content": [{ "type": "input_text", "text": system }]
+                }),
             );
         }
 
         let mut request = json!({
             "model": self.model,
             "input": input,
-            "text": { "verbosity": sanitize_verbosity(&self.verbosity) },
-            "reasoning": { "effort": sanitize_reasoning(&self.reasoning_effort) },
+            "text": {
+                "verbosity": sanitize_verbosity(&self.verbosity)
+            },
+            "reasoning": {
+                "effort": sanitize_reasoning(&self.reasoning_effort)
+            },
             "max_output_tokens": self.max_output_tokens,
             "stream": true
         });
+        
         if request_structured {
-            request["text"]["format"] = json!({ "type": "json_object" });
+            // For GPT-5 Responses API, structured output uses this format with schema
+            request["text"]["format"] = json!({
+                "type": "json_schema",
+                "name": "mira_response",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "output": {
+                            "type": "string",
+                            "description": "The main response text"
+                        },
+                        "mood": {
+                            "type": "string",
+                            "description": "The emotional tone of the response"
+                        },
+                        "salience": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Importance score from 1-10"
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "Brief summary of the interaction"
+                        },
+                        "memory_type": {
+                            "type": "string",
+                            "enum": ["event", "fact", "emotion", "preference", "context"],
+                            "description": "Category of memory"
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Relevant tags for this interaction"
+                        },
+                        "intent": {
+                            "type": "string",
+                            "description": "The user's apparent intent"
+                        },
+                        "monologue": {
+                            "type": ["string", "null"],
+                            "description": "Internal reasoning or thoughts"
+                        },
+                        "reasoning_summary": {
+                            "type": ["string", "null"],
+                            "description": "Summary of reasoning process"
+                        }
+                    },
+                    "required": ["output", "mood", "salience", "summary", "memory_type", "tags", "intent", "monologue", "reasoning_summary"],
+                    "additionalProperties": false
+                },
+                "strict": true
+            });
         }
 
         self.post_response_stream(request).await
@@ -221,10 +316,10 @@ impl OpenAIClient {
             return Err(anyhow::anyhow!("OpenAI API error ({}): {}", status, error_text));
         }
 
-        Ok(response.json().await?)
+        response.json().await.map_err(Into::into)
     }
 
-    /// Helper method for generic requests (used by other modules)
+    /// Helper method for making generic requests (for other modules) - NOT ASYNC
     pub fn request(&self, method: reqwest::Method, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, format!("{}/v1/{}", self.base_url, endpoint))
@@ -232,108 +327,59 @@ impl OpenAIClient {
             .header(header::CONTENT_TYPE, "application/json")
     }
 
-    /// Helper method for multipart requests (used for file uploads)
+    /// Helper method for multipart requests (for file uploads) - NOT ASYNC
     pub fn request_multipart(&self, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .post(format!("{}/v1/{}", self.base_url, endpoint))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
     }
 
-    // ====== Embeddings ======
+    /// Get embedding for text
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
-        let request = EmbeddingRequest {
-            model: "text-embedding-3-large".to_string(),
-            input: text.to_string(),
-            dimensions: Some(3072),
-        };
+        let body = json!({
+            "model": "text-embedding-3-small",
+            "input": text
+        });
 
         let response = self
             .client
             .post(format!("{}/v1/embeddings", self.base_url))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
             .header(header::CONTENT_TYPE, "application/json")
-            .json(&request)
+            .json(&body)
             .send()
             .await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
-            return Err(anyhow!("Embedding API error ({}): {}", status, error_text));
+            return Err(anyhow!("OpenAI embedding API error ({}): {}", status, error_text));
         }
 
-        let api_response: EmbeddingResponse = response.json().await?;
-        Ok(api_response
-            .data
-            .into_iter()
-            .next()
-            .map(|d| d.embedding)
-            .unwrap_or_default())
+        let result: serde_json::Value = response.json().await?;
+        
+        let embedding = result
+            .get("data")
+            .and_then(|d| d.get(0))
+            .and_then(|e| e.get("embedding"))
+            .and_then(|e| e.as_array())
+            .ok_or_else(|| anyhow!("Invalid embedding response format"))?
+            .iter()
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
+            .collect();
+
+        Ok(embedding)
     }
 }
 
-// ===== Request/Response types =====
-
-#[derive(Serialize)]
-struct InputMessage {
-    role: String,
-    content: Vec<ContentBlock>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-enum ContentBlock {
-    Text {
-        #[serde(rename = "type")]
-        text_type: String,
-        text: String,
-    },
-}
-
-#[derive(Deserialize)]
-struct ResponseApiResponse {
-    output: Vec<OutputItem>,
-    #[serde(default)]
-    reasoning_summary: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct OutputItem {
-    #[serde(rename = "type")]
-    output_type: String,
-    #[serde(default)]
-    content: Option<Vec<ContentBlock>>,
-}
-
-/// Response output from GPT-5
+// Data structures for request/response
+#[derive(Debug)]
 pub struct ResponseOutput {
     pub output: String,
     pub reasoning_summary: Option<String>,
 }
 
-// ===== Embedding API types =====
-
-#[derive(Serialize)]
-struct EmbeddingRequest {
-    model: String,
-    input: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    dimensions: Option<usize>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingResponse {
-    data: Vec<EmbeddingData>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
-}
-
-// ===== Helpers =====
-
-/// Turn an HTTP bytes stream (SSE) into a stream of JSON Values.
+/// SSE stream parser
 fn sse_json_stream<S>(mut raw: S) -> impl Stream<Item = Result<Value>> + Send
 where
     S: Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -395,6 +441,7 @@ fn find_frame_boundary(buf: &bytes::BytesMut) -> Option<usize> {
     if let Some(i) = fourwin(buf, b'\r', b'\n', b'\r', b'\n') { return Some(i); }
     None
 }
+
 fn twowin(buf: &bytes::BytesMut, a: u8, b: u8) -> Option<usize> {
     let bytes = &buf[..];
     for i in 0..bytes.len().saturating_sub(1) {
@@ -402,6 +449,7 @@ fn twowin(buf: &bytes::BytesMut, a: u8, b: u8) -> Option<usize> {
     }
     None
 }
+
 fn fourwin(buf: &bytes::BytesMut, a: u8, b: u8, c: u8, d: u8) -> Option<usize> {
     let bytes = &buf[..];
     for i in 0..bytes.len().saturating_sub(3) {
@@ -410,8 +458,9 @@ fn fourwin(buf: &bytes::BytesMut, a: u8, b: u8, c: u8, d: u8) -> Option<usize> {
     None
 }
 
-/// Helper to extract text from GPT-5 Responses API output (non-streaming)
+/// Helper to extract text from GPT-5 Responses API output
 pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<String> {
+    // Try output array first (standard Responses API format)
     if let Some(output) = resp_json.get("output").and_then(|o| o.as_array()) {
         let mut text_parts = vec![];
         for item in output {
@@ -431,9 +480,12 @@ pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<Stri
                 }
             }
         }
-        if !text_parts.is_empty() { return Some(text_parts.join("\n")); }
+        if !text_parts.is_empty() { 
+            return Some(text_parts.join("\n")); 
+        }
     }
 
+    // Fallback to choices format (Chat Completions compatibility)
     resp_json
         .pointer("/choices/0/message/content")
         .and_then(|c| c.as_array())
@@ -465,7 +517,7 @@ fn sanitize_verbosity(v: &str) -> &'static str {
 
 fn sanitize_reasoning(v: &str) -> &'static str {
     match v.trim().to_ascii_lowercase().as_str() {
-        "low" | "minimal" => "low",
+        "low" | "minimal" => "minimal",
         "high" => "high",
         _ => "medium",
     }
