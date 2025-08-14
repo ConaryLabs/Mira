@@ -1435,6 +1435,7 @@ dependencies = [
  "dotenv",
  "fastrand",
  "futures",
+ "futures-util",
  "git2",
  "governor",
  "hyper",

@@ -228,9 +228,14 @@ impl ChatService {
         context: &str,
         return_structured: bool,
     ) -> Result<ChatResponse> {
-        // Build the input messages (no mut needed)
+        // Build the input messages - use the JSON version when structured output is needed
         let history = self.get_trimmed_history(session_id).await?;
-        let input = self.build_gpt5_input(history, user_text, context);
+        let input = if return_structured {
+            // Use the method that adds "JSON" to the system message
+            self.build_gpt5_input_with_json_instruction(history, user_text, context)
+        } else {
+            self.build_gpt5_input(history, user_text, context)
+        };
 
         // Build the request
         let response_manager = crate::llm::responses::manager::ResponsesManager::new(self.client.clone());
@@ -249,11 +254,21 @@ impl ChatService {
             None
         };
 
+        // Build instructions with JSON mention if needed
+        let instructions = if return_structured {
+            format!(
+                "{}\n\nIMPORTANT: You must respond with a valid JSON object containing the following fields: reply (string), mood (string), salience (number 0-10), summary (string), memory_type (string), tags (array of strings), intent (string), and optionally monologue (string) and reasoning_summary (string).",
+                self.persona.prompt()
+            )
+        } else {
+            self.build_instructions()
+        };
+
         // Call the API
         let response = response_manager.create_response(
             &self.config.model,
             input,
-            Some(self.build_instructions()),
+            Some(instructions),
             response_format,
             Some(parameters),
         ).await?;
@@ -274,6 +289,60 @@ impl ChatService {
         context: &str,
     ) -> Vec<serde_json::Value> {
         let mut messages = vec![];
+
+        // Add history (already in GPT-5 format)
+        for msg in history {
+            if let Some(content) = msg.content {
+                messages.push(serde_json::json!({
+                    "role": msg.role,
+                    "content": [{
+                        "type": if msg.role == "user" { "input_text" } else { "output_text" },
+                        "text": content
+                    }]
+                }));
+            }
+        }
+
+        // Add context if present
+        if !context.is_empty() {
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": [{
+                    "type": "input_text",
+                    "text": format!("Context:\n{}", context)
+                }]
+            }));
+        }
+
+        // Add current user message
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": user_text
+            }]
+        }));
+
+        messages
+    }
+
+    /// Build GPT-5 input messages with JSON instruction for structured output
+    fn build_gpt5_input_with_json_instruction(
+        &self,
+        history: Vec<ResponseMessage>,
+        user_text: &str,
+        context: &str,
+    ) -> Vec<serde_json::Value> {
+        let mut messages = vec![];
+
+        // Add a system message that mentions JSON format
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": [{
+                "type": "input_text",
+                "text": "You must respond with a valid JSON object containing structured data."
+            }]
+        }));
 
         // Add history (already in GPT-5 format)
         for msg in history {

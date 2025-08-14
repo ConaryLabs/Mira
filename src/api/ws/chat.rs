@@ -1,5 +1,5 @@
 // src/api/ws/chat.rs
-// Phase 7: Unified WebSocket chat handler using ChatService
+// Phase 7: Unified WebSocket chat handler using ChatService + real streaming
 
 use axum::{
     extract::{WebSocketUpgrade, State},
@@ -10,12 +10,14 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::api::ws::session_state::WsSessionState;
 use crate::state::AppState;
+
+use crate::llm::streaming::{start_response_stream, StreamEvent};
 
 /// Main WebSocket handler for chat connections
 pub async fn ws_chat_handler(
@@ -37,8 +39,6 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     // Track connection state
     let mut ws_state = WsSessionState::new(session_id.clone());
     let mut current_mood = "attentive".to_string();
-
-    // NO GREETING - just wait for user input
 
     // Heartbeat: keep connections healthy behind proxies
     let sender_clone = sender.clone();
@@ -82,7 +82,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                 match client_msg {
                     WsClientMessage::Command { command, args } => {
                         debug!("🎮 Processing command: {}", command);
-                        handle_command(&sender, &command, args, &mut ws_state, &app_state).await;
+                        handle_command(&sender, &command, args, &mut ws_state).await;
                     }
 
                     WsClientMessage::Chat { content, project_id } => {
@@ -114,15 +114,8 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                         .await;
                     }
 
-                    WsClientMessage::Typing { .. } => {
-                        // No-op; used only to update last-active time
-                        ws_state.mark_active();
-                    }
-                    
-                    WsClientMessage::Status { .. } => {
-                        // Status messages from client - just mark as active
-                        ws_state.mark_active();
-                    }
+                    WsClientMessage::Typing { .. } => ws_state.mark_active(),
+                    WsClientMessage::Status { .. } => ws_state.mark_active(),
                 }
             }
 
@@ -149,7 +142,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     info!("✅ WebSocket connection closed for session: {}", &session_id);
 }
 
-/// Handle a single user -> assistant turn end-to-end
+/// Handle a single user -> assistant turn end-to-end (streaming)
 async fn handle_chat_turn(
     app_state: &Arc<AppState>,
     sender: &Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
@@ -175,95 +168,102 @@ async fn handle_chat_turn(
             .await;
     }
 
-    // Invoke ChatService (request structured JSON so we can pull mood/tags/salience)
-    let fut = app_state.chat_service.process_message(
-        session_id,
-        &content,
-        project_id.as_deref(),
-        true,
-    );
-
-    let result = match timeout(Duration::from_secs(30), fut).await {
-        Ok(Ok(chat_response)) => {
-            *current_mood = chat_response.mood.clone();
-            ws_state.set_mood(current_mood.clone());
-            Some(chat_response)
-        }
-        Ok(Err(e)) => {
-            error!("ChatService error: {:?}", e);
+    // Start real streaming from GPT-5
+    let mut stream = match start_response_stream(
+        app_state.llm_client.clone(),          // Arc<OpenAIClient>
+        session_id.to_string(),                // session id (String)
+        content.clone(),                       // user text (String)
+        project_id.clone(),                    // Option<String> project id
+        true,                                  // request_structured (JSON downstream)
+    ).await {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Chat stream start error: {:?}", e);
             let err = WsServerMessage::Error {
                 message: "Failed to process message".to_string(),
                 code: Some("CHAT_ERROR".to_string()),
             };
             let mut guard = sender.lock().await;
-            let _ =
-                guard.send(Message::Text(serde_json::to_string(&err).unwrap())).await;
-            None
-        }
-        Err(_) => {
-            warn!("Chat request timed out");
-            let err = WsServerMessage::Error {
-                message: "Request timed out".to_string(),
-                code: Some("TIMEOUT".to_string()),
-            };
-            let mut guard = sender.lock().await;
-            let _ =
-                guard.send(Message::Text(serde_json::to_string(&err).unwrap())).await;
-            None
+            let _ = guard
+                .send(Message::Text(serde_json::to_string(&err).unwrap()))
+                .await;
+            return;
         }
     };
 
-    if let Some(resp) = result {
-        // Stream text in small chunks for a natural feel
-        stream_response(sender, &resp.output, current_mood).await;
+    let mut first_chunk = true;
+    let mut full_text = String::new();
 
-        // Send completion metadata (keep payload small — front-end can request details if needed)
-        let done = WsServerMessage::Complete {
-            mood: Some(resp.mood),
-            salience: Some(resp.salience as f32),
-            tags: if resp.tags.is_empty() { None } else { Some(resp.tags) },
-        };
-        let mut guard = sender.lock().await;
-        let _ = guard
-            .send(Message::Text(serde_json::to_string(&done).unwrap()))
-            .await;
-    }
-}
+    while let Some(evt) = stream.next().await {
+        match evt {
+            Ok(StreamEvent::Delta(token)) => {
+                if token.is_empty() {
+                    continue;
+                }
 
-/// Stream response text in chunks for natural conversation feel
-async fn stream_response(
-    sender: &Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
-    text: &str,
-    mood: &str,
-) {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    let chunk_size = 5; // words per chunk
+                let chunk_msg = WsServerMessage::Chunk {
+                    content: if first_chunk { token.clone() } else { token.clone() },
+                    mood: if first_chunk { Some(current_mood.clone()) } else { None },
+                };
+                first_chunk = false;
 
-    for (i, chunk) in words.chunks(chunk_size).enumerate() {
-        let is_first = i == 0;
-        let chunk_text = if is_first {
-            chunk.join(" ")
-        } else {
-            format!(" {}", chunk.join(" "))
-        };
+                let mut guard = sender.lock().await;
+                if guard
+                    .send(Message::Text(serde_json::to_string(&chunk_msg).unwrap()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                full_text.push_str(&token);
+            }
 
-        let chunk_msg = WsServerMessage::Chunk {
-            content: chunk_text,
-            mood: if is_first { Some(mood.to_string()) } else { None },
-        };
+            Ok(StreamEvent::Done { full_text: ft, .. }) => {
+                // ensure we have the full text even if last chunk didn’t carry it all
+                if full_text.is_empty() {
+                    full_text = ft;
+                }
+                break;
+            }
 
-        let mut guard = sender.lock().await;
-        if guard
-            .send(Message::Text(serde_json::to_string(&chunk_msg).unwrap()))
-            .await
-            .is_err()
-        {
-            break;
+            Ok(StreamEvent::Error(msg)) => {
+                error!("Stream error event: {}", msg);
+                let err = WsServerMessage::Error {
+                    message: "Streaming failed".to_string(),
+                    code: Some("STREAM_ERROR".to_string()),
+                };
+                let mut guard = sender.lock().await;
+                let _ = guard
+                    .send(Message::Text(serde_json::to_string(&err).unwrap()))
+                    .await;
+                break;
+            }
+
+            Err(e) => {
+                warn!("stream error: {e:?}");
+                let err = WsServerMessage::Error {
+                    message: "Stream error".to_string(),
+                    code: Some("STREAM_ERROR".to_string()),
+                };
+                let mut guard = sender.lock().await;
+                let _ = guard
+                    .send(Message::Text(serde_json::to_string(&err).unwrap()))
+                    .await;
+                break;
+            }
         }
-
-        // small delay between chunks
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
+
+    // Final completion signal — lightweight (front-end can fetch details if needed)
+    let done = WsServerMessage::Complete {
+        mood: Some(current_mood.clone()),
+        salience: None,
+        tags: None,
+    };
+    let mut guard = sender.lock().await;
+    let _ = guard
+        .send(Message::Text(serde_json::to_string(&done).unwrap()))
+        .await;
 }
 
 /// Handle WebSocket commands
@@ -272,7 +272,6 @@ async fn handle_command(
     command: &str,
     args: Option<serde_json::Value>,
     ws_state: &mut WsSessionState,
-    _app_state: &Arc<AppState>,
 ) {
     match command {
         "ping" => {
@@ -305,7 +304,7 @@ async fn handle_command(
                 message: "Connected".to_string(),
                 detail: Some(json!({
                     "session_id": ws_state.session_id,
-                    "project": ws_state.active_project_id.as_ref(),  // Use active_project_id
+                    "project": ws_state.active_project_id.as_ref(),
                     "mood": ws_state.current_mood,
                     "last_active": ws_state.last_active.to_rfc3339(),
                 })
