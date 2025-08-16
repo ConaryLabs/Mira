@@ -5,6 +5,7 @@
 // - Added previous_response_id support through ResponsesManager
 // - Integrated tool calling capabilities
 // - Added configuration for vector search
+// - Integrated summarization service call
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -18,6 +19,7 @@ use crate::llm::responses::vector_store::VectorStoreManager;
 use crate::llm::responses::manager::ResponsesManager;
 use crate::llm::responses::types::Message;
 use crate::services::memory::MemoryService;
+use crate::services::summarization::SummarizationService;
 use crate::persona::PersonaOverlay;
 
 /// Output format for chat responses
@@ -37,7 +39,7 @@ pub struct ChatResponse {
 
 /// Configuration for ChatService
 #[derive(Clone)]
-struct ChatConfig {
+pub struct ChatConfig { // --- FIXED: Made this struct public ---
     pub model: String,
     pub verbosity: String,
     pub reasoning_effort: String,
@@ -45,15 +47,19 @@ struct ChatConfig {
     pub history_message_cap: usize,
     pub history_token_limit: usize,
     pub max_retrieval_tokens: usize,
-    pub max_vector_search_results: usize,  // NEW: Vector store search limit
-    pub enable_vector_search: bool,        // NEW: Toggle vector store search
-    pub enable_web_search: bool,           // NEW: Enable web search tool
-    pub enable_code_interpreter: bool,     // NEW: Enable code interpreter
+    pub max_vector_search_results: usize,
+    pub enable_vector_search: bool,
+    pub enable_web_search: bool,
+    pub enable_code_interpreter: bool,
     pub enable_debug_logging: bool,
+    pub enable_summarization: bool,
+    pub summary_chunk_size: usize,
+    pub summary_token_limit: usize,
+    pub summary_output_tokens: usize,
 }
 
 impl ChatConfig {
-    fn from_env() -> Self {
+    pub fn from_env() -> Self {
         let enable_debug_logging = std::env::var("MIRA_DEBUG_LOGGING")
             .unwrap_or_else(|_| "false".to_string())
             .parse::<bool>()
@@ -67,7 +73,7 @@ impl ChatConfig {
             max_output_tokens: std::env::var("MIRA_MAX_OUTPUT_TOKENS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(128000),  // 128k tokens - maximum for GPT-5
+                .unwrap_or(128000),
             history_message_cap: std::env::var("MIRA_HISTORY_MESSAGE_CAP")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -97,6 +103,22 @@ impl ChatConfig {
                 .parse::<bool>()
                 .unwrap_or(false),
             enable_debug_logging,
+            enable_summarization: std::env::var("MIRA_ENABLE_SUMMARIZATION")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse::<bool>()
+                .unwrap_or(true),
+            summary_chunk_size: std::env::var("MIRA_SUMMARY_CHUNK_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(6),
+            summary_token_limit: std::env::var("MIRA_SUMMARY_TOKEN_LIMIT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2000),
+            summary_output_tokens: std::env::var("MIRA_SUMMARY_OUTPUT_TOKENS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(512),
         }
     }
 }
@@ -108,8 +130,9 @@ pub struct ChatService {
     threads: Arc<ThreadManager>,
     memory_service: Arc<MemoryService>,
     vector_store_manager: Arc<VectorStoreManager>,
+    summarization_service: Arc<SummarizationService>,
     persona: PersonaOverlay,
-    config: ChatConfig,
+    config: Arc<ChatConfig>,
 }
 
 impl ChatService {
@@ -120,12 +143,18 @@ impl ChatService {
         vector_store_manager: Arc<VectorStoreManager>,
         persona: PersonaOverlay,
     ) -> Self {
-        let config = ChatConfig::from_env();
+        let config = Arc::new(ChatConfig::from_env());
         
-        // Create ResponsesManager with ThreadManager for response ID tracking
         let responses_manager = Arc::new(
             ResponsesManager::with_thread_manager(client.clone(), threads.clone())
         );
+
+        let summarization_service = Arc::new(SummarizationService::new(
+            threads.clone(),
+            memory_service.clone(),
+            client.clone(),
+            config.clone(),
+        ));
         
         Self {
             client,
@@ -133,6 +162,7 @@ impl ChatService {
             threads,
             memory_service,
             vector_store_manager,
+            summarization_service,
             persona,
             config,
         }
@@ -149,12 +179,10 @@ impl ChatService {
         let start_time = Instant::now();
         info!("💬 Starting chat for session: {}", session_id);
 
-        // 1) Save user message
         self.memory_service
             .save_user_message(session_id, user_text, project_id)
             .await?;
 
-        // 2) Add to thread
         self.threads.add_message(session_id, ResponseMessage {
             role: "user".to_string(),
             content: Some(user_text.to_string()),
@@ -163,16 +191,20 @@ impl ChatService {
             tool_calls: None,
         }).await?;
 
-        // 3) History (kept for observability)
+        if self.config.enable_summarization {
+            debug!("Checking for summarization trigger");
+            self.summarization_service
+                .summarize_if_needed(session_id)
+                .await?;
+        }
+
         let history = self.threads
             .get_conversation_capped(session_id, self.config.history_message_cap)
             .await;
         info!("📜 History: {} messages", history.len());
 
-        // 4) Build context with vector store integration
         let context = self.build_context(session_id, user_text, project_id).await?;
 
-        // 5) Call GPT-5 with previous_response_id support
         let gpt5_response = self.respond_gpt5(
             session_id,
             user_text,
@@ -180,7 +212,6 @@ impl ChatService {
             return_structured,
         ).await?;
 
-        // 6) Persist assistant response
         self.threads.add_message(session_id, ResponseMessage {
             role: "assistant".to_string(),
             content: Some(gpt5_response.output.clone()),
@@ -210,7 +241,6 @@ impl ChatService {
         let mut context_parts = vec![];
         let mut total_tokens = 0;
 
-        // 1) Get recent context from memory
         let recent_context = self.memory_service
             .get_recent_context(session_id, 4)
             .await?;
@@ -221,11 +251,10 @@ impl ChatService {
                 .map(|entry| entry.content.clone())
                 .collect();
             let recent_text = context_strings.join("\n");
-            total_tokens += recent_text.len() / 4;  // Rough estimate
+            total_tokens += recent_text.len() / 4;
             context_parts.push(format!("Recent context:\n{}", recent_text));
         }
 
-        // 2) Get similar memories from Qdrant
         let embedding = self.client.get_embedding(user_text).await?;
         let similar_memories = self.memory_service
             .search_similar(session_id, &embedding, 3)
@@ -241,7 +270,6 @@ impl ChatService {
             context_parts.push(format!("Related memories:\n{}", memories_text));
         }
 
-        // 3) IMPLEMENTED: Search vector store for relevant documents
         if self.config.enable_vector_search && project_id.is_some() {
             debug!("🔍 Searching vector store for project: {:?}", project_id);
             
@@ -255,12 +283,10 @@ impl ChatService {
                 Ok(vector_results) if !vector_results.is_empty() => {
                     info!("📚 Found {} relevant documents", vector_results.len());
                     
-                    // Summarize or truncate results to stay within token limits
                     let mut doc_content = String::new();
                     let mut doc_tokens = 0;
                     
                     for (idx, result) in vector_results.iter().enumerate() {
-                        // Truncate long content to avoid token overflow
                         let content_preview = if result.content.len() > 500 {
                             format!("{}...", &result.content[..500])
                         } else {
@@ -269,7 +295,6 @@ impl ChatService {
                         
                         let entry_tokens = content_preview.len() / 4;
                         
-                        // Check if adding this would exceed our retrieval token limit
                         if doc_tokens + entry_tokens > self.config.max_retrieval_tokens {
                             debug!("Reached retrieval token limit, stopping at {} documents", idx);
                             break;
@@ -298,7 +323,6 @@ impl ChatService {
             }
         }
 
-        // Log context size
         debug!("📊 Context built with ~{} tokens across {} parts", total_tokens, context_parts.len());
 
         Ok(context_parts.join("\n\n"))
@@ -312,11 +336,9 @@ impl ChatService {
         context: &str,
         return_structured: bool,
     ) -> Result<ChatResponse> {
-        // Build the input messages
         let history = self.get_trimmed_history(session_id).await?;
         let input = self.build_gpt5_input(history, user_text, context, return_structured);
 
-        // Build instructions
         let instructions = if return_structured {
             format!(
                 "{}\n\nIMPORTANT: You must respond with a valid JSON object containing: reply, mood, salience, summary, memory_type, tags, intent, and optionally monologue and reasoning_summary.",
@@ -326,22 +348,19 @@ impl ChatService {
             self.build_instructions()
         };
 
-        // Prepare parameters
         let parameters = ResponsesManager::build_gpt5_parameters(
             &self.config.verbosity,
             &self.config.reasoning_effort,
             Some(self.config.max_output_tokens as i32),
-            None,  // Use default temperature
+            None,
         );
 
-        // Prepare response format if structured
         let response_format = if return_structured {
             Some(serde_json::json!({ "type": "json_object" }))
         } else {
             None
         };
 
-        // Build tools if enabled
         let tools = if self.config.enable_web_search || self.config.enable_code_interpreter {
             Some(ResponsesManager::build_standard_tools(
                 self.config.enable_web_search,
@@ -351,20 +370,18 @@ impl ChatService {
             None
         };
 
-        // Call the API with session tracking for previous_response_id
         let response_text = self.responses_manager
             .create_response_with_context(
                 &self.config.model,
                 input,
                 Some(instructions),
-                Some(session_id),  // Pass session_id for response ID tracking
+                Some(session_id),
                 response_format,
                 Some(parameters),
                 tools,
             )
             .await?;
 
-        // Parse the response
         if return_structured {
             self.parse_structured_response(&response_text)
         } else {
@@ -382,7 +399,6 @@ impl ChatService {
     ) -> Vec<Message> {
         let mut input = Vec::new();
 
-        // System message with context
         let system_content = if return_structured {
             format!(
                 "{}\n\nContext:\n{}\n\nRespond with valid JSON.",
@@ -405,7 +421,6 @@ impl ChatService {
             tool_calls: None,
         });
 
-        // Add conversation history
         for msg in history {
             input.push(Message {
                 role: msg.role,
@@ -416,7 +431,6 @@ impl ChatService {
             });
         }
 
-        // Add current user message
         input.push(Message {
             role: "user".to_string(),
             content: Some(user_text.to_string()),
@@ -472,7 +486,6 @@ impl ChatService {
 
     /// Get trimmed history with token awareness
     async fn get_trimmed_history(&self, session_id: &str) -> Result<Vec<ResponseMessage>> {
-        // Use token-aware trimming
         let history = self.threads
             .get_conversation_with_token_limit(
                 session_id,
@@ -480,7 +493,6 @@ impl ChatService {
             )
             .await;
         
-        // Apply message cap as well
         let capped = if history.len() > self.config.history_message_cap {
             history[history.len() - self.config.history_message_cap..].to_vec()
         } else {
@@ -514,13 +526,15 @@ mod tests {
     fn test_config_from_env() {
         std::env::set_var("MIRA_MODEL", "gpt-5-mini");
         std::env::set_var("MIRA_ENABLE_VECTOR_SEARCH", "true");
+        std::env::set_var("MIRA_SUMMARY_CHUNK_SIZE", "10");
         
         let config = ChatConfig::from_env();
         assert_eq!(config.model, "gpt-5-mini");
         assert!(config.enable_vector_search);
+        assert_eq!(config.summary_chunk_size, 10);
         
-        // Clean up
         std::env::remove_var("MIRA_MODEL");
         std::env::remove_var("MIRA_ENABLE_VECTOR_SEARCH");
+        std::env::remove_var("MIRA_SUMMARY_CHUNK_SIZE");
     }
 }

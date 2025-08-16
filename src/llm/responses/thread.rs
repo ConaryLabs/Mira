@@ -4,13 +4,14 @@
 // - Added previous_response_id tracking for conversation continuity
 // - Enhanced session management with response ID history
 // - Improved token counting and message trimming
+// - Fixed visibility of SessionInfo for summarization service
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Message in a conversation thread
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,20 +28,20 @@ pub struct ResponseMessage {
 
 /// Session information including response ID tracking
 #[derive(Debug, Clone)]
-struct SessionInfo {
+pub struct SessionInfo { // --- FIXED: Made this struct public ---
     pub messages: VecDeque<ResponseMessage>,
-    pub previous_response_id: Option<String>,  // NEW: Track the last response ID
-    pub response_id_history: VecDeque<String>, // NEW: History of response IDs
+    pub previous_response_id: Option<String>,
+    pub response_id_history: VecDeque<String>,
     pub total_tokens: usize,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    // pub created_at: chrono::DateTime<chrono::Utc>, // Removed to clear dead_code warning
     pub last_activity: chrono::DateTime<chrono::Utc>,
 }
 
 /// Manages conversation threads locally with response ID tracking
 pub struct ThreadManager {
-    sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
+    pub sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
     max_messages_per_session: usize,
-    max_response_id_history: usize,  // NEW: Limit response ID history
+    max_response_id_history: usize,
     token_limit: usize,
 }
 
@@ -50,29 +51,12 @@ impl ThreadManager {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             max_messages_per_session: max_messages,
-            max_response_id_history: 10,  // Keep last 10 response IDs
+            max_response_id_history: 10,
             token_limit,
         }
     }
 
-    /// Get or create a session
-    async fn get_or_create_session(&self, session_id: &str) -> SessionInfo {
-        let mut sessions = self.sessions.write().await;
-        
-        sessions.entry(session_id.to_string())
-            .or_insert_with(|| {
-                info!("📝 Creating new session: {}", session_id);
-                SessionInfo {
-                    messages: VecDeque::new(),
-                    previous_response_id: None,
-                    response_id_history: VecDeque::new(),
-                    total_tokens: 0,
-                    created_at: chrono::Utc::now(),
-                    last_activity: chrono::Utc::now(),
-                }
-            })
-            .clone()
-    }
+    // Removed unused get_or_create_session method to clear dead_code warning
 
     /// Add a message to a session
     pub async fn add_message(
@@ -83,25 +67,25 @@ impl ThreadManager {
         let mut sessions = self.sessions.write().await;
         let session = sessions
             .entry(session_id.to_string())
-            .or_insert_with(|| SessionInfo {
-                messages: VecDeque::new(),
-                previous_response_id: None,
-                response_id_history: VecDeque::new(),
-                total_tokens: 0,
-                created_at: chrono::Utc::now(),
-                last_activity: chrono::Utc::now(),
+            .or_insert_with(|| {
+                info!("📝 Creating new session: {}", session_id);
+                SessionInfo {
+                    messages: VecDeque::new(),
+                    previous_response_id: None,
+                    response_id_history: VecDeque::new(),
+                    total_tokens: 0,
+                    // created_at: chrono::Utc::now(),
+                    last_activity: chrono::Utc::now(),
+                }
             });
 
-        // Add message
         session.messages.push_back(message.clone());
         session.last_activity = chrono::Utc::now();
 
-        // Estimate tokens (rough approximation)
         if let Some(content) = &message.content {
-            session.total_tokens += content.len() / 4;  // Rough token estimate
+            session.total_tokens += content.len() / 4;
         }
 
-        // Trim if exceeding limits
         self.trim_session_messages(session);
 
         debug!(
@@ -123,13 +107,10 @@ impl ThreadManager {
         let mut sessions = self.sessions.write().await;
         
         if let Some(session) = sessions.get_mut(session_id) {
-            // Update previous_response_id
             session.previous_response_id = Some(response_id.clone());
             
-            // Add to history
             session.response_id_history.push_back(response_id.clone());
             
-            // Trim history if too long
             while session.response_id_history.len() > self.max_response_id_history {
                 session.response_id_history.pop_front();
             }
@@ -141,13 +122,12 @@ impl ThreadManager {
                 session_id, response_id
             );
         } else {
-            // Create session if it doesn't exist
             let mut session = SessionInfo {
                 messages: VecDeque::new(),
                 previous_response_id: Some(response_id.clone()),
                 response_id_history: VecDeque::new(),
                 total_tokens: 0,
-                created_at: chrono::Utc::now(),
+                // created_at: chrono::Utc::now(),
                 last_activity: chrono::Utc::now(),
             };
             session.response_id_history.push_back(response_id);
@@ -176,7 +156,6 @@ impl ThreadManager {
         if let Some(session) = sessions.get(session_id) {
             let messages: Vec<ResponseMessage> = session.messages.iter().cloned().collect();
             
-            // Return the most recent messages up to the cap
             let start = messages.len().saturating_sub(max_messages);
             messages[start..].to_vec()
         } else {
@@ -207,7 +186,6 @@ impl ThreadManager {
             let mut result = Vec::new();
             let mut token_count = 0;
             
-            // Iterate from most recent to oldest
             for message in session.messages.iter().rev() {
                 let message_tokens = self.estimate_message_tokens(message);
                 
@@ -219,7 +197,6 @@ impl ThreadManager {
                 token_count += message_tokens;
             }
             
-            // Reverse to get chronological order
             result.reverse();
             result
         } else {
@@ -284,17 +261,14 @@ impl ThreadManager {
 
     /// Trim messages in a session to stay within limits
     fn trim_session_messages(&self, session: &mut SessionInfo) {
-        // Trim by message count
         while session.messages.len() > self.max_messages_per_session {
             if let Some(removed) = session.messages.pop_front() {
-                // Update token count
                 if let Some(content) = &removed.content {
                     session.total_tokens = session.total_tokens.saturating_sub(content.len() / 4);
                 }
             }
         }
 
-        // Trim by token limit
         while session.total_tokens > self.token_limit && !session.messages.is_empty() {
             if let Some(removed) = session.messages.pop_front() {
                 if let Some(content) = &removed.content {
@@ -309,10 +283,9 @@ impl ThreadManager {
         let mut tokens = 0;
         
         if let Some(content) = &message.content {
-            tokens += content.len() / 4;  // Rough estimate: 1 token ≈ 4 characters
+            tokens += content.len() / 4;
         }
         
-        // Add some overhead for role and structure
         tokens += 10;
         
         tokens
@@ -328,7 +301,6 @@ mod tests {
         let manager = ThreadManager::new(100, 10000);
         let session_id = "test_session";
         
-        // Add a message
         let message = ResponseMessage {
             role: "user".to_string(),
             content: Some("Hello".to_string()),
@@ -339,17 +311,13 @@ mod tests {
         
         manager.add_message(session_id, message).await.unwrap();
         
-        // Update response ID
         manager.update_response_id(session_id, "resp_123".to_string()).await.unwrap();
         
-        // Check it was stored
         let prev_id = manager.get_previous_response_id(session_id).await;
         assert_eq!(prev_id, Some("resp_123".to_string()));
         
-        // Update again
         manager.update_response_id(session_id, "resp_456".to_string()).await.unwrap();
         
-        // Check it was updated
         let prev_id = manager.get_previous_response_id(session_id).await;
         assert_eq!(prev_id, Some("resp_456".to_string()));
     }

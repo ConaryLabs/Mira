@@ -92,55 +92,21 @@ impl OpenAIClient {
         });
         
         if request_structured {
-            // For GPT-5 Responses API, structured output uses this format with schema
             request["text"]["format"] = json!({
                 "type": "json_schema",
                 "name": "mira_response",
                 "schema": {
                     "type": "object",
                     "properties": {
-                        "output": {
-                            "type": "string",
-                            "description": "The main response text"
-                        },
-                        "mood": {
-                            "type": "string",
-                            "description": "The emotional tone of the response"
-                        },
-                        "salience": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 10,
-                            "description": "Importance score from 1-10"
-                        },
-                        "summary": {
-                            "type": "string",
-                            "description": "Brief summary of the interaction"
-                        },
-                        "memory_type": {
-                            "type": "string",
-                            "enum": ["event", "fact", "emotion", "preference", "context"],
-                            "description": "Category of memory"
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            },
-                            "description": "Relevant tags for this interaction"
-                        },
-                        "intent": {
-                            "type": "string",
-                            "description": "The user's apparent intent"
-                        },
-                        "monologue": {
-                            "type": ["string", "null"],
-                            "description": "Internal reasoning or thoughts"
-                        },
-                        "reasoning_summary": {
-                            "type": ["string", "null"],
-                            "description": "Summary of reasoning process"
-                        }
+                        "output": { "type": "string", "description": "The main response text" },
+                        "mood": { "type": "string", "description": "The emotional tone of the response" },
+                        "salience": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Importance score from 1-10" },
+                        "summary": { "type": "string", "description": "Brief summary of the interaction" },
+                        "memory_type": { "type": "string", "enum": ["event", "fact", "emotion", "preference", "context"], "description": "Category of memory" },
+                        "tags": { "type": "array", "items": { "type": "string" }, "description": "Relevant tags for this interaction" },
+                        "intent": { "type": "string", "description": "The user's apparent intent" },
+                        "monologue": { "type": ["string", "null"], "description": "Internal reasoning or thoughts" },
+                        "reasoning_summary": { "type": ["string", "null"], "description": "Summary of reasoning process" }
                     },
                     "required": ["output", "mood", "salience", "summary", "memory_type", "tags", "intent", "monologue", "reasoning_summary"],
                     "additionalProperties": false
@@ -168,7 +134,6 @@ impl OpenAIClient {
 
         let api_response: Value = response.json().await?;
 
-        // Extract the text from the response
         let output_text = extract_text_from_responses(&api_response)
             .unwrap_or_default();
 
@@ -216,55 +181,21 @@ impl OpenAIClient {
         });
         
         if request_structured {
-            // For GPT-5 Responses API, structured output uses this format with schema
             request["text"]["format"] = json!({
                 "type": "json_schema",
                 "name": "mira_response",
                 "schema": {
                     "type": "object",
                     "properties": {
-                        "output": {
-                            "type": "string",
-                            "description": "The main response text"
-                        },
-                        "mood": {
-                            "type": "string",
-                            "description": "The emotional tone of the response"
-                        },
-                        "salience": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 10,
-                            "description": "Importance score from 1-10"
-                        },
-                        "summary": {
-                            "type": "string",
-                            "description": "Brief summary of the interaction"
-                        },
-                        "memory_type": {
-                            "type": "string",
-                            "enum": ["event", "fact", "emotion", "preference", "context"],
-                            "description": "Category of memory"
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            },
-                            "description": "Relevant tags for this interaction"
-                        },
-                        "intent": {
-                            "type": "string",
-                            "description": "The user's apparent intent"
-                        },
-                        "monologue": {
-                            "type": ["string", "null"],
-                            "description": "Internal reasoning or thoughts"
-                        },
-                        "reasoning_summary": {
-                            "type": ["string", "null"],
-                            "description": "Summary of reasoning process"
-                        }
+                        "output": { "type": "string", "description": "The main response text" },
+                        "mood": { "type": "string", "description": "The emotional tone of the response" },
+                        "salience": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Importance score from 1-10" },
+                        "summary": { "type": "string", "description": "Brief summary of the interaction" },
+                        "memory_type": { "type": "string", "enum": ["event", "fact", "emotion", "preference", "context"], "description": "Category of memory" },
+                        "tags": { "type": "array", "items": { "type": "string" }, "description": "Relevant tags for this interaction" },
+                        "intent": { "type": "string", "description": "The user's apparent intent" },
+                        "monologue": { "type": ["string", "null"], "description": "Internal reasoning or thoughts" },
+                        "reasoning_summary": { "type": ["string", "null"], "description": "Summary of reasoning process" }
                     },
                     "required": ["output", "mood", "salience", "summary", "memory_type", "tags", "intent", "monologue", "reasoning_summary"],
                     "additionalProperties": false
@@ -370,6 +301,34 @@ impl OpenAIClient {
 
         Ok(embedding)
     }
+
+    // --- NEW METHOD FOR CONVERSATION SUMMARIZATION ---
+    /// Generates a concise summary of a conversation chunk.
+    pub async fn summarize_conversation(
+        &self,
+        prompt: &str,
+        max_output_tokens: usize,
+    ) -> Result<String> {
+        let body = json!({
+            "model": self.model,
+            "input": [{
+                "role": "user",
+                "content": [{ "type": "input_text", "text": prompt }]
+            }],
+            "parameters": {
+                "verbosity": "low",
+                "reasoning_effort": "minimal",
+                "max_output_tokens": max_output_tokens,
+                "temperature": 0.3
+            }
+        });
+
+        debug!("📤 Sending summarization request to GPT-5 Responses API");
+        let response_value = self.post_response(body).await?;
+        
+        extract_text_from_responses(&response_value)
+            .ok_or_else(|| anyhow!("Failed to extract summary text from API response"))
+    }
 }
 
 // Data structures for request/response
@@ -378,6 +337,8 @@ pub struct ResponseOutput {
     pub output: String,
     pub reasoning_summary: Option<String>,
 }
+
+// ... (sse_json_stream and other helper functions remain the same) ...
 
 /// SSE stream parser
 fn sse_json_stream<S>(mut raw: S) -> impl Stream<Item = Result<Value>> + Send
@@ -397,13 +358,11 @@ where
                     loop {
                         if let Some(pos) = find_frame_boundary(&buf) {
                             let frame = buf.split_to(pos);
-                            // Drop the "\n\n"
                             if buf.remaining() >= 2 { let _ = buf.split_to(2); }
 
                             let text = String::from_utf8(frame.to_vec())
                                 .unwrap_or_else(|_| String::new());
 
-                            // Collect data: lines
                             let mut data_lines = Vec::new();
                             for line in text.lines() {
                                 let l = line.trim_start();
@@ -460,7 +419,6 @@ fn fourwin(buf: &bytes::BytesMut, a: u8, b: u8, c: u8, d: u8) -> Option<usize> {
 
 /// Helper to extract text from GPT-5 Responses API output
 pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<String> {
-    // Try output array first (standard Responses API format)
     if let Some(output) = resp_json.get("output").and_then(|o| o.as_array()) {
         let mut text_parts = vec![];
         for item in output {
@@ -480,12 +438,11 @@ pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<Stri
                 }
             }
         }
-        if !text_parts.is_empty() { 
-            return Some(text_parts.join("\n")); 
+        if !text_parts.is_empty() {	
+            return Some(text_parts.join("\n"));	
         }
     }
 
-    // Fallback to choices format (Chat Completions compatibility)
     resp_json
         .pointer("/choices/0/message/content")
         .and_then(|c| c.as_array())
