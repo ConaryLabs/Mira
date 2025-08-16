@@ -1,188 +1,211 @@
 // src/handlers.rs
-// Phase 7: Unified REST handler using ChatService
+// Fixed version - changed process_message to chat
 
 use axum::{
-    extract::{Json, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    extract::{Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{error, info};
 
-use crate::memory::types::MemoryEntry;
 use crate::state::AppState;
+use crate::services::chat::ChatResponse;
 
-#[derive(Deserialize)]
+// ============================================================================
+// Request/Response Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
 pub struct ChatRequest {
+    pub session_id: String,
     pub message: String,
-    /// Project ID for vector store retrieval (Phase 6)
-    pub project_id: Option<String>,
-    /// Reserved for future multimodal support
-    pub images: Option<Vec<String>>,
-    pub pdfs: Option<Vec<String>>,
 }
 
-#[derive(Serialize)]
-pub struct ChatReply {
-    pub output: String,
-    pub persona: String,
-    pub mood: String,
-    pub salience: u8,
-    pub summary: Option<String>,
-    pub memory_type: String,
-    pub tags: Vec<String>,
-    pub intent: String,
-    pub monologue: Option<String>,
-    pub reasoning_summary: Option<String>,
-    pub aside_intensity: Option<u8>,
+#[derive(Debug, Serialize)]
+pub struct ChatResponseWrapper {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<ChatResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-// Convert from services::chat::ChatResponse to ChatReply
-impl From<crate::services::chat::ChatResponse> for ChatReply {
-    fn from(response: crate::services::chat::ChatResponse) -> Self {
-        Self {
-            output: response.output,
-            persona: response.persona,
-            mood: response.mood,
-            salience: response.salience as u8,
-            summary: Some(response.summary),
-            memory_type: response.memory_type,
-            tags: response.tags,
-            intent: response.intent,
-            monologue: response.monologue,
-            reasoning_summary: response.reasoning_summary,
-            aside_intensity: None, // Not used in services::chat::ChatResponse
-        }
-    }
+#[derive(Debug, Deserialize)]
+pub struct ChatQueryParams {
+    #[serde(default)]
+    pub structured: bool,
 }
 
-// Also handle conversion from llm::schema::ChatResponse if needed
-impl From<crate::llm::schema::ChatResponse> for ChatReply {
-    fn from(response: crate::llm::schema::ChatResponse) -> Self {
-        Self {
-            output: response.output,
-            persona: response.persona,
-            mood: response.mood,
-            salience: response.salience,
-            summary: response.summary,
-            memory_type: response.memory_type,
-            tags: response.tags,
-            intent: response.intent,
-            monologue: response.monologue,
-            reasoning_summary: response.reasoning_summary,
-            aside_intensity: response.aside_intensity,
-        }
-    }
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
 }
 
-#[derive(Serialize)]
-pub struct ChatHistoryResponse {
-    pub messages: Vec<MemoryEntry>,
+#[derive(Debug, Deserialize)]
+pub struct HistoryRequest {
     pub session_id: String,
 }
 
-#[derive(Deserialize)]
-pub struct HistoryQuery {
-    pub limit: Option<usize>,
-    pub offset: Option<i64>,
-    pub project_id: Option<String>,
+#[derive(Debug, Serialize)]
+pub struct HistoryResponse {
+    pub success: bool,
+    pub messages: Vec<MessageEntry>,
 }
 
-/// Main REST chat handler - Phase 7 unified implementation
+#[derive(Debug, Serialize)]
+pub struct MessageEntry {
+    pub role: String,
+    pub content: String,
+}
+
+// ============================================================================
+// Handlers
+// ============================================================================
+
+/// Health check endpoint
+pub async fn health_handler() -> impl IntoResponse {
+    Json(HealthResponse {
+        status: "healthy".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+/// Main chat endpoint
 pub async fn chat_handler(
     State(state): State<Arc<AppState>>,
-    _headers: HeaderMap,
+    Query(params): Query<ChatQueryParams>,
     Json(payload): Json<ChatRequest>,
-) -> Response {
-    // Use consistent session ID with WebSocket
-    let session_id = "peter-eternal".to_string();
-    info!("📮 REST chat request for session: {}", session_id);
-    
-    if let Some(ref project_id) = payload.project_id {
-        info!("📁 Using project context: {}", project_id);
+) -> impl IntoResponse {
+    info!(
+        "📨 Chat request - session: {}, structured: {}",
+        payload.session_id, params.structured
+    );
+
+    // Validate input
+    if payload.message.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ChatResponseWrapper {
+                success: false,
+                data: None,
+                error: Some("Message cannot be empty".to_string()),
+            }),
+        );
     }
 
-    // Call the unified ChatService
+    if payload.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ChatResponseWrapper {
+                success: false,
+                data: None,
+                error: Some("Session ID cannot be empty".to_string()),
+            }),
+        );
+    }
+
+    let return_structured = params.structured;
+
+    // FIXED: Changed from process_message to chat
     let result = state
         .chat_service
-        .process_message(
-            &session_id,
+        .chat(
+            &payload.session_id,
             &payload.message,
-            payload.project_id.as_deref(),
-            true, // Request structured JSON for consistent response
+            None,  // project_id - None for now, can be added to payload later
+            return_structured,
         )
         .await;
 
     match result {
-        Ok(chat_response) => {
+        Ok(response) => {
             info!("✅ Chat response generated successfully");
-            
-            // Log key metrics
-            info!("   Salience: {}/10", chat_response.salience);
-            info!("   Mood: {}", chat_response.mood);
-            if !chat_response.tags.is_empty() {
-                info!("   Tags: {:?}", chat_response.tags);
-            }
-            
-            // Convert to ChatReply
-            let reply: ChatReply = chat_response.into();
-            
-            Json(reply).into_response()
+            (
+                StatusCode::OK,
+                Json(ChatResponseWrapper {
+                    success: true,
+                    data: Some(response),
+                    error: None,
+                }),
+            )
         }
         Err(e) => {
             error!("❌ Chat processing failed: {:?}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to process chat message",
-                    "details": e.to_string()
-                })),
+                Json(ChatResponseWrapper {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Failed to process message: {}", e)),
+                }),
             )
-                .into_response()
         }
     }
 }
 
-/// Get chat history - Phase 7 implementation
-pub async fn get_chat_history(
+/// Get chat history endpoint
+pub async fn history_handler(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<HistoryQuery>,
-) -> Response {
-    let session_id = "peter-eternal".to_string();
-    let limit = params.limit.unwrap_or(20).min(100);
-    
-    info!("📖 Fetching chat history for session: {} (limit: {})", session_id, limit);
-    
-    match state.memory_service.get_recent_messages(&session_id, limit).await {
-        Ok(messages) => {
-            info!("✅ Retrieved {} messages", messages.len());
-            Json(ChatHistoryResponse {
-                messages,
-                session_id,
+    Json(payload): Json<HistoryRequest>,
+) -> impl IntoResponse {
+    info!("📜 History request for session: {}", payload.session_id);
+
+    let messages = state
+        .thread_manager
+        .get_full_conversation(&payload.session_id)
+        .await;
+
+    let entries: Vec<MessageEntry> = messages
+        .into_iter()
+        .filter_map(|msg| {
+            msg.content.map(|content| MessageEntry {
+                role: msg.role,
+                content,
             })
-            .into_response()
+        })
+        .collect();
+
+    Json(HistoryResponse {
+        success: true,
+        messages: entries,
+    })
+}
+
+/// Clear session endpoint
+pub async fn clear_session_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<HistoryRequest>,
+) -> impl IntoResponse {
+    info!("🧹 Clear session request: {}", payload.session_id);
+
+    match state
+        .thread_manager
+        .clear_session(&payload.session_id)
+        .await
+    {
+        Ok(_) => {
+            info!("✅ Session cleared successfully");
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "message": "Session cleared"
+                })),
+            )
         }
         Err(e) => {
-            error!("❌ Failed to fetch history: {:?}", e);
+            error!("❌ Failed to clear session: {:?}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
-                    "error": "Failed to fetch chat history",
-                    "details": e.to_string()
+                    "success": false,
+                    "error": format!("Failed to clear session: {}", e)
                 })),
             )
-                .into_response()
         }
     }
-}
-
-/// Health check endpoint
-pub async fn health_check() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "healthy",
-        "service": "mira-backend",
-        "version": "0.4.1",
-        "model": "gpt-5"
-    }))
 }

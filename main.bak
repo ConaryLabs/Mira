@@ -1,0 +1,187 @@
+// src/main.rs
+// Fixed version - Added parameters to ThreadManager::new()
+
+use anyhow::Result;
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
+
+use mira_backend::{
+    api,
+    git::{GitClient, GitStore},
+    handlers,
+    llm::{
+        client::OpenAIClient,
+        responses::{ResponsesManager, ThreadManager, VectorStoreManager},
+    },
+    memory::{
+        qdrant::store::QdrantMemoryStore,
+        sqlite::store::SqliteMemoryStore,
+    },
+    persona::PersonaOverlay,
+    project::store::ProjectStore,
+    services::{ChatService, ContextService, DocumentService, MemoryService},
+    state::AppState,
+};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize tracing
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    info!("🚀 Starting Mira Backend v{}", env!("CARGO_PKG_VERSION"));
+
+    // Load environment variables
+    dotenv::dotenv().ok();
+
+    // Initialize database connection
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite:./mira.db".to_string());
+    
+    info!("📊 Connecting to database: {}", database_url);
+    let pool = sqlx::SqlitePool::connect(&database_url).await?;
+    
+    // Run migrations
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    info!("✅ Database migrations completed");
+
+    // Initialize stores
+    let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
+    
+    let qdrant_url = std::env::var("QDRANT_URL")
+        .unwrap_or_else(|_| "http://localhost:6333".to_string());
+    let qdrant_collection = std::env::var("QDRANT_COLLECTION")
+        .unwrap_or_else(|_| "mira-memory".to_string());
+    
+    info!("🔮 Connecting to Qdrant at: {}", qdrant_url);
+    let qdrant_store = Arc::new(
+        QdrantMemoryStore::new(&qdrant_url, &qdrant_collection).await?
+    );
+
+    // Initialize project store
+    let project_store = Arc::new(ProjectStore::new(pool.clone()));
+
+    // Initialize Git store and client
+    let git_repos_dir = std::env::var("GIT_REPOS_DIR")
+        .unwrap_or_else(|_| "./repos".to_string());
+    let git_store = GitStore::new(pool.clone());
+    let git_client = GitClient::new(&git_repos_dir);
+
+    // Initialize LLM components
+    let llm_client = Arc::new(OpenAIClient::new()?);
+    
+    // FIXED: Added parameters to ThreadManager::new()
+    // Using values from environment or defaults
+    let max_messages = std::env::var("MIRA_HISTORY_MESSAGE_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24);
+    
+    let token_limit = std::env::var("MIRA_HISTORY_TOKEN_LIMIT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(32768);
+    
+    let thread_manager = Arc::new(ThreadManager::new(max_messages, token_limit));
+    
+    let responses_manager = Arc::new(
+        ResponsesManager::with_thread_manager(llm_client.clone(), thread_manager.clone())
+    );
+    
+    let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
+
+    // Initialize services
+    let memory_service = Arc::new(MemoryService::new(
+        sqlite_store.clone(),
+        qdrant_store.clone(),
+        llm_client.clone(),
+    ));
+
+    let context_service = Arc::new(ContextService::new(
+        sqlite_store.clone(),
+        qdrant_store.clone(),
+    ));
+
+    // Get persona from environment
+    let persona_str = std::env::var("MIRA_PERSONA")
+        .unwrap_or_else(|_| "Default".to_string());
+    
+    let persona = match persona_str.as_str() {
+        "Forbidden" => PersonaOverlay::Forbidden,
+        "Hallow" => PersonaOverlay::Hallow,
+        "Haven" => PersonaOverlay::Haven,
+        _ => PersonaOverlay::Default,
+    };
+    
+    info!("🎭 Using persona: {:?}", persona);
+
+    let chat_service = Arc::new(ChatService::new(
+        llm_client.clone(),
+        thread_manager.clone(),
+        memory_service.clone(),
+        vector_store_manager.clone(),
+        persona,
+    ));
+
+    let document_service = Arc::new(DocumentService::new(
+        memory_service.clone(),
+        vector_store_manager.clone(),
+    ));
+
+    // Create app state
+    let app_state = Arc::new(AppState {
+        sqlite_store,
+        qdrant_store,
+        project_store,
+        git_store,
+        git_client,
+        llm_client,
+        responses_manager,
+        vector_store_manager,
+        thread_manager,
+        chat_service,
+        memory_service,
+        context_service,
+        document_service,
+    });
+
+    // Build the router
+    let app = Router::new()
+        // Health check
+        .route("/health", get(handlers::health_handler))
+        
+        // Chat endpoints
+        .route("/chat", post(handlers::chat_handler))
+        .route("/chat/history", post(handlers::history_handler))
+        .route("/chat/clear", post(handlers::clear_session_handler))
+        
+        // Project endpoints
+        .nest("/projects", api::http::project::router())
+        
+        // Git endpoints (if implemented)
+        // .nest("/git", api::http::git::router())
+        
+        // WebSocket endpoint (if needed)
+        // .route("/ws", get(api::ws::websocket_handler))
+        
+        .layer(CorsLayer::permissive())
+        .with_state(app_state);
+
+    // Start the server
+    let addr = "0.0.0.0:3000";
+    info!("🌐 Server listening on http://{}", addr);
+    
+    axum::Server::bind(&addr.parse()?)
+        .serve(app.into_make_service())
+        .await?;
+
+    Ok(())
+}

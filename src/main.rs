@@ -1,5 +1,5 @@
 // src/main.rs
-// Phase 3: Remove HybridMemoryService, properly initialize unified ChatService
+// Mira v2.0 - GPT-5 Edition with Responses API
 
 use std::sync::Arc;
 
@@ -27,10 +27,11 @@ use mira_backend::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize environment and logging
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    info!("🚀 Mira v2.0 - GPT‑5 Edition");
+    info!("🚀 Mira v2.0 - GPT-5 Edition");
     info!("📅 August 2025 - Full Autonomy Mode");
 
     // --- Initialize SQLite pool ---
@@ -52,8 +53,8 @@ async fn main() -> anyhow::Result<()> {
         QdrantMemoryStore::new(&qdrant_url, &qdrant_collection).await?
     );
 
-    // --- Initialize OpenAI (GPT‑5 + embeddings + images) ---
-    info!("🧠 Initializing OpenAI (GPT‑5)...");
+    // --- Initialize OpenAI (GPT-5 + embeddings + images) ---
+    info!("🧠 Initializing OpenAI (GPT-5)...");
     // NOTE: OpenAIClient::new() already returns Arc<Self>
     let openai_client = OpenAIClient::new()?;
     info!("   ✅ gpt-5 for conversation");
@@ -74,7 +75,10 @@ async fn main() -> anyhow::Result<()> {
     info!("🔧 Initializing Responses API managers...");
     let responses_manager = Arc::new(ResponsesManager::new(openai_client.clone()));
     let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
-    let thread_manager = Arc::new(ThreadManager::new());
+    
+    // ThreadManager needs max_messages and token_limit parameters
+    // Using reasonable defaults: 100 messages max, 128k token limit
+    let thread_manager = Arc::new(ThreadManager::new(100, 128000));
 
     // --- Initialize Services ---
     info!("🔧 Initializing services...");
@@ -99,8 +103,8 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(PersonaOverlay::Default);
     info!("🧬 Persona overlay: {}", persona.name());
 
-    // Chat service (Unified GPT‑5 via /responses) - updated signature: no ContextService arg
-    info!("🚀 Creating unified GPT‑5 chat service with vector store retrieval...");
+    // Chat service (Unified GPT-5 via /responses) - updated signature: no ContextService arg
+    info!("🚀 Creating unified GPT-5 chat service with vector store retrieval...");
     let chat_service = Arc::new(ChatService::new(
         openai_client.clone(),
         thread_manager.clone(),
@@ -147,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = format!("0.0.0.0:{port}");
 
     let app = Router::new()
-        .route("/", get(|| async { "Mira Backend v2.0 - GPT‑5" }))
+        .route("/", get(|| async { "Mira Backend v2.0 - GPT-5" }))
         .route("/health", get(|| async {
             axum::Json(serde_json::json!({
                 "status": "healthy",
@@ -164,11 +168,15 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors)
         .with_state(app_state);
 
-    info!("✨ Mira server starting on {}", addr);
-    info!("🌐 WebSocket endpoint: ws://{}/ws/chat", addr);
-    info!("🔗 REST endpoint: http://{}/api/chat", addr);
+    info!("🚀 Server starting on {}", addr);
+    info!("🌐 HTTP endpoints: http://{}/api", addr);
+    info!("🔌 WebSocket endpoint: ws://{}/ws/chat", addr);
+    info!("📁 Project endpoints: http://{}/projects", addr);
 
-    let listener = TcpListener::bind(addr).await?;
+    // --- Start the server ---
+    let listener = TcpListener::bind(&addr).await?;
+    info!("✨ Mira is ready for connections!");
+    
     axum::serve(listener, app).await?;
 
     Ok(())

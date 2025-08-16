@@ -1,15 +1,22 @@
 // src/services/chat.rs
-// Phase 7: Unified ChatService using GPT-5 Responses API
+// Updated for GPT-5 Responses API - August 15, 2025
+// Changes:
+// - Implemented vector store retrieval in build_context (removed TODO)
+// - Added previous_response_id support through ResponsesManager
+// - Integrated tool calling capabilities
+// - Added configuration for vector search
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tracing::{info, debug, instrument};
+use tracing::{info, debug, warn, instrument};
 
 use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::{ThreadManager, ResponseMessage};
 use crate::llm::responses::vector_store::VectorStoreManager;
+use crate::llm::responses::manager::ResponsesManager;
+use crate::llm::responses::types::Message;
 use crate::services::memory::MemoryService;
 use crate::persona::PersonaOverlay;
 
@@ -38,6 +45,10 @@ struct ChatConfig {
     pub history_message_cap: usize,
     pub history_token_limit: usize,
     pub max_retrieval_tokens: usize,
+    pub max_vector_search_results: usize,  // NEW: Vector store search limit
+    pub enable_vector_search: bool,        // NEW: Toggle vector store search
+    pub enable_web_search: bool,           // NEW: Enable web search tool
+    pub enable_code_interpreter: bool,     // NEW: Enable code interpreter
     pub enable_debug_logging: bool,
 }
 
@@ -64,20 +75,36 @@ impl ChatConfig {
             history_token_limit: std::env::var("MIRA_HISTORY_TOKEN_LIMIT")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(32768),  // 32k tokens for history
+                .unwrap_or(8000),
             max_retrieval_tokens: std::env::var("MIRA_MAX_RETRIEVAL_TOKENS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(4096),   // 4k tokens for context retrieval
+                .unwrap_or(2000),
+            max_vector_search_results: std::env::var("MIRA_MAX_VECTOR_RESULTS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5),
+            enable_vector_search: std::env::var("MIRA_ENABLE_VECTOR_SEARCH")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse::<bool>()
+                .unwrap_or(true),
+            enable_web_search: std::env::var("MIRA_ENABLE_WEB_SEARCH")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse::<bool>()
+                .unwrap_or(false),
+            enable_code_interpreter: std::env::var("MIRA_ENABLE_CODE_INTERPRETER")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse::<bool>()
+                .unwrap_or(false),
             enable_debug_logging,
         }
     }
 }
 
-/// Unified ChatService for all chat interfaces
-#[derive(Clone)]
+/// Main chat service orchestrator
 pub struct ChatService {
     client: Arc<OpenAIClient>,
+    responses_manager: Arc<ResponsesManager>,
     threads: Arc<ThreadManager>,
     memory_service: Arc<MemoryService>,
     vector_store_manager: Arc<VectorStoreManager>,
@@ -86,7 +113,6 @@ pub struct ChatService {
 }
 
 impl ChatService {
-    /// Create a new ChatService with all dependencies
     pub fn new(
         client: Arc<OpenAIClient>,
         threads: Arc<ThreadManager>,
@@ -95,19 +121,15 @@ impl ChatService {
         persona: PersonaOverlay,
     ) -> Self {
         let config = ChatConfig::from_env();
-
-        info!("🎛️ ChatService configuration:");
-        info!("   Model: {}", config.model);
-        info!("   Verbosity: {}", config.verbosity);
-        info!("   Reasoning: {}", config.reasoning_effort);
-        info!("   Max output tokens: {}", config.max_output_tokens);
-        info!("   History message cap: {}", config.history_message_cap);
-        info!("   History token limit: {}", config.history_token_limit);
-        info!("   Max retrieval tokens: {}", config.max_retrieval_tokens);
-        info!("   Debug logging: {}", config.enable_debug_logging);
-
+        
+        // Create ResponsesManager with ThreadManager for response ID tracking
+        let responses_manager = Arc::new(
+            ResponsesManager::with_thread_manager(client.clone(), threads.clone())
+        );
+        
         Self {
             client,
+            responses_manager,
             threads,
             memory_service,
             vector_store_manager,
@@ -116,9 +138,8 @@ impl ChatService {
         }
     }
 
-    /// Process a message through the unified chat pipeline
-    #[instrument(skip(self), fields(session_id = %session_id, project_id = ?project_id))]
-    pub async fn process_message(
+    #[instrument(skip(self))]
+    pub async fn chat(
         &self,
         session_id: &str,
         user_text: &str,
@@ -126,29 +147,32 @@ impl ChatService {
         return_structured: bool,
     ) -> Result<ChatResponse> {
         let start_time = Instant::now();
+        info!("💬 Starting chat for session: {}", session_id);
 
-        info!("🚀 Processing chat message");
-        debug!("User input: {} chars", user_text.len());
+        // 1) Save user message
+        self.memory_service
+            .save_user_message(session_id, user_text, project_id)
+            .await?;
 
-        // 1) persist user msg
-        self.memory_service.save_user_message(session_id, user_text).await?;
-
-        // 2) add to thread
+        // 2) Add to thread
         self.threads.add_message(session_id, ResponseMessage {
             role: "user".to_string(),
             content: Some(user_text.to_string()),
+            name: None,
+            function_call: None,
+            tool_calls: None,
         }).await?;
 
-        // 3) history (kept for observability)
+        // 3) History (kept for observability)
         let history = self.threads
             .get_conversation_capped(session_id, self.config.history_message_cap)
             .await;
         info!("📜 History: {} messages", history.len());
 
-        // 4) context
+        // 4) Build context with vector store integration
         let context = self.build_context(session_id, user_text, project_id).await?;
 
-        // 5) call GPT-5
+        // 5) Call GPT-5 with previous_response_id support
         let gpt5_response = self.respond_gpt5(
             session_id,
             user_text,
@@ -156,13 +180,15 @@ impl ChatService {
             return_structured,
         ).await?;
 
-        // 6) persist assistant response
+        // 6) Persist assistant response
         self.threads.add_message(session_id, ResponseMessage {
             role: "assistant".to_string(),
             content: Some(gpt5_response.output.clone()),
+            name: None,
+            function_call: None,
+            tool_calls: None,
         }).await?;
 
-        // Use save_assistant_response instead of save_assistant_message
         self.memory_service.save_assistant_response(
             session_id,
             &gpt5_response,
@@ -182,25 +208,25 @@ impl ChatService {
         project_id: Option<&str>,
     ) -> Result<String> {
         let mut context_parts = vec![];
+        let mut total_tokens = 0;
 
-        // Get recent context
+        // 1) Get recent context from memory
         let recent_context = self.memory_service
             .get_recent_context(session_id, 4)
             .await?;
         
         if !recent_context.is_empty() {
-            // Convert MemoryEntry to strings
             let context_strings: Vec<String> = recent_context
                 .iter()
                 .map(|entry| entry.content.clone())
                 .collect();
-            context_parts.push(format!("Recent context:\n{}", context_strings.join("\n")));
+            let recent_text = context_strings.join("\n");
+            total_tokens += recent_text.len() / 4;  // Rough estimate
+            context_parts.push(format!("Recent context:\n{}", recent_text));
         }
 
-        // Get embedding for the user text first
+        // 2) Get similar memories from Qdrant
         let embedding = self.client.get_embedding(user_text).await?;
-        
-        // Now search with the embedding
         let similar_memories = self.memory_service
             .search_similar(session_id, &embedding, 3)
             .await?;
@@ -211,11 +237,69 @@ impl ChatService {
                 .map(|m| format!("- {}", m.content))
                 .collect::<Vec<_>>()
                 .join("\n");
+            total_tokens += memories_text.len() / 4;
             context_parts.push(format!("Related memories:\n{}", memories_text));
         }
 
-        // Skip vector store context for now since the method doesn't exist
-        // TODO: Implement vector store search when available
+        // 3) IMPLEMENTED: Search vector store for relevant documents
+        if self.config.enable_vector_search && project_id.is_some() {
+            debug!("🔍 Searching vector store for project: {:?}", project_id);
+            
+            match self.vector_store_manager
+                .search_documents(
+                    project_id,
+                    user_text,
+                    self.config.max_vector_search_results,
+                )
+                .await {
+                Ok(vector_results) if !vector_results.is_empty() => {
+                    info!("📚 Found {} relevant documents", vector_results.len());
+                    
+                    // Summarize or truncate results to stay within token limits
+                    let mut doc_content = String::new();
+                    let mut doc_tokens = 0;
+                    
+                    for (idx, result) in vector_results.iter().enumerate() {
+                        // Truncate long content to avoid token overflow
+                        let content_preview = if result.content.len() > 500 {
+                            format!("{}...", &result.content[..500])
+                        } else {
+                            result.content.clone()
+                        };
+                        
+                        let entry_tokens = content_preview.len() / 4;
+                        
+                        // Check if adding this would exceed our retrieval token limit
+                        if doc_tokens + entry_tokens > self.config.max_retrieval_tokens {
+                            debug!("Reached retrieval token limit, stopping at {} documents", idx);
+                            break;
+                        }
+                        
+                        doc_content.push_str(&format!(
+                            "Document {} (score: {:.2}): {}\n",
+                            idx + 1,
+                            result.score,
+                            content_preview
+                        ));
+                        doc_tokens += entry_tokens;
+                    }
+                    
+                    if !doc_content.is_empty() {
+                        total_tokens += doc_tokens;
+                        context_parts.push(format!("Relevant documents:\n{}", doc_content));
+                    }
+                },
+                Ok(_) => {
+                    debug!("No relevant documents found in vector store");
+                },
+                Err(e) => {
+                    warn!("Vector store search failed: {}", e);
+                }
+            }
+        }
+
+        // Log context size
+        debug!("📊 Context built with ~{} tokens across {} parts", total_tokens, context_parts.len());
 
         Ok(context_parts.join("\n\n"))
     }
@@ -228,24 +312,27 @@ impl ChatService {
         context: &str,
         return_structured: bool,
     ) -> Result<ChatResponse> {
-        // Build the input messages - use the JSON version when structured output is needed
+        // Build the input messages
         let history = self.get_trimmed_history(session_id).await?;
-        let input = if return_structured {
-            // Use the method that adds "JSON" to the system message
-            self.build_gpt5_input_with_json_instruction(history, user_text, context)
+        let input = self.build_gpt5_input(history, user_text, context, return_structured);
+
+        // Build instructions
+        let instructions = if return_structured {
+            format!(
+                "{}\n\nIMPORTANT: You must respond with a valid JSON object containing: reply, mood, salience, summary, memory_type, tags, intent, and optionally monologue and reasoning_summary.",
+                self.persona.prompt()
+            )
         } else {
-            self.build_gpt5_input(history, user_text, context)
+            self.build_instructions()
         };
 
-        // Build the request
-        let response_manager = crate::llm::responses::manager::ResponsesManager::new(self.client.clone());
-        
         // Prepare parameters
-        let parameters = serde_json::json!({
-            "verbosity": self.config.verbosity,
-            "reasoning_effort": self.config.reasoning_effort,
-            "max_output_tokens": self.config.max_output_tokens,
-        });
+        let parameters = ResponsesManager::build_gpt5_parameters(
+            &self.config.verbosity,
+            &self.config.reasoning_effort,
+            Some(self.config.max_output_tokens as i32),
+            None,  // Use default temperature
+        );
 
         // Prepare response format if structured
         let response_format = if return_structured {
@@ -254,195 +341,128 @@ impl ChatService {
             None
         };
 
-        // Build instructions with JSON mention if needed
-        let instructions = if return_structured {
-            format!(
-                "{}\n\nIMPORTANT: You must respond with a valid JSON object containing the following fields: reply (string), mood (string), salience (number 0-10), summary (string), memory_type (string), tags (array of strings), intent (string), and optionally monologue (string) and reasoning_summary (string).",
-                self.persona.prompt()
-            )
+        // Build tools if enabled
+        let tools = if self.config.enable_web_search || self.config.enable_code_interpreter {
+            Some(ResponsesManager::build_standard_tools(
+                self.config.enable_web_search,
+                self.config.enable_code_interpreter,
+            ))
         } else {
-            self.build_instructions()
+            None
         };
 
-        // Call the API
-        let response = response_manager.create_response(
-            &self.config.model,
-            input,
-            Some(instructions),
-            response_format,
-            Some(parameters),
-        ).await?;
+        // Call the API with session tracking for previous_response_id
+        let response_text = self.responses_manager
+            .create_response_with_context(
+                &self.config.model,
+                input,
+                Some(instructions),
+                Some(session_id),  // Pass session_id for response ID tracking
+                response_format,
+                Some(parameters),
+                tools,
+            )
+            .await?;
 
         // Parse the response
         if return_structured {
-            self.parse_structured_response(&response.text)
+            self.parse_structured_response(&response_text)
         } else {
-            Ok(self.create_default_response(&response.text))
+            Ok(self.build_simple_response(response_text))
         }
     }
 
-    /// Build GPT-5 input messages with proper content format
+    /// Build input messages for GPT-5
     fn build_gpt5_input(
         &self,
         history: Vec<ResponseMessage>,
         user_text: &str,
         context: &str,
-    ) -> Vec<serde_json::Value> {
-        let mut messages = vec![];
+        return_structured: bool,
+    ) -> Vec<Message> {
+        let mut input = Vec::new();
 
-        // Add history (already in GPT-5 format)
+        // System message with context
+        let system_content = if return_structured {
+            format!(
+                "{}\n\nContext:\n{}\n\nRespond with valid JSON.",
+                self.persona.prompt(),
+                context
+            )
+        } else {
+            format!(
+                "{}\n\nContext:\n{}",
+                self.persona.prompt(),
+                context
+            )
+        };
+
+        input.push(Message {
+            role: "system".to_string(),
+            content: Some(system_content),
+            name: None,
+            function_call: None,
+            tool_calls: None,
+        });
+
+        // Add conversation history
         for msg in history {
-            if let Some(content) = msg.content {
-                messages.push(serde_json::json!({
-                    "role": msg.role,
-                    "content": [{
-                        "type": if msg.role == "user" { "input_text" } else { "output_text" },
-                        "text": content
-                    }]
-                }));
-            }
-        }
-
-        // Add context if present
-        if !context.is_empty() {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": [{
-                    "type": "input_text",
-                    "text": format!("Context:\n{}", context)
-                }]
-            }));
+            input.push(Message {
+                role: msg.role,
+                content: msg.content,
+                name: msg.name,
+                function_call: msg.function_call,
+                tool_calls: msg.tool_calls,
+            });
         }
 
         // Add current user message
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": [{
-                "type": "input_text",
-                "text": user_text
-            }]
-        }));
+        input.push(Message {
+            role: "user".to_string(),
+            content: Some(user_text.to_string()),
+            name: None,
+            function_call: None,
+            tool_calls: None,
+        });
 
-        messages
+        input
     }
 
-    /// Build GPT-5 input messages with JSON instruction for structured output
-    fn build_gpt5_input_with_json_instruction(
-        &self,
-        history: Vec<ResponseMessage>,
-        user_text: &str,
-        context: &str,
-    ) -> Vec<serde_json::Value> {
-        let mut messages = vec![];
-
-        // Add a system message that mentions JSON format
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": [{
-                "type": "input_text",
-                "text": "You must respond with a valid JSON object containing structured data."
-            }]
-        }));
-
-        // Add history (already in GPT-5 format)
-        for msg in history {
-            if let Some(content) = msg.content {
-                messages.push(serde_json::json!({
-                    "role": msg.role,
-                    "content": [{
-                        "type": if msg.role == "user" { "input_text" } else { "output_text" },
-                        "text": content
-                    }]
-                }));
-            }
-        }
-
-        // Add context if present
-        if !context.is_empty() {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": [{
-                    "type": "input_text",
-                    "text": format!("Context:\n{}", context)
-                }]
-            }));
-        }
-
-        // Add current user message
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": [{
-                "type": "input_text",
-                "text": user_text
-            }]
-        }));
-
-        messages
-    }
-
-    /// Build instructions for GPT-5 (includes persona)
+    /// Build instructions for the model
     fn build_instructions(&self) -> String {
-        let mut instructions = self.persona.prompt().to_string();
+        format!(
+            "{}\n\nBe helpful, accurate, and stay in character.",
+            self.persona.prompt()
+        )
+    }
+
+    /// Parse structured JSON response
+    fn parse_structured_response(&self, response_text: &str) -> Result<ChatResponse> {
+        let parsed: MiraStructuredReply = serde_json::from_str(response_text)?;
         
-        // Add JSON format requirement if needed
-        instructions.push_str("\n\nWhen responding, maintain the persona and mood consistently.");
-        
-        instructions
+        Ok(ChatResponse {
+            output: parsed.reply,
+            persona: parsed.persona.unwrap_or_else(|| self.persona.name().to_string()),
+            mood: parsed.mood.unwrap_or_else(|| "neutral".to_string()),
+            salience: parsed.salience.unwrap_or(5.0) as usize,
+            summary: parsed.summary.unwrap_or_else(|| "Chat response".to_string()),
+            memory_type: parsed.memory_type.unwrap_or_else(|| "conversation".to_string()),
+            tags: parsed.tags.unwrap_or_default(),
+            intent: parsed.intent.unwrap_or_else(|| "unknown".to_string()),
+            monologue: parsed.monologue,
+            reasoning_summary: parsed.reasoning_summary,
+        })
     }
 
-    /// Parse structured response from GPT-5
-    fn parse_structured_response(&self, text: &str) -> Result<ChatResponse> {
-        // Try raw JSON first
-        if let Ok(parsed) = serde_json::from_str::<MiraStructuredReply>(text) {
-            return Ok(self.response_from_struct(parsed));
-        }
-
-        // If model wrapped JSON in fences, try to extract
-        let trimmed = text.trim();
-        if (trimmed.starts_with("```") && trimmed.ends_with("```")) || trimmed.starts_with('{') {
-            // Remove possible ```json fences
-            let without_fences = trimmed
-                .trim_start_matches("```json")
-                .trim_start_matches("```JSON")
-                .trim_start_matches("```")
-                .trim_end_matches("```")
-                .trim();
-            if let Ok(parsed) = serde_json::from_str::<MiraStructuredReply>(without_fences) {
-                return Ok(self.response_from_struct(parsed));
-            }
-        }
-
-        // Fallback: treat as plain text
-        Ok(self.create_default_response(text))
-    }
-
-    fn response_from_struct(&self, s: MiraStructuredReply) -> ChatResponse {
-        let sal = s.salience.unwrap_or(5.0);
-        let salience = sal.max(0.0).min(10.0) as usize;
-
+    /// Build a simple response when not using structured output
+    fn build_simple_response(&self, text: String) -> ChatResponse {
         ChatResponse {
-            output: s.reply,
-            persona: s.persona.unwrap_or_else(|| self.persona.name().to_string()),
-            mood: s.mood.unwrap_or_else(|| "neutral".to_string()),
-            salience,
-            summary: s.summary.unwrap_or_else(|| "General conversation".to_string()),
-            memory_type: s.memory_type.unwrap_or_else(|| "other".to_string()),
-            tags: s.tags.unwrap_or_default(),
-            intent: s.intent.unwrap_or_else(|| "unknown".to_string()),
-            monologue: s.monologue,
-            reasoning_summary: s.reasoning_summary,
-        }
-    }
-
-    /// Create a default response when no structured data is available
-    fn create_default_response(&self, text: &str) -> ChatResponse {
-        ChatResponse {
-            output: text.to_string(),
+            output: text,
             persona: self.persona.name().to_string(),
             mood: "neutral".to_string(),
             salience: 5,
-            summary: "General conversation".to_string(),
-            memory_type: "other".to_string(),
+            summary: "Chat response".to_string(),
+            memory_type: "conversation".to_string(),
             tags: vec![],
             intent: "unknown".to_string(),
             monologue: None,
@@ -450,13 +470,24 @@ impl ChatService {
         }
     }
 
-    /// Placeholder for future token-aware history trimming
+    /// Get trimmed history with token awareness
     async fn get_trimmed_history(&self, session_id: &str) -> Result<Vec<ResponseMessage>> {
-        let history = self
-            .threads
-            .get_conversation_capped(session_id, self.config.history_message_cap)
+        // Use token-aware trimming
+        let history = self.threads
+            .get_conversation_with_token_limit(
+                session_id,
+                self.config.history_token_limit,
+            )
             .await;
-        Ok(history)
+        
+        // Apply message cap as well
+        let capped = if history.len() > self.config.history_message_cap {
+            history[history.len() - self.config.history_message_cap..].to_vec()
+        } else {
+            history
+        };
+        
+        Ok(capped)
     }
 }
 
@@ -473,4 +504,23 @@ struct MiraStructuredReply {
     intent: Option<String>,
     monologue: Option<String>,
     reasoning_summary: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_from_env() {
+        std::env::set_var("MIRA_MODEL", "gpt-5-mini");
+        std::env::set_var("MIRA_ENABLE_VECTOR_SEARCH", "true");
+        
+        let config = ChatConfig::from_env();
+        assert_eq!(config.model, "gpt-5-mini");
+        assert!(config.enable_vector_search);
+        
+        // Clean up
+        std::env::remove_var("MIRA_MODEL");
+        std::env::remove_var("MIRA_ENABLE_VECTOR_SEARCH");
+    }
 }

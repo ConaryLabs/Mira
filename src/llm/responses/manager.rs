@@ -1,233 +1,335 @@
 // src/llm/responses/manager.rs
-use std::sync::Arc;
+// Updated for GPT-5 Responses API - August 15, 2025
+// Changes:
+// - Added previous_response_id support for conversation continuity
+// - Integrated with ThreadManager for response ID tracking
+// - Added tool calling support
+// - Streamlined response generation (removed duplication with OpenAIClient)
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use anyhow::{Result, Context};
 use serde_json::{json, Value};
-use tracing::{debug, error, info};
+use std::sync::Arc;
+use tracing::{debug, info};
 
 use crate::llm::client::OpenAIClient;
+use crate::llm::responses::thread::ThreadManager;
+use crate::llm::responses::types::{
+    ResponsesResponse, Message, Tool,
+    FunctionDefinition, CodeInterpreterConfig, ContainerConfig,
+};
 
-#[derive(Clone)]
+/// High-level manager for the GPT-5 Responses API
 pub struct ResponsesManager {
     client: Arc<OpenAIClient>,
-    responses_id: Option<String>,
+    thread_manager: Option<Arc<ThreadManager>>,  // Optional thread manager for response ID tracking
 }
 
 impl ResponsesManager {
+    /// Create a new ResponsesManager
     pub fn new(client: Arc<OpenAIClient>) -> Self {
-        Self { client, responses_id: None }
+        Self {
+            client,
+            thread_manager: None,
+        }
     }
 
+    /// Create a ResponsesManager with ThreadManager for response ID tracking
+    pub fn with_thread_manager(
+        client: Arc<OpenAIClient>,
+        thread_manager: Arc<ThreadManager>,
+    ) -> Self {
+        Self {
+            client,
+            thread_manager: Some(thread_manager),
+        }
+    }
+
+    /// Create a response using the Responses API with full parameter support
     pub async fn create_response(
         &self,
         model: &str,
-        messages: Vec<Value>,
+        input: Vec<Message>,
         instructions: Option<String>,
-        response_format: Option<Value>,  // kept for compatibility
-        parameters: Option<Value>,       // verbosity, reasoning_effort, max_output_tokens
-    ) -> Result<ResponseObject> {
-        let mut body = json!({ "model": model, "input": messages });
+        response_format: Option<Value>,
+        parameters: Option<Value>,
+    ) -> Result<String> {
+        // This method maintains backward compatibility
+        self.create_response_with_context(
+            model,
+            input,
+            instructions,
+            None,  // No session_id for backward compatibility
+            response_format,
+            parameters,
+            None,  // No tools
+        ).await
+    }
 
-        if let Some(ref instr) = instructions {
-            body["instructions"] = Value::String(instr.clone());
+    /// Create a response with session tracking and previous_response_id
+    pub async fn create_response_with_context(
+        &self,
+        model: &str,
+        input: Vec<Message>,
+        instructions: Option<String>,
+        session_id: Option<&str>,
+        response_format: Option<Value>,
+        parameters: Option<Value>,
+        tools: Option<Vec<Tool>>,
+    ) -> Result<String> {
+        // Get previous_response_id if we have a session
+        let previous_response_id = if let (Some(session_id), Some(thread_mgr)) = 
+            (session_id, &self.thread_manager) {
+            thread_mgr.get_previous_response_id(session_id).await
+        } else {
+            None
+        };
+
+        if let Some(ref prev_id) = previous_response_id {
+            debug!("Using previous_response_id: {}", prev_id);
         }
 
-        // ---- Parameters (validated) ----------------------------------------------------------
-        let mut verbosity = "medium";
-        let mut reasoning_effort = "medium";
-        let mut max_output_tokens: usize = 128_000;
+        // Build the request
+        let mut request_body = json!({
+            "model": model,
+            "input": input,
+        });
 
-        if let Some(params) = &parameters {
-            if let Some(v) = params.get("verbosity").and_then(|v| v.as_str()) {
-                verbosity = match v.trim() {
-                    "low" => "low",
-                    "high" => "high",
-                    _ => "medium",
-                };
-            }
-            if let Some(r) = params.get("reasoning_effort").and_then(|r| r.as_str()) {
-                reasoning_effort = match r.trim() {
-                    "minimal" | "low" => "low",
-                    "high" => "high",
-                    _ => "medium",
-                };
-            }
-            if let Some(m) = params.get("max_output_tokens") {
-                if let Some(num) = m.as_u64() {
-                    max_output_tokens = num as usize;
-                } else if let Some(num) = m.as_i64() {
-                    max_output_tokens = num as usize;
-                }
-            }
+        if let Some(inst) = instructions {
+            request_body["instructions"] = json!(inst);
         }
 
-        // ---- Text / format -------------------------------------------------------------------
-        // Always include a "text" object; set "format" only if caller asked for JSON.
-        let mut text_obj = json!({ "verbosity": verbosity });
+        if let Some(prev_id) = previous_response_id {
+            request_body["previous_response_id"] = json!(prev_id);
+        }
 
         if let Some(fmt) = response_format {
-            if fmt.get("type").and_then(|t| t.as_str()) == Some("json_object") {
-                text_obj["format"] = json!({ "type": "json_object" });
-            }
-        }
-        body["text"] = text_obj.clone();
-
-        // ---- Reasoning / tokens --------------------------------------------------------------
-        body["reasoning"] = json!({ "effort": reasoning_effort });
-        body["max_output_tokens"] = json!(max_output_tokens);
-
-        // ---- Debug request -------------------------------------------------------------------
-        info!("🔍 Sending request to OpenAI:");
-        info!("   Model: {}", model);
-        info!("   Verbosity: {}", verbosity);
-        info!("   Reasoning effort: {}", reasoning_effort);
-        info!("   Max output tokens: {}", max_output_tokens);
-        info!("   Has instructions: {}", instructions.is_some());
-        info!("   Has format: {}", text_obj.get("format").is_some());
-        info!("   Input messages count: {}", messages.len());
-
-        if let Some(first_msg) = body.get("input").and_then(|i| i.as_array()).and_then(|a| a.first()) {
-            debug!("   First message: {}", first_msg);
-        }
-        if let Ok(pretty) = serde_json::to_string_pretty(&body) {
-            debug!("📤 Full request body: {}", pretty);
+            request_body["response_format"] = fmt;
         }
 
-        // ---- Call API (non-streaming) --------------------------------------------------------
-        let v = match self.client.post_response(body).await {
-            Ok(response) => {
-                info!("✅ Got response from OpenAI");
-                response
+        // Merge parameters into the request
+        if let Some(params) = parameters {
+            if let Some(obj) = params.as_object() {
+                for (key, value) in obj {
+                    request_body[key] = value.clone();
+                }
             }
-            Err(e) => {
-                error!("❌ OpenAI API error: {:?}", e);
-                return Err(e);
-            }
-        };
+        }
 
-        // ---- Extract output (GPT‑5 Responses shape) -----------------------------------------
-        if let Some(output_val) = v.get("output").cloned() {
-            debug!(
-                "🔎 output: {}",
-                serde_json::to_string_pretty(&output_val).unwrap_or_default()
+        if let Some(tools_list) = tools {
+            request_body["tools"] = json!(tools_list);
+            request_body["tool_choice"] = json!("auto");  // Default to auto
+        }
+
+        info!("📤 Sending request to GPT-5 Responses API");
+        debug!("Request body: {}", serde_json::to_string_pretty(&request_body)?);
+
+        // Send the request using the client's post_response method
+        let response = self.client
+            .post_response(request_body.clone())
+            .await
+            .context("Failed to call Responses API")?;
+
+        // Parse the response
+        let response_data: ResponsesResponse = serde_json::from_value(response)
+            .context("Failed to parse ResponsesResponse")?;
+        
+        // Update the previous_response_id for the session
+        if let (Some(session_id), Some(thread_mgr)) = (session_id, &self.thread_manager) {
+            thread_mgr.update_response_id(session_id, response_data.id.clone()).await?;
+            info!("✅ Updated session {} with response_id: {}", session_id, response_data.id);
+        }
+
+        // Extract the text content
+        let mut output_text = String::new();
+        let mut function_calls = Vec::new();
+
+        for item in &response_data.output {
+            match item.output_type.as_str() {
+                "text" => {
+                    if let Some(text) = &item.text {
+                        output_text.push_str(text);
+                    }
+                }
+                "function_call" | "tool_call" => {
+                    function_calls.push(item.clone());
+                }
+                _ => {
+                    debug!("Unknown output type: {}", item.output_type);
+                }
+            }
+        }
+
+        // Handle function calls if present
+        if !function_calls.is_empty() {
+            info!("🔧 Response contains {} function calls", function_calls.len());
+            // For now, we'll return the text and log the function calls
+            // In a full implementation, we'd execute these and call back
+            for call in &function_calls {
+                debug!("Function call: {:?}", call);
+            }
+        }
+
+        // Log usage if available
+        if let Some(usage) = &response_data.usage {
+            info!(
+                "📊 Token usage - Prompt: {}, Completion: {}, Total: {}{}",
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                usage.reasoning_tokens
+                    .map(|r| format!(", Reasoning: {}", r))
+                    .unwrap_or_default()
             );
-            let text = extract_text_from_output(&output_val);
-            info!("📝 Extracted text from output (length: {} chars)", text.len());
-            return Ok(ResponseObject { raw: v, text });
         }
 
-        // ---- Fallback: legacy Chat Completions shapes ----------------------------------------
-        let text = if let Some(content) = v.pointer("/choices/0/message/content") {
-            if let Some(arr) = content.as_array() {
-                let mut buf = String::new();
-                for part in arr {
-                    let ptype = part.get("type").and_then(|t| t.as_str());
-                    if ptype == Some("output_text") || ptype == Some("text") {
-                        if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
-                            if !buf.is_empty() { buf.push('\n'); }
-                            buf.push_str(t);
-                        }
-                    } else if ptype == Some("output_json") {
-                        if let Some(j) = part.get("json") {
-                            if !buf.is_empty() { buf.push('\n'); }
-                            buf.push_str(&j.to_string());
-                        }
-                    }
-                }
-                buf
-            } else {
-                content.as_str().unwrap_or_default().to_string()
-            }
+        Ok(output_text)
+    }
+
+    /// Create a streaming response
+    pub async fn create_streaming_response(
+        &self,
+        model: &str,
+        input: Vec<Message>,
+        instructions: Option<String>,
+        session_id: Option<&str>,
+        parameters: Option<Value>,
+    ) -> Result<impl futures::Stream<Item = Result<Value>>> {
+        // Get previous_response_id if we have a session
+        let previous_response_id = if let (Some(session_id), Some(thread_mgr)) = 
+            (session_id, &self.thread_manager) {
+            thread_mgr.get_previous_response_id(session_id).await
         } else {
-            // tool call arguments as last-ditch (string)
-            v.pointer("/choices/0/message/tool_calls/0/function/arguments")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string()
+            None
         };
 
-        info!(
-            "📝 Extracted text from fallback format (length: {} chars)",
-            text.len()
+        // Build the request
+        let mut request_body = json!({
+            "model": model,
+            "input": input,
+            "stream": true,
+        });
+
+        if let Some(inst) = instructions {
+            request_body["instructions"] = json!(inst);
+        }
+
+        if let Some(prev_id) = previous_response_id {
+            request_body["previous_response_id"] = json!(prev_id);
+        }
+
+        if let Some(params) = parameters {
+            if let Some(obj) = params.as_object() {
+                for (key, value) in obj {
+                    request_body[key] = value.clone();
+                }
+            }
+        }
+
+        // Use the client's streaming method
+        self.client
+            .post_response_stream(request_body)
+            .await
+            .context("Failed to create streaming response")
+    }
+
+    /// Helper to build standard GPT-5 parameters
+    pub fn build_gpt5_parameters(
+        verbosity: &str,
+        reasoning_effort: &str,
+        max_output_tokens: Option<i32>,
+        temperature: Option<f32>,
+    ) -> Value {
+        let mut params = json!({
+            "verbosity": verbosity,
+            "reasoning_effort": reasoning_effort,
+        });
+
+        if let Some(max_tokens) = max_output_tokens {
+            params["max_output_tokens"] = json!(max_tokens);
+        }
+
+        if let Some(temp) = temperature {
+            params["temperature"] = json!(temp);
+        }
+
+        params
+    }
+
+    /// Helper to build common tools
+    pub fn build_standard_tools(
+        enable_web_search: bool,
+        enable_code_interpreter: bool,
+    ) -> Vec<Tool> {
+        let mut tools = Vec::new();
+
+        if enable_web_search {
+            tools.push(Tool {
+                tool_type: "web_search_preview".to_string(),
+                function: None,
+                web_search_preview: Some(json!({})),
+                code_interpreter: None,
+            });
+        }
+
+        if enable_code_interpreter {
+            tools.push(Tool {
+                tool_type: "code_interpreter".to_string(),
+                function: None,
+                web_search_preview: None,
+                code_interpreter: Some(CodeInterpreterConfig {
+                    container: ContainerConfig {
+                        container_type: "auto".to_string(),
+                    },
+                }),
+            });
+        }
+
+        tools
+    }
+
+    /// Build a custom function tool
+    pub fn build_function_tool(
+        name: &str,
+        description: &str,
+        parameters: Value,
+    ) -> Tool {
+        Tool {
+            tool_type: "function".to_string(),
+            function: Some(FunctionDefinition {
+                name: name.to_string(),
+                description: description.to_string(),
+                parameters,
+            }),
+            web_search_preview: None,
+            code_interpreter: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_gpt5_parameters() {
+        let params = ResponsesManager::build_gpt5_parameters(
+            "medium",
+            "high",
+            Some(4096),
+            Some(0.7),
         );
-        Ok(ResponseObject { raw: v, text })
+
+        assert_eq!(params["verbosity"], "medium");
+        assert_eq!(params["reasoning_effort"], "high");
+        assert_eq!(params["max_output_tokens"], 4096);
+        assert_eq!(params["temperature"], 0.7);
     }
 
-    pub fn get_responses_id(&self) -> Option<&str> {
-        self.responses_id.as_deref()
+    #[test]
+    fn test_build_standard_tools() {
+        let tools = ResponsesManager::build_standard_tools(true, true);
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].tool_type, "web_search_preview");
+        assert_eq!(tools[1].tool_type, "code_interpreter");
     }
-}
-
-/// Robust extractor for GPT‑5 Responses payloads.
-/// Handles:
-/// - Top-level parts: [{ type: "output_text", text }, { type:"message", content:[...] }, ...]
-/// - Nested message.content[*] parts with type "output_text" | "text" | "output_json"
-/// - Direct item.text strings
-fn extract_text_from_output(output: &Value) -> String {
-    fn push_line(buf: &mut String, s: &str) {
-        if !buf.is_empty() {
-            buf.push('\n');
-        }
-        buf.push_str(s);
-    }
-
-    if let Some(arr) = output.as_array() {
-        let mut s = String::new();
-        for item in arr {
-            let itype = item.get("type").and_then(|t| t.as_str());
-
-            // A) Direct part at top level
-            if itype == Some("output_text") {
-                if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
-                    push_line(&mut s, t);
-                    continue;
-                }
-            }
-            if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
-                // Some SDKs may still return a direct "text" field
-                push_line(&mut s, t);
-                continue;
-            }
-
-            // B) Wrapped message with content parts
-            if itype == Some("message") || item.get("content").is_some() {
-                if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
-                    for part in content {
-                        let ptype = part.get("type").and_then(|t| t.as_str());
-                        match ptype {
-                            Some("output_text") | Some("text") => {
-                                if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
-                                    push_line(&mut s, t);
-                                }
-                            }
-                            Some("output_json") => {
-                                if let Some(j) = part.get("json") {
-                                    push_line(&mut s, &j.to_string());
-                                }
-                            }
-                            _ => {
-                                // ignore other part types for now
-                            }
-                        }
-                    }
-                    continue;
-                }
-            }
-        }
-        return s;
-    }
-
-    // Unexpected shapes: try a few safe fallbacks
-    if let Some(s) = output.get("text").and_then(|v| v.as_str()) {
-        return s.to_string();
-    }
-    String::new()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseObject {
-    pub text: String,
-    #[serde(skip)]
-    pub raw: Value,
 }

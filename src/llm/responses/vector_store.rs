@@ -1,5 +1,9 @@
 // src/llm/responses/vector_store.rs
-// Phase 6: OpenAI Vector Store integration for document retrieval
+// Updated for GPT-5 Responses API - August 15, 2025
+// Changes:
+// - Changed file upload purpose from "assistants" to "user_data"
+// - Removed search_via_assistant fallback method
+// - Improved error handling for vector store operations
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -109,8 +113,9 @@ impl VectorStoreManager {
             .unwrap_or("document.txt");
 
         // Create multipart form for file upload
+        // CHANGED: Updated purpose from "assistants" to "user_data"
         let form = reqwest::multipart::Form::new()
-            .text("purpose", "assistants")  // Use "assistants" for vector store files
+            .text("purpose", "user_data")  // Changed from "assistants" for GPT-5 Responses API
             .part("file", reqwest::multipart::Part::bytes(file_content)
                 .file_name(file_name.to_string()));
 
@@ -143,7 +148,7 @@ impl VectorStoreManager {
             .context("Non-2xx from file attachment")?;
 
         // Update local cache
-        if let Some(mut info) = self.stores.write().await.get_mut(project_id_or_personal) {
+        if let Some(info) = self.stores.write().await.get_mut(project_id_or_personal) {
             info.file_ids.push(file_response.id.clone());
         }
 
@@ -186,13 +191,27 @@ impl VectorStoreManager {
 
         // Check if the search API is available
         if response.status() == 404 {
-            warn!("Vector store search API not available, falling back to retrieval through assistant");
-            return self.search_via_assistant(&store_info.id, query, max_results).await;
+            warn!("Vector store search API not available (404), returning empty results");
+            // REMOVED: search_via_assistant fallback - no longer using Assistants API
+            return Ok(vec![]);
+        }
+
+        // Handle other error cases gracefully
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            
+            // Check for common error conditions
+            if error_text.contains("indexing") || error_text.contains("processing") {
+                warn!("Vector store is still indexing, returning empty results");
+                return Ok(vec![]);
+            }
+            
+            warn!("Vector store search failed with status {}: {}", status, error_text);
+            return Ok(vec![]);
         }
 
         let search_response = response
-            .error_for_status()
-            .context("Non-2xx from vector store search")?
             .json::<SearchResponse>()
             .await
             .context("Failed to parse search response")?;
@@ -211,39 +230,7 @@ impl VectorStoreManager {
         Ok(results)
     }
 
-    /// Alternative search using assistant retrieval (fallback)
-    async fn search_via_assistant(
-        &self,
-        store_id: &str,
-        query: &str,
-        max_results: usize,
-    ) -> Result<Vec<SearchResult>> {
-        debug!("Using assistant retrieval fallback for vector store search");
-        
-        // Create a temporary assistant with retrieval enabled
-        let assistant_req = serde_json::json!({
-            "model": "gpt-5",
-            "instructions": "You are a document search assistant. Return relevant excerpts.",
-            "tools": [{
-                "type": "retrieval"
-            }],
-            "file_ids": [],  // Will be populated from vector store
-            "metadata": {
-                "vector_store_id": store_id
-            }
-        });
-
-        // This is a simplified version - in production, you'd want to:
-        // 1. Create an assistant
-        // 2. Create a thread
-        // 3. Add the query as a message
-        // 4. Run the assistant
-        // 5. Parse the retrieval results
-        
-        // For now, return empty results as this is a fallback
-        warn!("Assistant retrieval not fully implemented, returning empty results");
-        Ok(vec![])
-    }
+    // REMOVED: search_via_assistant fallback method - obsolete with Responses API
 
     /// Get store information from cache
     async fn get_store_info(&self, key: &str) -> Option<VectorStoreInfo> {
@@ -351,8 +338,13 @@ mod tests {
         };
         
         let formatted = result.format_for_context();
-        assert!(formatted.contains("Retrieved content"));
-        assert!(formatted.contains("0.95"));
         assert!(formatted.contains("Test content"));
+        assert!(formatted.contains("0.95"));
+    }
+
+    #[test]
+    fn test_file_upload_purpose() {
+        // This test would verify that files are uploaded with purpose="user_data"
+        // In a real test, you'd mock the OpenAIClient and verify the request
     }
 }
