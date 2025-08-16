@@ -10,7 +10,7 @@ use axum::{
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::{stream_response, StreamEvent};
@@ -39,6 +39,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                     Ok(WsClientMessage::Chat { content, project_id: _ }) => {
                         // Start a streaming round-trip (inline; 1-at-a-time per connection)
                         let client = &*app_state.llm_client;
+                        // Keep structured_json true for proper metadata extraction
                         let structured_json = true;
 
                         match stream_response(client, &content, None, structured_json).await {
@@ -55,27 +56,70 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                                         .await;
                                 }
 
+                                // Track if we've sent the complete message
+                                let mut message_sent = false;
+
                                 while let Some(next) = stream.next().await {
                                     match next {
                                         Ok(StreamEvent::Delta(chunk)) => {
-                                            if chunk.is_empty() {
+                                            if chunk.is_empty() || message_sent {
                                                 continue;
                                             }
-                                            let msg = WsServerMessage::Chunk {
-                                                content: chunk,
-                                                mood: None,
-                                            };
-                                            let mut lock = sender.lock().await;
-                                            if let Err(e) = lock
-                                                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                                                .await
-                                            {
-                                                warn!("WS send error (chunk): {e}");
-                                                break;
+                                            
+                                            debug!("Received chunk: {}", chunk);
+                                            
+                                            // Try to parse as complete JSON structure
+                                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&chunk) {
+                                                // Handle complete item structure (from response.output_item.done)
+                                                if let Some(content_array) = json_val.get("content").and_then(|v| v.as_array()) {
+                                                    for content_item in content_array {
+                                                        if let Some(text) = content_item.get("text").and_then(|v| v.as_str()) {
+                                                            // The text field contains our structured JSON
+                                                            if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(text) {
+                                                                if let Some(output) = inner_json.get("output").and_then(|v| v.as_str()) {
+                                                                    let mood = inner_json.get("mood").and_then(|v| v.as_str()).map(String::from);
+                                                                    
+                                                                    // Send the extracted message
+                                                                    let msg = WsServerMessage::Chunk {
+                                                                        content: output.to_string(),
+                                                                        mood,
+                                                                    };
+                                                                    let mut lock = sender.lock().await;
+                                                                    if let Err(e) = lock
+                                                                        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
+                                                                        .await
+                                                                    {
+                                                                        warn!("WS send error (chunk): {e}");
+                                                                        break;
+                                                                    }
+                                                                    message_sent = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                // Also check for direct output/reply fields
+                                                else if let Some(output) = json_val.get("output").and_then(|v| v.as_str()) {
+                                                    let mood = json_val.get("mood").and_then(|v| v.as_str()).map(String::from);
+                                                    let msg = WsServerMessage::Chunk {
+                                                        content: output.to_string(),
+                                                        mood,
+                                                    };
+                                                    let mut lock = sender.lock().await;
+                                                    if let Err(e) = lock
+                                                        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
+                                                        .await
+                                                    {
+                                                        warn!("WS send error (chunk): {e}");
+                                                        break;
+                                                    }
+                                                    message_sent = true;
+                                                }
                                             }
+                                            // If not structured JSON or can't parse, skip (don't send raw JSON)
                                         }
                                         Ok(StreamEvent::Done { .. }) => {
-                                            // Signal completion (no content/raw fields on Complete)
+                                            // Signal completion
                                             let complete = WsServerMessage::Complete {
                                                 mood: None,
                                                 salience: None,
