@@ -190,6 +190,12 @@ pub async fn stream_response(
                                 "response.content_part.added" => {
                                     info!("🧩 Content part added");
                                 }
+                                "response.content_part.done" => {
+                                    info!("✅ Content part completed");
+                                    // This event signals that a content part is complete
+                                    // We don't need to do anything special here as the content
+                                    // has already been accumulated in previous delta events
+                                }
                                 "response.output_text.delta" => {
                                     // This is where the structured JSON comes through
                                     if let Some(delta) = v.get("delta").and_then(|d| d.as_str()) {
@@ -271,9 +277,9 @@ pub async fn stream_response(
                                                         
                                                         // Try to parse and extract output for raw accumulator
                                                         if let Ok(structured) = serde_json::from_str::<Value>(text) {
-                                                            if let Some(output) = structured.get("output").and_then(|o| o.as_str()) {
+                                                            if let Some(_output) = structured.get("output").and_then(|o| o.as_str()) {
                                                                 let mut raw_guard = raw_acc.lock().await;
-                                                                raw_guard.push_str(output);
+                                                                raw_guard.push_str(_output);
                                                                 drop(raw_guard);
                                                             }
                                                         }
@@ -313,7 +319,7 @@ pub async fn stream_response(
                                         
                                         // Try to parse and extract output
                                         if let Ok(structured) = serde_json::from_str::<Value>(&json_full) {
-                                            if let Some(output) = structured.get("output").and_then(|o| o.as_str()) {
+                                            if let Some(_output) = structured.get("output").and_then(|o| o.as_str()) {
                                                 return Ok(StreamEvent::Done {
                                                     full_text: json_full, // Send full JSON for metadata
                                                     raw: Some(v),

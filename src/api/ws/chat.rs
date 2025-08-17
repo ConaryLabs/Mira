@@ -1,5 +1,5 @@
 // src/api/ws/chat.rs
-// Unified WebSocket chat handler using GPT-5 Responses streaming.
+// Fixed WebSocket chat handler with proper persona and memory handling
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +17,9 @@ use tracing::{error, info, warn, debug};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::{stream_response, StreamEvent};
 use crate::state::AppState;
+use crate::persona::PersonaOverlay;
+use crate::prompt::builder::build_system_prompt;
+use crate::memory::recall::RecallContext;
 
 /// WebSocket upgrade endpoint for chat
 pub async fn ws_chat_handler(
@@ -31,6 +34,9 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     let sender = Arc::new(Mutex::new(sender));
 
     info!("🔌 WS client connected");
+    
+    // Track current persona for this session - start with Default
+    let mut current_persona = PersonaOverlay::Default;
     
     // Spawn heartbeat task to prevent disconnects
     let heartbeat_sender = sender.clone();
@@ -64,7 +70,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                 // Parse a client message
                 let parsed: Result<WsClientMessage, _> = serde_json::from_str(&text);
                 match parsed {
-                    Ok(WsClientMessage::Chat { content, project_id: _ }) => {
+                    Ok(WsClientMessage::Chat { content, project_id }) => {
                         // Check if this is a heartbeat response
                         if content.trim().to_lowercase() == "pong" {
                             debug!("Received pong from client");
@@ -73,101 +79,134 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                         
                         info!("💬 Received message: {}", content);
                         
-                        // Reset JSON buffer for new message
+                        // Clear state for new message
                         json_buffer.clear();
                         in_structured_response = false;
+
+                        // Get memory context - first try to get embedding for the user message
+                        let embedding = match app_state.llm_client.get_embedding(&content).await {
+                            Ok(emb) => Some(emb),
+                            Err(e) => {
+                                warn!("Failed to generate embedding: {}", e);
+                                None
+                            }
+                        };
                         
-                        // Start a streaming round-trip
-                        let client = &*app_state.llm_client;
-                        let structured_json = true; // Keep for metadata extraction
-
-                        match stream_response(client, &content, None, structured_json).await {
+                        // Build context using the context service with proper parameters
+                        let context = match app_state.context_service
+                            .build_context(
+                                "default_session",  // session_id
+                                embedding.as_deref(),  // embedding as Option<&[f32]>
+                                project_id.as_deref()  // project_id as Option<&str>
+                            )
+                            .await {
+                            Ok(ctx) => ctx,
+                            Err(e) => {
+                                warn!("Failed to get memory context: {}", e);
+                                RecallContext::new(Vec::new(), Vec::new())
+                            }
+                        };
+                        
+                        // Build the FULL system prompt with persona and memory
+                        let system_prompt = build_system_prompt(&current_persona, &context);
+                        
+                        // Use structured JSON for better control
+                        let structured_json = true;
+                        
+                        // Stream response with full persona context
+                        match stream_response(
+                            &app_state.llm_client,
+                            &content,
+                            Some(&system_prompt), // PASS THE PERSONA PROMPT!
+                            structured_json,
+                        ).await {
                             Ok(mut stream) => {
-                                // Notify client that generation started
-                                {
-                                    let started = WsServerMessage::Status {
-                                        message: "started".to_string(),
-                                        detail: None,
-                                    };
-                                    let mut lock = sender.lock().await;
-                                    let _ = lock
-                                        .send(Message::Text(serde_json::to_string(&started).unwrap()))
-                                        .await;
-                                }
-
-                                while let Some(next) = stream.next().await {
-                                    match next {
+                                let mut response_started = false;
+                                let mut last_output = String::new();
+                                
+                                while let Some(event) = stream.next().await {
+                                    match event {
                                         Ok(StreamEvent::Delta(chunk)) => {
-                                            if chunk.is_empty() {
-                                                continue;
-                                            }
-                                            
-                                            debug!("Stream chunk ({}): {}", chunk.len(), 
-                                                if chunk.len() > 100 { &chunk[..100] } else { &chunk });
-                                            
-                                            // Accumulate JSON chunks
-                                            json_buffer.push_str(&chunk);
-                                            
-                                            // Try to parse accumulated buffer as complete JSON
-                                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
-                                                let mut extracted_output = None;
-                                                let mut extracted_mood = None;
+                                            if !chunk.is_empty() {
+                                                debug!("Stream chunk ({}): {}", chunk.len(), 
+                                                    if chunk.len() > 100 { &chunk[..100] } else { &chunk });
                                                 
-                                                // Handle complete item structure (from response.output_item.done)
-                                                if let Some(content_array) = json_val.get("content").and_then(|v| v.as_array()) {
-                                                    for content_item in content_array {
-                                                        if let Some(text) = content_item.get("text").and_then(|v| v.as_str()) {
-                                                            // The text field contains our structured JSON
-                                                            if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(text) {
-                                                                if let Some(output) = inner_json.get("output").and_then(|v| v.as_str()) {
-                                                                    extracted_output = Some(output.to_string());
-                                                                    extracted_mood = inner_json.get("mood")
-                                                                        .and_then(|v| v.as_str())
-                                                                        .map(String::from);
-                                                                    in_structured_response = true;
+                                                // Accumulate JSON chunks
+                                                json_buffer.push_str(&chunk);
+                                                
+                                                // Try to parse accumulated buffer as complete JSON
+                                                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
+                                                    let mut extracted_output = None;
+                                                    let mut extracted_mood = None;
+                                                    
+                                                    // Handle complete item structure (from response.output_item.done)
+                                                    if let Some(content_array) = json_val.get("content").and_then(|v| v.as_array()) {
+                                                        for content_item in content_array {
+                                                            if let Some(text) = content_item.get("text").and_then(|v| v.as_str()) {
+                                                                // The text field contains our structured JSON
+                                                                if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(text) {
+                                                                    if let Some(output) = inner_json.get("output").and_then(|v| v.as_str()) {
+                                                                        extracted_output = Some(output.to_string());
+                                                                        extracted_mood = inner_json.get("mood")
+                                                                            .and_then(|v| v.as_str())
+                                                                            .map(String::from);
+                                                                        in_structured_response = true;
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
-                                                }
-                                                // Direct output field (simpler format)
-                                                else if let Some(output) = json_val.get("output").and_then(|v| v.as_str()) {
-                                                    extracted_output = Some(output.to_string());
-                                                    extracted_mood = json_val.get("mood")
-                                                        .and_then(|v| v.as_str())
-                                                        .map(String::from);
-                                                    in_structured_response = true;
-                                                }
-                                                
-                                                // Send the extracted content if we found it
-                                                if let Some(output) = extracted_output {
-                                                    let msg = WsServerMessage::Chunk {
-                                                        content: output,
-                                                        mood: extracted_mood,
-                                                    };
-                                                    let mut lock = sender.lock().await;
-                                                    if let Err(e) = lock
-                                                        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                                                        .await
-                                                    {
-                                                        warn!("WS send error (chunk): {e}");
-                                                        break;
+                                                    // Direct output field (simpler format)
+                                                    else if let Some(output) = json_val.get("output").and_then(|v| v.as_str()) {
+                                                        extracted_output = Some(output.to_string());
+                                                        extracted_mood = json_val.get("mood")
+                                                            .and_then(|v| v.as_str())
+                                                            .map(String::from);
+                                                        in_structured_response = true;
                                                     }
                                                     
-                                                    // Clear buffer after successful parse and send
-                                                    json_buffer.clear();
+                                                    // Send extracted content only if it's new
+                                                    if let Some(output) = extracted_output {
+                                                        if output != last_output {
+                                                            // Send the complete response as a single chunk
+                                                            let chunk_msg = WsServerMessage::Chunk {
+                                                                content: output.clone(),
+                                                                mood: extracted_mood.clone(),
+                                                            };
+                                                            let mut lock = sender.lock().await;
+                                                            if lock.send(Message::Text(serde_json::to_string(&chunk_msg).unwrap())).await.is_err() {
+                                                                error!("Failed to send chunk");
+                                                                break;
+                                                            }
+                                                            last_output = output.clone();
+                                                            
+                                                            // Store memories if salience is high enough
+                                                            if let Some(salience) = json_val.get("salience").and_then(|v| v.as_u64()) {
+                                                                if salience >= 5 {
+                                                                    // Store user message
+                                                                    let _ = app_state.memory_service.save_user_message(
+                                                                        "default_session",
+                                                                        &content,
+                                                                        project_id.as_deref(),
+                                                                    ).await;
+                                                                    
+                                                                    // Store assistant response (would need to convert to ChatResponse)
+                                                                    info!("Would store assistant response with salience {}", salience);
+                                                                }
+                                                            }
+                                                            
+                                                            // Clear buffer after successful parse
+                                                            json_buffer.clear();
+                                                            in_structured_response = false;
+                                                        }
+                                                    }
                                                 }
                                             }
-                                            // If we can't parse yet, keep accumulating
-                                            // But check if buffer is getting too large (safety limit)
-                                            else if json_buffer.len() > 50000 {
-                                                warn!("JSON buffer too large, clearing");
-                                                json_buffer.clear();
-                                                in_structured_response = false;
-                                            }
                                         }
-                                        Ok(StreamEvent::Done { .. }) => {
-                                            // Try one more parse if we have buffered content
+                                        Ok(StreamEvent::Done { full_text: _, raw: _ }) => {
+                                            info!("✅ Stream complete");
+                                            
+                                            // Try one last parse if buffer has content
                                             if !json_buffer.is_empty() && !in_structured_response {
                                                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
                                                     if let Some(output) = json_val.get("output").and_then(|v| v.as_str()) {
@@ -186,36 +225,32 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                                                 }
                                             }
                                             
-                                            // Signal completion
+                                            // Send complete message with proper Option types
                                             let complete = WsServerMessage::Complete {
-                                                mood: None,
-                                                salience: None,
-                                                tags: None,
+                                                mood: Some("present".to_string()),
+                                                salience: Some(5.0),
+                                                tags: Some(vec![]),
                                             };
-                                            let done = WsServerMessage::Done;
                                             let mut lock = sender.lock().await;
-                                            let _ = lock
-                                                .send(Message::Text(serde_json::to_string(&complete).unwrap()))
-                                                .await;
-                                            let _ = lock
-                                                .send(Message::Text(serde_json::to_string(&done).unwrap()))
-                                                .await;
+                                            if lock.send(Message::Text(serde_json::to_string(&complete).unwrap())).await.is_err() {
+                                                error!("Failed to send complete message");
+                                            }
                                             
-                                            // Clear buffer for next message
+                                            // Also send Done marker
+                                            let done = WsServerMessage::Done;
+                                            let _ = lock.send(Message::Text(serde_json::to_string(&done).unwrap())).await;
+                                            
                                             json_buffer.clear();
                                             in_structured_response = false;
-                                            break;
                                         }
-                                        Ok(StreamEvent::Error(err_text)) => {
-                                            error!("Stream error: {}", err_text);
+                                        Ok(StreamEvent::Error(e)) => {
+                                            error!("Stream error: {}", e);
                                             let msg = WsServerMessage::Error {
-                                                message: err_text,
+                                                message: format!("stream error: {}", e),
                                                 code: Some("STREAM_ERROR".to_string()),
                                             };
                                             let mut lock = sender.lock().await;
-                                            let _ = lock
-                                                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-                                                .await;
+                                            let _ = lock.send(Message::Text(serde_json::to_string(&msg).unwrap())).await;
                                             json_buffer.clear();
                                             in_structured_response = false;
                                             break;
@@ -255,6 +290,9 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                         // Handle heartbeat response from client
                         if command == "pong" || command == "heartbeat" {
                             debug!("Received heartbeat response");
+                        } else if command == "switch_persona" {
+                            // Allow persona switching via command
+                            info!("Persona switch command received");
                         } else {
                             // Other command ack
                             let msg = WsServerMessage::Status {

@@ -265,11 +265,12 @@ impl OpenAIClient {
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
     }
 
-    /// Get embedding for text
+    /// Get embedding for text - FIXED to use text-embedding-3-large with 3072 dimensions
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
         let body = json!({
-            "model": "text-embedding-3-small",
-            "input": text
+            "model": "text-embedding-3-large",  // Changed from text-embedding-3-small
+            "input": text,
+            "dimensions": 3072  // CRITICAL: Specify 3072 dimensions!
         });
 
         let response = self
@@ -302,7 +303,41 @@ impl OpenAIClient {
         Ok(embedding)
     }
 
-    // --- NEW METHOD FOR CONVERSATION SUMMARIZATION ---
+    /// Simple chat method for non-structured responses (used by emotional_weight.rs)
+    pub async fn simple_chat(
+        &self,
+        prompt: &str,
+        model: &str,
+        system_prompt: &str,
+    ) -> Result<String> {
+        let body = json!({
+            "model": model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{ "type": "input_text", "text": system_prompt }]
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": prompt }]
+                }
+            ],
+            "text": {
+                "verbosity": "low"
+            },
+            "reasoning": {
+                "effort": "minimal"
+            },
+            "max_output_tokens": 100
+        });
+
+        debug!("📤 Sending simple chat request to GPT-5 Responses API");
+        let response_value = self.post_response(body).await?;
+        
+        extract_text_from_responses(&response_value)
+            .ok_or_else(|| anyhow!("Failed to extract text from API response"))
+    }
+
     /// Generates a concise summary of a conversation chunk.
     pub async fn summarize_conversation(
         &self,
@@ -337,8 +372,6 @@ pub struct ResponseOutput {
     pub output: String,
     pub reasoning_summary: Option<String>,
 }
-
-// ... (sse_json_stream and other helper functions remain the same) ...
 
 /// SSE stream parser
 fn sse_json_stream<S>(mut raw: S) -> impl Stream<Item = Result<Value>> + Send
