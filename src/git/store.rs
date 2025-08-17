@@ -1,7 +1,9 @@
+// src/git/store.rs
+
 use anyhow::{Result, Context};
 use sqlx::SqlitePool;
 use super::types::{GitRepoAttachment, GitImportStatus};
-use chrono::{DateTime, Utc, NaiveDateTime};
+use chrono::{DateTime, Utc};
 
 #[derive(Clone)]
 pub struct GitStore {
@@ -77,6 +79,11 @@ impl GitStore {
                 last_sync_at,
             }
         }).collect())
+    }
+
+    /// Alias for get_attachments_for_project to match the handler's expectation
+    pub async fn list_project_attachments(&self, project_id: &str) -> Result<Vec<GitRepoAttachment>> {
+        self.get_attachments_for_project(project_id).await
     }
 
     pub async fn get_attachment_by_id(&self, attachment_id: &str) -> Result<Option<GitRepoAttachment>> {

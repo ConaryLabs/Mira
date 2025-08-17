@@ -1,107 +1,32 @@
 // src/api/http/git/mod.rs
+// Main module file - just coordinates the submodules
 
 pub mod common;
-// For now, re-export handlers from the parent git.rs if it exists
-// Or create stub handlers here
+pub mod repos;
+pub mod files;
+pub mod branches;
+pub mod commits;
 
-use axum::{
-    extract::{Path, State, Json},
-    response::IntoResponse,
-    http::StatusCode,
+// Re-export all handlers for use in the main router
+pub use repos::{
+    attach_repo_handler,
+    list_attached_repos_handler,
+    sync_repo_handler,
 };
-use std::sync::Arc;
-use crate::state::AppState;
-use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
-pub struct AttachRepoRequest {
-    pub repo_url: String,
-}
+pub use files::{
+    get_file_tree_handler,
+    get_file_content_handler,
+    update_file_content_handler,
+};
 
-#[derive(Serialize)]
-pub struct RepoAttachment {
-    pub id: String,
-    pub repo_url: String,
-    pub status: String,
-}
+pub use branches::{
+    list_branches,
+    switch_branch,
+};
 
-// Stub handlers - implement these properly later
-pub async fn attach_repo_handler(
-    State(_state): State<Arc<AppState>>,
-    Path(_project_id): Path<String>,
-    Json(_payload): Json<AttachRepoRequest>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn list_attached_repos_handler(
-    State(_state): State<Arc<AppState>>,
-    Path(_project_id): Path<String>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn sync_repo_handler(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn get_file_tree_handler(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn get_file_content_handler(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id, _file_path)): Path<(String, String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn update_file_content_handler(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id, _file_path)): Path<(String, String, String)>,
-    _body: String,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-// Phase 3 handlers
-pub async fn list_branches(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn switch_branch(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id, _branch)): Path<(String, String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn get_commit_history(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn get_commit_diff(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id, _commit_hash)): Path<(String, String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn get_file_at_commit(
-    State(_state): State<Arc<AppState>>,
-    Path((_project_id, _attachment_id, _commit_hash, _file_path)): Path<(String, String, String, String)>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
+pub use commits::{
+    get_commit_history,
+    get_commit_diff,
+    get_file_at_commit,
+};
