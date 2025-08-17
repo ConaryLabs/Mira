@@ -137,6 +137,7 @@ pub async fn stream_response(
     let frame_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let is_structured = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(structured_json));
     let complete_json_sent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let final_json = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
 
     let stream = sse
         .then({
@@ -145,6 +146,7 @@ pub async fn stream_response(
             let frame_count = frame_count.clone();
             let is_structured = is_structured.clone();
             let complete_json_sent = complete_json_sent.clone();
+            let final_json = final_json.clone();
             
             move |item| {
                 let raw_acc = raw_acc.clone();
@@ -152,6 +154,7 @@ pub async fn stream_response(
                 let frame_count = frame_count.clone();
                 let is_structured = is_structured.clone();
                 let complete_json_sent = complete_json_sent.clone();
+                let final_json = final_json.clone();
                 
                 async move {
                     match item {
@@ -193,9 +196,6 @@ pub async fn stream_response(
                                 }
                                 "response.content_part.done" => {
                                     info!("✅ Content part completed");
-                                    // This event signals that a content part is complete
-                                    // We don't need to do anything special here as the content
-                                    // has already been accumulated in previous delta events
                                 }
                                 "response.output_text.delta" => {
                                     // This is where the structured JSON comes through
@@ -211,7 +211,11 @@ pub async fn stream_response(
                                             
                                             // Try to parse accumulated JSON
                                             if let Ok(_parsed) = serde_json::from_str::<Value>(&*json_guard) {
-                                                // Only send if we haven't already sent it
+                                                // Store the complete JSON for later
+                                                let mut final_guard = final_json.lock().await;
+                                                *final_guard = json_guard.clone();
+                                                
+                                                // Only send once when complete
                                                 if !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) {
                                                     let json_str = json_guard.clone();
                                                     
@@ -225,12 +229,12 @@ pub async fn stream_response(
                                                     } else {
                                                         json_str.clone()
                                                     };
-                                                    info!("📄 Sending complete structured JSON: {}", preview);
+                                                    info!("📄 Complete structured JSON ready: {}", preview);
                                                     
                                                     // Mark as sent
                                                     complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
                                                     
-                                                    // Send the complete JSON for the WebSocket handler to parse
+                                                    // Send the complete JSON
                                                     return Ok(StreamEvent::Delta(json_str));
                                                 }
                                             }
@@ -243,44 +247,35 @@ pub async fn stream_response(
                                 "response.output_item.done" => {
                                     info!("✅ Output item completed");
                                     
-                                    // Handle the complete item
-                                    if let Some(item) = v.get("item") {
-                                        // Check for content array (structured response)
-                                        if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
-                                            for content_item in content_array {
-                                                if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
-                                                    // Safe string truncation for logging
-                                                    let preview = if text.len() > 200 {
-                                                        let mut end = 200;
-                                                        while !text.is_char_boundary(end) && end > 0 {
-                                                            end -= 1;
-                                                        }
-                                                        format!("{}...", &text[..end])
-                                                    } else {
-                                                        text.to_string()
-                                                    };
-                                                    info!("📄 Complete text from output_item.done: {}", preview);
-                                                    
-                                                    // For structured responses, this might be the complete JSON
-                                                    if is_structured.load(std::sync::atomic::Ordering::SeqCst) {
-                                                        if !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) {
-                                                            complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
-                                                            return Ok(StreamEvent::Delta(text.to_string()));
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                    // If we have structured JSON ready, make sure it gets sent
+                                    if is_structured.load(std::sync::atomic::Ordering::SeqCst) {
+                                        let final_guard = final_json.lock().await;
+                                        if !final_guard.is_empty() && !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) {
+                                            complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
+                                            info!("📤 Sending complete JSON from output_item.done");
+                                            return Ok(StreamEvent::Delta(final_guard.clone()));
                                         }
                                     }
+                                    
+                                    // Also send a Done event here since response.done might not come
+                                    let raw_guard = raw_acc.lock().await;
+                                    let full_text = raw_guard.clone();
+                                    
+                                    info!("🎉 Sending Done event from output_item.done (fallback)");
+                                    return Ok(StreamEvent::Done {
+                                        full_text,
+                                        raw: Some(v),
+                                    });
                                 }
                                 "response.done" => {
-                                    info!("🎉 Response complete!");
+                                    info!("🎉 Response complete - sending Done event!");
                                     
                                     let raw_guard = raw_acc.lock().await;
                                     let full_text = raw_guard.clone();
                                     
                                     info!("📊 Total streamed: {} chars", full_text.len());
                                     
+                                    // ALWAYS return the Done event
                                     return Ok(StreamEvent::Done {
                                         full_text,
                                         raw: Some(v),
@@ -304,8 +299,11 @@ pub async fn stream_response(
         })
         .filter_map(|result| async move {
             match result {
-                Ok(event) => Some(Ok(event)),
-                Err(_) => None, // Skip non-events
+                Ok(event) => {
+                    // Always pass through Delta, Done, and Error events
+                    Some(Ok(event))
+                },
+                Err(_) => None, // Skip non-events (the intermediate frames)
             }
         });
 
