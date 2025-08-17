@@ -1,18 +1,21 @@
 // src/handlers.rs
-// Fixed version - changed process_message to chat
+// Final version with borrow checker fixes and cleanup
 
 use axum::{
-    extract::{Query, State},
+    extract::{Query, State, Json},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{error, info};
+use futures::StreamExt;
 
 use crate::state::AppState;
 use crate::services::chat::ChatResponse;
+use crate::api::two_phase::{get_metadata, get_content_stream};
+use crate::llm::streaming::StreamEvent;
+use crate::persona::PersonaOverlay;
 
 // ============================================================================
 // Request/Response Types
@@ -66,7 +69,6 @@ pub struct MessageEntry {
 // Handlers
 // ============================================================================
 
-/// Health check endpoint
 pub async fn health_handler() -> impl IntoResponse {
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -74,18 +76,16 @@ pub async fn health_handler() -> impl IntoResponse {
     })
 }
 
-/// Main chat endpoint
 pub async fn chat_handler(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<ChatQueryParams>,
+    Query(_params): Query<ChatQueryParams>,
     Json(payload): Json<ChatRequest>,
-) -> impl IntoResponse {
+) -> (StatusCode, Json<ChatResponseWrapper>) {
     info!(
-        "📨 Chat request - session: {}, structured: {}",
-        payload.session_id, params.structured
+        "📨 HTTP Chat request - session: {}",
+        payload.session_id
     );
 
-    // Validate input
     if payload.message.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -97,57 +97,96 @@ pub async fn chat_handler(
         );
     }
 
-    if payload.session_id.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ChatResponseWrapper {
+    let persona = PersonaOverlay::Default;
+    let context = match state.context_service
+        .build_context(&payload.session_id, None, Some(&payload.session_id))
+        .await
+    {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            error!("Failed to build context: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ChatResponseWrapper {
                 success: false,
                 data: None,
-                error: Some("Session ID cannot be empty".to_string()),
-            }),
-        );
-    }
-
-    let return_structured = params.structured;
-
-    // FIXED: Changed from process_message to chat
-    let result = state
-        .chat_service
-        .chat(
-            &payload.session_id,
-            &payload.message,
-            None,  // project_id - None for now, can be added to payload later
-            return_structured,
-        )
-        .await;
-
-    match result {
-        Ok(response) => {
-            info!("✅ Chat response generated successfully");
-            (
-                StatusCode::OK,
-                Json(ChatResponseWrapper {
-                    success: true,
-                    data: Some(response),
-                    error: None,
-                }),
-            )
+                error: Some(format!("Failed to build context: {}", e)),
+            }));
         }
+    };
+
+    let metadata = match get_metadata(
+        &state.llm_client,
+        &payload.message,
+        &persona,
+        &context,
+    ).await {
+        Ok(m) => m,
         Err(e) => {
-            error!("❌ Chat processing failed: {:?}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatResponseWrapper {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Failed to process message: {}", e)),
-                }),
-            )
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ChatResponseWrapper {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to get metadata: {}", e)),
+            }));
+        }
+    };
+
+    let mut content_stream = match get_content_stream(
+        &state.llm_client,
+        &payload.message,
+        &persona,
+        &context,
+        &metadata,
+    ).await {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ChatResponseWrapper {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to get content: {}", e)),
+            }));
+        }
+    };
+
+    let mut full_content = String::new();
+    while let Some(event) = content_stream.next().await {
+        if let Ok(StreamEvent::Delta(chunk)) = event {
+            full_content.push_str(&chunk);
         }
     }
+
+    let complete_output = if metadata.output.is_empty() {
+        full_content
+    } else {
+        format!("{}\n\n{}", metadata.output, full_content)
+    };
+    
+    let response = ChatResponse {
+        output: complete_output,
+        persona: persona.name().to_string(),
+        mood: metadata.mood,
+        salience: metadata.salience,
+        summary: metadata.summary,
+        memory_type: metadata.memory_type,
+        tags: metadata.tags,
+        intent: metadata.intent,
+        monologue: metadata.monologue,
+        reasoning_summary: metadata.reasoning_summary,
+    };
+
+    if let Err(e) = state.memory_service.save_assistant_response(
+        &payload.session_id,
+        &response,
+    ).await {
+        error!("Failed to save assistant response: {}", e);
+    }
+
+    (StatusCode::OK, Json(ChatResponseWrapper {
+        success: true,
+        data: Some(response),
+        error: None,
+    }))
 }
 
-/// Get chat history endpoint
+
 pub async fn history_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<HistoryRequest>,
@@ -175,7 +214,6 @@ pub async fn history_handler(
     })
 }
 
-/// Clear session endpoint
 pub async fn clear_session_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<HistoryRequest>,
