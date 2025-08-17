@@ -20,6 +20,7 @@ use crate::state::AppState;
 use crate::persona::PersonaOverlay;
 use crate::prompt::builder::build_system_prompt;
 use crate::memory::recall::RecallContext;
+use crate::services::chat::ChatResponse;
 
 /// WebSocket upgrade endpoint for chat
 pub async fn ws_chat_handler(
@@ -36,7 +37,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
     info!("🔌 WS client connected");
     
     // Track current persona for this session - start with Default
-    let mut current_persona = PersonaOverlay::Default;
+    let current_persona = PersonaOverlay::Default;
     
     // Spawn heartbeat task to prevent disconnects
     let heartbeat_sender = sender.clone();
@@ -95,7 +96,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                         // Build context using the context service with proper parameters
                         let context = match app_state.context_service
                             .build_context(
-                                "default_session",  // session_id
+                                "peter-eternal",  // FIXED: Use peter-eternal session
                                 embedding.as_deref(),  // embedding as Option<&[f32]>
                                 project_id.as_deref()  // project_id as Option<&str>
                             )
@@ -121,7 +122,7 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                             structured_json,
                         ).await {
                             Ok(mut stream) => {
-                                let mut response_started = false;
+                                let mut _response_started = false;
                                 let mut last_output = String::new();
                                 
                                 while let Some(event) = stream.next().await {
@@ -185,13 +186,49 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>) {
                                                                 if salience >= 5 {
                                                                     // Store user message
                                                                     let _ = app_state.memory_service.save_user_message(
-                                                                        "default_session",
+                                                                        "peter-eternal",  // FIXED: Use peter-eternal
                                                                         &content,
                                                                         project_id.as_deref(),
                                                                     ).await;
                                                                     
-                                                                    // Store assistant response (would need to convert to ChatResponse)
-                                                                    info!("Would store assistant response with salience {}", salience);
+                                                                    // FIXED: Actually store assistant response
+                                                                    let response = ChatResponse {
+                                                                        output: output.clone(),
+                                                                        persona: "mira".to_string(),
+                                                                        mood: extracted_mood.clone().unwrap_or_else(|| "present".to_string()),
+                                                                        salience: salience as usize,
+                                                                        summary: json_val.get("summary")
+                                                                            .and_then(|v| v.as_str())
+                                                                            .unwrap_or("")
+                                                                            .to_string(),
+                                                                        memory_type: json_val.get("memory_type")
+                                                                            .and_then(|v| v.as_str())
+                                                                            .unwrap_or("event")
+                                                                            .to_string(),
+                                                                        tags: json_val.get("tags")
+                                                                            .and_then(|v| v.as_array())
+                                                                            .map(|arr| arr.iter()
+                                                                                .filter_map(|v| v.as_str().map(String::from))
+                                                                                .collect())
+                                                                            .unwrap_or_else(Vec::new),
+                                                                        intent: json_val.get("intent")
+                                                                            .and_then(|v| v.as_str())
+                                                                            .unwrap_or("")
+                                                                            .to_string(),
+                                                                        monologue: json_val.get("monologue")
+                                                                            .and_then(|v| v.as_str())
+                                                                            .map(String::from),
+                                                                        reasoning_summary: json_val.get("reasoning_summary")
+                                                                            .and_then(|v| v.as_str())
+                                                                            .map(String::from),
+                                                                    };
+                                                                    
+                                                                    let _ = app_state.memory_service.save_assistant_response(
+                                                                        "peter-eternal",  // FIXED: Use peter-eternal
+                                                                        &response,
+                                                                    ).await;
+                                                                    
+                                                                    info!("✅ Stored assistant response with salience {}", salience);
                                                                 }
                                                             }
                                                             

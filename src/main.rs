@@ -160,16 +160,16 @@ async fn main() -> anyhow::Result<()> {
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }))
         }))
-        .nest("/api", http_router())
+        .merge(http_router().with_state(app_state.clone()))  // Changed from .nest("/api", ...) to .merge()
         // ws_router requires AppState; pass a clone
         .nest("/ws", ws_router(app_state.clone()))
         // project_router already contains /projects/* paths; merge instead of double-prefixed nest
-        .merge(project_router())
+        .merge(project_router().with_state(app_state.clone()))
         .layer(cors)
         .with_state(app_state);
 
     info!("🚀 Server starting on {}", addr);
-    info!("🌐 HTTP endpoints: http://{}/api", addr);
+    info!("🌐 HTTP endpoints: http://{}", addr);  // Updated log message
     info!("🔌 WebSocket endpoint: ws://{}/ws/chat", addr);
     info!("📁 Project endpoints: http://{}/projects", addr);
 

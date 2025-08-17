@@ -3,9 +3,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use reqwest::{header, Client};
-use serde::{Deserialize, Serialize};
 use serde_json::{self, json, Value};
 use tracing::{debug, info};
 
@@ -80,137 +79,46 @@ impl OpenAIClient {
         }
 
         let mut request = json!({
-            "model": self.model,
+            "model": &self.model,
             "input": input,
             "text": {
-                "verbosity": sanitize_verbosity(&self.verbosity)
+                "verbosity": &self.verbosity
             },
             "reasoning": {
-                "effort": sanitize_reasoning(&self.reasoning_effort)
+                "effort": &self.reasoning_effort
             },
             "max_output_tokens": self.max_output_tokens
         });
-        
+
         if request_structured {
-            request["text"]["format"] = json!({
-                "type": "json_schema",
-                "name": "mira_response",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "output": { "type": "string", "description": "The main response text" },
-                        "mood": { "type": "string", "description": "The emotional tone of the response" },
-                        "salience": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Importance score from 1-10" },
-                        "summary": { "type": "string", "description": "Brief summary of the interaction" },
-                        "memory_type": { "type": "string", "enum": ["event", "fact", "emotion", "preference", "context"], "description": "Category of memory" },
-                        "tags": { "type": "array", "items": { "type": "string" }, "description": "Relevant tags for this interaction" },
-                        "intent": { "type": "string", "description": "The user's apparent intent" },
-                        "monologue": { "type": ["string", "null"], "description": "Internal reasoning or thoughts" },
-                        "reasoning_summary": { "type": ["string", "null"], "description": "Summary of reasoning process" }
-                    },
-                    "required": ["output", "mood", "salience", "summary", "memory_type", "tags", "intent", "monologue", "reasoning_summary"],
-                    "additionalProperties": false
-                },
-                "strict": true
-            });
+            request["text"]["format"] = json!("json_object");
         }
 
         debug!("📤 Sending request to GPT-5 Responses API");
+        let response_value = self.post_response(request).await?;
 
-        let response = self
-            .client
-            .post(format!("{}/v1/responses", self.base_url))
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
-            .header(header::CONTENT_TYPE, "application/json")
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
-            return Err(anyhow!("OpenAI API error ({}): {}", status, error_text));
-        }
-
-        let api_response: Value = response.json().await?;
-
-        let output_text = extract_text_from_responses(&api_response)
-            .unwrap_or_default();
+        let text_content = extract_text_from_responses(&response_value)
+            .ok_or_else(|| anyhow!("Failed to extract text from API response"))?;
 
         Ok(ResponseOutput {
-            output: output_text,
-            reasoning_summary: api_response.get("reasoning_summary")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+            content: text_content,
+            raw: Some(response_value),
         })
     }
 
-    /// Generate a response as an **SSE stream** from the GPT-5 Responses API.
-    pub async fn generate_response_stream(
+    /// Stream a response using the GPT-5 Responses API (SSE).
+    /// This method is called by streaming.rs
+    pub async fn stream_response(
         &self,
-        user_text: &str,
-        system_prompt: Option<&str>,
-        request_structured: bool,
+        body: serde_json::Value,
     ) -> Result<ResponseStream> {
-        let mut input = vec![json!({
-            "role": "user",
-            "content": [{ "type": "input_text", "text": user_text }]
-        })];
-
-        if let Some(system) = system_prompt {
-            input.insert(
-                0,
-                json!({
-                    "role": "system",
-                    "content": [{ "type": "input_text", "text": system }]
-                }),
-            );
-        }
-
-        let mut request = json!({
-            "model": self.model,
-            "input": input,
-            "text": {
-                "verbosity": sanitize_verbosity(&self.verbosity)
-            },
-            "reasoning": {
-                "effort": sanitize_reasoning(&self.reasoning_effort)
-            },
-            "max_output_tokens": self.max_output_tokens,
-            "stream": true
-        });
-        
-        if request_structured {
-            request["text"]["format"] = json!({
-                "type": "json_schema",
-                "name": "mira_response",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "output": { "type": "string", "description": "The main response text" },
-                        "mood": { "type": "string", "description": "The emotional tone of the response" },
-                        "salience": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Importance score from 1-10" },
-                        "summary": { "type": "string", "description": "Brief summary of the interaction" },
-                        "memory_type": { "type": "string", "enum": ["event", "fact", "emotion", "preference", "context"], "description": "Category of memory" },
-                        "tags": { "type": "array", "items": { "type": "string" }, "description": "Relevant tags for this interaction" },
-                        "intent": { "type": "string", "description": "The user's apparent intent" },
-                        "monologue": { "type": ["string", "null"], "description": "Internal reasoning or thoughts" },
-                        "reasoning_summary": { "type": ["string", "null"], "description": "Summary of reasoning process" }
-                    },
-                    "required": ["output", "mood", "salience", "summary", "memory_type", "tags", "intent", "monologue", "reasoning_summary"],
-                    "additionalProperties": false
-                },
-                "strict": true
-            });
-        }
-
-        self.post_response_stream(request).await
+        self.post_response_stream(body).await
     }
 
     /// Low-level helper to POST a Responses request and return an SSE JSON stream.
+    /// Used by streaming.rs and responses/manager.rs
     pub async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
-        let req = self
-            .client
+        let req = self.client
             .post(format!("{}/v1/responses", self.base_url))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
             .header(header::CONTENT_TYPE, "application/json")
@@ -303,41 +211,6 @@ impl OpenAIClient {
         Ok(embedding)
     }
 
-    /// Simple chat method for non-structured responses (used by emotional_weight.rs)
-    pub async fn simple_chat(
-        &self,
-        prompt: &str,
-        model: &str,
-        system_prompt: &str,
-    ) -> Result<String> {
-        let body = json!({
-            "model": model,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [{ "type": "input_text", "text": system_prompt }]
-                },
-                {
-                    "role": "user",
-                    "content": [{ "type": "input_text", "text": prompt }]
-                }
-            ],
-            "text": {
-                "verbosity": "low"
-            },
-            "reasoning": {
-                "effort": "minimal"
-            },
-            "max_output_tokens": 100
-        });
-
-        debug!("📤 Sending simple chat request to GPT-5 Responses API");
-        let response_value = self.post_response(body).await?;
-        
-        extract_text_from_responses(&response_value)
-            .ok_or_else(|| anyhow!("Failed to extract text from API response"))
-    }
-
     /// Generates a concise summary of a conversation chunk.
     pub async fn summarize_conversation(
         &self,
@@ -345,170 +218,117 @@ impl OpenAIClient {
         max_output_tokens: usize,
     ) -> Result<String> {
         let body = json!({
-            "model": self.model,
+            "model": &self.model,
             "input": [{
                 "role": "user",
                 "content": [{ "type": "input_text", "text": prompt }]
             }],
-            "parameters": {
-                "verbosity": "low",
-                "reasoning_effort": "minimal",
-                "max_output_tokens": max_output_tokens,
-                "temperature": 0.3
-            }
+            "text": {
+                "verbosity": "low"
+            },
+            "reasoning": {
+                "effort": "minimal"
+            },
+            "max_output_tokens": max_output_tokens
         });
 
         debug!("📤 Sending summarization request to GPT-5 Responses API");
         let response_value = self.post_response(body).await?;
         
         extract_text_from_responses(&response_value)
-            .ok_or_else(|| anyhow!("Failed to extract summary text from API response"))
+            .ok_or_else(|| anyhow!("Failed to extract summary from API response"))
     }
 }
 
-// Data structures for request/response
+/// Helper function to extract text content from the Responses API response.
+pub fn extract_text_from_responses(response: &Value) -> Option<String> {
+    // Try to extract from output.message.content[0].text
+    if let Some(text) = response
+        .get("output")
+        .and_then(|o| o.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.get(0))
+        .and_then(|part| part.get("text"))
+        .and_then(|t| t.as_str())
+    {
+        return Some(text.to_string());
+    }
+
+    // Fallback: Try message.content[0].text directly
+    if let Some(text) = response
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.get(0))
+        .and_then(|part| part.get("text"))
+        .and_then(|t| t.as_str())
+    {
+        return Some(text.to_string());
+    }
+
+    // Additional fallback: Try output as string directly
+    if let Some(text) = response
+        .get("output")
+        .and_then(|o| o.as_str())
+    {
+        return Some(text.to_string());
+    }
+
+    None
+}
+
+/// Helper: Parse SSE stream of JSON into a Stream of Value.
+fn sse_json_stream(
+    bytes_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+) -> impl Stream<Item = Result<Value>> + Send {
+    use futures::stream;
+    
+    bytes_stream
+        .map(|res| res.map_err(Into::into))
+        .scan(Vec::new(), |buffer, res: Result<bytes::Bytes, anyhow::Error>| {
+            let bytes = match res {
+                Ok(b) => b,
+                Err(e) => return futures::future::ready(Some(Some(Err(e)))),
+            };
+
+            buffer.extend_from_slice(&bytes);
+            let events = parse_sse_from_buffer(buffer);
+            futures::future::ready(Some(Some(Ok(events))))
+        })
+        .filter_map(|item| async move { item })
+        .flat_map(|res: Result<Vec<Value>, anyhow::Error>| {
+            // Ensure both arms return the same type
+            let items: Vec<Result<Value>> = match res {
+                Ok(events) => events.into_iter().map(Ok).collect(),
+                Err(e) => vec![Err(e)],
+            };
+            stream::iter(items)
+        })
+}
+
+/// Parse SSE events from a buffer.
+fn parse_sse_from_buffer(buffer: &mut Vec<u8>) -> Vec<Value> {
+    let mut events = Vec::new();
+    let data = String::from_utf8_lossy(buffer);
+    let mut lines = data.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        if line.starts_with("data: ") {
+            let json_str = &line[6..];
+            if json_str == "[DONE]" {
+                continue;
+            }
+            if let Ok(parsed) = serde_json::from_str::<Value>(json_str) {
+                events.push(parsed);
+            }
+        }
+    }
+
+    buffer.clear();
+    events
+}
+
 #[derive(Debug)]
 pub struct ResponseOutput {
-    pub output: String,
-    pub reasoning_summary: Option<String>,
-}
-
-/// SSE stream parser
-fn sse_json_stream<S>(mut raw: S) -> impl Stream<Item = Result<Value>> + Send
-where
-    S: Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin + Send + 'static,
-{
-    use bytes::Buf;
-
-    let mut buf = bytes::BytesMut::new();
-
-    async_stream::stream! {
-        while let Some(chunk_res) = raw.next().await {
-            match chunk_res {
-                Ok(chunk) => {
-                    buf.extend_from_slice(&chunk);
-
-                    loop {
-                        if let Some(pos) = find_frame_boundary(&buf) {
-                            let frame = buf.split_to(pos);
-                            if buf.remaining() >= 2 { let _ = buf.split_to(2); }
-
-                            let text = String::from_utf8(frame.to_vec())
-                                .unwrap_or_else(|_| String::new());
-
-                            let mut data_lines = Vec::new();
-                            for line in text.lines() {
-                                let l = line.trim_start();
-                                if l.starts_with("data:") {
-                                    let v = l["data:".len()..].trim_start();
-                                    data_lines.push(v);
-                                }
-                            }
-
-                            if data_lines.is_empty() { continue; }
-
-                            let data_joined = data_lines.join("\n");
-
-                            if data_joined == "[DONE]" {
-                                yield Ok(json!({ "done": true }));
-                                continue;
-                            }
-
-                            match serde_json::from_str::<Value>(&data_joined) {
-                                Ok(v) => yield Ok(v),
-                                Err(e) => yield Err(anyhow!("SSE data parse error: {e}; raw={}", data_joined)),
-                            }
-                        } else { break; }
-                    }
-                }
-                Err(e) => { yield Err(anyhow!("SSE transport error: {e}")); }
-            }
-        }
-    }
-}
-
-/// Find "\n\n" (or "\r\n\r\n") boundary in buffer; return index of frame end.
-fn find_frame_boundary(buf: &bytes::BytesMut) -> Option<usize> {
-    if let Some(i) = twowin(buf, b'\n', b'\n') { return Some(i); }
-    if let Some(i) = fourwin(buf, b'\r', b'\n', b'\r', b'\n') { return Some(i); }
-    None
-}
-
-fn twowin(buf: &bytes::BytesMut, a: u8, b: u8) -> Option<usize> {
-    let bytes = &buf[..];
-    for i in 0..bytes.len().saturating_sub(1) {
-        if bytes[i] == a && bytes[i + 1] == b { return Some(i); }
-    }
-    None
-}
-
-fn fourwin(buf: &bytes::BytesMut, a: u8, b: u8, c: u8, d: u8) -> Option<usize> {
-    let bytes = &buf[..];
-    for i in 0..bytes.len().saturating_sub(3) {
-        if bytes[i] == a && bytes[i + 1] == b && bytes[i + 2] == c && bytes[i + 3] == d { return Some(i); }
-    }
-    None
-}
-
-/// Helper to extract text from GPT-5 Responses API output
-pub fn extract_text_from_responses(resp_json: &serde_json::Value) -> Option<String> {
-    if let Some(output) = resp_json.get("output").and_then(|o| o.as_array()) {
-        let mut text_parts = vec![];
-        for item in output {
-            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
-                if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
-                    for content_item in content {
-                        if content_item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
-                            if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
-                                text_parts.push(text.to_string());
-                            }
-                        }
-                    }
-                }
-            } else if item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
-                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                    text_parts.push(text.to_string());
-                }
-            }
-        }
-        if !text_parts.is_empty() {	
-            return Some(text_parts.join("\n"));	
-        }
-    }
-
-    resp_json
-        .pointer("/choices/0/message/content")
-        .and_then(|c| c.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|part| {
-                    if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
-                        part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                    } else { None }
-                })
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .or_else(|| {
-            resp_json
-                .pointer("/choices/0/message/content")
-                .and_then(|c| c.as_str())
-                .map(|s| s.to_string())
-        })
-}
-
-fn sanitize_verbosity(v: &str) -> &'static str {
-    match v.trim().to_ascii_lowercase().as_str() {
-        "low" => "low",
-        "high" => "high",
-        _ => "medium",
-    }
-}
-
-fn sanitize_reasoning(v: &str) -> &'static str {
-    match v.trim().to_ascii_lowercase().as_str() {
-        "low" | "minimal" => "minimal",
-        "high" => "high",
-        _ => "medium",
-    }
+    pub content: String,
+    pub raw: Option<Value>,
 }

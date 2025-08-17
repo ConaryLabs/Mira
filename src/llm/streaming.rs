@@ -127,7 +127,8 @@ pub async fn stream_response(
     info!("📤 Sending request to OpenAI Responses API");
     debug!("Request body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
 
-    let sse: ResponseStream = client.post_response_stream(body).await?;
+    // Fixed: Use stream_response instead of post_response_stream
+    let sse: ResponseStream = client.stream_response(body).await?;
     info!("✅ SSE stream started successfully");
 
     // Keep accumulators for both raw JSON and structured content
@@ -199,54 +200,43 @@ pub async fn stream_response(
                                 "response.output_text.delta" => {
                                     // This is where the structured JSON comes through
                                     if let Some(delta) = v.get("delta").and_then(|d| d.as_str()) {
-                                        info!("💬 Output text delta: {}", delta);
+                                        info!("📝 Text delta: {} chars", delta.len());
                                         
-                                        // Accumulate the JSON string
-                                        let mut json_guard = json_acc.lock().await;
-                                        json_guard.push_str(delta);
+                                        let mut raw_guard = raw_acc.lock().await;
+                                        raw_guard.push_str(delta);
                                         
-                                        // For structured JSON, don't send individual deltas
-                                        // We'll send the complete parsed output later
                                         if is_structured.load(std::sync::atomic::Ordering::SeqCst) {
-                                            drop(json_guard);
-                                            // Return empty delta to filter out
-                                            return Ok(StreamEvent::Delta(String::new()));
-                                        } else {
-                                            // For non-structured, accumulate and send
-                                            let mut raw_guard = raw_acc.lock().await;
-                                            raw_guard.push_str(delta);
-                                            drop(raw_guard);
-                                            drop(json_guard);
-                                            return Ok(StreamEvent::Delta(delta.to_string()));
-                                        }
-                                    }
-                                }
-                                "response.output_text.done" => {
-                                    info!("✅ Output text done");
-                                    
-                                    // For structured JSON, send the complete JSON as one chunk
-                                    if is_structured.load(std::sync::atomic::Ordering::SeqCst) 
-                                        && !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) {
-                                        
-                                        let json_str = json_acc.lock().await.clone();
-                                        if !json_str.is_empty() {
-                                            // Safe string truncation for logging
-                                            let preview = if json_str.len() > 200 {
-                                                let mut end = 200;
-                                                while !json_str.is_char_boundary(end) && end > 0 {
-                                                    end -= 1;
+                                            let mut json_guard = json_acc.lock().await;
+                                            json_guard.push_str(delta);
+                                            
+                                            // Try to parse accumulated JSON
+                                            if let Ok(_parsed) = serde_json::from_str::<Value>(&*json_guard) {
+                                                // Only send if we haven't already sent it
+                                                if !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) {
+                                                    let json_str = json_guard.clone();
+                                                    
+                                                    // Safe string truncation for logging
+                                                    let preview = if json_str.len() > 200 {
+                                                        let mut end = 200;
+                                                        while !json_str.is_char_boundary(end) && end > 0 {
+                                                            end -= 1;
+                                                        }
+                                                        format!("{}...", &json_str[..end])
+                                                    } else {
+                                                        json_str.clone()
+                                                    };
+                                                    info!("📄 Sending complete structured JSON: {}", preview);
+                                                    
+                                                    // Mark as sent
+                                                    complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                    
+                                                    // Send the complete JSON for the WebSocket handler to parse
+                                                    return Ok(StreamEvent::Delta(json_str));
                                                 }
-                                                format!("{}...", &json_str[..end])
-                                            } else {
-                                                json_str.clone()
-                                            };
-                                            info!("📄 Sending complete structured JSON: {}", preview);
-                                            
-                                            // Mark as sent
-                                            complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
-                                            
-                                            // Send the complete JSON for the WebSocket handler to parse
-                                            return Ok(StreamEvent::Delta(json_str));
+                                            }
+                                        } else {
+                                            // For non-structured, send the delta immediately
+                                            return Ok(StreamEvent::Delta(delta.to_string()));
                                         }
                                     }
                                 }
@@ -269,108 +259,70 @@ pub async fn stream_response(
                                                     } else {
                                                         text.to_string()
                                                     };
-                                                    info!("📄 Complete item text: {}", preview);
+                                                    info!("📄 Complete text from output_item.done: {}", preview);
                                                     
-                                                    // For structured JSON, send the complete JSON
+                                                    // For structured responses, this might be the complete JSON
                                                     if is_structured.load(std::sync::atomic::Ordering::SeqCst) {
-                                                        complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
-                                                        
-                                                        // Try to parse and extract output for raw accumulator
-                                                        if let Ok(structured) = serde_json::from_str::<Value>(text) {
-                                                            if let Some(_output) = structured.get("output").and_then(|o| o.as_str()) {
-                                                                let mut raw_guard = raw_acc.lock().await;
-                                                                raw_guard.push_str(_output);
-                                                                drop(raw_guard);
-                                                            }
+                                                        if !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) {
+                                                            complete_json_sent.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                            return Ok(StreamEvent::Delta(text.to_string()));
                                                         }
-                                                        
-                                                        return Ok(StreamEvent::Delta(text.to_string()));
-                                                    } else {
-                                                        // Non-structured, send as-is
-                                                        let mut raw_guard = raw_acc.lock().await;
-                                                        raw_guard.push_str(text);
-                                                        drop(raw_guard);
-                                                        return Ok(StreamEvent::Delta(text.to_string()));
                                                     }
                                                 }
                                             }
                                         }
-                                        // Simple content string
-                                        else if let Some(content) = item.get("content").and_then(|c| c.as_str()) {
-                                            info!("📄 Complete item content: {}", content);
-                                            let mut raw_guard = raw_acc.lock().await;
-                                            raw_guard.push_str(content);
-                                            drop(raw_guard);
-                                            return Ok(StreamEvent::Delta(content.to_string()));
-                                        }
                                     }
                                 }
-                                "response.done" | "response.completed" => {
-                                    let full = raw_acc.lock().await.clone();
-                                    let json_full = json_acc.lock().await.clone();
+                                "response.done" => {
+                                    info!("🎉 Response complete!");
                                     
-                                    info!("✅ Response complete. Total text: {} chars, JSON: {} chars", 
-                                        full.len(), json_full.len());
-
-                                    // If we have structured JSON that wasn't sent yet, send it now
-                                    if is_structured.load(std::sync::atomic::Ordering::SeqCst) 
-                                        && !complete_json_sent.load(std::sync::atomic::Ordering::SeqCst) 
-                                        && !json_full.is_empty() {
-                                        
-                                        // Try to parse and extract output
-                                        if let Ok(structured) = serde_json::from_str::<Value>(&json_full) {
-                                            if let Some(_output) = structured.get("output").and_then(|o| o.as_str()) {
-                                                return Ok(StreamEvent::Done {
-                                                    full_text: json_full, // Send full JSON for metadata
-                                                    raw: Some(v),
-                                                });
-                                            }
-                                        }
-                                    }
-
-                                    // Use the raw accumulator for Done event
+                                    let raw_guard = raw_acc.lock().await;
+                                    let full_text = raw_guard.clone();
+                                    
+                                    info!("📊 Total streamed: {} chars", full_text.len());
+                                    
                                     return Ok(StreamEvent::Done {
-                                        full_text: if !full.is_empty() { full } else { json_full },
+                                        full_text,
                                         raw: Some(v),
                                     });
                                 }
                                 _ => {
-                                    warn!("⚠️ Unknown event type: {}", event_type);
+                                    debug!("📋 Other event type: {}", event_type);
                                 }
                             }
-
-                            // If we haven't returned yet, this frame doesn't produce a delta
-                            Ok(StreamEvent::Delta(String::new()))
+                            
+                            // No event to emit for this frame
+                            Err(anyhow::anyhow!("No stream event"))
                         }
                         Err(e) => {
-                            let current = frame_count.load(std::sync::atomic::Ordering::SeqCst);
-                            info!("❌ SSE error at frame #{}: {:?}", current, e);
+                            warn!("❌ Stream error: {}", e);
                             Ok(StreamEvent::Error(e.to_string()))
                         }
                     }
                 }
             }
         })
-        .filter_map(|res| async move {
-            match &res {
-                Ok(StreamEvent::Delta(s)) if s.is_empty() => None,
-                _ => Some(res),
+        .filter_map(|result| async move {
+            match result {
+                Ok(event) => Some(Ok(event)),
+                Err(_) => None, // Skip non-events
             }
         });
 
     Ok(Box::pin(stream))
 }
 
-fn sanitize_verbosity(v: &str) -> Value {
-    match v {
-        "low" | "medium" | "high" => serde_json::json!(v),
-        _ => serde_json::json!("medium"),
+/// Helper functions for sanitizing parameters
+fn sanitize_verbosity(v: &str) -> &str {
+    match v.to_lowercase().as_str() {
+        "low" | "medium" | "high" => v,
+        _ => "medium"
     }
 }
 
-fn sanitize_reasoning(v: &str) -> Value {
-    match v {
-        "minimal" | "low" | "medium" | "high" => serde_json::json!(v),
-        _ => serde_json::json!("medium"),
+fn sanitize_reasoning(r: &str) -> &str {
+    match r.to_lowercase().as_str() {
+        "minimal" | "medium" | "high" => r,
+        _ => "medium"
     }
 }
