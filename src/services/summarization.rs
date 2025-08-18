@@ -1,30 +1,24 @@
 // src/services/summarization.rs
-
 use std::sync::Arc;
 use anyhow::{anyhow, Result};
 
 use crate::llm::client::OpenAIClient;
+use crate::memory::sqlite::store::SqliteMemoryStore;
+use crate::memory::traits::MemoryStore;
 use crate::services::chat::{ChatConfig, ChatResponse};
 use crate::services::memory::MemoryService;
-use crate::memory::traits::MemoryStore;
 
-/// Summarizes recent conversation and persists a compact summary as a normal
-/// assistant response (tags=["summary"], memory_type="context").
-///
-/// Wiring options:
-/// - Minimal: call `new(openai, config)` and later call `attach_stores(...)`.
-/// - Fully-wired: call `new_with_stores(openai, config, sqlite_store, memory_service)`.
 pub struct SummarizationService {
     openai_client: Arc<OpenAIClient>,
     config: Arc<ChatConfig>,
-
-    // Optional until attached; enables summarize_if_needed to operate.
-    sqlite_store: Option<Arc<dyn MemoryStore + Send + Sync>>,
+    sqlite_store: Option<Arc<SqliteMemoryStore>>,
     memory_service: Option<Arc<MemoryService>>,
 }
 
 impl SummarizationService {
+    /// Create a summarizer for direct summarization (text-only)
     pub fn new(openai_client: Arc<OpenAIClient>, config: Arc<ChatConfig>) -> Self {
+        // Placeholder: we don't have stores here, so summarize_if_needed() is a no-op.
         Self {
             openai_client,
             config,
@@ -33,10 +27,11 @@ impl SummarizationService {
         }
     }
 
+    /// Create a summarizer that can actually read & write memory (used for ChatService).
     pub fn new_with_stores(
         openai_client: Arc<OpenAIClient>,
         config: Arc<ChatConfig>,
-        sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
+        sqlite_store: Arc<SqliteMemoryStore>,
         memory_service: Arc<MemoryService>,
     ) -> Self {
         Self {
@@ -47,29 +42,33 @@ impl SummarizationService {
         }
     }
 
-    /// If you constructed with `new(...)`, call this once during bootstrapping.
-    pub fn attach_stores(
-        &mut self,
-        sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
-        memory_service: Arc<MemoryService>,
-    ) {
-        self.sqlite_store = Some(sqlite_store);
-        self.memory_service = Some(memory_service);
+    /// Check recent conversation length & trigger summarization if needed.
+    pub async fn summarize_if_needed(&self, session_id: &str) -> Result<()> {
+        // We only summarize if we have real stores; if not, return early.
+        if let Some(ref sqlite_store) = self.sqlite_store {
+            let cap = self.config.history_message_cap.max(8);
+            let recent = sqlite_store.load_recent(session_id, cap).await?;
+            if recent.len() < cap / 2 {
+                // Too few messages to bother summarizing.
+                return Ok(());
+            }
+            self.summarize_recent(session_id).await
+        } else {
+            // No stores available, skip summarization
+            Ok(())
+        }
     }
 
-    /// Summarize recent messages and persist the result as a ChatResponse.
-    /// If stores haven’t been attached, this becomes a safe no-op (returns Ok(())).
-    pub async fn summarize_if_needed(&self, session_id: &str) -> Result<()> {
-        let sqlite = match &self.sqlite_store {
-            Some(s) => s.clone(),
-            None => return Ok(()), // not wired yet; skip without failing the pipeline
-        };
-        let mem = match &self.memory_service {
-            Some(m) => m.clone(),
-            None => return Ok(()),
-        };
+    /// Actually summarize recent messages and persist the summary.
+    pub async fn summarize_recent(&self, session_id: &str) -> Result<()> {
+        let sqlite = self.sqlite_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("No SQLite store available for summarization"))?;
+        let mem = self.memory_service
+            .as_ref()
+            .ok_or_else(|| anyhow!("No memory service available for summarization"))?;
 
-        // 1) Load a window of recent messages (use history_message_cap as guide).
+        // 1) Load recent messages (more than config cap to ensure we catch the tail).
         let cap = self.config.history_message_cap.max(8);
         let take = cap.saturating_mul(2);
         let recent = sqlite.load_recent(session_id, take).await?;
@@ -97,14 +96,14 @@ impl SummarizationService {
             .to_string();
 
         if summary.is_empty() {
-            // Don’t save an empty summary.
+            // Don't save an empty summary.
             return Ok(());
         }
 
-        // 4) Persist as an assistant response so it’s retrievable like everything else.
+        // 4) Persist as an assistant response so it's retrievable like everything else.
         let response = ChatResponse {
             output: String::new(),            // not user-facing body; summary lives below
-            persona: Some("mira".to_string()),
+            persona: "mira".to_string(),      // FIXED: was Some("mira".to_string())
             mood: "neutral".to_string(),
             salience: 2,                      // low default; tune if desired
             summary,                          // the compacted conversation summary

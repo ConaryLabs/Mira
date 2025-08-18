@@ -130,7 +130,7 @@ impl DocumentService {
         // Build a ChatResponse, since MemoryService::evaluate_and_save_response expects that type
         let doc_response = ChatResponse {
             output: content.to_string(),
-            persona: Some("system".to_string()),
+            persona: "system".to_string(),  // FIXED: was Some("system".to_string())
             mood: "neutral".to_string(),
             salience: 7,
             summary: "Imported document".to_string(),
@@ -155,7 +155,7 @@ impl DocumentService {
     ) -> Result<()> {
         let doc_response = ChatResponse {
             output: content.to_string(),
-            persona: Some("system".to_string()),
+            persona: "system".to_string(),  // FIXED: was Some("system".to_string())
             mood: "neutral".to_string(),
             salience: 7,
             summary: "Imported project document".to_string(),

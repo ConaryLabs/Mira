@@ -29,11 +29,17 @@ impl ContextService {
         embedding: Option<&[f32]>,
         _project_id: Option<&str>,
     ) -> Result<RecallContext> {
+        // Get limits from environment
+        let recent_messages = std::env::var("MIRA_CONTEXT_RECENT_MESSAGES")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(30);
+        let semantic_matches = std::env::var("MIRA_CONTEXT_SEMANTIC_MATCHES")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(15);
+        
         let context = build_context(
             session_id,
             embedding,
-            30,  // recent messages - increased for better context
-            15,  // semantic matches - increased for better recall
+            recent_messages,
+            semantic_matches,
             self.sqlite_store.as_ref(),
             self.qdrant_store.as_ref(),
         )

@@ -50,116 +50,149 @@ pub struct HistoryQuery {
 }
 
 fn default_limit() -> usize {
-    30
+    std::env::var("MIRA_HISTORY_DEFAULT_LIMIT")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(30)
 }
 
-// Handler for fetching Peter's eternal session history
+// Handler for fetching session history
 pub async fn get_chat_history(
     State(app_state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<HistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, StatusCode> {
+    // Get session ID from environment
+    let session_id = std::env::var("MIRA_SESSION_ID")
+        .unwrap_or_else(|_| "peter-eternal".to_string());
+    
+    tracing::info!("📚 Fetching history for session: {} (offset: {}, limit: {})", 
+                  session_id, query.offset, query.limit);
+    
+    // Enforce maximum limit from environment
+    let max_limit = std::env::var("MIRA_HISTORY_MAX_LIMIT")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+    
     // Calculate how many messages to skip and take
     let skip = query.offset;
-    let take = query.limit;
+    let take = query.limit.min(max_limit);
     
-    // Fetch messages for peter-eternal session
-    // Get more than requested to handle offset
+    // Fetch messages for session
     match app_state.memory_service
-        .get_recent_context("peter-eternal", skip + take)
+        .get_recent_context(&session_id, skip + take)
         .await 
     {
         Ok(memories) => {
+            tracing::info!("📚 Retrieved {} total memories from database", memories.len());
+            
             // Skip the offset amount and take the limit
             let messages: Vec<ChatHistoryMessage> = memories
                 .into_iter()
                 .skip(skip)
                 .take(take)
-                .enumerate()
-                .map(|(idx, m)| ChatHistoryMessage {
-                    id: format!("history-{}-{}", m.timestamp.timestamp(), idx),
-                    role: if m.role == "assistant" { "assistant".to_string() } else { m.role },
+                .map(|m| ChatHistoryMessage {
+                    id: format!("msg-{}-{}", m.timestamp.timestamp_millis(), m.id.unwrap_or(0)),
+                    role: if m.role == "assistant" || m.role == "mira" { 
+                        "assistant".to_string() 
+                    } else { 
+                        m.role 
+                    },
                     content: m.content,
-                    timestamp: m.timestamp.timestamp(),
+                    timestamp: m.timestamp.timestamp_millis(),
                     tags: m.tags,
                 })
                 .collect();
             
-            tracing::info!("📚 Loaded {} messages from Peter's eternal session (offset: {}, limit: {})", 
-                         messages.len(), skip, take);
+            tracing::info!("📚 Returning {} messages after pagination", messages.len());
             
             Ok(Json(ChatHistoryResponse { messages }))
         }
         Err(e) => {
-            tracing::error!("Failed to load Peter's history: {}", e);
+            tracing::error!("❌ Failed to load history: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
-pub fn http_router() -> Router<Arc<AppState>> {
+// Chat request/response types
+#[derive(Deserialize)]
+pub struct ChatRequest {
+    pub message: String,
+    pub persona_override: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ChatResponse {
+    pub output: String,
+    pub persona: String,
+    pub mood: String,
+    pub salience: usize,
+    pub summary: String,
+    pub memory_type: String,
+    pub tags: Vec<String>,
+    pub intent: Option<String>,
+    pub monologue: Option<String>,
+    pub reasoning_summary: Option<String>,
+}
+
+// REST chat handler
+pub async fn rest_chat_handler(
+    State(app_state): State<Arc<AppState>>,
+    Json(payload): Json<ChatRequest>,
+) -> Result<Json<ChatResponse>, StatusCode> {
+    // Get session ID from environment
+    let session_id = std::env::var("MIRA_SESSION_ID")
+        .unwrap_or_else(|_| "peter-eternal".to_string());
+    
+    // Use provided persona or default from environment
+    let _persona_str = payload.persona_override
+        .unwrap_or_else(|| std::env::var("MIRA_DEFAULT_PERSONA")
+            .unwrap_or_else(|_| "default".to_string()));
+    
+    match app_state.chat_service
+        .chat(&session_id, &payload.message, None)
+        .await
+    {
+        Ok(response) => {
+            Ok(Json(ChatResponse {
+                output: response.output,
+                persona: response.persona,
+                mood: response.mood,
+                salience: response.salience,
+                summary: response.summary,
+                memory_type: response.memory_type,
+                tags: response.tags,
+                intent: response.intent,
+                monologue: response.monologue,
+                reasoning_summary: response.reasoning_summary,
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Chat service error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// This function now takes the app_state as a parameter (called from main.rs)
+pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
-        // Chat history endpoint - matches frontend expectation
-        .route("/chat/history", get(get_chat_history))
+        // Chat endpoints - match frontend expectations
+        .route("/api/chat/history", get(get_chat_history))
+        .route("/api/chat", post(rest_chat_handler))
         
-        // Git endpoints - existing
-        .route(
-            "/projects/:project_id/git/attach",
-            post(attach_repo_handler),
-        )
-        .route(
-            "/projects/:project_id/git/repos",
-            get(list_attached_repos_handler),
-        )
-        .route(
-            "/projects/:project_id/git/:attachment_id/sync",
-            post(sync_repo_handler),
-        )
-        
-        // Git file operations - existing
-        .route(
-            "/projects/:project_id/git/:attachment_id/tree",
-            get(get_file_tree_handler),
-        )
-        .route(
-            "/projects/:project_id/git/:attachment_id/file/*file_path",
-            get(get_file_content_handler)
-                .put(update_file_content_handler),
-        )
-        // Add the /files/* route that frontend expects (with 's')
-        .route(
-            "/projects/:project_id/git/:attachment_id/files/*file_path",
-            get(get_file_content_handler)
-                .put(update_file_content_handler),
-        )
-        
-        // Git Phase 3 - new branch operations
-        .route(
-            "/projects/:project_id/git/:attachment_id/branches",
-            get(list_branches),
-        )
-        .route(
-            "/projects/:project_id/git/:attachment_id/branches/switch",
-            post(switch_branch),
-        )
-        
-        // Git Phase 3 - new commit operations
-        .route(
-            "/projects/:project_id/git/:attachment_id/commits",
-            get(get_commit_history),
-        )
-        .route(
-            "/projects/:project_id/git/:attachment_id/commits/:commit_id/diff",
-            get(get_commit_diff),
-        )
-        .route(
-            "/projects/:project_id/git/:attachment_id/file_at_commit",
-            get(get_file_at_commit),
-        )
+        // Git endpoints
+        .route("/git/attach", post(attach_repo_handler))
+        .route("/git/repos", get(list_attached_repos_handler))
+        .route("/git/sync/:project_id", post(sync_repo_handler))
+        .route("/git/tree/:project_id", get(get_file_tree_handler))
+        .route("/git/file/:project_id", get(get_file_content_handler))
+        .route("/git/file/:project_id", post(update_file_content_handler))
+        .route("/git/branches/:project_id", get(list_branches))
+        .route("/git/branch/:project_id", post(switch_branch))
+        .route("/git/commits/:project_id", get(get_commit_history))
+        .route("/git/diff/:project_id/:commit_sha", get(get_commit_diff))
+        .route("/git/file-at-commit/:project_id/:commit_sha", get(get_file_at_commit))
         
         // Project endpoints
-        .route(
-            "/projects/:project_id/details",
-            get(project_details_handler),
-        )
-        // Add other endpoints here as needed
+        .route("/project/:project_id", get(project_details_handler))
+        
+        .with_state(app_state)
 }

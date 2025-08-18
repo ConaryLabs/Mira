@@ -38,7 +38,7 @@ impl FileContextService {
     
     /// Check if a message needs file context using LLM
     pub async fn check_intent(&self, message: &str, metadata: &MessageMetadata) -> Result<FileIntent> {
-        // Use configurable model or default to gpt-5
+        // Use configurable model from environment
         let model = std::env::var("MIRA_INTENT_MODEL")
             .unwrap_or_else(|_| "gpt-5".to_string());
         
@@ -82,130 +82,91 @@ Respond in JSON format:
         let intent: FileIntent = serde_json::from_str(&response)
             .context("Failed to parse intent response")?;
         
-        info!(
-            "File context intent: needs={}, confidence={:.2}, reason={}",
-            intent.needs_file_content, intent.confidence, intent.reasoning
-        );
+        info!("File context intent: needs_content={}, confidence={:.2}", 
+              intent.needs_file_content, intent.confidence);
         
         Ok(intent)
     }
     
-    /// Get file content if needed based on intent
-    pub async fn get_file_content_if_needed(
+    /// Get file content from git repository
+    pub async fn get_file_content(
         &self,
-        message: &str,
         project_id: &str,
-        metadata: &MessageMetadata,
-    ) -> Result<Option<String>> {
-        // Check intent with LLM
-        let intent = self.check_intent(message, metadata).await?;
-        
-        // If LLM says we don't need the file, return None
-        if !intent.needs_file_content || intent.confidence < 0.7 {
-            debug!("LLM determined file content not needed (confidence: {:.2})", intent.confidence);
-            return Ok(None);
-        }
-        
-        // Get the file content directly from filesystem
-        if let (Some(attachment_id), Some(file_path)) = 
-            (&metadata.attachment_id, &metadata.file_path) {
+        file_path: &str,
+        repo_id: Option<&str>,
+    ) -> Result<String> {
+        // Get attachment from store
+        if let Some(repo) = repo_id {
+            let attachments = self.git_client.store
+                .list_project_attachments(project_id)
+                .await
+                .context("Failed to list attachments")?;
             
-            debug!("Fetching file content for {}", file_path);
+            let attachment = attachments
+                .into_iter()
+                .find(|a| a.id == repo)
+                .ok_or_else(|| anyhow::anyhow!("Repository not found"))?;
             
-            // Get attachment info to find local path
-            match self.git_client.store.get_attachment_by_id(attachment_id).await {
-                Ok(Some(attachment)) => {
-                    // Build full file path
-                    let full_path = StdPath::new(&attachment.local_path).join(file_path);
-                    
-                    // Read file content
-                    match tokio::fs::read_to_string(&full_path).await {
-                        Ok(content) => {
-                            // Truncate if too large (>10KB)
-                            let truncated = if content.len() > 10240 {
-                                let truncated = format!(
-                                    "{}\n\n[... file truncated, showing first 10KB ...]",
-                                    &content[..10240]
-                                );
-                                warn!("File content truncated from {} to 10KB", content.len());
-                                truncated
-                            } else {
-                                content
-                            };
-                            
-                            info!("Including file content ({} bytes)", truncated.len());
-                            Ok(Some(truncated))
-                        }
-                        Err(e) => {
-                            warn!("Failed to read file content: {}", e);
-                            Ok(None)
-                        }
-                    }
-                }
-                Ok(None) => {
-                    warn!("Attachment {} not found", attachment_id);
-                    Ok(None)
-                }
-                Err(e) => {
-                    warn!("Failed to get attachment: {}", e);
-                    Ok(None)
-                }
-            }
+            // Read file directly from the cloned repository
+            let full_path = StdPath::new(&attachment.local_path).join(file_path);
+            let content = std::fs::read_to_string(&full_path)
+                .context("Failed to read file content")?;
+            
+            Ok(content)
         } else {
-            debug!("No attachment_id or file_path in metadata");
-            Ok(None)
+            Err(anyhow::anyhow!("Repository ID required to fetch file content"))
         }
     }
     
     /// Process a message with potential file context
-    pub async fn enhance_message_with_context(
+    pub async fn process_with_context(
         &self,
         message: &str,
-        project_id: &str,
-        metadata: Option<&MessageMetadata>,
+        metadata: &MessageMetadata,
+        project_id: Option<&str>,
     ) -> Result<String> {
-        // If no metadata, return original message
-        let metadata = match metadata {
-            Some(m) => m,
-            None => return Ok(message.to_string()),
-        };
+        // Check if file context is needed
+        let intent = self.check_intent(message, metadata).await?;
         
-        // Get file content if LLM determines it's needed
-        if let Some(file_content) = self
-            .get_file_content_if_needed(message, project_id, metadata)
-            .await? {
-            
-            // Build enhanced message with file context
-            let enhanced = format!(
-                "I'm looking at `{}` which contains:\n\n```{}\n{}\n```\n\n{}",
-                metadata.file_path.as_deref().unwrap_or("file"),
-                metadata.language.as_deref().unwrap_or(""),
-                file_content,
-                message
-            );
-            
-            debug!("Enhanced message with file context");
-            Ok(enhanced)
-        } else {
-            Ok(message.to_string())
+        if intent.needs_file_content && intent.confidence > 0.7 {
+            if let (Some(file_path), Some(repo_id)) = 
+                (&metadata.file_path, &metadata.repo_id) {
+                
+                // Get the file content
+                let content = self.get_file_content(
+                    project_id.unwrap_or("default"),
+                    file_path,
+                    Some(repo_id),
+                ).await?;
+                
+                // Get selected text if available
+                let selected = metadata.selection.as_ref()
+                    .and_then(|s| s.text.clone())
+                    .unwrap_or_default();
+                
+                // Build enhanced message with context
+                let enhanced = format!(
+                    "User message: {}\n\nFile context ({}):\n{}\n{}",
+                    message,
+                    file_path,
+                    if !selected.is_empty() {
+                        format!("Selected text:\n{}", selected)
+                    } else {
+                        String::new()
+                    },
+                    if content.len() > 5000 {
+                        format!("File content (truncated):\n{}", &content[..5000])
+                    } else {
+                        format!("File content:\n{}", content)
+                    }
+                );
+                
+                info!("Enhanced message with file context");
+                return Ok(enhanced);
+            }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_file_intent_parsing() {
-        let json = r#"{
-            "needs_file_content": true,
-            "confidence": 0.95,
-            "reasoning": "User is asking about 'this function' which refers to code"
-        }"#;
         
-        let intent: FileIntent = serde_json::from_str(json).unwrap();
-        assert!(intent.needs_file_content);
-        assert!(intent.confidence > 0.9);
+        // Return original message if no context needed
+        Ok(message.to_string())
     }
 }

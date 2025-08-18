@@ -40,6 +40,10 @@ impl MemoryService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<()> {
+        // Get default salience from environment
+        let default_salience = std::env::var("MIRA_MIN_SALIENCE_FOR_STORAGE")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(5.0);
+        
         let mut entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -47,7 +51,7 @@ impl MemoryService {
             content: content.to_string(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(5.0),
+            salience: Some(default_salience),
             tags: Some(vec!["user_message".to_string()]),
             summary: None,
             memory_type: Some(MemoryType::Event),
@@ -63,19 +67,30 @@ impl MemoryService {
             debug!("User message for project: {}", proj_id);
         }
 
-        match self.llm_client.get_embedding(content).await {
-            Ok(embedding) => {
-                entry.embedding = Some(embedding);
-            }
-            Err(e) => {
-                debug!("Failed to generate embedding: {}", e);
+        // Check if we should always embed user messages
+        let always_embed_user = std::env::var("MEM_ALWAYS_EMBED_USER")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse::<bool>().unwrap_or(true);
+        
+        if always_embed_user {
+            match self.llm_client.get_embedding(content).await {
+                Ok(embedding) => {
+                    entry.embedding = Some(embedding);
+                }
+                Err(e) => {
+                    debug!("Failed to generate embedding: {}", e);
+                }
             }
         }
 
         self.sqlite_store.save(&entry).await?;
 
+        // Get minimum salience for Qdrant from environment
+        let min_salience_qdrant = std::env::var("MIRA_MIN_SALIENCE_FOR_QDRANT")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
+        
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= 3.0 {
+            if salience >= min_salience_qdrant {
                 self.qdrant_store.save(&entry).await?;
             }
         }
@@ -97,7 +112,7 @@ impl MemoryService {
             content: response.output.clone(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(response.salience as f32), // Should be f32
+            salience: Some(response.salience as f32),
             tags: Some(response.tags.clone()),
             summary: Some(response.summary.clone()),
             memory_type: Some(self.parse_memory_type(&response.memory_type)),
@@ -106,19 +121,34 @@ impl MemoryService {
             system_fingerprint: None,
         };
 
-        match self.llm_client.get_embedding(&response.output).await {
-            Ok(embedding) => {
-                entry.embedding = Some(embedding);
-            }
-            Err(e) => {
-                debug!("Failed to generate embedding: {}", e);
+        // Check if we should always embed assistant messages
+        let always_embed_assistant = std::env::var("MEM_ALWAYS_EMBED_ASSISTANT")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse::<bool>().unwrap_or(true);
+        
+        // Check minimum character count for embedding
+        let min_chars = std::env::var("MEM_EMBED_MIN_CHARS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(6);
+        
+        if always_embed_assistant && response.output.len() >= min_chars {
+            match self.llm_client.get_embedding(&response.output).await {
+                Ok(embedding) => {
+                    entry.embedding = Some(embedding);
+                }
+                Err(e) => {
+                    debug!("Failed to generate embedding: {}", e);
+                }
             }
         }
 
         self.sqlite_store.save(&entry).await?;
 
+        // Get minimum salience for Qdrant from environment
+        let min_salience_qdrant = std::env::var("MIRA_MIN_SALIENCE_FOR_QDRANT")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
+        
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= 3.0 {
+            if salience >= min_salience_qdrant {
                 self.qdrant_store.save(&entry).await?;
             }
         }
@@ -126,9 +156,8 @@ impl MemoryService {
         info!("💾 Saved assistant response to memory stores");
         Ok(())
     }
-    
-    // --- NEW METHOD FOR SAVING SUMMARIES ---
-    /// Save a conversation summary to memory stores
+
+    /// Save a summary to memory stores
     pub async fn save_summary(
         &self,
         session_id: &str,
@@ -142,7 +171,7 @@ impl MemoryService {
             content: summary_content.to_string(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(5.0), // Default salience for a summary
+            salience: Some(2.0),  // Low salience for summaries
             tags: Some(vec!["summary".to_string(), "compressed".to_string()]),
             summary: Some(format!("Summary of previous {} messages.", original_message_count)),
             memory_type: Some(MemoryType::Summary),
@@ -162,8 +191,12 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
+        // Get minimum salience for Qdrant from environment
+        let min_salience_qdrant = std::env::var("MIRA_MIN_SALIENCE_FOR_QDRANT")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
+        
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= 3.0 {
+            if salience >= min_salience_qdrant {
                 self.qdrant_store.save(&entry).await?;
             }
         }
@@ -214,7 +247,7 @@ impl MemoryService {
             "joke" => MemoryType::Joke,
             "promise" => MemoryType::Promise,
             "event" => MemoryType::Event,
-            "summary" => MemoryType::Summary, // --- ADDED SUMMARY TYPE ---
+            "summary" => MemoryType::Summary,
             _ => MemoryType::Other,
         }
     }

@@ -182,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }))
         }))
-        .merge(http_router().with_state(app_state.clone()))
+        .merge(http_router(app_state.clone()))  // FIXED: Pass app_state directly, no .with_state()
         // ws_router requires AppState; pass a clone
         .nest("/ws", ws_router(app_state.clone()))
         // project_router already contains /projects/* paths; merge instead of double-prefixed nest

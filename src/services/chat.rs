@@ -76,22 +76,22 @@ impl Default for ChatConfig {
 }
 
 pub struct ChatService {
-    pub client: Arc<OpenAIClient>,
-    pub thread_mgr: Arc<ThreadManager>,
-    pub vector_store: Arc<VectorStoreManager>,
-    pub persona: PersonaOverlay,
-    pub memory: Arc<MemoryService>,
-    pub sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
-    pub qdrant_store: Arc<dyn MemoryStore + Send + Sync>,
-    pub config: ChatConfig,
-    pub summarizer: Arc<SummarizationService>,
+    client: Arc<OpenAIClient>,
+    thread_manager: Arc<ThreadManager>,
+    vector_store_manager: Arc<VectorStoreManager>,
+    persona: PersonaOverlay,
+    memory: Arc<MemoryService>,
+    sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
+    qdrant_store: Arc<dyn MemoryStore + Send + Sync>,
+    summarizer: Arc<SummarizationService>,
+    config: ChatConfig,
 }
 
 impl ChatService {
     pub fn new(
         client: Arc<OpenAIClient>,
-        thread_mgr: Arc<ThreadManager>,
-        vector_store: Arc<VectorStoreManager>,
+        thread_manager: Arc<ThreadManager>,
+        vector_store_manager: Arc<VectorStoreManager>,
         persona: PersonaOverlay,
         memory: Arc<MemoryService>,
         sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
@@ -99,10 +99,10 @@ impl ChatService {
         summarizer: Arc<SummarizationService>,
         config: Option<ChatConfig>,
     ) -> Self {
-        ChatService {
+        Self {
             client,
-            thread_mgr,
-            vector_store,
+            thread_manager,
+            vector_store_manager,
             persona,
             memory,
             sqlite_store,
@@ -120,14 +120,13 @@ impl ChatService {
         project_id: Option<&str>,
     ) -> Result<ChatResponse> {
         let start = Instant::now();
-        info!("chat(): session_id={}", session_id);
 
-        // 1) Persist the user message (matches services/memory.rs signature)
+        // 1) Persist user message
         self.memory
             .save_user_message(session_id, user_text, project_id)
             .await?;
 
-        // 2) Build recall context using both stores (recent + semantic)
+        // 2) Build recall context (using build_context)
         let embedding = self.client.get_embedding(user_text).await.ok();
         let context = build_context(
             session_id,
@@ -151,13 +150,14 @@ impl ChatService {
 
         // 4) Phase 2: content (bind owned copies for lifetimes)
         let mood = metadata.mood.clone();
+        let intent = metadata.intent.clone();
         let mut content_stream = crate::api::two_phase::get_content_stream(
             &self.client,
             user_text,
             &self.persona,
             &context,
             &mood,
-            &metadata.intent,
+            &intent,
         )
         .await?;
 
@@ -172,15 +172,15 @@ impl ChatService {
             output: full_content,
             persona: self.persona.to_string(),
             mood: metadata.mood,
-            salience: metadata.salience, // usize in your struct
-            summary: metadata.summary,   // String in your struct
+            salience: metadata.salience,
+            summary: metadata.summary,
             memory_type: if metadata.memory_type.is_empty() {
                 "other".into()
             } else {
                 metadata.memory_type
             },
             tags: metadata.tags,
-            intent: metadata.intent,
+            intent: Some(metadata.intent),  // FIXED: wrapped in Some()
             monologue: metadata.monologue,
             reasoning_summary: metadata.reasoning_summary,
         };
