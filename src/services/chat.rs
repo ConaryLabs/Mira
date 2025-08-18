@@ -25,7 +25,7 @@ pub struct ChatResponse {
     pub summary: String,
     pub memory_type: String,
     pub tags: Vec<String>,
-    pub intent: String,
+    pub intent: Option<String>,
     pub monologue: Option<String>,
     pub reasoning_summary: Option<String>,
 }
@@ -151,14 +151,13 @@ impl ChatService {
 
         // 4) Phase 2: content (bind owned copies for lifetimes)
         let mood = metadata.mood.clone();
-        let intent = metadata.intent.clone();
         let mut content_stream = crate::api::two_phase::get_content_stream(
             &self.client,
             user_text,
             &self.persona,
             &context,
             &mood,
-            &intent,
+            &metadata.intent,
         )
         .await?;
 
@@ -169,15 +168,8 @@ impl ChatService {
             }
         }
 
-        // 5) Combine metadata.output + streamed content
-        let output = if metadata.output.is_empty() {
-            full_content
-        } else {
-            format!("{}\n\n{}", metadata.output, full_content)
-        };
-
         let response = ChatResponse {
-            output,
+            output: full_content,
             persona: self.persona.to_string(),
             mood: metadata.mood,
             salience: metadata.salience, // usize in your struct

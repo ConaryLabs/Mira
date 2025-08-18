@@ -104,13 +104,13 @@ impl SummarizationService {
         // 4) Persist as an assistant response so it’s retrievable like everything else.
         let response = ChatResponse {
             output: String::new(),            // not user-facing body; summary lives below
-            persona: "mira".to_string(),
+            persona: Some("mira".to_string()),
             mood: "neutral".to_string(),
             salience: 2,                      // low default; tune if desired
             summary,                          // the compacted conversation summary
             memory_type: "context".to_string(),
             tags: vec!["summary".to_string()],
-            intent: "summarize".to_string(),
+            intent: Some("summarize".to_string()),
             monologue: None,
             reasoning_summary: None,
         };

@@ -108,7 +108,7 @@ async fn handle_chat_message(
     let context = build_context(
         session_id,
         user_embedding.as_deref(),
-        30,   // history cap
+        100,   // history cap
         15,   // vector search k
         app_state.sqlite_store.as_ref(),
         app_state.qdrant_store.as_ref(),
@@ -174,7 +174,7 @@ async fn handle_chat_message(
                 // Build response object mirroring ChatService::ChatResponse
                 let response = crate::services::chat::ChatResponse {
                     output: complete_output,
-                    persona: persona.to_string(),
+                    persona: Some(persona.to_string()),
                     mood: metadata.mood.clone(),
                     salience: metadata.salience,
                     summary: metadata.summary.clone(),
@@ -184,7 +184,7 @@ async fn handle_chat_message(
                         metadata.memory_type.clone()
                     },
                     tags: metadata.tags.clone(),
-                    intent: metadata.intent.clone(),
+                    intent: Some(metadata.intent.clone()),
                     monologue: metadata.monologue.clone(),
                     reasoning_summary: metadata.reasoning_summary.clone(),
                 };

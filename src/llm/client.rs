@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use futures::{Stream, StreamExt, stream};
 use reqwest::{header, Client};
 use serde_json::{self, json, Value};
-use tracing::{debug, info};
+use tracing::{debug, info, error};
 
 /// Stream of JSON payloads from the OpenAI Responses SSE.
 pub type ResponseStream = Pin<Box<dyn Stream<Item = Result<Value>> + Send>>;
@@ -121,7 +121,10 @@ impl OpenAIClient {
 
         // Stronger text extraction to handle multiple possible shapes
         let text_content = extract_text_from_responses(&response_value)
-            .ok_or_else(|| anyhow!("Failed to extract text from API response"))?;
+            .ok_or_else(|| {
+                error!("Failed to extract text from API response. Raw response: {}", serde_json::to_string_pretty(&response_value).unwrap_or_default());
+                anyhow!("Failed to extract text from API response")
+            })?;
 
         Ok(ResponseOutput {
             content: text_content,
@@ -273,6 +276,11 @@ fn norm_effort(r: &str) -> &'static str {
 
 /// Helper function to extract text content from various Responses API shapes.
 pub fn extract_text_from_responses(response: &Value) -> Option<String> {
+    // New primary path based on logs
+    if let Some(text) = response.pointer("/output/1/content/0/text").and_then(|t| t.as_str()) {
+        return Some(text.to_string());
+    }
+    
     // 1) Newer shape: output.message.content[0].text.value
     if let Some(text) = response.pointer("/output/message/content/0/text/value").and_then(|t| t.as_str()) {
         return Some(text.to_string());
@@ -301,8 +309,16 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
     {
         return Some(text.to_string());
     }
-    // 5) Fallback: output as a raw string
+    // 5) Fallback: choices[0].message.content
+    if let Some(text) = response.pointer("/choices/0/message/content").and_then(|t| t.as_str()) {
+        return Some(text.to_string());
+    }
+    // 6) Fallback: output as a raw string
     if let Some(text) = response.get("output").and_then(|o| o.as_str()) {
+        return Some(text.to_string());
+    }
+    // 7) Fallback for tool_calls
+    if let Some(text) = response.pointer("/choices/0/message/tool_calls/0/function/arguments").and_then(|t| t.as_str()) {
         return Some(text.to_string());
     }
 

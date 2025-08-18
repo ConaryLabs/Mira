@@ -12,6 +12,7 @@ use crate::llm::streaming::StreamEvent;
 use crate::memory::recall::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::builder::build_system_prompt;
+use crate::services::chat::ChatResponse;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Metadata {
@@ -61,22 +62,13 @@ pub async fn get_metadata(
     let raw = resp.raw.unwrap_or(Value::Null);
 
     // Try to parse the entire response body as the JSON we asked for:
-    // 1) Some providers put JSON directly in top-level "output" string
-    if let Some(s) = raw.get("output").and_then(|o| o.as_str()) {
-        if let Ok(v) = serde_json::from_str::<Value>(s) {
-            return Ok(parse_metadata(v));
-        }
-    }
-    // 2) Else, try extracting text and then parse as JSON
     if let Some(text) = extract_text_from_responses(&raw) {
         if let Ok(v) = serde_json::from_str::<Value>(&text) {
             return Ok(parse_metadata(v));
         }
     }
-    // 3) Else, if raw already looks like the JSON object, try parsing directly
-    if raw.is_object() && raw.get("mood").is_some() {
-        return Ok(parse_metadata(raw));
-    }
+    
+    tracing::error!("Could not parse metadata. Raw response: {}", serde_json::to_string_pretty(&raw).unwrap_or_default());
 
     Err(anyhow!("metadata stream produced no valid JSON"))
 }
@@ -109,7 +101,7 @@ pub async fn get_content_stream(
     persona: &PersonaOverlay,
     context: &RecallContext,
     mood: &str,
-    intent: &str,
+    intent: &String,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
     let mut system_prompt = build_system_prompt(persona, context);
     if !mood.is_empty() || !intent.is_empty() {
@@ -123,8 +115,9 @@ pub async fn get_content_stream(
     }
 
     // Non-streaming generation for content; then we wrap into a tiny stream so the WS layer stays happy
-    let out = client.generate_response(user_text, Some(&system_prompt), false).await?;
-    let text = out.content.trim().to_string();
+    let out = client.generate_response(user_text, Some(&system_prompt), true).await?;
+    let response: ChatResponse = serde_json::from_str(&out.content)?;
+    let text = response.output.trim().to_string();
 
     let s = stream::once(async move {
         if text.is_empty() {
