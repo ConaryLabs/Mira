@@ -3,13 +3,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{State, WebSocketUpgrade, ConnectInfo},
+    extract::{ConnectInfo, State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures::SinkExt;
 use futures::StreamExt;
 use futures_util::stream::SplitSink;
+use serde::Deserialize;
+use serde_json::json;
 use tokio::sync::Mutex;
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info, warn};
@@ -17,9 +19,20 @@ use tracing::{debug, error, info, warn};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::StreamEvent;
 use crate::persona::PersonaOverlay;
-use crate::prompt::builder::build_system_prompt;
 use crate::state::AppState;
-use crate::memory::recall::{RecallContext, build_context};
+use crate::memory::recall::{build_context, RecallContext};
+
+#[derive(Deserialize)]
+struct Canary {
+    id: String,
+    part: u32,
+    total: u32,
+    complete: bool,
+    #[serde(default)]
+    done: Option<bool>,
+    #[allow(dead_code)]
+    msg: Option<String>,
+}
 
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
@@ -31,7 +44,7 @@ pub async fn ws_chat_handler(
 }
 
 async fn handle_socket(
-    socket: WebSocket, 
+    socket: WebSocket,
     app_state: Arc<AppState>,
     addr: std::net::SocketAddr,
 ) {
@@ -41,103 +54,165 @@ async fn handle_socket(
 
     info!("🔌 WS client connected from {} (new connection)", addr);
 
-    // Heartbeat configuration from environment
+    // ---- Heartbeat configuration (soft) ----
     let heartbeat_interval_secs = std::env::var("MIRA_WS_HEARTBEAT_INTERVAL")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(30);
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(25);
+    // kept for receive timeout only
     let connection_timeout_secs = std::env::var("MIRA_WS_CONNECTION_TIMEOUT")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(180);
 
-    // Track last activity
-    let last_activity = Arc::new(Mutex::new(Instant::now()));
-    
-    // Heartbeat task with connection monitoring
+    let last_activity = Arc::new(Mutex::new(Instant::now())); // any inbound
+    let last_any_send = Arc::new(Mutex::new(Instant::now())); // any outbound
+    let is_processing = Arc::new(Mutex::new(false));
+
+    // Send immediate hello + ready
     {
-        let sender_for_ping = sender.clone();
-        let last_activity_ping = last_activity.clone();
-        
+        let mut lock = sender.lock().await;
+        let _ = lock.send(Message::Text(json!({
+            "type": "hello",
+            "ts": chrono::Utc::now().to_rfc3339(),
+            "server": "mira-backend"
+        }).to_string())).await;
+
+        let _ = lock.send(Message::Text(json!({
+            "type": "ready"
+        }).to_string())).await;
+
+        *last_any_send.lock().await = Instant::now();
+    }
+
+    // ---- Heartbeat task (app heartbeat + ping; NO auto-close) ----
+    {
+        let sender_for_tick   = sender.clone();
+        let last_any_send_ref = last_any_send.clone();
+        let is_processing_ref = is_processing.clone();
+
+        let interval_dur = Duration::from_secs(heartbeat_interval_secs);
+
         tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(heartbeat_interval_secs));
-            let mut consecutive_failures = 0;
-            
+            let mut ticker = interval(interval_dur);
+            ticker.tick().await; // prime
+            tokio::time::sleep(Duration::from_secs(2)).await;
+
             loop {
                 ticker.tick().await;
-                
-                // Check if connection is still alive based on last activity
-                let last = *last_activity_ping.lock().await;
-                if last.elapsed() > Duration::from_secs(connection_timeout_secs) {
-                    warn!("⚠️ WebSocket connection timed out (no activity for {}s)", 
-                          connection_timeout_secs);
+
+                // Avoid competing with streaming writes
+                if *is_processing_ref.lock().await {
+                    debug!("💓 Skip heartbeat while processing");
+                    continue;
+                }
+
+                // Take a normal lock and send heartbeat + ping
+                let mut l = sender_for_tick.lock().await;
+
+                if l.send(Message::Text(json!({
+                    "type":"heartbeat",
+                    "ts": chrono::Utc::now().to_rfc3339()
+                }).to_string())).await.is_ok() {
+                    *last_any_send_ref.lock().await = Instant::now();
+                    debug!("💓 App heartbeat sent");
+                } else {
+                    debug!("Heartbeat send failed (socket likely closed)");
                     break;
                 }
-                
-                // Send ping
-                let mut lock = sender_for_ping.lock().await;
-                if let Err(e) = lock.send(Message::Ping(vec![0x9])).await {
-                    consecutive_failures += 1;
-                    warn!("Heartbeat ping failed (attempt {}): {}", consecutive_failures, e);
-                    
-                    if consecutive_failures >= 3 {
-                        error!("❌ Heartbeat failed 3 times, closing connection");
-                        break;
-                    }
-                } else {
-                    consecutive_failures = 0;
-                    debug!("💓 Heartbeat ping sent successfully");
+
+                if l.send(Message::Ping(Vec::new())).await.is_err() {
+                    debug!("Ping failed (socket likely closed)");
+                    break;
                 }
             }
             debug!("Heartbeat task ended");
         });
     }
 
-    // Message handling with timeout
+    // ---- Message loop with receive timeout ----
     let receive_timeout = Duration::from_secs(connection_timeout_secs);
-    
+
     loop {
-        // Use timeout to detect stalled connections
         match timeout(receive_timeout, receiver.next()).await {
             Ok(Some(Ok(msg))) => {
-                // Update last activity
                 *last_activity.lock().await = Instant::now();
-                
+
                 match msg {
                     Message::Text(text) => {
                         debug!("📥 Received text message: {} bytes", text.len());
-                        
-                        match serde_json::from_str::<WsClientMessage>(&text) {
-                            Ok(WsClientMessage::Chat { content, project_id, .. })
-                            | Ok(WsClientMessage::Message { content, project_id, .. }) => {
-                                info!("💬 Processing chat message from {}", addr);
-                                
-                                let app_state = app_state.clone();
-                                let sender = sender.clone();
-                                
-                                tokio::spawn(async move {
-                                    if let Err(e) = handle_chat_message(
-                                        content, 
-                                        project_id, 
-                                        app_state, 
-                                        sender,
-                                        addr
-                                    ).await {
-                                        error!("Error handling chat message: {}", e);
-                                    }
-                                });
+
+                        // 1) Primary protocol
+                        if let Ok(parsed) = serde_json::from_str::<WsClientMessage>(&text) {
+                            match parsed {
+                                WsClientMessage::Chat { content, project_id, .. }
+                                | WsClientMessage::Message { content, project_id, .. } => {
+                                    info!("💬 Processing chat message from {}", addr);
+                                    *is_processing.lock().await = true;
+
+                                    let app_state = app_state.clone();
+                                    let sender = sender.clone();
+                                    let is_processing_clone = is_processing.clone();
+                                    let last_activity_clone = last_activity.clone();
+                                    let last_any_send_clone = last_any_send.clone();
+
+                                    tokio::spawn(async move {
+                                        if let Err(e) = handle_chat_message(
+                                            content,
+                                            project_id,
+                                            app_state,
+                                            sender,
+                                            addr,
+                                            last_any_send_clone,
+                                        ).await {
+                                            error!("Error handling chat message: {}", e);
+                                        }
+                                        *is_processing_clone.lock().await = false;
+                                        *last_activity_clone.lock().await = Instant::now();
+                                    });
+                                }
+                                WsClientMessage::Status { message } => {
+                                    debug!("📊 Status message: {}", message);
+                                }
+                                WsClientMessage::Command { .. } => {
+                                    debug!("⚙️ Command received (ignored for now)");
+                                }
+                                // don't assume fields; just ack
+                                WsClientMessage::Typing { .. } => {
+                                    debug!("⌨️ Typing signal received");
+                                    let mut lock = sender.lock().await;
+                                    let _ = lock
+                                        .send(Message::Text(json!({"type":"typing_ack"}).to_string()))
+                                        .await;
+                                    *last_any_send.lock().await = Instant::now();
+                                }
                             }
-                            Ok(WsClientMessage::Status { message }) => {
-                                debug!("📊 Status message: {}", message);
-                                // This might be a keep-alive from frontend
-                                *last_activity.lock().await = Instant::now();
-                            }
-                            Ok(WsClientMessage::Command { .. }) => {
-                                debug!("⚙️ Command received (ignored for now)");
-                            }
-                            Ok(other) => {
-                                debug!("❓ Ignoring WS message type: {:?}", other);
-                            }
-                            Err(e) => {
-                                warn!("⚠️ Invalid WS message: {}", e);
-                            }
+                            continue;
                         }
+
+                        // 2) Canary payloads
+                        if let Ok(c) = serde_json::from_str::<Canary>(&text) {
+                            let ack = json!({
+                                "type": "canary_ack",
+                                "id": c.id,
+                                "part": c.part,
+                                "seen": format!("seen-{}", c.part),
+                            }).to_string();
+
+                            let mut lock = sender.lock().await;
+                            if let Err(e) = lock.send(Message::Text(ack)).await {
+                                warn!("⚠️ Failed to send canary ack: {}", e);
+                            } else {
+                                *last_any_send.lock().await = Instant::now();
+                            }
+
+                            if c.complete || c.done.unwrap_or(false) {
+                                let done = serde_json::to_string(&WsServerMessage::Done).unwrap();
+                                let _ = lock.send(Message::Text(done)).await;
+                                *last_any_send.lock().await = Instant::now();
+                            }
+
+                            continue;
+                        }
+
+                        // 3) Unknown payload
+                        warn!("⚠️ Unrecognized WS text payload (ignored)");
                     }
                     Message::Binary(data) => {
                         debug!("📥 Binary message ({} bytes) - ignored", data.len());
@@ -148,9 +223,11 @@ async fn handle_socket(
                         if let Err(e) = lock.send(Message::Pong(data)).await {
                             warn!("Failed to send pong: {}", e);
                         }
+                        *last_activity.lock().await = Instant::now();
                     }
                     Message::Pong(_) => {
                         debug!("🏓 Pong received");
+                        *last_activity.lock().await = Instant::now();
                     }
                     Message::Close(frame) => {
                         info!("🔌 Close frame received: {:?}", frame);
@@ -167,17 +244,20 @@ async fn handle_socket(
                 break;
             }
             Err(_) => {
-                warn!("⏱️ WebSocket receive timeout ({} seconds)", connection_timeout_secs);
-                break;
+                if !*is_processing.lock().await {
+                    warn!("⏱️ WebSocket receive timeout after {:?}", receive_timeout);
+                    break;
+                }
             }
         }
     }
 
     let connection_duration = connection_start.elapsed();
     info!("🔌 WS handler done for {} (connected for {:?})", addr, connection_duration);
-    
+
     // Clean shutdown
     if let Ok(mut lock) = sender.try_lock() {
+        let _ = lock.send(Message::Close(None)).await;
         let _ = lock.close().await;
     }
 }
@@ -188,38 +268,31 @@ async fn handle_chat_message(
     app_state: Arc<AppState>,
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     addr: std::net::SocketAddr,
+    last_any_send: Arc<Mutex<Instant>>,
 ) -> anyhow::Result<()> {
     let msg_start = Instant::now();
-    
-    // Get session ID from environment
-    let session_id = std::env::var("MIRA_SESSION_ID")
-        .unwrap_or_else(|_| "peter-eternal".to_string());
-    
-    // Get default persona from environment
-    let persona_str = std::env::var("MIRA_DEFAULT_PERSONA")
-        .unwrap_or_else(|_| "default".to_string());
-    let persona = persona_str.parse::<PersonaOverlay>()
-        .unwrap_or(PersonaOverlay::Default);
+
+    // Session + persona
+    let session_id = std::env::var("MIRA_SESSION_ID").unwrap_or_else(|_| "peter-eternal".to_string());
+    let persona_str = std::env::var("MIRA_DEFAULT_PERSONA").unwrap_or_else(|_| "default".to_string());
+    let persona = persona_str.parse::<PersonaOverlay>().unwrap_or(PersonaOverlay::Default);
 
     info!("💾 Saving user message to memory...");
-    
-    // Persist user message
+
     if let Err(e) = app_state
         .memory_service
         .save_user_message(&session_id, &content, project_id.as_deref())
-        .await 
+        .await
     {
         warn!("⚠️ Failed to save user message: {}", e);
     }
 
-    // Build recall context with env-based limits
-    let history_cap = std::env::var("MIRA_WS_HISTORY_CAP")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(100);
-    let vector_k = std::env::var("MIRA_WS_VECTOR_SEARCH_K")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(15);
-    
+    // Build recall context
+    let history_cap = std::env::var("MIRA_WS_HISTORY_CAP").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+    let vector_k    = std::env::var("MIRA_WS_VECTOR_SEARCH_K").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
+
     info!("🔍 Building context (history: {}, semantic: {})...", history_cap, vector_k);
-    
+
     let user_embedding = app_state.llm_client.get_embedding(&content).await.ok();
     let context = build_context(
         &session_id,
@@ -236,7 +309,7 @@ async fn handle_chat_message(
     });
 
     info!("📝 Getting metadata from GPT-5...");
-    
+
     // Phase 1: metadata
     let metadata = match crate::api::two_phase::get_metadata(
         &app_state.llm_client,
@@ -257,7 +330,7 @@ async fn handle_chat_message(
     };
 
     info!("💬 Getting content from GPT-5...");
-    
+
     // Phase 2: content
     let mut stream = match crate::api::two_phase::get_content_stream(
         &app_state.llm_client,
@@ -267,60 +340,53 @@ async fn handle_chat_message(
         &metadata.mood,
         &metadata.intent,
     )
-    .await {
+    .await
+    {
         Ok(s) => s,
         Err(e) => {
             error!("❌ Failed to get content stream: {}", e);
-            
-            // Send error to client
+
             let error_msg = WsServerMessage::Error {
                 message: "Failed to generate response".to_string(),
                 code: Some("STREAM_ERROR".to_string()),
             };
-            
+
             let mut lock = sender.lock().await;
             let _ = lock.send(Message::Text(serde_json::to_string(&error_msg)?)).await;
+            *last_any_send.lock().await = Instant::now();
             return Err(e);
         }
     };
 
     let mut full_text = String::new();
     let mut chunks_sent = 0;
-    
+
     while let Some(event) = stream.next().await {
         match event {
             Ok(StreamEvent::Delta(chunk)) => {
                 full_text.push_str(&chunk);
                 chunks_sent += 1;
-                
-                // Send chunk to client
+
                 let msg = WsServerMessage::Chunk {
                     content: chunk,
-                    mood: Some(metadata.mood.clone()),
+                    mood: if chunks_sent == 1 { Some(metadata.mood.clone()) } else { None },
                 };
-                
+
                 if let Ok(text) = serde_json::to_string(&msg) {
                     let mut lock = sender.lock().await;
                     if let Err(e) = lock.send(Message::Text(text)).await {
                         warn!("⚠️ Failed to send chunk {}: {}", chunks_sent, e);
                         break;
+                    } else {
+                        *last_any_send.lock().await = Instant::now();
                     }
+                } else {
+                    warn!("Failed to serialize chunk message");
                 }
             }
             Ok(StreamEvent::Done { .. }) => {
                 info!("✅ Stream complete: {} chunks sent", chunks_sent);
-                
-                // Send completion
-                let msg = WsServerMessage::Complete {
-                    mood: Some(metadata.mood.clone()),
-                    salience: Some(metadata.salience as f32),
-                    tags: Some(metadata.tags.clone()),
-                };
-                
-                if let Ok(text) = serde_json::to_string(&msg) {
-                    let mut lock = sender.lock().await;
-                    let _ = lock.send(Message::Text(text)).await;
-                }
+                break;
             }
             Ok(StreamEvent::Error(e)) => {
                 error!("❌ Stream error: {}", e);
@@ -336,7 +402,7 @@ async fn handle_chat_message(
     // Save assistant response
     if !full_text.is_empty() {
         info!("💾 Saving assistant response ({} chars)...", full_text.len());
-        
+
         let response = crate::services::chat::ChatResponse {
             output: full_text,
             persona: persona.to_string(),
@@ -353,17 +419,18 @@ async fn handle_chat_message(
         if let Err(e) = app_state
             .memory_service
             .save_assistant_response(&session_id, &response)
-            .await 
+            .await
         {
             warn!("⚠️ Failed to save assistant response: {}", e);
         }
     }
 
-    // Send done marker
+    // Done marker
     let done_msg = WsServerMessage::Done;
     if let Ok(text) = serde_json::to_string(&done_msg) {
         let mut lock = sender.lock().await;
         let _ = lock.send(Message::Text(text)).await;
+        *last_any_send.lock().await = Instant::now();
     }
 
     let total_time = msg_start.elapsed();

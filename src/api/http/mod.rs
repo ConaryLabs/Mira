@@ -1,8 +1,16 @@
 // src/api/http/mod.rs
-use axum::{Router, routing::{get, post}, extract::State, Json, http::StatusCode};
+use axum::{
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    extract::State,
+    Json, Router,
+};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
 use crate::state::AppState;
-use serde::{Serialize, Deserialize};
 
 mod git;
 mod project;
@@ -22,11 +30,21 @@ pub use git::{
     get_file_at_commit,
 };
 
-pub use project::{
-    project_details_handler,
-};
+pub use project::project_details_handler;
 
-// History response types
+// ---------- Health ----------
+
+pub async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+        "model": "gpt-5",
+        "timestamp": Utc::now().to_rfc3339()
+    }))
+}
+
+// ---------- History response types ----------
+
 #[derive(Serialize)]
 pub struct ChatHistoryMessage {
     id: String,
@@ -51,10 +69,13 @@ pub struct HistoryQuery {
 
 fn default_limit() -> usize {
     std::env::var("MIRA_HISTORY_DEFAULT_LIMIT")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(30)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30)
 }
 
-// Handler for fetching session history
+// ---------- Chat history handler ----------
+
 pub async fn get_chat_history(
     State(app_state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<HistoryQuery>,
@@ -62,46 +83,51 @@ pub async fn get_chat_history(
     // Get session ID from environment
     let session_id = std::env::var("MIRA_SESSION_ID")
         .unwrap_or_else(|_| "peter-eternal".to_string());
-    
-    tracing::info!("📚 Fetching history for session: {} (offset: {}, limit: {})", 
-                  session_id, query.offset, query.limit);
-    
+
+    tracing::info!(
+        "📚 Fetching history for session: {} (offset: {}, limit: {})",
+        session_id,
+        query.offset,
+        query.limit
+    );
+
     // Enforce maximum limit from environment
     let max_limit = std::env::var("MIRA_HISTORY_MAX_LIMIT")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(100);
-    
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
     // Calculate how many messages to skip and take
     let skip = query.offset;
     let take = query.limit.min(max_limit);
-    
+
     // Fetch messages for session
-    match app_state.memory_service
+    match app_state
+        .memory_service
         .get_recent_context(&session_id, skip + take)
-        .await 
+        .await
     {
         Ok(memories) => {
             tracing::info!("📚 Retrieved {} total memories from database", memories.len());
-            
-            // Skip the offset amount and take the limit
+
             let messages: Vec<ChatHistoryMessage> = memories
                 .into_iter()
                 .skip(skip)
                 .take(take)
                 .map(|m| ChatHistoryMessage {
                     id: format!("msg-{}-{}", m.timestamp.timestamp_millis(), m.id.unwrap_or(0)),
-                    role: if m.role == "assistant" || m.role == "mira" { 
-                        "assistant".to_string() 
-                    } else { 
-                        m.role 
+                    role: if m.role == "assistant" || m.role == "mira" {
+                        "assistant".to_string()
+                    } else {
+                        m.role
                     },
                     content: m.content,
                     timestamp: m.timestamp.timestamp_millis(),
                     tags: m.tags,
                 })
                 .collect();
-            
+
             tracing::info!("📚 Returning {} messages after pagination", messages.len());
-            
             Ok(Json(ChatHistoryResponse { messages }))
         }
         Err(e) => {
@@ -111,7 +137,8 @@ pub async fn get_chat_history(
     }
 }
 
-// Chat request/response types
+// ---------- REST chat types & handler ----------
+
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
@@ -132,7 +159,6 @@ pub struct ChatResponse {
     pub reasoning_summary: Option<String>,
 }
 
-// REST chat handler
 pub async fn rest_chat_handler(
     State(app_state): State<Arc<AppState>>,
     Json(payload): Json<ChatRequest>,
@@ -140,30 +166,31 @@ pub async fn rest_chat_handler(
     // Get session ID from environment
     let session_id = std::env::var("MIRA_SESSION_ID")
         .unwrap_or_else(|_| "peter-eternal".to_string());
-    
+
     // Use provided persona or default from environment
-    let _persona_str = payload.persona_override
-        .unwrap_or_else(|| std::env::var("MIRA_DEFAULT_PERSONA")
-            .unwrap_or_else(|_| "default".to_string()));
-    
-    match app_state.chat_service
+    let _persona_str = payload
+        .persona_override
+        .unwrap_or_else(|| {
+            std::env::var("MIRA_DEFAULT_PERSONA").unwrap_or_else(|_| "default".to_string())
+        });
+
+    match app_state
+        .chat_service
         .chat(&session_id, &payload.message, None)
         .await
     {
-        Ok(response) => {
-            Ok(Json(ChatResponse {
-                output: response.output,
-                persona: response.persona,
-                mood: response.mood,
-                salience: response.salience,
-                summary: response.summary,
-                memory_type: response.memory_type,
-                tags: response.tags,
-                intent: response.intent,
-                monologue: response.monologue,
-                reasoning_summary: response.reasoning_summary,
-            }))
-        }
+        Ok(response) => Ok(Json(ChatResponse {
+            output: response.output,
+            persona: response.persona,
+            mood: response.mood,
+            salience: response.salience,
+            summary: response.summary,
+            memory_type: response.memory_type,
+            tags: response.tags,
+            intent: response.intent,
+            monologue: response.monologue,
+            reasoning_summary: response.reasoning_summary,
+        })),
         Err(e) => {
             tracing::error!("Chat service error: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -171,13 +198,15 @@ pub async fn rest_chat_handler(
     }
 }
 
-// This function now takes the app_state as a parameter (called from main.rs)
+// ---------- Public router (UNPREFIXED). main.rs nests under /api ----------
+
 pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
-        // Chat endpoints - match frontend expectations
-        .route("/api/chat/history", get(get_chat_history))
-        .route("/api/chat", post(rest_chat_handler))
-        
+        // Health
+        .route("/health", get(health_handler))
+        // Chat endpoints (REST)
+        .route("/chat/history", get(get_chat_history))
+        .route("/chat", post(rest_chat_handler))
         // Git endpoints
         .route("/git/attach", post(attach_repo_handler))
         .route("/git/repos", get(list_attached_repos_handler))
@@ -190,9 +219,7 @@ pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/git/commits/:project_id", get(get_commit_history))
         .route("/git/diff/:project_id/:commit_sha", get(get_commit_diff))
         .route("/git/file-at-commit/:project_id/:commit_sha", get(get_file_at_commit))
-        
         // Project endpoints
         .route("/project/:project_id", get(project_details_handler))
-        
         .with_state(app_state)
 }

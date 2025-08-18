@@ -17,7 +17,8 @@ def should_include(path, excludes):
     # Default excludes
     default_excludes = {
         'target',           # Rust build artifacts
-        '.git',            # Git repository
+        'repos',
+	'.git',            # Git repository
         'node_modules',    # Node dependencies
         '.env',            # Environment variables
         '*.db',            # SQLite databases
