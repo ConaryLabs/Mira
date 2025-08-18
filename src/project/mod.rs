@@ -1,3 +1,4 @@
+// src/project/mod.rs
 pub mod types;
 pub mod store;
 pub mod handlers;
@@ -17,6 +18,10 @@ pub fn project_router() -> Router<Arc<AppState>> {
         .route("/projects/:id", get(handlers::get_project_handler))
         .route("/projects/:id", put(handlers::update_project_handler))
         .route("/projects/:id", delete(handlers::delete_project_handler))
+        
+        // Git routes nested under projects (matches frontend expectations)
+        .nest("/projects/:project_id/git", crate::api::http::project_git_router())
+        
         // Artifact routes (using plural for collection)
         .route("/artifacts", post(handlers::create_artifact_handler))
         .route("/artifacts/:id", get(handlers::get_artifact_handler))
@@ -26,3 +31,6 @@ pub fn project_router() -> Router<Arc<AppState>> {
 }
 
 // Re-export for easy use elsewhere
+pub use types::{Project, Artifact, ArtifactType};
+pub use store::ProjectStore;
+pub use handlers::*;

@@ -115,82 +115,82 @@ pub async fn get_chat_history(
                 .skip(skip)
                 .take(take)
                 .map(|m| ChatHistoryMessage {
-                    id: format!("msg-{}-{}", m.timestamp.timestamp_millis(), m.id.unwrap_or(0)),
-                    role: if m.role == "assistant" || m.role == "mira" {
-                        "assistant".to_string()
-                    } else {
-                        m.role
-                    },
+                    id: m.id.map_or_else(
+                        || "msg_unknown".to_string(),
+                        |id| format!("msg_{}", id)
+                    ),
+                    role: m.role,
                     content: m.content,
-                    timestamp: m.timestamp.timestamp_millis(),
-                    tags: m.tags,
+                    timestamp: m.timestamp.timestamp(),
+                    tags: m.tags.filter(|t| !t.is_empty()),
                 })
                 .collect();
 
-            tracing::info!("📚 Returning {} messages after pagination", messages.len());
+            tracing::info!(
+                "📚 Returning {} messages (skipped: {}, took: {})",
+                messages.len(),
+                skip,
+                take
+            );
+
             Ok(Json(ChatHistoryResponse { messages }))
         }
         Err(e) => {
-            tracing::error!("❌ Failed to load history: {}", e);
+            tracing::error!("❌ Error fetching chat history: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
-// ---------- REST chat types & handler ----------
+// ---------- REST Chat Request/Response ----------
 
 #[derive(Deserialize)]
-pub struct ChatRequest {
+pub struct RestChatRequest {
     pub message: String,
+    pub project_id: Option<String>,
     pub persona_override: Option<String>,
+    pub file_context: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
-pub struct ChatResponse {
-    pub output: String,
+pub struct RestChatResponse {
+    pub response: String,
     pub persona: String,
     pub mood: String,
-    pub salience: usize,
-    pub summary: String,
-    pub memory_type: String,
     pub tags: Vec<String>,
-    pub intent: Option<String>,
-    pub monologue: Option<String>,
-    pub reasoning_summary: Option<String>,
+    pub summary: String,
+    pub tool_results: Option<Vec<serde_json::Value>>,
+    pub citations: Option<Vec<serde_json::Value>>,
 }
+
+// ---------- REST chat handler ----------
 
 pub async fn rest_chat_handler(
     State(app_state): State<Arc<AppState>>,
-    Json(payload): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, StatusCode> {
-    // Get session ID from environment
+    Json(request): Json<RestChatRequest>,
+) -> Result<Json<RestChatResponse>, StatusCode> {
     let session_id = std::env::var("MIRA_SESSION_ID")
         .unwrap_or_else(|_| "peter-eternal".to_string());
 
-    // Use provided persona or default from environment
-    let _persona_str = payload
-        .persona_override
-        .unwrap_or_else(|| {
-            std::env::var("MIRA_DEFAULT_PERSONA").unwrap_or_else(|_| "default".to_string())
-        });
+    tracing::info!("💬 REST chat request for session: {}", session_id);
 
-    match app_state
-        .chat_service
-        .chat(&session_id, &payload.message, None)
-        .await
-    {
-        Ok(response) => Ok(Json(ChatResponse {
-            output: response.output,
-            persona: response.persona,
-            mood: response.mood,
-            salience: response.salience,
-            summary: response.summary,
-            memory_type: response.memory_type,
-            tags: response.tags,
-            intent: response.intent,
-            monologue: response.monologue,
-            reasoning_summary: response.reasoning_summary,
-        })),
+    // Use regular chat method for now (chat_with_tools will be added in Phase 2)
+    match app_state.chat_service.chat(
+        &session_id,
+        &request.message,
+        request.project_id.as_deref(),
+    ).await {
+        Ok(response) => {
+            Ok(Json(RestChatResponse {
+                response: response.output,
+                persona: response.persona,
+                mood: response.mood,
+                tags: response.tags,
+                summary: response.summary,
+                tool_results: None,  // Will be populated in Phase 2
+                citations: None,     // Will be populated in Phase 2
+            }))
+        }
         Err(e) => {
             tracing::error!("Chat service error: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -207,19 +207,31 @@ pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Chat endpoints (REST)
         .route("/chat/history", get(get_chat_history))
         .route("/chat", post(rest_chat_handler))
-        // Git endpoints
-        .route("/git/attach", post(attach_repo_handler))
-        .route("/git/repos", get(list_attached_repos_handler))
-        .route("/git/sync/:project_id", post(sync_repo_handler))
-        .route("/git/tree/:project_id", get(get_file_tree_handler))
-        .route("/git/file/:project_id", get(get_file_content_handler))
-        .route("/git/file/:project_id", post(update_file_content_handler))
-        .route("/git/branches/:project_id", get(list_branches))
-        .route("/git/branch/:project_id", post(switch_branch))
-        .route("/git/commits/:project_id", get(get_commit_history))
-        .route("/git/diff/:project_id/:commit_sha", get(get_commit_diff))
-        .route("/git/file-at-commit/:project_id/:commit_sha", get(get_file_at_commit))
         // Project endpoints
         .route("/project/:project_id", get(project_details_handler))
         .with_state(app_state)
+}
+
+// ---------- Git router for projects (nested under /projects/:project_id/git) ----------
+
+pub fn project_git_router() -> Router<Arc<AppState>> {
+    Router::new()
+        // Repository management
+        .route("/attach", post(attach_repo_handler))
+        .route("/repos", get(list_attached_repos_handler))
+        .route("/sync/:attachment_id", post(sync_repo_handler))
+        
+        // File operations
+        .route("/files/:attachment_id/tree", get(get_file_tree_handler))
+        .route("/files/:attachment_id/content/*path", get(get_file_content_handler))
+        .route("/files/:attachment_id/content/*path", post(update_file_content_handler))
+        
+        // Branch operations
+        .route("/branches/:attachment_id", get(list_branches))
+        .route("/branch/:attachment_id", post(switch_branch))
+        
+        // Commit operations
+        .route("/commits/:attachment_id", get(get_commit_history))
+        .route("/diff/:attachment_id/:commit_sha", get(get_commit_diff))
+        .route("/file-at-commit/:attachment_id/:commit_sha/*path", get(get_file_at_commit))
 }
