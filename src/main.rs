@@ -18,10 +18,17 @@ use mira_backend::{
     memory::{
         qdrant::store::QdrantMemoryStore,
         sqlite::{migration, store::SqliteMemoryStore},
+        traits::MemoryStore, // for trait-object casts
     },
     persona::PersonaOverlay,
     project::{project_router, store::ProjectStore},
-    services::{ChatService, ContextService, DocumentService, MemoryService},
+    services::{
+        chat::{ChatConfig, ChatService},
+        ContextService,
+        DocumentService,
+        MemoryService,
+        summarization::SummarizationService,
+    },
     state::AppState,
 };
 
@@ -75,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     info!("🔧 Initializing Responses API managers...");
     let responses_manager = Arc::new(ResponsesManager::new(openai_client.clone()));
     let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
-    
+
     // ThreadManager needs max_messages and token_limit parameters
     // Using reasonable defaults: 100 messages max, 128k token limit
     let thread_manager = Arc::new(ThreadManager::new(100, 128000));
@@ -101,16 +108,31 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|s| s.parse::<PersonaOverlay>().ok())
         .unwrap_or(PersonaOverlay::Default);
-    info!("🧬 Persona overlay: {}", persona.name());
+    info!("🧬 Persona overlay: {:?}", persona);
 
-    // Chat service (Unified GPT-5 via /responses) - updated signature: no ContextService arg
+    // ---- Chat config ----
+    let chat_config = ChatConfig::default();
+
+    // ---- Summarization wired with stores (does real work) ----
+    let summarization_service = Arc::new(SummarizationService::new_with_stores(
+        openai_client.clone(),
+        Arc::new(chat_config.clone()),
+        sqlite_store.clone(),
+        memory_service.clone(),
+    ));
+
+    // ---- ChatService wired with summarizer and both memory stores ----
     info!("🚀 Creating unified GPT-5 chat service with vector store retrieval...");
     let chat_service = Arc::new(ChatService::new(
         openai_client.clone(),
         thread_manager.clone(),
-        memory_service.clone(),
         vector_store_manager.clone(),
-        persona,
+        persona,                                // PersonaOverlay
+        memory_service.clone(),                 // Arc<MemoryService>
+        sqlite_store.clone() as Arc<dyn MemoryStore + Send + Sync>,
+        qdrant_store.clone() as Arc<dyn MemoryStore + Send + Sync>,
+        summarization_service.clone(),          // Arc<SummarizationService>
+        Some(chat_config),                      // Option<ChatConfig>
     ));
 
     // Document service
@@ -160,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }))
         }))
-        .merge(http_router().with_state(app_state.clone()))  // Changed from .nest("/api", ...) to .merge()
+        .merge(http_router().with_state(app_state.clone()))
         // ws_router requires AppState; pass a clone
         .nest("/ws", ws_router(app_state.clone()))
         // project_router already contains /projects/* paths; merge instead of double-prefixed nest
@@ -169,14 +191,14 @@ async fn main() -> anyhow::Result<()> {
         .with_state(app_state);
 
     info!("🚀 Server starting on {}", addr);
-    info!("🌐 HTTP endpoints: http://{}", addr);  // Updated log message
+    info!("🌐 HTTP endpoints: http://{}", addr);
     info!("🔌 WebSocket endpoint: ws://{}/ws/chat", addr);
     info!("📁 Project endpoints: http://{}/projects", addr);
 
     // --- Start the server ---
     let listener = TcpListener::bind(&addr).await?;
     info!("✨ Mira is ready for connections!");
-    
+
     axum::serve(listener, app).await?;
 
     Ok(())

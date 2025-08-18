@@ -50,13 +50,14 @@ impl OpenAIClient {
         }))
     }
 
-    // Small getters used by the streaming module
+    // Small getters used by other modules
     pub fn model(&self) -> &str { &self.model }
     pub fn verbosity(&self) -> &str { &self.verbosity }
     pub fn reasoning_effort(&self) -> &str { &self.reasoning_effort }
     pub fn max_output_tokens(&self) -> usize { self.max_output_tokens }
 
     /// Generate a response using the GPT-5 Responses API (non-streaming).
+    /// If `request_structured` is true, we attach a proper `json_schema` TEXT FORMAT OBJECT.
     pub async fn generate_response(
         &self,
         user_text: &str,
@@ -82,21 +83,43 @@ impl OpenAIClient {
             "model": &self.model,
             "input": input,
             "text": {
-                "verbosity": &self.verbosity
+                "verbosity": norm_verbosity(&self.verbosity)
             },
             "reasoning": {
-                "effort": &self.reasoning_effort
+                "effort": norm_effort(&self.reasoning_effort)
             },
             "max_output_tokens": self.max_output_tokens
         });
 
         if request_structured {
-            request["text"]["format"] = json!("json_object");
+            // IMPORTANT: format must be an OBJECT, not a string
+            request["text"]["format"] = json!({
+                "type": "json_schema",
+                "name": "mira_response",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "output": { "type":"string" },
+                        "mood": { "type":"string" },
+                        "salience": { "type":"integer", "minimum": 0, "maximum": 10 },
+                        "summary": { "type":"string" },
+                        "memory_type": { "type":"string" },
+                        "tags": { "type":"array", "items": { "type":"string" } },
+                        "intent": { "type":"string" },
+                        "monologue": { "type":["string","null"] },
+                        "reasoning_summary": { "type":["string","null"] }
+                    },
+                    "required": ["output","mood","salience","summary","memory_type","tags","intent","monologue","reasoning_summary"],
+                    "additionalProperties": false
+                },
+                "strict": true
+            });
         }
 
-        debug!("📤 Sending request to GPT-5 Responses API");
+        debug!("📤 Sending request to GPT-5 Responses API (non-streaming)");
         let response_value = self.post_response(request).await?;
 
+        // Stronger text extraction to handle multiple possible shapes
         let text_content = extract_text_from_responses(&response_value)
             .ok_or_else(|| anyhow!("Failed to extract text from API response"))?;
 
@@ -107,7 +130,6 @@ impl OpenAIClient {
     }
 
     /// Stream a response using the GPT-5 Responses API (SSE).
-    /// This method is called by streaming.rs
     pub async fn stream_response(
         &self,
         body: serde_json::Value,
@@ -115,8 +137,6 @@ impl OpenAIClient {
         self.post_response_stream(body).await
     }
 
-    /// Low-level helper to POST a Responses request and return an SSE JSON stream.
-    /// Used by streaming.rs and responses/manager.rs
     pub async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
         let req = self.client
             .post(format!("{}/v1/responses", self.base_url))
@@ -138,7 +158,6 @@ impl OpenAIClient {
         Ok(Box::pin(s))
     }
 
-    /// Helper method for making POST requests (used by other modules)
     pub async fn post_response(&self, body: serde_json::Value) -> Result<serde_json::Value> {
         let response = self
             .client
@@ -158,7 +177,6 @@ impl OpenAIClient {
         response.json().await.map_err(Into::into)
     }
 
-    /// Helper method for making generic requests (for other modules) - NOT ASYNC
     pub fn request(&self, method: reqwest::Method, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, format!("{}/v1/{}", self.base_url, endpoint))
@@ -166,19 +184,18 @@ impl OpenAIClient {
             .header(header::CONTENT_TYPE, "application/json")
     }
 
-    /// Helper method for multipart requests (for file uploads) - NOT ASYNC
     pub fn request_multipart(&self, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .post(format!("{}/v1/{}", self.base_url, endpoint))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
     }
 
-    /// Get embedding for text - FIXED to use text-embedding-3-large with 3072 dimensions
+    /// Get embedding for text - text-embedding-3-large with 3072 dims
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
         let body = json!({
-            "model": "text-embedding-3-large",  // Changed from text-embedding-3-small
+            "model": "text-embedding-3-large",
             "input": text,
-            "dimensions": 3072  // CRITICAL: Specify 3072 dimensions!
+            "dimensions": 3072
         });
 
         let response = self
@@ -211,7 +228,6 @@ impl OpenAIClient {
         Ok(embedding)
     }
 
-    /// Generates a concise summary of a conversation chunk.
     pub async fn summarize_conversation(
         &self,
         prompt: &str,
@@ -223,12 +239,8 @@ impl OpenAIClient {
                 "role": "user",
                 "content": [{ "type": "input_text", "text": prompt }]
             }],
-            "text": {
-                "verbosity": "low"
-            },
-            "reasoning": {
-                "effort": "minimal"
-            },
+            "text": { "verbosity": "low" },
+            "reasoning": { "effort": "minimal" },
             "max_output_tokens": max_output_tokens
         });
 
@@ -240,12 +252,34 @@ impl OpenAIClient {
     }
 }
 
-/// Helper function to extract text content from the Responses API response.
+// === strict literal normalizers ===
+fn norm_verbosity(v: &str) -> &'static str {
+    match v.to_ascii_lowercase().as_str() {
+        "low" => "low",
+        "medium" => "medium",
+        "high" => "high",
+        _ => "medium",
+    }
+}
+
+fn norm_effort(r: &str) -> &'static str {
+    match r.to_ascii_lowercase().as_str() {
+        "minimal" => "minimal",
+        "medium" => "medium",
+        "high" => "high",
+        _ => "medium",
+    }
+}
+
+/// Helper function to extract text content from various Responses API shapes.
 pub fn extract_text_from_responses(response: &Value) -> Option<String> {
-    // Try to extract from output.message.content[0].text
+    // 1) Newer shape: output.message.content[0].text.value
+    if let Some(text) = response.pointer("/output/message/content/0/text/value").and_then(|t| t.as_str()) {
+        return Some(text.to_string());
+    }
+    // 2) output.message.content[0].text
     if let Some(text) = response
-        .get("output")
-        .and_then(|o| o.get("message"))
+        .get("output").and_then(|o| o.get("message"))
         .and_then(|m| m.get("content"))
         .and_then(|c| c.get(0))
         .and_then(|part| part.get("text"))
@@ -253,8 +287,11 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
     {
         return Some(text.to_string());
     }
-
-    // Fallback: Try message.content[0].text directly
+    // 3) message.content[0].text.value
+    if let Some(text) = response.pointer("/message/content/0/text/value").and_then(|t| t.as_str()) {
+        return Some(text.to_string());
+    }
+    // 4) message.content[0].text
     if let Some(text) = response
         .get("message")
         .and_then(|m| m.get("content"))
@@ -264,12 +301,8 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
     {
         return Some(text.to_string());
     }
-
-    // Additional fallback: Try output as string directly
-    if let Some(text) = response
-        .get("output")
-        .and_then(|o| o.as_str())
-    {
+    // 5) Fallback: output as a raw string
+    if let Some(text) = response.get("output").and_then(|o| o.as_str()) {
         return Some(text.to_string());
     }
 
@@ -296,7 +329,6 @@ fn sse_json_stream(
         })
         .filter_map(|item| async move { item })
         .flat_map(|res: Result<Vec<Value>, anyhow::Error>| {
-            // Ensure both arms return the same type
             let items: Vec<Result<Value>> = match res {
                 Ok(events) => events.into_iter().map(Ok).collect(),
                 Err(e) => vec![Err(e)],
@@ -305,7 +337,6 @@ fn sse_json_stream(
         })
 }
 
-/// Parse SSE events from a buffer.
 fn parse_sse_from_buffer(buffer: &mut Vec<u8>) -> Vec<Value> {
     let mut events = Vec::new();
     let data = String::from_utf8_lossy(buffer);

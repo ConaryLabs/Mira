@@ -9,6 +9,7 @@ use crate::memory::decay::{calculate_decayed_salience, DecayConfig};
 use chrono::Utc;
 
 /// The context returned for LLM prompting: recency + semantic + summaries.
+#[derive(Default)]
 pub struct RecallContext {
     pub recent: Vec<MemoryEntry>,   // Last N chronological messages (SQLite)
     pub semantic: Vec<MemoryEntry>, // Top K semantically relevant (Qdrant)

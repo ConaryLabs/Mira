@@ -1,125 +1,134 @@
-use crate::{
-    llm::{
-        client::OpenAIClient,
-        responses::thread::{ResponseMessage, ThreadManager},
-    },
-    services::{chat::ChatConfig, memory::MemoryService},
-};
-use anyhow::Result;
-use std::sync::Arc;
-use tracing::{debug, info, warn};
+// src/services/summarization.rs
 
-/// A service dedicated to summarizing conversation history when it exceeds token or message limits.
+use std::sync::Arc;
+use anyhow::{anyhow, Result};
+
+use crate::llm::client::OpenAIClient;
+use crate::services::chat::{ChatConfig, ChatResponse};
+use crate::services::memory::MemoryService;
+use crate::memory::traits::MemoryStore;
+
+/// Summarizes recent conversation and persists a compact summary as a normal
+/// assistant response (tags=["summary"], memory_type="context").
+///
+/// Wiring options:
+/// - Minimal: call `new(openai, config)` and later call `attach_stores(...)`.
+/// - Fully-wired: call `new_with_stores(openai, config, sqlite_store, memory_service)`.
 pub struct SummarizationService {
-    pub thread_manager: Arc<ThreadManager>,
-    pub memory_service: Arc<MemoryService>,
-    pub openai_client: Arc<OpenAIClient>,
-    pub config: Arc<ChatConfig>,
+    openai_client: Arc<OpenAIClient>,
+    config: Arc<ChatConfig>,
+
+    // Optional until attached; enables summarize_if_needed to operate.
+    sqlite_store: Option<Arc<dyn MemoryStore + Send + Sync>>,
+    memory_service: Option<Arc<MemoryService>>,
 }
 
 impl SummarizationService {
-    /// Creates a new instance of the SummarizationService.
-    pub fn new(
-        thread_manager: Arc<ThreadManager>,
-        memory_service: Arc<MemoryService>,
-        openai_client: Arc<OpenAIClient>,
-        config: Arc<ChatConfig>,
-    ) -> Self {
+    pub fn new(openai_client: Arc<OpenAIClient>, config: Arc<ChatConfig>) -> Self {
         Self {
-            thread_manager,
-            memory_service,
             openai_client,
             config,
+            sqlite_store: None,
+            memory_service: None,
         }
     }
 
-    /// Checks if the conversation history for a given session exceeds the configured limits
-    /// and, if so, triggers the summarization process.
-    pub async fn summarize_if_needed(&self, session_id: &str) -> Result<()> {
-        let mut sessions = self.thread_manager.sessions.write().await;
-        
-        if let Some(session) = sessions.get_mut(session_id) {
-            let message_count = session.messages.len();
-            let token_count = session.total_tokens;
-
-            let message_cap = self.config.history_message_cap;
-            let token_limit = self.config.history_token_limit;
-
-            // 1. Check if limits are exceeded. If not, return immediately. [cite: 80]
-            if message_count <= message_cap && token_count <= token_limit {
-                return Ok(());
-            }
-
-            info!(
-                "Summarization triggered for session {}: messages {}/{}, tokens {}/{}",
-                session_id, message_count, message_cap, token_count, token_limit
-            );
-
-            // 2. Identify messages to summarize. [cite: 82]
-            // We'll take a chunk from the beginning of the history.
-            let chunk_size = std::cmp::min(self.config.summary_chunk_size, message_count);
-            if chunk_size == 0 {
-                return Ok(());
-            }
-            
-            // Temporarily take ownership of messages to summarize
-            let messages_to_summarize: Vec<ResponseMessage> = session.messages.drain(0..chunk_size).collect();
-            let original_message_count = messages_to_summarize.len();
-
-            // 3. Convert them to a single text prompt. [cite: 53-57, 83]
-            let prompt_text = self.build_summarization_prompt(&messages_to_summarize);
-
-            // Call the OpenAI client to get the summary. [cite: 83]
-            match self.openai_client.summarize_conversation(&prompt_text, self.config.summary_output_tokens).await {
-                Ok(summary_text) => {
-                    info!("Successfully generated summary for {} messages.", original_message_count);
-                    
-                    // 4. Create and insert a summary message into the thread at the front. [cite: 63, 84]
-                    let summary_message = ResponseMessage {
-                        role: "system".to_string(),
-                        content: Some(summary_text.clone()),
-                        name: None,
-                        function_call: None,
-                        tool_calls: None,
-                    };
-                    session.messages.push_front(summary_message);
-
-                    // 5. Create a MemoryEntry for the summary and save it. [cite: 65, 85]
-                    if let Err(e) = self.memory_service.save_summary(session_id, &summary_text, original_message_count).await {
-                        warn!("Failed to save summary to memory service: {}", e);
-                    }
-                    
-                    // 6. Recalculate total tokens for accuracy
-                    session.total_tokens = session.messages.iter().map(|m| {
-                        m.content.as_deref().unwrap_or("").len() / 4 + 10
-                    }).sum();
-
-                    debug!("Session {} post-summary: {} messages, ~{} tokens", session_id, session.messages.len(), session.total_tokens);
-
-                }
-                Err(e) => {
-                    warn!("Summarization failed: {}. Re-inserting original messages.", e);
-                    // If summarization fails, put the messages back to avoid data loss.
-                    for msg in messages_to_summarize.into_iter().rev() {
-                        session.messages.push_front(msg);
-                    }
-                }
-            }
+    pub fn new_with_stores(
+        openai_client: Arc<OpenAIClient>,
+        config: Arc<ChatConfig>,
+        sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
+        memory_service: Arc<MemoryService>,
+    ) -> Self {
+        Self {
+            openai_client,
+            config,
+            sqlite_store: Some(sqlite_store),
+            memory_service: Some(memory_service),
         }
+    }
+
+    /// If you constructed with `new(...)`, call this once during bootstrapping.
+    pub fn attach_stores(
+        &mut self,
+        sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
+        memory_service: Arc<MemoryService>,
+    ) {
+        self.sqlite_store = Some(sqlite_store);
+        self.memory_service = Some(memory_service);
+    }
+
+    /// Summarize recent messages and persist the result as a ChatResponse.
+    /// If stores haven’t been attached, this becomes a safe no-op (returns Ok(())).
+    pub async fn summarize_if_needed(&self, session_id: &str) -> Result<()> {
+        let sqlite = match &self.sqlite_store {
+            Some(s) => s.clone(),
+            None => return Ok(()), // not wired yet; skip without failing the pipeline
+        };
+        let mem = match &self.memory_service {
+            Some(m) => m.clone(),
+            None => return Ok(()),
+        };
+
+        // 1) Load a window of recent messages (use history_message_cap as guide).
+        let cap = self.config.history_message_cap.max(8);
+        let take = cap.saturating_mul(2);
+        let recent = sqlite.load_recent(session_id, take).await?;
+        if recent.is_empty() {
+            return Ok(());
+        }
+
+        // 2) Build a clean prompt for summarization (order preserved).
+        let mut prompt = String::from(
+            "Summarize the following recent conversation for fast recall later.\n\
+             Keep it faithful, concise, and useful for context stitching.\n\n",
+        );
+        for msg in &recent {
+            // Expecting each entry to have role + content.
+            prompt.push_str(&format!("{}: {}\n", msg.role, msg.content));
+        }
+
+        // 3) Ask the model for a compact summary within our configured token budget.
+        let token_limit = self.config.max_output_tokens.min(1024);
+        let summary = self
+            .openai_client
+            .summarize_conversation(&prompt, token_limit)
+            .await?
+            .trim()
+            .to_string();
+
+        if summary.is_empty() {
+            // Don’t save an empty summary.
+            return Ok(());
+        }
+
+        // 4) Persist as an assistant response so it’s retrievable like everything else.
+        let response = ChatResponse {
+            output: String::new(),            // not user-facing body; summary lives below
+            persona: "mira".to_string(),
+            mood: "neutral".to_string(),
+            salience: 2,                      // low default; tune if desired
+            summary,                          // the compacted conversation summary
+            memory_type: "context".to_string(),
+            tags: vec!["summary".to_string()],
+            intent: "summarize".to_string(),
+            monologue: None,
+            reasoning_summary: None,
+        };
+
+        mem.save_assistant_response(session_id, &response).await?;
         Ok(())
     }
 
-    /// Builds the prompt for the summarization LLM call.
-    fn build_summarization_prompt(&self, messages: &[ResponseMessage]) -> String {
-        let mut prompt = String::from("Summarise the following conversation excerpts. Retain important facts, promises, feelings and humour. Include a brief description of the emotional tone and any relevant tags. Do not invent details.\n\n");
-
-        for message in messages {
-            let content = message.content.as_deref().unwrap_or("").trim();
-            if !content.is_empty() {
-                let line = format!("{}: {}\n", message.role, content);
-                prompt.push_str(&line);
-            }
+    /// Direct utility: summarize arbitrary text without touching storage.
+    pub async fn summarize_text(&self, text: &str) -> Result<String> {
+        if text.trim().is_empty() {
+            return Err(anyhow!("summarize_text: empty input"));
         }
-        prompt
+        let token_limit = self.config.max_output_tokens.min(1024);
+        let out = self
+            .openai_client
+            .summarize_conversation(text, token_limit)
+            .await?;
+        Ok(out.trim().to_string())
     }
 }

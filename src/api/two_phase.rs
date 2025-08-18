@@ -1,162 +1,140 @@
 // src/api/two_phase.rs
-use std::sync::Arc;
-use anyhow::Result;
-use futures::{Stream, StreamExt};
-use tracing::{info, warn};
+//! Two-phase chat: (1) Metadata (structured JSON via non-streaming), (2) Content (plain text)
 
-use crate::api::types::ResponseMetadata;
-use crate::llm::client::OpenAIClient;
-use crate::llm::streaming::{stream_response, StreamEvent};
-use crate::persona::PersonaOverlay;
+use anyhow::{anyhow, Result};
+use futures::{stream, Stream, StreamExt};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::pin::Pin;
+
+use crate::llm::client::{extract_text_from_responses, OpenAIClient};
+use crate::llm::streaming::StreamEvent;
 use crate::memory::recall::RecallContext;
-use crate::services::chat::ChatResponse;
+use crate::persona::PersonaOverlay;
+use crate::prompt::builder::build_system_prompt;
 
-/// Build system prompt for any response
-pub fn build_system_prompt(
-    persona: &PersonaOverlay,
-    context: &RecallContext,
-) -> String {
-    let mut prompt = String::new();
-
-    // Add persona
-    prompt.push_str(persona.prompt());
-    prompt.push_str("\n\n");
-
-    // Add context if available
-    if !context.recent.is_empty() {
-        prompt.push_str("Recent conversation:\n");
-        for entry in &context.recent {
-            prompt.push_str(&format!("{}: {}\n", entry.role, entry.content));
-        }
-        prompt.push_str("\n");
-    }
-
-    prompt
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Metadata {
+    pub output: String,
+    pub mood: String,
+    pub intent: String,
+    pub salience: usize,
+    pub summary: String,
+    pub memory_type: String,
+    pub tags: Vec<String>,
+    pub monologue: Option<String>,
+    pub reasoning_summary: Option<String>,
 }
 
-/// Phase 1: Get metadata with structured JSON
+fn metadata_instructions(system_prompt: &str) -> String {
+    format!(
+        "You are Mira's metadata analyzer.\n\
+         Output ONLY JSON matching this exact schema; no extra fields:\n\
+         {{\
+           \"output\": \"string\",\
+           \"mood\": \"string\",\
+           \"intent\": \"string\",\
+           \"salience\": 0,\
+           \"summary\": \"string\",\
+           \"memory_type\": \"string\",\
+           \"tags\": [\"string\"],\
+           \"monologue\": \"string|null\",\
+           \"reasoning_summary\": \"string|null\"\
+         }}\n\n\
+         System context:\n{system}",
+        system = system_prompt
+    )
+}
+
 pub async fn get_metadata(
     client: &OpenAIClient,
-    user_message: &str,
+    user_text: &str,
     persona: &PersonaOverlay,
     context: &RecallContext,
-) -> Result<ResponseMetadata> {
-    let metadata_prompt = format!(
-        r#"{}
+) -> Result<Metadata> {
+    // Build system prompt
+    let system_prompt = build_system_prompt(persona, context);
+    let sys = metadata_instructions(&system_prompt);
 
-You are responding to: "{}"
+    // Use NON-streaming with structured JSON format (proper json_schema object).
+    let resp = client.generate_response(user_text, Some(&sys), true).await?;
+    let raw = resp.raw.unwrap_or(Value::Null);
 
-Provide a JSON object with these fields:
-{{
-    "output": "A preview or initial part of your response - can be a greeting, acknowledgment, or the first part of your answer. This can be up to 500 tokens if you want to include substantial content here.",
-    "mood": "your current emotional state (e.g., excited, contemplative, focused, playful)",
-    "salience": 1-10 (importance/memorability of this interaction),
-    "memory_type": "event|fact|emotion|preference|context",
-    "tags": ["relevant", "tags", "for", "categorization"],
-    "intent": "what you're trying to accomplish with this response",
-    "summary": "comprehensive summary for memory storage - be detailed",
-    "monologue": "your internal thoughts, reactions, and meta-commentary about this interaction (optional but encouraged)",
-    "reasoning_summary": "detailed explanation of your reasoning process, assumptions, and approach (optional but encouraged)"
-}}
+    // Try to parse the entire response body as the JSON we asked for:
+    // 1) Some providers put JSON directly in top-level "output" string
+    if let Some(s) = raw.get("output").and_then(|o| o.as_str()) {
+        if let Ok(v) = serde_json::from_str::<Value>(s) {
+            return Ok(parse_metadata(v));
+        }
+    }
+    // 2) Else, try extracting text and then parse as JSON
+    if let Some(text) = extract_text_from_responses(&raw) {
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            return Ok(parse_metadata(v));
+        }
+    }
+    // 3) Else, if raw already looks like the JSON object, try parsing directly
+    if raw.is_object() && raw.get("mood").is_some() {
+        return Ok(parse_metadata(raw));
+    }
 
-You have up to 1280 tokens for this entire JSON response. Use the space wisely:
-- If the response will be simple, put more in "output" as a preview
-- For complex responses, use the space for rich metadata, monologue, and reasoning
-- Be expressive and detailed in mood, intent, and summary fields
-- Include relevant tags that will help with memory retrieval
-- The monologue field is your space for personality and internal thoughts"#,
-        build_system_prompt(persona, context),
-        user_message
-    );
-
-    info!("📊 Phase 1: Getting metadata (up to 1280 tokens)");
-
-    let metadata_stream = stream_response(
-        client,
-        user_message,
-        Some(&metadata_prompt),
-        true,  // structured JSON
-    ).await?;
-
-    extract_metadata(metadata_stream).await
+    Err(anyhow!("metadata stream produced no valid JSON"))
 }
 
-/// Phase 2: Get full content with plain text streaming
+fn parse_metadata(v: Value) -> Metadata {
+    let mut md = Metadata::default();
+    md.output = v.get("output").and_then(Value::as_str).unwrap_or("").to_string();
+    md.mood = v.get("mood").and_then(Value::as_str).unwrap_or("").to_string();
+    md.intent = v.get("intent").and_then(Value::as_str).unwrap_or("").to_string();
+    md.salience = v.get("salience").and_then(Value::as_u64).unwrap_or(0) as usize;
+    md.summary = v.get("summary").and_then(Value::as_str).unwrap_or("").to_string();
+    md.memory_type = v.get("memory_type").and_then(Value::as_str).unwrap_or("").to_string();
+    md.tags = v
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    md.monologue = v
+        .get("monologue")
+        .and_then(|x| if x.is_null() { None } else { x.as_str().map(|s| s.to_string()) });
+    md.reasoning_summary = v
+        .get("reasoning_summary")
+        .and_then(|x| if x.is_null() { None } else { x.as_str().map(|s| s.to_string()) });
+    md
+}
+
 pub async fn get_content_stream(
     client: &OpenAIClient,
-    user_message: &str,
+    user_text: &str,
     persona: &PersonaOverlay,
     context: &RecallContext,
-    metadata: &ResponseMetadata,
-) -> Result<impl Stream<Item = Result<StreamEvent>>> {
-    let content_prompt = format!(
-        r#"{}
-
-Previous context: {}
-User message: "{}"
-
-Provide your complete response as Mira. Be thorough and detailed.
-No JSON formatting, no metadata fields - just your natural response.
-Your current mood is: {}
-Your intent is: {}
-
-Write as much as needed - there are no length limits."#,
-        build_system_prompt(persona, context),
-        build_conversation_context(context, 10),
-        user_message,
-        metadata.mood,
-        metadata.intent
-    );
-
-    info!("📝 Phase 2: Streaming content");
-
-    stream_response(
-        client,
-        user_message,
-        Some(&content_prompt),
-        false,  // plain text
-    ).await
-}
-
-/// Extract metadata from JSON stream
-async fn extract_metadata(
-    mut stream: impl Stream<Item = Result<StreamEvent>> + Unpin,
-) -> Result<ResponseMetadata> {
-    let mut json_buffer = String::new();
-
-    while let Some(event) = stream.next().await {
-        match event? {
-            StreamEvent::Delta(chunk) => {
-                json_buffer.push_str(&chunk);
-            }
-            StreamEvent::Done { full_text, .. } => {
-                // Try to parse the complete JSON
-                if let Ok(metadata) = serde_json::from_str::<ResponseMetadata>(&full_text) {
-                    info!("✅ Metadata extracted successfully");
-                    return Ok(metadata);
-                }
-                // Try buffer as fallback
-                if let Ok(metadata) = serde_json::from_str::<ResponseMetadata>(&json_buffer) {
-                    return Ok(metadata);
-                }
-                warn!("⚠️ Could not parse metadata, using defaults");
-                break;
-            }
-            StreamEvent::Error(e) => {
-                warn!("Metadata stream error: {}", e);
-                break;
-            }
+    mood: &str,
+    intent: &str,
+) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
+    let mut system_prompt = build_system_prompt(persona, context);
+    if !mood.is_empty() || !intent.is_empty() {
+        system_prompt.push_str("\n\n[conversation-metadata]\n");
+        if !mood.is_empty() {
+            system_prompt.push_str(&format!("mood: {mood}\n"));
+        }
+        if !intent.is_empty() {
+            system_prompt.push_str(&format!("intent: {intent}\n"));
         }
     }
 
-    Ok(ResponseMetadata::default())
-}
+    // Non-streaming generation for content; then we wrap into a tiny stream so the WS layer stays happy
+    let out = client.generate_response(user_text, Some(&system_prompt), false).await?;
+    let text = out.content.trim().to_string();
 
-fn build_conversation_context(context: &RecallContext, limit: usize) -> String {
-    context.recent
-        .iter()
-        .take(limit)
-        .map(|entry| format!("{}: {}", entry.role, entry.content))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let s = stream::once(async move {
+        if text.is_empty() {
+            Ok(StreamEvent::Done { full_text: String::new(), raw: None })
+        } else {
+            Ok(StreamEvent::Delta(text))
+        }
+    })
+    .chain(stream::once(async { Ok(StreamEvent::Done { full_text: String::new(), raw: None }) }))
+    .boxed();
+
+    Ok(s)
 }
