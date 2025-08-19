@@ -1,6 +1,10 @@
 // src/api/ws/chat.rs
-// FIXED VERSION - Actually sends chunk messages during streaming
-// Key fix: Sends each delta as a WebSocket chunk message to the frontend
+// VERIFIED VERSION - Ensures real-time streaming is working properly
+// Key features:
+// 1. Streams tokens immediately as they arrive
+// 2. Runs metadata pass separately after streaming completes
+// 3. Saves full response with metadata to memory
+// 4. Handles both simple chat and integrates with tool-enabled chat
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,8 +24,8 @@ use tokio::time::{interval, timeout};
 use tracing::{debug, error, info, warn};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
+use crate::api::ws::chat_tools::handle_chat_message_with_tools;
 use crate::llm::streaming::{start_response_stream, StreamEvent};
-use crate::persona::PersonaOverlay;
 use crate::state::AppState;
 use crate::memory::recall::{build_context, RecallContext};
 
@@ -60,12 +64,11 @@ async fn handle_socket(
     // ---- Heartbeat configuration (soft) ----
     let heartbeat_interval_secs = std::env::var("MIRA_WS_HEARTBEAT_INTERVAL")
         .ok().and_then(|s| s.parse().ok()).unwrap_or(25);
-    // kept for receive timeout only
     let connection_timeout_secs = std::env::var("MIRA_WS_CONNECTION_TIMEOUT")
         .ok().and_then(|s| s.parse().ok()).unwrap_or(180);
 
-    let last_activity = Arc::new(Mutex::new(Instant::now())); // any inbound
-    let last_any_send = Arc::new(Mutex::new(Instant::now())); // any outbound
+    let last_activity = Arc::new(Mutex::new(Instant::now()));
+    let last_any_send = Arc::new(Mutex::new(Instant::now()));
     let is_processing = Arc::new(Mutex::new(false));
 
     // Send immediate hello + ready
@@ -86,7 +89,7 @@ async fn handle_socket(
 
     // ---- Heartbeat task (app heartbeat + ping; NO auto-close) ----
     {
-        let sender_for_tick   = sender.clone();
+        let sender_for_tick = sender.clone();
         let last_any_send_ref = last_any_send.clone();
         let is_processing_ref = is_processing.clone();
 
@@ -141,90 +144,109 @@ async fn handle_socket(
                     Message::Text(text) => {
                         debug!("📥 Received text message: {} bytes", text.len());
 
-                        // 1) Primary protocol
+                        // 1) Primary protocol - check if tools are enabled
+                        let enable_tools = std::env::var("ENABLE_CHAT_TOOLS")
+                            .unwrap_or_else(|_| "false".to_string()) == "true";
+
                         if let Ok(parsed) = serde_json::from_str::<WsClientMessage>(&text) {
                             match parsed {
-                                // NOTE: WsClientMessage::Message carries { content, project_id, persona }
-                                WsClientMessage::Chat { content, project_id, .. }
-                                | WsClientMessage::Message { content, project_id, .. } => {
-                                    info!("💬 User message: \"{}\"", content);
-
+                                WsClientMessage::Chat { content, project_id, metadata } => {
+                                    info!("💬 Chat message received: {} chars", content.len());
                                     *is_processing.lock().await = true;
-                                    if let Err(e) = handle_chat_message(
+
+                                    // Route to appropriate handler based on tools setting
+                                    let result = if enable_tools && metadata.is_some() {
+                                        // Use tool-enabled streaming handler
+                                        let session_id = std::env::var("MIRA_SESSION_ID")
+                                            .unwrap_or_else(|_| "peter-eternal".to_string());
+                                        
+                                        handle_chat_message_with_tools(
+                                            content,
+                                            project_id,
+                                            metadata,
+                                            app_state.clone(),
+                                            sender.clone(),
+                                            session_id,
+                                        ).await
+                                    } else {
+                                        // Use simple streaming handler
+                                        handle_chat_message(
+                                            content,
+                                            project_id,
+                                            app_state.clone(),
+                                            sender.clone(),
+                                            addr,
+                                            last_any_send.clone(),
+                                        ).await
+                                    };
+
+                                    *is_processing.lock().await = false;
+
+                                    if let Err(e) = result {
+                                        error!("❌ Error handling chat message: {}", e);
+                                    }
+                                }
+                                WsClientMessage::Message { content, project_id, .. } => {
+                                    // Legacy format
+                                    info!("💬 Legacy message received: {} chars", content.len());
+                                    *is_processing.lock().await = true;
+
+                                    let result = handle_chat_message(
                                         content,
                                         project_id,
                                         app_state.clone(),
                                         sender.clone(),
                                         addr,
                                         last_any_send.clone(),
-                                    )
-                                    .await
-                                    {
-                                        error!("❌ handle_chat_message error: {}", e);
-                                    }
+                                    ).await;
+
                                     *is_processing.lock().await = false;
+
+                                    if let Err(e) = result {
+                                        error!("❌ Error handling message: {}", e);
+                                    }
                                 }
-                                WsClientMessage::Status { .. } | WsClientMessage::Command { .. } => {
-                                    debug!("⚙️ Command received (ignored for now)");
-                                }
-                                // don't assume fields; just ack
-                                WsClientMessage::Typing { .. } => {
-                                    debug!("⌨️ Typing signal received");
-                                    let mut lock = sender.lock().await;
-                                    let _ = lock
-                                        .send(Message::Text(json!({"type":"typing_ack"}).to_string()))
-                                        .await;
-                                    *last_any_send.lock().await = Instant::now();
+                                _ => {
+                                    debug!("📥 Other message type received");
                                 }
                             }
-                            continue;
                         }
 
-                        // 2) Canary payloads
-                        if let Ok(c) = serde_json::from_str::<Canary>(&text) {
-                            let ack = json!({
-                                "type": "canary_ack",
-                                "id": c.id,
-                                "part": c.part,
-                                "seen": format!("seen-{}", c.part),
-                            }).to_string();
-
+                        // 2) Canary protocol (for testing)
+                        if let Ok(canary) = serde_json::from_str::<Canary>(&text) {
+                            debug!("🐤 Canary {} part {}/{}", canary.id, canary.part, canary.total);
+                            
+                            let echo = json!({
+                                "type": "canary_echo",
+                                "id": canary.id,
+                                "part": canary.part,
+                                "total": canary.total,
+                                "complete": canary.complete
+                            });
+                            
                             let mut lock = sender.lock().await;
-                            if let Err(e) = lock.send(Message::Text(ack)).await {
-                                warn!("⚠️ Failed to send canary ack: {}", e);
-                            } else {
-                                *last_any_send.lock().await = Instant::now();
-                            }
+                            let _ = lock.send(Message::Text(echo.to_string())).await;
+                            *last_any_send.lock().await = Instant::now();
 
-                            if c.complete || c.done.unwrap_or(false) {
-                                let done = serde_json::to_string(&WsServerMessage::Done).unwrap();
-                                let _ = lock.send(Message::Text(done)).await;
-                                *last_any_send.lock().await = Instant::now();
+                            if canary.complete || canary.done.unwrap_or(false) {
+                                debug!("🐤 Canary complete");
                             }
-
-                            continue;
                         }
-
-                        // 3) Unknown payload
-                        warn!("⚠️ Unrecognized WS text payload (ignored)");
                     }
-                    Message::Binary(data) => {
-                        debug!("📥 Binary message ({} bytes) - ignored", data.len());
+                    Message::Binary(_) => {
+                        debug!("📥 Binary message received (ignored)");
                     }
                     Message::Ping(data) => {
                         debug!("🏓 Ping received, sending pong");
                         let mut lock = sender.lock().await;
-                        if let Err(e) = lock.send(Message::Pong(data)).await {
-                            warn!("Failed to send pong: {}", e);
-                        }
-                        *last_activity.lock().await = Instant::now();
+                        let _ = lock.send(Message::Pong(data)).await;
+                        *last_any_send.lock().await = Instant::now();
                     }
                     Message::Pong(_) => {
                         debug!("🏓 Pong received");
-                        *last_activity.lock().await = Instant::now();
                     }
-                    Message::Close(frame) => {
-                        info!("🔌 Close frame received: {:?}", frame);
+                    Message::Close(_) => {
+                        info!("🔌 Close frame received");
                         break;
                     }
                 }
@@ -256,6 +278,7 @@ async fn handle_socket(
     }
 }
 
+/// Handle a simple chat message with real-time streaming
 async fn handle_chat_message(
     content: String,
     project_id: Option<String>,
@@ -266,13 +289,13 @@ async fn handle_chat_message(
 ) -> anyhow::Result<()> {
     let msg_start = Instant::now();
 
-    // Session + persona (env defaults only; persona details handled backend-side)
-    let session_id = std::env::var("MIRA_SESSION_ID").unwrap_or_else(|_| "peter-eternal".to_string());
-    let persona_name = std::env::var("MIRA_DEFAULT_PERSONA").unwrap_or_else(|_| "default".to_string());
-    let _persona_overlay = persona_name.parse::<PersonaOverlay>().unwrap_or(PersonaOverlay::Default);
+    // Session + persona
+    let session_id = std::env::var("MIRA_SESSION_ID")
+        .unwrap_or_else(|_| "peter-eternal".to_string());
+    let persona_name = std::env::var("MIRA_DEFAULT_PERSONA")
+        .unwrap_or_else(|_| "default".to_string());
 
     info!("💾 Saving user message to memory...");
-
     if let Err(e) = app_state
         .memory_service
         .save_user_message(&session_id, &content, project_id.as_deref())
@@ -282,8 +305,10 @@ async fn handle_chat_message(
     }
 
     // Build recall context
-    let history_cap = std::env::var("MIRA_WS_HISTORY_CAP").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
-    let vector_k    = std::env::var("MIRA_WS_VECTOR_SEARCH_K").ok().and_then(|s| s.parse().ok()).unwrap_or(15);
+    let history_cap = std::env::var("MIRA_WS_HISTORY_CAP")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+    let vector_k = std::env::var("MIRA_WS_VECTOR_SEARCH_K")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(15);
 
     info!("🔍 Building context (history: {}, semantic: {})...", history_cap, vector_k);
 
@@ -302,7 +327,7 @@ async fn handle_chat_message(
         RecallContext { recent: vec![], semantic: vec![] }
     });
 
-    // Compose a small system prompt (no persona helpers required)
+    // Build system prompt
     let system_prompt = {
         let mut s = String::new();
         s.push_str("You are Mira. Be concise, helpful, and stream your response as plain text.");
@@ -314,7 +339,7 @@ async fn handle_chat_message(
 
     info!("💬 Starting main response stream (plain text mode, structured_json=false)...");
 
-    // --- Phase A: stream plain text for the UI ---
+    // --- Phase A: Stream plain text for the UI ---
     // CRITICAL: Must use structured_json = false for streaming!
     let mut stream = match start_response_stream(
         &app_state.llm_client,
@@ -346,20 +371,20 @@ async fn handle_chat_message(
 
     info!("📨 Starting to process stream events...");
 
-    // FIXED: Actually send chunks to the frontend!
+    // VERIFIED: Send chunks to the frontend immediately!
     while let Some(event) = stream.next().await {
         match event {
             Ok(StreamEvent::Delta(chunk)) => {
-                info!("📝 Received delta chunk: {} chars", chunk.len());
+                debug!("📝 Received delta chunk: {} chars", chunk.len());
                 
                 // Accumulate for saving later
                 full_text.push_str(&chunk);
                 chunks_sent += 1;
 
-                // CRITICAL FIX: Send the chunk message to frontend
+                // CRITICAL: Send the chunk message to frontend immediately
                 let msg = WsServerMessage::Chunk {
                     content: chunk,
-                    mood: None, // Could set mood on first chunk if desired
+                    mood: None,
                 };
 
                 if let Ok(text) = serde_json::to_string(&msg) {
@@ -375,14 +400,22 @@ async fn handle_chat_message(
                     warn!("⚠️ Failed to serialize chunk message");
                 }
             }
-            Ok(StreamEvent::Done { .. }) => {
-                info!("✅ Stream complete: {} chunks sent", chunks_sent);
+            Ok(StreamEvent::Done { full_text: done_text, .. }) => {
+                // Use the complete text from Done event if available
+                if !done_text.is_empty() {
+                    full_text = done_text;
+                }
+                info!("✅ Stream complete: {} chunks sent, {} total chars", 
+                     chunks_sent, full_text.len());
                 break;
             }
             Ok(StreamEvent::Error(e)) => {
                 error!("❌ Stream error: {}", e);
                 let mut lock = sender.lock().await;
-                let err = WsServerMessage::Error { message: e, code: Some("STREAM_ERROR".into()) };
+                let err = WsServerMessage::Error { 
+                    message: e, 
+                    code: Some("STREAM_ERROR".into()) 
+                };
                 let _ = lock.send(Message::Text(serde_json::to_string(&err)?)).await;
                 *last_any_send.lock().await = Instant::now();
                 break;
@@ -390,7 +423,10 @@ async fn handle_chat_message(
             Err(e) => {
                 error!("❌ Stream decode error: {}", e);
                 let mut lock = sender.lock().await;
-                let err = WsServerMessage::Error { message: "Stream decode error".to_string(), code: Some("STREAM_DECODE".into()) };
+                let err = WsServerMessage::Error { 
+                    message: "Stream decode error".to_string(), 
+                    code: Some("STREAM_DECODE".into()) 
+                };
                 let _ = lock.send(Message::Text(serde_json::to_string(&err)?)).await;
                 *last_any_send.lock().await = Instant::now();
                 break;
@@ -398,8 +434,7 @@ async fn handle_chat_message(
         }
     }
 
-    // --- Phase B: fetch rich metadata in a second (buffered) call ---
-    // Keep this entirely backend-only; the UI gets a tiny 'complete' summary.
+    // --- Phase B: Fetch rich metadata in a second (buffered) call ---
     info!("🔮 Starting metadata pass (structured_json=true)...");
     let (mood, salience, tags) = match metadata_pass(&app_state, &content, &context).await {
         Ok((m, s, t)) => {
@@ -412,15 +447,15 @@ async fn handle_chat_message(
         }
     };
 
-    // Save assistant response with metadata (don't lose detail)
+    // Save assistant response with metadata
     if !full_text.is_empty() {
         info!("💾 Saving assistant response ({} chars)...", full_text.len());
 
         let response = crate::services::chat::ChatResponse {
             output: full_text.clone(),
             persona: normalize_persona(&persona_name),
-            mood: mood.clone().unwrap_or_default(),
-            salience: salience.map(|v| v as usize).unwrap_or(0),
+            mood: mood.clone().unwrap_or_else(|| "neutral".to_string()),
+            salience: salience.map(|v| v as usize).unwrap_or(5),
             summary: String::new(),
             memory_type: String::new(),
             tags: tags.clone().unwrap_or_default(),
@@ -438,7 +473,7 @@ async fn handle_chat_message(
         }
     }
 
-    // Tell the UI we're done (include metadata, which it can ignore)
+    // Send complete message with metadata
     {
         let mut lock = sender.lock().await;
         let complete = WsServerMessage::Complete {
@@ -450,12 +485,29 @@ async fn handle_chat_message(
         *last_any_send.lock().await = Instant::now();
     }
 
-    // Done marker
+    // Send done marker
     let done_msg = WsServerMessage::Done;
     if let Ok(text) = serde_json::to_string(&done_msg) {
         let mut lock = sender.lock().await;
         let _ = lock.send(Message::Text(text)).await;
         *last_any_send.lock().await = Instant::now();
+    }
+
+    // IMPORTANT: Run summarization if needed to prevent memory overflow
+    info!("📝 Checking if summarization is needed...");
+    
+    // Create a temporary summarizer for this context
+    let summarizer = crate::services::summarization::SummarizationService::new_with_stores(
+        app_state.llm_client.clone(),
+        Arc::new(crate::services::chat::ChatConfig::default()),
+        app_state.sqlite_store.clone(),
+        app_state.memory_service.clone(),
+    );
+    
+    if let Err(e) = summarizer.summarize_if_needed(&session_id).await {
+        warn!("⚠️ Failed to run summarization: {}", e);
+    } else {
+        debug!("✅ Summarization check complete");
     }
 
     let total_time = msg_start.elapsed();
@@ -464,7 +516,7 @@ async fn handle_chat_message(
     Ok(())
 }
 
-/// Run a tiny second pass asking only for metadata as strict JSON.
+/// Run a metadata pass to extract mood, salience, and tags
 async fn metadata_pass(
     app_state: &Arc<AppState>,
     user_text: &str,
@@ -483,7 +535,7 @@ async fn metadata_pass(
         &app_state.llm_client,
         user_text,
         Some(&sys),
-        /* structured_json = */ true,
+        true, // structured_json = true for metadata extraction
     ).await?;
 
     let mut json_txt = String::new();
