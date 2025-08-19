@@ -7,17 +7,17 @@ use axum::{
     response::IntoResponse,
 };
 use axum::extract::ws::{Message, WebSocket};
-use futures::SinkExt;
 use futures::StreamExt;
+use futures_util::SinkExt; // provides .send()/.close() on SplitSink
 use futures_util::stream::SplitSink;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info, warn};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
-use crate::llm::streaming::StreamEvent;
+use crate::llm::streaming::{start_response_stream, StreamEvent};
 use crate::persona::PersonaOverlay;
 use crate::state::AppState;
 use crate::memory::recall::{build_context, RecallContext};
@@ -141,6 +141,7 @@ async fn handle_socket(
                         // 1) Primary protocol
                         if let Ok(parsed) = serde_json::from_str::<WsClientMessage>(&text) {
                             match parsed {
+                                // NOTE: WsClientMessage::Message carries { content, project_id, persona }
                                 WsClientMessage::Chat { content, project_id, .. }
                                 | WsClientMessage::Message { content, project_id, .. } => {
                                     info!("💬 Processing chat message from {}", addr);
@@ -272,10 +273,10 @@ async fn handle_chat_message(
 ) -> anyhow::Result<()> {
     let msg_start = Instant::now();
 
-    // Session + persona
+    // Session + persona (env defaults only; persona details handled backend-side)
     let session_id = std::env::var("MIRA_SESSION_ID").unwrap_or_else(|_| "peter-eternal".to_string());
-    let persona_str = std::env::var("MIRA_DEFAULT_PERSONA").unwrap_or_else(|_| "default".to_string());
-    let persona = persona_str.parse::<PersonaOverlay>().unwrap_or(PersonaOverlay::Default);
+    let persona_name = std::env::var("MIRA_DEFAULT_PERSONA").unwrap_or_else(|_| "default".to_string());
+    let _persona_overlay = persona_name.parse::<PersonaOverlay>().unwrap_or(PersonaOverlay::Default);
 
     info!("💾 Saving user message to memory...");
 
@@ -308,40 +309,25 @@ async fn handle_chat_message(
         RecallContext { recent: vec![], semantic: vec![] }
     });
 
-    info!("📝 Getting metadata from GPT-5...");
-
-    // Phase 1: metadata
-    let metadata = match crate::api::two_phase::get_metadata(
-        &app_state.llm_client,
-        &content,
-        &persona,
-        &context,
-    )
-    .await
-    {
-        Ok(m) => {
-            info!("✅ Metadata received: mood={}, salience={}", m.mood, m.salience);
-            m
+    // Compose a small system prompt (no persona helpers required)
+    let system_prompt = {
+        let mut s = String::new();
+        s.push_str("You are Mira. Be concise, helpful, and stream your response as plain text.");
+        if !context.recent.is_empty() {
+            s.push_str("\nRecent conversation context is available; reference prior answers succinctly.");
         }
-        Err(e) => {
-            warn!("⚠️ Could not parse metadata, using defaults: {}", e);
-            Default::default()
-        }
+        Some(s)
     };
 
-    info!("💬 Getting content from GPT-5...");
+    info!("💬 Streaming content from GPT-5...");
 
-    // Phase 2: content
-    let mut stream = match crate::api::two_phase::get_content_stream(
+    // --- Phase A: stream plain text for the UI ---
+    let mut stream = match start_response_stream(
         &app_state.llm_client,
         &content,
-        &persona,
-        &context,
-        &metadata.mood,
-        &metadata.intent,
-    )
-    .await
-    {
+        system_prompt.as_deref(),
+        /* structured_json = */ false,
+    ).await {
         Ok(s) => s,
         Err(e) => {
             error!("❌ Failed to get content stream: {}", e);
@@ -354,12 +340,12 @@ async fn handle_chat_message(
             let mut lock = sender.lock().await;
             let _ = lock.send(Message::Text(serde_json::to_string(&error_msg)?)).await;
             *last_any_send.lock().await = Instant::now();
-            return Err(e);
+            return Err(e.into());
         }
     };
 
     let mut full_text = String::new();
-    let mut chunks_sent = 0;
+    let mut chunks_sent: usize = 0;
 
     while let Some(event) = stream.next().await {
         match event {
@@ -369,7 +355,7 @@ async fn handle_chat_message(
 
                 let msg = WsServerMessage::Chunk {
                     content: chunk,
-                    mood: if chunks_sent == 1 { Some(metadata.mood.clone()) } else { None },
+                    mood: None,
                 };
 
                 if let Ok(text) = serde_json::to_string(&msg) {
@@ -378,10 +364,9 @@ async fn handle_chat_message(
                         warn!("⚠️ Failed to send chunk {}: {}", chunks_sent, e);
                         break;
                     } else {
+                        info!("➡️ sent chunk #{}", chunks_sent);
                         *last_any_send.lock().await = Instant::now();
                     }
-                } else {
-                    warn!("Failed to serialize chunk message");
                 }
             }
             Ok(StreamEvent::Done { .. }) => {
@@ -390,30 +375,48 @@ async fn handle_chat_message(
             }
             Ok(StreamEvent::Error(e)) => {
                 error!("❌ Stream error: {}", e);
+                let mut lock = sender.lock().await;
+                let err = WsServerMessage::Error { message: e, code: Some("STREAM_ERROR".into()) };
+                let _ = lock.send(Message::Text(serde_json::to_string(&err)?)).await;
+                *last_any_send.lock().await = Instant::now();
                 break;
             }
             Err(e) => {
                 error!("❌ Stream decode error: {}", e);
+                let mut lock = sender.lock().await;
+                let err = WsServerMessage::Error { message: "Stream decode error".to_string(), code: Some("STREAM_DECODE".into()) };
+                let _ = lock.send(Message::Text(serde_json::to_string(&err)?)).await;
+                *last_any_send.lock().await = Instant::now();
                 break;
             }
         }
     }
 
-    // Save assistant response
+    // --- Phase B: fetch rich metadata in a second (buffered) call ---
+    // Keep this entirely backend-only; the UI gets a tiny 'complete' summary.
+    let (mood, salience, tags) = match metadata_pass(&app_state, &content, &context).await {
+        Ok((m, s, t)) => (m, s, t),
+        Err(e) => {
+            warn!("⚠️ Metadata pass failed: {}", e);
+            (None, None, None)
+        }
+    };
+
+    // Save assistant response with metadata (don’t lose detail)
     if !full_text.is_empty() {
         info!("💾 Saving assistant response ({} chars)...", full_text.len());
 
         let response = crate::services::chat::ChatResponse {
-            output: full_text,
-            persona: persona.to_string(),
-            mood: metadata.mood,
-            salience: metadata.salience,
-            summary: metadata.summary,
-            memory_type: metadata.memory_type,
-            tags: metadata.tags,
-            intent: Some(metadata.intent),
-            monologue: metadata.monologue,
-            reasoning_summary: metadata.reasoning_summary,
+            output: full_text.clone(),
+            persona: normalize_persona(&persona_name),
+            mood: mood.clone().unwrap_or_default(),
+            salience: salience.map(|v| v as usize).unwrap_or(0),
+            summary: String::new(),
+            memory_type: String::new(),
+            tags: tags.clone().unwrap_or_default(),
+            intent: None,
+            monologue: None,
+            reasoning_summary: None,
         };
 
         if let Err(e) = app_state
@@ -423,6 +426,18 @@ async fn handle_chat_message(
         {
             warn!("⚠️ Failed to save assistant response: {}", e);
         }
+    }
+
+    // Tell the UI we’re done (include metadata, which it can ignore)
+    {
+        let mut lock = sender.lock().await;
+        let complete = WsServerMessage::Complete {
+            mood,
+            salience,
+            tags,
+        };
+        let _ = lock.send(Message::Text(serde_json::to_string(&complete)?)).await;
+        *last_any_send.lock().await = Instant::now();
     }
 
     // Done marker
@@ -437,4 +452,64 @@ async fn handle_chat_message(
     info!("✅ Message handled for {} in {:?}", addr, total_time);
 
     Ok(())
+}
+
+/// Run a tiny second pass asking only for metadata as strict JSON.
+async fn metadata_pass(
+    app_state: &Arc<AppState>,
+    user_text: &str,
+    context: &RecallContext,
+) -> anyhow::Result<(Option<String>, Option<f32>, Option<Vec<String>>)> {
+    let sys = {
+        let mut s = String::new();
+        s.push_str("Return ONLY JSON with keys: mood (string), salience (number 0..10), tags (array of strings).");
+        if !context.recent.is_empty() {
+            s.push_str(" Consider recent messages for mood and tags.");
+        }
+        s
+    };
+
+    let mut meta_stream = start_response_stream(
+        &app_state.llm_client,
+        user_text,
+        Some(&sys),
+        /* structured_json = */ true,
+    ).await?;
+
+    let mut json_txt = String::new();
+    while let Some(ev) = meta_stream.next().await {
+        match ev {
+            Ok(StreamEvent::Delta(chunk)) => {
+                json_txt.push_str(&chunk);
+            }
+            Ok(StreamEvent::Done { .. }) => break,
+            Ok(StreamEvent::Error(e)) => {
+                return Err(anyhow::anyhow!(e));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    if json_txt.trim().is_empty() {
+        return Ok((None, None, None));
+    }
+
+    // Parse and extract fields gently
+    let v: Value = serde_json::from_str(&json_txt)?;
+    let mood = v.get("mood").and_then(|x| x.as_str()).map(|s| s.to_string());
+    let sal = v.get("salience").and_then(|x| x.as_f64()).map(|f| f as f32);
+    let tags = v
+        .get("tags")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        });
+
+    Ok((mood, sal, tags))
+}
+
+fn normalize_persona(p: &str) -> String {
+    if p.is_empty() { "default".to_string() } else { p.to_string() }
 }

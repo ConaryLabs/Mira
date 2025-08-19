@@ -1,4 +1,3 @@
-// src/services/chat.rs
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -9,7 +8,7 @@ use futures::StreamExt;
 use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::ThreadManager;
 use crate::llm::responses::vector_store::VectorStoreManager;
-use crate::llm::streaming::StreamEvent;
+use crate::llm::streaming::{StreamEvent, start_response_stream};
 use crate::services::memory::MemoryService;
 use crate::services::summarization::SummarizationService;
 use crate::memory::recall::{RecallContext, build_context};
@@ -30,7 +29,6 @@ pub struct ChatResponse {
     pub reasoning_summary: Option<String>,
 }
 
-/// Configuration for ChatService
 #[derive(Clone)]
 pub struct ChatConfig {
     pub model: String,
@@ -126,7 +124,7 @@ impl ChatService {
             .save_user_message(session_id, user_text, project_id)
             .await?;
 
-        // 2) Build recall context (using build_context)
+        // 2) Build recall context
         let embedding = self.client.get_embedding(user_text).await.ok();
         let context = build_context(
             session_id,
@@ -139,30 +137,23 @@ impl ChatService {
         .await
         .unwrap_or_else(|_| RecallContext { recent: vec![], semantic: vec![] });
 
-        // 3) Phase 1: metadata
-        let metadata = crate::api::two_phase::get_metadata(
-            &self.client,
-            user_text,
-            &self.persona,
-            &context,
-        )
-        .await?;
+        // 3) Minimal system prompt (no persona helper dependency)
+        let mut sys = String::from("You are Mira. Be concise and stream text output.");
+        if !context.recent.is_empty() {
+            sys.push_str("\nReference recent context when useful.");
+        }
+        let system_prompt = Some(sys);
 
-        // 4) Phase 2: content (bind owned copies for lifetimes)
-        let mood = metadata.mood.clone();
-        let intent = metadata.intent.clone();
-        let mut content_stream = crate::api::two_phase::get_content_stream(
+        // 4) Stream content directly
+        let mut stream = start_response_stream(
             &self.client,
             user_text,
-            &self.persona,
-            &context,
-            &mood,
-            &intent,
-        )
-        .await?;
+            system_prompt.as_deref(),
+            /* structured_json = */ false,
+        ).await?;
 
         let mut full_content = String::new();
-        while let Some(event) = content_stream.next().await {
+        while let Some(event) = stream.next().await {
             if let Ok(StreamEvent::Delta(chunk)) = event {
                 full_content.push_str(&chunk);
             }
@@ -171,18 +162,14 @@ impl ChatService {
         let response = ChatResponse {
             output: full_content,
             persona: self.persona.to_string(),
-            mood: metadata.mood,
-            salience: metadata.salience,
-            summary: metadata.summary,
-            memory_type: if metadata.memory_type.is_empty() {
-                "other".into()
-            } else {
-                metadata.memory_type
-            },
-            tags: metadata.tags,
-            intent: Some(metadata.intent),  // FIXED: wrapped in Some()
-            monologue: metadata.monologue,
-            reasoning_summary: metadata.reasoning_summary,
+            mood: String::new(),
+            salience: 0,
+            summary: String::new(),
+            memory_type: "other".into(),
+            tags: vec![],
+            intent: None,
+            monologue: None,
+            reasoning_summary: None,
         };
 
         // 6) Persist assistant response
@@ -190,7 +177,7 @@ impl ChatService {
             .save_assistant_response(session_id, &response)
             .await?;
 
-        // 7) Summarize if needed (now wired for real work)
+        // 7) Summarize if needed
         self.summarizer.summarize_if_needed(session_id).await?;
 
         info!("chat() done in {:?}", start.elapsed());
