@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::pin::Pin;
 
 use crate::llm::client::{extract_text_from_responses, OpenAIClient};
-use crate::llm::streaming::StreamEvent;
+use crate::llm::streaming::{StreamEvent, StreamResult};
 use crate::memory::recall::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::builder::build_system_prompt;
@@ -66,9 +66,7 @@ pub async fn get_metadata(
             return Ok(parse_metadata(v));
         }
     }
-    
     tracing::error!("Could not parse metadata. Raw response: {}", serde_json::to_string_pretty(&raw).unwrap_or_default());
-
     Err(anyhow!("metadata stream produced no valid JSON"))
 }
 
@@ -97,7 +95,6 @@ fn parse_metadata(v: Value) -> Metadata {
 /// Build a content-only system prompt (no JSON requirements)
 fn build_content_prompt(persona: &PersonaOverlay, context: &RecallContext, mood: &str, intent: &str) -> String {
     let mut prompt = String::new();
-    
     // 1. Core persona prompt (without the JSON requirement at the end)
     let persona_text = persona.prompt();
     // Remove the CRITICAL JSON instruction if present
@@ -107,23 +104,19 @@ fn build_content_prompt(persona: &PersonaOverlay, context: &RecallContext, mood:
         prompt.push_str(persona_text);
     }
     prompt.push_str("\n\n");
-    
     // 2. Add memory context
     prompt.push_str("You have access to our conversation history and memories. ");
     prompt.push_str("Use these naturally in your responses when relevant.\n\n");
-    
     // 3. Include recent conversation history
     if !context.recent.is_empty() {
         prompt.push_str("Recent conversation:\n");
         let mut recent_reversed = context.recent.clone();
         recent_reversed.reverse();
-        
         for entry in recent_reversed.iter().take(10) {
             prompt.push_str(&format!("[{}] {}\n", entry.role, entry.content));
         }
         prompt.push_str("\n");
     }
-    
     // 4. Add mood/intent context
     if !mood.is_empty() || !intent.is_empty() {
         prompt.push_str("[Current state]\n");
@@ -135,10 +128,8 @@ fn build_content_prompt(persona: &PersonaOverlay, context: &RecallContext, mood:
         }
         prompt.push_str("\n");
     }
-    
     // 5. CRITICAL: Plain text instruction
     prompt.push_str("Respond naturally as Mira. Just your message, no JSON, no metadata, no structured output. Be real, be yourself.");
-    
     prompt
 }
 
@@ -149,30 +140,9 @@ pub async fn get_content_stream(
     context: &RecallContext,
     mood: &str,
     intent: &str,
-) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-    // Use the new content-specific prompt builder
+) -> Result<StreamResult> {
+    // Build the content-specific system prompt
     let system_prompt = build_content_prompt(persona, context, mood, intent);
-
-    // Non-streaming generation for content
-    let resp = client.generate_response(user_text, Some(&system_prompt), false).await?;
-    
-    // Extract the plain text content
-    let text = if let Some(raw_text) = extract_text_from_responses(&resp.raw.unwrap_or(Value::Null)) {
-        raw_text.trim().to_string()
-    } else {
-        resp.content.trim().to_string()
-    };
-
-    // Wrap in a stream for compatibility with the WebSocket layer
-    let s = stream::once(async move {
-        if text.is_empty() {
-            Ok(StreamEvent::Done { full_text: String::new(), raw: None })
-        } else {
-            Ok(StreamEvent::Delta(text))
-        }
-    })
-    .chain(stream::once(async { Ok(StreamEvent::Done { full_text: String::new(), raw: None }) }))
-    .boxed();
-
-    Ok(s)
+    // Use streaming generation for content
+    crate::llm::streaming::stream_response(client, user_text, Some(&system_prompt), false).await
 }
