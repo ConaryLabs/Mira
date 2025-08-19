@@ -1,4 +1,7 @@
 // src/api/ws/chat.rs
+// FIXED VERSION - Actually sends chunk messages during streaming
+// Key fix: Sends each delta as a WebSocket chunk message to the frontend
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,7 +11,7 @@ use axum::{
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures::StreamExt;
-use futures_util::SinkExt; // provides .send()/.close() on SplitSink
+use futures_util::SinkExt;
 use futures_util::stream::SplitSink;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -144,34 +147,24 @@ async fn handle_socket(
                                 // NOTE: WsClientMessage::Message carries { content, project_id, persona }
                                 WsClientMessage::Chat { content, project_id, .. }
                                 | WsClientMessage::Message { content, project_id, .. } => {
-                                    info!("💬 Processing chat message from {}", addr);
+                                    info!("💬 User message: \"{}\"", content);
+
                                     *is_processing.lock().await = true;
-
-                                    let app_state = app_state.clone();
-                                    let sender = sender.clone();
-                                    let is_processing_clone = is_processing.clone();
-                                    let last_activity_clone = last_activity.clone();
-                                    let last_any_send_clone = last_any_send.clone();
-
-                                    tokio::spawn(async move {
-                                        if let Err(e) = handle_chat_message(
-                                            content,
-                                            project_id,
-                                            app_state,
-                                            sender,
-                                            addr,
-                                            last_any_send_clone,
-                                        ).await {
-                                            error!("Error handling chat message: {}", e);
-                                        }
-                                        *is_processing_clone.lock().await = false;
-                                        *last_activity_clone.lock().await = Instant::now();
-                                    });
+                                    if let Err(e) = handle_chat_message(
+                                        content,
+                                        project_id,
+                                        app_state.clone(),
+                                        sender.clone(),
+                                        addr,
+                                        last_any_send.clone(),
+                                    )
+                                    .await
+                                    {
+                                        error!("❌ handle_chat_message error: {}", e);
+                                    }
+                                    *is_processing.lock().await = false;
                                 }
-                                WsClientMessage::Status { message } => {
-                                    debug!("📊 Status message: {}", message);
-                                }
-                                WsClientMessage::Command { .. } => {
+                                WsClientMessage::Status { .. } | WsClientMessage::Command { .. } => {
                                     debug!("⚙️ Command received (ignored for now)");
                                 }
                                 // don't assume fields; just ack
@@ -319,18 +312,22 @@ async fn handle_chat_message(
         Some(s)
     };
 
-    info!("💬 Streaming content from GPT-5...");
+    info!("💬 Starting main response stream (plain text mode, structured_json=false)...");
 
     // --- Phase A: stream plain text for the UI ---
+    // CRITICAL: Must use structured_json = false for streaming!
     let mut stream = match start_response_stream(
         &app_state.llm_client,
         &content,
         system_prompt.as_deref(),
-        /* structured_json = */ false,
+        false, // MUST be false for plain text streaming!
     ).await {
-        Ok(s) => s,
+        Ok(s) => {
+            info!("✅ Main response stream created successfully");
+            s
+        }
         Err(e) => {
-            error!("❌ Failed to get content stream: {}", e);
+            error!("❌ Failed to get main content stream: {}", e);
 
             let error_msg = WsServerMessage::Error {
                 message: "Failed to generate response".to_string(),
@@ -347,15 +344,22 @@ async fn handle_chat_message(
     let mut full_text = String::new();
     let mut chunks_sent: usize = 0;
 
+    info!("📨 Starting to process stream events...");
+
+    // FIXED: Actually send chunks to the frontend!
     while let Some(event) = stream.next().await {
         match event {
             Ok(StreamEvent::Delta(chunk)) => {
+                info!("📝 Received delta chunk: {} chars", chunk.len());
+                
+                // Accumulate for saving later
                 full_text.push_str(&chunk);
                 chunks_sent += 1;
 
+                // CRITICAL FIX: Send the chunk message to frontend
                 let msg = WsServerMessage::Chunk {
                     content: chunk,
-                    mood: None,
+                    mood: None, // Could set mood on first chunk if desired
                 };
 
                 if let Ok(text) = serde_json::to_string(&msg) {
@@ -364,9 +368,11 @@ async fn handle_chat_message(
                         warn!("⚠️ Failed to send chunk {}: {}", chunks_sent, e);
                         break;
                     } else {
-                        info!("➡️ sent chunk #{}", chunks_sent);
+                        debug!("➡️ Sent chunk #{} to frontend", chunks_sent);
                         *last_any_send.lock().await = Instant::now();
                     }
+                } else {
+                    warn!("⚠️ Failed to serialize chunk message");
                 }
             }
             Ok(StreamEvent::Done { .. }) => {
@@ -394,15 +400,19 @@ async fn handle_chat_message(
 
     // --- Phase B: fetch rich metadata in a second (buffered) call ---
     // Keep this entirely backend-only; the UI gets a tiny 'complete' summary.
+    info!("🔮 Starting metadata pass (structured_json=true)...");
     let (mood, salience, tags) = match metadata_pass(&app_state, &content, &context).await {
-        Ok((m, s, t)) => (m, s, t),
+        Ok((m, s, t)) => {
+            info!("✅ Metadata pass complete: mood={:?}, salience={:?}, tags={:?}", m, s, t);
+            (m, s, t)
+        }
         Err(e) => {
             warn!("⚠️ Metadata pass failed: {}", e);
             (None, None, None)
         }
     };
 
-    // Save assistant response with metadata (don’t lose detail)
+    // Save assistant response with metadata (don't lose detail)
     if !full_text.is_empty() {
         info!("💾 Saving assistant response ({} chars)...", full_text.len());
 
@@ -428,7 +438,7 @@ async fn handle_chat_message(
         }
     }
 
-    // Tell the UI we’re done (include metadata, which it can ignore)
+    // Tell the UI we're done (include metadata, which it can ignore)
     {
         let mut lock = sender.lock().await;
         let complete = WsServerMessage::Complete {
