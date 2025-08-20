@@ -1,5 +1,6 @@
 // src/services/memory.rs
 // Fixed version - Added project_id parameter to save_user_message
+// OPTIMIZATION: Using centralized CONFIG for better performance
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -12,6 +13,7 @@ use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryType};
 use crate::services::chat::ChatResponse;
 use crate::llm::client::OpenAIClient;
+use crate::config::CONFIG;  // ADD THIS IMPORT
 
 /// Unified memory service that manages both SQLite and Qdrant stores
 pub struct MemoryService {
@@ -40,9 +42,8 @@ impl MemoryService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<()> {
-        // Get default salience from environment
-        let default_salience = std::env::var("MIRA_MIN_SALIENCE_FOR_STORAGE")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(5.0);
+        // Get default salience from CONFIG
+        let default_salience = CONFIG.min_salience_for_storage;
         
         let mut entry = MemoryEntry {
             id: None,
@@ -67,12 +68,8 @@ impl MemoryService {
             debug!("User message for project: {}", proj_id);
         }
 
-        // Check if we should always embed user messages
-        let always_embed_user = std::env::var("MEM_ALWAYS_EMBED_USER")
-            .unwrap_or_else(|_| "true".to_string())
-            .parse::<bool>().unwrap_or(true);
-        
-        if always_embed_user {
+        // Check if we should always embed user messages (from CONFIG)
+        if CONFIG.always_embed_user {
             match self.llm_client.get_embedding(content).await {
                 Ok(embedding) => {
                     entry.embedding = Some(embedding);
@@ -85,12 +82,9 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
-        // Get minimum salience for Qdrant from environment
-        let min_salience_qdrant = std::env::var("MIRA_MIN_SALIENCE_FOR_QDRANT")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
-        
+        // Get minimum salience for Qdrant from CONFIG
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= min_salience_qdrant {
+            if salience >= CONFIG.min_salience_for_qdrant {
                 self.qdrant_store.save(&entry).await?;
             }
         }
@@ -121,16 +115,9 @@ impl MemoryService {
             system_fingerprint: None,
         };
 
-        // Check if we should always embed assistant messages
-        let always_embed_assistant = std::env::var("MEM_ALWAYS_EMBED_ASSISTANT")
-            .unwrap_or_else(|_| "true".to_string())
-            .parse::<bool>().unwrap_or(true);
-        
-        // Check minimum character count for embedding
-        let min_chars = std::env::var("MEM_EMBED_MIN_CHARS")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(6);
-        
-        if always_embed_assistant && response.output.len() >= min_chars {
+        // Check if we should always embed assistant messages (from CONFIG)
+        // Check minimum character count for embedding (from CONFIG)
+        if CONFIG.always_embed_assistant && response.output.len() >= CONFIG.embed_min_chars {
             match self.llm_client.get_embedding(&response.output).await {
                 Ok(embedding) => {
                     entry.embedding = Some(embedding);
@@ -143,12 +130,9 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
-        // Get minimum salience for Qdrant from environment
-        let min_salience_qdrant = std::env::var("MIRA_MIN_SALIENCE_FOR_QDRANT")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
-        
+        // Get minimum salience for Qdrant from CONFIG
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= min_salience_qdrant {
+            if salience >= CONFIG.min_salience_for_qdrant {
                 self.qdrant_store.save(&entry).await?;
             }
         }
@@ -191,12 +175,9 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
-        // Get minimum salience for Qdrant from environment
-        let min_salience_qdrant = std::env::var("MIRA_MIN_SALIENCE_FOR_QDRANT")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
-        
+        // Get minimum salience for Qdrant from CONFIG
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= min_salience_qdrant {
+            if salience >= CONFIG.min_salience_for_qdrant {
                 self.qdrant_store.save(&entry).await?;
             }
         }
@@ -204,7 +185,6 @@ impl MemoryService {
         info!("💾 Saved conversation summary to memory stores");
         Ok(())
     }
-
 
     /// Evaluate and save a response
     pub async fn evaluate_and_save_response(

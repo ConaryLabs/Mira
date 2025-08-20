@@ -2,7 +2,7 @@
 // Phase 4: Memory evaluation via GPT-5 Functions API with improved error handling and retries
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
 

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

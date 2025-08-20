@@ -2,7 +2,7 @@
 // Streaming for OpenAI Responses API (GPT‑5) — current event shapes as of 2025‑08‑19.
 // No legacy handlers. Emits live text deltas for plain text; buffers until parseable for structured JSON.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 use std::pin::Pin;

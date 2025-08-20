@@ -5,11 +5,11 @@ use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::path::Path as StdPath;
-use tracing::{info, warn, debug};
+use tracing::{info, debug};
 
 use crate::{
     api::ws::message::MessageMetadata,
-    git::{GitClient, GitStore},
+    git::GitClient,
     llm::OpenAIClient,
 };
 

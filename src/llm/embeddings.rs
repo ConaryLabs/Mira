@@ -1,9 +1,7 @@
 // src/llm/embeddings.rs
 // Phase 3: Embeddings functionality using text-embedding-3-large
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use tracing::debug;
+use serde::Deserialize;
 
 /// Embedding configuration for text-embedding-3-large
 pub struct EmbeddingConfig {
@@ -42,7 +40,7 @@ pub struct EmbeddingUsage {
 
 /// Helper functions for working with embeddings
 pub mod utils {
-    use super::*;
+    
     
     /// Calculate cosine similarity between two embeddings
     pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

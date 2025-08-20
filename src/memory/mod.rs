@@ -8,6 +8,7 @@ pub mod summarizer;
 pub mod decay;
 pub mod sqlite;
 pub mod qdrant;
+pub mod parallel_recall;  // ADD THIS LINE - new parallel optimization module
 
 // Add the missing MemoryMessage type that ChatService needs
 use serde::{Deserialize, Serialize};
@@ -19,5 +20,6 @@ pub struct MemoryMessage {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-// Re-export commonly used types from submodules if they exist
+// Re-export commonly used types from submodules
 pub use types::*;
+pub use parallel_recall::build_context_parallel;  // ADD THIS LINE - export the parallel function

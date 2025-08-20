@@ -4,11 +4,9 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use tracing::{info, warn};
 use uuid::Uuid;
 use reqwest::Client;
-use chrono::Utc;
 
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;

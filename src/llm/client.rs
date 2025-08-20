@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use futures::{Stream, StreamExt, stream};
+use futures::{Stream, StreamExt};
 use reqwest::{header, Client};
 use serde_json::{self, json, Value};
 use tracing::{debug, info, error};

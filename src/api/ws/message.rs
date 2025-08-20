@@ -1,6 +1,5 @@
 // src/api/ws/message.rs
 // Enhanced WebSocket message types with metadata support for file context
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -55,14 +54,6 @@ pub enum WsClientMessage {
     #[serde(rename = "status")]
     Status {
         message: String,
-    },
-    
-    // Legacy message format for backward compatibility
-    #[serde(rename = "message")]
-    Message {
-        content: String,
-        persona: Option<String>, // DEPRECATED
-        project_id: Option<String>,
     },
     
     // Typing indicator
@@ -132,9 +123,6 @@ impl WsClientMessage {
         match self {
             WsClientMessage::Chat { content, project_id, metadata } => {
                 (Some(content.clone()), project_id.clone(), metadata.clone())
-            }
-            WsClientMessage::Message { content, project_id, .. } => {
-                (Some(content.clone()), project_id.clone(), None)
             }
             _ => (None, None, None)
         }
