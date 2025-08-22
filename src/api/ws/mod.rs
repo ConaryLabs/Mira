@@ -7,12 +7,15 @@ pub mod connection;     // Extracted connection management (Phase 1)
 pub mod message_router; // Extracted message routing (Phase 2) 
 pub mod heartbeat;      // Extracted heartbeat management (Phase 3)
 
+// Tool support modules
+pub mod tools;          // Tool functionality modules (executor, message_handler, prompt_builder)
+pub mod chat_tools;     // Tool support module (integrates with message_router)
+
 // Existing modules
 pub mod persona;
 pub mod project;
 pub mod message;
 pub mod session_state;
-pub mod chat_tools;     // Tool support module (integrates with message_router)
 
 use axum::{Router, routing::get};
 use std::sync::Arc;
@@ -22,8 +25,9 @@ use crate::state::AppState;
 pub use session_state::{WsSessionState, WsSessionManager};
 
 // Export tool-related types for use in chat handlers
+// Fixed: Import directly from the tools modules instead of through chat_tools
+pub use tools::message_handler::{WsServerMessageWithTools, ToolMessageHandler};
 pub use chat_tools::{
-    WsServerMessageWithTools,
     handle_chat_message_with_tools,
     update_ws_handler_for_tools
 };

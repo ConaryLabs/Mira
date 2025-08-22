@@ -1,5 +1,5 @@
 // src/tools/mira_import/openai.rs
-// Phase 9: Updated to use GPT-5 Functions API
+// Phase 9: Updated to use GPT-5 Functions API and centralized config
 
 //! Batch OpenAI memory_eval runner for import (GPT-5, strict, retcon)
 
@@ -8,7 +8,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
+use crate::config::CONFIG;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MemoryEvalResult {
@@ -22,7 +22,7 @@ pub struct MemoryEvalResult {
 /// This is the main export for the import tool
 pub async fn batch_memory_eval(
     messages: &[MiraMessage],
-    api_key: &str,
+    _api_key: &str,  // Fixed: Added underscore prefix to indicate intentionally unused
 ) -> Result<HashMap<String, MemoryEvalResult>> {
     batch_evaluate_messages(messages).await
 }
@@ -31,7 +31,8 @@ pub async fn batch_memory_eval(
 pub async fn batch_evaluate_messages(
     messages: &[MiraMessage],
 ) -> Result<HashMap<String, MemoryEvalResult>> {
-    let api_key = env::var("OPENAI_API_KEY")?;
+    // Get API key from environment (still needed for import tool which isn't part of main app)
+    let api_key = std::env::var("OPENAI_API_KEY")?;
     let client = Client::new();
     let mut results = HashMap::new();
 
@@ -42,8 +43,9 @@ pub async fn batch_evaluate_messages(
         }
 
         // Build the Functions API request for memory evaluation
+        // Using centralized config for model settings where applicable
         let request_body = serde_json::json!({
-            "model": "gpt-5",
+            "model": CONFIG.model,  // Use centralized model config
             "input": [
                 {
                     "role": "user",
@@ -83,9 +85,9 @@ pub async fn batch_evaluate_messages(
             ],
             "function_call": {"name": "memory_eval"},  // Force this function to be called
             "parameters": {
-                "verbosity": "low",
-                "reasoning_effort": "minimal",
-                "max_output_tokens": 256
+                "verbosity": CONFIG.verbosity,  // Use centralized verbosity config
+                "reasoning_effort": CONFIG.reasoning_effort,  // Use centralized reasoning config
+                "max_output_tokens": 256  // Override for import efficiency
             }
         });
 

@@ -1,9 +1,10 @@
 // src/llm/client/config.rs
 // Phase 1: Extract Configuration Management from client.rs
-// Centralizes all LLM client configuration and environment variable handling
+// Updated to use centralized CONFIG from src/config/mod.rs
 
 use anyhow::Result;
 use tracing::info;
+use crate::config::CONFIG;
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -16,40 +17,28 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
-    /// Create configuration from environment variables
+    /// Create configuration from centralized CONFIG and environment variables
     pub fn from_env() -> Result<Self> {
+        // API key still needs to come from env as it's sensitive
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY must be set"))?;
         
-        let model = std::env::var("MIRA_MODEL")
-            .unwrap_or_else(|_| "gpt-5".to_string());
-        
-        let verbosity = std::env::var("MIRA_VERBOSITY")
-            .unwrap_or_else(|_| "medium".to_string());
-        
-        let reasoning_effort = std::env::var("MIRA_REASONING_EFFORT")
-            .unwrap_or_else(|_| "medium".to_string());
-        
-        let max_output_tokens = std::env::var("MIRA_MAX_OUTPUT_TOKENS")
-            .unwrap_or_else(|_| "128000".to_string())
-            .parse()
-            .unwrap_or(128000);
-        
+        // Base URL from env (fallback to default)
         let base_url = std::env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com".to_string());
 
         info!(
             "🚀 Initialized LLM client config (model={}, verbosity={}, reasoning={}, max_tokens={})",
-            model, verbosity, reasoning_effort, max_output_tokens
+            CONFIG.model, CONFIG.verbosity, CONFIG.reasoning_effort, CONFIG.max_output_tokens
         );
 
         Ok(Self {
             api_key,
             base_url,
-            model,
-            verbosity,
-            reasoning_effort,
-            max_output_tokens,
+            model: CONFIG.model.clone(),
+            verbosity: CONFIG.verbosity.clone(),
+            reasoning_effort: CONFIG.reasoning_effort.clone(),
+            max_output_tokens: CONFIG.max_output_tokens,
         })
     }
 
@@ -112,51 +101,33 @@ impl ClientConfig {
             return Err(anyhow::anyhow!("Base URL cannot be empty"));
         }
 
-        if self.model.is_empty() {
-            return Err(anyhow::anyhow!("Model cannot be empty"));
-        }
-
         // Validate verbosity levels
         match self.verbosity.as_str() {
             "low" | "medium" | "high" => {},
-            _ => return Err(anyhow::anyhow!("Invalid verbosity level: {}", self.verbosity)),
+            _ => return Err(anyhow::anyhow!("Invalid verbosity level. Must be 'low', 'medium', or 'high'")),
         }
 
         // Validate reasoning effort levels
         match self.reasoning_effort.as_str() {
             "low" | "medium" | "high" => {},
-            _ => return Err(anyhow::anyhow!("Invalid reasoning effort level: {}", self.reasoning_effort)),
+            _ => return Err(anyhow::anyhow!("Invalid reasoning effort level. Must be 'low', 'medium', or 'high'")),
         }
 
-        // Validate max output tokens
-        if self.max_output_tokens == 0 {
-            return Err(anyhow::anyhow!("Max output tokens must be greater than 0"));
-        }
-
-        if self.max_output_tokens > 200000 {
-            return Err(anyhow::anyhow!("Max output tokens too large: {}", self.max_output_tokens));
+        // Validate max tokens range
+        if self.max_output_tokens == 0 || self.max_output_tokens > 200000 {
+            return Err(anyhow::anyhow!("Max output tokens must be between 1 and 200000"));
         }
 
         Ok(())
     }
 
-    /// Get default headers for requests
+    /// Get default headers for HTTP requests
     pub fn default_headers(&self) -> Vec<(String, String)> {
         vec![
             ("authorization".to_string(), format!("Bearer {}", self.api_key)),
             ("content-type".to_string(), "application/json".to_string()),
-            ("user-agent".to_string(), "mira-backend/0.4.1".to_string()),
+            ("accept".to_string(), "application/json".to_string()),
         ]
-    }
-
-    /// Get model-specific configuration
-    pub fn model_config(&self) -> ModelConfig {
-        ModelConfig {
-            model: self.model.clone(),
-            verbosity: self.verbosity.clone(),
-            reasoning_effort: self.reasoning_effort.clone(),
-            max_output_tokens: self.max_output_tokens,
-        }
     }
 }
 
@@ -169,7 +140,17 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
-    /// Convert to JSON value for API requests
+    /// Create from centralized CONFIG
+    pub fn from_config() -> Self {
+        Self {
+            model: CONFIG.model.clone(),
+            verbosity: CONFIG.verbosity.clone(),
+            reasoning_effort: CONFIG.reasoning_effort.clone(),
+            max_output_tokens: CONFIG.max_output_tokens,
+        }
+    }
+
+    /// Convert to JSON for API requests
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "model": self.model,
@@ -190,7 +171,8 @@ impl ModelConfig {
         // GPT-5 and modern models support structured output
         self.model.starts_with("gpt-5") || 
         self.model.starts_with("gpt-4") ||
-        self.model.contains("turbo")
+        self.model.contains("turbo") ||
+        self.model.starts_with("o1")
     }
 
     /// Get recommended timeout for this model
@@ -209,22 +191,17 @@ impl Default for ClientConfig {
         Self {
             api_key: String::new(),
             base_url: "https://api.openai.com".to_string(),
-            model: "gpt-5".to_string(),
-            verbosity: "medium".to_string(),
-            reasoning_effort: "medium".to_string(),
-            max_output_tokens: 128000,
+            model: CONFIG.model.clone(),
+            verbosity: CONFIG.verbosity.clone(),
+            reasoning_effort: CONFIG.reasoning_effort.clone(),
+            max_output_tokens: CONFIG.max_output_tokens,
         }
     }
 }
 
 impl Default for ModelConfig {
     fn default() -> Self {
-        Self {
-            model: "gpt-5".to_string(),
-            verbosity: "medium".to_string(),
-            reasoning_effort: "medium".to_string(),
-            max_output_tokens: 128000,
-        }
+        Self::from_config()
     }
 }
 
@@ -275,12 +252,11 @@ mod tests {
         let config = ModelConfig::default();
         
         assert!(config.supports_streaming());
-        assert!(config.supports_structured_output());
-        assert_eq!(config.recommended_timeout_secs(), 60);
+        assert_eq!(config.recommended_timeout_secs(), 60); // Depends on CONFIG.reasoning_effort
         
         let json = config.to_json();
-        assert_eq!(json["model"], "gpt-5");
-        assert_eq!(json["verbosity"], "medium");
+        assert!(json["model"].is_string());
+        assert!(json["verbosity"].is_string());
     }
 
     #[test]
