@@ -1,6 +1,5 @@
 // src/api/http/git/files.rs
-// MIGRATED: Updated to use unified ApiError and IntoApiError pattern
-// Handlers for file operations (tree, read, update)
+// Complete migration to unified ApiError pattern
 
 use axum::{
     extract::{Path, State, Json},
@@ -53,32 +52,30 @@ pub struct UpdateFileResponse {
 // ===== Handlers =====
 
 /// Get the file tree of a repository
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn get_file_tree_handler(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Get file tree with unified error handling
         let nodes = state
             .git_client
             .get_file_tree(&attachment)
             .into_api_error("Failed to retrieve file tree")?;
         
-        // Calculate statistics
-        let total_files = nodes.iter()
-            .filter(|n| n.node_type == crate::git::FileNodeType::File)
-            .count();
-        let total_directories = nodes.iter()
-            .filter(|n| n.node_type == crate::git::FileNodeType::Directory)
-            .count();
+        // Count files vs directories
+        let (total_files, total_directories) = nodes.iter().fold((0, 0), |(files, dirs), node| {
+            if node.node_type == crate::git::FileNodeType::File {
+                (files + 1, dirs)
+            } else {
+                (files, dirs + 1)
+            }
+        });
         
         let response = FileTreeResponse {
             nodes,
@@ -95,36 +92,25 @@ pub async fn get_file_tree_handler(
     }
 }
 
-/// Get content of a specific file
-/// MIGRATED: Now uses unified error handling pattern
+/// Get file content from the repository
 pub async fn get_file_content_handler(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id, file_path)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Construct full file path
-        let full_path = StdPath::new(&attachment.local_path).join(&file_path);
+        let content = state
+            .git_client
+            .get_file_content(&attachment, &file_path)
+            .into_api_error("Failed to read file content")?;
         
-        // Read file content with proper error handling
-        let content = tokio::fs::read_to_string(&full_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    ApiError::not_found("File not found")
-                } else {
-                    ApiError::internal("Failed to read file content")
-                }
-            })?;
-        
-        let size = content.len();
         let language = super::common::detect_language(&file_path);
+        let size = content.len();
         
         let response = FileContentResponse {
             path: file_path,
@@ -143,71 +129,43 @@ pub async fn get_file_content_handler(
     }
 }
 
-/// Update content of a specific file
-/// MIGRATED: Now uses unified error handling pattern
+/// Update file content in the repository
 pub async fn update_file_content_handler(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id, file_path)): Path<(String, String, String)>,
     Json(payload): Json<UpdateFileRequest>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Construct full file path
-        let full_path = StdPath::new(&attachment.local_path).join(&file_path);
+        // Update file content
+        state
+            .git_client
+            .update_file_content(
+                &attachment,
+                &file_path,
+                &payload.content,
+                payload.commit_message.as_deref(),
+            )
+            .into_api_error("Failed to update file content")?;
         
-        // Ensure parent directory exists
-        if let Some(parent) = full_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .into_api_error("Failed to create parent directory")?;
-        }
+        info!("Updated file: {} ({} bytes)", file_path, payload.content.len());
         
-        // Write file content
-        tokio::fs::write(&full_path, &payload.content)
-            .await
-            .into_api_error("Failed to write file content")?;
-        
-        info!("Updated file {} in attachment {}", file_path, attachment_id);
-        
-        // Attempt to sync changes if commit message is provided
-        let synced = if let Some(commit_msg) = payload.commit_message {
-            match state.git_client.sync_changes(&attachment, &commit_msg).await {
-                Ok(_) => {
-                    info!("Successfully synced changes for file {}", file_path);
-                    true
-                }
-                Err(e) => {
-                    warn!("File updated but failed to sync: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
-        };
-        
+        let language = super::common::detect_language(&file_path);
         let size = payload.content.len();
-        let message = if synced {
-            "File updated and synced successfully".to_string()
-        } else if payload.commit_message.is_some() {
-            "File updated but sync failed".to_string()
-        } else {
-            "File updated successfully".to_string()
-        };
         
         let response = UpdateFileResponse {
-            path: file_path.clone(),
+            path: file_path,
             content: payload.content,
-            language: super::common::detect_language(&file_path),
+            language,
             encoding: "utf-8".to_string(),
             size,
-            synced,
-            message,
+            synced: true,
+            message: "File updated successfully".to_string(),
         };
         
         Ok(Json(response))

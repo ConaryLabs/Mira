@@ -1,6 +1,5 @@
 // src/api/http/git/commits.rs
-// MIGRATED: Updated to use unified ApiError and IntoApiError pattern
-// Handlers for commit operations (history, diffs, file at commit)
+// Complete migration to unified ApiError pattern
 
 use axum::{
     extract::{Path, State, Query},
@@ -12,7 +11,6 @@ use std::sync::Arc;
 use crate::state::AppState;
 use crate::api::error::{ApiResult, IntoApiError};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 // ===== Request/Response DTOs =====
 
@@ -45,21 +43,18 @@ pub struct FileContentResponse {
 // ===== Handlers =====
 
 /// Get commit history
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn get_commit_history(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
     Query(params): Query<CommitHistoryQuery>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Get commit history with unified error handling
         let commits = state
             .git_client
             .get_commits(&attachment, params.limit)
@@ -81,20 +76,17 @@ pub async fn get_commit_history(
 }
 
 /// Get diff for a specific commit
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn get_commit_diff(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id, commit_hash)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Get commit diff with unified error handling
         let diff = state
             .git_client
             .get_diff(&attachment, &commit_hash)
@@ -110,32 +102,29 @@ pub async fn get_commit_diff(
 }
 
 /// Get file content at a specific commit
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn get_file_at_commit(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id, commit_hash, file_path)): Path<(String, String, String, String)>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Get file content at commit with unified error handling
         let content = state
             .git_client
             .get_file_at_commit(&attachment, &commit_hash, &file_path)
-            .into_api_error("Failed to retrieve file at commit")?;
+            .into_api_error("Failed to retrieve file content at commit")?;
         
-        // Calculate actual file size
+        let language = super::common::detect_language(&file_path);
         let size = content.len();
         
         let response = FileContentResponse {
-            path: file_path.clone(),
+            path: file_path,
             content,
-            language: super::common::detect_language(&file_path),
+            language,
             encoding: "utf-8".to_string(),
             size,
         };

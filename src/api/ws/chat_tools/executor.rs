@@ -1,17 +1,20 @@
 // src/api/ws/chat_tools/executor.rs
-// FIXED: Now uses CONFIG.model instead of hardcoded "gpt-5"
-// Tool execution with ResponsesManager integration
+// Complete tool integration with real ResponsesManager API calls
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde_json::Value;
 use tracing::{info, debug, warn, error};
-use futures::Stream;
+use futures::{Stream, StreamExt};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::api::ws::message::MessageMetadata;
-use crate::llm::responses::types::Message as ResponseMessage;
-use crate::llm::responses::ResponsesManager;
+use crate::llm::responses::{
+    types::{Message as ResponseMessage, Tool, CreateStreamingResponse},
+    ResponsesManager,
+};
 use crate::memory::recall::RecallContext;
+use crate::services::chat_with_tools::get_enabled_tools;
 use crate::config::CONFIG;
 
 /// Configuration for tool execution using centralized CONFIG
@@ -29,8 +32,8 @@ impl Default for ToolConfig {
     fn default() -> Self {
         Self {
             enable_tools: CONFIG.enable_chat_tools,
-            max_tools: 10, // Could be added to CONFIG later
-            tool_timeout_secs: 120, // Could be added to CONFIG later
+            max_tools: 10,
+            tool_timeout_secs: 120,
             model: CONFIG.model.clone(),
             max_output_tokens: CONFIG.max_output_tokens,
             reasoning_effort: CONFIG.reasoning_effort.clone(),
@@ -109,8 +112,7 @@ pub enum ToolEvent {
     Done,
 }
 
-/// Tool executor with ResponsesManager integration
-/// FIXED: Now uses centralized CONFIG instead of hardcoded values
+/// Tool executor with complete ResponsesManager integration
 pub struct ToolExecutor {
     responses_manager: Arc<ResponsesManager>,
     config: ToolConfig,
@@ -119,10 +121,7 @@ pub struct ToolExecutor {
 impl ToolExecutor {
     /// Create new tool executor with CONFIG-based defaults
     pub fn new(responses_manager: Arc<ResponsesManager>) -> Self {
-        info!(
-            "🔧 Initializing ToolExecutor with model: {} (from CONFIG)",
-            CONFIG.model
-        );
+        info!("Initializing ToolExecutor with model: {} (from CONFIG)", CONFIG.model);
 
         Self {
             responses_manager,
@@ -133,9 +132,8 @@ impl ToolExecutor {
     /// Create tool executor with custom config
     pub fn with_config(responses_manager: Arc<ResponsesManager>, config: ToolConfig) -> Self {
         info!(
-            "🔧 Initializing ToolExecutor with custom config - model: {}, tools_enabled: {}",
-            config.model,
-            config.enable_tools
+            "Initializing ToolExecutor with custom config - model: {}, tools_enabled: {}",
+            config.model, config.enable_tools
         );
 
         Self {
@@ -154,125 +152,203 @@ impl ToolExecutor {
         &self.config.model
     }
 
-    /// Execute chat with tools (non-streaming)
-    /// FIXED: Now uses CONFIG.model instead of hardcoded "gpt-5"
+    /// Execute chat with tools (non-streaming) - COMPLETED IMPLEMENTATION
     pub async fn execute_with_tools(&self, request: &ToolChatRequest) -> Result<ToolChatResponse> {
         info!(
-            "🔧 Executing with tools using model: {} for content: {}",
+            "Executing with tools using model: {} for content: {}",
             self.config.model,
             request.content.chars().take(50).collect::<String>()
         );
 
-        debug!(
-            "Tool execution config: model={}, max_output_tokens={}, reasoning_effort={}",
-            self.config.model,
-            self.config.max_output_tokens,
-            self.config.reasoning_effort
-        );
-
-        // Build messages for the responses API
         let messages = self.build_messages(request)?;
+        let tools = get_enabled_tools();
 
-        // Create streaming response with CONFIG values
-        let _stream_result = self.responses_manager.create_streaming_response(
-            &self.config.model,                                        // Use CONFIG.model
+        // Create the streaming response request
+        let create_request = CreateStreamingResponse {
             messages,
-            Some(request.system_prompt.clone()),
-            Some(&request.session_id),
-            Some(serde_json::json!({
-                "max_output_tokens": self.config.max_output_tokens,
-                "reasoning_effort": self.config.reasoning_effort,
-                "tools_enabled": self.config.enable_tools
-            })),
-        ).await;
+            tools: Some(tools),
+            model: Some(self.config.model.clone()),
+            system_prompt: Some(request.system_prompt.clone()),
+            max_output_tokens: Some(self.config.max_output_tokens),
+            temperature: Some(0.7),
+            stream: false, // Non-streaming for this method
+        };
 
-        // TODO: Process actual tool calls from the stream result
-        // For now, return structured response instead of mock
-        let tool_calls: Vec<ToolCallResult> = Vec::new();
+        debug!("Calling ResponsesManager with {} tools", create_request.tools.as_ref().unwrap().len());
 
-        debug!("Tool execution completed - {} tool calls processed", tool_calls.len());
+        // Call the actual ResponsesManager API
+        match self.responses_manager.create_response(&create_request).await {
+            Ok(api_response) => {
+                debug!("Received response from ResponsesManager");
 
-        Ok(ToolChatResponse {
-            content: format!("Response generated using {} with tool support", self.config.model),
-            tool_calls,
-            metadata: Some(ResponseMetadata {
-                mood: Some("helpful".to_string()),
-                salience: Some(7.0),
-                tags: Some(vec!["tool-response".to_string(), "config-driven".to_string()]),
-                response_id: None,
-            }),
-        })
-    }
-
-    /// Stream chat with tools
-    /// FIXED: Uses CONFIG for model and parameters
-    pub async fn stream_with_tools(&self, request: &ToolChatRequest) -> Result<impl Stream<Item = ToolEvent>> {
-        info!(
-            "🚀 Starting tool streaming with model: {} for session: {}",
-            self.config.model,
-            request.session_id
-        );
-
-        debug!(
-            "Stream config: enable_tools={}, max_tools={}, timeout={}s",
-            self.config.enable_tools,
-            self.config.max_tools,
-            self.config.tool_timeout_secs
-        );
-
-        // Build messages for streaming
-        let messages = self.build_messages(request)?;
-
-        // Create the actual streaming response using CONFIG values
-        let stream = self.responses_manager.create_streaming_response(
-            &self.config.model,                                        // Use CONFIG.model
-            messages,
-            Some(request.system_prompt.clone()),
-            Some(&request.session_id),
-            Some(serde_json::json!({
-                "max_output_tokens": self.config.max_output_tokens,
-                "reasoning_effort": self.config.reasoning_effort,
-                "tools_enabled": self.config.enable_tools,
-                "tool_timeout": self.config.tool_timeout_secs
-            })),
-        ).await.map_err(|e| {
-            error!("Failed to create streaming response: {}", e);
-            anyhow::anyhow!("Tool streaming failed: {}", e)
-        })?;
-
-        // Convert ResponsesManager stream to ToolEvent stream
-        let tool_stream = futures::stream::unfold(stream, |mut stream| async move {
-            // TODO: Process actual streaming events and convert them to ToolEvent
-            // This is a simplified version - full implementation would parse actual tool responses
-            use futures::StreamExt;
-            
-            if let Some(event) = stream.next().await {
-                match event {
-                    Ok(content_chunk) => {
-                        // Process different types of streaming events
-                        if content_chunk.contains("tool_call") {
-                            Some((ToolEvent::ToolCallStarted {
-                                tool_type: "function".to_string(),
-                                tool_id: "tool_1".to_string(),
-                            }, stream))
-                        } else {
-                            Some((ToolEvent::ContentChunk(content_chunk), stream))
-                        }
-                    }
-                    Err(e) => {
-                        Some((ToolEvent::Error(format!("Stream error: {}", e)), stream))
+                // Extract tool calls from the response
+                let mut tool_calls = Vec::new();
+                if let Some(tool_call_results) = &api_response.tool_calls {
+                    for tool_call in tool_call_results {
+                        tool_calls.push(ToolCallResult {
+                            tool_type: tool_call.tool_type.clone(),
+                            tool_id: tool_call.tool_id.clone().unwrap_or_else(|| "unknown".to_string()),
+                            status: if tool_call.status == "completed" {
+                                ToolCallStatus::Completed
+                            } else if tool_call.status == "failed" {
+                                ToolCallStatus::Failed
+                            } else {
+                                ToolCallStatus::Started
+                            },
+                            result: tool_call.result.clone(),
+                            error: tool_call.error.clone(),
+                        });
                     }
                 }
-            } else {
-                Some((ToolEvent::Done, stream))
-            }
-        });
 
-        info!("Tool streaming initialized successfully");
-        Ok(tool_stream)
+                // Extract metadata
+                let metadata = Some(ResponseMetadata {
+                    mood: api_response.mood,
+                    salience: api_response.salience,
+                    tags: api_response.tags,
+                    response_id: api_response.response_id,
+                });
+
+                info!("Tool execution completed with {} tool calls", tool_calls.len());
+
+                Ok(ToolChatResponse {
+                    content: api_response.content,
+                    tool_calls,
+                    metadata,
+                })
+            }
+            Err(e) => {
+                error!("ResponsesManager API call failed: {}", e);
+                Err(anyhow::anyhow!("Tool execution failed: {}", e))
+            }
+        }
     }
 
-    /// Build messages for the ResponsesManager
+    /// Execute chat with tools (streaming) - COMPLETED IMPLEMENTATION
+    pub async fn stream_with_tools(&self, request: &ToolChatRequest) -> Result<impl Stream<Item = ToolEvent>> {
+        info!("Starting streaming tool execution with model: {}", self.config.model);
+
+        let messages = self.build_messages(request)?;
+        let tools = get_enabled_tools();
+
+        // Create the streaming response request
+        let create_request = CreateStreamingResponse {
+            messages,
+            tools: Some(tools),
+            model: Some(self.config.model.clone()),
+            system_prompt: Some(request.system_prompt.clone()),
+            max_output_tokens: Some(self.config.max_output_tokens),
+            temperature: Some(0.7),
+            stream: true, // Enable streaming
+        };
+
+        debug!("Starting streaming response with {} tools", create_request.tools.as_ref().unwrap().len());
+
+        // Call the actual ResponsesManager streaming API
+        match self.responses_manager.create_streaming_response(&create_request).await {
+            Ok(response_stream) => {
+                info!("Streaming response initiated successfully");
+
+                // Convert ResponsesManager stream events to ToolEvent
+                let tool_stream = response_stream.map(|event_result| {
+                    match event_result {
+                        Ok(stream_event) => {
+                            // Convert ResponsesManager events to ToolEvent
+                            match stream_event.event_type.as_str() {
+                                "text_delta" => {
+                                    if let Some(text) = stream_event.data.get("text").and_then(|t| t.as_str()) {
+                                        ToolEvent::ContentChunk(text.to_string())
+                                    } else {
+                                        ToolEvent::Error("Invalid text delta event".to_string())
+                                    }
+                                }
+                                "tool_call_start" => {
+                                    let tool_type = stream_event.data.get("tool_type")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let tool_id = stream_event.data.get("tool_id")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    
+                                    ToolEvent::ToolCallStarted { tool_type, tool_id }
+                                }
+                                "tool_call_complete" => {
+                                    let tool_type = stream_event.data.get("tool_type")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let tool_id = stream_event.data.get("tool_id")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let result = stream_event.data.get("result")
+                                        .cloned()
+                                        .unwrap_or_else(|| Value::Null);
+                                    
+                                    ToolEvent::ToolCallCompleted { tool_type, tool_id, result }
+                                }
+                                "tool_call_error" => {
+                                    let tool_type = stream_event.data.get("tool_type")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let tool_id = stream_event.data.get("tool_id")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let error = stream_event.data.get("error")
+                                        .and_then(|e| e.as_str())
+                                        .unwrap_or("Unknown error")
+                                        .to_string();
+                                    
+                                    ToolEvent::ToolCallFailed { tool_type, tool_id, error }
+                                }
+                                "response_complete" => {
+                                    let metadata = Some(ResponseMetadata {
+                                        mood: stream_event.data.get("mood").and_then(|m| m.as_str()).map(String::from),
+                                        salience: stream_event.data.get("salience").and_then(|s| s.as_f64()).map(|f| f as f32),
+                                        tags: stream_event.data.get("tags")
+                                            .and_then(|t| t.as_array())
+                                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()),
+                                        response_id: stream_event.data.get("response_id").and_then(|r| r.as_str()).map(String::from),
+                                    });
+                                    
+                                    ToolEvent::Complete { metadata }
+                                }
+                                "done" => ToolEvent::Done,
+                                "error" => {
+                                    let error_msg = stream_event.data.get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Unknown streaming error")
+                                        .to_string();
+                                    
+                                    ToolEvent::Error(error_msg)
+                                }
+                                _ => {
+                                    debug!("Unknown stream event type: {}", stream_event.event_type);
+                                    ToolEvent::Error(format!("Unknown event type: {}", stream_event.event_type))
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Stream error: {}", e);
+                            ToolEvent::Error(format!("Stream error: {}", e))
+                        }
+                    }
+                });
+
+                Ok(tool_stream)
+            }
+            Err(e) => {
+                error!("Failed to create streaming response: {}", e);
+                Err(anyhow::anyhow!("Streaming tool execution failed: {}", e))
+            }
+        }
+    }
+
+    /// Build messages for ResponsesManager API
     fn build_messages(&self, request: &ToolChatRequest) -> Result<Vec<ResponseMessage>> {
         debug!("Building messages for tool execution");
 
@@ -308,9 +384,30 @@ impl ToolExecutor {
     }
 }
 
-// REMOVED: All hardcoded "gpt-5" references
-// ADDED: Centralized CONFIG.model usage throughout
-// ADDED: Configuration transparency with debug logging
-// ADDED: Proper parameter passing to ResponsesManager
-// IMPROVED: Better error handling and logging
-// TODO: Complete tool call processing from actual API responses
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_config_default() {
+        let config = ToolConfig::default();
+        assert_eq!(config.model, CONFIG.model);
+        assert_eq!(config.max_output_tokens, CONFIG.max_output_tokens);
+        assert_eq!(config.reasoning_effort, CONFIG.reasoning_effort);
+    }
+
+    #[test]
+    fn test_tool_call_status() {
+        let result = ToolCallResult {
+            tool_type: "web_search".to_string(),
+            tool_id: "search_1".to_string(),
+            status: ToolCallStatus::Completed,
+            result: Some(serde_json::json!({"url": "https://example.com"})),
+            error: None,
+        };
+        
+        assert!(matches!(result.status, ToolCallStatus::Completed));
+        assert!(result.result.is_some());
+        assert!(result.error.is_none());
+    }
+}

@@ -1,6 +1,5 @@
 // src/api/http/git/branches.rs
-// MIGRATED: Updated to use unified ApiError and IntoApiError pattern
-// Handlers for branch operations
+// Complete migration to unified ApiError pattern
 
 use axum::{
     extract::{Path, State, Json},
@@ -22,7 +21,7 @@ pub struct SwitchBranchRequest {
 
 #[derive(Debug, Serialize)]
 pub struct ListBranchesResponse {
-    pub branches: Vec<crate::git::client::branch_manager::BranchInfo>,
+    pub branches: Vec<crate::git::client::BranchInfo>,
     pub total: usize,
     pub current_branch: Option<String>,
 }
@@ -38,20 +37,17 @@ pub struct SwitchBranchResponse {
 // ===== Handlers =====
 
 /// List all branches in the repository
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn list_branches(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Get branches with unified error handling
         let branches = state
             .git_client
             .get_branches(&attachment)
@@ -79,48 +75,40 @@ pub async fn list_branches(
 }
 
 /// Switch to a different branch
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn switch_branch(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
     Json(payload): Json<SwitchBranchRequest>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
             &attachment_id,
         ).await?;
         
-        // Get current branch for response info
-        let previous_branch = state
+        // Get current branch before switching
+        let branches = state
             .git_client
             .get_branches(&attachment)
-            .ok()
-            .and_then(|branches| {
-                branches
-                    .iter()
-                    .find(|b| b.is_head)
-                    .map(|b| b.name.clone())
-            });
+            .into_api_error("Failed to get current branch list")?;
         
-        // Switch branch with unified error handling
+        let previous_branch = branches
+            .iter()
+            .find(|b| b.is_head)
+            .map(|b| b.name.clone());
+        
+        // Switch branch
         state
             .git_client
             .switch_branch(&attachment, &payload.branch_name)
             .into_api_error("Failed to switch branch")?;
         
-        info!(
-            "Switched to branch {} in attachment {} (from {})",
-            payload.branch_name,
-            attachment_id,
-            previous_branch.as_deref().unwrap_or("unknown")
-        );
+        info!("Successfully switched to branch: {}", payload.branch_name);
         
         let response = SwitchBranchResponse {
             success: true,
-            message: format!("Successfully switched to branch: {}", payload.branch_name),
+            message: format!("Successfully switched to branch '{}'", payload.branch_name),
             current_branch: payload.branch_name,
             previous_branch,
         };

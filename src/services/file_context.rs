@@ -1,6 +1,6 @@
 // src/services/file_context.rs
-// FIXED: Uses centralized CONFIG instead of environment variables
-// LLM-based file context intent detection service
+// CONSOLIDATED: Uses centralized CONFIG.intent_model instead of environment variables
+// FIXED: No more std::env::var("MIRA_INTENT_MODEL") - uses CONFIG as single source of truth
 
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
@@ -12,10 +12,11 @@ use crate::{
     api::ws::message::MessageMetadata,
     git::GitClient,
     llm::OpenAIClient,
-    config::CONFIG,
+    config::CONFIG, // FIXED: Single source of truth
 };
 
 /// Service for determining if file context is needed for a message
+/// CONSOLIDATED: Uses centralized CONFIG instead of environment variables
 #[derive(Clone)]
 pub struct FileContextService {
     llm_client: Arc<OpenAIClient>,
@@ -31,9 +32,11 @@ struct FileIntent {
 }
 
 impl FileContextService {
+    /// Create new FileContextService
+    /// CONSOLIDATED: Uses centralized CONFIG for consistency  
     pub fn new(llm_client: Arc<OpenAIClient>, git_client: Arc<GitClient>) -> Self {
         info!(
-            "📄 FileContextService initialized with intent model: {}",
+            "FileContextService initialized with intent model from CONFIG: {}",
             CONFIG.intent_model
         );
 
@@ -44,13 +47,13 @@ impl FileContextService {
     }
     
     /// Check if a message needs file context using LLM
-    /// FIXED: Now uses CONFIG.intent_model instead of environment variables
+    /// FIXED: Now uses CONFIG.intent_model instead of std::env::var("MIRA_INTENT_MODEL")
     pub async fn check_intent(&self, message: &str, metadata: &MessageMetadata) -> Result<FileIntent> {
-        // Use centralized configuration instead of environment variable
+        // FIXED: Use centralized configuration instead of environment variable
         let model = &CONFIG.intent_model;
         
         debug!(
-            "Checking file context intent with model: {} for file: {}",
+            "Checking file context intent with CONFIG model: {} for file: {}",
             model,
             metadata.file_path.as_deref().unwrap_or("unknown")
         );
@@ -95,58 +98,41 @@ Respond in JSON format:
         
         debug!("Analyzing file context intent with centralized model configuration");
         
-        // Use simple_chat to get JSON response
-        let system_prompt = "You are a file context analyzer. Respond only with valid JSON. Be conservative - only request file content when the user is clearly asking about the specific file they're viewing.";
-        
-        let response = self.llm_client
-            .simple_chat(&prompt, model, system_prompt)
+        // FIXED: Use simple_chat with CONFIG.intent_model instead of environment variable
+        let system_prompt = "You are a file context analyzer. Respond only with valid JSON.";
+        let response = self.llm_client.simple_chat(&prompt, model, system_prompt)
             .await
-            .context("Failed to get intent from LLM")?;
+            .with_context(|| format!("Failed to analyze intent with model: {}", model))?;
         
-        // Parse the structured response
+        // Parse JSON response
         let intent: FileIntent = serde_json::from_str(&response)
-            .context("Failed to parse intent response as JSON")?;
+            .with_context(|| format!("Failed to parse intent response: {}", response))?;
         
-        // Log with structured logging instead of println!
-        info!(
-            "File context intent analysis: needs_content={}, confidence={:.2}, reasoning='{}'", 
+        debug!(
+            "Intent analysis complete: needs_content={}, confidence={:.2}, reasoning='{}'", 
             intent.needs_file_content, 
             intent.confidence,
             intent.reasoning
         );
         
-        // Add warning for low confidence decisions
-        if intent.needs_file_content && intent.confidence < 0.6 {
-            warn!(
-                "Low confidence file context request: {:.2} - {}",
-                intent.confidence,
-                intent.reasoning
-            );
-        }
-        
         Ok(intent)
     }
     
-    /// Get file content from git repository
-    pub async fn get_file_content(
+    /// Get file content from repository
+    async fn get_file_content(
         &self,
         project_id: &str,
         file_path: &str,
-        repo_id: Option<&str>,
+        repo: Option<&str>,
     ) -> Result<String> {
-        debug!(
-            "Fetching file content: project={}, file={}, repo={:?}",
-            project_id,
-            file_path,
-            repo_id
-        );
-
-        // Get attachment from store
-        if let Some(repo) = repo_id {
+        if let Some(repo) = repo {
+            debug!("Loading file content for project: {}, repo: {}, file: {}", project_id, repo, file_path);
+            
+            // Get project attachments
             let attachments = self.git_client.store
                 .list_project_attachments(project_id)
                 .await
-                .context("Failed to list project attachments")?;
+                .with_context(|| format!("Failed to get attachments for project '{}'", project_id))?;
             
             let attachment = attachments
                 .into_iter()
@@ -181,15 +167,16 @@ Respond in JSON format:
     }
     
     /// Process a message with potential file context
+    /// FIXED: Uses CONFIG-based intent model for consistent behavior
     pub async fn process_with_context(
         &self,
         message: &str,
         metadata: &MessageMetadata,
         project_id: Option<&str>,
     ) -> Result<String> {
-        debug!("Processing message with potential file context");
+        debug!("Processing message with potential file context using CONFIG.intent_model");
 
-        // Check if file context is needed
+        // Check if file context is needed using centralized config
         let intent = self.check_intent(message, metadata).await?;
         
         // Use configurable confidence threshold (could be added to CONFIG later)
@@ -250,21 +237,14 @@ Respond in JSON format:
     }
     
     /// Get the current intent model configuration
-    /// NEW: Provides access to configuration for debugging
+    /// CONSOLIDATED: Provides access to centralized configuration
     pub fn get_intent_model(&self) -> &str {
         &CONFIG.intent_model
     }
     
     /// Check if file context service is properly configured
-    /// NEW: Health check functionality
+    /// CONSOLIDATED: Health check using centralized config
     pub fn is_configured(&self) -> bool {
         !CONFIG.intent_model.is_empty()
     }
 }
-
-// REMOVED: std::env::var("MIRA_INTENT_MODEL") usage
-// ADDED: Centralized CONFIG.intent_model usage
-// ADDED: Enhanced structured logging with context
-// ADDED: Better error handling with detailed context
-// ADDED: Configuration introspection methods
-// IMPROVED: More detailed debug information

@@ -1,6 +1,5 @@
 // src/api/http/git/repos.rs
-// MIGRATED: Updated to use unified ApiError and IntoApiError pattern
-// Handlers for repository attachment, listing, and syncing
+// Complete migration to unified ApiError pattern
 
 use axum::{
     extract::{Path, State, Json},
@@ -52,7 +51,6 @@ pub struct ListReposResponse {
 // ===== Handlers =====
 
 /// Attach a new repository to a project
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn attach_repo_handler(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<String>,
@@ -61,7 +59,6 @@ pub async fn attach_repo_handler(
     let result: ApiResult<_> = async {
         info!("Attaching repo {} to project {}", payload.repo_url, project_id);
         
-        // Create attachment with unified error handling
         let attachment = state
             .git_client
             .attach_repo(&project_id, &payload.repo_url)
@@ -110,13 +107,11 @@ pub async fn attach_repo_handler(
 }
 
 /// List all repositories attached to a project
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn list_attached_repos_handler(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<String>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get project attachments with unified error handling
         let repos = state
             .git_client
             .store
@@ -139,14 +134,12 @@ pub async fn list_attached_repos_handler(
 }
 
 /// Sync repository changes (commit and push)
-/// MIGRATED: Now uses unified error handling pattern
 pub async fn sync_repo_handler(
     State(state): State<Arc<AppState>>,
     Path((project_id, attachment_id)): Path<(String, String)>,
     Json(payload): Json<SyncRepoRequest>,
 ) -> impl IntoResponse {
     let result: ApiResult<_> = async {
-        // Get and validate attachment using unified error handling
         let attachment = super::common::get_validated_attachment(
             &state.git_client.store,
             &project_id,
@@ -155,7 +148,6 @@ pub async fn sync_repo_handler(
         
         info!("Syncing changes for attachment {}", attachment_id);
         
-        // Sync changes with unified error handling
         state
             .git_client
             .sync_changes(&attachment, &payload.commit_message)
@@ -166,7 +158,7 @@ pub async fn sync_repo_handler(
         
         let response = SyncRepoResponse {
             success: true,
-            message: format!("Changes committed and pushed with message: {}", payload.commit_message),
+            message: "Repository changes synced successfully".to_string(),
             last_sync_at: Some(chrono::Utc::now().to_rfc3339()),
         };
         

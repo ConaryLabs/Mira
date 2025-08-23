@@ -1,14 +1,12 @@
 // src/api/ws/chat/message_router.rs
-// Phase 2: Extract Message Routing from chat.rs
-// Handles routing between simple chat and tool-enabled chat based on CONFIG.enable_chat_tools
-// Maintains CRITICAL integration with chat_tools.rs
+// CLEANED: Removed leftover phase comments, fixed emojis in logging
+// Handles routing between simple chat and tool-enabled chat based on CONFIG
 
 use std::sync::Arc;
 use std::net::SocketAddr;
 
 use tracing::{debug, error, info};
 
-// FIXED: Updated import path - now in same directory
 use super::connection::WebSocketConnection;
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
@@ -52,23 +50,22 @@ impl MessageRouter {
         }
     }
 
-    /// CRITICAL: Routes chat messages based on CONFIG.enable_chat_tools and metadata presence
-    /// This preserves the exact logic from the original chat.rs file
+    /// Routes chat messages based on CONFIG.enable_chat_tools and metadata presence
     async fn handle_chat_message(
         &self,
         content: String,
         project_id: Option<String>,
         metadata: Option<MessageMetadata>,
     ) -> Result<(), anyhow::Error> {
-        info!("💬 Chat message received: {} chars", content.len());
+        info!("Chat message received: {} chars", content.len());
         self.connection.set_processing(true).await;
 
-        // CRITICAL: Check if tools are enabled (from CONFIG) - matches original logic
+        // Check if tools are enabled (from CONFIG)
         let enable_tools = CONFIG.enable_chat_tools;
 
         // Route to appropriate handler based on tools setting and metadata presence
         let result = if enable_tools && metadata.is_some() {
-            // Use tool-enabled streaming handler - CRITICAL integration with chat_tools.rs
+            // Use tool-enabled streaming handler
             let session_id = CONFIG.session_id.clone();
             
             handle_chat_message_with_tools(
@@ -76,11 +73,11 @@ impl MessageRouter {
                 project_id,
                 metadata,
                 self.app_state.clone(),
-                self.connection.get_sender(), // Get compatible sender reference
+                self.connection.get_sender(),
                 session_id,
             ).await
         } else {
-            // Use simple streaming handler - delegate to original function
+            // Use simple streaming handler
             self.handle_simple_chat_message(
                 content,
                 project_id,
@@ -90,7 +87,7 @@ impl MessageRouter {
         self.connection.set_processing(false).await;
 
         if let Err(e) = result {
-            error!("❌ Error handling chat message: {}", e);
+            error!("Error handling chat message: {}", e);
             let _ = self.connection.send_error(&format!("Failed to process message: {}", e)).await;
         }
 
@@ -98,13 +95,12 @@ impl MessageRouter {
     }
 
     /// Handle simple chat messages (non-tool enabled)
-    /// This extracts the simple chat logic from the original handle_chat_message function
     async fn handle_simple_chat_message(
         &self,
         content: String,
         project_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        // Call the extracted simple chat handler from the main chat.rs
+        // Call the simple chat handler from the main chat module
         use super::handle_simple_chat_message;
         
         handle_simple_chat_message(
@@ -123,16 +119,16 @@ impl MessageRouter {
         command: String,
         args: Option<serde_json::Value>,
     ) -> Result<(), anyhow::Error> {
-        info!("🎮 Command received: {} with args: {:?}", command, args);
+        info!("Command received: {} with args: {:?}", command, args);
         
         // Handle specific commands
         match command.as_str() {
             "ping" | "heartbeat" => {
-                debug!("💓 Heartbeat command received");
+                debug!("Heartbeat command received");
                 self.connection.send_status("pong").await?;
             }
             _ => {
-                debug!("🎮 Unknown command: {}", command);
+                debug!("Unknown command: {}", command);
             }
         }
         
@@ -144,10 +140,10 @@ impl MessageRouter {
         &self,
         message: String,
     ) -> Result<(), anyhow::Error> {
-        debug!("📊 Status message: {}", message);
+        debug!("Status message: {}", message);
         
         if message == "pong" || message.to_lowercase().contains("heartbeat") {
-            debug!("💓 Heartbeat acknowledged");
+            debug!("Heartbeat acknowledged");
         }
         
         Ok(())
@@ -158,7 +154,7 @@ impl MessageRouter {
         &self,
         active: bool,
     ) -> Result<(), anyhow::Error> {
-        debug!("⌨️ Typing indicator: {}", active);
+        debug!("Typing indicator: {}", active);
         
         // Could forward to other connected clients in the future
         // For now, just acknowledge
@@ -229,7 +225,6 @@ mod tests {
 
     #[test]
     fn test_extract_file_context() {
-        // Test with file path
         let metadata_with_file = Some(MessageMetadata {
             file_path: Some("src/main.rs".to_string()),
             repo_id: None,
@@ -238,9 +233,6 @@ mod tests {
             selection: None,
         });
         
-        assert_eq!(extract_file_context(&metadata_with_file), Some("File: src/main.rs".to_string()));
-        
-        // Test with repo ID
         let metadata_with_repo = Some(MessageMetadata {
             file_path: None,
             repo_id: Some("repo-123".to_string()),
@@ -249,9 +241,17 @@ mod tests {
             selection: None,
         });
         
-        assert_eq!(extract_file_context(&metadata_with_repo), Some("Repository: repo-123".to_string()));
+        let empty_metadata = Some(MessageMetadata {
+            file_path: None,
+            repo_id: None,
+            attachment_id: None,
+            language: None,
+            selection: None,
+        });
         
-        // Test with no metadata
+        assert_eq!(extract_file_context(&metadata_with_file), Some("File: src/main.rs".to_string()));
+        assert_eq!(extract_file_context(&metadata_with_repo), Some("Repository: repo-123".to_string()));
+        assert_eq!(extract_file_context(&empty_metadata), None);
         assert_eq!(extract_file_context(&None), None);
     }
 }
