@@ -1,4 +1,4 @@
-// src/api/http/chat.rs - Updated REST handler with complete tool integration
+// src/api/http/chat.rs
 
 use axum::{
     extract::{Query, State},
@@ -11,10 +11,8 @@ use tracing::{info, error};
 
 use crate::api::error::{ApiResult, IntoApiError};
 use crate::config::CONFIG;
-use crate::services::chat_with_tools::{ChatServiceToolExt, ChatResponseWithTools, ToolResult, Citation};
+use crate::services::chat_with_tools::ChatServiceToolExt;
 use crate::state::AppState;
-
-// ---------- REST Chat Request/Response with Tool Support ----------
 
 #[derive(Deserialize)]
 pub struct RestChatRequest {
@@ -22,7 +20,7 @@ pub struct RestChatRequest {
     pub project_id: Option<String>,
     pub persona_override: Option<String>,
     pub file_context: Option<serde_json::Value>,
-    pub enable_tools: Option<bool>, // Allow per-request tool control
+    pub enable_tools: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -32,7 +30,6 @@ pub struct RestChatResponse {
     pub mood: String,
     pub tags: Vec<String>,
     pub summary: String,
-    // COMPLETED: Real tool results and citations instead of placeholders
     pub tool_results: Option<Vec<RestToolResult>>,
     pub citations: Option<Vec<RestCitation>>,
     pub previous_response_id: Option<String>,
@@ -57,8 +54,6 @@ pub struct RestCitation {
     pub title: Option<String>,
     pub source_type: String,
 }
-
-// ---------- History endpoints (unchanged) ----------
 
 #[derive(Deserialize)]
 pub struct HistoryQuery {
@@ -92,7 +87,7 @@ pub async fn get_chat_history(
         info!("Fetching chat history: limit={}, offset={}", limit, skip);
 
         let messages: Vec<ChatHistoryMessage> = app_state.memory_service
-            .get_recent_messages(&CONFIG.session_id, take + skip)
+            .get_recent_context(&CONFIG.session_id, take + skip)
             .await
             .into_api_error("Failed to fetch chat history")?
             .into_iter()
@@ -100,7 +95,7 @@ pub async fn get_chat_history(
             .take(take)
             .enumerate()
             .map(|(i, m)| ChatHistoryMessage {
-                id: m.id.unwrap_or_else(|| format!("msg_{}", i)),
+                id: m.id.map(|id| id.to_string()).unwrap_or_else(|| format!("msg_{}", i)),
                 role: m.role,
                 content: m.content,
                 timestamp: m.timestamp.timestamp(),
@@ -118,8 +113,6 @@ pub async fn get_chat_history(
     }
 }
 
-// ---------- REST chat handler with COMPLETE tool integration ----------
-
 pub async fn rest_chat_handler(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<RestChatRequest>,
@@ -130,13 +123,11 @@ pub async fn rest_chat_handler(
               session_id,
               request.enable_tools.unwrap_or(CONFIG.enable_chat_tools));
 
-        // Determine if tools should be used
         let use_tools = request.enable_tools.unwrap_or(CONFIG.enable_chat_tools) && CONFIG.enable_chat_tools;
 
         if use_tools {
             info!("Using tool-enabled chat for enhanced capabilities");
             
-            // Use the COMPLETED tool-enabled chat
             let tool_response = app_state.chat_service.chat_with_tools(
                 session_id,
                 &request.message,
@@ -145,7 +136,6 @@ pub async fn rest_chat_handler(
             ).await
             .into_api_error("Tool-enabled chat service failed")?;
 
-            // Convert to REST response format with REAL data
             let rest_tool_results = tool_response.tool_results.map(|tools| {
                 tools.into_iter().map(|tool| RestToolResult {
                     tool_type: tool.tool_type,
@@ -167,11 +157,11 @@ pub async fn rest_chat_handler(
                 }).collect()
             });
 
-            let tools_used = rest_tool_results.as_ref().map_or(0, |t| t.len());
+            let tools_used = rest_tool_results.as_ref().map_or(0, |t: &Vec<RestToolResult>| t.len());
 
             info!("Tool-enabled chat completed: {} tools used, {} citations", 
                   tools_used,
-                  rest_citations.as_ref().map_or(0, |c| c.len()));
+                  rest_citations.as_ref().map_or(0, |c: &Vec<RestCitation>| c.len()));
 
             Ok(Json(RestChatResponse {
                 response: tool_response.base.output,
@@ -187,7 +177,6 @@ pub async fn rest_chat_handler(
         } else {
             info!("Using regular chat (tools disabled)");
             
-            // Use regular chat method without tools
             let response = app_state.chat_service.chat(
                 session_id,
                 &request.message,
@@ -195,7 +184,6 @@ pub async fn rest_chat_handler(
             ).await
             .into_api_error("Chat service failed")?;
 
-            // Add basic file context citation if provided
             let citations = if let Some(file_context) = &request.file_context {
                 if let Some(file_path) = file_context.get("file_path").and_then(|p| p.as_str()) {
                     Some(vec![RestCitation {
@@ -221,7 +209,7 @@ pub async fn rest_chat_handler(
                 mood: response.mood,
                 tags: response.tags,
                 summary: response.summary,
-                tool_results: None, // No tools used
+                tool_results: None,
                 citations,
                 previous_response_id: None,
                 tools_used: 0,
