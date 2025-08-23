@@ -19,7 +19,6 @@ use mira_backend::{
     memory::{
         qdrant::store::QdrantMemoryStore,
         sqlite::{migration, store::SqliteMemoryStore},
-        traits::MemoryStore,
     },
     persona::PersonaOverlay,
     project::{project_router, store::ProjectStore},
@@ -28,7 +27,7 @@ use mira_backend::{
         ContextService,
         DocumentService,
         MemoryService,
-        summarization::SummarizationService,
+        SummarizationService,
     },
     state::AppState,
 };
@@ -81,15 +80,7 @@ async fn main() -> anyhow::Result<()> {
     let thread_manager = Arc::new(ThreadManager::new(100, 128_000));
 
     // --- Services ---
-    info!("Initializing core services");
-    let chat_config = ChatConfig {
-        max_context_messages: 20,
-        enable_memory: true,
-        enable_file_context: true,
-        enable_summarization: true,
-        enable_tools: true,
-    };
-
+    info!("Initializing services");
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store.clone(),
         qdrant_store.clone(),
@@ -97,89 +88,78 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let context_service = Arc::new(ContextService::new(
-        memory_service.clone(),
         openai_client.clone(),
+        sqlite_store.clone(),
+        qdrant_store.clone(),
     ));
 
-    let summarization_service = Arc::new(SummarizationService::new(openai_client.clone()));
+    // Create chat config with default settings
+    let chat_config = ChatConfig::default();
+
+    let summarization_service = Arc::new(SummarizationService::new(
+        openai_client.clone(),
+        Arc::new(chat_config.clone()),
+    ));
 
     let document_service = Arc::new(DocumentService::new(
         memory_service.clone(),
-        openai_client.clone(),
+        vector_store_manager.clone(),
     ));
+
+    let persona_overlay = PersonaOverlay::mira();
 
     let chat_service = Arc::new(ChatService::new(
         openai_client.clone(),
+        thread_manager.clone(),
+        vector_store_manager.clone(),
+        persona_overlay,
         memory_service.clone(),
-        context_service.clone(),
-        summarization_service.clone(),
-        chat_config,
+        sqlite_store.clone(),
+        qdrant_store.clone(),
+        summarization_service,
+        Some(chat_config),
     ));
 
-    let persona_overlay = Arc::new(PersonaOverlay::new());
-
     // --- App state ---
-    info!("Building application state");
+    info!("Assembling application state");
     let app_state = Arc::new(AppState {
-        db_pool: pool,
-        openai_client,
+        sqlite_store,
+        qdrant_store,
         project_store,
-        git_store: Arc::new(git_store),
-        git_client: Arc::new(git_client),
-        memory_service,
-        context_service,
-        chat_service,
-        document_service,
-        summarization_service,
-        persona_overlay,
+        git_store,
+        git_client,
+        llm_client: openai_client,
         responses_manager,
         vector_store_manager,
         thread_manager,
+        chat_service,
+        memory_service,
+        context_service,
+        document_service,
     });
 
-    // --- CORS ---
+    // --- HTTP server ---
+    info!("Configuring HTTP server");
+    
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // --- Router composition ---
-    info!("Setting up routes");
-    
-    // Clean separation of concerns:
-    // - http_router() handles /health and /chat endpoints only
-    // - project_router() handles all /projects/* routes in unified hierarchy
-    // - Git routes are nested under /projects/:project_id/git
-    let api = Router::new()
-        .merge(http_router(app_state.clone()))               // REST: /health, /chat, /chat/history only
-        .nest("/ws", ws_router(app_state.clone()))           // WS: /ws/chat, /ws/test
-        .merge(project_router().with_state(app_state.clone())); // Projects: /projects/* (unified)
-
-    let port = 8080;
-    let addr = format!("0.0.0.0:{port}");
-
     let app = Router::new()
-        .route("/", get(|| async { "Mira Backend v2.0 - GPT-5" }))
-        .nest("/api", api)
+        .merge(http_router(app_state.clone()))
+        .merge(ws_router(app_state.clone()))
+        .merge(project_router())
+        .route("/health", get(|| async { "OK" }))
         .layer(cors)
         .with_state(app_state);
 
-    info!("Server starting on {}", addr);
-    info!("  - Base URL:        http://{addr}/");
-    info!("  - API (REST):      http://{addr}/api/");
-    info!("  - WebSocket:       ws://{addr}/api/ws/chat");
-    info!("  - Project routes:  http://{addr}/api/projects/*");
-    info!("  - Git routes:      http://{addr}/api/projects/:id/git/*");
+    let listener = TcpListener::bind("0.0.0.0:3001").await?;
+    info!("Server listening on http://0.0.0.0:3001");
+    info!("WebSocket available at ws://0.0.0.0:3001/ws");
+    info!("Health check available at http://0.0.0.0:3001/health");
 
-    // --- Start server with ConnectInfo (for WS peer addr, etc.) ---
-    let listener = TcpListener::bind(&addr).await?;
-    info!("Mira server is ready for connections");
-
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
