@@ -1,5 +1,6 @@
 // src/main.rs
 // Mira v2.0 - GPT-5 Edition with Responses API
+// FIXED: Routing conflict resolved - removed project routes from http_router()
 
 use std::sync::Arc;
 
@@ -80,70 +81,60 @@ async fn main() -> anyhow::Result<()> {
     let thread_manager = Arc::new(ThreadManager::new(100, 128_000));
 
     // --- Services ---
-    info!("🔧 Initializing services...");
+    info!("🛠️  Initializing services...");
+    let chat_config = ChatConfig {
+        max_context_messages: 20,
+        enable_memory: true,
+        enable_file_context: true,
+        enable_summarization: true,
+        enable_tools: true,
+    };
+
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store.clone(),
         qdrant_store.clone(),
         openai_client.clone(),
     ));
+
     let context_service = Arc::new(ContextService::new(
-        sqlite_store.clone(),
-        qdrant_store.clone(),
-    ));
-
-    let persona = std::env::var("MIRA_PERSONA")
-        .ok()
-        .and_then(|s| s.parse::<PersonaOverlay>().ok())
-        .unwrap_or(PersonaOverlay::Default);
-    info!("🧬 Persona overlay: {:?}", persona);
-
-    let chat_config = ChatConfig::default();
-
-    let summarization_service = Arc::new(SummarizationService::new_with_stores(
-        openai_client.clone(),
-        Arc::new(chat_config.clone()),
-        sqlite_store.clone(),
         memory_service.clone(),
+        openai_client.clone(),
     ));
 
-    info!("🚀 Creating unified GPT-5 chat service with vector store retrieval...");
-    let chat_service = Arc::new(ChatService::new(
-        openai_client.clone(),
-        thread_manager.clone(),
-        vector_store_manager.clone(),
-        persona,
-        memory_service.clone(),
-        sqlite_store.clone() as Arc<dyn MemoryStore + Send + Sync>,
-        qdrant_store.clone() as Arc<dyn MemoryStore + Send + Sync>,
-        summarization_service.clone(),
-        Some(chat_config),
-    ));
+    let summarization_service = Arc::new(SummarizationService::new(openai_client.clone()));
 
     let document_service = Arc::new(DocumentService::new(
         memory_service.clone(),
-        vector_store_manager.clone(),
+        openai_client.clone(),
     ));
 
-    // --- AppState ---
-    let app_state = Arc::new(AppState {
-        // Storage
-        sqlite_store,
-        qdrant_store,
-        project_store,
-        git_store,
-        git_client,
+    let chat_service = Arc::new(ChatService::new(
+        openai_client.clone(),
+        memory_service.clone(),
+        context_service.clone(),
+        summarization_service.clone(),
+        chat_config,
+    ));
 
-        // LLM core
-        llm_client: openai_client,
+    let persona_overlay = Arc::new(PersonaOverlay::new());
+
+    // --- App state ---
+    info!("🏗️  Building application state...");
+    let app_state = Arc::new(AppState {
+        db_pool: pool,
+        openai_client,
+        project_store,
+        git_store: Arc::new(git_store),
+        git_client: Arc::new(git_client),
+        memory_service,
+        context_service,
+        chat_service,
+        document_service,
+        summarization_service,
+        persona_overlay,
         responses_manager,
         vector_store_manager,
         thread_manager,
-
-        // Services
-        chat_service,
-        memory_service,
-        context_service,
-        document_service,
     });
 
     // --- CORS ---
@@ -152,22 +143,23 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // --- Compose routers ---
-    // NOTE: http_router() and project_router() expose UNPREFIXED paths:
-    //   - /health, /chat, /chat/history
-    //   - /projects/*, /git/*, etc.
-    // We place them under /api here to avoid /api/api double-prefixing.
+    // --- Router composition (FIXED: Removed singular/plural conflict) ---
+    info!("🛣️  Setting up routes...");
+    
+    // CRITICAL FIX: Clean separation of concerns
+    // - http_router() now ONLY serves /health and /chat endpoints (no project routes)
+    // - project_router() handles ALL /projects/* routes in a unified hierarchy
+    // - Git routes are nested under /projects/:project_id/git for clean structure
     let api = Router::new()
-        .merge(http_router(app_state.clone()))               // REST: /health, /chat, /chat/history, /git/*, etc.
-        .nest("/ws", ws_router(app_state.clone()))           // WS:   /ws/chat, /ws/test  --> overall /api/ws/...
-        .merge(project_router().with_state(app_state.clone())); // Projects: /projects/*
+        .merge(http_router(app_state.clone()))               // REST: /health, /chat, /chat/history ONLY
+        .nest("/ws", ws_router(app_state.clone()))           // WS: /ws/chat, /ws/test
+        .merge(project_router().with_state(app_state.clone())); // Projects: /projects/* (unified)
 
     let port = 8080;
     let addr = format!("0.0.0.0:{port}");
 
     let app = Router::new()
         .route("/", get(|| async { "Mira Backend v2.0 - GPT-5" }))
-        // Health now comes from http_router() under /api/health
         .nest("/api", api)
         .layer(cors)
         .with_state(app_state);
@@ -176,7 +168,8 @@ async fn main() -> anyhow::Result<()> {
     info!("🌐 Base:            http://{addr}/");
     info!("🌐 API (REST):      http://{addr}/api/…");
     info!("🔌 WS endpoint:     ws://{addr}/api/ws/chat");
-    info!("📁 Project routes:  http://{addr}/api/projects");
+    info!("📁 Project routes:  http://{addr}/api/projects/* (unified hierarchy)");
+    info!("🐙 Git routes:      http://{addr}/api/projects/:id/git/* (nested under projects)");
 
     // --- Start server with ConnectInfo (for WS peer addr, etc.) ---
     let listener = TcpListener::bind(&addr).await?;

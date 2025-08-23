@@ -1,24 +1,10 @@
 // src/api/http/mod.rs
-// REFACTORED VERSION - Reduced from ~420-450 lines to ~100 lines
-// 
-// EXTRACTED MODULES:
-// - handlers.rs: HTTP handlers for health, chat, project details
-// - router.rs: Router composition and route definitions  
-// - chat.rs: REST chat handling and related types
-// - git.rs: Git repository handlers (from git/ submodule)
-//
-// PRESERVED CRITICAL INTEGRATIONS:
-// - http_router() and project_git_router() exports for main.rs compatibility
-// - All HTTP endpoints and handlers functionality
-// - Error handling now uses centralized src/api/error.rs
-// - Configuration uses centralized CONFIG from src/config/mod.rs
+// HTTP API module with handlers, routing, and Git operations
 
-// Import extracted modules
+// Import modules
 pub mod handlers;
 pub mod router;
 pub mod chat;
-
-// Import existing git submodule (already exists as git/mod.rs)
 pub mod git;
 
 // Re-export handlers for external compatibility
@@ -37,7 +23,7 @@ pub use chat::{
     HistoryQuery,
 };
 
-// Re-export git handlers (from existing git/ submodule)
+// Re-export Git handlers
 pub use git::{
     attach_repo_handler,
     list_attached_repos_handler,
@@ -52,7 +38,7 @@ pub use git::{
     get_file_at_commit,
 };
 
-// Re-export router functions (CRITICAL: Preserve for main.rs compatibility)
+// Re-export router functions for main.rs compatibility
 pub use router::{
     http_router,
     project_git_router,

@@ -1,26 +1,32 @@
 // src/api/http/git/common.rs
-// Common utilities for Git HTTP handlers
+// MIGRATED: Updated to use unified ApiError and IntoApiError pattern
+// CRITICAL: Common utilities for Git HTTP handlers with consistent error handling
 
-use axum::{http::StatusCode, response::{IntoResponse, Response}};
-use crate::git::types::GitRepoAttachment;
-use crate::git::store::GitStore;
 use std::path::Path;
 
+use crate::git::types::GitRepoAttachment;
+use crate::git::store::GitStore;
+use crate::api::error::{ApiError, ApiResult, IntoApiError, IntoApiErrorOption};
+
 /// Validate and retrieve an attachment, ensuring it belongs to the specified project
+/// MIGRATED: Now uses unified error handling instead of manual StatusCode responses
 pub async fn get_validated_attachment(
     store: &GitStore,
     project_id: &str,
     attachment_id: &str,
-) -> Result<GitRepoAttachment, Response> {
-    match store.get_attachment_by_id(attachment_id).await {
-        Ok(Some(att)) if att.project_id == project_id => Ok(att),
-        Ok(Some(_)) => Err((StatusCode::FORBIDDEN, "Attachment belongs to different project").into_response()),
-        Ok(None) => Err((StatusCode::NOT_FOUND, "Attachment not found").into_response()),
-        Err(e) => {
-            tracing::error!("Failed to get attachment: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response())
-        }
+) -> ApiResult<GitRepoAttachment> {
+    let attachment = store
+        .get_attachment_by_id(attachment_id)
+        .await
+        .into_api_error("Failed to retrieve attachment")?
+        .ok_or_not_found("Attachment not found")?;
+    
+    // Validate that attachment belongs to the specified project
+    if attachment.project_id != project_id {
+        return Err(ApiError::forbidden("Attachment belongs to different project"));
     }
+    
+    Ok(attachment)
 }
 
 /// Detect programming language from file extension

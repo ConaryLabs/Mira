@@ -1,6 +1,5 @@
 // src/api/http/router.rs
-// Phase 2: Extract Router Composition from mod.rs
-// CRITICAL: Preserves http_router() and project_git_router() exports for main.rs
+// HTTP router composition for REST API endpoints
 
 use axum::{
     routing::{get, post},
@@ -31,7 +30,7 @@ use super::{
     },
 };
 
-/// Main HTTP router - CRITICAL: Preserve exact function signature for main.rs compatibility
+/// Main HTTP router for health and chat endpoints
 /// This router is nested under /api in main.rs
 pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
@@ -48,7 +47,7 @@ pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
         .with_state(app_state)
 }
 
-/// Git router for projects - CRITICAL: Preserve exact function signature for main.rs compatibility
+/// Git router for project operations
 /// This router is nested under /projects/:project_id/git in project/mod.rs
 pub fn project_git_router() -> Router<Arc<AppState>> {
     Router::new()

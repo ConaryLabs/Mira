@@ -1,17 +1,14 @@
 // src/api/mod.rs
+// API module with clean, organized structure
 
 pub mod ws;
 pub mod http;
-pub mod types;     // <-- ADDED THIS LINE
+pub mod types;
 pub mod error;
 
-use axum::Router;
-use std::sync::Arc;
-use crate::state::AppState;
+// Re-export commonly used items for external convenience
+pub use error::{ApiError, ApiResult};
+pub use types::*;
 
-pub fn api_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
-    Router::new()
-        .nest("/ws", ws::ws_router(app_state.clone()))
-        // You might want to nest http routes under /api as well
-        // .nest("/http", http::http_router(app_state.clone()))
-}
+// Note: Router composition is handled directly in main.rs
+// No additional router aggregation needed here
