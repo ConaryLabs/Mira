@@ -1,5 +1,5 @@
 // src/api/ws/message.rs
-// Enhanced WebSocket message types with metadata support for file context
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -34,7 +34,7 @@ pub struct TextSelection {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum WsClientMessage {
-    // Enhanced chat message with metadata
+    /// Enhanced chat message with metadata
     #[serde(rename = "chat")]
     Chat {
         content: String,
@@ -43,20 +43,20 @@ pub enum WsClientMessage {
         metadata: Option<MessageMetadata>,
     },
     
-    // Command variant for control messages
+    /// Command variant for control messages
     #[serde(rename = "command")]
     Command {
         command: String,
         args: Option<Value>,
     },
     
-    // Status variant for heartbeat/status
+    /// Status variant for heartbeat/status
     #[serde(rename = "status")]
     Status {
         message: String,
     },
     
-    // Typing indicator
+    /// Typing indicator
     #[serde(rename = "typing")]
     Typing {
         active: bool,
@@ -67,14 +67,24 @@ pub enum WsClientMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum WsServerMessage {
-    // Streaming chunk of response
+    /// Streaming chunk of response
     #[serde(rename = "chunk")]
     Chunk {
         content: String,
         mood: Option<String>,
     },
     
-    // Completion message with metadata
+    /// Stream chunk variant (for compatibility)
+    #[serde(rename = "stream_chunk")]
+    StreamChunk {
+        text: String,
+    },
+    
+    /// Stream end marker
+    #[serde(rename = "stream_end")]
+    StreamEnd,
+    
+    /// Completion message with metadata
     #[serde(rename = "complete")]
     Complete {
         mood: Option<String>,
@@ -82,14 +92,14 @@ pub enum WsServerMessage {
         tags: Option<Vec<String>>,
     },
     
-    // Status messages for commands
+    /// Status messages for commands
     #[serde(rename = "status")]
     Status {
         message: String,
         detail: Option<String>,
     },
     
-    // Emotional aside (preserved from Phase 7)
+    /// Emotional aside (preserved from Phase 7)
     #[serde(rename = "aside")]
     Aside {
         emotional_cue: String,
@@ -97,15 +107,14 @@ pub enum WsServerMessage {
         intensity: Option<f32>,
     },
     
-    // Error messages
+    /// Error messages
     #[serde(rename = "error")]
     Error {
         message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        code: Option<String>,
+        code: String,
     },
     
-    // End of stream marker
+    /// End of stream marker
     #[serde(rename = "done")]
     Done,
 }
@@ -113,7 +122,8 @@ pub enum WsServerMessage {
 impl WsClientMessage {
     /// Check if this is a heartbeat/pong message
     pub fn is_heartbeat(&self) -> bool {
-        matches!(self, 
+        matches!(
+            self, 
             WsClientMessage::Command { command, .. } if command == "pong" || command == "heartbeat"
         )
     }

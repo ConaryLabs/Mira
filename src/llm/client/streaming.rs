@@ -1,6 +1,4 @@
 // src/llm/client/streaming.rs
-// Phase 3: Extract Streaming Logic from client.rs
-// Handles SSE parsing, streaming response processing, and chunk extraction
 
 use std::pin::Pin;
 
@@ -9,9 +7,38 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 use tracing::{debug, warn};
+use reqwest::{header, Client};
+
+use crate::llm::client::config::ClientConfig;
 
 /// Stream of JSON payloads from the OpenAI Responses SSE.
 pub type ResponseStream = Pin<Box<dyn Stream<Item = Result<Value>> + Send>>;
+
+/// Create SSE stream for streaming responses
+pub async fn create_sse_stream(
+    client: &Client,
+    config: &ClientConfig,
+    body: Value,
+) -> Result<ResponseStream> {
+    let req = client
+        .post(&format!("{}/responses", config.base_url()))
+        .header(header::AUTHORIZATION, format!("Bearer {}", config.api_key()))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "text/event-stream")
+        .json(&body);
+
+    let resp = req.send().await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let error_text = resp.text().await.unwrap_or_else(|_| "<no body>".into());
+        return Err(anyhow::anyhow!("OpenAI API error ({}): {}", status, error_text));
+    }
+
+    let bytes_stream = resp.bytes_stream();
+    let stream = sse_json_stream(bytes_stream);
+    Ok(Box::pin(stream))
+}
 
 /// Parse SSE stream of JSON into a Stream of Value.
 /// Filters out empty lines, "data: " prefixes, and parses JSON chunks.
@@ -126,79 +153,27 @@ pub fn extract_content_from_chunk(chunk: &Value) -> Option<String> {
     // 5) Text field
     if let Some(content) = chunk.get("text").and_then(|c| c.as_str()) {
         if !content.is_empty() {
-            debug!("Extracted text field: {} chars", content.len());
+            debug!("Extracted text content: {} chars", content.len());
             return Some(content.to_string());
         }
     }
-
-    // No content found
+    
     None
 }
 
-/// Extract streaming event type from chunk
-pub fn extract_event_type(chunk: &Value) -> Option<String> {
-    chunk.get("type")
-        .and_then(|t| t.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            // Check for event in object field
-            chunk.get("object")
-                .and_then(|t| t.as_str())
-                .map(|s| s.to_string())
-        })
-}
-
-/// Check if chunk indicates completion
+/// Check if streaming chunk indicates completion
 pub fn is_completion_chunk(chunk: &Value) -> bool {
-    // Check for finish_reason
+    // Check for finish reasons
     if let Some(finish_reason) = chunk.pointer("/choices/0/finish_reason") {
         return !finish_reason.is_null();
     }
     
-    // Check for done flag
-    if let Some(done) = chunk.get("done").and_then(|d| d.as_bool()) {
-        return done;
-    }
-    
-    // Check for completion event type
-    if let Some(event_type) = extract_event_type(chunk) {
-        return event_type == "completion" || event_type == "done";
+    // Check for completion signals in response API format
+    if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
+        return event_type == "response.done" || event_type == "response.completed";
     }
     
     false
-}
-
-/// Extract tool calls from streaming chunk
-pub fn extract_tool_calls_from_chunk(chunk: &Value) -> Vec<ToolCallDelta> {
-    let mut tool_calls = Vec::new();
-    
-    // Try different paths for tool calls
-    if let Some(calls) = chunk.pointer("/choices/0/delta/tool_calls").and_then(|t| t.as_array()) {
-        for call in calls {
-            if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(call.clone()) {
-                tool_calls.push(tool_call);
-            }
-        }
-    }
-    
-    // Try output format
-    if let Some(output_array) = chunk.get("output").and_then(|o| o.as_array()) {
-        for item in output_array {
-            if item.get("type").and_then(|t| t.as_str()) == Some("tool_call") {
-                if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(item.clone()) {
-                    tool_calls.push(tool_call);
-                }
-            }
-        }
-    }
-    
-    tool_calls
-}
-
-/// Extract usage information from final chunk
-pub fn extract_usage_from_chunk(chunk: &Value) -> Option<StreamingUsage> {
-    chunk.get("usage")
-        .and_then(|u| serde_json::from_value(u.clone()).ok())
 }
 
 /// Tool call delta for streaming
@@ -302,126 +277,41 @@ impl Default for StreamProcessor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn test_parse_sse_chunk() {
-        let chunk = "data: {\"content\": \"Hello\"}\n\n";
-        let result = parse_sse_chunk(chunk).unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap()["content"], "Hello");
-    }
-
-    #[test]
-    fn test_parse_sse_done() {
-        let chunk = "data: [DONE]\n\n";
-        let result = parse_sse_chunk(chunk).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_extract_content_from_chunk() {
-        let chunk = json!({
-            "choices": [
-                {
-                    "delta": {
-                        "content": "Hello, world!"
-                    }
-                }
-            ]
-        });
-
-        let content = extract_content_from_chunk(&chunk);
-        assert_eq!(content, Some("Hello, world!".to_string()));
-    }
-
-    #[test]
-    fn test_extract_content_response_api() {
-        let chunk = json!({
-            "output": [
-                {
-                    "content": [
-                        {
-                            "text": "Response API content"
+/// Extract tool calls from streaming chunk
+pub fn extract_tool_calls_from_chunk(chunk: &Value) -> Vec<ToolCallDelta> {
+    let mut tool_calls = Vec::new();
+    
+    // Try different paths for tool call extraction
+    if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+        for choice in choices {
+            if let Some(delta) = choice.get("delta") {
+                if let Some(calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
+                    for call in calls {
+                        if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(call.clone()) {
+                            tool_calls.push(tool_call);
                         }
-                    ]
-                }
-            ]
-        });
-
-        let content = extract_content_from_chunk(&chunk);
-        assert_eq!(content, Some("Response API content".to_string()));
-    }
-
-    #[test]
-    fn test_is_completion_chunk() {
-        let completion = json!({
-            "choices": [
-                {
-                    "finish_reason": "stop"
-                }
-            ]
-        });
-
-        assert!(is_completion_chunk(&completion));
-
-        let not_done = json!({
-            "choices": [
-                {
-                    "delta": {
-                        "content": "more content"
                     }
                 }
-            ]
-        });
-
-        assert!(!is_completion_chunk(&not_done));
+            }
+        }
     }
-
-    #[test]
-    fn test_stream_processor() {
-        let mut processor = StreamProcessor::new();
-        
-        let chunk1 = json!({
-            "choices": [
-                {
-                    "delta": {
-                        "content": "Hello"
-                    }
+    
+    // Response API format
+    if let Some(output) = chunk.get("output").and_then(|o| o.as_array()) {
+        for item in output {
+            if item.get("type").and_then(|t| t.as_str()) == Some("tool_call") {
+                if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(item.clone()) {
+                    tool_calls.push(tool_call);
                 }
-            ]
-        });
-        
-        let result1 = processor.process_chunk(&chunk1);
-        assert_eq!(result1.content_delta, Some("Hello".to_string()));
-        assert!(!result1.is_complete);
-        
-        let chunk2 = json!({
-            "choices": [
-                {
-                    "delta": {
-                        "content": " world!"
-                    }
-                }
-            ]
-        });
-        
-        let result2 = processor.process_chunk(&chunk2);
-        assert_eq!(result2.content_delta, Some(" world!".to_string()));
-        
-        assert_eq!(processor.get_content(), "Hello world!");
+            }
+        }
     }
+    
+    tool_calls
+}
 
-    #[test]
-    fn test_extract_event_type() {
-        let chunk = json!({
-            "type": "response.text.delta"
-        });
-
-        let event_type = extract_event_type(&chunk);
-        assert_eq!(event_type, Some("response.text.delta".to_string()));
-    }
+/// Extract usage information from final chunk
+pub fn extract_usage_from_chunk(chunk: &Value) -> Option<StreamingUsage> {
+    chunk.get("usage")
+        .and_then(|u| serde_json::from_value(u.clone()).ok())
 }

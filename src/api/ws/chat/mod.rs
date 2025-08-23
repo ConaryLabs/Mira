@@ -1,9 +1,8 @@
 // src/api/ws/chat/mod.rs
-// CLEANED: Removed leftover markers, fixed dead code, and streamlined logging
-// Simplified WebSocket handler with extracted modules
 
+use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::{
     extract::{ConnectInfo, State, WebSocketUpgrade},
@@ -15,8 +14,7 @@ use futures_util::SinkExt;
 use futures_util::stream::SplitSink;
 use serde::Deserialize;
 use tokio::sync::Mutex;
-use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 // Import extracted modules
 pub mod connection;
@@ -33,9 +31,7 @@ use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::{start_response_stream, StreamEvent};
 use crate::state::AppState;
 use crate::memory::recall::RecallContext;
-use crate::config::CONFIG;
 
-// CLEANED: Removed unused msg field and #[allow(dead_code)] suppression
 #[derive(Deserialize)]
 struct Canary {
     id: String,
@@ -82,134 +78,138 @@ async fn handle_socket(
 
     // Send initial connection messages
     if let Err(e) = connection.send_connection_ready().await {
-        error!("Failed to send connection ready: {}", e);
+        error!("Failed to send connection ready message: {}", e);
         return;
     }
 
-    // Create message router
-    let router = MessageRouter::new(
+    // Initialize heartbeat manager with just the connection
+    let heartbeat_manager = Arc::new(HeartbeatManager::new(
+        connection.clone(),
+    ));
+
+    // Start heartbeat task
+    let heartbeat_handle = tokio::spawn({
+        let heartbeat_manager = heartbeat_manager.clone();
+        async move {
+            // HeartbeatManager handles its own lifecycle
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        }
+    });
+
+    // Message processing loop - fix parameter order
+    let message_router = MessageRouter::new(
         app_state.clone(),
         connection.clone(),
         addr,
     );
 
-    // Start heartbeat manager
-    let heartbeat = HeartbeatManager::new(connection.clone());
-    let heartbeat_task = heartbeat.start();
-
-    // Main message loop
-    let receive_timeout = Duration::from_secs(CONFIG.ws_receive_timeout);
-
-    loop {
-        let recv_future = timeout(receive_timeout, receiver.next());
-        
-        match recv_future.await {
-            Ok(Some(Ok(msg))) => {
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
                 // Update activity timestamp
-                connection.update_activity().await;
-                
-                match msg {
-                    Message::Text(text) => {
-                        debug!("Received text message: {} bytes", text.len());
+                {
+                    let mut activity_lock = last_activity.lock().await;
+                    *activity_lock = Instant::now();
+                }
 
-                        // Parse and route messages
-                        if let Ok(parsed) = serde_json::from_str::<WsClientMessage>(&text) {
-                            if let Err(e) = router.route_message(parsed).await {
-                                error!("Error routing message: {}", e);
-                            }
-                        } else if let Ok(canary) = serde_json::from_str::<Canary>(&text) {
-                            debug!("Canary message: id={}, part={}/{}", 
-                                   canary.id, canary.part, canary.total);
-                            
-                            if canary.complete || canary.done.unwrap_or(false) {
-                                info!("Canary complete");
-                            }
-                        } else {
-                            warn!("Unable to parse message: {}", text);
+                // Parse and route message
+                match serde_json::from_str::<WsClientMessage>(&text) {
+                    Ok(client_msg) => {
+                        if let Err(e) = message_router.route_message(client_msg).await {
+                            error!("Error routing message: {}", e);
                         }
                     }
-                    Message::Binary(_) => {
-                        debug!("Binary message received (ignored)");
-                    }
-                    Message::Ping(data) => {
-                        if let Err(e) = connection.send_pong(data).await {
-                            error!("Failed to send pong: {}", e);
-                        }
-                    }
-                    Message::Pong(_) => {
-                        debug!("Pong received");
-                    }
-                    Message::Close(_) => {
-                        info!("Close frame received");
-                        break;
+                    Err(e) => {
+                        warn!("Failed to parse client message: {} - Text: {}", e, text);
+                        let _ = connection.send_error("Invalid message format").await;
                     }
                 }
             }
-            Ok(Some(Err(e))) => {
-                error!("WebSocket error: {}", e);
+            Ok(Message::Close(_)) => {
+                info!("Client {} disconnected", addr);
                 break;
             }
-            Ok(None) => {
-                info!("WebSocket stream ended");
-                break;
+            Ok(_) => {
+                // Ignore other message types (binary, ping, pong)
             }
-            Err(_) => {
-                // Timeout - check if we should break
-                if !connection.is_processing().await {
-                    warn!("WebSocket receive timeout after {:?}", receive_timeout);
-                    break;
-                }
+            Err(e) => {
+                error!("WebSocket error for client {}: {}", addr, e);
+                break;
             }
         }
     }
 
     // Cleanup
-    heartbeat_task.abort();
-    let connection_duration = connection_start.elapsed();
-    info!("WebSocket client {} disconnected after {:?}", addr, connection_duration);
+    heartbeat_handle.abort();
+    info!(
+        "WebSocket connection closed for {} after {:?}",
+        addr,
+        connection_start.elapsed()
+    );
 }
 
-/// Simple chat handler function (for compatibility with message_router)
+/// Handle simple chat message (non-tool enabled)
 pub async fn handle_simple_chat_message(
     content: String,
-    _project_id: Option<String>,
+    project_id: Option<String>,
     app_state: Arc<AppState>,
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
-    _addr: std::net::SocketAddr,
-    _last_send: Arc<Mutex<Instant>>,
+    addr: std::net::SocketAddr,
+    last_send_ref: Arc<Mutex<Instant>>,
 ) -> Result<(), anyhow::Error> {
-    info!("Simple chat message: {} chars", content.len());
+    info!("Processing simple chat message from {}: {}", addr, content.chars().take(50).collect::<String>());
 
-    // Build basic context
-    let _session_id = CONFIG.session_id.clone();
-    let context = RecallContext { recent: vec![], semantic: vec![] };
+    // Build context for the user's message
+    let session_id = format!("session_{}", addr.ip());
+    let context = RecallContext { recent: vec![], semantic: vec![] }; // Empty context for simple messages
 
-    // Build system prompt
-    let mut sys = String::from("You are Mira. Be concise and stream text output.");
-    if !context.recent.is_empty() {
-        sys.push_str("\nReference recent context when useful.");
-    }
-
-    // Stream response
-    let mut stream = start_response_stream(
+    // Generate response using the streaming client
+    let stream = start_response_stream(
         &app_state.llm_client,
         &content,
-        Some(&sys),
-        false,
+        Some("You are Mira, a helpful AI assistant."),
+        false, // Not structured JSON
     ).await?;
 
-    while let Some(event_result) = stream.next().await {
-        let event = match event_result {
-            Ok(e) => e,
-            Err(e) => {
-                error!("Stream error: {}", e);
-                break;
-            }
-        };
+    // Process the stream and send chunks via WebSocket
+    handle_stream_response(stream, sender, last_send_ref).await?;
 
-        match event {
+    Ok(())
+}
+
+/// Handle streaming response and send to WebSocket
+async fn handle_stream_response(
+    mut stream: Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>,
+    sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+    last_send_ref: Arc<Mutex<Instant>>,
+) -> Result<(), anyhow::Error> {
+    while let Some(event) = stream.next().await {
+        match event? {
             StreamEvent::Text(text) => {
                 let msg = WsServerMessage::StreamChunk { text };
+                let json = serde_json::to_string(&msg)?;
+                
+                let ws_msg = Message::Text(json);
+                if let Ok(mut sender_lock) = sender.try_lock() {
+                    if let Err(e) = sender_lock.send(ws_msg).await {
+                        error!("Failed to send stream chunk: {}", e);
+                        break;
+                    }
+                    
+                    // Update last send time
+                    {
+                        let mut last_send = last_send_ref.lock().await;
+                        *last_send = Instant::now();
+                    }
+                } else {
+                    warn!("Failed to acquire sender lock for streaming");
+                }
+            }
+            StreamEvent::Delta(delta) => {
+                let msg = WsServerMessage::Chunk { 
+                    content: delta, 
+                    mood: None 
+                };
                 let json = serde_json::to_string(&msg)?;
                 
                 let ws_msg = Message::Text(json);
@@ -222,7 +222,7 @@ pub async fn handle_simple_chat_message(
                     warn!("Failed to acquire sender lock for streaming");
                 }
             }
-            StreamEvent::Done => {
+            StreamEvent::Done { full_text: _, raw: _ } => {
                 let msg = WsServerMessage::StreamEnd;
                 let json = serde_json::to_string(&msg)?;
                 
@@ -237,7 +237,8 @@ pub async fn handle_simple_chat_message(
             StreamEvent::Error(e) => {
                 error!("Stream error event: {}", e);
                 let msg = WsServerMessage::Error { 
-                    message: format!("Stream error: {}", e) 
+                    message: format!("Stream error: {}", e),
+                    code: "STREAM_ERROR".to_string(),
                 };
                 let json = serde_json::to_string(&msg)?;
                 

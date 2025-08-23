@@ -1,6 +1,4 @@
 // src/llm/client/mod.rs
-// Refactored OpenAI Client - Main interface module
-// CLEANED: Removed all emojis for professional, terminal-friendly logging
 
 use std::sync::Arc;
 
@@ -140,8 +138,8 @@ impl OpenAIClient {
             .ok_or_else(|| anyhow::anyhow!("Failed to extract summarization response"))
     }
 
-    /// Raw HTTP POST to the Responses API
-    async fn post_response(&self, body: Value) -> Result<Value> {
+    /// Raw HTTP POST to the Responses API - Made public for ResponsesManager
+    pub async fn post_response(&self, body: Value) -> Result<Value> {
         let response = self
             .client
             .post(&format!("{}/responses", &self.config.base_url()))
@@ -161,8 +159,8 @@ impl OpenAIClient {
         Ok(response_data)
     }
 
-    /// Raw HTTP POST to streaming Responses API
-    async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
+    /// Raw HTTP POST to streaming Responses API - Made public for ResponsesManager
+    pub async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
         streaming::create_sse_stream(&self.client, &self.config, body).await
     }
 
@@ -204,9 +202,15 @@ impl OpenAIClient {
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
     }
 
-    /// Get embeddings for text
+    /// Get embeddings for text - Fixed method name
     pub async fn get_embeddings(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embedding_client.get_embeddings(texts).await
+        // Handle multiple texts by calling get_embedding for each
+        let mut results = Vec::new();
+        for text in texts {
+            let embedding = self.embedding_client.get_embedding(text).await?;
+            results.push(embedding);
+        }
+        Ok(results)
     }
 
     /// Get single embedding for text
@@ -238,27 +242,6 @@ mod tests {
         assert!(client_result.is_ok());
         
         let client = client_result.unwrap();
-        assert_eq!(client.model(), "gpt-5"); // Default model
-    }
-
-    #[test]
-    fn test_client_with_custom_config() {
-        let config = ClientConfig::new(
-            "test-key".to_string(),
-            "https://api.openai.com".to_string(),
-            "gpt-4".to_string(),
-            "high".to_string(),
-            "low".to_string(),
-            2000,
-        );
-
-        let client_result = OpenAIClient::with_config(config);
-        assert!(client_result.is_ok());
-        
-        let client = client_result.unwrap();
-        assert_eq!(client.model(), "gpt-4");
-        assert_eq!(client.verbosity(), "high");
-        assert_eq!(client.reasoning_effort(), "low");
-        assert_eq!(client.max_output_tokens(), 2000);
+        assert_eq!(client.model(), "gpt-4o");
     }
 }

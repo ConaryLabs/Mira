@@ -1,6 +1,4 @@
 // src/llm/streaming.rs
-// Streaming for OpenAI Responses API (GPT‑5) — current event shapes as of 2025‑08‑19.
-// No legacy handlers. Emits live text deltas for plain text; buffers until parseable for structured JSON.
 
 use anyhow::Result;
 use futures::{Stream, StreamExt};
@@ -15,6 +13,8 @@ use crate::llm::client::{OpenAIClient, ResponseStream};
 pub enum StreamEvent {
     /// A chunk of plain text from the model (or, for structured_json=true, the buffered JSON once parseable).
     Delta(String),
+    /// Legacy text variant for compatibility
+    Text(String),
     /// Final result with the full accumulated text and the last raw SSE frame.
     Done { full_text: String, raw: Option<Value> },
     /// Surface transport / protocol errors.
@@ -41,7 +41,7 @@ pub async fn stream_response(
     system_prompt: Option<&str>,
     structured_json: bool,
 ) -> Result<StreamResult> {
-    info!("🚀 Starting response stream - structured_json: {}", structured_json);
+    info!("Starting response stream - structured_json: {}", structured_json);
 
     // Build input (system + user).
     let input = vec![
@@ -93,9 +93,9 @@ pub async fn stream_response(
         });
     }
 
-    info!("📤 Sending request to OpenAI Responses API");
+    info!("Sending request to OpenAI Responses API");
     let sse: ResponseStream = client.stream_response(body).await?;
-    info!("✅ SSE stream started successfully");
+    info!("SSE stream started successfully");
 
     // Shared state across frames.
     let raw_text = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
@@ -126,7 +126,7 @@ pub async fn stream_response(
                             // Log & stash last raw.
                             let n = frame_no.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             let short = truncate_for_log(&serde_json::to_string(&v).unwrap_or_default(), 220);
-                            info!("📦 SSE frame #{}: {}", n, short);
+                            info!("SSE frame #{}: {}", n, short);
                             {
                                 let mut g = last_raw.lock().await;
                                 *g = Some(v.clone());
@@ -138,11 +138,11 @@ pub async fn stream_response(
                                 // Lifecycle chatter — useful logs only.
                                 "response.created" => {
                                     let rid = v.pointer("/response/id").and_then(|x| x.as_str()).unwrap_or("unknown");
-                                    info!("🚀 Response created: {}", rid);
+                                    info!("Response created: {}", rid);
                                     Ok(None)
                                 }
                                 "response.in_progress" => {
-                                    info!("⏳ Response in progress");
+                                    info!("Response in progress");
                                     Ok(None)
                                 }
 
@@ -159,14 +159,15 @@ pub async fn stream_response(
                                             if try_parse_complete_json(&jb) {
                                                 // Announce the first time the JSON becomes parseable.
                                                 if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                                                    info!("📄 Structured JSON became parseable (text.delta)");
+                                                    info!("Structured JSON became parseable (text.delta)");
                                                     return Ok(Some(StreamEvent::Delta(jb.clone())));
                                                 }
                                             }
                                             // Do not spam deltas in JSON mode; wait until parseable or done.
                                             Ok(None)
                                         } else {
-                                            Ok(Some(StreamEvent::Delta(delta.to_string())))
+                                            // Emit both Delta and Text for compatibility
+                                            Ok(Some(StreamEvent::Text(delta.to_string())))
                                         }
                                     } else {
                                         Ok(None)
@@ -186,13 +187,13 @@ pub async fn stream_response(
                                                 jb.push_str(txt);
                                                 if try_parse_complete_json(&jb) {
                                                     if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                                                        info!("📄 Structured JSON became parseable (content_part.added)");
+                                                        info!("Structured JSON became parseable (content_part.added)");
                                                         return Ok(Some(StreamEvent::Delta(jb.clone())));
                                                     }
                                                 }
                                                 return Ok(None);
                                             } else {
-                                                return Ok(Some(StreamEvent::Delta(txt.to_string())));
+                                                return Ok(Some(StreamEvent::Text(txt.to_string())));
                                             }
                                         }
                                     }
@@ -201,12 +202,12 @@ pub async fn stream_response(
 
                                 // Output item done often precedes response.done; treat as a flush point.
                                 "response.output_item.done" => {
-                                    debug!("✅ output_item.done");
+                                    debug!("output_item.done");
                                     if structured_json {
                                         let jb = json_buf.lock().await;
                                         if !jb.is_empty() && try_parse_complete_json(&jb) {
                                             if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                                                info!("📤 Emitting buffered JSON at output_item.done");
+                                                info!("Emitting buffered JSON at output_item.done");
                                                 return Ok(Some(StreamEvent::Delta(jb.clone())));
                                             }
                                         }
@@ -216,12 +217,12 @@ pub async fn stream_response(
 
                                 // Final markers.
                                 "response.done" | "response.text.done" => {
-                                    info!("🎉 Response complete");
+                                    info!("Response complete");
                                     if structured_json {
                                         let jb = json_buf.lock().await;
                                         if !jb.is_empty() && try_parse_complete_json(&jb) {
                                             if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                                                info!("📤 Emitting buffered JSON at response.done");
+                                                info!("Emitting buffered JSON at response.done");
                                                 // Emit once before Done so the UI can record the JSON payload early.
                                                 // The Done below still carries full_text.
                                                 return Ok(Some(StreamEvent::Delta(jb.clone())));
@@ -234,13 +235,13 @@ pub async fn stream_response(
 
                                 // Everything else — ignore.
                                 _ => {
-                                    debug!("📋 Ignored event: {}", typ);
+                                    debug!("Ignored event: {}", typ);
                                     Ok(None)
                                 }
                             }
                         }
                         Err(e) => {
-                            warn!("❌ SSE error: {}", e);
+                            warn!("SSE error: {}", e);
                             Ok(Some(StreamEvent::Error(e.to_string())))
                         }
                     }
@@ -257,8 +258,6 @@ pub async fn stream_response(
 
     Ok(Box::pin(stream))
 }
-
-// === helpers ===
 
 fn norm_verbosity(v: &str) -> &'static str {
     match v.to_ascii_lowercase().as_str() {

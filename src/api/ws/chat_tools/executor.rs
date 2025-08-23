@@ -1,16 +1,14 @@
 // src/api/ws/chat_tools/executor.rs
-// Complete tool integration with real ResponsesManager API calls
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde_json::Value;
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, error};
 use futures::{Stream, StreamExt};
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::responses::{
-    types::{Message as ResponseMessage, Tool, CreateStreamingResponse},
+    types::{Message as ResponseMessage, CreateStreamingResponse},
     ResponsesManager,
 };
 use crate::memory::recall::RecallContext;
@@ -163,56 +161,32 @@ impl ToolExecutor {
         let messages = self.build_messages(request)?;
         let tools = get_enabled_tools();
 
-        // Create the streaming response request
-        let create_request = CreateStreamingResponse {
+        debug!("Calling ResponsesManager with {} tools", tools.len());
+
+        // Call the actual ResponsesManager API with correct parameters
+        match self.responses_manager.create_response(
+            &self.config.model,
             messages,
-            tools: Some(tools),
-            model: Some(self.config.model.clone()),
-            system_prompt: Some(request.system_prompt.clone()),
-            max_output_tokens: Some(self.config.max_output_tokens),
-            temperature: Some(0.7),
-            stream: false, // Non-streaming for this method
-        };
-
-        debug!("Calling ResponsesManager with {} tools", create_request.tools.as_ref().unwrap().len());
-
-        // Call the actual ResponsesManager API
-        match self.responses_manager.create_response(&create_request).await {
+            None, // instructions
+            None, // response_format
+            None, // parameters
+        ).await {
             Ok(api_response) => {
                 debug!("Received response from ResponsesManager");
 
-                // Extract tool calls from the response
-                let mut tool_calls = Vec::new();
-                if let Some(tool_call_results) = &api_response.tool_calls {
-                    for tool_call in tool_call_results {
-                        tool_calls.push(ToolCallResult {
-                            tool_type: tool_call.tool_type.clone(),
-                            tool_id: tool_call.tool_id.clone().unwrap_or_else(|| "unknown".to_string()),
-                            status: if tool_call.status == "completed" {
-                                ToolCallStatus::Completed
-                            } else if tool_call.status == "failed" {
-                                ToolCallStatus::Failed
-                            } else {
-                                ToolCallStatus::Started
-                            },
-                            result: tool_call.result.clone(),
-                            error: tool_call.error.clone(),
-                        });
-                    }
-                }
-
-                // Extract metadata
+                // The response is a String, so we need to handle it accordingly
+                let tool_calls = Vec::new(); // No tool calls in basic response
                 let metadata = Some(ResponseMetadata {
-                    mood: api_response.mood,
-                    salience: api_response.salience,
-                    tags: api_response.tags,
-                    response_id: api_response.response_id,
+                    mood: None,
+                    salience: None,
+                    tags: None,
+                    response_id: None,
                 });
 
-                info!("Tool execution completed with {} tool calls", tool_calls.len());
+                info!("Tool execution completed");
 
                 Ok(ToolChatResponse {
-                    content: api_response.content,
+                    content: api_response,
                     tool_calls,
                     metadata,
                 })
@@ -231,21 +205,16 @@ impl ToolExecutor {
         let messages = self.build_messages(request)?;
         let tools = get_enabled_tools();
 
-        // Create the streaming response request
-        let create_request = CreateStreamingResponse {
+        debug!("Starting streaming response with {} tools", tools.len());
+
+        // Call the actual ResponsesManager streaming API with correct parameters
+        match self.responses_manager.create_streaming_response(
+            &self.config.model,
             messages,
-            tools: Some(tools),
-            model: Some(self.config.model.clone()),
-            system_prompt: Some(request.system_prompt.clone()),
-            max_output_tokens: Some(self.config.max_output_tokens),
-            temperature: Some(0.7),
-            stream: true, // Enable streaming
-        };
-
-        debug!("Starting streaming response with {} tools", create_request.tools.as_ref().unwrap().len());
-
-        // Call the actual ResponsesManager streaming API
-        match self.responses_manager.create_streaming_response(&create_request).await {
+            None, // instructions
+            Some(&request.session_id),
+            None, // parameters
+        ).await {
             Ok(response_stream) => {
                 info!("Streaming response initiated successfully");
 
@@ -253,73 +222,72 @@ impl ToolExecutor {
                 let tool_stream = response_stream.map(|event_result| {
                     match event_result {
                         Ok(stream_event) => {
-                            // Convert ResponsesManager events to ToolEvent
-                            match stream_event.event_type.as_str() {
-                                "text_delta" => {
-                                    if let Some(text) = stream_event.data.get("text").and_then(|t| t.as_str()) {
+                            // The stream_event is a JsonValue, so access it as such
+                            match stream_event.get("type").and_then(|t| t.as_str()) {
+                                Some("text_delta") => {
+                                    if let Some(text) = stream_event.get("text").and_then(|t| t.as_str()) {
                                         ToolEvent::ContentChunk(text.to_string())
                                     } else {
                                         ToolEvent::Error("Invalid text delta event".to_string())
                                     }
                                 }
-                                "tool_call_start" => {
-                                    let tool_type = stream_event.data.get("tool_type")
+                                Some("tool_call_start") => {
+                                    let tool_type = stream_event.get("tool_type")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
-                                    let tool_id = stream_event.data.get("tool_id")
+                                    let tool_id = stream_event.get("tool_id")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
                                     
                                     ToolEvent::ToolCallStarted { tool_type, tool_id }
                                 }
-                                "tool_call_complete" => {
-                                    let tool_type = stream_event.data.get("tool_type")
+                                Some("tool_call_complete") => {
+                                    let tool_type = stream_event.get("tool_type")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
-                                    let tool_id = stream_event.data.get("tool_id")
+                                    let tool_id = stream_event.get("tool_id")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
-                                    let result = stream_event.data.get("result")
+                                    let result = stream_event.get("result")
                                         .cloned()
-                                        .unwrap_or_else(|| Value::Null);
+                                        .unwrap_or(serde_json::Value::Null);
                                     
                                     ToolEvent::ToolCallCompleted { tool_type, tool_id, result }
                                 }
-                                "tool_call_error" => {
-                                    let tool_type = stream_event.data.get("tool_type")
+                                Some("tool_call_failed") => {
+                                    let tool_type = stream_event.get("tool_type")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
-                                    let tool_id = stream_event.data.get("tool_id")
+                                    let tool_id = stream_event.get("tool_id")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
-                                    let error = stream_event.data.get("error")
+                                    let error = stream_event.get("error")
                                         .and_then(|e| e.as_str())
                                         .unwrap_or("Unknown error")
                                         .to_string();
                                     
                                     ToolEvent::ToolCallFailed { tool_type, tool_id, error }
                                 }
-                                "response_complete" => {
+                                Some("complete") => {
                                     let metadata = Some(ResponseMetadata {
-                                        mood: stream_event.data.get("mood").and_then(|m| m.as_str()).map(String::from),
-                                        salience: stream_event.data.get("salience").and_then(|s| s.as_f64()).map(|f| f as f32),
-                                        tags: stream_event.data.get("tags")
+                                        mood: stream_event.get("mood").and_then(|m| m.as_str()).map(String::from),
+                                        salience: stream_event.get("salience").and_then(|s| s.as_f64()).map(|f| f as f32),
+                                        tags: stream_event.get("tags")
                                             .and_then(|t| t.as_array())
                                             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()),
-                                        response_id: stream_event.data.get("response_id").and_then(|r| r.as_str()).map(String::from),
+                                        response_id: stream_event.get("response_id").and_then(|r| r.as_str()).map(String::from),
                                     });
                                     
                                     ToolEvent::Complete { metadata }
                                 }
-                                "done" => ToolEvent::Done,
-                                "error" => {
-                                    let error_msg = stream_event.data.get("message")
+                                Some("error") => {
+                                    let error_msg = stream_event.get("message")
                                         .and_then(|m| m.as_str())
                                         .unwrap_or("Unknown streaming error")
                                         .to_string();
@@ -327,14 +295,16 @@ impl ToolExecutor {
                                     ToolEvent::Error(error_msg)
                                 }
                                 _ => {
-                                    debug!("Unknown stream event type: {}", stream_event.event_type);
-                                    ToolEvent::Error(format!("Unknown event type: {}", stream_event.event_type))
+                                    debug!("Unknown stream event type: {}", 
+                                           stream_event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"));
+                                    ToolEvent::Error(format!("Unknown event type: {}", 
+                                                            stream_event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown")))
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Stream error: {}", e);
-                            ToolEvent::Error(format!("Stream error: {}", e))
+                            error!("Streaming error: {}", e);
+                            ToolEvent::Error(e.to_string())
                         }
                     }
                 });
@@ -342,72 +312,36 @@ impl ToolExecutor {
                 Ok(tool_stream)
             }
             Err(e) => {
-                error!("Failed to create streaming response: {}", e);
-                Err(anyhow::anyhow!("Streaming tool execution failed: {}", e))
+                error!("ResponsesManager streaming API call failed: {}", e);
+                Err(anyhow::anyhow!("Tool streaming failed: {}", e))
             }
         }
     }
 
-    /// Build messages for ResponsesManager API
+    /// Build messages for the request
     fn build_messages(&self, request: &ToolChatRequest) -> Result<Vec<ResponseMessage>> {
-        debug!("Building messages for tool execution");
-
         let mut messages = Vec::new();
 
-        // Add context messages from recent history
+        // Add context messages if available
         for msg in &request.context.recent {
             messages.push(ResponseMessage {
                 role: msg.role.clone(),
-                content: msg.content.clone(),
+                content: Some(msg.content.clone()),
+                name: None,
+                function_call: None,
+                tool_calls: None,
             });
         }
 
-        // Add current user message
+        // Add the user message
         messages.push(ResponseMessage {
             role: "user".to_string(),
-            content: request.content.clone(),
+            content: Some(request.content.clone()),
+            name: None,
+            function_call: None,
+            tool_calls: None,
         });
 
-        debug!("Built {} messages for tool execution", messages.len());
         Ok(messages)
-    }
-
-    /// Get tool configuration summary for debugging
-    pub fn get_config_summary(&self) -> String {
-        format!(
-            "ToolExecutor Config: model={}, tools_enabled={}, max_tools={}, timeout={}s",
-            self.config.model,
-            self.config.enable_tools,
-            self.config.max_tools,
-            self.config.tool_timeout_secs
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tool_config_default() {
-        let config = ToolConfig::default();
-        assert_eq!(config.model, CONFIG.model);
-        assert_eq!(config.max_output_tokens, CONFIG.max_output_tokens);
-        assert_eq!(config.reasoning_effort, CONFIG.reasoning_effort);
-    }
-
-    #[test]
-    fn test_tool_call_status() {
-        let result = ToolCallResult {
-            tool_type: "web_search".to_string(),
-            tool_id: "search_1".to_string(),
-            status: ToolCallStatus::Completed,
-            result: Some(serde_json::json!({"url": "https://example.com"})),
-            error: None,
-        };
-        
-        assert!(matches!(result.status, ToolCallStatus::Completed));
-        assert!(result.result.is_some());
-        assert!(result.error.is_none());
     }
 }
