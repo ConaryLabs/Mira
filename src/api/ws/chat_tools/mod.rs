@@ -1,9 +1,9 @@
-// src/api/ws/chat_tools.rs
+// src/api/ws/chat_tools/mod.rs
 // REFACTORED VERSION - Simplified main interface using extracted modules
 // Reduced from ~550-600 lines to ~150 lines by extracting:
-// - tools/executor.rs: Tool execution logic
-// - tools/message_handler.rs: WebSocket message handling
-// - tools/prompt_builder.rs: System prompt building
+// - executor.rs: Tool execution logic
+// - message_handler.rs: WebSocket message handling
+// - prompt_builder.rs: System prompt building
 //
 // PRESERVED CRITICAL INTEGRATIONS:
 // - handle_chat_message_with_tools function (used by message_router.rs)
@@ -19,17 +19,15 @@ use futures_util::stream::SplitSink;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-// Import extracted modules from tools directory - ONLY import what we use directly
-use crate::api::ws::tools::{
-    executor::{ToolExecutor, ToolConfig},
-    message_handler::{ToolMessageHandler, WsServerMessageWithTools},
-    prompt_builder::ToolPromptBuilder,
-};
+// Import extracted modules
+pub mod executor;
+pub mod message_handler;
+pub mod prompt_builder;
 
-// Re-export ALL types for external use (CRITICAL: preserves existing API)
-// These are the ONLY exports, no duplicates with the imports above
-pub use crate::api::ws::tools::executor::{ToolChatRequest, ToolEvent};
-pub use crate::api::ws::tools::prompt_builder::PromptTemplates;
+// Re-export types for external use (CRITICAL: preserves existing API)
+pub use executor::{ToolChatRequest, ToolEvent, ToolExecutor, ToolConfig};
+pub use message_handler::{ToolMessageHandler, WsServerMessageWithTools};
+pub use prompt_builder::{ToolPromptBuilder, PromptTemplates};
 
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
 use crate::llm::responses::ResponsesManager;
@@ -47,7 +45,7 @@ pub async fn handle_chat_message_with_tools(
     sender: Arc<Mutex<SplitSink<axum::extract::ws::WebSocket, Message>>>,
     session_id: String,
 ) -> Result<()> {
-    info!("🚀 Processing chat message with tools (refactored) for session: {}", session_id);
+    info!("Processing chat message with tools (refactored) for session: {}", session_id);
 
     // 1. Save user message to memory
     if let Err(e) = app_state
@@ -55,14 +53,14 @@ pub async fn handle_chat_message_with_tools(
         .save_user_message(&session_id, &content, project_id.as_deref())
         .await
     {
-        warn!("⚠️ Failed to save user message: {}", e);
+        warn!("Failed to save user message: {}", e);
     }
 
     // 2. Build context using parallel optimization (preserved from original)
     let history_cap = CONFIG.ws_history_cap;
     let vector_k = CONFIG.ws_vector_search_k;
     
-    info!("🔍 Building context PARALLEL (history: {}, semantic: {})...", history_cap, vector_k);
+    info!("Building context PARALLEL (history: {}, semantic: {})...", history_cap, vector_k);
     
     let context = build_context_parallel(
         &session_id,
@@ -75,40 +73,33 @@ pub async fn handle_chat_message_with_tools(
     )
     .await
     .unwrap_or_else(|e| {
-        warn!("⚠️ Failed to build context: {}. Using empty context.", e);
+        warn!("Failed to build context: {}. Using empty context.", e);
         crate::memory::recall::RecallContext { recent: vec![], semantic: vec![] }
     });
 
-    // 3. Get enabled tools
-    let tools = crate::services::chat_with_tools::get_enabled_tools();
-    info!("🔧 {} tools enabled", tools.len());
+    // 3. Create tool executor with default configuration (FIXED: Use actual API)
+    let tool_executor = Arc::new(ToolExecutor::new(
+        app_state.responses_manager.clone()
+    ));
 
-    // 4. Build tool-aware system prompt
+    // 4. Build system prompt with tools (FIXED: Use static method)
     let system_prompt = ToolPromptBuilder::build_tool_aware_system_prompt(
-        &context, 
-        &tools, 
+        &context,
+        &crate::services::chat_with_tools::get_enabled_tools(),
         metadata.as_ref()
     );
 
-    // 5. Create tool executor and message handler
-    let responses_manager = Arc::new(ResponsesManager::new(app_state.llm_client.clone()));
-    let tool_executor = Arc::new(ToolExecutor::new(responses_manager));
-    
-    // Create connection wrapper for the message handler
-    let connection = Arc::new(crate::api::ws::connection::WebSocketConnection::new_with_parts(
-        sender.clone(),
-        Arc::new(Mutex::new(std::time::Instant::now())), // last_activity
-        Arc::new(Mutex::new(false)), // is_processing
-        Arc::new(Mutex::new(std::time::Instant::now())), // last_send
-    ));
-    
+    // 5. Create connection wrapper for WebSocket (simplified for now)
+    let connection = crate::api::ws::connection::WebSocketConnection::new(sender);
+
+    // 6. Create message handler for WebSocket streaming (FIXED: Use actual API)
     let message_handler = ToolMessageHandler::new(
-        tool_executor,
-        connection,
+        tool_executor.clone(),
+        Arc::new(connection),
         app_state.clone(),
     );
 
-    // 6. Handle the message with tools
+    // 7. Execute tool-enabled chat with streaming
     message_handler.handle_tool_message(
         content,
         project_id,
@@ -116,11 +107,13 @@ pub async fn handle_chat_message_with_tools(
         context,
         system_prompt,
         session_id,
-    ).await
+    ).await?;
+
+    info!("Tool-enabled chat completed for session: {}", session_id);
+    Ok(())
 }
 
-/// CRITICAL FUNCTION: WebSocket handler updater (used by mod.rs)
-/// This function MUST maintain the exact same signature for compatibility
+/// PRESERVED: WebSocket handler update function (used by ws/mod.rs)
 pub async fn update_ws_handler_for_tools(
     msg: WsClientMessage,
     app_state: Arc<AppState>,

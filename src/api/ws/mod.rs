@@ -1,15 +1,14 @@
 // src/api/ws/mod.rs
-// Updated to include all refactored WebSocket modules from Phase 1-4
+// Updated to include all refactored WebSocket modules with consistent directory structure
 
-// Core WebSocket modules
-pub mod chat;           // Refactored main handler (Phase 4)
-pub mod connection;     // Extracted connection management (Phase 1)
-pub mod message_router; // Extracted message routing (Phase 2) 
-pub mod heartbeat;      // Extracted heartbeat management (Phase 3)
+// Core WebSocket modules (all refactored)
+pub mod chat;           // Main handler: src/api/ws/chat.rs
+pub mod connection;     // Connection management: src/api/ws/connection.rs
+pub mod message_router; // Message routing: src/api/ws/message_router.rs 
+pub mod heartbeat;      // Heartbeat management: src/api/ws/heartbeat.rs
 
-// Tool support modules
-pub mod tools;          // Tool functionality modules (executor, message_handler, prompt_builder)
-pub mod chat_tools;     // Tool support module (integrates with message_router)
+// Tool support modules (refactored with proper structure)
+pub mod chat_tools;     // Tool support: src/api/ws/chat_tools/mod.rs
 
 // Existing modules
 pub mod persona;
@@ -24,12 +23,12 @@ use crate::state::AppState;
 // Export session state types for use elsewhere
 pub use session_state::{WsSessionState, WsSessionManager};
 
-// Export tool-related types for use in chat handlers
-// Fixed: Import directly from the tools modules instead of through chat_tools
-pub use tools::message_handler::{WsServerMessageWithTools, ToolMessageHandler};
+// Export tool-related types from the refactored chat_tools module
 pub use chat_tools::{
+    ToolMessageHandler, WsServerMessageWithTools,
     handle_chat_message_with_tools,
-    update_ws_handler_for_tools
+    update_ws_handler_for_tools,
+    ToolExecutor, ToolConfig, ToolEvent
 };
 
 // Export refactored module types for external use

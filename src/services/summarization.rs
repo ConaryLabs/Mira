@@ -46,7 +46,7 @@ impl SummarizationService {
     pub async fn summarize_if_needed(&self, session_id: &str) -> Result<()> {
         // We only summarize if we have real stores; if not, return early.
         if let Some(ref sqlite_store) = self.sqlite_store {
-            let cap = self.config.history_message_cap.max(8);
+            let cap = self.config.history_message_cap().max(8);
             let recent = sqlite_store.load_recent(session_id, cap).await?;
             if recent.len() < cap / 2 {
                 // Too few messages to bother summarizing.
@@ -69,7 +69,7 @@ impl SummarizationService {
             .ok_or_else(|| anyhow!("No memory service available for summarization"))?;
 
         // 1) Load recent messages (more than config cap to ensure we catch the tail).
-        let cap = self.config.history_message_cap.max(8);
+        let cap = self.config.history_message_cap().max(8);
         let take = cap.saturating_mul(2);
         let recent = sqlite.load_recent(session_id, take).await?;
         if recent.is_empty() {
@@ -87,7 +87,7 @@ impl SummarizationService {
         }
 
         // 3) Ask the model for a compact summary within our configured token budget.
-        let token_limit = self.config.max_output_tokens.min(1024);
+        let token_limit = self.config.max_output_tokens().min(1024);
         let summary = self
             .openai_client
             .summarize_conversation(&prompt, token_limit)
@@ -123,7 +123,7 @@ impl SummarizationService {
         if text.trim().is_empty() {
             return Err(anyhow!("summarize_text: empty input"));
         }
-        let token_limit = self.config.max_output_tokens.min(1024);
+        let token_limit = self.config.max_output_tokens().min(1024);
         let out = self
             .openai_client
             .summarize_conversation(text, token_limit)
