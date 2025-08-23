@@ -1,362 +1,291 @@
-# Mira Backend
+# Mira
 
-High-performance Rust backend for the Mira AI Assistant, featuring GPT-5 integration, WebSocket real-time communication, vector memory storage, and Git repository management.
+**Advanced AI Development Assistant with Memory and Git Integration**
 
-## Features
+Mira is a sophisticated AI-powered development assistant built in Rust that combines persistent memory, contextual awareness, and seamless integration with development workflows. Version 0.4.1 features GPT-5 integration, dual memory storage, advanced Git operations, and a flexible persona system.
 
-- 🤖 **GPT-5 Integration** - Advanced AI with tool support (web search, code interpreter, file search, image generation)
-- 🔄 **WebSocket Chat** - Real-time streaming responses with mood and metadata
-- 🧠 **Dual Memory System** - SQLite for conversation history + Qdrant for semantic search
-- 📁 **Project Management** - Full CRUD operations with artifact support
-- 🔀 **Git Integration** - Clone, sync, and manage Git repositories
-- 🎭 **Persona System** - Multiple AI personalities with dynamic switching
-- 📊 **Context Building** - Intelligent retrieval with summarization
-- 🔧 **Tool Extensions** - Extensible tool system via trait-based design
+## ✨ Key Features
 
-## Tech Stack
+### 🧠 Persistent Memory System
+- **Dual Storage Architecture**: SQLite for structured data, Qdrant for semantic search
+- **Salience-Based Storage**: Intelligent message prioritization (1-10 scale)
+- **Context Preservation**: Maintains conversation context across sessions
+- **Automatic Summarization**: Prevents context window overflow
 
-- **Language**: Rust (async/await)
-- **Web Framework**: Axum
-- **Database**: SQLite (via SQLx) + Qdrant (vector store)
-- **AI**: OpenAI GPT-5 API
-- **WebSocket**: Tokio + Axum-ws
-- **Git**: git2-rs
-- **Async Runtime**: Tokio
+### 🔄 Advanced Git Integration
+- **Repository Management**: Clone, attach, and sync repositories
+- **File Operations**: Tree traversal, content retrieval, diff generation
+- **Branch Management**: List branches, switch branches, commit history
+- **Smart Diff Parser**: Analyzes changes with hunk-level granularity
 
-## Prerequisites
+### ⚡ Real-Time Communication
+- **WebSocket Streaming**: Real-time AI responses
+- **REST API**: Complete HTTP API for all operations
+- **Session Management**: Per-connection state with heartbeat monitoring
 
-- Rust 1.75+
-- SQLite 3
-- Qdrant running on port 6333
-- OpenAI API key with GPT-5 access
-- Git
+### 🏗 Project-Centric Architecture
+- **Project Isolation**: Separate memory and context per project
+- **Artifact Management**: Store code, documents, images and notes associated with a project
 
-## Installation
+### 🎭 Multi-Persona System
+- **Default**: Standard assistant behavior
+- **Haven**: Comforting, supportive presence
+- **Hallow**: Sacred, emotionally present interaction
+- **Forbidden**: Playful, flirtatious (with safety boundaries)
 
-```bash
-# Clone the repository
-git clone https://github.com/ConaryLabs/Mira.git
-cd Mira/backend
+## 🚀 Quick Start
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your configuration
+### Prerequisites
+- **Rust 1.70+** - [Install Rust](https://rustup.rs/)
+- **OpenAI API Key** - [Get API access](https://platform.openai.com/)
+- **Qdrant** (optional) - [Run locally](https://qdrant.tech/) or use cloud
 
-# Install dependencies and build
-cargo build --release
+### Installation
 
-# Run database migrations
-sqlx migrate run
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ConaryLabs/Mira.git
+   cd Mira
+   ```
 
-# Start the server
-cargo run --release
-```
+2. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your OpenAI API key and other settings
+   ```
 
-## Configuration
+3. Start Qdrant (optional for semantic search):
+   ```bash
+   docker run -p 6333:6333 qdrant/qdrant
+   ```
 
-### Environment Variables (.env)
+4. Build and run:
+   ```bash
+   cargo build --release
+   cargo run
+   ```
 
+5. Test the connection:
+   ```bash
+   curl http://localhost:3001/health
+   ```
+
+## ⚙️ Configuration
+
+Mira uses environment variables for configuration. Key settings include:
+
+### Core Configuration
 ```bash
 # OpenAI Configuration
-OPENAI_API_KEY=your_key_here
+OPENAI_API_KEY=your_api_key_here
 MIRA_MODEL=gpt-5
-MIRA_VERBOSITY=high
-MIRA_REASONING_EFFORT=high
 MIRA_MAX_OUTPUT_TOKENS=128000
 
 # Database
 DATABASE_URL=sqlite:./mira.db
-SQLITE_MAX_CONNECTIONS=10
-
-# Qdrant Vector Store
 QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=mira-memory
-QDRANT_EMBEDDING_DIM=3072
-
-# Session
-MIRA_SESSION_ID=peter-eternal
-MIRA_DEFAULT_PERSONA=default
-
-# GPT-5 Tools (Phase 3)
-ENABLE_WEB_SEARCH=true
-ENABLE_CODE_INTERPRETER=true
-ENABLE_FILE_SEARCH=true
-ENABLE_IMAGE_GENERATION=true
 
 # Server
-MIRA_HOST=0.0.0.0
-MIRA_PORT=8080
+MIRA_HOST=0.0.0.0 
+MIRA_PORT=3001
 
-# Git
+# Memory Settings
+MIRA_HISTORY_MESSAGE_CAP=50
+MIRA_ENABLE_VECTOR_SEARCH=true
+MIRA_MIN_SALIENCE_FOR_QDRANT=7.0
+
+# Git Integration
 GIT_REPOS_DIR=./repos
 ```
 
-## Architecture
+### Tool Configuration (GPT-5 Features)
+```bash
+# Tool integration (GPT-5 Functions API)
+ENABLE_CHAT_TOOLS=false
 
-```
-src/
-├── api/
-│   ├── ws/              # WebSocket handlers
-│   │   ├── chat.rs      # Main chat handler
-│   │   ├── chat_tools.rs # GPT-5 tool integration
-│   │   └── message.rs   # Message types
-│   └── http/            # REST endpoints
-│       ├── git/         # Git operations
-│       └── project.rs   # Project management
-├── services/
-│   ├── chat.rs          # Chat service
-│   ├── chat_with_tools.rs # Tool extension trait
-│   ├── memory.rs        # Memory management
-│   └── summarization.rs # Context summarization
-├── llm/
-│   ├── client.rs        # OpenAI client
-│   ├── responses/       # GPT-5 Responses API
-│   └── embeddings.rs    # Vector embeddings
-├── memory/
-│   ├── sqlite/          # Conversation storage
-│   └── qdrant/          # Vector search
-├── persona/             # AI personalities
-├── git/                 # Repository management
-└── state.rs            # Application state
+# Reserved for future features
+ENABLE_WEB_SEARCH=true # reserved
+ENABLE_CODE_INTERPRETER=true # reserved
+ENABLE_FILE_SEARCH=true # not implemented yet
+ENABLE_IMAGE_GENERATION=true # not implemented yet
 ```
 
-## API Endpoints
+See `.env.example` for the complete configuration reference.
 
-### WebSocket
-- `ws://localhost:8080/ws/chat` - Real-time chat with tool support
+## 🏗 Architecture Overview
 
-### REST API
-
-#### Projects
-- `GET /api/projects` - List all projects
-- `POST /api/projects` - Create project
-- `GET /api/project/:id` - Get project details
-- `PUT /api/projects/:id` - Update project
-- `DELETE /api/projects/:id` - Delete project
-
-#### Git Operations
-- `POST /api/projects/:id/git/attach` - Attach Git repo
-- `GET /api/projects/:id/git/repos` - List attached repos
-- `POST /api/projects/:id/git/files/:attachment_id/content/:path` - Update file
-- `GET /api/projects/:id/git/branches/:attachment_id` - List branches
-- `GET /api/projects/:id/git/commits/:attachment_id` - Get commit history
-
-#### Artifacts
-- `POST /api/artifacts` - Create artifact
-- `GET /api/artifacts/:id` - Get artifact
-- `PUT /api/artifacts/:id` - Update artifact
-- `DELETE /api/artifacts/:id` - Delete artifact
-
-#### Chat History
-- `GET /api/chat/history` - Get conversation history
-
-## GPT-5 Tool Integration
-
-The backend supports GPT-5 tools through an extension trait system:
-
-```rust
-use crate::services::chat_with_tools::ChatServiceToolExt;
-
-// Extends ChatService with tool support
-let response = chat_service.chat_with_tools(
-    session_id,
-    message,
-    project_id,
-    file_context
-).await?;
+### Directory Structure
+```
+mira/
+├── src/
+│   ├── api/                  # HTTP and WebSocket API handlers
+│   │   ├── http/            # REST API endpoints
+│   │   └── ws/              # WebSocket handlers
+│   ├── config/              # Configuration management
+│   ├── git/                 # Git integration layer
+│   ├── llm/                 # OpenAI client and schema
+│   ├── memory/              # Dual storage system
+│   │   ├── sqlite/          # SQLite operations
+│   │   └── qdrant/          # Vector store operations
+│   ├── persona/             # Multi-persona system
+│   ├── project/             # Project management
+│   ├── services/            # Business logic layer
+│   │   ├── chat/            # Modular chat service
+│   │   ├── memory.rs        # Memory service
+│   │   ├── context.rs       # Context building
+│   │   └── ...
+│   ├── state.rs             # Application state
+│   ├── lib.rs               # Library exports
+│   └── main.rs              # Application entry point
+├── tests/                   # Integration tests
+├── Cargo.toml              # Rust dependencies
+└── .env.example            # Configuration template
 ```
 
-### Supported Tools
-- **Web Search** - Internet search integration
-- **Code Interpreter** - Python code execution
-- **File Search** - Document retrieval
-- **Image Generation** - DALL-E integration
+### Core Services
 
-### Tool Response Flow
-1. Client sends message via WebSocket
-2. Backend checks enabled tools
-3. Executes relevant tools based on context
-4. Streams results back with citations
-5. Frontend displays rich tool results
+- **ChatService**: Modular chat processing with extracted components
+- **MemoryService**: Manages SQLite and Qdrant storage
+- **ContextService**: Builds comprehensive context from multiple sources
+- **DocumentService**: Handles file processing and project integration
+- **SummarizationService**: Automatic conversation compression
 
-## WebSocket Protocol
+## 📡 API Reference
 
-### Client → Server
+### WebSocket API
+
+**Connect**: `ws://localhost:3001/ws/chat`
+
+**Message Format**:
 ```json
 {
   "type": "chat",
-  "content": "message text",
-  "project_id": "optional-project-id",
-  "metadata": {
-    "file_path": "optional/file/path",
-    "attachment_id": "optional-id"
-  }
+  "message": "Hello, Mira!",
+  "project_id": "optional-project-uuid"
 }
 ```
 
-### Server → Client
-- `chunk` - Streaming content chunks
-- `complete` - Message completion with metadata
-- `status` - Processing status updates
-- `tool_result` - Tool execution results
-- `citation` - Source citations
-- `done` - End of stream marker
+**Response Format**:
+```json
+{
+  "output": "Hello! How can I assist you today?",
+  "persona": "default",
+  "mood": "helpful",
+  "salience": 5,
+  "tags": ["greeting"],
+  "memory_type": "interaction"
+}
+```
 
-## Memory System
+### REST API
 
-### Dual Storage
-1. **SQLite** - Structured conversation history
-   - Messages with timestamps
-   - Metadata and tags
-   - Session management
+#### Chat Endpoints
+```bash
+# Send chat message
+POST /api/chat
+{
+  "message": "Help me debug this code",
+  "session_id": "my-session",
+  "project_id": "optional-project-id"
+}
 
-2. **Qdrant** - Vector similarity search
-   - Semantic memory retrieval
-   - Context building
-   - Relevant history lookup
+# Get chat history
+GET /api/chat/history?session_id=my-session&limit=10
+```
 
-### Context Building Pipeline
-1. Fetch recent messages (SQLite)
-2. Generate embedding for current message
-3. Search similar memories (Qdrant)
-4. Build recall context
-5. Summarize if needed
-6. Pass to GPT-5
+#### Project Management
+```bash
+# Create project
+POST /api/projects
+{
+  "name": "My Project",
+  "description": "A cool project",
+  "tags": ["rust", "ai"]
+}
 
-## Development
+# Get project details
+GET /api/project/{project_id}
+
+# Attach Git repository
+POST /api/projects/{project_id}/git/attach
+{
+  "repo_url": "https://github.com/user/repo.git"
+}
+```
+
+#### Git Operations
+```bash
+# Get file tree
+GET /api/projects/{project_id}/git/files/{attachment_id}/tree
+
+# Get file content
+GET /api/projects/{project_id}/git/files/{attachment_id}/content/src/main.rs
+
+# List branches
+GET /api/projects/{project_id}/git/branches/{attachment_id}
+
+# Get commit history 
+GET /api/projects/{project_id}/git/commits/{attachment_id}
+```
+
+## 🧪 Testing
+
+Run the comprehensive test suite:
 
 ```bash
-# Run with debug logging
-RUST_LOG=debug cargo run
-
-# Run tests
+# All tests
 cargo test
 
-# Check code
-cargo clippy
+# Specific test module
+cargo test test_project_system
 
-# Format code
-cargo fmt
+# With output
+cargo test -- --nocapture
 
-# Watch for changes
-cargo watch -x run
+# Generate test coverage
+cargo tarpaulin --html
 ```
 
-## Database Migrations
+## 📋 Roadmap
 
-```bash
-# Create new migration
-sqlx migrate add <name>
+### Current Version (v0.4.1)
+- ✅ GPT-5 integration
+- ✅ Dual memory storage
+- ✅ Git integration
+- ✅ WebSocket streaming
+- ✅ Multi-persona system
 
-# Run migrations
-sqlx migrate run
+### Planned Enhancements
+- Enhanced Git workflows (more diff analytics, merge assistance)
+- File search and image generation tools
+- Basic team collaboration features (shared projects, role-based access)
+- Custom model fine-tuning
 
-# Revert migration
-sqlx migrate revert
-```
+### Longer-Term Ideas
+- Multi-modal capabilities (images, audio)
+- Advanced code generation and refactoring assistance
+- CI/CD integration
+- Enterprise features and robust authentication
 
-## Performance Tuning
+## 📄 License
 
-### Connection Pools
-- SQLite: 10 connections (configurable)
-- Qdrant: Connection reuse
-- HTTP: Keep-alive enabled
+No LICENSE file is present in this repository. Licensing terms have not yet been finalized.
 
-### Memory Optimization
-- Streaming responses to minimize memory
-- Chunked file processing
-- Lazy loading for large datasets
+## 🆘 Support
 
-### Concurrency
-- Tokio async runtime
-- Arc/Mutex for shared state
-- Lock-free message passing where possible
+- **Issues**: [GitHub Issues](https://github.com/ConaryLabs/Mira/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ConaryLabs/Mira/discussions)
+- **Documentation**: [Wiki](https://github.com/ConaryLabs/Mira/wiki)
+- **Email**: support@conarylabs.com
 
-## Monitoring
+## 🙏 Acknowledgments
 
-### Logs
-- Structured logging with tracing
-- Configurable log levels
-- Request/response tracking
+- OpenAI for GPT-5 and embedding models
+- Qdrant for vector storage capabilities
+- Rust Community for excellent ecosystem
+- Contributors who make this project possible
 
-### Health Check
-```bash
-curl http://localhost:8080/health
-```
+---
 
-## Deployment
-
-### Docker
-```dockerfile
-FROM rust:1.75 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-COPY --from=builder /app/target/release/mira-backend /usr/local/bin/
-CMD ["mira-backend"]
-```
-
-### Systemd Service
-```ini
-[Unit]
-Description=Mira Backend
-After=network.target
-
-[Service]
-Type=simple
-User=mira
-WorkingDirectory=/opt/mira
-ExecStart=/opt/mira/mira-backend
-Restart=on-failure
-Environment="RUST_LOG=info"
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Qdrant Connection Failed**
-   ```bash
-   # Ensure Qdrant is running
-   docker run -p 6333:6333 qdrant/qdrant
-   ```
-
-2. **SQLite Locked**
-   ```bash
-   # Check for hanging processes
-   fuser mira.db
-   ```
-
-3. **WebSocket Upgrade Failed**
-   - Check CORS settings
-   - Verify WebSocket headers
-   - Ensure no proxy interference
-
-4. **Tool Results Not Showing**
-   - Verify environment variables are set
-   - Check OpenAI API limits
-   - Review logs for tool execution
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Write tests for new features
-4. Ensure `cargo clippy` passes
-5. Submit a Pull Request
-
-## License
-
-Proprietary - ConaryLabs
-
-## Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check logs in `RUST_LOG=debug` mode
-- Contact the development team
+Built with ❤️ by ConaryLabs
