@@ -89,8 +89,8 @@ pub async fn handle_chat_message_with_tools(
         metadata.as_ref()
     );
 
-    // 5. Create connection wrapper for WebSocket (FIXED: Use new_with_parts for already-split sender)
-    let connection = Arc::new(crate::api::ws::connection::WebSocketConnection::new_with_parts(
+    // 5. Create connection wrapper for WebSocket (FIXED: Use correct import path)
+    let connection = Arc::new(crate::api::ws::chat::connection::WebSocketConnection::new_with_parts(
         sender,
         Arc::new(Mutex::new(std::time::Instant::now())),
         Arc::new(Mutex::new(false)),

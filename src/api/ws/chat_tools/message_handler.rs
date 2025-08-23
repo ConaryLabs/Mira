@@ -5,10 +5,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use futures::StreamExt;
+use futures_util::StreamExt; // Added for .next() method on streams
 use tracing::{error, info, warn};
 
-use crate::api::ws::connection::WebSocketConnection;
+// FIXED: Updated import path - connection is now in chat/ directory
+use crate::api::ws::chat::connection::WebSocketConnection;
 use crate::api::ws::message::{MessageMetadata, WsServerMessage};
 use crate::api::ws::chat_tools::executor::{ToolExecutor, ToolChatRequest, ToolEvent};
 use crate::memory::recall::RecallContext;

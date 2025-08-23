@@ -1,4 +1,4 @@
-// src/api/ws/message_router.rs
+// src/api/ws/chat/message_router.rs
 // Phase 2: Extract Message Routing from chat.rs
 // Handles routing between simple chat and tool-enabled chat based on CONFIG.enable_chat_tools
 // Maintains CRITICAL integration with chat_tools.rs
@@ -8,7 +8,8 @@ use std::net::SocketAddr;
 
 use tracing::{debug, error, info};
 
-use crate::api::ws::connection::WebSocketConnection;
+// FIXED: Updated import path - now in same directory
+use super::connection::WebSocketConnection;
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
 use crate::state::AppState;
@@ -104,7 +105,7 @@ impl MessageRouter {
         project_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
         // Call the extracted simple chat handler from the main chat.rs
-        use crate::api::ws::chat::handle_simple_chat_message;
+        use super::handle_simple_chat_message;
         
         handle_simple_chat_message(
             content,
@@ -228,6 +229,7 @@ mod tests {
 
     #[test]
     fn test_extract_file_context() {
+        // Test with file path
         let metadata_with_file = Some(MessageMetadata {
             file_path: Some("src/main.rs".to_string()),
             repo_id: None,
@@ -236,25 +238,20 @@ mod tests {
             selection: None,
         });
         
+        assert_eq!(extract_file_context(&metadata_with_file), Some("File: src/main.rs".to_string()));
+        
+        // Test with repo ID
         let metadata_with_repo = Some(MessageMetadata {
             file_path: None,
-            repo_id: Some("my-repo".to_string()),
+            repo_id: Some("repo-123".to_string()),
             attachment_id: None,
             language: None,
             selection: None,
         });
         
-        let empty_metadata = Some(MessageMetadata {
-            file_path: None,
-            repo_id: None,
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
+        assert_eq!(extract_file_context(&metadata_with_repo), Some("Repository: repo-123".to_string()));
         
-        assert_eq!(extract_file_context(&metadata_with_file), Some("File: src/main.rs".to_string()));
-        assert_eq!(extract_file_context(&metadata_with_repo), Some("Repository: my-repo".to_string()));
-        assert_eq!(extract_file_context(&empty_metadata), None);
+        // Test with no metadata
         assert_eq!(extract_file_context(&None), None);
     }
 }

@@ -1,11 +1,8 @@
 // src/api/ws/mod.rs
-// Updated to include all refactored WebSocket modules with consistent directory structure
+// Updated to reflect proper directory structure after chat.rs refactoring
 
-// Core WebSocket modules (all refactored)
-pub mod chat;           // Main handler: src/api/ws/chat.rs
-pub mod connection;     // Connection management: src/api/ws/connection.rs
-pub mod message_router; // Message routing: src/api/ws/message_router.rs 
-pub mod heartbeat;      // Heartbeat management: src/api/ws/heartbeat.rs
+// Core WebSocket modules (all refactored and properly organized)
+pub mod chat;           // Main handler: src/api/ws/chat/mod.rs + extracted modules
 
 // Tool support modules (refactored with proper structure)
 pub mod chat_tools;     // Tool support: src/api/ws/chat_tools/mod.rs
@@ -31,13 +28,18 @@ pub use chat_tools::{
     ToolExecutor, ToolConfig, ToolEvent
 };
 
-// Export refactored module types for external use
-pub use connection::WebSocketConnection;
-pub use message_router::{MessageRouter, should_use_tools, extract_file_context};
-pub use heartbeat::{HeartbeatManager, HeartbeatConfig, HeartbeatStats};
-
-// Re-export the simple chat handler for message_router compatibility  
-pub use chat::handle_simple_chat_message;
+// Export refactored chat module types for external use (now from chat/ directory)
+pub use chat::{
+    WebSocketConnection,      // from chat/connection.rs
+    MessageRouter,            // from chat/message_router.rs  
+    should_use_tools,         // from chat/message_router.rs
+    extract_file_context,     // from chat/message_router.rs
+    HeartbeatManager,         // from chat/heartbeat.rs
+    HeartbeatConfig,          // from chat/heartbeat.rs
+    HeartbeatStats,           // from chat/heartbeat.rs
+    handle_simple_chat_message, // from chat/mod.rs
+    ws_chat_handler,          // from chat/mod.rs
+};
 
 pub fn ws_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
@@ -45,6 +47,6 @@ pub fn ws_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
             eprintln!("HTTP GET to /ws/test");
             "WebSocket routes are loaded!" 
         }))
-        .route("/chat", get(chat::ws_chat_handler)) // Uses refactored handler
+        .route("/chat", get(chat::ws_chat_handler)) // Uses refactored handler from chat/mod.rs
         .with_state(app_state)
 }
