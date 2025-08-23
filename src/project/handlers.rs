@@ -15,7 +15,7 @@ use crate::project::types::{
     CreateArtifactRequest, UpdateArtifactRequest,
     ProjectsResponse, ArtifactsResponse
 };
-use crate::project::types::{Project, Artifact};
+// FIXED: Removed unused imports Project and Artifact
 use crate::api::error::{ApiError, ApiResult, IntoApiError, IntoApiErrorOption};
 
 // Project handlers

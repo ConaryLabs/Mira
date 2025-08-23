@@ -5,14 +5,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::extract::ws::Message;
 use futures::StreamExt;
-use futures_util::SinkExt; // For send() method
-use tracing::{error, info, warn}; // Removed unused imports: debug, json, Mutex
+use tracing::{error, info, warn};
 
 use crate::api::ws::connection::WebSocketConnection;
-use crate::api::ws::message::MessageMetadata;
-use crate::api::ws::chat_tools::executor::{ToolExecutor, ToolChatRequest, ToolEvent}; // FIXED: Updated path
+use crate::api::ws::message::{MessageMetadata, WsServerMessage};
+use crate::api::ws::chat_tools::executor::{ToolExecutor, ToolChatRequest, ToolEvent};
 use crate::memory::recall::RecallContext;
 use crate::state::AppState;
 
@@ -83,9 +81,9 @@ impl ToolMessageHandler {
         content: String,
         project_id: Option<String>,
         metadata: Option<MessageMetadata>,
-        _context: RecallContext, // Added underscore prefix for unused variable
+        context: RecallContext, // Use the context parameter
         system_prompt: String,
-        _session_id: String, // Added underscore prefix for unused variable
+        session_id: String, // Use the session_id parameter
     ) -> Result<()> {
         info!("🔧 Handling tool message for content: {}", content.chars().take(50).collect::<String>());
 
@@ -98,21 +96,22 @@ impl ToolMessageHandler {
             return self.handle_simple_response(content).await;
         }
 
-        // Create tool chat request
+        // Create tool chat request with all required fields
         let request = ToolChatRequest {
             content,
             project_id,
             metadata,
-            session_id: "temp-session".to_string(), // Using temporary session ID
-            context: RecallContext { recent: vec![], semantic: vec![] }, // Using empty context for now
+            session_id,        // Add the required session_id field
+            context,           // Add the required context field
             system_prompt,
         };
 
-        // Execute with tools and stream results
+        // Execute with tools and stream results using the correct method and response type
         match self.executor.stream_with_tools(&request).await {
             Ok(mut stream) => {
                 while let Some(event) = stream.next().await {
                     match event {
+                        // Match the actual ToolEvent variants from executor.rs
                         ToolEvent::ContentChunk(chunk) => {
                             self.send_chunk(&chunk, None).await?;
                         }
@@ -128,11 +127,11 @@ impl ToolMessageHandler {
                             self.send_error(&format!("Tool {} failed: {}", tool_type, error), None).await?;
                         }
                         ToolEvent::Complete { metadata } => {
-                            self.send_complete(
-                                metadata.as_ref().and_then(|m| m.mood.clone()),
-                                metadata.as_ref().and_then(|m| m.salience),
-                                metadata.as_ref().and_then(|m| m.tags.clone()),
-                            ).await?;
+                            // Extract fields from metadata properly
+                            let mood = metadata.as_ref().and_then(|m| m.mood.clone());
+                            let salience = metadata.as_ref().and_then(|m| m.salience);
+                            let tags = metadata.as_ref().and_then(|m| m.tags.clone());
+                            self.send_complete(mood, salience, tags).await?;
                         }
                         ToolEvent::Error(error_msg) => {
                             self.send_error(&error_msg, None).await?;
@@ -155,19 +154,20 @@ impl ToolMessageHandler {
 
     // Helper methods for sending WebSocket messages
     async fn send_chunk(&self, content: &str, mood: Option<String>) -> Result<()> {
-        let message = WsServerMessageWithTools::Chunk {
+        let message = WsServerMessage::Chunk {
             content: content.to_string(),
             mood,
         };
-        self.send_ws_message(message).await
+        self.connection.send_message(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
     }
 
     async fn send_status(&self, message: &str, detail: Option<&str>) -> Result<()> {
-        let message = WsServerMessageWithTools::Status {
-            message: message.to_string(),
-            detail: detail.map(|s| s.to_string()),
-        };
-        self.send_ws_message(message).await
+        // Use the existing send_status method from WebSocketConnection
+        if let Some(detail) = detail {
+            self.connection.send_status(&format!("{} - {}", message, detail)).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
+        } else {
+            self.connection.send_status(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
+        }
     }
 
     async fn send_complete(
@@ -176,48 +176,34 @@ impl ToolMessageHandler {
         salience: Option<f32>,
         tags: Option<Vec<String>>,
     ) -> Result<()> {
-        let message = WsServerMessageWithTools::Complete {
+        let message = WsServerMessage::Complete {
             mood,
             salience,
             tags,
         };
-        self.send_ws_message(message).await
+        self.connection.send_message(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
     }
 
     async fn send_tool_call(&self, tool_type: &str, tool_id: &str, status: &str) -> Result<()> {
-        let message = WsServerMessageWithTools::ToolCall {
-            tool_type: tool_type.to_string(),
-            tool_id: tool_id.to_string(),
-            status: status.to_string(),
-        };
-        self.send_ws_message(message).await
+        // Send as status message since we don't have a specific tool call message type in WsServerMessage
+        let status_msg = format!("Tool {}: {} - {}", tool_type, tool_id, status);
+        self.connection.send_status(&status_msg).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
     }
 
     async fn send_tool_result(&self, tool_type: &str, tool_id: &str, data: serde_json::Value) -> Result<()> {
-        let message = WsServerMessageWithTools::ToolResult {
-            tool_type: tool_type.to_string(),
-            tool_id: tool_id.to_string(),
-            data,
-        };
-        self.send_ws_message(message).await
+        // Send tool result as status message with JSON data
+        let result_msg = format!("Tool result {}: {} - {}", tool_type, tool_id, data);
+        self.connection.send_status(&result_msg).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
     }
 
-    async fn send_error(&self, message: &str, code: Option<&str>) -> Result<()> {
-        let message = WsServerMessageWithTools::Error {
-            message: message.to_string(),
-            code: code.map(|s| s.to_string()),
-        };
-        self.send_ws_message(message).await
+    async fn send_error(&self, message: &str, _code: Option<&str>) -> Result<()> {
+        // Use the existing send_error method from WebSocketConnection
+        self.connection.send_error(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
     }
 
     async fn send_done(&self) -> Result<()> {
-        let message = WsServerMessageWithTools::Done;
-        self.send_ws_message(message).await
-    }
-
-    async fn send_ws_message(&self, message: WsServerMessageWithTools) -> Result<()> {
-        let json = serde_json::to_string(&message)?;
-        self.connection.send_text(&json).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
+        let message = WsServerMessage::Done;
+        self.connection.send_message(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
     }
 
     async fn handle_simple_response(&self, content: String) -> Result<()> {
