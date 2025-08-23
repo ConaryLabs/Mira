@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::fs;
 
-use crate::git::types::{GitRepoAttachment, GitImportStatus};
+use crate::git::types::GitRepoAttachment;
 use crate::git::store::GitStore;
 
 // Internal module declarations
@@ -167,8 +167,9 @@ impl GitClient {
     // ===== UTILITY METHODS =====
     
     /// Get the local path for an attachment
-    pub fn get_local_path(&self, attachment: &GitRepoAttachment) -> &str {
-        &attachment.local_path
+    /// FIXED: Lifetime issue by returning owned String instead of borrowed &str
+    pub fn get_local_path(&self, attachment: &GitRepoAttachment) -> String {
+        attachment.local_path.clone()
     }
 
     /// Check if a repository exists locally

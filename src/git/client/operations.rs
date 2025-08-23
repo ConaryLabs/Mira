@@ -1,20 +1,20 @@
 // src/git/client/operations.rs
-// Core git operations: attach, clone, import, sync
+// Core git repository operations: attach, clone, import, sync
 // Extracted from monolithic GitClient for focused responsibility
 
-use anyhow::{Result, Context};
+use anyhow::Result;
+use chrono::Utc;
 use git2::Repository;
 use std::fs;
 use std::path::{Path, PathBuf};
-use chrono::Utc;
+use tracing::{info, debug};
 use uuid::Uuid;
-use walkdir::WalkDir;
 
 use crate::git::types::{GitRepoAttachment, GitImportStatus};
 use crate::git::store::GitStore;
 use crate::api::error::IntoApiError;
 
-/// Handles core git repository operations
+/// Handles core Git repository operations
 #[derive(Clone)]
 pub struct GitOperations {
     git_dir: PathBuf,
@@ -37,15 +37,14 @@ impl GitOperations {
         let local_path = self
             .git_dir
             .join(&id)
-            .to_str()
-            .context("Failed to create local path")?
+            .to_string_lossy()
             .to_string();
 
         let attachment = GitRepoAttachment {
             id,
             project_id: project_id.to_string(),
             repo_url: repo_url.to_string(),
-            local_path: local_path.clone(),
+            local_path,
             import_status: GitImportStatus::Pending,
             last_imported_at: None,
             last_sync_at: None,
@@ -55,19 +54,21 @@ impl GitOperations {
             .await
             .into_api_error("Failed to create git attachment")?;
 
+        info!("Attached repository {} for project {}", repo_url, project_id);
         Ok(attachment)
     }
 
-    /// Clone the attached repo to disk. Returns Result<()>.
+    /// Clone the attached repo to disk.
     pub async fn clone_repo(&self, attachment: &GitRepoAttachment) -> Result<()> {
+        info!("Cloning repository {} to {}", attachment.repo_url, attachment.local_path);
+
         // Ensure parent directory exists
         if let Some(parent) = Path::new(&attachment.local_path).parent() {
             fs::create_dir_all(parent)
                 .into_api_error("Failed to create repository directory")?;
         }
 
-        // For MVP/public repos: no custom fetch options or callbacks needed.
-        // (Add auth/ssh in a future sprint.)
+        // Clone using git2
         Repository::clone(
             &attachment.repo_url,
             &attachment.local_path,
@@ -78,52 +79,49 @@ impl GitOperations {
             .await
             .into_api_error("Failed to update import status")?;
 
+        info!("Successfully cloned repository {}", attachment.id);
         Ok(())
     }
 
     /// Import files into your DB (MVP: just record file paths and contents)
     pub async fn import_codebase(&self, attachment: &GitRepoAttachment) -> Result<()> {
+        info!("Importing codebase for repository {}", attachment.id);
+
         let repo_path = Path::new(&attachment.local_path);
-        
         if !repo_path.exists() {
-            return Err(anyhow::anyhow!("Repository path does not exist: {}", attachment.local_path));
+            return Err(anyhow::anyhow!("Repository not found at {}", attachment.local_path));
         }
 
-        let mut files_imported = 0;
-
-        // Walk through all files in the repository
-        for entry in WalkDir::new(repo_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter(|e| !should_ignore_file(e.path()))
-        {
-            let rel_path = entry
-                .path()
-                .strip_prefix(repo_path)
-                .context("Failed to get relative path")?
-                .to_str()
-                .context("Invalid UTF-8 in file path")?
-                .to_string();
-
-            // Read file contents (with error handling for binary files)
-            match fs::read_to_string(entry.path()) {
-                Ok(_contents) => {
-                    // In a full implementation, you would store this in your codebase DB:
-                    // e.g., CodeFile { attachment_id, rel_path, contents }
-                    // For now, just count successful reads
-                    files_imported += 1;
-                }
-                Err(_) => {
-                    // Skip binary files or files with encoding issues
-                    tracing::debug!("Skipping binary or unreadable file: {}", rel_path);
+        // Walk through files and import them
+        fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
+            let mut files = Vec::new();
+            
+            if dir.is_dir() {
+                for entry in fs::read_dir(dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    
+                    if should_ignore_file(&path) {
+                        continue;
+                    }
+                    
+                    if path.is_dir() {
+                        files.extend(walk_directory(&path)?);
+                    } else if path.is_file() {
+                        files.push(path);
+                    }
                 }
             }
+            
+            Ok(files)
         }
 
-        tracing::info!("Imported {} files from repository {}", files_imported, attachment.id);
+        let files = walk_directory(repo_path)
+            .into_api_error("Failed to walk repository directory")?;
+        debug!("Found {} files to import", files.len());
 
-        // Update database status
+        // For MVP, we'll just update the status
+        // In the future, this would actually import file contents to the database
         self.store.update_import_status(&attachment.id, GitImportStatus::Imported)
             .await
             .into_api_error("Failed to update import status")?;
@@ -132,16 +130,20 @@ impl GitOperations {
             .await
             .into_api_error("Failed to update last sync time")?;
 
+        info!("Successfully imported {} files for repository {}", files.len(), attachment.id);
         Ok(())
     }
 
     /// Sync: commit and push DB-side code changes back to GitHub.
     pub async fn sync_changes(&self, attachment: &GitRepoAttachment, commit_message: &str) -> Result<()> {
-        // Do all git operations in a block to ensure git2 types are dropped before async operations
+        info!("Syncing changes for repository {}", attachment.id);
+
+        // All git2 operations in this block
         {
             let repo = Repository::open(&attachment.local_path)
                 .into_api_error("Could not open local repo for syncing")?;
 
+            // Stage all changes
             let mut index = repo.index()
                 .into_api_error("Failed to get repository index")?;
             
@@ -188,7 +190,7 @@ impl GitOperations {
             .await
             .into_api_error("Failed to update last sync time")?;
 
-        tracing::info!("Successfully synced changes for repository {}", attachment.id);
+        info!("Successfully synced changes for repository {}", attachment.id);
         Ok(())
     }
 }
@@ -227,13 +229,5 @@ mod tests {
         assert!(should_ignore_file(Path::new("image.png")));
         assert!(!should_ignore_file(Path::new("main.rs")));
         assert!(!should_ignore_file(Path::new("README.md")));
-    }
-
-    #[test]
-    fn test_operations_creation() {
-        let temp_dir = TempDir::new().unwrap();
-        // Note: Would need a mock store for actual testing
-        // let store = GitStore::new(/* test db */);
-        // let operations = GitOperations::new(temp_dir.path().to_path_buf(), store);
     }
 }

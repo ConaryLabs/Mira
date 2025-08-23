@@ -3,6 +3,7 @@
 pub mod ws;
 pub mod http;
 pub mod types;     // <-- ADDED THIS LINE
+pub mod error;
 
 use axum::Router;
 use std::sync::Arc;

@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use std::fmt;
 use tracing::error;
 
 /// Standard API error response format
@@ -91,6 +92,19 @@ impl ApiError {
         }
     }
 }
+
+// CRITICAL: Implement Display trait for std::error::Error
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+// CRITICAL: Implement std::error::Error trait so anyhow can convert from it
+impl std::error::Error for ApiError {}
+
+// NOTE: anyhow automatically provides From<ApiError> for anyhow::Error
+// since ApiError implements std::error::Error + Send + Sync + 'static
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {

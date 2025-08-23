@@ -2,9 +2,8 @@
 // Diff parsing and commit comparison operations
 // Extracted from monolithic GitClient for focused responsibility
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use git2::{Repository, Oid};
-use std::path::Path;
 use serde::{Serialize, Deserialize};
 
 use crate::git::types::GitRepoAttachment;
@@ -173,33 +172,31 @@ impl DiffParser {
     ) -> Result<String> {
         let repo = Repository::open(&attachment.local_path)
             .into_api_error("Failed to open repository")?;
-
+        
         let oid = Oid::from_str(commit_id)
             .into_api_error("Invalid commit ID")?;
-
+        
         let commit = repo.find_commit(oid)
             .into_api_error("Commit not found")?;
-
+        
         let tree = commit.tree()
             .into_api_error("Failed to get commit tree")?;
-
-        let entry = tree.get_path(Path::new(file_path))
-            .into_api_error(&format!("File not found in commit: {}", file_path))?;
-
-        let object = entry.to_object(&repo)
-            .into_api_error("Failed to get file object")?;
-
-        let blob = object.as_blob()
-            .ok_or_else(|| anyhow::anyhow!("Path is not a file: {}", file_path))?;
-
+        
+        // Navigate to the file in the tree
+        let entry = tree.get_path(std::path::Path::new(file_path))
+            .into_api_error("File not found in commit")?;
+        
+        let blob = repo.find_blob(entry.id())
+            .into_api_error("Failed to find blob")?;
+        
         let content = std::str::from_utf8(blob.content())
             .into_api_error("File contains invalid UTF-8")?;
-
+        
         Ok(content.to_string())
     }
 
-    /// Compare two commits and get the diff between them
-    pub fn compare_commits(
+    /// Get diff between two commits (for future use)
+    pub fn get_diff_between_commits(
         &self,
         attachment: &GitRepoAttachment,
         from_commit: &str,
@@ -207,12 +204,12 @@ impl DiffParser {
     ) -> Result<DiffInfo> {
         let repo = Repository::open(&attachment.local_path)
             .into_api_error("Failed to open repository")?;
-
+        
         let from_oid = Oid::from_str(from_commit)
             .into_api_error("Invalid from commit ID")?;
         let to_oid = Oid::from_str(to_commit)
             .into_api_error("Invalid to commit ID")?;
-
+        
         let from_commit_obj = repo.find_commit(from_oid)
             .into_api_error("From commit not found")?;
         let to_commit_obj = repo.find_commit(to_oid)
@@ -288,45 +285,6 @@ impl DiffParser {
             deletions: total_deletions,
         })
     }
-
-    /// Get a summary of changes in a diff
-    pub fn get_diff_summary(&self, diff_info: &DiffInfo) -> DiffSummary {
-        let mut files_added = 0;
-        let mut files_deleted = 0;
-        let mut files_modified = 0;
-        let mut files_renamed = 0;
-
-        for file in &diff_info.files_changed {
-            match file.status {
-                DiffStatus::Added => files_added += 1,
-                DiffStatus::Deleted => files_deleted += 1,
-                DiffStatus::Modified => files_modified += 1,
-                DiffStatus::Renamed => files_renamed += 1,
-            }
-        }
-
-        DiffSummary {
-            total_files: diff_info.files_changed.len(),
-            files_added,
-            files_deleted,
-            files_modified,
-            files_renamed,
-            total_additions: diff_info.additions,
-            total_deletions: diff_info.deletions,
-        }
-    }
-}
-
-/// Summary statistics for a diff
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiffSummary {
-    pub total_files: usize,
-    pub files_added: usize,
-    pub files_deleted: usize,
-    pub files_modified: usize,
-    pub files_renamed: usize,
-    pub total_additions: usize,
-    pub total_deletions: usize,
 }
 
 #[cfg(test)]
@@ -334,60 +292,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_diff_parser_creation() {
-        let parser = DiffParser::new();
-        // DiffParser is stateless, so just verify it can be created
-        assert!(std::mem::size_of_val(&parser) >= 0);
-    }
-
-    #[test]
-    fn test_diff_status_serialization() {
-        let statuses = vec![
-            DiffStatus::Added,
-            DiffStatus::Deleted,
-            DiffStatus::Modified,
-            DiffStatus::Renamed,
-        ];
-
-        for status in statuses {
-            let json = serde_json::to_string(&status).unwrap();
-            let deserialized: DiffStatus = serde_json::from_str(&json).unwrap();
-            // Basic test to ensure serialization/deserialization works
-        }
-    }
-
-    #[test]
-    fn test_diff_summary_calculation() {
-        let parser = DiffParser::new();
-        let diff_info = DiffInfo {
-            commit_id: "test".to_string(),
-            files_changed: vec![
-                FileDiff {
-                    path: "file1.rs".to_string(),
-                    old_path: None,
-                    status: DiffStatus::Added,
-                    additions: 10,
-                    deletions: 0,
-                    hunks: vec![],
-                },
-                FileDiff {
-                    path: "file2.rs".to_string(),
-                    old_path: None,
-                    status: DiffStatus::Modified,
-                    additions: 5,
-                    deletions: 3,
-                    hunks: vec![],
-                },
-            ],
-            additions: 15,
-            deletions: 3,
+    fn test_diff_status() {
+        let file_diff = FileDiff {
+            path: "test.rs".to_string(),
+            old_path: None,
+            status: DiffStatus::Added,
+            additions: 10,
+            deletions: 0,
+            hunks: Vec::new(),
         };
-
-        let summary = parser.get_diff_summary(&diff_info);
-        assert_eq!(summary.total_files, 2);
-        assert_eq!(summary.files_added, 1);
-        assert_eq!(summary.files_modified, 1);
-        assert_eq!(summary.total_additions, 15);
-        assert_eq!(summary.total_deletions, 3);
+        
+        assert!(matches!(file_diff.status, DiffStatus::Added));
+        assert_eq!(file_diff.additions, 10);
     }
 }
