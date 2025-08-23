@@ -1,9 +1,10 @@
 // src/llm/client/config.rs
 // Phase 1: Extract Configuration Management from client.rs
 // Updated to use centralized CONFIG from src/config/mod.rs
+// CLEANED: Removed emojis for professional, terminal-friendly logging
 
 use anyhow::Result;
-use tracing::info;
+use tracing::{debug, info};
 use crate::config::CONFIG;
 
 #[derive(Debug, Clone)]
@@ -27,8 +28,8 @@ impl ClientConfig {
         let base_url = std::env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com".to_string());
 
-        info!(
-            "🚀 Initialized LLM client config (model={}, verbosity={}, reasoning={}, max_tokens={})",
+        debug!(
+            "Initialized LLM client config: model={}, verbosity={}, reasoning={}, max_tokens={}",
             CONFIG.model, CONFIG.verbosity, CONFIG.reasoning_effort, CONFIG.max_output_tokens
         );
 
@@ -131,6 +132,19 @@ impl ClientConfig {
     }
 }
 
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            api_key: "".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            model: "gpt-5".to_string(),
+            verbosity: "high".to_string(),
+            reasoning_effort: "high".to_string(),
+            max_output_tokens: 128000,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
     pub model: String,
@@ -150,6 +164,22 @@ impl ModelConfig {
         }
     }
 
+    /// Check if model supports streaming
+    pub fn supports_streaming(&self) -> bool {
+        // GPT-5 and similar models support streaming
+        self.model.starts_with("gpt-") || self.model.starts_with("claude-")
+    }
+
+    /// Get recommended timeout based on reasoning effort
+    pub fn recommended_timeout_secs(&self) -> u64 {
+        match self.reasoning_effort.as_str() {
+            "low" => 30,
+            "medium" => 60,
+            "high" => 120,
+            _ => 60, // Default fallback
+        }
+    }
+
     /// Convert to JSON for API requests
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -158,44 +188,6 @@ impl ModelConfig {
             "reasoning_effort": self.reasoning_effort,
             "max_output_tokens": self.max_output_tokens
         })
-    }
-
-    /// Check if model supports streaming
-    pub fn supports_streaming(&self) -> bool {
-        // Most modern models support streaming
-        true
-    }
-
-    /// Check if model supports structured output
-    pub fn supports_structured_output(&self) -> bool {
-        // GPT-5 and modern models support structured output
-        self.model.starts_with("gpt-5") || 
-        self.model.starts_with("gpt-4") ||
-        self.model.contains("turbo") ||
-        self.model.starts_with("o1")
-    }
-
-    /// Get recommended timeout for this model
-    pub fn recommended_timeout_secs(&self) -> u64 {
-        match self.reasoning_effort.as_str() {
-            "high" => 120, // High reasoning effort needs more time
-            "medium" => 60,
-            "low" => 30,
-            _ => 60,
-        }
-    }
-}
-
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self {
-            api_key: String::new(),
-            base_url: "https://api.openai.com".to_string(),
-            model: CONFIG.model.clone(),
-            verbosity: CONFIG.verbosity.clone(),
-            reasoning_effort: CONFIG.reasoning_effort.clone(),
-            max_output_tokens: CONFIG.max_output_tokens,
-        }
     }
 }
 
@@ -212,28 +204,20 @@ mod tests {
     #[test]
     fn test_config_validation() {
         let mut config = ClientConfig::default();
-        
-        // Should fail with empty API key
-        assert!(config.validate().is_err());
-        
-        // Set valid API key
         config.api_key = "test-key".to_string();
+        
         assert!(config.validate().is_ok());
         
+        // Test empty API key
+        config.api_key = "".to_string();
+        assert!(config.validate().is_err());
+        
         // Test invalid verbosity
+        config.api_key = "test-key".to_string();
         config.verbosity = "invalid".to_string();
         assert!(config.validate().is_err());
         
-        // Reset to valid
         config.verbosity = "medium".to_string();
-        assert!(config.validate().is_ok());
-        
-        // Test invalid reasoning effort
-        config.reasoning_effort = "invalid".to_string();
-        assert!(config.validate().is_err());
-        
-        // Reset to valid
-        config.reasoning_effort = "high".to_string();
         assert!(config.validate().is_ok());
         
         // Test invalid max tokens

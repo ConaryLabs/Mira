@@ -1,6 +1,6 @@
 // src/main.rs
 // Mira v2.0 - GPT-5 Edition with Responses API
-// FIXED: Routing conflict resolved - removed project routes from http_router()
+// CLEANED: Removed all emojis for professional, terminal-friendly logging
 
 use std::sync::Arc;
 
@@ -39,16 +39,16 @@ async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    info!("🚀 Mira v2.0 - GPT-5 Edition");
-    info!("📅 August 2025 - Full Autonomy Mode");
+    info!("Starting Mira v2.0 - GPT-5 Edition");
+    info!("Build Date: August 2025 - Full Autonomy Mode");
 
     // --- SQLite ---
-    info!("📦 Initializing SQLite database...");
+    info!("Initializing SQLite database");
     let pool = SqlitePool::connect("sqlite://mira.db").await?;
     migration::run_migrations(&pool).await?;
 
     // --- Memory stores ---
-    info!("🧠 Initializing memory stores...");
+    info!("Initializing memory stores");
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
 
     let qdrant_url =
@@ -59,29 +59,29 @@ async fn main() -> anyhow::Result<()> {
     let qdrant_store = Arc::new(QdrantMemoryStore::new(&qdrant_url, &qdrant_collection).await?);
 
     // --- OpenAI / GPT-5 ---
-    info!("🧠 Initializing OpenAI (GPT-5)...");
+    info!("Initializing OpenAI GPT-5 client");
     let openai_client = OpenAIClient::new()?;
-    info!("   ✅ gpt-5 for conversation");
-    info!("   ✅ gpt-image-1 for image generation");
-    info!("   ✅ text-embedding-3-large for embeddings");
+    info!("  - Model: gpt-5 for conversation");
+    info!("  - Image: gpt-image-1 for image generation");
+    info!("  - Embeddings: text-embedding-3-large");
 
     // --- Projects / Git ---
-    info!("📁 Initializing project store...");
+    info!("Initializing project store");
     let project_store = Arc::new(ProjectStore::new(pool.clone()));
 
-    info!("🐙 Initializing Git stores...");
+    info!("Initializing Git client and store");
     let git_store = GitStore::new(pool.clone());
     let git_dir = std::env::var("GIT_REPOS_DIR").unwrap_or_else(|_| "./repos".to_string());
     let git_client = GitClient::new(&git_dir, git_store.clone());
 
     // --- Responses API managers ---
-    info!("🔧 Initializing Responses API managers...");
+    info!("Initializing Responses API managers");
     let responses_manager = Arc::new(ResponsesManager::new(openai_client.clone()));
     let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(100, 128_000));
 
     // --- Services ---
-    info!("🛠️  Initializing services...");
+    info!("Initializing core services");
     let chat_config = ChatConfig {
         max_context_messages: 20,
         enable_memory: true,
@@ -119,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
     let persona_overlay = Arc::new(PersonaOverlay::new());
 
     // --- App state ---
-    info!("🏗️  Building application state...");
+    info!("Building application state");
     let app_state = Arc::new(AppState {
         db_pool: pool,
         openai_client,
@@ -143,15 +143,15 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // --- Router composition (FIXED: Removed singular/plural conflict) ---
-    info!("🛣️  Setting up routes...");
+    // --- Router composition ---
+    info!("Setting up routes");
     
-    // CRITICAL FIX: Clean separation of concerns
-    // - http_router() now ONLY serves /health and /chat endpoints (no project routes)
-    // - project_router() handles ALL /projects/* routes in a unified hierarchy
-    // - Git routes are nested under /projects/:project_id/git for clean structure
+    // Clean separation of concerns:
+    // - http_router() handles /health and /chat endpoints only
+    // - project_router() handles all /projects/* routes in unified hierarchy
+    // - Git routes are nested under /projects/:project_id/git
     let api = Router::new()
-        .merge(http_router(app_state.clone()))               // REST: /health, /chat, /chat/history ONLY
+        .merge(http_router(app_state.clone()))               // REST: /health, /chat, /chat/history only
         .nest("/ws", ws_router(app_state.clone()))           // WS: /ws/chat, /ws/test
         .merge(project_router().with_state(app_state.clone())); // Projects: /projects/* (unified)
 
@@ -164,16 +164,16 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors)
         .with_state(app_state);
 
-    info!("🚀 Server starting on {}", addr);
-    info!("🌐 Base:            http://{addr}/");
-    info!("🌐 API (REST):      http://{addr}/api/…");
-    info!("🔌 WS endpoint:     ws://{addr}/api/ws/chat");
-    info!("📁 Project routes:  http://{addr}/api/projects/* (unified hierarchy)");
-    info!("🐙 Git routes:      http://{addr}/api/projects/:id/git/* (nested under projects)");
+    info!("Server starting on {}", addr);
+    info!("  - Base URL:        http://{addr}/");
+    info!("  - API (REST):      http://{addr}/api/");
+    info!("  - WebSocket:       ws://{addr}/api/ws/chat");
+    info!("  - Project routes:  http://{addr}/api/projects/*");
+    info!("  - Git routes:      http://{addr}/api/projects/:id/git/*");
 
     // --- Start server with ConnectInfo (for WS peer addr, etc.) ---
     let listener = TcpListener::bind(&addr).await?;
-    info!("✨ Mira is ready for connections!");
+    info!("Mira server is ready for connections");
 
     axum::serve(
         listener,

@@ -1,4 +1,5 @@
-// src/api/ws/connection.rs
+// src/api/ws/chat/connection.rs
+// CLEANED: Professional logging without emojis for terminal-friendly output
 // Phase 1: Extract Connection Management from chat.rs
 // Handles WebSocket connection state, message sending, and activity tracking
 
@@ -13,6 +14,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use crate::api::ws::message::WsServerMessage;
+use crate::config::CONFIG;
 
 pub struct WebSocketConnection {
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
@@ -50,7 +52,7 @@ impl WebSocketConnection {
     /// Send a structured WebSocket message
     pub async fn send_message(&self, msg: WsServerMessage) -> Result<(), anyhow::Error> {
         let json_str = serde_json::to_string(&msg)?;
-        debug!("📤 Sending WS message: {} bytes", json_str.len());
+        debug!("Sending WS message: {} bytes", json_str.len());
         
         let mut lock = self.sender.lock().await;
         lock.send(Message::Text(json_str)).await?;
@@ -67,7 +69,7 @@ impl WebSocketConnection {
             "ts": chrono::Utc::now().to_rfc3339()
         });
         
-        debug!("📤 Sending status: {}", status);
+        debug!("Sending status: {}", status);
         let mut lock = self.sender.lock().await;
         lock.send(Message::Text(msg.to_string())).await?;
         *self.last_any_send.lock().await = Instant::now();
@@ -83,7 +85,7 @@ impl WebSocketConnection {
             "ts": chrono::Utc::now().to_rfc3339()
         });
         
-        error!("📤 Sending error: {}", error);
+        error!("Sending error: {}", error);
         let mut lock = self.sender.lock().await;
         lock.send(Message::Text(msg.to_string())).await?;
         *self.last_any_send.lock().await = Instant::now();
@@ -93,32 +95,34 @@ impl WebSocketConnection {
 
     /// Send initial connection messages (hello + ready)
     pub async fn send_connection_ready(&self) -> Result<(), anyhow::Error> {
-        // Send hello message
-        let hello_msg = json!({
-            "type": "hello",
-            "ts": chrono::Utc::now().to_rfc3339(),
-            "server": "mira-backend"
+        // Send welcome message
+        let welcome_msg = json!({
+            "type": "status",
+            "message": format!("Connected to Mira v{}", env!("CARGO_PKG_VERSION")),
+            "ts": chrono::Utc::now().to_rfc3339()
         });
 
-        // Send ready message
-        let ready_msg = json!({
-            "type": "ready",
-            "message": "WebSocket connection established",
+        // Send config info
+        let config_msg = json!({
+            "type": "status", 
+            "message": format!("Model: {} | Tools: {}", 
+                             CONFIG.model, 
+                             if CONFIG.enable_chat_tools { "enabled" } else { "disabled" }),
             "ts": chrono::Utc::now().to_rfc3339()
         });
 
         let mut lock = self.sender.lock().await;
-        lock.send(Message::Text(hello_msg.to_string())).await?;
-        lock.send(Message::Text(ready_msg.to_string())).await?;
+        lock.send(Message::Text(welcome_msg.to_string())).await?;
+        lock.send(Message::Text(config_msg.to_string())).await?;
         *self.last_any_send.lock().await = Instant::now();
 
-        info!("🔌 Connection ready messages sent");
+        info!("WebSocket connection ready messages sent");
         Ok(())
     }
 
     /// Send pong response to ping
     pub async fn send_pong(&self, data: Vec<u8>) -> Result<(), anyhow::Error> {
-        debug!("🏓 Ping received, sending pong");
+        debug!("Received ping, sending pong");
         let mut lock = self.sender.lock().await;
         lock.send(Message::Pong(data)).await?;
         *self.last_any_send.lock().await = Instant::now();

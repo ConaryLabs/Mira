@@ -1,7 +1,9 @@
 // src/memory/parallel_recall.rs
+// CLEANED: Professional logging without emojis for terminal-friendly output
 // Parallel version of context building - 30-50% faster than sequential
+
 use tokio::join;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use crate::memory::recall::RecallContext;
 use crate::memory::decay::{calculate_decayed_salience, DecayConfig};
 use crate::memory::traits::MemoryStore;
@@ -25,6 +27,8 @@ where
 {
     let start = std::time::Instant::now();
     
+    debug!("Starting parallel context build for session: {}", session_id);
+    
     // Launch embedding and recent messages fetch in parallel
     let (embedding_result, recent_result): (Result<Vec<f32>, _>, Result<Vec<_>, _>) = join!(
         llm_client.get_embedding(user_text),
@@ -32,7 +36,7 @@ where
     );
     
     let parallel_time = start.elapsed();
-    info!("⚡ Parallel fetch completed in {:?} (embedding + SQLite)", parallel_time);
+    debug!("Parallel fetch completed in {:?} (embedding + SQLite)", parallel_time);
     
     // Handle results
     let embedding = embedding_result.ok();
@@ -41,15 +45,16 @@ where
     }
     
     let recent = recent_result?;
-    info!("📚 Loaded {} recent messages", recent.len());
+    debug!("Loaded {} recent messages", recent.len());
     
     // Semantic search only if we have an embedding
     let semantic = if let Some(ref emb) = embedding {
         let semantic_start = std::time::Instant::now();
         let results = qdrant_store.semantic_search(session_id, emb, semantic_count * 2).await?;
-        info!("🔍 Semantic search found {} results in {:?}", results.len(), semantic_start.elapsed());
+        debug!("Semantic search found {} results in {:?}", results.len(), semantic_start.elapsed());
         results
     } else {
+        debug!("Skipping semantic search - no embedding available");
         Vec::new()
     };
     
@@ -59,9 +64,19 @@ where
     
     // Apply decay to semantic memories
     let now = Utc::now();
+    let mut decayed_count = 0;
     for memory in &mut context.semantic {
+        let original_salience = memory.salience.unwrap_or(0.0);
         let decayed = calculate_decayed_salience(memory, &decay_config, now);
         memory.salience = Some(decayed);
+        
+        if decayed < original_salience {
+            decayed_count += 1;
+        }
+    }
+    
+    if decayed_count > 0 {
+        debug!("Applied decay to {} semantic memories", decayed_count);
     }
     
     // Sort semantic by decayed salience
@@ -75,8 +90,15 @@ where
     context.semantic.truncate(semantic_count);
     
     let total_time = start.elapsed();
-    info!("✅ Context built in {:?} total: {} recent, {} semantic entries", 
-          total_time, context.recent.len(), context.semantic.len());
+    info!(
+        "Context built in {:?}: {} recent, {} semantic entries", 
+        total_time, context.recent.len(), context.semantic.len()
+    );
+    
+    // Log performance metrics for tuning
+    if total_time.as_millis() > 1000 {
+        warn!("Slow context build: {:?} (consider optimization)", total_time);
+    }
     
     Ok(context)
 }
