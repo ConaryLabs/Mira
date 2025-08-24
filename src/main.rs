@@ -2,6 +2,8 @@
 // Mira v2.0 - GPT-5 Edition with Responses API
 // CLEANED: Removed all emojis for professional, terminal-friendly logging
 // PHASE 3 UPDATE: Added ImageGenerationManager and FileSearchService
+// FIXED: Removed duplicate /health route that was causing Axum router conflict
+// FIXED: Use CONFIG system instead of hardcoded values
 
 use std::sync::Arc;
 
@@ -14,6 +16,7 @@ use tracing::info;
 use mira_backend::{
     api::http::http_router,
     api::ws::ws_router,
+    config::CONFIG,  // ADDED: Import CONFIG
     git::{GitClient, GitStore},
     llm::client::OpenAIClient,
     llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager, ImageGenerationManager}, // PHASE 3: Added ImageGenerationManager
@@ -43,26 +46,23 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Mira v2.0 - GPT-5 Edition");
     info!("Build Date: August 2025 - Full Autonomy Mode");
 
-    // --- SQLite ---
+    // FIXED: Use CONFIG for database URL
     info!("Initializing SQLite database");
-    let pool = SqlitePool::connect("sqlite://mira.db").await?;
+    let pool = SqlitePool::connect(&CONFIG.database_url).await?;
     migration::run_migrations(&pool).await?;
 
     // --- Memory stores ---
     info!("Initializing memory stores");
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
 
-    let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
-    let qdrant_collection =
-        std::env::var("QDRANT_COLLECTION").unwrap_or_else(|_| "mira-memory".to_string());
-
+    // FIXED: Use CONFIG for Qdrant configuration
+    let (qdrant_url, qdrant_collection, _) = CONFIG.qdrant_config();
     let qdrant_store = Arc::new(QdrantMemoryStore::new(&qdrant_url, &qdrant_collection).await?);
 
     // --- OpenAI / GPT-5 ---
     info!("Initializing OpenAI GPT-5 client");
     let openai_client = OpenAIClient::new()?;
-    info!("  - Model: gpt-5 for conversation");
+    info!("  - Model: {} for conversation", CONFIG.model);
     info!("  - Image: gpt-image-1 for image generation");
     info!("  - Embeddings: text-embedding-3-large");
 
@@ -72,8 +72,8 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Initializing Git client and store");
     let git_store = GitStore::new(pool.clone());
-    let git_dir = std::env::var("GIT_REPOS_DIR").unwrap_or_else(|_| "./repos".to_string());
-    let git_client = GitClient::new(&git_dir, git_store.clone());
+    // FIXED: Use CONFIG for git directory
+    let git_client = GitClient::new(&CONFIG.git_repos_dir, git_store.clone());
 
     // --- Responses API managers ---
     info!("Initializing Responses API managers");
@@ -164,14 +164,17 @@ async fn main() -> anyhow::Result<()> {
         .merge(http_router(app_state.clone()))
         .merge(ws_router(app_state.clone()))
         .merge(project_router())
-        .route("/health", get(|| async { "OK" }))
+        // REMOVED: .route("/health", get(|| async { "OK" })) - duplicates http_router health endpoint
         .layer(cors)
         .with_state(app_state);
 
-    let listener = TcpListener::bind("0.0.0.0:3001").await?;
-    info!("Server listening on http://0.0.0.0:3001");
-    info!("WebSocket available at ws://0.0.0.0:3001/ws");
-    info!("Health check available at http://0.0.0.0:3001/health");
+    // FIXED: Use CONFIG.bind_address() instead of hardcoded port
+    let bind_addr = CONFIG.bind_address();
+    info!("Server bind address: {}", bind_addr);
+    let listener = TcpListener::bind(&bind_addr).await?;
+    info!("Server listening on http://{}", bind_addr);
+    info!("WebSocket available at ws://{}/ws/chat", bind_addr);
+    info!("Health check available at http://{}/health", bind_addr);
 
     axum::serve(listener, app).await?;
 
