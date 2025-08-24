@@ -1,12 +1,15 @@
 // src/services/file_search.rs
 // PHASE 3 NEW: File search service for project-aware document search
 // Integrates with VectorStoreManager and Git system for comprehensive file search
+// FIXED: Recursive async function using Box::pin for indirection
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::path::Path;
+use std::pin::Pin;
+use std::future::Future;
 use tracing::{info, debug, warn};
 
 use crate::llm::responses::VectorStoreManager;
@@ -67,7 +70,7 @@ impl FileSearchService {
     pub async fn search_files(
         &self,
         params: &FileSearchParams,
-        project_id: Option<&str>,
+        _project_id: Option<&str>,
     ) -> Result<Value> {
         info!("🔍 Searching files with query: '{}'", params.query);
         debug!("Search parameters: {:?}", params);
@@ -79,16 +82,16 @@ impl FileSearchService {
         let mut results = Vec::new();
         
         if let Ok(vector_results) = self.vector_store_manager
-            .search_documents(project_id, &params.query, max_files)
+            .search_documents(_project_id, &params.query, max_files)
             .await 
         {
             debug!("Found {} vector store results", vector_results.len());
             
             for result in vector_results {
                 // Filter by file extensions if specified
-                if let Some(ref extensions) = params.file_extensions {
+                if let Some(ref _file_extensions) = params.file_extensions {
                     if let Some(ref file_id) = result.file_id {
-                        let matches_extension = extensions.iter().any(|ext| {
+                        let matches_extension = _file_extensions.iter().any(|ext| {
                             file_id.ends_with(&format!(".{}", ext))
                         });
                         if !matches_extension {
@@ -128,7 +131,7 @@ impl FileSearchService {
         if results.len() < max_files {
             if let Some(filename_results) = self.search_by_filename_and_path(
                 &params.query, 
-                project_id, 
+                _project_id, 
                 &params.file_extensions,
                 max_files - results.len(),
                 params.case_sensitive.unwrap_or(false)
@@ -163,9 +166,9 @@ impl FileSearchService {
     async fn search_by_filename_and_path(
         &self,
         query: &str,
-        project_id: Option<&str>,
-        file_extensions: &Option<Vec<String>>,
-        max_results: usize,
+        _project_id: Option<&str>,
+        _file_extensions: &Option<Vec<String>>,
+        _max_results: usize,
         case_sensitive: bool,
     ) -> Option<Vec<FileSearchResult>> {
         debug!("Searching filenames and paths for: '{}'", query);
@@ -213,7 +216,7 @@ impl FileSearchService {
         let file_nodes = self.git_client.get_file_tree(attachment)
             .map_err(|e| anyhow::anyhow!("Failed to get file tree: {}", e))?;
         
-        // Recursively index files
+        // Recursively index files using Box::pin for indirection
         indexed_files += self.index_file_nodes(&file_nodes, attachment).await?;
         
         info!("📚 Repository indexing completed: {} files indexed", indexed_files);
@@ -221,30 +224,33 @@ impl FileSearchService {
     }
     
     /// Recursively index file nodes
-    async fn index_file_nodes(
-        &self,
-        nodes: &[FileNode],
-        attachment: &GitRepoAttachment,
-    ) -> Result<usize> {
-        let mut indexed = 0;
-        
-        for node in nodes {
-            match node.node_type {
-                FileNodeType::File => {
-                    if self.should_index_file(&node.path) {
-                        if let Ok(_) = self.index_single_file(node, attachment).await {
-                            indexed += 1;
+    /// FIXED: Use proper lifetimes for all parameters
+    fn index_file_nodes<'a>(
+        &'a self,
+        nodes: &'a [FileNode],
+        attachment: &'a GitRepoAttachment,
+    ) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut indexed = 0;
+            
+            for node in nodes {
+                match node.node_type {
+                    FileNodeType::File => {
+                        if self.should_index_file(&node.path) {
+                            if let Ok(_) = self.index_single_file(node, attachment).await {
+                                indexed += 1;
+                            }
                         }
                     }
-                }
-                FileNodeType::Directory => {
-                    // Recursively index children
-                    indexed += self.index_file_nodes(&node.children, attachment).await?;
+                    FileNodeType::Directory => {
+                        // Recursively index children using Box::pin
+                        indexed += self.index_file_nodes(&node.children, attachment).await?;
+                    }
                 }
             }
-        }
-        
-        Ok(indexed)
+            
+            Ok(indexed)
+        })
     }
     
     /// Index a single file into the vector store
@@ -256,7 +262,7 @@ impl FileSearchService {
         debug!("Indexing file: {}", file_node.path);
         
         // Get file content from git client
-        let content = self.git_client.get_file_content(attachment, &file_node.path)
+        let _content = self.git_client.get_file_content(attachment, &file_node.path)
             .map_err(|e| anyhow::anyhow!("Failed to read file content: {}", e))?;
         
         // Create a temporary file for vector store upload

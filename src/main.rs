@@ -1,6 +1,7 @@
 // src/main.rs
 // Mira v2.0 - GPT-5 Edition with Responses API
 // CLEANED: Removed all emojis for professional, terminal-friendly logging
+// PHASE 3 UPDATE: Added ImageGenerationManager and FileSearchService
 
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use mira_backend::{
     api::ws::ws_router,
     git::{GitClient, GitStore},
     llm::client::OpenAIClient,
-    llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager},
+    llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager, ImageGenerationManager}, // PHASE 3: Added ImageGenerationManager
     memory::{
         qdrant::store::QdrantMemoryStore,
         sqlite::{migration, store::SqliteMemoryStore},
@@ -28,6 +29,7 @@ use mira_backend::{
         DocumentService,
         MemoryService,
         SummarizationService,
+        FileSearchService, // PHASE 3: Added FileSearchService
     },
     state::AppState,
 };
@@ -79,6 +81,10 @@ async fn main() -> anyhow::Result<()> {
     let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
     let thread_manager = Arc::new(ThreadManager::new(100, 128_000));
 
+    // PHASE 3 NEW: Initialize ImageGenerationManager
+    info!("Initializing Phase 3 services");
+    let image_generation_manager = Arc::new(ImageGenerationManager::new(openai_client.clone()));
+
     // --- Services ---
     info!("Initializing services");
     let memory_service = Arc::new(MemoryService::new(
@@ -104,6 +110,12 @@ async fn main() -> anyhow::Result<()> {
     let document_service = Arc::new(DocumentService::new(
         memory_service.clone(),
         vector_store_manager.clone(),
+    ));
+
+    // PHASE 3 NEW: Initialize FileSearchService
+    let file_search_service = Arc::new(FileSearchService::new(
+        vector_store_manager.clone(),
+        git_client.clone(),
     ));
 
     let persona_overlay = PersonaOverlay::mira();
@@ -132,10 +144,12 @@ async fn main() -> anyhow::Result<()> {
         responses_manager,
         vector_store_manager,
         thread_manager,
+        image_generation_manager, // PHASE 3 NEW
         chat_service,
         memory_service,
         context_service,
         document_service,
+        file_search_service, // PHASE 3 NEW
     });
 
     // --- HTTP server ---

@@ -1,6 +1,7 @@
 // src/api/ws/chat_tools/message_handler.rs
 // Phase 2: Extract Message Handling from chat_tools.rs
 // Handles WebSocket-specific tool message processing and streaming
+// FIXED: Added missing ImageGenerated pattern match
 
 use std::sync::Arc;
 
@@ -53,6 +54,12 @@ pub enum WsServerMessageWithTools {
         tool_type: String,
         tool_id: String,
         data: serde_json::Value,
+    },
+    // PHASE 3 NEW: Image generation specific message type
+    ImageGenerated {
+        urls: Vec<String>,
+        revised_prompt: Option<String>,
+        tool_id: String,
     },
 }
 
@@ -127,6 +134,11 @@ impl ToolMessageHandler {
                             self.send_tool_call(&tool_type, &tool_id, "failed").await?;
                             self.send_error(&format!("Tool {} failed: {}", tool_type, error), None).await?;
                         }
+                        // FIXED: Added missing ImageGenerated pattern match
+                        ToolEvent::ImageGenerated { urls, revised_prompt } => {
+                            info!("🎨 Image generated with {} URLs", urls.len());
+                            self.send_image_generated(urls, revised_prompt, "img_gen_1".to_string()).await?;
+                        }
                         ToolEvent::Complete { metadata } => {
                             // Extract fields from metadata properly
                             let mood = metadata.as_ref().and_then(|m| m.mood.clone());
@@ -143,74 +155,146 @@ impl ToolMessageHandler {
                         }
                     }
                 }
+                
+                Ok(())
             }
             Err(e) => {
-                error!("Failed to execute with tools: {}", e);
-                self.send_error(&format!("Failed to process with tools: {}", e), None).await?;
+                error!("Tool execution failed: {}", e);
+                self.send_error(&format!("Tool execution failed: {}", e), Some("TOOL_EXEC_ERROR".to_string())).await?;
+                Err(e)
             }
         }
-
-        Ok(())
     }
 
-    // Helper methods for sending WebSocket messages
+    // Private helper methods for sending WebSocket messages
+
     async fn send_chunk(&self, content: &str, mood: Option<String>) -> Result<()> {
-        let message = WsServerMessage::Chunk {
-            content: content.to_string(),
-            mood,
+        let message = WsServerMessageWithTools::Chunk { 
+            content: content.to_string(), 
+            mood 
         };
-        self.connection.send_message(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
-    }
-
-    async fn send_status(&self, message: &str, detail: Option<&str>) -> Result<()> {
-        // Use the existing send_status method from WebSocketConnection
-        if let Some(detail) = detail {
-            self.connection.send_status(&format!("{} - {}", message, detail)).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
-        } else {
-            self.connection.send_status(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
-        }
+        self.send_ws_message(message).await
     }
 
     async fn send_complete(
-        &self,
-        mood: Option<String>,
-        salience: Option<f32>,
-        tags: Option<Vec<String>>,
+        &self, 
+        mood: Option<String>, 
+        salience: Option<f32>, 
+        tags: Option<Vec<String>>
     ) -> Result<()> {
-        let message = WsServerMessage::Complete {
-            mood,
-            salience,
-            tags,
+        let message = WsServerMessageWithTools::Complete { mood, salience, tags };
+        self.send_ws_message(message).await
+    }
+
+    async fn send_status(&self, message: &str, detail: Option<&str>) -> Result<()> {
+        let status_msg = WsServerMessageWithTools::Status { 
+            message: message.to_string(), 
+            detail: detail.map(|d| d.to_string()) 
         };
-        self.connection.send_message(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
+        self.send_ws_message(status_msg).await
     }
 
-    async fn send_tool_call(&self, tool_type: &str, tool_id: &str, status: &str) -> Result<()> {
-        // Send as status message since we don't have a specific tool call message type in WsServerMessage
-        let status_msg = format!("Tool {}: {} - {}", tool_type, tool_id, status);
-        self.connection.send_status(&status_msg).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
-    }
-
-    async fn send_tool_result(&self, tool_type: &str, tool_id: &str, data: serde_json::Value) -> Result<()> {
-        // Send tool result as status message with JSON data
-        let result_msg = format!("Tool result {}: {} - {}", tool_type, tool_id, data);
-        self.connection.send_status(&result_msg).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
-    }
-
-    async fn send_error(&self, message: &str, _code: Option<&str>) -> Result<()> {
-        // Use the existing send_error method from WebSocketConnection
-        self.connection.send_error(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
+    async fn send_error(&self, message: &str, code: Option<String>) -> Result<()> {
+        let error_msg = WsServerMessageWithTools::Error { 
+            message: message.to_string(), 
+            code 
+        };
+        self.send_ws_message(error_msg).await
     }
 
     async fn send_done(&self) -> Result<()> {
-        let message = WsServerMessage::Done;
-        self.connection.send_message(message).await.map_err(|e| anyhow::anyhow!("WebSocket send error: {}", e))
+        let done_msg = WsServerMessageWithTools::Done;
+        self.send_ws_message(done_msg).await
     }
 
+    async fn send_tool_call(&self, tool_type: &str, tool_id: &str, status: &str) -> Result<()> {
+        let tool_call_msg = WsServerMessageWithTools::ToolCall {
+            tool_type: tool_type.to_string(),
+            tool_id: tool_id.to_string(),
+            status: status.to_string(),
+        };
+        self.send_ws_message(tool_call_msg).await
+    }
+
+    async fn send_tool_result(&self, tool_type: &str, tool_id: &str, data: serde_json::Value) -> Result<()> {
+        let tool_result_msg = WsServerMessageWithTools::ToolResult {
+            tool_type: tool_type.to_string(),
+            tool_id: tool_id.to_string(),
+            data,
+        };
+        self.send_ws_message(tool_result_msg).await
+    }
+
+    // PHASE 3 NEW: Send image generation result
+    async fn send_image_generated(&self, urls: Vec<String>, revised_prompt: Option<String>, tool_id: String) -> Result<()> {
+        let image_msg = WsServerMessageWithTools::ImageGenerated {
+            urls,
+            revised_prompt,
+            tool_id,
+        };
+        self.send_ws_message(image_msg).await
+    }
+
+    async fn send_ws_message(&self, message: WsServerMessageWithTools) -> Result<()> {
+        // Convert our custom message type to the expected WsServerMessage
+        let ws_message = match message {
+            WsServerMessageWithTools::Chunk { content, mood } => {
+                WsServerMessage::Chunk { content, mood }
+            }
+            WsServerMessageWithTools::Complete { mood, salience, tags } => {
+                WsServerMessage::Complete { mood, salience, tags }
+            }
+            WsServerMessageWithTools::Status { message, detail: _ } => {
+                // Use send_status method instead
+                return self.connection.send_status(&message).await;
+            }
+            WsServerMessageWithTools::Aside { emotional_cue, intensity: _ } => {
+                // Convert to status message for aside
+                let aside_msg = format!("Aside: {}", emotional_cue);
+                return self.connection.send_status(&aside_msg).await;
+            }
+            WsServerMessageWithTools::Error { message, code: _ } => {
+                WsServerMessage::Error { message, code: "TOOL_ERROR".to_string() }
+            }
+            WsServerMessageWithTools::Done => {
+                WsServerMessage::Done
+            }
+            WsServerMessageWithTools::ToolCall { tool_type, tool_id, status } => {
+                // Convert to status message
+                let status_msg = format!("Tool {}: {} - {}", tool_type, tool_id, status);
+                return self.connection.send_status(&status_msg).await;
+            }
+            WsServerMessageWithTools::ToolResult { tool_type, tool_id, data } => {
+                // Convert to status message with JSON data
+                let result_msg = format!("Tool result {}: {} - {}", tool_type, tool_id, data);
+                return self.connection.send_status(&result_msg).await;
+            }
+            WsServerMessageWithTools::ImageGenerated { urls, revised_prompt, tool_id: _ } => {
+                // Convert to status message with image URLs
+                let image_msg = format!("Image generated: {} URLs{}", 
+                    urls.len(),
+                    if let Some(prompt) = revised_prompt { 
+                        format!(" (revised: {})", prompt) 
+                    } else { 
+                        String::new() 
+                    }
+                );
+                return self.connection.send_status(&image_msg).await;
+            }
+        };
+        
+        self.connection.send_message(ws_message).await
+    }
+
+    /// Fallback handler for simple responses when tools are not available
     async fn handle_simple_response(&self, content: String) -> Result<()> {
-        // Fallback to simple response without tools
-        self.send_chunk(&format!("Simple response for: {}", content), Some("neutral".to_string())).await?;
-        self.send_complete(Some("neutral".to_string()), Some(5.0), Some(vec!["simple".to_string()])).await?;
-        self.send_done().await
+        info!("Handling simple response (tools disabled)");
+        
+        let response_content = format!("I received your message: {}", content);
+        self.send_chunk(&response_content, Some("helpful".to_string())).await?;
+        self.send_complete(Some("helpful".to_string()), Some(0.5), None).await?;
+        self.send_done().await?;
+        
+        Ok(())
     }
 }
