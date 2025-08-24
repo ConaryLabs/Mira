@@ -1,5 +1,5 @@
 // src/api/ws/chat/message_router.rs
-// CLEANED: Removed leftover phase comments, fixed emojis in logging
+// PHASE 3 UPDATE: Fixed tool detection logic for better routing
 // Handles routing between simple chat and tool-enabled chat based on CONFIG
 
 use std::sync::Arc;
@@ -50,7 +50,8 @@ impl MessageRouter {
         }
     }
 
-    /// Routes chat messages based on CONFIG.enable_chat_tools and metadata presence
+    /// Routes chat messages based on improved tool detection logic
+    /// PHASE 3 FIX: Use should_use_tools() function for consistent logic
     async fn handle_chat_message(
         &self,
         content: String,
@@ -60,13 +61,16 @@ impl MessageRouter {
         info!("Chat message received: {} chars", content.len());
         self.connection.set_processing(true).await;
 
-        // Check if tools are enabled (from CONFIG)
-        let enable_tools = CONFIG.enable_chat_tools;
-
-        // Route to appropriate handler based on tools setting and metadata presence
-        let result = if enable_tools && metadata.is_some() {
+        // PHASE 3 FIX: Use the centralized tool detection logic
+        let result = if should_use_tools(&metadata) {
             // Use tool-enabled streaming handler
-            let session_id = CONFIG.session_id.clone();
+            // Generate session ID dynamically for each WebSocket session
+            let session_id = format!("ws-{}-{}", 
+                chrono::Utc::now().timestamp(), 
+                self.addr.port()
+            );
+            
+            debug!("Routing to tool-enabled handler with session_id: {}", session_id);
             
             handle_chat_message_with_tools(
                 content,
@@ -78,6 +82,7 @@ impl MessageRouter {
             ).await
         } else {
             // Use simple streaming handler
+            debug!("Routing to simple chat handler");
             self.handle_simple_chat_message(
                 content,
                 project_id,
@@ -162,10 +167,47 @@ impl MessageRouter {
     }
 }
 
-/// Utility function to check if a message should use tools
-/// This encapsulates the routing logic for reuse
+/// PHASE 3 IMPROVED: Enhanced tool detection logic
+/// This encapsulates the routing logic for consistent reuse across the system
 pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
-    CONFIG.enable_chat_tools && metadata.is_some()
+    // Must have tools enabled globally
+    if !CONFIG.enable_chat_tools {
+        return false;
+    }
+    
+    // Tools are enabled - now check if context suggests tool usage would be beneficial
+    match metadata {
+        Some(meta) => {
+            // If we have specific file context, tools are likely beneficial
+            if meta.file_path.is_some() {
+                return true;
+            }
+            
+            // If we have repository context, tools are likely beneficial  
+            if meta.repo_id.is_some() || meta.attachment_id.is_some() {
+                return true;
+            }
+            
+            // If we have language context, user might be asking about code
+            if meta.language.is_some() {
+                return true;
+            }
+            
+            // If we have a text selection, user might want to operate on it
+            if meta.selection.is_some() {
+                return true;
+            }
+            
+            // Even empty metadata suggests the client is tool-capable
+            // Let the LLM decide if tools are actually needed
+            true
+        }
+        None => {
+            // No metadata means basic chat - use simple handler
+            // The client didn't indicate any context that would benefit from tools
+            false
+        }
+    }
 }
 
 /// Utility function to extract file context from metadata
@@ -175,6 +217,8 @@ pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String
             Some(format!("File: {}", file_path))
         } else if let Some(repo_id) = &meta.repo_id {
             Some(format!("Repository: {}", repo_id))
+        } else if let Some(attachment_id) = &meta.attachment_id {
+            Some(format!("Attachment: {}", attachment_id))
         } else {
             None
         }
@@ -188,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_should_use_tools() {
-        // Test with metadata present
+        // Test with metadata containing file path
         let metadata_with_file = Some(MessageMetadata {
             file_path: Some("test.rs".to_string()),
             repo_id: None,
@@ -197,10 +241,28 @@ mod tests {
             selection: None,
         });
         
+        // Test with metadata containing repo ID
+        let metadata_with_repo = Some(MessageMetadata {
+            file_path: None,
+            repo_id: Some("repo-123".to_string()),
+            attachment_id: None,
+            language: None,
+            selection: None,
+        });
+        
+        // Test with metadata containing language
+        let metadata_with_language = Some(MessageMetadata {
+            file_path: None,
+            repo_id: None,
+            attachment_id: None,
+            language: Some("rust".to_string()),
+            selection: None,
+        });
+        
         // Test with no metadata
         let no_metadata = None;
         
-        // Test with empty metadata
+        // Test with completely empty metadata
         let empty_metadata = Some(MessageMetadata {
             file_path: None,
             repo_id: None,
@@ -209,15 +271,18 @@ mod tests {
             selection: None,
         });
         
-        // Note: These tests depend on CONFIG.enable_chat_tools
-        // In a real test environment, we'd want to mock or set the config
-        
+        // These tests depend on CONFIG.enable_chat_tools being true (Phase 3 default)
         if CONFIG.enable_chat_tools {
-            assert!(should_use_tools(&metadata_with_file));
-            assert!(!should_use_tools(&no_metadata));
-            assert!(should_use_tools(&empty_metadata)); // metadata exists even if empty
+            assert!(should_use_tools(&metadata_with_file), "Should use tools for file context");
+            assert!(should_use_tools(&metadata_with_repo), "Should use tools for repo context");
+            assert!(should_use_tools(&metadata_with_language), "Should use tools for language context");
+            assert!(!should_use_tools(&no_metadata), "Should not use tools without metadata");
+            assert!(should_use_tools(&empty_metadata), "Should use tools for empty metadata (tool-capable client)");
         } else {
+            // If tools are disabled, none should use tools
             assert!(!should_use_tools(&metadata_with_file));
+            assert!(!should_use_tools(&metadata_with_repo));
+            assert!(!should_use_tools(&metadata_with_language));
             assert!(!should_use_tools(&no_metadata));
             assert!(!should_use_tools(&empty_metadata));
         }
@@ -241,6 +306,14 @@ mod tests {
             selection: None,
         });
         
+        let metadata_with_attachment = Some(MessageMetadata {
+            file_path: None,
+            repo_id: None,
+            attachment_id: Some("attach-456".to_string()),
+            language: None,
+            selection: None,
+        });
+        
         let empty_metadata = Some(MessageMetadata {
             file_path: None,
             repo_id: None,
@@ -251,6 +324,7 @@ mod tests {
         
         assert_eq!(extract_file_context(&metadata_with_file), Some("File: src/main.rs".to_string()));
         assert_eq!(extract_file_context(&metadata_with_repo), Some("Repository: repo-123".to_string()));
+        assert_eq!(extract_file_context(&metadata_with_attachment), Some("Attachment: attach-456".to_string()));
         assert_eq!(extract_file_context(&empty_metadata), None);
         assert_eq!(extract_file_context(&None), None);
     }

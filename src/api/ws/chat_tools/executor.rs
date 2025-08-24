@@ -1,8 +1,9 @@
 // src/api/ws/chat_tools/executor.rs
+// PHASE 3 UPDATE: Added ImageGenerationManager and FileSearchService integration
 
 use std::sync::Arc;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::{info, debug, error};
 use futures::{Stream, StreamExt};
 
@@ -10,9 +11,12 @@ use crate::api::ws::message::MessageMetadata;
 use crate::llm::responses::{
     types::{Message as ResponseMessage, CreateStreamingResponse},
     ResponsesManager,
+    ImageGenerationManager, // PHASE 3 NEW
+    ImageOptions, // PHASE 3 NEW
 };
 use crate::memory::recall::RecallContext;
-use crate::services::chat_with_tools::get_enabled_tools;
+use crate::services::{chat_with_tools::get_enabled_tools, FileSearchService, FileSearchParams}; // PHASE 3: Added FileSearchService
+use crate::state::AppState; // PHASE 3 NEW
 use crate::config::CONFIG;
 
 /// Configuration for tool execution using centralized CONFIG
@@ -103,6 +107,11 @@ pub enum ToolEvent {
         tool_id: String,
         error: String,
     },
+    // PHASE 3 NEW: Image generation event
+    ImageGenerated {
+        urls: Vec<String>,
+        revised_prompt: Option<String>,
+    },
     Complete {
         metadata: Option<ResponseMetadata>,
     },
@@ -110,9 +119,11 @@ pub enum ToolEvent {
     Done,
 }
 
-/// Tool executor with complete ResponsesManager integration
+/// Tool executor with complete integration for Phase 3 tools
 pub struct ToolExecutor {
     responses_manager: Arc<ResponsesManager>,
+    image_generation_manager: Option<Arc<ImageGenerationManager>>, // PHASE 3 NEW
+    file_search_service: Option<Arc<FileSearchService>>, // PHASE 3 NEW
     config: ToolConfig,
 }
 
@@ -123,6 +134,20 @@ impl ToolExecutor {
 
         Self {
             responses_manager,
+            image_generation_manager: None, // Will be set by from_app_state
+            file_search_service: None, // Will be set by from_app_state
+            config: ToolConfig::default(),
+        }
+    }
+
+    /// PHASE 3 NEW: Create new tool executor from AppState with all managers
+    pub fn from_app_state(app_state: &Arc<AppState>) -> Self {
+        info!("Initializing ToolExecutor with all managers from AppState");
+
+        Self {
+            responses_manager: app_state.responses_manager.clone(),
+            image_generation_manager: Some(app_state.image_generation_manager.clone()), // PHASE 3 NEW
+            file_search_service: Some(app_state.file_search_service.clone()), // PHASE 3 NEW
             config: ToolConfig::default(),
         }
     }
@@ -136,6 +161,8 @@ impl ToolExecutor {
 
         Self {
             responses_manager,
+            image_generation_manager: None, // Will need to be set separately
+            file_search_service: None, // Will need to be set separately
             config,
         }
     }
@@ -275,31 +302,17 @@ impl ToolExecutor {
                                     ToolEvent::ToolCallFailed { tool_type, tool_id, error }
                                 }
                                 Some("complete") => {
-                                    let metadata = Some(ResponseMetadata {
-                                        mood: stream_event.get("mood").and_then(|m| m.as_str()).map(String::from),
-                                        salience: stream_event.get("salience").and_then(|s| s.as_f64()).map(|f| f as f32),
-                                        tags: stream_event.get("tags")
-                                            .and_then(|t| t.as_array())
-                                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()),
-                                        response_id: stream_event.get("response_id").and_then(|r| r.as_str()).map(String::from),
-                                    });
-                                    
-                                    ToolEvent::Complete { metadata }
+                                    ToolEvent::Complete { 
+                                        metadata: Some(ResponseMetadata {
+                                            mood: None,
+                                            salience: None,
+                                            tags: None,
+                                            response_id: None,
+                                        })
+                                    }
                                 }
-                                Some("error") => {
-                                    let error_msg = stream_event.get("message")
-                                        .and_then(|m| m.as_str())
-                                        .unwrap_or("Unknown streaming error")
-                                        .to_string();
-                                    
-                                    ToolEvent::Error(error_msg)
-                                }
-                                _ => {
-                                    debug!("Unknown stream event type: {}", 
-                                           stream_event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"));
-                                    ToolEvent::Error(format!("Unknown event type: {}", 
-                                                            stream_event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown")))
-                                }
+                                Some("done") => ToolEvent::Done,
+                                _ => ToolEvent::Error("Unknown stream event type".to_string()),
                             }
                         }
                         Err(e) => {
@@ -316,6 +329,85 @@ impl ToolExecutor {
                 Err(anyhow::anyhow!("Tool streaming failed: {}", e))
             }
         }
+    }
+
+    /// PHASE 3 NEW: Execute image generation tool
+    pub async fn execute_image_generation(
+        &self,
+        prompt: &str,
+        style: Option<String>,
+        quality: Option<String>,
+        size: Option<String>,
+    ) -> Result<Value> {
+        info!("🎨 Executing image generation tool");
+        
+        let image_manager = self.image_generation_manager
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("ImageGenerationManager not available"))?;
+        
+        // Create options from parameters using CONFIG defaults
+        let options = ImageOptions {
+            n: Some(1),
+            size: size.or_else(|| Some(CONFIG.image_generation_size.clone())),
+            quality: quality.or_else(|| Some(CONFIG.image_generation_quality.clone())),
+            style: style.or_else(|| Some(CONFIG.image_generation_style.clone())),
+        };
+        
+        // Validate options
+        options.validate()?;
+        
+        // Generate the image
+        let response = image_manager.generate_images(prompt, options).await?;
+        
+        // Format response for tool system
+        let urls: Vec<&str> = response.urls();
+        let revised_prompt = response.images.first()
+            .and_then(|img| img.revised_prompt.as_deref());
+        
+        info!("✅ Image generation completed: {} images", response.images.len());
+        
+        Ok(json!({
+            "prompt": prompt,
+            "urls": urls,
+            "revised_prompt": revised_prompt,
+            "image_count": response.images.len(),
+            "tool_type": "image_generation",
+            "status": "completed"
+        }))
+    }
+
+    /// PHASE 3 NEW: Execute file search tool
+    pub async fn execute_file_search(
+        &self,
+        query: &str,
+        project_id: Option<&str>,
+        file_extensions: Option<Vec<String>>,
+        max_files: Option<usize>,
+        case_sensitive: Option<bool>,
+    ) -> Result<Value> {
+        info!("🔍 Executing file search tool for query: '{}'", query);
+        
+        let file_search_service = self.file_search_service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("FileSearchService not available"))?;
+        
+        // Create search parameters
+        let params = FileSearchParams {
+            query: query.to_string(),
+            file_extensions,
+            max_files,
+            case_sensitive,
+            include_content: Some(true),
+        };
+        
+        // Execute the search
+        let search_results = file_search_service
+            .search_files(&params, project_id)
+            .await?;
+        
+        info!("✅ File search completed");
+        
+        Ok(search_results)
     }
 
     /// Build messages for the request

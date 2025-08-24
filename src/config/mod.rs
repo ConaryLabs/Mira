@@ -1,3 +1,6 @@
+// src/config/mod.rs
+// PHASE 3 UPDATE: Change enable_chat_tools default from false to true
+
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
@@ -183,8 +186,8 @@ impl MiraConfig {
             enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
             
             // ── GPT-5 Tool Configuration
-            // Note: ENABLE_CHAT_TOOLS defaults to false as per .env, but can be overridden
-            enable_chat_tools: env_var_or("ENABLE_CHAT_TOOLS", false),
+            // PHASE 3 CRITICAL CHANGE: Change enable_chat_tools default from false to true
+            enable_chat_tools: env_var_or("ENABLE_CHAT_TOOLS", true),  // CHANGED: was false
             enable_web_search: env_var_or("ENABLE_WEB_SEARCH", true),
             enable_code_interpreter: env_var_or("ENABLE_CODE_INTERPRETER", true),
             enable_file_search: env_var_or("ENABLE_FILE_SEARCH", true),

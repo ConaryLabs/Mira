@@ -1,15 +1,15 @@
 // src/state.rs
-// Phase 3: Remove HybridMemoryService from AppState
+// PHASE 3 UPDATE: Added ImageGenerationManager and FileSearchService to AppState
 
 use std::sync::Arc;
 
 use crate::git::{GitClient, GitStore};
 use crate::llm::client::OpenAIClient;
-use crate::llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager};
+use crate::llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager, ImageGenerationManager}; // PHASE 3: Added ImageGenerationManager
 use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::project::store::ProjectStore;
-use crate::services::{ChatService, ContextService, DocumentService, MemoryService};
+use crate::services::{ChatService, ContextService, DocumentService, MemoryService, FileSearchService}; // PHASE 3: Added FileSearchService
 
 // Added: persona + chat config + summarizer
 use crate::persona::PersonaOverlay;
@@ -33,12 +33,14 @@ pub struct AppState {
     pub responses_manager: Arc<ResponsesManager>,
     pub vector_store_manager: Arc<VectorStoreManager>,
     pub thread_manager: Arc<ThreadManager>,
+    pub image_generation_manager: Arc<ImageGenerationManager>, // PHASE 3 NEW
 
     // -------- Services --------
     pub chat_service: Arc<ChatService>,
     pub memory_service: Arc<MemoryService>,
     pub context_service: Arc<ContextService>,
     pub document_service: Arc<DocumentService>,
+    pub file_search_service: Arc<FileSearchService>, // PHASE 3 NEW
     
     // REMOVED: pub hybrid_service: Arc<HybridMemoryService>,
 }
@@ -82,6 +84,14 @@ impl AppState {
         ))
     }
 
+    /// PHASE 3 NEW: Helper to create FileSearchService with required dependencies
+    pub fn assemble_file_search_service(
+        vector_store_manager: Arc<VectorStoreManager>,
+        git_client: GitClient,
+    ) -> Arc<FileSearchService> {
+        Arc::new(FileSearchService::new(vector_store_manager, git_client))
+    }
+
     /// If you already have an AppState struct built and just need to (re)wire the
     /// chat_service in place with a specific persona / config.
     pub fn wire_chat_service(&mut self, persona: PersonaOverlay, config: Option<ChatConfig>) {
@@ -96,5 +106,15 @@ impl AppState {
             config,
         );
         self.chat_service = chat;
+    }
+
+    /// PHASE 3 NEW: Helper to access ImageGenerationManager for tool integration
+    pub fn image_generation_manager(&self) -> &Arc<ImageGenerationManager> {
+        &self.image_generation_manager
+    }
+
+    /// PHASE 3 NEW: Helper to access FileSearchService for tool integration
+    pub fn file_search_service(&self) -> &Arc<FileSearchService> {
+        &self.file_search_service
     }
 }
