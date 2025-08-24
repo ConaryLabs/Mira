@@ -63,7 +63,7 @@ impl ChatServiceToolExt for ChatService {
         session_id: &str,
         message: &str,
         project_id: Option<&str>,
-        file_context: Option<serde_json::Value>,
+        _file_context: Option<serde_json::Value>,
     ) -> Result<ChatResponseWithTools> {
         info!("Processing chat with tools for session: {}", session_id);
         

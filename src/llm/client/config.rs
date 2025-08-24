@@ -4,7 +4,7 @@
 // CLEANED: Removed emojis for professional, terminal-friendly logging
 
 use anyhow::Result;
-use tracing::{debug, info};
+use tracing::{debug};
 use crate::config::CONFIG;
 
 #[derive(Debug, Clone)]

@@ -149,8 +149,8 @@ pub enum ToolEvent {
 /// ENHANCED: Tool executor with proper config management and Phase 3 integration
 pub struct ToolExecutor {
     responses_manager: Arc<ResponsesManager>,
-    image_generation_manager: Option<Arc<ImageGenerationManager>>, // PHASE 3 NEW
-    file_search_service: Option<Arc<FileSearchService>>, // PHASE 3 NEW
+    pub image_generation_manager: Option<Arc<ImageGenerationManager>>, // PHASE 3 NEW
+    pub file_search_service: Option<Arc<FileSearchService>>, // PHASE 3 NEW
     config: ToolConfig,
 }
 
@@ -243,9 +243,9 @@ impl ToolExecutor {
     }
 
     /// Execute chat with tools using streaming
-    pub async fn stream_with_tools(
-        &self,
-        request: &ToolChatRequest,
+    pub async fn stream_with_tools<'a>(
+        &'a self,
+        request: &'a ToolChatRequest,
     ) -> Result<impl Stream<Item = ToolEvent> + '_> {
         info!("🔧 Starting tool-enabled streaming chat");
 
@@ -271,15 +271,24 @@ impl ToolExecutor {
         } else {
             None
         };
+        
+        let mut request_body = json!({
+            "model": self.config.model,
+            "input": messages,
+            "stream": true,
+        });
+
+        if let Some(tools) = tools {
+            request_body["tools"] = json!(tools);
+        }
 
         // Create streaming request
-        match self.responses_manager.stream_with_tools(
+        match self.responses_manager.create_streaming_response(
             &self.config.model,
             messages,
-            tools,
-            Some(&request.system_prompt),
-            Some(self.config.max_output_tokens),
-            None, // temperature
+            Some(request.system_prompt.clone()),
+            Some(&request.session_id),
+            Some(request_body),
         ).await {
             Ok(stream) => {
                 let tool_stream = stream.map(move |chunk| {
@@ -304,7 +313,7 @@ impl ToolExecutor {
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("unknown")
                                         .to_string();
-                                    
+                                    ToolEvent::ToolCallStarted { tool_type, tool_id }
                                 }
                                 Some("tool_call_complete") => {
                                     let tool_type = stream_event.get("tool_type")

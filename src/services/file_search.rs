@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::path::Path;
 use std::pin::Pin;
 use std::future::Future;
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 
 use crate::llm::responses::VectorStoreManager;
 use crate::git::GitClient;

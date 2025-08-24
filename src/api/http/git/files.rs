@@ -6,13 +6,12 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use std::path::Path as StdPath;
 
 use crate::state::AppState;
 use crate::git::FileNode;
-use crate::api::error::{ApiResult, IntoApiError, ApiError};
+use crate::api::error::{ApiResult, IntoApiError};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{info};
 
 // ===== Request/Response DTOs =====
 

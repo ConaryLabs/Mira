@@ -89,7 +89,7 @@ async fn handle_socket(
 
     // Start heartbeat task
     let heartbeat_handle = tokio::spawn({
-        let heartbeat_manager = heartbeat_manager.clone();
+        let _heartbeat_manager = heartbeat_manager.clone();
         async move {
             // HeartbeatManager handles its own lifecycle
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
@@ -151,7 +151,7 @@ async fn handle_socket(
 /// Handle simple chat message (non-tool enabled)
 pub async fn handle_simple_chat_message(
     content: String,
-    project_id: Option<String>,
+    _project_id: Option<String>,
     app_state: Arc<AppState>,
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     addr: std::net::SocketAddr,
@@ -160,8 +160,8 @@ pub async fn handle_simple_chat_message(
     info!("Processing simple chat message from {}: {}", addr, content.chars().take(50).collect::<String>());
 
     // Build context for the user's message
-    let session_id = format!("session_{}", addr.ip());
-    let context = RecallContext { recent: vec![], semantic: vec![] }; // Empty context for simple messages
+    let _session_id = format!("session_{}", addr.ip());
+    let _context = RecallContext { recent: vec![], semantic: vec![] }; // Empty context for simple messages
 
     // Generate response using the streaming client
     let stream = start_response_stream(
