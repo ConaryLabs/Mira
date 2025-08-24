@@ -1,5 +1,6 @@
 // src/api/ws/chat_tools/mod.rs
-// PHASE 3 UPDATE: Updated tool executor creation to use from_app_state() constructor
+// PHASE 3 UPDATE: Enhanced tool executor creation with proper config management
+// FIXED: Proper integration of custom config with AppState managers
 
 use std::sync::Arc;
 
@@ -60,8 +61,8 @@ pub async fn handle_chat_message_with_tools(
         crate::memory::recall::RecallContext { recent: vec![], semantic: vec![] }
     });
 
-    // PHASE 3 UPDATED: Use from_app_state() to get all managers
-    let tool_executor = Arc::new(ToolExecutor::from_app_state(&app_state));
+    // ENHANCED: Use from_app_state() to get all managers with proper integration
+    let _executor = ToolExecutor::from_app_state(&app_state);
 
     let system_prompt = ToolPromptBuilder::build_tool_aware_system_prompt(
         &context,
@@ -77,7 +78,7 @@ pub async fn handle_chat_message_with_tools(
     ));
 
     let message_handler = ToolMessageHandler::new(
-        tool_executor.clone(),
+        Arc::new(_executor),
         connection,
         app_state.clone(),
     );
@@ -116,59 +117,106 @@ pub async fn update_ws_handler_for_tools(
     }
 }
 
-/// PHASE 3 UPDATED: Create tool executor using new from_app_state constructor
-/// This ensures all Phase 3 managers (ImageGenerationManager, FileSearchService) are available
+/// ENHANCED: Create tool executor using new from_app_state constructor
+/// This ensures all Phase 3 managers are available with default configuration
 pub fn create_tool_executor(app_state: &Arc<AppState>) -> Arc<ToolExecutor> {
     info!("Creating ToolExecutor with full Phase 3 integration");
     Arc::new(ToolExecutor::from_app_state(app_state))
 }
 
-/// PHASE 3 UPDATED: Create tool executor with custom config but full manager integration
+/// ENHANCED: Create tool executor with custom config and full manager integration
+/// FIXED: Now properly integrates custom config with all Phase 3 managers
 pub fn create_tool_executor_with_config(
     app_state: &Arc<AppState>, 
     config: ToolConfig
 ) -> Arc<ToolExecutor> {
     info!("Creating ToolExecutor with custom config and full Phase 3 integration");
     
-    // Create executor with all managers from AppState
-    let mut executor = ToolExecutor::from_app_state(app_state);
-    
-    // Note: We can't directly modify the config field as it's private
-    // Instead, we create a new executor with the custom config
-    // This is a design limitation that could be improved in the future
-    
-    // For now, use the new constructor approach:
-    let responses_manager = app_state.responses_manager.clone();
-    let mut executor = ToolExecutor::with_config(responses_manager, config);
-    
-    // Manually set the managers (this would require adding setters to ToolExecutor)
-    // For this implementation, we'll create a note that this needs improvement
-    warn!("Custom config with full manager integration requires ToolExecutor refactoring");
-    
-    Arc::new(executor)
+    // FIXED: Use the new from_app_state_with_config method for proper integration
+    Arc::new(ToolExecutor::from_app_state_with_config(app_state, config))
 }
 
-/// PHASE 3 NEW: Create tool executor with only specific managers (for testing/flexibility)
-pub fn create_minimal_tool_executor(
+/// ENHANCED: Create tool executor with builder pattern for maximum flexibility
+pub struct ToolExecutorBuilder {
+    app_state: Arc<AppState>,
+    config: Option<ToolConfig>,
+    enable_image_generation: bool,
+    enable_file_search: bool,
+}
+
+impl ToolExecutorBuilder {
+    /// Start building a new tool executor
+    pub fn new(app_state: Arc<AppState>) -> Self {
+        Self {
+            app_state,
+            config: None,
+            enable_image_generation: true,
+            enable_file_search: true,
+        }
+    }
+    
+    /// Set custom configuration
+    pub fn with_config(mut self, config: ToolConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+    
+    /// Enable or disable image generation
+    pub fn with_image_generation(mut self, enabled: bool) -> Self {
+        self.enable_image_generation = enabled;
+        self
+    }
+    
+    /// Enable or disable file search
+    pub fn with_file_search(mut self, enabled: bool) -> Self {
+        self.enable_file_search = enabled;
+        self
+    }
+    
+    /// Build the final tool executor
+    pub fn build(self) -> Arc<ToolExecutor> {
+        let config = self.config.unwrap_or_default();
+        
+        info!(
+            "Building ToolExecutor - model: {}, image_gen: {}, file_search: {}", 
+            config.model,
+            self.enable_image_generation,
+            self.enable_file_search
+        );
+        
+        // Create base executor with config and all managers
+        let mut executor = ToolExecutor::from_app_state_with_config(&self.app_state, config);
+        
+        // Selectively disable managers if requested
+        if !self.enable_image_generation {
+            executor = ToolExecutor::with_config(
+                self.app_state.responses_manager.clone(), 
+                executor.get_config().clone()
+            );
+        }
+        
+        if self.enable_file_search && executor.file_search_service.is_none() {
+            executor = executor.with_file_search_service(self.app_state.file_search_service.clone());
+        }
+        
+        if self.enable_image_generation && executor.image_generation_manager.is_none() {
+            executor = executor.with_image_generation_manager(self.app_state.image_generation_manager.clone());
+        }
+        
+        Arc::new(executor)
+    }
+}
+
+/// ENHANCED: Create tool executor with selective manager enabling
+pub fn create_custom_tool_executor(
     app_state: &Arc<AppState>,
     enable_image_generation: bool,
     enable_file_search: bool,
 ) -> Arc<ToolExecutor> {
-    info!(
-        "Creating minimal ToolExecutor - image_gen: {}, file_search: {}", 
-        enable_image_generation, 
-        enable_file_search
-    );
-    
-    // For now, minimal means using the basic constructor
-    // In a future refactor, this could selectively enable managers
-    if enable_image_generation || enable_file_search {
-        // If any Phase 3 features are requested, use full integration
-        Arc::new(ToolExecutor::from_app_state(app_state))
-    } else {
-        // Use basic constructor for minimal setup
-        Arc::new(ToolExecutor::new(app_state.responses_manager.clone()))
-    }
+    ToolExecutorBuilder::new(app_state.clone())
+        .with_image_generation(enable_image_generation)
+        .with_file_search(enable_file_search)
+        .build()
 }
 
 /// Check if tools are available and properly configured
@@ -192,7 +240,7 @@ pub fn available_tool_count() -> usize {
     }
 }
 
-/// PHASE 3 ENHANCED: Get detailed tool availability info
+/// ENHANCED: Get detailed tool availability info
 pub fn get_tool_availability_info() -> serde_json::Value {
     use serde_json::json;
     
@@ -223,4 +271,55 @@ pub fn build_simple_tool_prompt(has_tools: bool) -> String {
     } else {
         "You are Mira, a helpful AI assistant.".to_string()
     }
+}
+
+/// ENHANCED: Validate tool executor configuration
+pub fn validate_tool_configuration(executor: &ToolExecutor) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    
+    if let Err(e) = executor.validate_configuration() {
+        return Err(e);
+    }
+    
+    if executor.get_config().enable_tools && !CONFIG.enable_chat_tools {
+        warnings.push("Tools enabled in executor config but disabled globally".to_string());
+    }
+    
+    if CONFIG.enable_image_generation && executor.image_generation_manager.is_none() {
+        warnings.push("Image generation enabled globally but manager not available in executor".to_string());
+    }
+    
+    if CONFIG.enable_file_search && executor.file_search_service.is_none() {
+        warnings.push("File search enabled globally but service not available in executor".to_string());
+    }
+    
+    if !warnings.is_empty() {
+        for warning in &warnings {
+            warn!("Tool configuration warning: {}", warning);
+        }
+    }
+    
+    Ok(warnings)
+}
+
+/// ENHANCED: Create tool executor with configuration validation
+pub fn create_validated_tool_executor(
+    app_state: &Arc<AppState>,
+    config: Option<ToolConfig>,
+) -> Result<Arc<ToolExecutor>> {
+    let executor = match config {
+        Some(config) => create_tool_executor_with_config(app_state, config),
+        None => create_tool_executor(app_state),
+    };
+    
+    // Validate the configuration
+    let warnings = validate_tool_configuration(&executor)?;
+    
+    if !warnings.is_empty() {
+        info!("ToolExecutor created with {} configuration warnings", warnings.len());
+    } else {
+        info!("ToolExecutor created with valid configuration");
+    }
+    
+    Ok(executor)
 }
