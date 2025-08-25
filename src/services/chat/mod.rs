@@ -25,7 +25,7 @@ use crate::services::summarization::SummarizationService;
 use crate::memory::recall::RecallContext;
 use crate::persona::PersonaOverlay;
 
-// Import concrete store types
+// Import concrete store types for a more robust implementation
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
 
@@ -35,27 +35,26 @@ pub struct ChatService {
     client: Arc<OpenAIClient>,
     memory: Arc<MemoryService>,
     
-    // Extracted components
+    // Extracted components that hold the logic
     context_builder: ContextBuilder,
     response_processor: ResponseProcessor,
     streaming_handler: StreamingHandler,
 
-    // Keep these fields for AppState compatibility, even if unused directly here
+    // These fields are kept for compatibility with the AppState struct
     _thread_manager: Arc<ThreadManager>,
     _vector_store_manager: Arc<VectorStoreManager>,
 }
 
 impl ChatService {
-    // ** THIS IS THE CORRECTED FUNCTION SIGNATURE **
-    // It now uses concrete types for the stores, which is safer and more efficient.
+    /// Create new ChatService with a corrected signature
     pub fn new(
         client: Arc<OpenAIClient>,
         thread_manager: Arc<ThreadManager>,
         vector_store_manager: Arc<VectorStoreManager>,
         persona: PersonaOverlay,
         memory: Arc<MemoryService>,
-        sqlite_store: Arc<SqliteMemoryStore>, // Using concrete type
-        qdrant_store: Arc<QdrantMemoryStore>, // Using concrete type
+        sqlite_store: Arc<SqliteMemoryStore>, // Use concrete type
+        qdrant_store: Arc<QdrantMemoryStore>, // Use concrete type
         summarizer: Arc<SummarizationService>,
         config: Option<ChatConfig>,
     ) -> Self {
@@ -70,8 +69,8 @@ impl ChatService {
 
         let context_builder = ContextBuilder::new(
             client.clone(),
-            sqlite_store, // Pass the concrete store directly
-            qdrant_store, // Pass the concrete store directly
+            sqlite_store,
+            qdrant_store,
             chat_config.clone(),
         );
 
@@ -88,7 +87,6 @@ impl ChatService {
         Self {
             client,
             memory,
-            config: chat_config,
             context_builder,
             response_processor,
             streaming_handler,
@@ -131,6 +129,7 @@ impl ChatService {
         Ok(response)
     }
     
+    /// Public helper for context building
     pub async fn build_recall_context(
         &self,
         session_id: &str,
@@ -138,11 +137,8 @@ impl ChatService {
     ) -> Result<RecallContext> {
         self.context_builder.build_context_with_fallbacks(session_id, user_text).await
     }
-
-    pub fn config(&self) -> &ChatConfig {
-        &self.config
-    }
     
+    // Getters for core dependencies
     pub fn client(&self) -> &Arc<OpenAIClient> {
         &self.client
     }
