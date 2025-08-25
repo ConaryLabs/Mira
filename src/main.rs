@@ -16,10 +16,10 @@ use tracing::info;
 use mira_backend::{
     api::http::http_router,
     api::ws::ws_router,
-    config::CONFIG,  // ADDED: Import CONFIG
+    config::CONFIG,
     git::{GitClient, GitStore},
     llm::client::OpenAIClient,
-    llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager, ImageGenerationManager}, // PHASE 3: Added ImageGenerationManager
+    llm::responses::{ImageGenerationManager, ResponsesManager, ThreadManager, VectorStoreManager},
     memory::{
         qdrant::store::QdrantMemoryStore,
         sqlite::{migration, store::SqliteMemoryStore},
@@ -30,9 +30,9 @@ use mira_backend::{
         chat::{ChatConfig, ChatService},
         ContextService,
         DocumentService,
+        FileSearchService,
         MemoryService,
         SummarizationService,
-        FileSearchService, // PHASE 3: Added FileSearchService
     },
     state::AppState,
 };
@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
 
     // --- HTTP server ---
     info!("Configuring HTTP server");
-    
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -162,9 +162,8 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .merge(http_router(app_state.clone()))
-        .merge(ws_router(app_state.clone()))
+        .nest("/ws", ws_router(app_state.clone())) // This is the corrected line
         .merge(project_router())
-        // REMOVED: .route("/health", get(|| async { "OK" })) - duplicates http_router health endpoint
         .layer(cors)
         .with_state(app_state);
 

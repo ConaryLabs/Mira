@@ -3,6 +3,7 @@
 
 use once_cell::sync::Lazy;
 use serde::Deserialize;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MiraConfig {
@@ -126,15 +127,45 @@ pub struct MiraConfig {
     pub trace_sql: bool,
 }
 
+// ** THIS IS THE CORRECTED HELPER FUNCTION **
+// It now correctly handles values with comments and extra whitespace.
+fn env_var_or<T>(key: &str, default: T) -> T
+where
+    T: FromStr,
+{
+    match std::env::var(key) {
+        Ok(val) => {
+            // Trim whitespace and remove comments before parsing
+            let clean_val = val.split('#').next().unwrap_or("").trim();
+            match clean_val.parse::<T>() {
+                Ok(parsed) => {
+                    // Only log the successfully parsed value
+                    eprintln!("Config: {} = {} (from environment)", key, clean_val);
+                    parsed
+                }
+                Err(_) => {
+                    eprintln!("Config: {} = '{}' (parse failed, using default)", key, val);
+                    default
+                }
+            }
+        }
+        Err(_) => {
+            // This is not an error, just a missing variable, so we use the default.
+            default
+        }
+    }
+}
+
+
 impl MiraConfig {
     pub fn from_env() -> Self {
         // Load from .env file first if it exists
-        if let Err(e) = dotenv::dotenv() {
-            eprintln!("Warning: Could not load .env file: {}", e);
+        if dotenv::dotenv().is_err() {
+            eprintln!("Warning: .env file not found. Using environment variables and defaults.");
         }
         
+        // This will now use the corrected `env_var_or` function
         Self {
-            // ── OpenAI Configuration (from .env)
             openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()),
             model: env_var_or("MIRA_MODEL", "gpt-5".to_string()),
             verbosity: env_var_or("MIRA_VERBOSITY", "high".to_string()),
@@ -142,34 +173,22 @@ impl MiraConfig {
             max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 128000),
             debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
             intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
-            
-            // ── Database Configuration (from .env)
             database_url: env_var_or("DATABASE_URL", "sqlite:./mira.db".to_string()),
             sqlite_max_connections: env_var_or("SQLITE_MAX_CONNECTIONS", 10),
-            
-            // ── Session Configuration (from .env)
             session_id: env_var_or("MIRA_SESSION_ID", "peter-eternal".to_string()),
             default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "default".to_string()),
-            
-            // ── Memory & History Configuration (from .env)
             history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 50),
             history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 65536),
             max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 8192),
-            
-            // ── WebSocket Chat Settings (from .env)
             ws_history_cap: env_var_or("MIRA_WS_HISTORY_CAP", 100),
             ws_vector_search_k: env_var_or("MIRA_WS_VECTOR_SEARCH_K", 15),
             ws_heartbeat_interval: env_var_or("MIRA_WS_HEARTBEAT_INTERVAL", 30),
             ws_connection_timeout: env_var_or("MIRA_WS_CONNECTION_TIMEOUT", 300),
             ws_receive_timeout: env_var_or("MIRA_WS_RECEIVE_TIMEOUT", 60),
-            
-            // ── API Defaults (from .env)
             history_default_limit: env_var_or("MIRA_HISTORY_DEFAULT_LIMIT", 30),
             history_max_limit: env_var_or("MIRA_HISTORY_MAX_LIMIT", 100),
             context_recent_messages: env_var_or("MIRA_CONTEXT_RECENT_MESSAGES", 30),
             context_semantic_matches: env_var_or("MIRA_CONTEXT_SEMANTIC_MATCHES", 15),
-            
-            // ── Memory Embedding Configuration (from .env)
             always_embed_user: env_var_or("MEM_ALWAYS_EMBED_USER", true),
             always_embed_assistant: env_var_or("MEM_ALWAYS_EMBED_ASSISTANT", true),
             embed_min_chars: env_var_or("MEM_EMBED_MIN_CHARS", 6),
@@ -178,26 +197,18 @@ impl MiraConfig {
             rollup_every: env_var_or("MEM_ROLLUP_EVERY", 50),
             min_salience_for_qdrant: env_var_or("MIRA_MIN_SALIENCE_FOR_QDRANT", 3.0),
             min_salience_for_storage: env_var_or("MIRA_MIN_SALIENCE_FOR_STORAGE", 5.0),
-            
-            // ── Summarization Configuration (from .env)
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
             summary_chunk_size: env_var_or("MIRA_SUMMARY_CHUNK_SIZE", 10),
             summary_token_limit: env_var_or("MIRA_SUMMARY_TOKEN_LIMIT", 32000),
             summary_output_tokens: env_var_or("MIRA_SUMMARY_OUTPUT_TOKENS", 2048),
             summarize_after_messages: env_var_or("MIRA_SUMMARIZE_AFTER_MESSAGES", 12),
-            
-            // ── Vector Store Configuration (from .env)
             max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 5),
             enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
-            
-            // ── GPT-5 Tool Configuration (from .env)
             enable_chat_tools: env_var_or("ENABLE_CHAT_TOOLS", true),
             enable_web_search: env_var_or("ENABLE_WEB_SEARCH", true),
             enable_code_interpreter: env_var_or("ENABLE_CODE_INTERPRETER", true),
             enable_file_search: env_var_or("ENABLE_FILE_SEARCH", true),
             enable_image_generation: env_var_or("ENABLE_IMAGE_GENERATION", true),
-            
-            // ── Tool-specific Configuration (from .env)
             web_search_max_results: env_var_or("WEB_SEARCH_MAX_RESULTS", 10),
             web_search_timeout: env_var_or("WEB_SEARCH_TIMEOUT", 30),
             code_interpreter_timeout: env_var_or("CODE_INTERPRETER_TIMEOUT", 60),
@@ -207,55 +218,37 @@ impl MiraConfig {
             image_generation_size: env_var_or("IMAGE_GENERATION_SIZE", "1024x1024".to_string()),
             image_generation_quality: env_var_or("IMAGE_GENERATION_QUALITY", "standard".to_string()),
             image_generation_style: env_var_or("IMAGE_GENERATION_STYLE", "vivid".to_string()),
-            
-            // ── Qdrant Configuration (from .env)
             qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
             qdrant_collection: env_var_or("QDRANT_COLLECTION", "mira-memory".to_string()),
             qdrant_embedding_dim: env_var_or("QDRANT_EMBEDDING_DIM", 3072),
             qdrant_test_url: env_var_or("QDRANT_TEST_URL", "http://localhost:6334".to_string()),
             qdrant_test_collection: env_var_or("QDRANT_TEST_COLLECTION", "mira-test".to_string()),
-            
-            // ── Git Configuration (from .env)
             git_repos_dir: env_var_or("GIT_REPOS_DIR", "./repos".to_string()),
             git_cache_dir: env_var_or("MIRA_GIT_CACHE_DIR", "/tmp/mira-git-cache".to_string()),
-            git_max_file_size: env_var_or("MIRA_GIT_MAX_FILE_SIZE", 10485760), // 10MB
-            
-            // ── Import Tool Configuration (from .env)
+            git_max_file_size: env_var_or("MIRA_GIT_MAX_FILE_SIZE", 10485760),
             import_sqlite: env_var_or("MIRA_IMPORT_SQLITE", "mira.sqlite".to_string()),
             import_qdrant_url: env_var_or("MIRA_IMPORT_QDRANT_URL", "http://localhost:6333".to_string()),
             import_qdrant_collection: env_var_or("MIRA_IMPORT_QDRANT_COLLECTION", "mira_memories".to_string()),
-            
-            // ── Persona Configuration (from .env)
             persona: env_var_or("MIRA_PERSONA", "Default".to_string()),
             persona_decay_timeout: env_var_or("MIRA_PERSONA_DECAY_TIMEOUT", 60),
             session_stale_timeout: env_var_or("MIRA_SESSION_STALE_TIMEOUT", 30),
-            
-            // ── Server Configuration (from .env) - FIXED: Read from MIRA_PORT
             host: env_var_or("MIRA_HOST", "0.0.0.0".to_string()),
-            port: env_var_or("MIRA_PORT", 3001), // Will read 3001 from your .env
-            
-            // ── CORS Settings (from .env)
+            port: env_var_or("MIRA_PORT", 3001),
             cors_origin: env_var_or("MIRA_CORS_ORIGIN", "http://localhost:3000".to_string()),
             cors_credentials: env_var_or("MIRA_CORS_CREDENTIALS", true),
-            
-            // ── Rate Limiting (from .env)
             rate_limit_chat: env_var_or("MIRA_RATE_LIMIT_CHAT", 60),
             rate_limit_history: env_var_or("MIRA_RATE_LIMIT_HISTORY", 120),
             rate_limit_embeddings: env_var_or("MIRA_RATE_LIMIT_EMBEDDINGS", 30),
-            
-            // ── Timeouts (from .env)
             openai_timeout: env_var_or("MIRA_OPENAI_TIMEOUT", 60),
             qdrant_timeout: env_var_or("MIRA_QDRANT_TIMEOUT", 10),
             database_timeout: env_var_or("MIRA_DATABASE_TIMEOUT", 5),
-            
-            // ── Logging Configuration (from .env)
             log_level: env_var_or("MIRA_LOG_LEVEL", "info".to_string()),
             log_format: env_var_or("MIRA_LOG_FORMAT", "pretty".to_string()),
             trace_sql: env_var_or("MIRA_TRACE_SQL", false),
         }
     }
 
-    // ── Convenience Methods for Common Operations ──
+    // --- Convenience Methods for Common Operations ---
     
     /// Check if tools are enabled (combines multiple flags)
     pub fn tools_enabled(&self) -> bool {
@@ -315,27 +308,6 @@ impl MiraConfig {
             self.ws_history_cap,
             self.ws_vector_search_k
         )
-    }
-}
-
-fn env_var_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    match std::env::var(key) {
-        Ok(val) => {
-            match val.parse() {
-                Ok(parsed) => {
-                    eprintln!("Config: {} = {} (from environment)", key, val);
-                    parsed
-                },
-                Err(_) => {
-                    eprintln!("Config: {} = {} (parse failed, using default)", key, val);
-                    default
-                }
-            }
-        },
-        Err(_) => {
-            eprintln!("Config: {} = using default (not found in environment)", key);
-            default
-        }
     }
 }
 
