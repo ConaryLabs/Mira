@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::{
-    extract::{ConnectInfo, State, WebSocketUpgrade},
+    extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use axum::extract::ws::{Message, WebSocket};
@@ -46,22 +46,20 @@ struct Canary {
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
 ) -> impl IntoResponse {
-    info!("WebSocket upgrade request from {}", addr);
-    ws.on_upgrade(move |socket| handle_socket(socket, app_state, addr))
+    info!("WebSocket upgrade request");
+    ws.on_upgrade(move |socket| handle_socket(socket, app_state))
 }
 
 /// Socket handler using extracted modules
 async fn handle_socket(
     socket: WebSocket,
     app_state: Arc<AppState>,
-    addr: std::net::SocketAddr,
 ) {
     let connection_start = Instant::now();
     let (sender, mut receiver) = socket.split();
     
-    info!("WebSocket client connected from {}", addr);
+    info!("WebSocket client connected");
 
     // Create connection wrapper with state management
     let last_activity = Arc::new(Mutex::new(Instant::now()));
@@ -96,11 +94,12 @@ async fn handle_socket(
         }
     });
 
-    // Message processing loop - fix parameter order
+    // Message processing loop - using placeholder address since we're behind nginx
+    let placeholder_addr = "127.0.0.1:0".parse().unwrap();
     let message_router = MessageRouter::new(
         app_state.clone(),
         connection.clone(),
-        addr,
+        placeholder_addr,
     );
 
     while let Some(msg) = receiver.next().await {
@@ -126,14 +125,14 @@ async fn handle_socket(
                 }
             }
             Ok(Message::Close(_)) => {
-                info!("Client {} disconnected", addr);
+                info!("Client disconnected");
                 break;
             }
             Ok(_) => {
                 // Ignore other message types (binary, ping, pong)
             }
             Err(e) => {
-                error!("WebSocket error for client {}: {}", addr, e);
+                error!("WebSocket error: {}", e);
                 break;
             }
         }
@@ -142,8 +141,7 @@ async fn handle_socket(
     // Cleanup
     heartbeat_handle.abort();
     info!(
-        "WebSocket connection closed for {} after {:?}",
-        addr,
+        "WebSocket connection closed after {:?}",
         connection_start.elapsed()
     );
 }
@@ -154,13 +152,12 @@ pub async fn handle_simple_chat_message(
     _project_id: Option<String>,
     app_state: Arc<AppState>,
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
-    addr: std::net::SocketAddr,
     last_send_ref: Arc<Mutex<Instant>>,
 ) -> Result<(), anyhow::Error> {
-    info!("Processing simple chat message from {}: {}", addr, content.chars().take(50).collect::<String>());
+    info!("Processing simple chat message: {}", content.chars().take(50).collect::<String>());
 
     // Build context for the user's message
-    let _session_id = format!("session_{}", addr.ip());
+    let _session_id = "websocket_session".to_string();
     let _context = RecallContext { recent: vec![], semantic: vec![] }; // Empty context for simple messages
 
     // Generate response using the streaming client

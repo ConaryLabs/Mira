@@ -108,12 +108,13 @@ impl MessageRouter {
         // Call the simple chat handler from the main chat module
         use super::handle_simple_chat_message;
         
+        // FIXED: Corrected parameter order to match the function signature in mod.rs
+        // Function takes 5 parameters: content, project_id, app_state, sender, last_send_ref
         handle_simple_chat_message(
             content,
             project_id,
             self.app_state.clone(),
             self.connection.get_sender(),
-            self.addr,
             self.connection.get_last_send_ref(),
         ).await
     }
@@ -159,58 +160,49 @@ impl MessageRouter {
         &self,
         active: bool,
     ) -> Result<(), anyhow::Error> {
-        debug!("Typing indicator: {}", active);
-        
-        // Could forward to other connected clients in the future
-        // For now, just acknowledge
+        debug!("Typing indicator: active={}", active);
+        // Could implement typing indicator broadcast to other clients here
         Ok(())
     }
 }
 
-/// PHASE 3 IMPROVED: Enhanced tool detection logic
-/// This encapsulates the routing logic for consistent reuse across the system
+/// Determine if we should use tools based on configuration and metadata
+/// PHASE 3 FIX: Centralized logic for consistent tool routing decisions
 pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
-    // Must have tools enabled globally
+    // First check if tools are globally enabled in config
     if !CONFIG.enable_chat_tools {
+        debug!("Tools globally disabled in config");
         return false;
     }
-    
-    // Tools are enabled - now check if context suggests tool usage would be beneficial
-    match metadata {
-        Some(meta) => {
-            // If we have specific file context, tools are likely beneficial
-            if meta.file_path.is_some() {
-                return true;
-            }
-            
-            // If we have repository context, tools are likely beneficial  
-            if meta.repo_id.is_some() || meta.attachment_id.is_some() {
-                return true;
-            }
-            
-            // If we have language context, user might be asking about code
-            if meta.language.is_some() {
-                return true;
-            }
-            
-            // If we have a text selection, user might want to operate on it
-            if meta.selection.is_some() {
-                return true;
-            }
-            
-            // Even empty metadata suggests the client is tool-capable
-            // Let the LLM decide if tools are actually needed
-            true
+
+    // Check if client has metadata indicating it's in a context where tools would be helpful
+    // FIXED: Use the actual MessageMetadata fields instead of non-existent ones
+    if let Some(meta) = metadata {
+        // If we have file context (file_path, repo_id, attachment_id), use tools
+        if meta.file_path.is_some() || meta.repo_id.is_some() || meta.attachment_id.is_some() {
+            debug!("Using tools due to file/repo/attachment context");
+            return true;
         }
-        None => {
-            // No metadata means basic chat - use simple handler
-            // The client didn't indicate any context that would benefit from tools
-            false
+        
+        // If we have language context, use tools
+        if meta.language.is_some() {
+            debug!("Using tools due to language context");
+            return true;
         }
+    } else {
+        // No metadata = likely a basic client, don't use tools
+        debug!("No metadata provided, not using tools");
+        return false;
     }
+
+    // Metadata exists but no specific context - use tools if enabled (tool-capable client)
+    debug!("Using default tool behavior for metadata-capable client: {}", CONFIG.enable_chat_tools);
+    CONFIG.enable_chat_tools
 }
 
-/// Utility function to extract file context from metadata
+/// Extract context from uploaded files (placeholder implementation)
+/// PHASE 3: This should be implemented to process file uploads
+/// FIXED: Use actual MessageMetadata fields
 pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
     metadata.as_ref().and_then(|meta| {
         if let Some(file_path) = &meta.file_path {
