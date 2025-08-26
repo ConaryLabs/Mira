@@ -1,18 +1,16 @@
-// src/api/ws/chat/mod.rs
+// src/api/ws/chat/mod.rs - FIXED VERSION
 
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
 use axum::{
-    extract::{State, WebSocketUpgrade},
+    extract::{ConnectInfo, State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures::StreamExt;
 use futures_util::SinkExt;
 use futures_util::stream::SplitSink;
-use serde::Deserialize;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -32,34 +30,26 @@ use crate::llm::streaming::{start_response_stream, StreamEvent};
 use crate::state::AppState;
 use crate::memory::recall::RecallContext;
 
-#[derive(Deserialize)]
-struct Canary {
-    id: String,
-    part: u32,
-    total: u32,
-    complete: bool,
-    #[serde(default)]
-    done: Option<bool>,
-}
-
-/// Main WebSocket handler entry point
+/// Main WebSocket handler entry point - FIXED to accept ConnectInfo
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
 ) -> impl IntoResponse {
-    info!("WebSocket upgrade request");
-    ws.on_upgrade(move |socket| handle_socket(socket, app_state))
+    info!("WebSocket upgrade request from {}", addr);
+    ws.on_upgrade(move |socket| handle_socket(socket, app_state, addr))
 }
 
-/// Socket handler using extracted modules
+/// Socket handler using extracted modules - FIXED to accept addr parameter
 async fn handle_socket(
     socket: WebSocket,
     app_state: Arc<AppState>,
+    addr: std::net::SocketAddr,
 ) {
     let connection_start = Instant::now();
     let (sender, mut receiver) = socket.split();
     
-    info!("WebSocket client connected");
+    info!("WebSocket client connected from {}", addr);
 
     // Create connection wrapper with state management
     let last_activity = Arc::new(Mutex::new(Instant::now()));
@@ -94,12 +84,11 @@ async fn handle_socket(
         }
     });
 
-    // Message processing loop - using placeholder address since we're behind nginx
-    let placeholder_addr = "127.0.0.1:0".parse().unwrap();
+    // FIXED: Use real address instead of placeholder
     let message_router = MessageRouter::new(
         app_state.clone(),
         connection.clone(),
-        placeholder_addr,
+        addr, // Use the real client address
     );
 
     while let Some(msg) = receiver.next().await {
@@ -114,6 +103,7 @@ async fn handle_socket(
                 // Parse and route message
                 match serde_json::from_str::<WsClientMessage>(&text) {
                     Ok(client_msg) => {
+                        info!("Received WebSocket message: {:?}", &client_msg);
                         if let Err(e) = message_router.route_message(client_msg).await {
                             error!("Error routing message: {}", e);
                         }
@@ -125,14 +115,14 @@ async fn handle_socket(
                 }
             }
             Ok(Message::Close(_)) => {
-                info!("Client disconnected");
+                info!("Client {} disconnected", addr);
                 break;
             }
             Ok(_) => {
                 // Ignore other message types (binary, ping, pong)
             }
             Err(e) => {
-                error!("WebSocket error: {}", e);
+                error!("WebSocket error for client {}: {}", addr, e);
                 break;
             }
         }
@@ -141,12 +131,13 @@ async fn handle_socket(
     // Cleanup
     heartbeat_handle.abort();
     info!(
-        "WebSocket connection closed after {:?}",
+        "WebSocket connection closed for {} after {:?}",
+        addr,
         connection_start.elapsed()
     );
 }
 
-/// Handle simple chat message (non-tool enabled)
+/// Handle simple chat message (non-tool enabled) - FIXED API
 pub async fn handle_simple_chat_message(
     content: String,
     _project_id: Option<String>,
@@ -157,14 +148,13 @@ pub async fn handle_simple_chat_message(
     info!("Processing simple chat message: {}", content.chars().take(50).collect::<String>());
 
     // Build context for the user's message
-    let _session_id = "websocket_session".to_string();
-    let _context = RecallContext { recent: vec![], semantic: vec![] }; // Empty context for simple messages
+    let session_id = "websocket_session".to_string();
 
-    // Generate response using the streaming client
+    // FIXED: Use correct function signature
     let stream = start_response_stream(
         &app_state.llm_client,
         &content,
-        Some("You are Mira, a helpful AI assistant."),
+        Some("You are Mira, a helpful AI assistant. Respond conversationally and naturally."),
         false, // Not structured JSON
     ).await?;
 
@@ -174,79 +164,79 @@ pub async fn handle_simple_chat_message(
     Ok(())
 }
 
-/// Handle streaming response and send to WebSocket
+/// Handle streaming response and send to WebSocket - FIXED to match StreamEvent API
 async fn handle_stream_response(
-    mut stream: Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>,
+    mut stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>,
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     last_send_ref: Arc<Mutex<Instant>>,
 ) -> Result<(), anyhow::Error> {
-    while let Some(event) = stream.next().await {
-        match event? {
+    while let Some(event_result) = stream.next().await {
+        match event_result? {
+            // FIXED: Use correct StreamEvent variants
             StreamEvent::Text(text) => {
                 let msg = WsServerMessage::StreamChunk { text };
-                let json = serde_json::to_string(&msg)?;
-                
-                let ws_msg = Message::Text(json);
-                if let Ok(mut sender_lock) = sender.try_lock() {
-                    if let Err(e) = sender_lock.send(ws_msg).await {
-                        error!("Failed to send stream chunk: {}", e);
-                        break;
-                    }
-                    
-                    // Update last send time
-                    {
-                        let mut last_send = last_send_ref.lock().await;
-                        *last_send = Instant::now();
-                    }
-                } else {
-                    warn!("Failed to acquire sender lock for streaming");
-                }
+                send_ws_message(&msg, &sender).await?;
+                update_last_send(last_send_ref.clone()).await;
             }
             StreamEvent::Delta(delta) => {
                 let msg = WsServerMessage::Chunk { 
                     content: delta, 
                     mood: None 
                 };
-                let json = serde_json::to_string(&msg)?;
-                
-                let ws_msg = Message::Text(json);
-                if let Ok(mut sender_lock) = sender.try_lock() {
-                    if let Err(e) = sender_lock.send(ws_msg).await {
-                        error!("Failed to send stream chunk: {}", e);
-                        break;
-                    }
-                } else {
-                    warn!("Failed to acquire sender lock for streaming");
-                }
+                send_ws_message(&msg, &sender).await?;
+                update_last_send(last_send_ref.clone()).await;
             }
             StreamEvent::Done { full_text: _, raw: _ } => {
                 let msg = WsServerMessage::StreamEnd;
-                let json = serde_json::to_string(&msg)?;
+                send_ws_message(&msg, &sender).await?;
                 
-                let ws_msg = Message::Text(json);
-                if let Ok(mut sender_lock) = sender.try_lock() {
-                    if let Err(e) = sender_lock.send(ws_msg).await {
-                        error!("Failed to send stream end: {}", e);
-                    }
-                }
+                // Send completion message
+                let complete_msg = WsServerMessage::Complete {
+                    mood: Some("helpful".to_string()),
+                    salience: None,
+                    tags: None,
+                };
+                send_ws_message(&complete_msg, &sender).await?;
                 break;
             }
-            StreamEvent::Error(e) => {
-                error!("Stream error event: {}", e);
+            StreamEvent::Error(error_msg) => {
+                error!("Stream error: {}", error_msg);
                 let msg = WsServerMessage::Error { 
-                    message: format!("Stream error: {}", e),
+                    message: format!("Stream error: {}", error_msg),
                     code: "STREAM_ERROR".to_string(),
                 };
-                let json = serde_json::to_string(&msg)?;
-                
-                let ws_msg = Message::Text(json);
-                if let Ok(mut sender_lock) = sender.try_lock() {
-                    let _ = sender_lock.send(ws_msg).await;
-                }
+                send_ws_message(&msg, &sender).await?;
                 break;
             }
         }
     }
 
     Ok(())
+}
+
+/// Helper function to send WebSocket messages
+async fn send_ws_message(
+    msg: &WsServerMessage,
+    sender: &Arc<Mutex<SplitSink<WebSocket, Message>>>,
+) -> Result<(), anyhow::Error> {
+    let json = serde_json::to_string(msg)?;
+    let ws_msg = Message::Text(json);
+    
+    if let Ok(mut sender_lock) = sender.try_lock() {
+        if let Err(e) = sender_lock.send(ws_msg).await {
+            error!("Failed to send WebSocket message: {}", e);
+            return Err(e.into());
+        }
+    } else {
+        warn!("Failed to acquire sender lock");
+    }
+    
+    Ok(())
+}
+
+/// Helper function to update last send timestamp
+async fn update_last_send(last_send_ref: Arc<Mutex<Instant>>) {
+    if let Ok(mut last_send) = last_send_ref.try_lock() {
+        *last_send = Instant::now();
+    }
 }
