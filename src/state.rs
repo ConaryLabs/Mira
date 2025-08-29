@@ -2,27 +2,32 @@
 // PHASE 1: Added QdrantMultiStore for GPT-5 Robust Memory multi-collection support
 // PHASE 3 UPDATE: Added ImageGenerationManager and FileSearchService to AppState
 
+use crate::{
+    config::CONFIG,
+    git::{GitClient, GitStore},
+    llm::{
+        client::OpenAIClient,
+        responses::{ImageGenerationManager, ResponsesManager, ThreadManager, VectorStoreManager},
+    },
+    memory::{
+        qdrant::{multi_store::QdrantMultiStore, store::QdrantMemoryStore},
+        sqlite::store::SqliteMemoryStore,
+    },
+    persona::PersonaOverlay, // Correctly import only PersonaOverlay
+    project::store::ProjectStore,
+    services::{
+        chat::ChatConfig, summarization::SummarizationService, ChatService, ContextService,
+        DocumentService, FileSearchService, MemoryService,
+    },
+};
 use std::sync::Arc;
-
-use crate::git::{GitClient, GitStore};
-use crate::llm::client::OpenAIClient;
-use crate::llm::responses::{ResponsesManager, ThreadManager, VectorStoreManager, ImageGenerationManager};
-use crate::memory::qdrant::store::QdrantMemoryStore;
-use crate::memory::qdrant::multi_store::QdrantMultiStore;  // PHASE 1: New import
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::project::store::ProjectStore;
-use crate::services::{ChatService, ContextService, DocumentService, MemoryService, FileSearchService};
-
-use crate::persona::PersonaOverlay;
-use crate::services::chat::ChatConfig;
-use crate::services::summarization::SummarizationService;
 
 #[derive(Clone)]
 pub struct AppState {
     // -------- Storage --------
     pub sqlite_store: Arc<SqliteMemoryStore>,
     pub qdrant_store: Arc<QdrantMemoryStore>,
-    pub qdrant_multi_store: Arc<QdrantMultiStore>,  // PHASE 1: New multi-collection store
+    pub qdrant_multi_store: Arc<QdrantMultiStore>, // PHASE 1: New multi-collection store
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
@@ -142,13 +147,11 @@ pub async fn create_app_state_with_multi_qdrant(
     git_store: GitStore,
     git_client: GitClient,
 ) -> anyhow::Result<AppState> {
-    use crate::config::CONFIG;
     use tracing::{info, warn};
 
     // Initialize single Qdrant store for backward compatibility
-    let qdrant_store = Arc::new(
-        QdrantMemoryStore::new(qdrant_url, &CONFIG.qdrant_collection).await?
-    );
+    let qdrant_store =
+        Arc::new(QdrantMemoryStore::new(qdrant_url, &CONFIG.qdrant_collection).await?);
 
     // PHASE 1: Initialize multi-collection Qdrant store
     let qdrant_multi_store = if CONFIG.is_robust_memory_enabled() {
@@ -159,11 +162,14 @@ pub async fn create_app_state_with_multi_qdrant(
         Arc::new(QdrantMultiStore::from_single_store(qdrant_store.clone()))
     };
 
-    // Initialize LLM response managers
-    let responses_manager = Arc::new(ResponsesManager::new());
+    // Initialize LLM response managers with required arguments
+    let responses_manager = Arc::new(ResponsesManager::new(llm_client.clone()));
     let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
-    let thread_manager = Arc::new(ThreadManager::new());
-    let image_generation_manager = Arc::new(ImageGenerationManager::new());
+    let thread_manager = Arc::new(ThreadManager::new(
+        CONFIG.history_message_cap,
+        CONFIG.history_token_limit,
+    ));
+    let image_generation_manager = Arc::new(ImageGenerationManager::new(llm_client.clone()));
 
     // PHASE 1: Create memory service with multi-store support
     let memory_service = AppState::assemble_memory_service_with_multi_store(
@@ -181,10 +187,8 @@ pub async fn create_app_state_with_multi_qdrant(
     ));
 
     // Initialize document service
-    let document_service = Arc::new(DocumentService::new(
-        memory_service.clone(),
-        vector_store_manager.clone(),
-    ));
+    let document_service =
+        Arc::new(DocumentService::new(memory_service.clone(), vector_store_manager.clone()));
 
     // Initialize file search service
     let file_search_service = AppState::assemble_file_search_service(
@@ -192,9 +196,9 @@ pub async fn create_app_state_with_multi_qdrant(
         git_client.clone(),
     );
 
-    // Create default persona for chat service initialization
-    let default_persona = PersonaOverlay::new("Assistant", "A helpful AI assistant");
-    
+    // Create default persona for chat service initialization using the correct method
+    let default_persona = PersonaOverlay::mira();
+
     // Create chat service
     let chat_service = AppState::assemble_chat_service(
         llm_client.clone(),
@@ -207,8 +211,10 @@ pub async fn create_app_state_with_multi_qdrant(
         None, // Use default ChatConfig
     );
 
-    info!("✅ AppState initialized with {} Qdrant collections", 
-        if CONFIG.is_robust_memory_enabled() { "multiple" } else { "single" });
+    info!(
+        "✅ AppState initialized with {} Qdrant collections",
+        if CONFIG.is_robust_memory_enabled() { "multiple" } else { "single" }
+    );
 
     if CONFIG.is_robust_memory_enabled() {
         let collection_info = qdrant_multi_store.get_collection_info();
@@ -239,3 +245,4 @@ pub async fn create_app_state_with_multi_qdrant(
         file_search_service,
     })
 }
+
