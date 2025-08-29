@@ -8,4 +8,7 @@ pub mod multi_store;  // PHASE 1: Multi-collection wrapper
 
 // Re-export key types for convenience
 pub use store::QdrantMemoryStore;
-pub use multi_store::{QdrantMultiStore, EmbeddingHead}; // PHASE 1: New exports
+pub use multi_store::QdrantMultiStore;
+// PHASE 2: Correctly re-export the canonical EmbeddingHead to fix private import error
+pub use crate::llm::embeddings::EmbeddingHead;
+

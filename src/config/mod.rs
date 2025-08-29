@@ -1,6 +1,6 @@
 // src/config/mod.rs
 // PHASE 0: Added MINIMAL GPT-5 Robust Memory feature gates
-// Only adds essential flags, detailed config added in later phases
+// PHASE 2: Added chunking parameters for embedding heads
 
 use once_cell::sync::Lazy;
 use serde::Deserialize;
@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MiraConfig {
-    // ── Existing Configuration (unchanged from document you provided) ──
+    // ── Existing Configuration (unchanged) ──
     pub openai_base_url: String,
     pub model: String,
     pub verbosity: String,
@@ -16,33 +16,33 @@ pub struct MiraConfig {
     pub max_output_tokens: usize,
     pub debug_logging: bool,
     pub intent_model: String,
-    
+
     // ── Database Configuration
     pub database_url: String,
     pub sqlite_max_connections: usize,
-    
+
     // ── Session Configuration
     pub session_id: String,
     pub default_persona: String,
-    
+
     // ── Memory & History Configuration
     pub history_message_cap: usize,
     pub history_token_limit: usize,
     pub max_retrieval_tokens: usize,
-    
+
     // ── WebSocket Chat Settings
     pub ws_history_cap: usize,
     pub ws_vector_search_k: usize,
     pub ws_heartbeat_interval: u64,
     pub ws_connection_timeout: u64,
     pub ws_receive_timeout: u64,
-    
+
     // ── API Defaults
     pub history_default_limit: usize,
     pub history_max_limit: usize,
     pub context_recent_messages: usize,
     pub context_semantic_matches: usize,
-    
+
     // ── Memory Embedding Configuration
     pub always_embed_user: bool,
     pub always_embed_assistant: bool,
@@ -52,25 +52,25 @@ pub struct MiraConfig {
     pub rollup_every: usize,
     pub min_salience_for_qdrant: f32,
     pub min_salience_for_storage: f32,
-    
+
     // ── Summarization Configuration
     pub enable_summarization: bool,
     pub summary_chunk_size: usize,
     pub summary_token_limit: usize,
     pub summary_output_tokens: usize,
     pub summarize_after_messages: usize,
-    
+
     // ── Vector Store Configuration
     pub max_vector_results: usize,
     pub enable_vector_search: bool,
-    
+
     // ── GPT-5 Tool Configuration
     pub enable_chat_tools: bool,
     pub enable_web_search: bool,
     pub enable_code_interpreter: bool,
     pub enable_file_search: bool,
     pub enable_image_generation: bool,
-    
+
     // ── Tool-specific Configuration
     pub web_search_max_results: usize,
     pub web_search_timeout: u64,
@@ -81,47 +81,47 @@ pub struct MiraConfig {
     pub image_generation_size: String,
     pub image_generation_quality: String,
     pub image_generation_style: String,
-    
+
     // ── Qdrant Configuration
     pub qdrant_url: String,
     pub qdrant_collection: String,
     pub qdrant_embedding_dim: usize,
     pub qdrant_test_url: String,
     pub qdrant_test_collection: String,
-    
+
     // ── Git Configuration
     pub git_repos_dir: String,
     pub git_cache_dir: String,
     pub git_max_file_size: usize,
-    
+
     // ── Import Tool Configuration
     pub import_sqlite: String,
     pub import_qdrant_url: String,
     pub import_qdrant_collection: String,
-    
+
     // ── Persona Configuration
     pub persona: String,
     pub persona_decay_timeout: u64,
     pub session_stale_timeout: u64,
-    
+
     // ── Server Configuration
     pub host: String,
     pub port: u16,
-    
+
     // ── CORS Settings
     pub cors_origin: String,
     pub cors_credentials: bool,
-    
+
     // ── Rate Limiting (requests per minute)
     pub rate_limit_chat: usize,
     pub rate_limit_history: usize,
     pub rate_limit_embeddings: usize,
-    
+
     // ── Timeouts (in seconds)
     pub openai_timeout: u64,
     pub qdrant_timeout: u64,
     pub database_timeout: u64,
-    
+
     // ── Logging Configuration
     pub log_level: String,
     pub log_format: String,
@@ -130,18 +130,28 @@ pub struct MiraConfig {
     // ═══════════════════════════════════════════════════════════════
     // ─── PHASE 0: MINIMAL ROBUST MEMORY FEATURE GATES ─────────────
     // ═══════════════════════════════════════════════════════════════
-    
+
     /// Master flag to enable all new robust memory behaviors (OFF by default)
     pub aggressive_metadata_enabled: bool,
-    
+
     /// Comma-separated list of embedding heads (only used when master flag is ON)
     pub embed_heads: String,
-    
+
     /// Enable rolling summaries every 10 messages (only used when master flag is ON)
     pub summary_rolling_10: bool,
-    
+
     /// Enable rolling summaries every 100 messages (only used when master flag is ON)
     pub summary_rolling_100: bool,
+
+    // ═══════════════════════════════════════════════════════════════
+    // ─── PHASE 2: CHUNKING PARAMETERS FOR EMBEDDING HEADS ──────────
+    // ═══════════════════════════════════════════════════════════════
+    pub embed_semantic_chunk: usize,
+    pub embed_semantic_overlap: usize,
+    pub embed_code_chunk: usize,
+    pub embed_code_overlap: usize,
+    pub embed_summary_chunk: usize,
+    pub embed_summary_overlap: usize,
 }
 
 // Helper function - unchanged
@@ -172,7 +182,7 @@ impl MiraConfig {
         if dotenv::dotenv().is_err() {
             eprintln!("Warning: .env file not found. Using environment variables and defaults.");
         }
-        
+
         Self {
             // ── All existing configuration (unchanged) ──
             openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()),
@@ -260,82 +270,93 @@ impl MiraConfig {
             embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary".to_string()),
             summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
             summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
+
+            // ── PHASE 2: Chunking parameters ──
+            embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 300),
+            embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 100),
+            embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 256),
+            embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 64),
+            embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 600),
+            embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 200),
         }
     }
 
     // ── All existing convenience methods (unchanged) ──
-    
+
     pub fn tools_enabled(&self) -> bool {
-        self.enable_chat_tools && (
-            self.enable_web_search || 
-            self.enable_code_interpreter || 
-            self.enable_file_search || 
-            self.enable_image_generation
-        )
+        self.enable_chat_tools
+            && (self.enable_web_search
+                || self.enable_code_interpreter
+                || self.enable_file_search
+                || self.enable_image_generation)
     }
-    
+
     pub fn openai_api_url(&self, endpoint: &str) -> String {
         format!("{}/v1/{}", self.openai_base_url, endpoint)
     }
-    
+
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
-    
+
     pub fn database_pool_config(&self) -> (String, usize) {
         (self.database_url.clone(), self.sqlite_max_connections)
     }
-    
+
     pub fn qdrant_config(&self) -> (String, String, usize) {
-        (self.qdrant_url.clone(), self.qdrant_collection.clone(), self.qdrant_embedding_dim)
+        (
+            self.qdrant_url.clone(),
+            self.qdrant_collection.clone(),
+            self.qdrant_embedding_dim,
+        )
     }
-    
+
     pub fn is_debug(&self) -> bool {
         self.debug_logging || self.log_level.to_lowercase() == "debug"
     }
-    
+
     pub fn openai_timeout_ms(&self) -> u64 {
         self.openai_timeout * 1000
     }
-    
+
     pub fn embedding_settings(&self) -> (bool, bool, usize, f32) {
         (
             self.always_embed_user,
             self.always_embed_assistant,
             self.embed_min_chars,
-            self.min_salience_for_qdrant
+            self.min_salience_for_qdrant,
         )
     }
-    
+
     pub fn websocket_config(&self) -> (u64, u64, usize, usize) {
         (
             self.ws_heartbeat_interval,
             self.ws_connection_timeout,
             self.ws_history_cap,
-            self.ws_vector_search_k
+            self.ws_vector_search_k,
         )
     }
 
     // ── PHASE 0: Only essential robust memory methods ──
-    
+
     /// Check if robust memory features are enabled
     pub fn is_robust_memory_enabled(&self) -> bool {
         self.aggressive_metadata_enabled
     }
-    
+
     /// Get list of enabled embedding heads (fallback to single head if disabled)
     pub fn get_embedding_heads(&self) -> Vec<String> {
         if !self.aggressive_metadata_enabled {
             return vec!["semantic".to_string()];
         }
-        
+
         self.embed_heads
             .split(',')
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
             .collect()
     }
-    
+
     /// Check if rolling summaries should be enabled
     pub fn rolling_summaries_enabled(&self) -> bool {
         self.aggressive_metadata_enabled && (self.summary_rolling_10 || self.summary_rolling_100)
@@ -372,17 +393,17 @@ mod tests {
     #[test]
     fn test_phase0_robust_memory_enabled() {
         let original = env::var("MIRA_AGGRESSIVE_METADATA_ENABLED").ok();
-        
+
         env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
         let config = MiraConfig::from_env();
-        
+
         assert!(config.is_robust_memory_enabled());
         assert!(config.rolling_summaries_enabled());
         let heads = config.get_embedding_heads();
         assert!(heads.contains(&"semantic".to_string()));
         assert!(heads.contains(&"code".to_string()));
         assert!(heads.contains(&"summary".to_string()));
-        
+
         // Restore
         match original {
             Some(val) => env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", val),
@@ -390,3 +411,4 @@ mod tests {
         }
     }
 }
+

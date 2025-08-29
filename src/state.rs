@@ -156,7 +156,8 @@ pub async fn create_app_state_with_multi_qdrant(
     // PHASE 1: Initialize multi-collection Qdrant store
     let qdrant_multi_store = if CONFIG.is_robust_memory_enabled() {
         info!("🏗️  Robust memory enabled - initializing multi-collection Qdrant store");
-        Arc::new(QdrantMultiStore::new(qdrant_url).await?)
+        // Corrected: Pass the collection base name as the second argument
+        Arc::new(QdrantMultiStore::new(qdrant_url, &CONFIG.qdrant_collection).await?)
     } else {
         info!("📦 Robust memory disabled - using compatibility multi-store wrapper");
         Arc::new(QdrantMultiStore::from_single_store(qdrant_store.clone()))
@@ -220,7 +221,7 @@ pub async fn create_app_state_with_multi_qdrant(
         let collection_info = qdrant_multi_store.get_collection_info();
         info!("📊 Multi-collection setup:");
         for (head, collection_name) in collection_info {
-            info!("   - {}: {}", head.as_str(), collection_name);
+            info!("   - {}: {}", head, collection_name); // Adjusted to handle String head
         }
     } else {
         warn!("⚠️  Robust memory disabled - using single collection mode");
