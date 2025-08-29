@@ -1,24 +1,27 @@
 // src/services/memory.rs
-// Fixed version - Added project_id parameter to save_user_message
-// OPTIMIZATION: Using centralized CONFIG for better performance
+// PHASE 1: Multi-Collection Qdrant Support for GPT-5 Robust Memory
+// Updated to use QdrantMultiStore for multi-head embedding storage
 
 use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
+use crate::memory::qdrant::multi_store::{QdrantMultiStore, EmbeddingHead};
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryType};
 use crate::services::chat::ChatResponse;
 use crate::llm::client::OpenAIClient;
-use crate::config::CONFIG;  // ADD THIS IMPORT
+use crate::config::CONFIG;
 
 /// Unified memory service that manages both SQLite and Qdrant stores
+/// PHASE 1: Enhanced with multi-collection Qdrant support
 pub struct MemoryService {
     sqlite_store: Arc<SqliteMemoryStore>,
     qdrant_store: Arc<QdrantMemoryStore>,
+    qdrant_multi_store: Arc<QdrantMultiStore>,
     llm_client: Arc<OpenAIClient>,
 }
 
@@ -28,9 +31,28 @@ impl MemoryService {
         qdrant_store: Arc<QdrantMemoryStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
+        // PHASE 1: Create a temporary multi-store wrapper around the single store
+        let temp_multi_store = Arc::new(QdrantMultiStore::from_single_store(qdrant_store.clone()));
+        
         Self {
             sqlite_store,
             qdrant_store,
+            qdrant_multi_store: temp_multi_store,
+            llm_client,
+        }
+    }
+    
+    /// PHASE 1: Create with multi-store support
+    pub fn new_with_multi_store(
+        sqlite_store: Arc<SqliteMemoryStore>,
+        qdrant_store: Arc<QdrantMemoryStore>,
+        qdrant_multi_store: Arc<QdrantMultiStore>,
+        llm_client: Arc<OpenAIClient>,
+    ) -> Self {
+        Self {
+            sqlite_store,
+            qdrant_store,
+            qdrant_multi_store,
             llm_client,
         }
     }
@@ -42,7 +64,6 @@ impl MemoryService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<()> {
-        // Get default salience from CONFIG
         let default_salience = CONFIG.min_salience_for_storage;
         
         let mut entry = MemoryEntry {
@@ -65,10 +86,8 @@ impl MemoryService {
             if let Some(ref mut tags) = entry.tags {
                 tags.push(format!("project:{}", proj_id));
             }
-            debug!("User message for project: {}", proj_id);
         }
 
-        // Check if we should always embed user messages (from CONFIG)
         if CONFIG.always_embed_user {
             match self.llm_client.get_embedding(content).await {
                 Ok(embedding) => {
@@ -82,10 +101,14 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
-        // Get minimum salience for Qdrant from CONFIG
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
             if salience >= CONFIG.min_salience_for_qdrant {
-                self.qdrant_store.save(&entry).await?;
+                if CONFIG.is_robust_memory_enabled() {
+                    info!("💾 Saving user message to multiple Qdrant collections");
+                    self.save_to_multi_collections(&entry, &self.get_user_message_heads()).await?;
+                } else {
+                    self.qdrant_store.save(&entry).await?;
+                }
             }
         }
 
@@ -115,8 +138,6 @@ impl MemoryService {
             system_fingerprint: None,
         };
 
-        // Check if we should always embed assistant messages (from CONFIG)
-        // Check minimum character count for embedding (from CONFIG)
         if CONFIG.always_embed_assistant && response.output.len() >= CONFIG.embed_min_chars {
             match self.llm_client.get_embedding(&response.output).await {
                 Ok(embedding) => {
@@ -130,10 +151,14 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
-        // Get minimum salience for Qdrant from CONFIG
         if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
             if salience >= CONFIG.min_salience_for_qdrant {
-                self.qdrant_store.save(&entry).await?;
+                if CONFIG.is_robust_memory_enabled() {
+                    info!("💾 Saving assistant response to multiple Qdrant collections");
+                    self.save_to_multi_collections(&entry, &self.get_assistant_response_heads(response)).await?;
+                } else {
+                    self.qdrant_store.save(&entry).await?;
+                }
             }
         }
 
@@ -155,10 +180,10 @@ impl MemoryService {
             content: summary_content.to_string(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(2.0),  // Low salience for summaries
+            salience: Some(2.0),
             tags: Some(vec!["summary".to_string(), "compressed".to_string()]),
-            summary: Some(format!("Summary of previous {} messages.", original_message_count)),
-            memory_type: Some(MemoryType::Summary),
+            summary: Some(format!("Summary of previous {} messages", original_message_count)),
+            memory_type: Some(MemoryType::Other),
             logprobs: None,
             moderation_flag: None,
             system_fingerprint: None,
@@ -175,18 +200,21 @@ impl MemoryService {
 
         self.sqlite_store.save(&entry).await?;
 
-        // Get minimum salience for Qdrant from CONFIG
-        if let (Some(salience), Some(_)) = (entry.salience, &entry.embedding) {
-            if salience >= CONFIG.min_salience_for_qdrant {
+        if let Some(_) = &entry.embedding {
+            if CONFIG.is_robust_memory_enabled() {
+                info!("💾 Saving summary to Summary and Semantic collections");
+                let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
+                self.save_to_multi_collections(&entry, &summary_heads).await?;
+            } else {
                 self.qdrant_store.save(&entry).await?;
             }
         }
 
-        info!("💾 Saved conversation summary to memory stores");
+        info!("💾 Saved summary to memory stores");
         Ok(())
     }
 
-    /// Evaluate and save a response
+    /// Evaluate and save response (for compatibility)
     pub async fn evaluate_and_save_response(
         &self,
         session_id: &str,
@@ -196,7 +224,6 @@ impl MemoryService {
         if let Some(proj_id) = project_id {
             debug!("Evaluating response for project: {}", proj_id);
         }
-        
         self.save_assistant_response(session_id, response).await
     }
 
@@ -216,19 +243,73 @@ impl MemoryService {
         embedding: &[f32],
         k: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        self.qdrant_store.semantic_search(session_id, embedding, k).await
+        if CONFIG.is_robust_memory_enabled() {
+            self.qdrant_multi_store
+                .search(EmbeddingHead::Semantic, session_id, embedding, k)
+                .await
+        } else {
+            self.qdrant_store.semantic_search(session_id, embedding, k).await
+        }
     }
 
-    /// Parse memory type from string
-    fn parse_memory_type(&self, type_str: &str) -> MemoryType {
-        match type_str.to_lowercase().as_str() {
+    // Helper methods
+    async fn save_to_multi_collections(
+        &self, 
+        entry: &MemoryEntry, 
+        heads: &[EmbeddingHead]
+    ) -> Result<()> {
+        for head in heads {
+            if let Err(e) = self.qdrant_multi_store.save(*head, entry).await {
+                warn!("Failed to save to {} collection: {}", head.as_str(), e);
+            }
+        }
+        Ok(())
+    }
+
+    fn get_user_message_heads(&self) -> Vec<EmbeddingHead> {
+        let enabled_heads = self.qdrant_multi_store.get_enabled_heads();
+        enabled_heads.into_iter()
+            .filter(|head| *head != EmbeddingHead::Summary)
+            .collect()
+    }
+
+    fn get_assistant_response_heads(&self, response: &ChatResponse) -> Vec<EmbeddingHead> {
+        let enabled_heads = self.qdrant_multi_store.get_enabled_heads();
+        let is_summary = response.tags.contains(&"summary".to_string()) ||
+                        response.memory_type.to_lowercase().contains("summary");
+        
+        enabled_heads.into_iter()
+            .filter(|head| {
+                if *head == EmbeddingHead::Summary {
+                    is_summary
+                } else {
+                    true
+                }
+            })
+            .collect()
+    }
+
+    fn parse_memory_type(&self, memory_type: &str) -> MemoryType {
+        match memory_type.to_lowercase().as_str() {
             "feeling" => MemoryType::Feeling,
             "fact" => MemoryType::Fact,
             "joke" => MemoryType::Joke,
             "promise" => MemoryType::Promise,
             "event" => MemoryType::Event,
-            "summary" => MemoryType::Summary,
             _ => MemoryType::Other,
         }
+    }
+
+    // Getters
+    pub fn sqlite_store(&self) -> &Arc<SqliteMemoryStore> {
+        &self.sqlite_store
+    }
+    
+    pub fn qdrant_store(&self) -> &Arc<QdrantMemoryStore> {
+        &self.qdrant_store
+    }
+    
+    pub fn qdrant_multi_store(&self) -> &Arc<QdrantMultiStore> {
+        &self.qdrant_multi_store
     }
 }

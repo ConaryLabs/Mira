@@ -1,180 +1,204 @@
 // src/main.rs
-// Mira v2.0 - GPT-5 Edition with Responses API
-// CLEANED: Removed all emojis for professional, terminal-friendly logging
-// PHASE 3 UPDATE: Added ImageGenerationManager and FileSearchService
-// FIXED: Removed duplicate /health route that was causing Axum router conflict
-// FIXED: Use CONFIG system instead of hardcoded values
+// PHASE 1: Multi-Collection Qdrant Support for GPT-5 Robust Memory
+// PHASE 3: File search and image generation integration
 
 use std::sync::Arc;
-
-use axum::{routing::get, Router};
+use anyhow::Result;
+use tracing::{info, warn, error};
 use sqlx::SqlitePool;
-use tokio::net::TcpListener;
-use tower_http::cors::{Any, CorsLayer};
-use tracing::info;
+use axum::{
+    routing::{get, post},
+    Router,
+    http::Method,
+};
+use tower::ServiceBuilder;
+use tower_http::cors::{CorsLayer, Any};
 
-use mira_backend::{
-    api::http::http_router,
-    api::ws::ws_router,
-    config::CONFIG,
-    git::{GitClient, GitStore},
-    llm::client::OpenAIClient,
-    llm::responses::{ImageGenerationManager, ResponsesManager, ThreadManager, VectorStoreManager},
-    memory::{
-        qdrant::store::QdrantMemoryStore,
-        sqlite::{migration, store::SqliteMemoryStore},
-    },
-    persona::PersonaOverlay,
-    project::{project_router, store::ProjectStore},
-    services::{
-        chat::{ChatConfig, ChatService},
-        ContextService,
-        DocumentService,
-        FileSearchService,
-        MemoryService,
-        SummarizationService,
-    },
-    state::AppState,
+use mira_backend::config::CONFIG;
+use mira_backend::memory::sqlite::store::SqliteMemoryStore;
+use mira_backend::memory::qdrant::store::QdrantMemoryStore;
+use mira_backend::project::store::ProjectStore;
+use mira_backend::git::{GitStore, GitClient};
+use mira_backend::llm::client::OpenAIClient;
+use mira_backend::state::{AppState, create_app_state_with_multi_qdrant};  // PHASE 1: New import
+use mira_backend::api::http::chat::{rest_chat_handler, get_chat_history};
+use mira_backend::api::ws::chat::websocket_chat_handler;
+use mira_backend::api::http::handlers::{health_handler, project_details_handler};
+use mira_backend::project::{
+    create_project_handler,
+    list_projects_handler,
+    get_project_handler,
+    update_project_handler,
+    delete_project_handler,
+    create_artifact_handler,
+    get_artifact_handler,
+    list_project_artifacts_handler,
+    update_artifact_handler,
+    delete_artifact_handler,
+};
+use mira_backend::api::http::git::{
+    attach_repo_handler,
+    list_attached_repos_handler,
+    sync_repo_handler,
+    get_file_tree_handler,
+    get_file_content_handler,
+    update_file_content_handler,
+    list_branches,
+    switch_branch,
+    get_commit_history,
+    get_commit_diff,
+    get_file_at_commit,
 };
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Initialize env + logging
-    dotenv::dotenv().ok();
-    tracing_subscriber::fmt::init();
+async fn main() -> Result<()> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
-    info!("Starting Mira v2.0 - GPT-5 Edition");
-    info!("Build Date: August 2025 - Full Autonomy Mode");
+    info!("🚀 Starting Mira Backend (Phase 1: Multi-Collection Support)");
+    info!("Config loaded from environment and .env file");
+    
+    // PHASE 1: Log robust memory configuration status
+    if CONFIG.is_robust_memory_enabled() {
+        info!("🧠 Robust Memory: ENABLED");
+        info!("  - Embedding heads: {}", CONFIG.embed_heads);
+        info!("  - Rolling summaries (10): {}", CONFIG.summary_rolling_10);
+        info!("  - Rolling summaries (100): {}", CONFIG.summary_rolling_100);
+    } else {
+        info!("🧠 Robust Memory: DISABLED (using single-collection mode)");
+    }
 
-    // FIXED: Use CONFIG for database URL
-    info!("Initializing SQLite database");
-    let pool = SqlitePool::connect(&CONFIG.database_url).await?;
-    migration::run_migrations(&pool).await?;
+    // Initialize database pool
+    info!("Initializing database connection");
+    let database_url = &CONFIG.database_url;
+    info!("Database URL: {}", database_url);
 
-    // --- Memory stores ---
+    let pool = SqlitePool::connect(database_url).await?;
+    
+    // Run database migrations
+    info!("Running database migrations");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    info!("✅ Database migrations completed successfully");
+
+    // Initialize stores
     info!("Initializing memory stores");
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
+    info!("  - SQLite store: {}", database_url);
 
-    // FIXED: Use CONFIG for Qdrant configuration
-    let (qdrant_url, qdrant_collection, _) = CONFIG.qdrant_config();
-    let qdrant_store = Arc::new(QdrantMemoryStore::new(&qdrant_url, &qdrant_collection).await?);
+    // PHASE 1: Note about Qdrant initialization change
+    info!("Initializing Qdrant vector stores");
+    info!("  - Qdrant URL: {}", CONFIG.qdrant_url);
+    if CONFIG.is_robust_memory_enabled() {
+        info!("  - Multi-collection mode: {} heads", CONFIG.get_embedding_heads().len());
+    } else {
+        info!("  - Single collection: {}", CONFIG.qdrant_collection);
+    }
 
-    // --- OpenAI / GPT-5 ---
-    info!("Initializing OpenAI GPT-5 client");
-    let openai_client = OpenAIClient::new()?;
+    // Initialize OpenAI client
+    info!("Initializing LLM clients");
+    let openai_client = Arc::new(OpenAIClient::new()?);
+    info!("  - Base URL: {}", CONFIG.openai_base_url);
     info!("  - Model: {} for conversation", CONFIG.model);
     info!("  - Image: gpt-image-1 for image generation");
     info!("  - Embeddings: text-embedding-3-large");
 
-    // --- Projects / Git ---
+    // Initialize project store
     info!("Initializing project store");
     let project_store = Arc::new(ProjectStore::new(pool.clone()));
 
+    // Initialize Git client and store
     info!("Initializing Git client and store");
     let git_store = GitStore::new(pool.clone());
-    // FIXED: Use CONFIG for git directory
     let git_client = GitClient::new(&CONFIG.git_repos_dir, git_store.clone());
 
-    // --- Responses API managers ---
-    info!("Initializing Responses API managers");
-    let responses_manager = Arc::new(ResponsesManager::new(openai_client.clone()));
-    let vector_store_manager = Arc::new(VectorStoreManager::new(openai_client.clone()));
-    let thread_manager = Arc::new(ThreadManager::new(100, 128_000));
+    // PHASE 1: Use new multi-collection AppState initialization
+    info!("🏗️  Initializing AppState with multi-collection support");
+    let app_state = Arc::new(
+        create_app_state_with_multi_qdrant(
+            sqlite_store,
+            &CONFIG.qdrant_url,
+            openai_client,
+            project_store,
+            git_store,
+            git_client,
+        ).await?
+    );
 
-    // PHASE 3 NEW: Initialize ImageGenerationManager
-    info!("Initializing Phase 3 services");
-    let image_generation_manager = Arc::new(ImageGenerationManager::new(openai_client.clone()));
+    info!("✅ Application state assembled successfully");
 
-    // --- Services ---
-    info!("Initializing services");
-    let memory_service = Arc::new(MemoryService::new(
-        sqlite_store.clone(),
-        qdrant_store.clone(),
-        openai_client.clone(),
-    ));
-
-    let context_service = Arc::new(ContextService::new(
-        openai_client.clone(),
-        sqlite_store.clone(),
-        qdrant_store.clone(),
-    ));
-
-    // Create chat config with default settings
-    let chat_config = ChatConfig::default();
-
-    let summarization_service = Arc::new(SummarizationService::new(
-        openai_client.clone(),
-        Arc::new(chat_config.clone()),
-    ));
-
-    let document_service = Arc::new(DocumentService::new(
-        memory_service.clone(),
-        vector_store_manager.clone(),
-    ));
-
-    // PHASE 3 NEW: Initialize FileSearchService
-    let file_search_service = Arc::new(FileSearchService::new(
-        vector_store_manager.clone(),
-        git_client.clone(),
-    ));
-
-    let persona_overlay = PersonaOverlay::mira();
-
-    let chat_service = Arc::new(ChatService::new(
-        openai_client.clone(),
-        thread_manager.clone(),
-        vector_store_manager.clone(),
-        persona_overlay,
-        memory_service.clone(),
-        sqlite_store.clone(),
-        qdrant_store.clone(),
-        summarization_service,
-        Some(chat_config),
-    ));
-
-    // --- App state ---
-    info!("Assembling application state");
-    let app_state = Arc::new(AppState {
-        sqlite_store,
-        qdrant_store,
-        project_store,
-        git_store,
-        git_client,
-        llm_client: openai_client,
-        responses_manager,
-        vector_store_manager,
-        thread_manager,
-        image_generation_manager, // PHASE 3 NEW
-        chat_service,
-        memory_service,
-        context_service,
-        document_service,
-        file_search_service, // PHASE 3 NEW
-    });
-
-    // --- HTTP server ---
-    info!("Configuring HTTP server");
-
+    // Build CORS layer
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
+        .allow_origin(CONFIG.cors_origin.parse::<tower_http::cors::Any>().unwrap_or(Any))
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers(Any);
 
+    // Build the router
     let app = Router::new()
-        .merge(http_router(app_state.clone()))
-        .nest("/ws", ws_router(app_state.clone())) // This is the corrected line
-        .merge(project_router())
-        .layer(cors)
+        // Health check
+        .route("/health", get(health_handler))
+        
+        // Chat endpoints
+        .route("/chat", post(rest_chat_handler))
+        .route("/chat/history", get(get_chat_history))
+        .route("/ws/chat", get(websocket_chat_handler))
+        
+        // Project management
+        .route("/projects", post(create_project_handler))
+        .route("/projects", get(list_projects_handler))
+        .route("/projects/:id", get(get_project_handler))
+        .route("/projects/:id", post(update_project_handler))
+        .route("/projects/:id", delete(delete_project_handler))
+        .route("/project/:project_id", get(project_details_handler))
+        
+        // Artifact management
+        .route("/projects/:project_id/artifacts", post(create_artifact_handler))
+        .route("/projects/:project_id/artifacts", get(list_project_artifacts_handler))
+        .route("/artifacts/:id", get(get_artifact_handler))
+        .route("/artifacts/:id", post(update_artifact_handler))
+        .route("/artifacts/:id", delete(delete_artifact_handler))
+        
+        // Git integration
+        .route("/projects/:project_id/git/attach", post(attach_repo_handler))
+        .route("/projects/:project_id/git/repos", get(list_attached_repos_handler))
+        .route("/projects/:project_id/git/sync/:attachment_id", post(sync_repo_handler))
+        
+        // File operations
+        .route("/projects/:project_id/git/files/:attachment_id/tree", get(get_file_tree_handler))
+        .route("/projects/:project_id/git/files/:attachment_id/content/*path", get(get_file_content_handler))
+        .route("/projects/:project_id/git/files/:attachment_id/content/*path", post(update_file_content_handler))
+        
+        // Branch operations
+        .route("/projects/:project_id/git/branches/:attachment_id", get(list_branches))
+        .route("/projects/:project_id/git/branch/:attachment_id", post(switch_branch))
+        
+        // Commit operations
+        .route("/projects/:project_id/git/commits/:attachment_id", get(get_commit_history))
+        .route("/projects/:project_id/git/diff/:attachment_id/:commit_sha", get(get_commit_diff))
+        .route("/projects/:project_id/git/file-at-commit/:attachment_id/:commit_sha/*path", get(get_file_at_commit))
+        
+        .layer(ServiceBuilder::new().layer(cors))
         .with_state(app_state);
 
-    // FIXED: Use CONFIG.bind_address() instead of hardcoded port
-    let bind_addr = CONFIG.bind_address();
-    info!("Server bind address: {}", bind_addr);
-    let listener = TcpListener::bind(&bind_addr).await?;
-    info!("Server listening on http://{}", bind_addr);
-    info!("WebSocket available at ws://{}/ws/chat", bind_addr);
-    info!("Health check available at http://{}/health", bind_addr);
-
+    // Server configuration
+    let bind_address = CONFIG.bind_address();
+    info!("🌐 Starting HTTP server on {}", bind_address);
+    
+    // PHASE 1: Log startup summary with multi-collection info
+    info!("🎯 Mira Backend Ready!");
+    info!("  - HTTP API: http://{}", bind_address);
+    info!("  - WebSocket: ws://{}/ws/chat", bind_address);
+    if CONFIG.is_robust_memory_enabled() {
+        info!("  - Memory: Multi-collection Qdrant + SQLite");
+        info!("  - Collections: {}", CONFIG.get_embedding_heads().join(", "));
+    } else {
+        info!("  - Memory: Single-collection Qdrant + SQLite");
+    }
+    info!("  - Session ID: {}", CONFIG.session_id);
+    
+    // Start the server
+    let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
