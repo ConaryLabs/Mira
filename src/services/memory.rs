@@ -1,69 +1,276 @@
 // src/services/memory.rs
-
-use std::str::FromStr;
 use std::sync::Arc;
-
+use std::collections::HashMap;
+use std::str::FromStr;
+use tokio::sync::RwLock;
 use anyhow::Result;
 use chrono::Utc;
 use tracing::{debug, error, info, warn};
 
 use crate::config::CONFIG;
-use crate::llm::client::OpenAIClient;
-use crate::llm::classification::Classification; // Added for Phase 3
+use crate::memory::{
+    qdrant::{multi_store::QdrantMultiStore, store::QdrantMemoryStore},
+    sqlite::store::SqliteMemoryStore,
+    traits::MemoryStore,
+    types::{MemoryEntry, MemoryType},
+};
 use crate::llm::embeddings::{EmbeddingHead, TextChunker};
-use crate::memory::qdrant::multi_store::QdrantMultiStore;
-use crate::memory::qdrant::store::QdrantMemoryStore;
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::traits::MemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryType};
 use crate::services::chat::ChatResponse;
 
-/// Unified memory service that manages both SQLite and Qdrant stores.
-/// It now supports multi-head embeddings and write-time classification.
+// Remove the lazy_static block since we're using centralized CONFIG
+
 pub struct MemoryService {
+    llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
     qdrant_store: Arc<QdrantMemoryStore>,
-    qdrant_multi_store: Arc<QdrantMultiStore>,
-    llm_client: Arc<OpenAIClient>,
-    text_chunker: TextChunker,
+    multi_store: Option<Arc<QdrantMultiStore>>,
+    
+    // ── Phase 4: Session message counters for rolling summaries ──
+    session_counters: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 impl MemoryService {
-    /// Constructor with multi-store support.
+    /// Create a new memory service with single-head and multi-head embedding support.
+    pub async fn new(
+        llm_client: Arc<OpenAIClient>,
+        sqlite_store: Arc<SqliteMemoryStore>,
+        qdrant_store: Arc<QdrantMemoryStore>,
+    ) -> Result<Self> {
+        let multi_store = if CONFIG.is_robust_memory_enabled() {
+            // Get the base URL from the qdrant_store config
+            let base_url = &CONFIG.qdrant_url;
+            let collection_base = "mira-memory";
+            Some(Arc::new(QdrantMultiStore::new(base_url, collection_base).await?))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            llm_client,
+            sqlite_store,
+            qdrant_store,
+            multi_store,
+            session_counters: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
+    /// Alternative constructor for compatibility with existing state management
     pub fn new_with_multi_store(
         sqlite_store: Arc<SqliteMemoryStore>,
         qdrant_store: Arc<QdrantMemoryStore>,
-        qdrant_multi_store: Arc<QdrantMultiStore>,
+        multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
         Self {
+            llm_client,
             sqlite_store,
             qdrant_store,
-            qdrant_multi_store,
-            llm_client,
-            text_chunker: TextChunker::new().expect("Failed to initialize text chunker"),
+            multi_store: Some(multi_store),
+            session_counters: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Save a user message, enriching it with classification and multi-head embeddings.
+    /// Get the current message count for a session
+    pub async fn get_session_message_count(&self, session_id: &str) -> usize {
+        let counters = self.session_counters.read().await;
+        counters.get(session_id).copied().unwrap_or(0)
+    }
+
+    /// Increment message counter for a session and return the new count
+    async fn increment_session_counter(&self, session_id: &str) -> usize {
+        let mut counters = self.session_counters.write().await;
+        let count = counters.entry(session_id.to_string()).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    /// Check if rolling summarization should trigger at current message count
+    fn should_trigger_rolling_summary(&self, message_count: usize) -> (bool, bool) {
+        let trigger_10 = CONFIG.summary_rolling_10 && message_count % 10 == 0 && message_count >= 10;
+        let trigger_100 = CONFIG.summary_rolling_100 && message_count % 100 == 0 && message_count >= 100;
+        
+        // Avoid double-summarizing at 100 (since it's also a multiple of 10)
+        // If both are triggered, prefer the 100-message summary
+        let final_trigger_10 = trigger_10 && !trigger_100;
+        
+        (final_trigger_10, trigger_100)
+    }
+
+    /// Trigger rolling summarization if conditions are met
+    pub async fn check_and_trigger_rolling_summaries(&self, session_id: &str) -> Result<()> {
+        if !CONFIG.is_robust_memory_enabled() {
+            return Ok(());
+        }
+
+        let message_count = self.get_session_message_count(session_id).await;
+        let (trigger_10, trigger_100) = self.should_trigger_rolling_summary(message_count);
+        
+        if trigger_10 {
+            info!("🔄 Triggering 10-message rolling summary for session {} at count {}", session_id, message_count);
+            if let Err(e) = self.create_rolling_summary(session_id, 10).await {
+                warn!("⚠️ Failed to create 10-message rolling summary: {}", e);
+            }
+        }
+        
+        if trigger_100 {
+            info!("🔄 Triggering 100-message rolling summary for session {} at count {}", session_id, message_count);
+            if let Err(e) = self.create_rolling_summary(session_id, 100).await {
+                warn!("⚠️ Failed to create 100-message rolling summary: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create a rolling summary for the last N messages
+    async fn create_rolling_summary(&self, session_id: &str, n: usize) -> Result<()> {
+        // Fetch the last N non-summary messages
+        let recent_messages = self.sqlite_store.load_recent(session_id, n * 2).await?;
+        
+        // Filter out existing summary messages to avoid summarizing summaries
+        let non_summary_messages: Vec<_> = recent_messages
+            .into_iter()
+            .filter(|msg| {
+                !msg.tags
+                    .as_ref()
+                    .map(|tags| tags.iter().any(|tag| tag.contains("summary")))
+                    .unwrap_or(false)
+            })
+            .take(n)
+            .collect();
+
+        if non_summary_messages.len() < std::cmp::min(n, 3) {
+            debug!("Not enough messages for {}-message rolling summary", n);
+            return Ok(());
+        }
+
+        // Build prompt for summarization
+        let mut prompt = if n <= 10 {
+            format!(
+                "Summarize the following last {} exchanges briefly to maintain context.\n\
+                 Keep it faithful, concise, and useful for context stitching.\n\n",
+                non_summary_messages.len()
+            )
+        } else {
+            format!(
+                "Summarize the following {} messages at a high level, focusing on key topics and themes.\n\
+                 Keep it concise and capture the essential context for long-term recall.\n\n",
+                non_summary_messages.len()
+            )
+        };
+
+        // Reverse to get chronological order (oldest first)
+        for msg in non_summary_messages.iter().rev() {
+            prompt.push_str(&format!("{}: {}\n", msg.role, msg.content));
+        }
+
+        // Generate summary
+        let token_limit = if n <= 10 { 256 } else { 512 };
+        let summary_content = self
+            .llm_client
+            .summarize_conversation(&prompt, token_limit)
+            .await?
+            .trim()
+            .to_string();
+
+        if summary_content.is_empty() {
+            return Ok(());
+        }
+
+        // Save the rolling summary
+        self.save_rolling_summary(session_id, &summary_content, n).await?;
+        
+        info!("✅ Created {}-message rolling summary for session {}", n, session_id);
+        Ok(())
+    }
+
+    /// Save a rolling summary with appropriate tags
+    async fn save_rolling_summary(&self, session_id: &str, summary_content: &str, window_size: usize) -> Result<()> {
+        let rolling_tag = format!("summary:rolling:{}", window_size);
+        
+        let entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            role: "assistant".to_string(), // Use assistant role for rolling summaries
+            content: summary_content.to_string(),
+            timestamp: Utc::now(),
+            embedding: None,
+            salience: Some(1.5), // Low salience to not dominate retrieval
+            tags: Some(vec![
+                "summary".to_string(),
+                rolling_tag,
+                "compressed".to_string(),
+            ]),
+            summary: Some(format!("Rolling summary of last {} messages", window_size)),
+            memory_type: Some(MemoryType::Summary),
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: None,
+            head: None,
+            is_code: Some(false),
+            lang: Some("natural".to_string()),
+            topics: Some(vec!["summary".to_string()]),
+            pinned: Some(false),
+            subject_tag: None,
+            last_accessed: Some(Utc::now()),
+        };
+
+        let saved_entry = self.sqlite_store.save(&entry).await?;
+        info!("💾 Saved rolling summary to SQLite");
+
+        // Always embed rolling summaries regardless of salience
+        if CONFIG.is_robust_memory_enabled() {
+            // Use both Summary and Semantic heads for rolling summaries
+            let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
+            self.generate_and_save_embeddings(&saved_entry, &summary_heads).await?;
+        } else {
+            // Legacy single-embedding path
+            if let Ok(embedding) = self.llm_client.get_embedding(summary_content).await {
+                let mut entry_with_embedding = saved_entry;
+                entry_with_embedding.embedding = Some(embedding);
+                self.qdrant_store.save(&entry_with_embedding).await?;
+                info!("💾 Saved rolling summary to single Qdrant collection");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Save a user message to memory stores.
     pub async fn save_user_message(
         &self,
         session_id: &str,
         content: &str,
         project_id: Option<&str>,
     ) -> Result<()> {
-        // Create a basic entry from the message content.
-        let mut entry = MemoryEntry::from_user_message(session_id.to_string(), content.to_string());
+        // Increment session counter first
+        let message_count = self.increment_session_counter(session_id).await;
+        debug!("📈 Session {} message count now: {}", session_id, message_count);
 
-        if let Some(proj_id) = project_id {
-            if let Some(ref mut tags) = entry.tags {
-                tags.push(format!("project:{}", proj_id));
-            }
-            // Optional: seed subject_tag so decay policy can treat project memories gently
-            entry.subject_tag = Some(format!("project:{}", proj_id));
-        }
-        
-        // If robust memory is enabled, classify the content to get rich metadata.
+        let mut entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            role: "user".to_string(),
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            embedding: None,
+            salience: Some(self.calculate_user_message_salience(content) as f32),
+            tags: Some(vec!["conversational".to_string()]),
+            summary: Some(format!("User query: {}", content.chars().take(50).collect::<String>())),
+            memory_type: Some(MemoryType::Other), // Use Other instead of Episodic
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: project_id.map(String::from),
+            head: None,
+            is_code: None,
+            lang: None,
+            topics: None,
+            pinned: Some(false),
+            subject_tag: None,
+            last_accessed: Some(Utc::now()),
+        };
+
+        // Phase 3: Rich metadata classification (if enabled)
         if CONFIG.is_robust_memory_enabled() {
             info!("🧠 Classifying user message for rich metadata...");
             match self.llm_client.classify_text(content).await {
@@ -102,7 +309,7 @@ impl MemoryService {
                         .get_embedding_heads()
                         .into_iter()
                         .filter(|h| h != "summary") // Exclude summary head for user messages.
-                        .map(|s| EmbeddingHead::from_str(&s))
+                        .map(|s| EmbeddingHead::from_str(s))
                         .filter_map(Result::ok)
                         .collect::<Vec<_>>();
 
@@ -128,6 +335,10 @@ impl MemoryService {
         session_id: &str,
         response: &ChatResponse,
     ) -> Result<()> {
+        // Increment session counter first
+        let message_count = self.increment_session_counter(session_id).await;
+        debug!("📈 Session {} message count now: {}", session_id, message_count);
+
         let mut entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -167,7 +378,7 @@ impl MemoryService {
                         .get_embedding_heads()
                         .into_iter()
                         .filter(|h| if h == "summary" { is_summary } else { true })
-                        .map(|s| EmbeddingHead::from_str(&s))
+                        .map(|s| EmbeddingHead::from_str(s))
                         .filter_map(Result::ok)
                         .collect::<Vec<_>>();
 
@@ -183,6 +394,18 @@ impl MemoryService {
                 }
             }
         }
+
+        // ── Phase 4: Check for rolling summarization after saving ──
+        if CONFIG.is_robust_memory_enabled() {
+            // Don't trigger rolling summaries for rolling summary messages themselves
+            let is_rolling_summary = response.tags.iter()
+                .any(|tag| tag.starts_with("summary:rolling:"));
+            
+            if !is_rolling_summary {
+                self.check_and_trigger_rolling_summaries(session_id).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -241,107 +464,66 @@ impl MemoryService {
     /// Chunks text, generates batch embeddings, and saves them to the correct Qdrant collections.
     async fn generate_and_save_embeddings(
         &self,
-        base_entry: &MemoryEntry,
+        entry: &MemoryEntry,
         heads: &[EmbeddingHead],
     ) -> Result<()> {
-        if heads.is_empty() {
-            return Ok(());
-        }
-
-        let mut all_chunks_to_embed: Vec<String> = Vec::new();
-        let mut chunk_metadata: Vec<(EmbeddingHead, usize)> = Vec::new();
+        let multi_store = self
+            .multi_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Multi-store not initialized"))?;
 
         for head in heads {
-            let chunks = self.text_chunker.chunk_text(&base_entry.content, head)?;
-            for (i, chunk_content) in chunks.into_iter().enumerate() {
-                all_chunks_to_embed.push(chunk_content);
-                chunk_metadata.push((head.clone(), i));
+            // 1. Chunk the content according to the head's parameters.
+            let chunker = TextChunker::new()?;
+            let chunks = chunker.chunk_text(&entry.content, head)?;
+
+            // 2. Generate embeddings for all chunks (batch processing).
+            let mut embeddings = Vec::new();
+            for chunk in &chunks {
+                let embedding = self.llm_client.get_embedding(chunk).await?;
+                embeddings.push(embedding);
             }
-        }
 
-        if all_chunks_to_embed.is_empty() {
-            return Ok(());
-        }
+            // 3. Save each chunk with its embedding to the appropriate collection.
+            for (chunk_text, embedding) in chunks.iter().zip(embeddings.iter()) {
+                let mut chunk_entry = entry.clone();
+                chunk_entry.content = chunk_text.clone();
+                chunk_entry.embedding = Some(embedding.clone());
+                chunk_entry.head = Some(head.to_string());
 
-        info!(
-            "Generating {} embedding chunks across {} heads.",
-            all_chunks_to_embed.len(),
-            heads.len()
-        );
-
-        let embeddings = self.llm_client.get_embeddings(&all_chunks_to_embed).await?;
-
-        for (i, embedding) in embeddings.into_iter().enumerate() {
-            let (head, chunk_index) = match chunk_metadata.get(i) {
-                Some(meta) => meta,
-                None => {
-                    warn!("Mismatch between embeddings and metadata count. Skipping extra embedding.");
-                    continue;
-                }
-            };
-            
-            let chunk_content = &all_chunks_to_embed[i];
-
-            let mut chunk_entry = base_entry.clone();
-            chunk_entry.content = chunk_content.clone();
-            chunk_entry.embedding = Some(embedding);
-            chunk_entry.head = Some(head.to_string());
-            
-            let tags = chunk_entry.tags.get_or_insert_with(Vec::new);
-            tags.push(format!("chunk:{}", chunk_index));
-
-            if let Err(e) = self
-                .qdrant_multi_store
-                .save(head.clone(), &chunk_entry)
-                .await
-            {
-                warn!("Failed to save chunk to {} collection: {}", head.as_str(), e);
+                multi_store.save(*head, &chunk_entry).await?;
             }
+
+            info!(
+                "💾 Saved {} chunks to {} collection for entry {}",
+                chunks.len(),
+                head,
+                entry.id.unwrap_or(-1)
+            );
         }
 
-        info!("💾 Saved all embedding chunks to Qdrant multi-store.");
         Ok(())
     }
 
-    /// Evaluate and save response (for compatibility)
-    pub async fn evaluate_and_save_response(
-        &self,
-        session_id: &str,
-        response: &ChatResponse,
-        project_id: Option<&str>,
-    ) -> Result<()> {
-        if let Some(proj_id) = project_id {
-            debug!("Evaluating response for project: {}", proj_id);
-        }
-        self.save_assistant_response(session_id, response).await
-    }
-
-    /// Get recent context from memory
-    pub async fn get_recent_context(
-        &self,
-        session_id: &str,
-        n: usize,
-    ) -> Result<Vec<MemoryEntry>> {
-        self.sqlite_store.load_recent(session_id, n).await
-    }
-
-    /// Search for similar memories
-    pub async fn search_similar(
-        &self,
-        session_id: &str,
-        embedding: &[f32],
-        k: usize,
-    ) -> Result<Vec<MemoryEntry>> {
-        if CONFIG.is_robust_memory_enabled() {
-            self.qdrant_multi_store
-                .search(EmbeddingHead::Semantic, session_id, embedding, k)
-                .await
+    /// Calculate salience score for user messages
+    fn calculate_user_message_salience(&self, content: &str) -> usize {
+        let base_salience = 5;
+        let length_bonus = std::cmp::min(content.len() / 100, 3);
+        
+        // Boost salience for questions
+        let question_bonus = if content.contains('?') { 2 } else { 0 };
+        
+        // Boost for code-like content
+        let code_bonus = if content.contains("```") || content.contains("fn ") || content.contains("def ") {
+            3
         } else {
-            self.qdrant_store.semantic_search(session_id, embedding, k).await
-        }
+            0
+        };
+        
+        base_salience + length_bonus + question_bonus + code_bonus
     }
 
-    // Helper methods
+    /// Parse memory type from string
     fn parse_memory_type(&self, memory_type: &str) -> MemoryType {
         match memory_type.to_lowercase().as_str() {
             "feeling" => MemoryType::Feeling,
@@ -350,20 +532,63 @@ impl MemoryService {
             "promise" => MemoryType::Promise,
             "event" => MemoryType::Event,
             "summary" => MemoryType::Summary,
+            "context" => MemoryType::Summary,
             _ => MemoryType::Other,
         }
     }
 
-    // Getters
-    pub fn sqlite_store(&self) -> &Arc<SqliteMemoryStore> {
-        &self.sqlite_store
+    /// Get recent context from memory (for API compatibility)
+    pub async fn get_recent_context(
+        &self,
+        session_id: &str,
+        n: usize,
+    ) -> Result<Vec<MemoryEntry>> {
+        self.sqlite_store.load_recent(session_id, n).await
     }
 
-    pub fn qdrant_store(&self) -> &Arc<QdrantMemoryStore> {
-        &self.qdrant_store
+    /// Search for similar memories using semantic search
+    pub async fn search_similar(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+        if CONFIG.is_robust_memory_enabled() {
+            if let Some(multi_store) = &self.multi_store {
+                // Use multi-head search - for now just use semantic head
+                if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
+                    // Note: QdrantMultiStore.search method signature is: search(head, session_id, embedding, limit)
+                    multi_store.search(EmbeddingHead::Semantic, "", &query_embedding, limit).await
+                } else {
+                    Err(anyhow::anyhow!("Failed to generate query embedding"))
+                }
+            } else {
+                Err(anyhow::anyhow!("Multi-store not available"))
+            }
+        } else {
+            // Legacy single-collection search
+            if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
+                self.qdrant_store.search_similar_memories("", &query_embedding, limit).await
+            } else {
+                Err(anyhow::anyhow!("Failed to generate query embedding"))
+            }
+        }
     }
 
-    pub fn qdrant_multi_store(&self) -> &Arc<QdrantMultiStore> {
-        &self.qdrant_multi_store
+    /// Add missing method for compatibility
+    pub async fn evaluate_and_save_response(
+        &self,
+        session_id: &str,
+        response: &crate::services::chat::ChatResponse,
+        _project_id: Option<&str>,
+    ) -> Result<()> {
+        self.save_assistant_response(session_id, response).await
+    }
+
+    /// Reset session counter (useful for testing or session cleanup)
+    pub async fn reset_session_counter(&self, session_id: &str) {
+        let mut counters = self.session_counters.write().await;
+        counters.remove(session_id);
+        debug!("🔄 Reset message counter for session {}", session_id);
+    }
+
+    /// Get all session counters (for debugging/monitoring)
+    pub async fn get_all_session_counters(&self) -> HashMap<String, usize> {
+        self.session_counters.read().await.clone()
     }
 }

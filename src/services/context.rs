@@ -1,4 +1,4 @@
-// src/services/context.rs
+// src/services/context.rs - Fixed version
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -90,10 +90,7 @@ impl ContextService {
 
             Ok(context)
         } else {
-            let context = self.context_builder
-                .build_minimal_context(session_id)
-                .await;
-
+            let context = self.context_builder.build_minimal_context(session_id).await?;
             info!("Built minimal context: {} recent messages", context.recent.len());
             Ok(context)
         }
