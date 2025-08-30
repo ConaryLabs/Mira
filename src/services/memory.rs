@@ -59,6 +59,8 @@ impl MemoryService {
             if let Some(ref mut tags) = entry.tags {
                 tags.push(format!("project:{}", proj_id));
             }
+            // Optional: seed subject_tag so decay policy can treat project memories gently
+            entry.subject_tag = Some(format!("project:{}", proj_id));
         }
         
         // If robust memory is enabled, classify the content to get rich metadata.
@@ -87,7 +89,6 @@ impl MemoryService {
                 }
             }
         }
-
 
         // Always save the (potentially enriched) message to SQLite first.
         let saved_entry = self.sqlite_store.save(&entry).await?;
@@ -145,6 +146,11 @@ impl MemoryService {
             is_code: None,
             lang: None,
             topics: None,
+
+            // Phase 4 additions
+            pinned: Some(false),
+            subject_tag: None,
+            last_accessed: Some(Utc::now()),
         };
 
         // Save to SQLite first to get an ID and the final state of the entry
@@ -205,6 +211,11 @@ impl MemoryService {
             is_code: Some(false),
             lang: Some("natural".to_string()),
             topics: Some(vec!["summary".to_string()]),
+
+            // Phase 4 additions
+            pinned: Some(false),
+            subject_tag: None,
+            last_accessed: Some(Utc::now()),
         };
 
         let saved_entry = self.sqlite_store.save(&entry).await?;

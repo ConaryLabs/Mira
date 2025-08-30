@@ -1,3 +1,4 @@
+// src/memory/sqlite/store.rs
 //! Implements MemoryStore for SQLite (session/recency memory).
 
 use crate::memory::traits::MemoryStore;
@@ -35,11 +36,17 @@ impl SqliteMemoryStore {
                 .collect()
         })
     }
+
+    #[inline]
+    fn bool_to_sqlite(v: Option<bool>) -> i64 {
+        v.unwrap_or(false) as i64
+    }
 }
 
 #[async_trait]
 impl MemoryStore for SqliteMemoryStore {
-    /// **MODIFIED**: Now returns the saved MemoryEntry with its new database ID.
+    /// **MODIFIED (Phase 4)**: Persists `pinned`, `subject_tag`, `last_accessed`.
+    /// Returns the saved MemoryEntry with its new database ID.
     async fn save(&self, entry: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = entry
             .tags
@@ -57,8 +64,9 @@ impl MemoryStore for SqliteMemoryStore {
             INSERT INTO chat_history (
                 session_id, role, content, timestamp,
                 embedding, salience, tags, summary, memory_type,
-                logprobs, moderation_flag, system_fingerprint
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                logprobs, moderation_flag, system_fingerprint,
+                pinned, subject_tag, last_accessed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
@@ -74,6 +82,9 @@ impl MemoryStore for SqliteMemoryStore {
         .bind(logprobs_json)
         .bind(entry.moderation_flag)
         .bind(&entry.system_fingerprint)
+        .bind(Self::bool_to_sqlite(entry.pinned))
+        .bind(&entry.subject_tag)
+        .bind(entry.last_accessed.map(|t| t.naive_utc()))
         .fetch_one(&self.pool)
         .await?;
 
@@ -84,11 +95,13 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(saved_entry)
     }
 
+    /// **MODIFIED (Phase 4)**: Loads Phase-4 fields and touches `last_accessed` for the returned rows.
     async fn load_recent(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
         let rows = sqlx::query(
             r#"
             SELECT id, session_id, role, content, timestamp, embedding, salience, tags, summary, memory_type,
-                   logprobs, moderation_flag, system_fingerprint
+                   logprobs, moderation_flag, system_fingerprint,
+                   pinned, subject_tag, last_accessed
             FROM chat_history
             WHERE session_id = ?
             ORDER BY timestamp DESC
@@ -100,10 +113,13 @@ impl MemoryStore for SqliteMemoryStore {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut entries = Vec::new();
+        let mut entries = Vec::with_capacity(rows.len());
+        let mut ids: Vec<i64> = Vec::with_capacity(rows.len());
 
         for row in rows {
             let id: i64 = row.get("id");
+            ids.push(id);
+
             let session_id: String = row.get("session_id");
             let role: String = row.get("role");
             let content: String = row.get("content");
@@ -116,6 +132,10 @@ impl MemoryStore for SqliteMemoryStore {
             let logprobs: Option<String> = row.get("logprobs");
             let moderation_flag: Option<bool> = row.get("moderation_flag");
             let system_fingerprint: Option<String> = row.get("system_fingerprint");
+
+            let pinned_i: Option<i64> = row.get("pinned");
+            let subject_tag: Option<String> = row.get("subject_tag");
+            let last_accessed: Option<NaiveDateTime> = row.get("last_accessed");
 
             let tags_vec = tags
                 .as_ref()
@@ -148,12 +168,32 @@ impl MemoryStore for SqliteMemoryStore {
                 logprobs: logprobs_val,
                 moderation_flag,
                 system_fingerprint,
-                // **MODIFIED**: Add default values for new fields
+
+                // Robust memory (Phase 3)
                 head: None,
                 is_code: None,
                 lang: None,
                 topics: None,
+
+                // Phase 4
+                pinned: Some(pinned_i.unwrap_or(0) != 0),
+                subject_tag,
+                last_accessed: last_accessed.map(|naive| Utc.from_utc_datetime(&naive)),
             });
+        }
+
+        // Touch last_accessed for the rows we just read (cheap N updates; N stays small).
+        for id in ids {
+            let _ = sqlx::query(
+                r#"
+                UPDATE chat_history
+                SET last_accessed = CURRENT_TIMESTAMP
+                WHERE id = ?
+                "#,
+            )
+            .bind(id)
+            .execute(&self.pool)
+            .await;
         }
 
         Ok(entries)
@@ -169,7 +209,8 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(Vec::new())
     }
 
-    /// **MODIFIED**: Now returns the updated MemoryEntry.
+    /// **MODIFIED (Phase 4)**: Allows updating Phase-4 fields in addition to existing metadata.
+    /// Returns the updated MemoryEntry (echo).
     async fn update_metadata(&self, id: i64, updated: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = updated
             .tags
@@ -186,7 +227,8 @@ impl MemoryStore for SqliteMemoryStore {
             r#"
             UPDATE chat_history
             SET embedding = ?, salience = ?, tags = ?, summary = ?, memory_type = ?,
-                logprobs = ?, moderation_flag = ?, system_fingerprint = ?
+                logprobs = ?, moderation_flag = ?, system_fingerprint = ?,
+                pinned = ?, subject_tag = ?, last_accessed = COALESCE(?, last_accessed)
             WHERE id = ?
             "#,
         )
@@ -198,6 +240,9 @@ impl MemoryStore for SqliteMemoryStore {
         .bind(logprobs_json)
         .bind(updated.moderation_flag)
         .bind(&updated.system_fingerprint)
+        .bind(Self::bool_to_sqlite(updated.pinned))
+        .bind(&updated.subject_tag)
+        .bind(updated.last_accessed.map(|t| t.naive_utc()))
         .bind(id)
         .execute(&self.pool)
         .await?;

@@ -1,18 +1,17 @@
 // src/api/http/mod.rs
-// HTTP API module with handlers, routing, and Git operations
+// HTTP API module with handlers, routing, Git operations, and memory endpoints
 
-// Import modules
+// Submodules
 pub mod handlers;
 pub mod router;
 pub mod chat;
 pub mod git;
+pub mod memory; // Phase 4: pin/unpin/import endpoints
 
-// Re-export handlers for external compatibility
-pub use handlers::{
-    health_handler,
-    project_details_handler,
-};
+// Re-export core HTTP handlers
+pub use handlers::{health_handler, project_details_handler};
 
+// Chat API
 pub use chat::{
     get_chat_history,
     rest_chat_handler,
@@ -23,7 +22,7 @@ pub use chat::{
     HistoryQuery,
 };
 
-// Re-export Git handlers
+// Git API
 pub use git::{
     attach_repo_handler,
     list_attached_repos_handler,
@@ -38,8 +37,8 @@ pub use git::{
     get_file_at_commit,
 };
 
-// Re-export router functions for main.rs compatibility
-pub use router::{
-    http_router,
-    project_git_router,
-};
+// Memory API (Phase 4)
+pub use memory::{pin_memory, unpin_memory, import_memories};
+
+// Routers for main.rs
+pub use router::{http_router, project_git_router};

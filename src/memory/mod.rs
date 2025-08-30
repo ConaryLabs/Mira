@@ -5,10 +5,11 @@ pub mod traits;
 pub mod recall;
 pub mod salience;
 pub mod summarizer;
-pub mod decay;
+pub mod decay;            // existing subject-aware decay logic (policies/helpers)
+pub mod decay_scheduler;  // NEW: background scheduler for periodic decay
 pub mod sqlite;
 pub mod qdrant;
-pub mod parallel_recall;  // ADD THIS LINE - new parallel optimization module
+pub mod parallel_recall;  // parallel optimization module
 
 // Add the missing MemoryMessage type that ChatService needs
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,6 @@ pub struct MemoryMessage {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-// Re-export commonly used types from submodules
+// Re-export commonly used types and helpers
 pub use types::*;
-pub use parallel_recall::build_context_parallel;  // ADD THIS LINE - export the parallel function
+pub use parallel_recall::build_context_parallel;

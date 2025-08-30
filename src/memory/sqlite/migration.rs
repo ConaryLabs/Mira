@@ -1,10 +1,11 @@
 // src/memory/sqlite/migration.rs
 //! Handles migrations for SQLite: ensures chat_history table matches latest schema.
 //! Run this at startup to guarantee schema compatibility.
-use sqlx::{SqlitePool, Executor};
-use anyhow::Result;
 
-/// Latest schema for chat_history. Add columns here as you evolve fields.
+use anyhow::Result;
+use sqlx::{Executor, SqlitePool};
+
+/// Latest base schema for chat_history (pre-Phase 4 columns are here).
 const CREATE_CHAT_HISTORY: &str = r#"
 CREATE TABLE IF NOT EXISTS chat_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,41 +71,76 @@ const ALTER_CHAT_HISTORY_ADD_PROJECT: &str = r#"
 ALTER TABLE chat_history ADD COLUMN project_id TEXT REFERENCES projects(id);
 "#;
 
-/// Create index for faster project queries
-const CREATE_PROJECT_INDICES: &str = r#"
+/// Phase 4: new columns
+const ALTER_CHAT_HISTORY_ADD_PINNED: &str = r#"
+ALTER TABLE chat_history ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+"#;
+
+const ALTER_CHAT_HISTORY_ADD_SUBJECT_TAG: &str = r#"
+ALTER TABLE chat_history ADD COLUMN subject_tag TEXT;
+"#;
+
+const ALTER_CHAT_HISTORY_ADD_LAST_ACCESSED: &str = r#"
+ALTER TABLE chat_history ADD COLUMN last_accessed DATETIME;
+"#;
+
+/// Create indices for performance (Phase 1 + Phase 4)
+const CREATE_INDICES: &str = r#"
+-- Project-related
 CREATE INDEX IF NOT EXISTS idx_artifacts_project_id ON artifacts(project_id);
 CREATE INDEX IF NOT EXISTS idx_chat_history_project_id ON chat_history(project_id);
 CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
 CREATE INDEX IF NOT EXISTS idx_git_repo_project ON git_repo_attachments(project_id);
 CREATE INDEX IF NOT EXISTS idx_git_repo_url ON git_repo_attachments(repo_url);
+
+-- Phase 4: recall/decay helpers
+CREATE INDEX IF NOT EXISTS idx_chat_history_pinned ON chat_history(pinned);
+CREATE INDEX IF NOT EXISTS idx_chat_history_subject_tag ON chat_history(subject_tag);
+CREATE INDEX IF NOT EXISTS idx_chat_history_last_accessed ON chat_history(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_chat_history_salience ON chat_history(salience);
+
+-- Useful for recency pulls
+CREATE INDEX IF NOT EXISTS idx_chat_history_timestamp ON chat_history(timestamp);
 "#;
 
-/// Runs all required migrations for SQLite backend.
-/// Safe to call at every startup (idempotent).
-pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    // Original chat history table
-    pool.execute(CREATE_CHAT_HISTORY).await?;
-    
-    // Phase 1: Project system tables
-    pool.execute(CREATE_PROJECTS).await?;
-    pool.execute(CREATE_ARTIFACTS).await?;
-    
-    // Git repository attachments table
-    pool.execute(CREATE_GIT_REPO_ATTACHMENTS).await?;
-    
-    // Check if project_id column already exists before trying to add it
-    let has_project_id: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('chat_history') WHERE name = 'project_id'"
+/// Cheap helper to test for a column's existence.
+async fn column_exists(pool: &SqlitePool, table: &str, col: &str) -> Result<bool> {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
     )
+    .bind(table)
+    .bind(col)
     .fetch_one(pool)
     .await?;
-    
-    if !has_project_id {
+    Ok(exists > 0)
+}
+
+/// Runs all required migrations for SQLite backend. Idempotent.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+    // Base tables
+    pool.execute(CREATE_CHAT_HISTORY).await?;
+    pool.execute(CREATE_PROJECTS).await?;
+    pool.execute(CREATE_ARTIFACTS).await?;
+    pool.execute(CREATE_GIT_REPO_ATTACHMENTS).await?;
+
+    // Project link on chat_history
+    if !column_exists(pool, "chat_history", "project_id").await? {
         pool.execute(ALTER_CHAT_HISTORY_ADD_PROJECT).await?;
     }
-    
-    // Create indices for performance
-    pool.execute(CREATE_PROJECT_INDICES).await?;
-    
+
+    // Phase 4 columns on chat_history (pinning/subjects/recency)
+    if !column_exists(pool, "chat_history", "pinned").await? {
+        pool.execute(ALTER_CHAT_HISTORY_ADD_PINNED).await?;
+    }
+    if !column_exists(pool, "chat_history", "subject_tag").await? {
+        pool.execute(ALTER_CHAT_HISTORY_ADD_SUBJECT_TAG).await?;
+    }
+    if !column_exists(pool, "chat_history", "last_accessed").await? {
+        pool.execute(ALTER_CHAT_HISTORY_ADD_LAST_ACCESSED).await?;
+    }
+
+    // Indices
+    pool.execute(CREATE_INDICES).await?;
+
     Ok(())
 }

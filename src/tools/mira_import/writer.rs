@@ -1,13 +1,14 @@
 // backend/src/tools/mira_import/writer.rs
 
-use super::schema::MiraMessage;
 use super::openai::MemoryEvalResult;
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::qdrant::store::QdrantMemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryType};
-use crate::memory::traits::MemoryStore;
-use chrono::Utc;
+use super::schema::MiraMessage;
 use anyhow::Result;
+use chrono::Utc;
+
+use crate::memory::qdrant::store::QdrantMemoryStore;
+use crate::memory::sqlite::store::SqliteMemoryStore;
+use crate::memory::traits::MemoryStore;
+use crate::memory::types::{MemoryEntry, MemoryType};
 
 /// Import a batch of messages into both SQLite and Qdrant stores as needed.
 /// - `sqlite_store`: the real SqliteMemoryStore instance
@@ -30,6 +31,7 @@ pub async fn insert_messages(
                 role: msg.role.clone(),
                 content: msg.content.clone(),
                 timestamp: msg.create_time.unwrap_or_else(Utc::now),
+
                 embedding: Some(eval.embedding.clone()),
                 salience: Some(eval.salience),
                 tags: Some(eval.tags.clone()),
@@ -45,11 +47,17 @@ pub async fn insert_messages(
                 logprobs: None,
                 moderation_flag: None,
                 system_fingerprint: None,
-                // Add the new fields with default values
+
+                // Robust memory extras
                 head: None,
                 is_code: None,
                 lang: None,
                 topics: None,
+
+                // Phase 4 additions
+                pinned: Some(false),
+                subject_tag: None,                 // could derive from eval if you add it
+                last_accessed: Some(Utc::now()),
             };
 
             // The `save` method now returns the entry, so we capture it.
