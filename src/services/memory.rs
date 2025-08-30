@@ -1,30 +1,30 @@
 // src/services/memory.rs
-use std::sync::Arc;
 use std::collections::HashMap;
 use std::str::FromStr;
-use tokio::sync::RwLock;
+use std::sync::Arc;
+
 use anyhow::Result;
 use chrono::Utc;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::config::CONFIG;
+use crate::llm::client::OpenAIClient; // Added this import
+use crate::llm::embeddings::{EmbeddingHead, TextChunker};
 use crate::memory::{
     qdrant::{multi_store::QdrantMultiStore, store::QdrantMemoryStore},
     sqlite::store::SqliteMemoryStore,
     traits::MemoryStore,
     types::{MemoryEntry, MemoryType},
 };
-use crate::llm::embeddings::{EmbeddingHead, TextChunker};
 use crate::services::chat::ChatResponse;
-
-// Remove the lazy_static block since we're using centralized CONFIG
 
 pub struct MemoryService {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
     qdrant_store: Arc<QdrantMemoryStore>,
     multi_store: Option<Arc<QdrantMultiStore>>,
-    
+
     // ── Phase 4: Session message counters for rolling summaries ──
     session_counters: Arc<RwLock<HashMap<String, usize>>>,
 }
@@ -40,7 +40,9 @@ impl MemoryService {
             // Get the base URL from the qdrant_store config
             let base_url = &CONFIG.qdrant_url;
             let collection_base = "mira-memory";
-            Some(Arc::new(QdrantMultiStore::new(base_url, collection_base).await?))
+            Some(Arc::new(
+                QdrantMultiStore::new(base_url, collection_base).await?,
+            ))
         } else {
             None
         };
@@ -86,13 +88,15 @@ impl MemoryService {
 
     /// Check if rolling summarization should trigger at current message count
     fn should_trigger_rolling_summary(&self, message_count: usize) -> (bool, bool) {
-        let trigger_10 = CONFIG.summary_rolling_10 && message_count % 10 == 0 && message_count >= 10;
-        let trigger_100 = CONFIG.summary_rolling_100 && message_count % 100 == 0 && message_count >= 100;
-        
+        let trigger_10 =
+            CONFIG.summary_rolling_10 && message_count % 10 == 0 && message_count >= 10;
+        let trigger_100 =
+            CONFIG.summary_rolling_100 && message_count % 100 == 0 && message_count >= 100;
+
         // Avoid double-summarizing at 100 (since it's also a multiple of 10)
         // If both are triggered, prefer the 100-message summary
         let final_trigger_10 = trigger_10 && !trigger_100;
-        
+
         (final_trigger_10, trigger_100)
     }
 
@@ -104,16 +108,22 @@ impl MemoryService {
 
         let message_count = self.get_session_message_count(session_id).await;
         let (trigger_10, trigger_100) = self.should_trigger_rolling_summary(message_count);
-        
+
         if trigger_10 {
-            info!("🔄 Triggering 10-message rolling summary for session {} at count {}", session_id, message_count);
+            info!(
+                "🔄 Triggering 10-message rolling summary for session {} at count {}",
+                session_id, message_count
+            );
             if let Err(e) = self.create_rolling_summary(session_id, 10).await {
                 warn!("⚠️ Failed to create 10-message rolling summary: {}", e);
             }
         }
-        
+
         if trigger_100 {
-            info!("🔄 Triggering 100-message rolling summary for session {} at count {}", session_id, message_count);
+            info!(
+                "🔄 Triggering 100-message rolling summary for session {} at count {}",
+                session_id, message_count
+            );
             if let Err(e) = self.create_rolling_summary(session_id, 100).await {
                 warn!("⚠️ Failed to create 100-message rolling summary: {}", e);
             }
@@ -126,7 +136,7 @@ impl MemoryService {
     async fn create_rolling_summary(&self, session_id: &str, n: usize) -> Result<()> {
         // Fetch the last N non-summary messages
         let recent_messages = self.sqlite_store.load_recent(session_id, n * 2).await?;
-        
+
         // Filter out existing summary messages to avoid summarizing summaries
         let non_summary_messages: Vec<_> = recent_messages
             .into_iter()
@@ -178,16 +188,25 @@ impl MemoryService {
         }
 
         // Save the rolling summary
-        self.save_rolling_summary(session_id, &summary_content, n).await?;
-        
-        info!("✅ Created {}-message rolling summary for session {}", n, session_id);
+        self.save_rolling_summary(session_id, &summary_content, n)
+            .await?;
+
+        info!(
+            "✅ Created {}-message rolling summary for session {}",
+            n, session_id
+        );
         Ok(())
     }
 
     /// Save a rolling summary with appropriate tags
-    async fn save_rolling_summary(&self, session_id: &str, summary_content: &str, window_size: usize) -> Result<()> {
+    async fn save_rolling_summary(
+        &self,
+        session_id: &str,
+        summary_content: &str,
+        window_size: usize,
+    ) -> Result<()> {
         let rolling_tag = format!("summary:rolling:{}", window_size);
-        
+
         let entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -222,7 +241,8 @@ impl MemoryService {
         if CONFIG.is_robust_memory_enabled() {
             // Use both Summary and Semantic heads for rolling summaries
             let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
-            self.generate_and_save_embeddings(&saved_entry, &summary_heads).await?;
+            self.generate_and_save_embeddings(&saved_entry, &summary_heads)
+                .await?;
         } else {
             // Legacy single-embedding path
             if let Ok(embedding) = self.llm_client.get_embedding(summary_content).await {
@@ -245,7 +265,10 @@ impl MemoryService {
     ) -> Result<()> {
         // Increment session counter first
         let message_count = self.increment_session_counter(session_id).await;
-        debug!("📈 Session {} message count now: {}", session_id, message_count);
+        debug!(
+            "📈 Session {} message count now: {}",
+            session_id, message_count
+        );
 
         let mut entry = MemoryEntry {
             id: None,
@@ -256,7 +279,10 @@ impl MemoryService {
             embedding: None,
             salience: Some(self.calculate_user_message_salience(content) as f32),
             tags: Some(vec!["conversational".to_string()]),
-            summary: Some(format!("User query: {}", content.chars().take(50).collect::<String>())),
+            summary: Some(format!(
+                "User query: {}",
+                content.chars().take(50).collect::<String>()
+            )),
             memory_type: Some(MemoryType::Other), // Use Other instead of Episodic
             logprobs: None,
             moderation_flag: None,
@@ -292,7 +318,10 @@ impl MemoryService {
                     entry.tags = Some(new_tags);
                 }
                 Err(e) => {
-                    error!("Failed to classify message: {}. Proceeding with default metadata.", e);
+                    error!(
+                        "Failed to classify message: {}. Proceeding with default metadata.",
+                        e
+                    );
                 }
             }
         }
@@ -309,11 +338,12 @@ impl MemoryService {
                         .get_embedding_heads()
                         .into_iter()
                         .filter(|h| h != "summary") // Exclude summary head for user messages.
-                        .map(|s| EmbeddingHead::from_str(s))
+                        .map(|s| EmbeddingHead::from_str(&s)) // Fixed: borrow s
                         .filter_map(Result::ok)
                         .collect::<Vec<_>>();
 
-                    self.generate_and_save_embeddings(&saved_entry, &heads_to_use).await?;
+                    self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
+                        .await?;
                 } else {
                     // Legacy single-embedding path.
                     if let Ok(embedding) = self.llm_client.get_embedding(content).await {
@@ -337,7 +367,10 @@ impl MemoryService {
     ) -> Result<()> {
         // Increment session counter first
         let message_count = self.increment_session_counter(session_id).await;
-        debug!("📈 Session {} message count now: {}", session_id, message_count);
+        debug!(
+            "📈 Session {} message count now: {}",
+            session_id, message_count
+        );
 
         let mut entry = MemoryEntry {
             id: None,
@@ -378,11 +411,12 @@ impl MemoryService {
                         .get_embedding_heads()
                         .into_iter()
                         .filter(|h| if h == "summary" { is_summary } else { true })
-                        .map(|s| EmbeddingHead::from_str(s))
+                        .map(|s| EmbeddingHead::from_str(&s)) // Fixed: borrow s
                         .filter_map(Result::ok)
                         .collect::<Vec<_>>();
 
-                    self.generate_and_save_embeddings(&saved_entry, &heads_to_use).await?;
+                    self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
+                        .await?;
                 } else {
                     // Legacy single-embedding path
                     if let Ok(embedding) = self.llm_client.get_embedding(&response.output).await {
@@ -398,9 +432,11 @@ impl MemoryService {
         // ── Phase 4: Check for rolling summarization after saving ──
         if CONFIG.is_robust_memory_enabled() {
             // Don't trigger rolling summaries for rolling summary messages themselves
-            let is_rolling_summary = response.tags.iter()
+            let is_rolling_summary = response
+                .tags
+                .iter()
                 .any(|tag| tag.starts_with("summary:rolling:"));
-            
+
             if !is_rolling_summary {
                 self.check_and_trigger_rolling_summaries(session_id).await?;
             }
@@ -425,7 +461,10 @@ impl MemoryService {
             embedding: None,
             salience: Some(2.0),
             tags: Some(vec!["summary".to_string(), "compressed".to_string()]),
-            summary: Some(format!("Summary of previous {} messages", original_message_count)),
+            summary: Some(format!(
+                "Summary of previous {} messages",
+                original_message_count
+            )),
             memory_type: Some(MemoryType::Summary),
             logprobs: None,
             moderation_flag: None,
@@ -447,7 +486,8 @@ impl MemoryService {
         if CONFIG.is_robust_memory_enabled() {
             // Use both Semantic and Summary heads for summaries
             let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
-            self.generate_and_save_embeddings(&saved_entry, &summary_heads).await?;
+            self.generate_and_save_embeddings(&saved_entry, &summary_heads)
+                .await?;
         } else {
             // Legacy single-embedding path
             if let Ok(embedding) = self.llm_client.get_embedding(summary_content).await {
@@ -480,7 +520,8 @@ impl MemoryService {
             // 2. Generate embeddings for all chunks (batch processing).
             let mut embeddings = Vec::new();
             for chunk in &chunks {
-                let embedding = self.llm_client.get_embedding(chunk).await?;
+                // Fixed: Add explicit type annotation
+                let embedding: Vec<f32> = self.llm_client.get_embedding(chunk).await?;
                 embeddings.push(embedding);
             }
 
@@ -509,17 +550,20 @@ impl MemoryService {
     fn calculate_user_message_salience(&self, content: &str) -> usize {
         let base_salience = 5;
         let length_bonus = std::cmp::min(content.len() / 100, 3);
-        
+
         // Boost salience for questions
         let question_bonus = if content.contains('?') { 2 } else { 0 };
-        
+
         // Boost for code-like content
-        let code_bonus = if content.contains("```") || content.contains("fn ") || content.contains("def ") {
+        let code_bonus = if content.contains("```")
+            || content.contains("fn ")
+            || content.contains("def ")
+        {
             3
         } else {
             0
         };
-        
+
         base_salience + length_bonus + question_bonus + code_bonus
     }
 
@@ -553,7 +597,9 @@ impl MemoryService {
                 // Use multi-head search - for now just use semantic head
                 if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
                     // Note: QdrantMultiStore.search method signature is: search(head, session_id, embedding, limit)
-                    multi_store.search(EmbeddingHead::Semantic, "", &query_embedding, limit).await
+                    multi_store
+                        .search(EmbeddingHead::Semantic, "", &query_embedding, limit)
+                        .await
                 } else {
                     Err(anyhow::anyhow!("Failed to generate query embedding"))
                 }
@@ -563,7 +609,9 @@ impl MemoryService {
         } else {
             // Legacy single-collection search
             if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
-                self.qdrant_store.search_similar_memories("", &query_embedding, limit).await
+                self.qdrant_store
+                    .search_similar_memories("", &query_embedding, limit)
+                    .await
             } else {
                 Err(anyhow::anyhow!("Failed to generate query embedding"))
             }

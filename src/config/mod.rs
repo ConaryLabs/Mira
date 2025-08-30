@@ -1,7 +1,12 @@
 // src/config/mod.rs
 
-use std::str::FromStr;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+
+lazy_static! {
+    pub static ref CONFIG: MiraConfig = MiraConfig::from_env();
+}
 
 /// Main configuration structure for Mira
 /// Loads environment variables with sensible defaults
@@ -173,7 +178,10 @@ where
                     parsed
                 }
                 Err(_) => {
-                    eprintln!("Config: {} = '{}' (parse failed, using default)", key, val);
+                    eprintln!(
+                        "Config: {} = '{}' (parse failed, using default)",
+                        key, val
+                    );
                     default
                 }
             }
@@ -255,7 +263,10 @@ impl MiraConfig {
             file_search_max_files: env_var_or("FILE_SEARCH_MAX_FILES", 20),
             file_search_chunk_size: env_var_or("FILE_SEARCH_CHUNK_SIZE", 1000),
             image_generation_size: env_var_or("IMAGE_GENERATION_SIZE", "1024x1024".to_string()),
-            image_generation_quality: env_var_or("IMAGE_GENERATION_QUALITY", "standard".to_string()),
+            image_generation_quality: env_var_or(
+                "IMAGE_GENERATION_QUALITY",
+                "standard".to_string(),
+            ),
             image_generation_style: env_var_or("IMAGE_GENERATION_STYLE", "vivid".to_string()),
 
             // ── Qdrant Configuration ──
@@ -272,8 +283,14 @@ impl MiraConfig {
 
             // ── Import Configuration ──
             import_sqlite: env_var_or("MIRA_IMPORT_SQLITE", "mira.sqlite".to_string()),
-            import_qdrant_url: env_var_or("MIRA_IMPORT_QDRANT_URL", "http://localhost:6333".to_string()),
-            import_qdrant_collection: env_var_or("MIRA_IMPORT_QDRANT_COLLECTION", "mira_memories".to_string()),
+            import_qdrant_url: env_var_or(
+                "MIRA_IMPORT_QDRANT_URL",
+                "http://localhost:6333".to_string(),
+            ),
+            import_qdrant_collection: env_var_or(
+                "MIRA_IMPORT_QDRANT_COLLECTION",
+                "mira_memories".to_string(),
+            ),
 
             // ── Persona Configuration ──
             persona: env_var_or("MIRA_PERSONA", "Default".to_string()),
@@ -311,7 +328,10 @@ impl MiraConfig {
 
             // ── Phase 4: Additional rolling summary flags ──
             summary_phase_snapshots: env_var_or("MIRA_SUMMARY_PHASE_SNAPSHOTS", true),
-            use_rolling_summaries_in_context: env_var_or("MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT", true),
+            use_rolling_summaries_in_context: env_var_or(
+                "MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT",
+                true,
+            ),
             rolling_summary_max_age_hours: env_var_or("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS", 168), // 1 week
             rolling_summary_min_gap: env_var_or("MIRA_ROLLING_SUMMARY_MIN_GAP", 3),
 
@@ -327,8 +347,13 @@ impl MiraConfig {
         }
     }
 
+    /// Get the bind address for the server.
+    pub fn bind_address(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+
     /// ── Phase 4: Convenience methods for rolling summaries ──
-    
+
     /// Check if robust memory features are enabled
     pub fn is_robust_memory_enabled(&self) -> bool {
         self.aggressive_metadata_enabled
@@ -356,9 +381,9 @@ impl MiraConfig {
 
     /// Check if rolling summaries should be used in context building
     pub fn should_use_rolling_summaries_in_context(&self) -> bool {
-        self.aggressive_metadata_enabled && 
-        self.use_rolling_summaries_in_context && 
-        (self.summary_rolling_10 || self.summary_rolling_100)
+        self.aggressive_metadata_enabled
+            && self.use_rolling_summaries_in_context
+            && (self.summary_rolling_10 || self.summary_rolling_100)
     }
 
     /// Get the list of embedding heads to use
@@ -533,12 +558,12 @@ mod tests {
     #[test]
     fn test_chunk_size_configuration() {
         let config = MiraConfig::from_env();
-        
+
         assert_eq!(config.get_chunk_size_for_head("semantic"), 300);
         assert_eq!(config.get_chunk_size_for_head("code"), 256);
         assert_eq!(config.get_chunk_size_for_head("summary"), 600);
         assert_eq!(config.get_chunk_size_for_head("unknown"), 300); // Falls back to semantic
-        
+
         assert_eq!(config.get_chunk_overlap_for_head("semantic"), 100);
         assert_eq!(config.get_chunk_overlap_for_head("code"), 64);
         assert_eq!(config.get_chunk_overlap_for_head("summary"), 200);
