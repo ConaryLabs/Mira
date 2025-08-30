@@ -61,7 +61,7 @@ impl QdrantMultiStore {
     pub async fn save(&self, head: EmbeddingHead, entry: &MemoryEntry) -> Result<()> {
         debug!("💾 Saving memory to {} collection", head.as_str());
         if let Some(store) = self.stores.get(&head) {
-            store.save(entry).await
+            store.save(entry).await.map(|_| ())
         } else {
             warn!("No Qdrant store found for embedding head: {}", head.as_str());
             Ok(())
