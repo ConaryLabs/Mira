@@ -8,6 +8,7 @@ pub mod emotional_weight;
 pub mod intent;
 pub mod memory_eval;
 pub mod moderation;
+pub mod classification;
 // pub mod persona; // Note: `persona` is typically a top-level module, not under `llm`.
 pub mod prompts;
 pub mod responses; // Renamed from assistant

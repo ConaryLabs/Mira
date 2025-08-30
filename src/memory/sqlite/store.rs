@@ -1,24 +1,22 @@
-// src/memory/sqlite/store.rs
-
 //! Implements MemoryStore for SQLite (session/recency memory).
 
 use crate::memory::traits::MemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryType, MemoryTag};
-use async_trait::async_trait;
-use sqlx::{SqlitePool, Row};
-use chrono::{Utc, NaiveDateTime, TimeZone};
+use crate::memory::types::{MemoryEntry, MemoryTag, MemoryType};
 use anyhow::Result;
+use async_trait::async_trait;
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use serde_json;
+use sqlx::{Row, SqlitePool};
 
 pub struct SqliteMemoryStore {
-    pub pool: SqlitePool,  // Make pool public so handlers can access it
+    pub pool: SqlitePool, // Make pool public so handlers can access it
 }
 
 impl SqliteMemoryStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
-    
+
     // Helper to convert Vec<f32> to Vec<u8> for BLOB storage
     fn embedding_to_blob(embedding: &Option<Vec<f32>>) -> Option<Vec<u8>> {
         embedding.as_ref().map(|vec| {
@@ -27,7 +25,7 @@ impl SqliteMemoryStore {
                 .collect::<Vec<u8>>()
         })
     }
-    
+
     // Helper to convert BLOB (Vec<u8>) to Vec<f32>
     fn blob_to_embedding(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
         blob.map(|bytes| {
@@ -41,7 +39,8 @@ impl SqliteMemoryStore {
 
 #[async_trait]
 impl MemoryStore for SqliteMemoryStore {
-    async fn save(&self, entry: &MemoryEntry) -> Result<()> {
+    /// **MODIFIED**: Now returns the saved MemoryEntry with its new database ID.
+    async fn save(&self, entry: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = entry
             .tags
             .as_ref()
@@ -53,13 +52,14 @@ impl MemoryStore for SqliteMemoryStore {
             .as_ref()
             .map(|v| serde_json::to_string(v).unwrap_or("null".to_string()));
 
-        sqlx::query(
+        let row = sqlx::query(
             r#"
             INSERT INTO chat_history (
                 session_id, role, content, timestamp,
                 embedding, salience, tags, summary, memory_type,
                 logprobs, moderation_flag, system_fingerprint
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             "#,
         )
         .bind(&entry.session_id)
@@ -74,10 +74,14 @@ impl MemoryStore for SqliteMemoryStore {
         .bind(logprobs_json)
         .bind(entry.moderation_flag)
         .bind(&entry.system_fingerprint)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
 
-        Ok(())
+        let new_id: i64 = row.get("id");
+        let mut saved_entry = entry.clone();
+        saved_entry.id = Some(new_id);
+
+        Ok(saved_entry)
     }
 
     async fn load_recent(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
@@ -113,7 +117,6 @@ impl MemoryStore for SqliteMemoryStore {
             let moderation_flag: Option<bool> = row.get("moderation_flag");
             let system_fingerprint: Option<String> = row.get("system_fingerprint");
 
-            // Deserialize tags and logprobs
             let tags_vec = tags
                 .as_ref()
                 .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
@@ -127,6 +130,7 @@ impl MemoryStore for SqliteMemoryStore {
                 "Joke" => Some(MemoryType::Joke),
                 "Promise" => Some(MemoryType::Promise),
                 "Event" => Some(MemoryType::Event),
+                "Summary" => Some(MemoryType::Summary),
                 _ => Some(MemoryType::Other),
             });
 
@@ -144,11 +148,13 @@ impl MemoryStore for SqliteMemoryStore {
                 logprobs: logprobs_val,
                 moderation_flag,
                 system_fingerprint,
+                // **MODIFIED**: Add default values for new fields
+                head: None,
+                is_code: None,
+                lang: None,
+                topics: None,
             });
         }
-
-        // FIXED: Removed the reverse() that was messing up the order!
-        // We want DESC order (newest first) to stay as-is so the LLM sees recent context first
 
         Ok(entries)
     }
@@ -163,7 +169,8 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(Vec::new())
     }
 
-    async fn update_metadata(&self, id: i64, updated: &MemoryEntry) -> Result<()> {
+    /// **MODIFIED**: Now returns the updated MemoryEntry.
+    async fn update_metadata(&self, id: i64, updated: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = updated
             .tags
             .as_ref()
@@ -195,7 +202,7 @@ impl MemoryStore for SqliteMemoryStore {
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(updated.clone())
     }
 
     async fn delete(&self, id: i64) -> Result<()> {

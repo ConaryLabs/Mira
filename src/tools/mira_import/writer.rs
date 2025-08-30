@@ -5,7 +5,7 @@ use super::openai::MemoryEvalResult;
 use crate::memory::sqlite::store::SqliteMemoryStore;
 use crate::memory::qdrant::store::QdrantMemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryType};
-use crate::memory::traits::MemoryStore; // <-- Add this for trait methods!
+use crate::memory::traits::MemoryStore;
 use chrono::Utc;
 use anyhow::Result;
 
@@ -45,11 +45,19 @@ pub async fn insert_messages(
                 logprobs: None,
                 moderation_flag: None,
                 system_fingerprint: None,
+                // Add the new fields with default values
+                head: None,
+                is_code: None,
+                lang: None,
+                topics: None,
             };
-            sqlite_store.save(&memory).await?;
-            if let Some(s) = memory.salience {
-                if s >= 3.0 && memory.embedding.is_some() {
-                    qdrant_store.save(&memory).await?;
+
+            // The `save` method now returns the entry, so we capture it.
+            let saved_memory = sqlite_store.save(&memory).await?;
+            if let Some(s) = saved_memory.salience {
+                if s >= 3.0 && saved_memory.embedding.is_some() {
+                    // Qdrant also needs the updated entry
+                    qdrant_store.save(&saved_memory).await?;
                 }
             }
         }
