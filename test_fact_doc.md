@@ -1,1 +1,0 @@
-My birthday is March 15th and I live in Seattle.

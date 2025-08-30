@@ -1,1 +1,0 @@
-Dear diary, today I learned about Rust memory management and OpenAI file APIs. This file is for RAG testing and should upload just fine!
