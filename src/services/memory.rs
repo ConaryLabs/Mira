@@ -372,7 +372,7 @@ impl MemoryService {
             session_id, message_count
         );
 
-        let mut entry = MemoryEntry {
+        let entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
             role: "assistant".to_string(),

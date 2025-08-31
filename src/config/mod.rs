@@ -9,7 +9,6 @@ lazy_static! {
 }
 
 /// Main configuration structure for Mira
-/// Loads environment variables with sensible defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
     // ── Core LLM Configuration ──
@@ -483,89 +482,120 @@ impl Default for MiraConfig {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    // Use a mutex to ensure tests that modify the environment run serially.
+    lazy_static! {
+        static ref ENV_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    // Helper function to run tests in a clean environment.
+    fn run_test<T>(test: T)
+    where
+        T: FnOnce() + std::panic::UnwindSafe,
+    {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let original_vars: Vec<(String, Option<String>)> = [
+            "MIRA_AGGRESSIVE_METADATA_ENABLED",
+            // Add any other env vars your tests modify here
+        ]
+        .iter()
+        .map(|&key| (key.to_string(), env::var(key).ok()))
+        .collect();
+
+        let result = std::panic::catch_unwind(test);
+
+        // Teardown: Restore original environment variables
+        for (key, val) in original_vars {
+            unsafe {
+                match val {
+                    Some(v) => env::set_var(&key, v),
+                    None => env::remove_var(&key),
+                }
+            }
+        }
+        
+        assert!(result.is_ok());
+    }
+
 
     #[test]
     fn test_default_config() {
-        let config = MiraConfig::from_env();
-        assert_eq!(config.model, "gpt-5");
-        assert_eq!(config.enable_web_search, true);
-        // Phase 0: robust memory OFF by default
-        assert_eq!(config.aggressive_metadata_enabled, false);
+        run_test(|| {
+            let config = MiraConfig::from_env();
+            assert_eq!(config.model, "gpt-5");
+            assert_eq!(config.enable_web_search, true);
+            assert_eq!(config.aggressive_metadata_enabled, false);
+        });
     }
 
     #[test]
     fn test_phase4_robust_memory_disabled() {
-        let config = MiraConfig::from_env();
-        assert!(!config.is_robust_memory_enabled());
-        assert!(!config.rolling_summaries_enabled());
-        // Should fallback to single head when disabled
-        assert_eq!(config.get_embedding_heads(), vec!["semantic"]);
+        run_test(|| {
+            // Explicitly remove the variable to ensure a clean state
+            unsafe {
+                env::remove_var("MIRA_AGGRESSIVE_METADATA_ENABLED");
+            }
+            let config = MiraConfig::from_env();
+            assert!(!config.is_robust_memory_enabled());
+            assert!(!config.rolling_summaries_enabled());
+            assert_eq!(config.get_embedding_heads(), vec!["semantic"]);
+        });
     }
 
     #[test]
     fn test_phase4_robust_memory_enabled() {
-        let original = env::var("MIRA_AGGRESSIVE_METADATA_ENABLED").ok();
+        run_test(|| {
+            unsafe {
+                env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
+            }
+            let config = MiraConfig::from_env();
 
-        env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
-        let config = MiraConfig::from_env();
-
-        assert!(config.is_robust_memory_enabled());
-        assert!(config.rolling_summaries_enabled());
-        let heads = config.get_embedding_heads();
-        assert!(heads.contains(&"semantic".to_string()));
-        assert!(heads.contains(&"code".to_string()));
-        assert!(heads.contains(&"summary".to_string()));
-
-        // Test Phase 4 specific features
-        assert!(config.rolling_10_enabled());
-        assert!(config.rolling_100_enabled());
-        assert!(config.snapshot_summaries_enabled());
-        assert!(config.should_use_rolling_summaries_in_context());
-
-        // Restore
-        match original {
-            Some(val) => env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", val),
-            None => env::remove_var("MIRA_AGGRESSIVE_METADATA_ENABLED"),
-        }
+            assert!(config.is_robust_memory_enabled());
+            assert!(config.rolling_summaries_enabled());
+            let heads = config.get_embedding_heads();
+            assert!(heads.contains(&"semantic".to_string()));
+            assert!(heads.contains(&"code".to_string()));
+            assert!(heads.contains(&"summary".to_string()));
+            assert!(config.rolling_10_enabled());
+            assert!(config.rolling_100_enabled());
+            assert!(config.snapshot_summaries_enabled());
+            assert!(config.should_use_rolling_summaries_in_context());
+        });
     }
 
     #[test]
     fn test_phase4_rolling_summary_config() {
-        let original = env::var("MIRA_AGGRESSIVE_METADATA_ENABLED").ok();
+        run_test(|| {
+            unsafe {
+                env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
+            }
+            let config = MiraConfig::from_env();
+            let rolling_config = config.get_rolling_summary_config();
+            assert!(rolling_config.enabled);
+            assert!(rolling_config.rolling_10);
+            assert!(rolling_config.rolling_100);
+            assert!(rolling_config.snapshots);
+            assert!(rolling_config.use_in_context);
 
-        env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
-        let config = MiraConfig::from_env();
-
-        let rolling_config = config.get_rolling_summary_config();
-        assert!(rolling_config.enabled);
-        assert!(rolling_config.rolling_10);
-        assert!(rolling_config.rolling_100);
-        assert!(rolling_config.snapshots);
-        assert!(rolling_config.use_in_context);
-
-        let phase4_features = config.get_phase4_features();
-        assert!(phase4_features.robust_memory);
-        assert!(phase4_features.rolling_summaries);
-        assert_eq!(phase4_features.embedding_heads.len(), 3);
-
-        // Restore
-        match original {
-            Some(val) => env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", val),
-            None => env::remove_var("MIRA_AGGRESSIVE_METADATA_ENABLED"),
-        }
+            let phase4_features = config.get_phase4_features();
+            assert!(phase4_features.robust_memory);
+            assert!(phase4_features.rolling_summaries);
+            assert_eq!(phase4_features.embedding_heads.len(), 3);
+        });
     }
 
     #[test]
     fn test_chunk_size_configuration() {
-        let config = MiraConfig::from_env();
-
-        assert_eq!(config.get_chunk_size_for_head("semantic"), 300);
-        assert_eq!(config.get_chunk_size_for_head("code"), 256);
-        assert_eq!(config.get_chunk_size_for_head("summary"), 600);
-        assert_eq!(config.get_chunk_size_for_head("unknown"), 300); // Falls back to semantic
-
-        assert_eq!(config.get_chunk_overlap_for_head("semantic"), 100);
-        assert_eq!(config.get_chunk_overlap_for_head("code"), 64);
-        assert_eq!(config.get_chunk_overlap_for_head("summary"), 200);
+        run_test(|| {
+            let config = MiraConfig::from_env();
+            assert_eq!(config.get_chunk_size_for_head("semantic"), 300);
+            assert_eq!(config.get_chunk_size_for_head("code"), 256);
+            assert_eq!(config.get_chunk_size_for_head("summary"), 600);
+            assert_eq!(config.get_chunk_size_for_head("unknown"), 300);
+            assert_eq!(config.get_chunk_overlap_for_head("semantic"), 100);
+            assert_eq!(config.get_chunk_overlap_for_head("code"), 64);
+            assert_eq!(config.get_chunk_overlap_for_head("summary"), 200);
+        });
     }
 }

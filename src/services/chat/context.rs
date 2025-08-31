@@ -9,7 +9,6 @@ use crate::memory::recall::{RecallContext, build_context};
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::services::chat::config::ChatConfig;
-use crate::api::error::IntoApiError;
 use crate::config::CONFIG;
 
 #[derive(Debug)]

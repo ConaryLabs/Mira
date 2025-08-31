@@ -4,13 +4,12 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::str::FromStr;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::memory::qdrant::mapping::{memory_entry_to_payload, payload_to_memory_entry};
 use crate::memory::traits::MemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::types::MemoryEntry;
 
 /// Qdrant-based vector store for semantic memory search.
 #[derive(Debug)]

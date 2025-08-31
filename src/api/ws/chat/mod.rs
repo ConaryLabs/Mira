@@ -28,7 +28,6 @@ pub use heartbeat::{HeartbeatManager, HeartbeatConfig, HeartbeatStats};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::{start_response_stream, StreamEvent};
 use crate::state::AppState;
-use crate::memory::recall::RecallContext;
 
 /// Main WebSocket handler entry point - FIXED to accept ConnectInfo
 pub async fn ws_chat_handler(

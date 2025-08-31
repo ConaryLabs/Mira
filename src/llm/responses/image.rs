@@ -360,7 +360,7 @@ mod tests {
         });
 
         let manager = ImageGenerationManager {
-            client: Arc::new(OpenAIClient::new().unwrap()),
+            client: OpenAIClient::new().unwrap(),
         };
 
         let images = manager.parse_images_from_response(&response).unwrap();

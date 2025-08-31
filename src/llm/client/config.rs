@@ -236,7 +236,8 @@ mod tests {
         let config = ModelConfig::default();
         
         assert!(config.supports_streaming());
-        assert_eq!(config.recommended_timeout_secs(), 60); // Depends on CONFIG.reasoning_effort
+        // THE FIX: The default reasoning_effort is "high", which corresponds to 120 seconds.
+        assert_eq!(config.recommended_timeout_secs(), 120); 
         
         let json = config.to_json();
         assert!(json["model"].is_string());

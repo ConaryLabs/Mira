@@ -6,7 +6,7 @@
 // - Added tool calling support
 // - Streamlined response generation (removed duplication with OpenAIClient)
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -14,14 +14,13 @@ use tracing::{debug, info};
 use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::ThreadManager;
 use crate::llm::responses::types::{
-    ResponsesResponse, Message, Tool,
-    FunctionDefinition, CodeInterpreterConfig, ContainerConfig,
+    CodeInterpreterConfig, ContainerConfig, FunctionDefinition, Message, ResponsesResponse, Tool,
 };
 
 /// High-level manager for the GPT-5 Responses API
 pub struct ResponsesManager {
     client: Arc<OpenAIClient>,
-    thread_manager: Option<Arc<ThreadManager>>,  // Optional thread manager for response ID tracking
+    thread_manager: Option<Arc<ThreadManager>>, // Optional thread manager for response ID tracking
 }
 
 impl ResponsesManager {
@@ -58,11 +57,12 @@ impl ResponsesManager {
             model,
             input,
             instructions,
-            None,  // No session_id for backward compatibility
+            None, // No session_id for backward compatibility
             response_format,
             parameters,
-            None,  // No tools
-        ).await
+            None, // No tools
+        )
+        .await
     }
 
     /// Create a response with session tracking and previous_response_id
@@ -77,12 +77,12 @@ impl ResponsesManager {
         tools: Option<Vec<Tool>>,
     ) -> Result<String> {
         // Get previous_response_id if we have a session
-        let previous_response_id = if let (Some(session_id), Some(thread_mgr)) = 
-            (session_id, &self.thread_manager) {
-            thread_mgr.get_previous_response_id(session_id).await
-        } else {
-            None
-        };
+        let previous_response_id =
+            if let (Some(session_id), Some(thread_mgr)) = (session_id, &self.thread_manager) {
+                thread_mgr.get_previous_response_id(session_id).await
+            } else {
+                None
+            };
 
         if let Some(ref prev_id) = previous_response_id {
             debug!("Using previous_response_id: {}", prev_id);
@@ -117,26 +117,35 @@ impl ResponsesManager {
 
         if let Some(tools_list) = tools {
             request_body["tools"] = json!(tools_list);
-            request_body["tool_choice"] = json!("auto");  // Default to auto
+            request_body["tool_choice"] = json!("auto"); // Default to auto
         }
 
         info!("📤 Sending request to GPT-5 Responses API");
-        debug!("Request body: {}", serde_json::to_string_pretty(&request_body)?);
+        debug!(
+            "Request body: {}",
+            serde_json::to_string_pretty(&request_body)?
+        );
 
         // Send the request using the client's post_response method
-        let response = self.client
+        let response = self
+            .client
             .post_response(request_body.clone())
             .await
             .context("Failed to call Responses API")?;
 
         // Parse the response
-        let response_data: ResponsesResponse = serde_json::from_value(response)
-            .context("Failed to parse ResponsesResponse")?;
-        
+        let response_data: ResponsesResponse =
+            serde_json::from_value(response).context("Failed to parse ResponsesResponse")?;
+
         // Update the previous_response_id for the session
         if let (Some(session_id), Some(thread_mgr)) = (session_id, &self.thread_manager) {
-            thread_mgr.update_response_id(session_id, response_data.id.clone()).await?;
-            info!("✅ Updated session {} with response_id: {}", session_id, response_data.id);
+            thread_mgr
+                .update_response_id(session_id, response_data.id.clone())
+                .await?;
+            info!(
+                "✅ Updated session {} with response_id: {}",
+                session_id, response_data.id
+            );
         }
 
         // Extract the text content
@@ -161,9 +170,10 @@ impl ResponsesManager {
 
         // Handle function calls if present
         if !function_calls.is_empty() {
-            info!("🔧 Response contains {} function calls", function_calls.len());
-            // For now, we'll return the text and log the function calls
-            // In a full implementation, we'd execute these and call back
+            info!(
+                "🔧 Response contains {} function calls",
+                function_calls.len()
+            );
             for call in &function_calls {
                 debug!("Function call: {:?}", call);
             }
@@ -176,7 +186,8 @@ impl ResponsesManager {
                 usage.prompt_tokens,
                 usage.completion_tokens,
                 usage.total_tokens,
-                usage.reasoning_tokens
+                usage
+                    .reasoning_tokens
                     .map(|r| format!(", Reasoning: {}", r))
                     .unwrap_or_default()
             );
@@ -194,15 +205,13 @@ impl ResponsesManager {
         session_id: Option<&str>,
         parameters: Option<Value>,
     ) -> Result<impl futures::Stream<Item = Result<Value>>> {
-        // Get previous_response_id if we have a session
-        let previous_response_id = if let (Some(session_id), Some(thread_mgr)) = 
-            (session_id, &self.thread_manager) {
-            thread_mgr.get_previous_response_id(session_id).await
-        } else {
-            None
-        };
+        let previous_response_id =
+            if let (Some(session_id), Some(thread_mgr)) = (session_id, &self.thread_manager) {
+                thread_mgr.get_previous_response_id(session_id).await
+            } else {
+                None
+            };
 
-        // Build the request
         let mut request_body = json!({
             "model": model,
             "input": input,
@@ -225,7 +234,6 @@ impl ResponsesManager {
             }
         }
 
-        // Use the client's streaming method
         self.client
             .post_response_stream(request_body)
             .await
@@ -322,7 +330,10 @@ mod tests {
         assert_eq!(params["verbosity"], "medium");
         assert_eq!(params["reasoning_effort"], "high");
         assert_eq!(params["max_output_tokens"], 4096);
-        assert_eq!(params["temperature"], 0.7);
+
+        // THE FIX: Compare floating-point numbers for approximate equality.
+        let temp = params["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7).abs() < f64::EPSILON);
     }
 
     #[test]

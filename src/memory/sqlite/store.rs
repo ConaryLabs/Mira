@@ -1,6 +1,7 @@
 // src/memory/sqlite/store.rs
 //! Implements MemoryStore for SQLite (session/recency memory).
 
+use crate::memory::sqlite::migration; // Import the migration module
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryTag, MemoryType};
 use anyhow::Result;
@@ -10,12 +11,17 @@ use serde_json;
 use sqlx::{Row, SqlitePool};
 
 pub struct SqliteMemoryStore {
-    pub pool: SqlitePool, // Make pool public so handlers can access it
+    pub pool: SqlitePool,
 }
 
 impl SqliteMemoryStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// **NEW**: Runs all required database migrations.
+    pub async fn run_migrations(&self) -> Result<()> {
+        migration::run_migrations(&self.pool).await
     }
 
     // Helper to convert Vec<f32> to Vec<u8> for BLOB storage
@@ -45,8 +51,6 @@ impl SqliteMemoryStore {
 
 #[async_trait]
 impl MemoryStore for SqliteMemoryStore {
-    /// **MODIFIED (Phase 4)**: Persists `pinned`, `subject_tag`, `last_accessed`.
-    /// Returns the saved MemoryEntry with its new database ID.
     async fn save(&self, entry: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = entry
             .tags
@@ -95,7 +99,6 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(saved_entry)
     }
 
-    /// **MODIFIED (Phase 4)**: Loads Phase-4 fields and touches `last_accessed` for the returned rows.
     async fn load_recent(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
         let rows = sqlx::query(
             r#"
@@ -168,21 +171,16 @@ impl MemoryStore for SqliteMemoryStore {
                 logprobs: logprobs_val,
                 moderation_flag,
                 system_fingerprint,
-
-                // Robust memory (Phase 3)
                 head: None,
                 is_code: None,
                 lang: None,
                 topics: None,
-
-                // Phase 4
                 pinned: Some(pinned_i.unwrap_or(0) != 0),
                 subject_tag,
                 last_accessed: last_accessed.map(|naive| Utc.from_utc_datetime(&naive)),
             });
         }
 
-        // Touch last_accessed for the rows we just read (cheap N updates; N stays small).
         for id in ids {
             let _ = sqlx::query(
                 r#"
@@ -205,12 +203,9 @@ impl MemoryStore for SqliteMemoryStore {
         _embedding: &[f32],
         _k: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        // SQLite does not support semantic search. Return empty.
         Ok(Vec::new())
     }
 
-    /// **MODIFIED (Phase 4)**: Allows updating Phase-4 fields in addition to existing metadata.
-    /// Returns the updated MemoryEntry (echo).
     async fn update_metadata(&self, id: i64, updated: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = updated
             .tags
