@@ -3,9 +3,13 @@
 use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, warn, debug};
+use tokio::join;
+use std::collections::HashMap;
 
 use crate::llm::client::OpenAIClient;
+use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::recall::{RecallContext, build_context};
+use crate::memory::qdrant::multi_store::QdrantMultiStore;
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::MemoryEntry;
 use crate::services::chat::config::ChatConfig;
@@ -20,11 +24,23 @@ pub struct ContextStats {
     pub compression_ratio: f64,
 }
 
+/// Enhanced memory entry with similarity score for re-ranking
+#[derive(Debug, Clone)]
+pub struct ScoredMemoryEntry {
+    pub entry: MemoryEntry,
+    pub similarity_score: f32,
+    pub salience_score: f32,
+    pub recency_score: f32,
+    pub composite_score: f32,
+    pub source_head: EmbeddingHead,
+}
+
 #[derive(Clone)]
 pub struct ContextBuilder {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
     qdrant_store: Arc<dyn MemoryStore + Send + Sync>,
+    multi_store: Option<Arc<QdrantMultiStore>>,
     config: ChatConfig,
 }
 
@@ -39,6 +55,24 @@ impl ContextBuilder {
             llm_client,
             sqlite_store,
             qdrant_store,
+            multi_store: None,
+            config,
+        }
+    }
+
+    /// Phase 5: Constructor with multi-store support
+    pub fn new_with_multi_store(
+        llm_client: Arc<OpenAIClient>,
+        sqlite_store: Arc<dyn MemoryStore + Send + Sync>,
+        qdrant_store: Arc<dyn MemoryStore + Send + Sync>,
+        multi_store: Option<Arc<QdrantMultiStore>>,
+        config: ChatConfig,
+    ) -> Self {
+        Self {
+            llm_client,
+            sqlite_store,
+            qdrant_store,
+            multi_store,
             config,
         }
     }
@@ -59,27 +93,215 @@ impl ContextBuilder {
         self.config.enable_vector_search()
     }
 
-    /// ── Phase 4: Enhanced context building with rolling summaries ──
-    /// This is the main context building method that chooses between legacy and rolling approaches.
+    /// ── Phase 5: Enhanced context building with multi-head parallel retrieval ──
+    /// This is the main context building method that chooses between enhanced and legacy approaches.
     pub async fn build_context(
         &self,
         session_id: &str,
         user_text: &str,
     ) -> Result<RecallContext> {
         info!(
-            "Building context for session: {} (history_cap={}, vector_results={}, rolling_summaries={})",
+            "Building context for session: {} (history_cap={}, vector_results={}, rolling_summaries={}, multi_head={})",
             session_id,
             self.config.history_message_cap(),
             self.config.max_vector_search_results(),
-            CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100
+            CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100,
+            CONFIG.is_robust_memory_enabled() && self.multi_store.is_some()
         );
 
-        // Check if we should use rolling summaries in context building
-        if CONFIG.is_robust_memory_enabled() && 
-           (CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100) {
+        // Phase 5: Use enhanced multi-head parallel retrieval when enabled
+        if CONFIG.is_robust_memory_enabled() && self.multi_store.is_some() {
+            self.build_context_with_multihead_retrieval(session_id, user_text).await
+        } else if CONFIG.is_robust_memory_enabled() && 
+                  (CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100) {
             self.build_context_with_rolling_summaries(session_id, user_text).await
         } else {
             self.build_context_legacy(session_id, user_text).await
+        }
+    }
+
+    /// ── Phase 5: Multi-head parallel retrieval with re-ranking ──
+    async fn build_context_with_multihead_retrieval(
+        &self,
+        session_id: &str,
+        user_text: &str,
+    ) -> Result<RecallContext> {
+        debug!("Building context with multi-head parallel retrieval for session: {}", session_id);
+        let start_time = std::time::Instant::now();
+
+        let multi_store = self.multi_store.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Multi-store not available for enhanced retrieval"))?;
+
+        // Phase 5: Parallel execution - embedding + recent messages + multi-head search
+        let (embedding_result, recent_result) = join!(
+            self.llm_client.get_embedding(user_text),
+            self.load_recent_with_summaries(session_id)
+        );
+
+        let embedding = embedding_result.map_err(|e| {
+            warn!("Failed to get embedding for enhanced context building: {}", e);
+            e
+        })?;
+
+        let context_recent = recent_result?;
+        debug!("Loaded {} recent messages in parallel", context_recent.len());
+
+        // Phase 5: Parallel multi-head semantic search
+        let k_per_head = std::cmp::max(10, self.config.max_vector_search_results() / 3);
+        let multi_search_result = multi_store.search_all(session_id, &embedding, k_per_head).await?;
+
+        let num_heads_searched = multi_search_result.len();
+        debug!("Multi-head search completed: {} heads searched", num_heads_searched);
+
+        // Phase 5: Merge and deduplicate results across all heads
+        let mut all_candidates = Vec::new();
+        let mut content_dedup = HashMap::new();
+
+        for (head, entries) in &multi_search_result {
+            for entry in entries {
+                // Simple deduplication by content hash to avoid identical chunks
+                let content_key = format!("{}:{}", entry.content.len(), entry.content.chars().take(50).collect::<String>());
+                
+                if !content_dedup.contains_key(&content_key) {
+                    content_dedup.insert(content_key, true);
+                    all_candidates.push((*head, entry.clone()));
+                } else {
+                    debug!("Deduplicated similar content from {} head", head.as_str());
+                }
+            }
+        }
+
+        debug!("After deduplication: {} candidates from {} heads", all_candidates.len(), num_heads_searched);
+
+        // Phase 5: Compute re-ranking scores for all candidates
+        let scored_entries = self.compute_rerank_scores(&embedding, all_candidates).await?;
+
+        // Phase 5: Sort by composite score and take top results
+        let mut sorted_entries = scored_entries;
+        sorted_entries.sort_by(|a, b| b.composite_score.partial_cmp(&a.composite_score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let selected_entries: Vec<MemoryEntry> = sorted_entries
+            .into_iter()
+            .take(self.config.max_vector_search_results())
+            .map(|scored| scored.entry)
+            .collect();
+
+        let context = RecallContext {
+            recent: context_recent,
+            semantic: selected_entries,
+        };
+
+        let total_time = start_time.elapsed();
+        info!(
+            "Enhanced multi-head context built in {:?}: {} recent messages, {} re-ranked semantic matches from parallel search",
+            total_time,
+            context.recent.len(),
+            context.semantic.len()
+        );
+
+        // Log performance warning if slow
+        if total_time.as_millis() > 1500 {
+            warn!("Slow multi-head context build: {:?} (consider optimization)", total_time);
+        }
+
+        Ok(context)
+    }
+
+    /// Phase 5: Compute composite re-ranking scores combining similarity, salience, and recency
+    async fn compute_rerank_scores(
+        &self,
+        query_embedding: &[f32],
+        candidates: Vec<(EmbeddingHead, MemoryEntry)>,
+    ) -> Result<Vec<ScoredMemoryEntry>> {
+        let mut scored_entries = Vec::new();
+        let now = chrono::Utc::now();
+
+        for (head, entry) in candidates {
+            // Calculate similarity score
+            let similarity_score = if let Some(entry_embedding) = &entry.embedding {
+                self.cosine_similarity(query_embedding, entry_embedding)
+            } else {
+                0.0 // No embedding available
+            };
+
+            // Calculate salience score (normalize to 0-1 range)
+            let salience_score = entry.salience.unwrap_or(0.0).min(1.0).max(0.0);
+
+            // Calculate recency score (exponential decay from timestamp)
+            let hours_ago = (now - entry.timestamp).num_hours().max(0) as f32;
+            let recency_score = (-hours_ago / 168.0).exp(); // 168 hours = 1 week half-life
+
+            // Phase 5: Composite score - 75% similarity + 20% salience + 5% recency
+            // Adjust weights based on head type
+            let (sim_weight, sal_weight, rec_weight) = match head {
+                EmbeddingHead::Code => (0.70, 0.25, 0.05),    // Slightly favor salience for code
+                EmbeddingHead::Summary => (0.80, 0.15, 0.05), // Favor similarity for summaries  
+                EmbeddingHead::Semantic => (0.75, 0.20, 0.05), // Balanced default
+            };
+
+            let composite_score = (similarity_score * sim_weight) + 
+                                (salience_score * sal_weight) + 
+                                (recency_score * rec_weight);
+
+            scored_entries.push(ScoredMemoryEntry {
+                entry,
+                similarity_score,
+                salience_score,
+                recency_score,
+                composite_score,
+                source_head: head,
+            });
+        }
+
+        debug!("Computed re-ranking scores for {} candidates", scored_entries.len());
+        Ok(scored_entries)
+    }
+
+    /// Phase 5: Cosine similarity calculation for embeddings
+    fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() {
+            return 0.0;
+        }
+
+        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            dot_product / (norm_a * norm_b)
+        }
+    }
+
+    /// Phase 5: Load recent messages with rolling summaries integration
+    async fn load_recent_with_summaries(&self, session_id: &str) -> Result<Vec<MemoryEntry>> {
+        if CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100 {
+            // Use rolling summaries approach
+            let all_recent = self.sqlite_store
+                .load_recent(session_id, self.config.history_message_cap() * 2)
+                .await?;
+
+            let (rolling_summaries, regular_messages) = self.separate_summaries_from_messages(all_recent);
+            let mut context_recent = Vec::new();
+
+            // Include recent actual messages
+            let immediate_context_size = std::cmp::min(8, self.config.history_message_cap() / 3);
+            context_recent.extend(regular_messages.into_iter().take(immediate_context_size));
+
+            // Add most relevant rolling summaries
+            let (rolling_10, rolling_100) = self.select_relevant_rolling_summaries(rolling_summaries);
+            if let Some(summary_100) = rolling_100 {
+                context_recent.push(summary_100);
+            }
+            if let Some(summary_10) = rolling_10 {
+                context_recent.push(summary_10);
+            }
+
+            Ok(context_recent)
+        } else {
+            // Load regular recent messages
+            self.sqlite_store.load_recent(session_id, self.config.history_message_cap()).await
         }
     }
 
@@ -91,59 +313,46 @@ impl ContextBuilder {
     ) -> Result<RecallContext> {
         debug!("Building context with rolling summaries for session: {}", session_id);
 
-        // Get embedding for semantic search
-        let embedding = match self.llm_client.get_embedding(user_text).await {
-            Ok(emb) => Some(emb),
-            Err(e) => {
-                warn!("Failed to get embedding for context building: {}", e);
-                None
-            }
-        };
-
-        // Load all recent messages (including summaries)
+        // Load recent messages and separate summaries from regular messages
         let all_recent = self.sqlite_store
             .load_recent(session_id, self.config.history_message_cap() * 2)
             .await?;
 
-        // Separate rolling summaries from regular messages
         let (rolling_summaries, regular_messages) = self.separate_summaries_from_messages(all_recent);
-
-        // Build context strategically with rolling summaries
+        
+        // Build context with both summaries and recent messages
         let mut context_recent = Vec::new();
         
-        // Strategy: Include the most recent actual messages for immediate context
+        // Include immediate context (recent actual messages)
         let immediate_context_size = std::cmp::min(5, self.config.history_message_cap() / 4);
-        let recent_actual: Vec<MemoryEntry> = regular_messages
-            .into_iter()
-            .take(immediate_context_size)
-            .collect();
-        
-        context_recent.extend(recent_actual);
+        context_recent.extend(regular_messages.into_iter().take(immediate_context_size));
 
-        // Add rolling summaries for compressed historical context
+        // Select and include the most relevant rolling summaries
         let (rolling_10, rolling_100) = self.select_relevant_rolling_summaries(rolling_summaries);
-        
-        // Include the latest 100-message summary first (broader context)
         if let Some(summary_100) = rolling_100 {
-            debug!("Including 100-message rolling summary in context");
             context_recent.push(summary_100);
         }
-        
-        // Include the latest 10-message summary (more recent context)
         if let Some(summary_10) = rolling_10 {
-            debug!("Including 10-message rolling summary in context");
             context_recent.push(summary_10);
         }
 
-        // Perform semantic search with the user query
-        let semantic_matches = if let Some(embedding) = embedding {
-            match self.qdrant_store.semantic_search(session_id, &embedding, self.config.max_vector_search_results()).await {
-                Ok(matches) => {
-                    debug!("Found {} semantic matches from vector search", matches.len());
-                    matches
+        debug!("Context recent built: {} messages", context_recent.len());
+
+        // Get semantic matches if vector search is enabled
+        let semantic_matches = if self.can_use_vector_search() {
+            match self.llm_client.get_embedding(user_text).await {
+                Ok(embedding) => match self.qdrant_store.semantic_search(session_id, &embedding, self.config.max_vector_search_results()).await {
+                    Ok(matches) => {
+                        debug!("Found {} semantic matches from vector search", matches.len());
+                        matches
+                    }
+                    Err(e) => {
+                        warn!("Semantic search failed: {}", e);
+                        Vec::new()
+                    }
                 }
                 Err(e) => {
-                    warn!("Semantic search failed: {}", e);
+                    warn!("Failed to get embedding for context building: {}", e);
                     Vec::new()
                 }
             }
@@ -291,11 +500,11 @@ impl ContextBuilder {
         session_id: &str,
         user_text: &str,
     ) -> Result<RecallContext> {
-        // Try the main context building method first
+        // Try the enhanced context building method first
         match self.build_context(session_id, user_text).await {
             Ok(context) => Ok(context),
             Err(e) => {
-                warn!("Main context building failed: {}. Trying minimal context.", e);
+                warn!("Enhanced context building failed: {}. Trying minimal context.", e);
                 self.build_minimal_context(session_id).await
             }
         }
