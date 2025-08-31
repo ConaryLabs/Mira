@@ -6,13 +6,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::config::CONFIG;
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::{EmbeddingHead, TextChunker};
 use crate::memory::{
-    qdrant::{multi_store::QdrantMultiStore, store::QdrantMemoryStore},
+    qdrant::multi_store::QdrantMultiStore,
     sqlite::store::SqliteMemoryStore,
     traits::MemoryStore,
     types::{MemoryEntry, MemoryType},
@@ -34,33 +34,16 @@ pub struct ScoredMemoryEntry {
 pub struct MemoryService {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
-    qdrant_store: Arc<QdrantMemoryStore>,
-    multi_store: Option<Arc<QdrantMultiStore>>,
+    multi_store: Arc<QdrantMultiStore>,
 
     // ── Phase 4: Session message counters for rolling summaries ──
     session_counters: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 impl MemoryService {
-    /// Create a new memory service with single-head and multi-head embedding support.
+    /// Create a new memory service with multi-head embedding support.
     pub fn new(
         sqlite_store: Arc<SqliteMemoryStore>,
-        qdrant_store: Arc<QdrantMemoryStore>,
-        llm_client: Arc<OpenAIClient>,
-    ) -> Self {
-        Self {
-            llm_client,
-            sqlite_store,
-            qdrant_store,
-            multi_store: None,
-            session_counters: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-
-    /// ── Phase 1: Constructor with multi-store support ──
-    pub fn new_with_multi_store(
-        sqlite_store: Arc<SqliteMemoryStore>,
-        qdrant_store: Arc<QdrantMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
@@ -68,15 +51,13 @@ impl MemoryService {
         Self {
             llm_client,
             sqlite_store,
-            qdrant_store,
-            multi_store: Some(multi_store),
+            multi_store,
             session_counters: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// ── Phase 5: Parallel recall context method for enhanced retrieval ──
-    /// This method encapsulates the multi-head parallel retrieval logic and provides
-    /// a clean interface for ContextService and ChatService to use.
+    /// This method encapsulates the multi-head parallel retrieval logic.
     pub async fn parallel_recall_context(
         &self,
         session_id: &str,
@@ -84,37 +65,8 @@ impl MemoryService {
         recent_count: usize,
         semantic_count: usize,
     ) -> Result<RecallContext> {
-        info!("🔄 Starting parallel recall context for session: {} (robust_mode={})", 
-              session_id, CONFIG.is_robust_memory_enabled());
-        
-        let _start_time = std::time::Instant::now();
-
-        // Phase 5: Use enhanced multi-head retrieval if available
-        if CONFIG.is_robust_memory_enabled() && self.multi_store.is_some() {
-            self.build_context_with_multihead_parallel(session_id, query_text, recent_count, semantic_count).await
-        } else {
-            // Fallback to existing parallel recall from parallel_recall.rs
-            let embedding_result = self.llm_client.get_embedding(query_text).await;
-            match embedding_result {
-                Ok(_embedding) => {
-                    crate::memory::parallel_recall::build_context_parallel(
-                        session_id,
-                        query_text,
-                        recent_count,
-                        semantic_count,
-                        &*self.llm_client,
-                        self.sqlite_store.as_ref(),
-                        self.qdrant_store.as_ref(),
-                    ).await
-                }
-                Err(e) => {
-                    warn!("Failed to get embedding for parallel recall: {}", e);
-                    // Fallback to just recent messages
-                    let recent = self.sqlite_store.load_recent(session_id, recent_count).await?;
-                    Ok(RecallContext::new(recent, Vec::new()))
-                }
-            }
-        }
+        info!("🔄 Starting parallel recall context for session: {}", session_id);
+        self.build_context_with_multihead_parallel(session_id, query_text, recent_count, semantic_count).await
     }
 
     /// ── Phase 5: Multi-head parallel context building implementation ──
@@ -126,9 +78,6 @@ impl MemoryService {
         semantic_count: usize,
     ) -> Result<RecallContext> {
         debug!("Building context with multi-head parallel retrieval");
-        
-        let multi_store = self.multi_store.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Multi-store not available"))?;
 
         // Phase 5: Parallel execution - embedding + recent messages
         let (embedding_result, recent_result) = tokio::join!(
@@ -142,7 +91,7 @@ impl MemoryService {
 
         // Phase 5: Multi-head semantic search with appropriate k per head
         let k_per_head = std::cmp::max(10, semantic_count / 3);
-        let multi_search_result = multi_store.search_all(session_id, &embedding, k_per_head).await?;
+        let multi_search_result = self.multi_store.search_all(session_id, &embedding, k_per_head).await?;
 
         // Phase 5: Merge, deduplicate, and re-rank results
         let all_candidates = self.merge_and_deduplicate_results(multi_search_result)?;
@@ -245,8 +194,8 @@ impl MemoryService {
         for (head, entries) in multi_search_result {
             for entry in entries {
                 // Simple deduplication by content hash to avoid identical chunks
-                let content_key = format!("{}:{}", 
-                    entry.content.len(), 
+                let content_key = format!("{}:{}",
+                    entry.content.len(),
                     entry.content.chars().take(50).collect::<String>()
                 );
                 
@@ -289,14 +238,14 @@ impl MemoryService {
 
             // Phase 5: Composite score with head-specific weights
             let (sim_weight, sal_weight, rec_weight) = match head {
-                EmbeddingHead::Code => (0.70, 0.25, 0.05),    // Favor salience for code
-                EmbeddingHead::Summary => (0.80, 0.15, 0.05), // Favor similarity for summaries  
+                EmbeddingHead::Code => (0.70, 0.25, 0.05),     // Favor salience for code
+                EmbeddingHead::Summary => (0.80, 0.15, 0.05),  // Favor similarity for summaries
                 EmbeddingHead::Semantic => (0.75, 0.20, 0.05), // Balanced default
             };
 
-            let composite_score = (similarity_score * sim_weight) + 
-                                (salience_score * sal_weight) + 
-                                (recency_score * rec_weight);
+            let composite_score = (similarity_score * sim_weight)
+                                + (salience_score * sal_weight)
+                                + (recency_score * rec_weight);
 
             scored_entries.push(ScoredMemoryEntry {
                 entry,
@@ -344,10 +293,6 @@ impl MemoryService {
 
     /// ── Phase 4: Check and trigger rolling summaries ──
     pub async fn check_and_trigger_rolling_summaries(&self, session_id: &str) -> Result<()> {
-        if !CONFIG.is_robust_memory_enabled() {
-            return Ok(());
-        }
-
         let message_count = self.get_session_message_count(session_id).await;
         let mut triggered = false;
 
@@ -456,21 +401,11 @@ impl MemoryService {
         let saved_entry = self.sqlite_store.save(&entry).await?;
         info!("💾 Saved rolling summary to SQLite");
 
-        // Always embed rolling summaries regardless of salience
-        if CONFIG.is_robust_memory_enabled() {
-            // Use both Summary and Semantic heads for rolling summaries
-            let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
-            self.generate_and_save_embeddings(&saved_entry, &summary_heads)
-                .await?;
-        } else {
-            // Legacy single-embedding path
-            if let Ok(embedding) = self.llm_client.get_embedding(summary_content).await {
-                let mut entry_with_embedding = saved_entry;
-                entry_with_embedding.embedding = Some(embedding);
-                self.qdrant_store.save(&entry_with_embedding).await?;
-                info!("💾 Saved rolling summary to single Qdrant collection");
-            }
-        }
+        // Always embed rolling summaries
+        // Use both Summary and Semantic heads for rolling summaries
+        let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
+        self.generate_and_save_embeddings(&saved_entry, &summary_heads)
+            .await?;
 
         Ok(())
     }
@@ -515,31 +450,29 @@ impl MemoryService {
             last_accessed: Some(Utc::now()),
         };
 
-        // Phase 3: Rich metadata classification (if enabled)
-        if CONFIG.is_robust_memory_enabled() {
-            info!("🧠 Classifying user message for rich metadata...");
-            match self.llm_client.classify_text(content).await {
-                Ok(classification) => {
-                    entry = entry.with_classification(classification.clone());
+        // Phase 3: Rich metadata classification
+        info!("🧠 Classifying user message for rich metadata...");
+        match self.llm_client.classify_text(content).await {
+            Ok(classification) => {
+                entry = entry.with_classification(classification.clone());
 
-                    let mut new_tags = entry.tags.clone().unwrap_or_default();
-                    if classification.is_code {
-                        new_tags.push("is_code:true".to_string());
-                    }
-                    if !classification.lang.is_empty() && classification.lang != "natural" {
-                        new_tags.push(format!("lang:{}", classification.lang));
-                    }
-                    for topic in classification.topics {
-                        new_tags.push(format!("topic:{}", topic));
-                    }
-                    entry.tags = Some(new_tags);
+                let mut new_tags = entry.tags.clone().unwrap_or_default();
+                if classification.is_code {
+                    new_tags.push("is_code:true".to_string());
                 }
-                Err(e) => {
-                    error!(
-                        "Failed to classify message: {}. Proceeding with default metadata.",
-                        e
-                    );
+                if !classification.lang.is_empty() && classification.lang != "natural" {
+                    new_tags.push(format!("lang:{}", classification.lang));
                 }
+                for topic in classification.topics {
+                    new_tags.push(format!("topic:{}", topic));
+                }
+                entry.tags = Some(new_tags);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to classify message: {}. Proceeding with default metadata.",
+                    e
+                );
             }
         }
 
@@ -550,26 +483,16 @@ impl MemoryService {
         // Conditionally generate and save embeddings to Qdrant
         if let Some(salience) = saved_entry.salience {
             if salience >= CONFIG.min_salience_for_qdrant {
-                if CONFIG.is_robust_memory_enabled() {
-                    let heads_to_use = CONFIG
-                        .get_embedding_heads()
-                        .into_iter()
-                        .filter(|h| h != "summary") // Exclude summary head for user messages
-                        .map(|s| EmbeddingHead::from_str(&s))
-                        .filter_map(Result::ok)
-                        .collect::<Vec<_>>();
+                let heads_to_use = CONFIG
+                    .get_embedding_heads()
+                    .into_iter()
+                    .filter(|h| h != "summary") // Exclude summary head for user messages
+                    .map(|s| EmbeddingHead::from_str(&s))
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>();
 
-                    self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
-                        .await?;
-                } else {
-                    // Legacy single-embedding path
-                    if let Ok(embedding) = self.llm_client.get_embedding(content).await {
-                        let mut entry_with_embedding = saved_entry;
-                        entry_with_embedding.embedding = Some(embedding);
-                        self.qdrant_store.save(&entry_with_embedding).await?;
-                        info!("💾 Saved user message to single Qdrant collection");
-                    }
-                }
+                self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
+                    .await?;
             }
         }
 
@@ -596,7 +519,11 @@ impl MemoryService {
             tags: Some(response.tags.clone()),
             summary: Some(response.summary.clone()),
             memory_type: Some(self.parse_memory_type(
-                &response.memory_type.as_ref().unwrap_or(&"other".to_string())
+                if response.memory_type.trim().is_empty() {
+                    "other"
+                } else {
+                    response.memory_type.as_str()
+                },
             )),
             logprobs: None,
             moderation_flag: None,
@@ -611,14 +538,12 @@ impl MemoryService {
         };
 
         // Phase 3: Rich metadata classification
-        if CONFIG.is_robust_memory_enabled() {
-            match self.llm_client.classify_text(&response.output).await {
-                Ok(classification) => {
-                    entry = entry.with_classification(classification);
-                }
-                Err(e) => {
-                    error!("Failed to classify assistant response: {}", e);
-                }
+        match self.llm_client.classify_text(&response.output).await {
+            Ok(classification) => {
+                entry = entry.with_classification(classification);
+            }
+            Err(e) => {
+                error!("Failed to classify assistant response: {}", e);
             }
         }
 
@@ -628,25 +553,16 @@ impl MemoryService {
         // Generate embeddings if salience threshold is met
         if let Some(salience) = saved_entry.salience {
             if salience >= CONFIG.min_salience_for_qdrant {
-                if CONFIG.is_robust_memory_enabled() {
-                    let heads_to_use = CONFIG
-                        .get_embedding_heads()
-                        .into_iter()
-                        .filter(|h| h != "summary")
-                        .map(|s| EmbeddingHead::from_str(&s))
-                        .filter_map(Result::ok)
-                        .collect::<Vec<_>>();
+                let heads_to_use = CONFIG
+                    .get_embedding_heads()
+                    .into_iter()
+                    .filter(|h| h != "summary")
+                    .map(|s| EmbeddingHead::from_str(&s))
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>();
 
-                    self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
-                        .await?;
-                } else {
-                    if let Ok(embedding) = self.llm_client.get_embedding(&response.output).await {
-                        let mut entry_with_embedding = saved_entry;
-                        entry_with_embedding.embedding = Some(embedding);
-                        self.qdrant_store.save(&entry_with_embedding).await?;
-                        info!("💾 Saved assistant response to single Qdrant collection");
-                    }
-                }
+                self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
+                    .await?;
             }
         }
 
@@ -662,15 +578,12 @@ impl MemoryService {
         entry: &MemoryEntry,
         heads: &[EmbeddingHead],
     ) -> Result<()> {
-        let multi_store = self.multi_store.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Multi-store not available for multi-head embeddings"))?;
-
         info!("🧠 Generating embeddings for {} heads: {:?}", heads.len(), heads);
+        let chunker = TextChunker::new()?;
 
         for &head in heads {
             // 1. Chunk the content based on the head type
-            let chunker = TextChunker::new(head);
-            let chunks = chunker.chunk(&entry.content);
+            let chunks = chunker.chunk_text(&entry.content, &head)?;
             debug!("Generated {} chunks for {} head", chunks.len(), head.as_str());
 
             // 2. Generate embeddings for each chunk
@@ -687,7 +600,7 @@ impl MemoryService {
                 chunk_entry.embedding = Some(embedding.clone());
                 chunk_entry.head = Some(head.to_string());
 
-                multi_store.save(head, &chunk_entry).await?;
+                self.multi_store.save(head, &chunk_entry).await?;
             }
 
             info!(
@@ -729,7 +642,7 @@ impl MemoryService {
         }
     }
 
-    /// Get recent context from memory (for API compatibility)
+    /// Get recent context from memory
     pub async fn get_recent_context(
         &self,
         session_id: &str,
@@ -740,32 +653,11 @@ impl MemoryService {
 
     /// Search for similar memories using semantic search
     pub async fn search_similar(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        if CONFIG.is_robust_memory_enabled() {
-            if let Some(multi_store) = &self.multi_store {
-                // Use multi-head search - for now just use semantic head
-                if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
-                    multi_store
-                        .search(EmbeddingHead::Semantic, "", &query_embedding, limit)
-                        .await
-                } else {
-                    Err(anyhow::anyhow!("Failed to generate embedding for search query"))
-                }
-            } else {
-                // Fallback to single store
-                if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
-                    self.qdrant_store.semantic_search("", &query_embedding, limit).await
-                } else {
-                    Ok(Vec::new())
-                }
-            }
-        } else {
-            // Legacy single-head search
-            if let Ok(query_embedding) = self.llm_client.get_embedding(query).await {
-                self.qdrant_store.semantic_search("", &query_embedding, limit).await
-            } else {
-                Ok(Vec::new())
-            }
-        }
+        let query_embedding = self.llm_client.get_embedding(query).await?;
+        // Use multi-head search - for now just use semantic head as a default for general search
+        self.multi_store
+            .search(EmbeddingHead::Semantic, "", &query_embedding, limit)
+            .await
     }
 
     /// Get reference to SQLite store for direct access
@@ -773,19 +665,15 @@ impl MemoryService {
         &self.sqlite_store
     }
 
-    /// Get reference to Qdrant store for direct access
-    pub fn qdrant_store(&self) -> &Arc<QdrantMemoryStore> {
-        &self.qdrant_store
-    }
-
     /// Get reference to multi-store if available
-    pub fn multi_store(&self) -> Option<&Arc<QdrantMultiStore>> {
-        self.multi_store.as_ref()
+    pub fn multi_store(&self) -> &Arc<QdrantMultiStore> {
+        &self.multi_store
     }
 
-    /// Check if multi-head mode is enabled and available
+    /// Check if multi-head mode is enabled
     pub fn is_multi_head_enabled(&self) -> bool {
-        CONFIG.is_robust_memory_enabled() && self.multi_store.is_some()
+        // Always true since we removed the fallback
+        true
     }
 
     /// ── Phase 5: Evaluate and save response (for DocumentService compatibility) ──
@@ -793,9 +681,8 @@ impl MemoryService {
         &self,
         session_id: &str,
         response: &ChatResponse,
-        project_id: Option<&str>,
+        _project_id: Option<&str>,
     ) -> Result<()> {
-        // Use the existing save_assistant_response method
         self.save_assistant_response(session_id, response).await
     }
 
@@ -804,23 +691,15 @@ impl MemoryService {
         let recent_count = self.sqlite_store.load_recent(session_id, 1000).await?.len();
         let session_count = self.get_session_message_count(session_id).await;
         
-        let semantic_count = if let Some(multi_store) = &self.multi_store {
-            // Count entries across all heads
-            let mut total = 0;
-            for head in multi_store.get_enabled_heads() {
-                if let Ok(results) = multi_store.search(head, session_id, &vec![0.0; 1536], 1000).await {
-                    total += results.len();
-                }
+        // Count entries across all heads
+        let mut total = 0;
+        for head in self.multi_store.get_enabled_heads() {
+            // Use a dummy embedding for counting; we just need the count filter
+            if let Ok(results) = self.multi_store.search(head, session_id, &vec![0.0; 1536], 1000).await {
+                total += results.len();
             }
-            total
-        } else {
-            // Single head count (approximate via search)
-            if let Ok(embedding) = self.llm_client.get_embedding("test").await {
-                self.qdrant_store.semantic_search(session_id, &embedding, 1000).await?.len()
-            } else {
-                0
-            }
-        };
+        }
+        let semantic_count = total;
 
         Ok(MemoryServiceStats {
             session_id: session_id.to_string(),
@@ -828,11 +707,7 @@ impl MemoryService {
             recent_messages: recent_count,
             semantic_entries: semantic_count,
             multi_head_enabled: self.is_multi_head_enabled(),
-            heads_available: if let Some(multi_store) = &self.multi_store {
-                multi_store.get_enabled_heads().len()
-            } else {
-                1
-            },
+            heads_available: self.multi_store.get_enabled_heads().len(),
         })
     }
 }

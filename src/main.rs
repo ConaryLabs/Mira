@@ -35,7 +35,7 @@ use mira_backend::{
         list_project_artifacts_handler, list_projects_handler, update_artifact_handler,
         update_project_handler,
     },
-    state::create_app_state_with_multi_qdrant,
+    state::{AppState, create_app_state_with_multi_qdrant}, // ⬅️ import AppState for explicit Arc type
 };
 use sqlx::SqlitePool;
 use std::{env, sync::Arc, time::Duration};
@@ -72,7 +72,8 @@ async fn main() -> Result<()> {
     let git_store = GitStore::new(pool);
     let git_client = GitClient::new(&CONFIG.git_repos_dir, git_store.clone());
 
-    let app_state = Arc::new(
+    // Explicit type so the compiler knows Arc<T>
+    let app_state: Arc<AppState> = Arc::new(
         create_app_state_with_multi_qdrant(
             sqlite_store,
             &CONFIG.qdrant_url,

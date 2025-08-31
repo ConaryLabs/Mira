@@ -19,7 +19,6 @@ pub use message_handler::{ToolMessageHandler, WsServerMessageWithTools};
 pub use prompt_builder::{ToolPromptBuilder, PromptTemplates};
 
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
-use crate::memory::parallel_recall::build_context_parallel;
 use crate::state::AppState;
 use crate::config::CONFIG;
 
@@ -44,16 +43,13 @@ pub async fn handle_chat_message_with_tools(
     let history_cap = CONFIG.ws_history_cap;
     let vector_k = CONFIG.ws_vector_search_k;
     
-    info!("Building context PARALLEL (history: {}, semantic: {})...", history_cap, vector_k);
+    info!("Building context with parallel recall (history: {}, semantic: {})...", history_cap, vector_k);
     
-    let context = build_context_parallel(
+    let context = app_state.memory_service.parallel_recall_context(
         &session_id,
         &content,
         history_cap,
         vector_k,
-        &app_state.llm_client,
-        app_state.sqlite_store.as_ref(),
-        app_state.qdrant_store.as_ref(),
     )
     .await
     .unwrap_or_else(|e| {
@@ -62,7 +58,7 @@ pub async fn handle_chat_message_with_tools(
     });
 
     // ENHANCED: Use from_app_state() to get all managers with proper integration
-    let _executor = ToolExecutor::from_app_state(&app_state);
+    let executor = ToolExecutor::from_app_state(&app_state);
 
     let system_prompt = ToolPromptBuilder::build_tool_aware_system_prompt(
         &context,
@@ -78,7 +74,7 @@ pub async fn handle_chat_message_with_tools(
     ));
 
     let message_handler = ToolMessageHandler::new(
-        Arc::new(_executor),
+        Arc::new(executor),
         connection,
         app_state.clone(),
     );

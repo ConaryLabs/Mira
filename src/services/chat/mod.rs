@@ -25,10 +25,6 @@ use crate::services::summarization::SummarizationService;
 use crate::memory::recall::RecallContext;
 use crate::persona::PersonaOverlay;
 
-// Import concrete store types for a more robust implementation
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::qdrant::store::QdrantMemoryStore;
-
 /// Main ChatService with refactored modular architecture
 pub struct ChatService {
     // Core dependencies
@@ -53,8 +49,6 @@ impl ChatService {
         vector_store_manager: Arc<VectorStoreManager>,
         persona: PersonaOverlay,
         memory: Arc<MemoryService>,
-        sqlite_store: Arc<SqliteMemoryStore>, // Use concrete type
-        qdrant_store: Arc<QdrantMemoryStore>, // Use concrete type
         summarizer: Arc<SummarizationService>,
         config: Option<ChatConfig>,
     ) -> Self {
@@ -68,9 +62,7 @@ impl ChatService {
         );
 
         let context_builder = ContextBuilder::new(
-            client.clone(),
-            sqlite_store,
-            qdrant_store,
+            memory.clone(),
             chat_config.clone(),
         );
 
