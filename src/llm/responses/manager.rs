@@ -245,7 +245,7 @@ impl ResponsesManager {
         verbosity: &str,
         reasoning_effort: &str,
         max_output_tokens: Option<i32>,
-        temperature: Option<f32>,
+        temperature: Option<f64>, // <-- FIX: Changed from f32 to f64
     ) -> Value {
         let mut params = json!({
             "verbosity": verbosity,

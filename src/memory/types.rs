@@ -116,6 +116,34 @@ impl MemoryEntry {
     }
 }
 
+// FIX: Manually implement the Default trait for MemoryEntry
+impl Default for MemoryEntry {
+    fn default() -> Self {
+        Self {
+            id: None,
+            session_id: String::new(),
+            role: String::new(),
+            content: String::new(),
+            timestamp: Utc::now(),
+            embedding: None,
+            salience: Some(0.0),
+            tags: Some(Vec::new()),
+            summary: None,
+            memory_type: Some(MemoryType::Other),
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: None,
+            head: None,
+            is_code: None,
+            lang: None,
+            topics: None,
+            pinned: Some(false),
+            subject_tag: None,
+            last_accessed: Some(Utc::now()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryType {

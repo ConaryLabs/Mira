@@ -7,7 +7,6 @@ use tracing::{debug, info, warn};
 
 use crate::llm::client::OpenAIClient;
 use crate::memory::recall::RecallContext;
-use crate::config::CONFIG;
 
 /// Handles streaming chat responses
 pub struct StreamingHandler {
@@ -27,10 +26,10 @@ impl StreamingHandler {
     ) -> Result<String> {
         debug!("Generating streaming response for {} chars", user_text.len());
         
-        let system_prompt = self.build_system_prompt(context);
+        let _system_prompt = self.build_system_prompt(context);
         
         // This line will likely need to be changed to:
-        // let response = self.llm_client.generate_response(user_text, Some(&system_prompt.unwrap_or_default()), false).await?;
+        // let response = self.llm_client.generate_response(user_text, Some(&_system_prompt.unwrap_or_default()), false).await?;
         // Ok(response.output)
         
         // Placeholder to allow compilation based on original code, which used a now-removed `simple_chat` method.
@@ -51,12 +50,12 @@ impl StreamingHandler {
     /// Generate response with custom prompt
     pub async fn generate_response_with_prompt(
         &self,
-        user_text: &str,
+        _user_text: &str,
         system_prompt: Option<&str>,
     ) -> Result<String> {
         debug!("Generating response with custom prompt");
         
-        let prompt = system_prompt.unwrap_or("You are Mira, a helpful AI assistant.");
+        let _prompt = system_prompt.unwrap_or("You are Mira, a helpful AI assistant.");
 
         // Similar to above, this method call will need to be updated.
         let result: Result<String> = Err(anyhow::anyhow!("'simple_chat' method not found, please update to use 'generate_response'"));
@@ -180,6 +179,8 @@ mod tests {
     use super::*;
     use crate::llm::client::{ClientConfig, OpenAIClient};
     use crate::memory::recall::RecallContext;
+    // FIX: Import the correct MemoryEntry struct
+    use crate::memory::MemoryEntry;
 
     /// Create a mock OpenAI client for testing
     fn create_mock_client() -> Arc<OpenAIClient> {
@@ -273,7 +274,8 @@ mod tests {
         let handler = StreamingHandler::new(mock_client);
 
         let context_with_recent = RecallContext {
-            recent: vec![], // Using an empty vec still indicates the field exists
+            // FIX: Use the correct struct and its new default implementation
+            recent: vec![MemoryEntry::default()],
             semantic: vec![],
         };
 
@@ -282,7 +284,7 @@ mod tests {
         
         let prompt_text = prompt.unwrap();
         assert!(prompt_text.contains("Mira"));
-        // Since we have "recent" messages, should mention history
-        assert!(prompt_text.contains("recent conversation"));
+        
+        assert!(prompt_text.to_lowercase().contains("recent conversation history"));
     }
 }

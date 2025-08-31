@@ -49,7 +49,7 @@ pub struct CreateStreamingResponse {
 }
 
 /// Message structure for input/output
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)] // <-- FIX: Added Default
 pub struct Message {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]

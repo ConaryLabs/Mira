@@ -5,11 +5,11 @@ pub mod traits;
 pub mod recall;
 pub mod salience;
 pub mod summarizer;
-pub mod decay;          // existing subject-aware decay logic (policies/helpers)
-pub mod decay_scheduler;  // NEW: background scheduler for periodic decay
-pub mod sqlite;         // <--- THIS IS THE FIX
+pub mod decay;         // existing subject-aware decay logic (policies/helpers)
+pub mod decay_scheduler; // NEW: background scheduler for periodic decay
+pub mod sqlite;        // <--- THIS IS THE FIX
 pub mod qdrant;
-pub mod parallel_recall;  // parallel optimization module
+pub mod parallel_recall; // parallel optimization module
 
 // Add the missing MemoryMessage type that ChatService needs
 use serde::{Deserialize, Serialize};
