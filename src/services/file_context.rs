@@ -1,4 +1,5 @@
 // src/services/file_context.rs
+// Determines if a user's message requires the content of a file they are currently viewing.
 
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
@@ -12,17 +13,19 @@ use crate::{
     config::CONFIG,
 };
 
+/// Service to analyze user intent regarding file content.
 #[derive(Clone)]
 pub struct FileContextService {
     llm_client: Arc<OpenAIClient>,
     git_client: Arc<GitClient>,
 }
 
+/// Represents the analyzed intent of a user's message regarding a file.
 #[derive(Debug, Serialize, Deserialize)]
-struct FileIntent {
-    needs_file_content: bool,
-    confidence: f32,
-    reasoning: String,
+pub struct FileIntent {
+    pub needs_file_content: bool,
+    pub confidence: f32,
+    pub reasoning: String,
 }
 
 impl FileContextService {
@@ -38,18 +41,19 @@ impl FileContextService {
         }
     }
     
+    /// Checks if a user's message implies a need for the content of the currently viewed file.
     pub async fn check_intent(&self, message: &str, metadata: &MessageMetadata) -> Result<FileIntent> {
         let model = &CONFIG.intent_model;
+        let file_path = metadata.file_path.as_deref().unwrap_or("unknown");
         
         debug!(
             "Checking file context intent with model: {} for file: {}",
-            model,
-            metadata.file_path.as_deref().unwrap_or("unknown")
+            model, file_path
         );
 
         let file_info = format!(
             "User is viewing: {}\nLanguage: {}",
-            metadata.file_path.as_deref().unwrap_or("unknown"),
+            file_path,
             metadata.language.as_deref().unwrap_or("unknown")
         );
         
@@ -62,17 +66,6 @@ Context:
 User's message: "{}"
 
 Analyze if this message is asking about, referring to, or needs the content of the file being viewed.
-
-Examples of messages that NEED file content:
-- "What does this function do?"
-- "How can I fix this error on line 42?"
-- "Explain this code"
-- "What variables are defined here?"
-
-Examples of messages that DON'T need file content:
-- "Hello"
-- "What's the weather?"
-- "How are you?"
 
 Respond with JSON:
 {{
@@ -103,6 +96,7 @@ Respond with JSON:
         Ok(intent)
     }
 
+    /// Retrieves file content if the user's intent meets a certain confidence threshold.
     pub async fn get_context_if_needed(
         &self,
         message: &str,
@@ -162,6 +156,7 @@ Respond with JSON:
         }
     }
 
+    /// Formats the file path and content for inclusion in a prompt.
     pub fn format_file_context(&self, file_path: &str, content: &str, language: Option<&str>) -> String {
         let lang = language.unwrap_or("text");
         
@@ -171,6 +166,7 @@ Respond with JSON:
         )
     }
 
+    /// Retrieves statistics about the service's operation.
     pub fn get_stats(&self) -> FileContextStats {
         FileContextStats {
             total_checks: 0,
@@ -180,6 +176,7 @@ Respond with JSON:
     }
 }
 
+/// Contains statistics about file context operations.
 #[derive(Debug, Serialize)]
 pub struct FileContextStats {
     pub total_checks: u64,

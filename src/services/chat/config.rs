@@ -47,7 +47,7 @@ impl Default for ChatConfig {
 
         ChatConfig {
             // ── Core LLM Configuration ──
-            model: CONFIG.model.clone(),
+            model: CONFIG.gpt5_model.clone(),
             verbosity: CONFIG.verbosity.clone(),
             reasoning_effort: CONFIG.reasoning_effort.clone(),
             max_output_tokens: CONFIG.max_output_tokens,
@@ -110,7 +110,7 @@ impl ChatConfig {
         vector_search_override: Option<bool>,
     ) -> Self {
         Self {
-            model: model_override.unwrap_or_else(|| CONFIG.model.clone()),
+            model: model_override.unwrap_or_else(|| CONFIG.gpt5_model.clone()),
             history_message_cap: history_cap_override.unwrap_or(CONFIG.history_message_cap),
             enable_vector_search: vector_search_override.unwrap_or(CONFIG.enable_vector_search),
             // Use defaults for other fields

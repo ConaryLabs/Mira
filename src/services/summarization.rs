@@ -93,7 +93,6 @@ impl SummarizationService {
              Keep it faithful, concise, and useful for context stitching.\n\n",
         );
         for msg in &recent {
-            // Expecting each entry to have role + content.
             prompt.push_str(&format!("{}: {}\n", msg.role, msg.content));
         }
 
@@ -107,17 +106,16 @@ impl SummarizationService {
             .to_string();
 
         if summary.is_empty() {
-            // Don't save an empty summary.
             return Ok(());
         }
 
         // 4) Persist as an assistant response so it's retrievable like everything else.
         let response = ChatResponse {
-            output: String::new(),            // not user-facing body; summary lives below
+            output: String::new(),           // not user-facing body; summary lives below
             persona: "mira".to_string(),
             mood: "neutral".to_string(),
-            salience: 2,                      // low default; tune if desired
-            summary,                          // the compacted conversation summary
+            salience: 2,                     // low default; tune if desired
+            summary,                         // the compacted conversation summary
             memory_type: "context".to_string(),
             tags: vec!["summary".to_string()],
             intent: Some("summarize".to_string()),

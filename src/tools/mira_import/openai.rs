@@ -45,7 +45,7 @@ pub async fn batch_evaluate_messages(
         // Build the Functions API request for memory evaluation
         // Using centralized config for model settings where applicable
         let request_body = serde_json::json!({
-            "model": CONFIG.model,  // Use centralized model config
+            "model": CONFIG.gpt5_model,  // Use centralized model config
             "input": [
                 {
                     "role": "user",

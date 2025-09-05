@@ -124,7 +124,7 @@ impl OpenAIClient {
         max_output_tokens: usize,
     ) -> Result<String> {
         let body = json!({
-            "model": self.config.model(),
+            "model": CONFIG.gpt5_model,
             "input": [{
                 "role": "user",
                 "content": [{
@@ -132,10 +132,15 @@ impl OpenAIClient {
                     "text": prompt
                 }]
             }],
-            "verbosity": self.config.verbosity(),
-            "reasoning_effort": self.config.reasoning_effort(),
-            "max_output_tokens": max_output_tokens,
-            "temperature": 0.3
+            "text": {
+                "verbosity": CONFIG.get_verbosity_for("summary")
+            },
+            "parameters": {
+                "verbosity": CONFIG.get_verbosity_for("summary"),
+                "reasoning_effort": CONFIG.get_reasoning_effort_for("summary"),
+                "max_output_tokens": max_output_tokens,
+                "temperature": 0.3
+            }
         });
 
         let response = self.post_response(body).await?;
@@ -145,11 +150,10 @@ impl OpenAIClient {
 
     /// CRITICAL FIX #2: Classifies text using GPT-5 Responses API with JSON mode
     /// Was: Using GPT-4o with old chat/completions endpoint
-    /// Now: Using GPT-5 with /responses endpoint and proper parameters
+    /// Now: Using GPT-5 with /responses endpoint and proper parameters from config
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
         info!("🔍 Classifying text with GPT-5 Responses API");
         
-        // Instructions for classification (replaces system prompt)
         let instructions = r#"
             You are an expert at analyzing text to extract structured metadata.
             Analyze the following message and output a JSON object with the fields:
@@ -163,9 +167,9 @@ impl OpenAIClient {
             Be concise and accurate. Use minimal reasoning.
         "#;
 
-        // Build the GPT-5 Responses API request
+        // Build the GPT-5 Responses API request using centralized config
         let request_body = json!({
-            "model": CONFIG.model.clone(), // Use GPT-5 from config
+            "model": CONFIG.gpt5_model,
             "input": [{
                 "role": "user",
                 "content": [{
@@ -175,18 +179,21 @@ impl OpenAIClient {
             }],
             "instructions": instructions,
             "text": {
-                "format": "json_object",  // JSON mode for structured output
-                "verbosity": "low"        // Low verbosity for classification
+                "format": "json_object",
+                "verbosity": CONFIG.get_verbosity_for("classification")
             },
             "parameters": {
-                "verbosity": "low",              // Minimal verbosity
-                "reasoning_effort": "minimal",   // Minimal reasoning for speed
-                "max_output_tokens": 500         // Small output for classification
-            },
-            "temperature": 0.1  // Low temperature for consistency
+                "verbosity": CONFIG.get_verbosity_for("classification"),
+                "reasoning_effort": CONFIG.get_reasoning_effort_for("classification"),
+                "max_output_tokens": CONFIG.get_json_max_tokens()
+            }
         });
 
-        debug!("Classification request: model={}, reasoning=minimal, verbosity=low", CONFIG.model);
+        debug!("Classification request: model={}, reasoning={}, verbosity={}", 
+            CONFIG.gpt5_model, 
+            CONFIG.get_reasoning_effort_for("classification"),
+            CONFIG.get_verbosity_for("classification")
+        );
 
         // Make the API call to /responses endpoint
         let response = self.post_response(request_body).await
@@ -208,7 +215,7 @@ impl OpenAIClient {
     pub async fn post_response(&self, body: Value) -> Result<Value> {
         let response = self
             .client
-            .post(&format!("{}/responses", &self.config.base_url()))
+            .post(&format!("{}/v1/responses", &self.config.base_url()))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
@@ -270,13 +277,7 @@ impl OpenAIClient {
 
     /// Get embeddings for text - Fixed method name
     pub async fn get_embeddings(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        // Handle multiple texts by calling get_embedding for each
-        let mut results = Vec::new();
-        for text in texts {
-            let embedding = self.embedding_client.get_embedding(text).await?;
-            results.push(embedding);
-        }
-        Ok(results)
+        self.embedding_client.get_embeddings_batch(texts).await
     }
 
     /// Get single embedding for text
@@ -302,16 +303,15 @@ mod tests {
     #[test]
     fn test_client_creation() {
         // Test with environment variables
-        // THE FIX: Wrap environment variable calls in an unsafe block.
-        unsafe {
-            std::env::set_var("OPENAI_API_KEY", "test-key");
-        }
+        std::env::set_var("OPENAI_API_KEY", "test-key");
         
         let client_result = OpenAIClient::new();
         assert!(client_result.is_ok());
         
         let client = client_result.unwrap();
-        // NOTE: Default model might be different based on your ClientConfig implementation
-        // assert_eq!(client.model(), "gpt-4o"); 
+        // This test confirms client initializes; model details are in config tests
+        assert_eq!(client.config().api_key(), "test-key");
+
+        std::env::remove_var("OPENAI_API_KEY");
     }
 }

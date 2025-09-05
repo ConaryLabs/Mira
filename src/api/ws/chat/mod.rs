@@ -1,4 +1,5 @@
-// src/api/ws/chat/mod.rs - FIXED VERSION
+// src/api/ws/chat/mod.rs
+// Handles the primary WebSocket chat endpoint, connection lifecycle, and message routing.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,22 +15,22 @@ use futures_util::stream::SplitSink;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-// Import extracted modules
+// Module organization for WebSocket chat functionalities.
 pub mod connection;
 pub mod message_router;
 pub mod heartbeat;
 
-// Re-export for external use
+// Re-export key components for easier access from other modules.
 pub use connection::WebSocketConnection;
 pub use message_router::{MessageRouter, should_use_tools, extract_file_context};
 pub use heartbeat::{HeartbeatManager, HeartbeatConfig, HeartbeatStats};
 
-// Import dependencies
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::{start_response_stream, StreamEvent};
 use crate::state::AppState;
 
-/// Main WebSocket handler entry point - FIXED to accept ConnectInfo
+/// Main WebSocket handler entry point.
+/// Upgrades the HTTP connection to a WebSocket and establishes the session.
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<Arc<AppState>>,
@@ -39,7 +40,7 @@ pub async fn ws_chat_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, app_state, addr))
 }
 
-/// Socket handler using extracted modules - FIXED to accept addr parameter
+/// Manages the entire lifecycle of a single WebSocket connection.
 async fn handle_socket(
     socket: WebSocket,
     app_state: Arc<AppState>,
@@ -50,7 +51,7 @@ async fn handle_socket(
     
     info!("WebSocket client connected from {}", addr);
 
-    // Create connection wrapper with state management
+    // Atomically shared state for managing the connection's activity.
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let last_any_send = Arc::new(Mutex::new(Instant::now()));
     let is_processing = Arc::new(Mutex::new(false));
@@ -63,43 +64,36 @@ async fn handle_socket(
         last_any_send.clone(),
     ));
 
-    // Send initial connection messages
+    // Notify the client that the connection is established and ready.
     if let Err(e) = connection.send_connection_ready().await {
         error!("Failed to send connection ready message: {}", e);
         return;
     }
 
-    // Initialize heartbeat manager with just the connection
-    let heartbeat_manager = Arc::new(HeartbeatManager::new(
-        connection.clone(),
-    ));
-
-    // Start heartbeat task
+    // Initialize and start the heartbeat manager to keep the connection alive.
+    let heartbeat_manager = Arc::new(HeartbeatManager::new(connection.clone()));
     let heartbeat_handle = tokio::spawn({
-        let _heartbeat_manager = heartbeat_manager.clone();
+        let manager = heartbeat_manager.clone();
         async move {
-            // HeartbeatManager handles its own lifecycle
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            // FIX: Handle the Result from the start method.
+            if let Err(e) = manager.start().await {
+                warn!("Heartbeat manager for client {} exited with error: {}", addr, e);
+            }
         }
     });
 
-    // FIXED: Use real address instead of placeholder
+    // Initialize the message router to handle incoming client messages.
     let message_router = MessageRouter::new(
         app_state.clone(),
         connection.clone(),
-        addr, // Use the real client address
+        addr,
     );
 
+    // Main loop to process incoming messages from the client.
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                // Update activity timestamp
-                {
-                    let mut activity_lock = last_activity.lock().await;
-                    *activity_lock = Instant::now();
-                }
-
-                // Parse and route message
+                *last_activity.lock().await = Instant::now();
                 match serde_json::from_str::<WsClientMessage>(&text) {
                     Ok(client_msg) => {
                         info!("Received WebSocket message: {:?}", &client_msg);
@@ -114,20 +108,18 @@ async fn handle_socket(
                 }
             }
             Ok(Message::Close(_)) => {
-                info!("Client {} disconnected", addr);
+                info!("Client {} initiated disconnection", addr);
                 break;
             }
-            Ok(_) => {
-                // Ignore other message types (binary, ping, pong)
-            }
+            Ok(_) => {}
             Err(e) => {
-                error!("WebSocket error for client {}: {}", addr, e);
+                error!("WebSocket transport error for client {}: {}", addr, e);
                 break;
             }
         }
     }
 
-    // Cleanup
+    // Cleanup resources on disconnection.
     heartbeat_handle.abort();
     info!(
         "WebSocket connection closed for {} after {:?}",
@@ -136,7 +128,7 @@ async fn handle_socket(
     );
 }
 
-/// Handle simple chat message (non-tool enabled) - FIXED API
+/// Handles a simple (non-tool-enabled) chat message and streams the response.
 pub async fn handle_simple_chat_message(
     content: String,
     _project_id: Option<String>,
@@ -144,26 +136,24 @@ pub async fn handle_simple_chat_message(
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     last_send_ref: Arc<Mutex<Instant>>,
 ) -> Result<(), anyhow::Error> {
-    info!("Processing simple chat message: {}", content.chars().take(50).collect::<String>());
+    info!("Processing simple chat message: {}", content.chars().take(80).collect::<String>());
 
-    // Build context for the user's message
-    let session_id = "websocket_session".to_string();
+    // FIX: Prefix unused variable with underscore
+    let _session_id = "websocket_session".to_string();
 
-    // FIXED: Use correct function signature
     let stream = start_response_stream(
         &app_state.llm_client,
         &content,
         Some("You are Mira, a helpful AI assistant. Respond conversationally and naturally."),
-        false, // Not structured JSON
+        false,
     ).await?;
 
-    // Process the stream and send chunks via WebSocket
     handle_stream_response(stream, sender, last_send_ref).await?;
 
     Ok(())
 }
 
-/// Handle streaming response and send to WebSocket - FIXED to match StreamEvent API
+/// Processes a stream of events from the LLM and forwards them to the client.
 async fn handle_stream_response(
     mut stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>,
     sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
@@ -171,25 +161,15 @@ async fn handle_stream_response(
 ) -> Result<(), anyhow::Error> {
     while let Some(event_result) = stream.next().await {
         match event_result? {
-            // FIXED: Use correct StreamEvent variants
-            StreamEvent::Text(text) => {
+            StreamEvent::Text(text) | StreamEvent::Delta(text) => {
                 let msg = WsServerMessage::StreamChunk { text };
                 send_ws_message(&msg, &sender).await?;
                 update_last_send(last_send_ref.clone()).await;
             }
-            StreamEvent::Delta(delta) => {
-                let msg = WsServerMessage::Chunk { 
-                    content: delta, 
-                    mood: None 
-                };
-                send_ws_message(&msg, &sender).await?;
-                update_last_send(last_send_ref.clone()).await;
-            }
-            StreamEvent::Done { full_text: _, raw: _ } => {
-                let msg = WsServerMessage::StreamEnd;
-                send_ws_message(&msg, &sender).await?;
+            StreamEvent::Done { .. } => {
+                let end_msg = WsServerMessage::StreamEnd;
+                send_ws_message(&end_msg, &sender).await?;
                 
-                // Send completion message
                 let complete_msg = WsServerMessage::Complete {
                     mood: Some("helpful".to_string()),
                     salience: None,
@@ -199,7 +179,7 @@ async fn handle_stream_response(
                 break;
             }
             StreamEvent::Error(error_msg) => {
-                error!("Stream error: {}", error_msg);
+                error!("Stream error from LLM: {}", error_msg);
                 let msg = WsServerMessage::Error { 
                     message: format!("Stream error: {}", error_msg),
                     code: "STREAM_ERROR".to_string(),
@@ -209,11 +189,10 @@ async fn handle_stream_response(
             }
         }
     }
-
     Ok(())
 }
 
-/// Helper function to send WebSocket messages
+/// A thread-safe helper to send a serialized message over the WebSocket.
 async fn send_ws_message(
     msg: &WsServerMessage,
     sender: &Arc<Mutex<SplitSink<WebSocket, Message>>>,
@@ -227,13 +206,13 @@ async fn send_ws_message(
             return Err(e.into());
         }
     } else {
-        warn!("Failed to acquire sender lock");
+        warn!("Could not acquire WebSocket sender lock to send message.");
     }
     
     Ok(())
 }
 
-/// Helper function to update last send timestamp
+/// A thread-safe helper to update the timestamp of the last message sent.
 async fn update_last_send(last_send_ref: Arc<Mutex<Instant>>) {
     if let Ok(mut last_send) = last_send_ref.try_lock() {
         *last_send = Instant::now();

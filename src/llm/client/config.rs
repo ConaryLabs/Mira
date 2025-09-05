@@ -30,13 +30,13 @@ impl ClientConfig {
 
         debug!(
             "Initialized LLM client config: model={}, verbosity={}, reasoning={}, max_tokens={}",
-            CONFIG.model, CONFIG.verbosity, CONFIG.reasoning_effort, CONFIG.max_output_tokens
+            CONFIG.gpt5_model, CONFIG.verbosity, CONFIG.reasoning_effort, CONFIG.max_output_tokens
         );
 
         Ok(Self {
             api_key,
             base_url,
-            model: CONFIG.model.clone(),
+            model: CONFIG.gpt5_model.clone(),
             verbosity: CONFIG.verbosity.clone(),
             reasoning_effort: CONFIG.reasoning_effort.clone(),
             max_output_tokens: CONFIG.max_output_tokens,
@@ -157,7 +157,7 @@ impl ModelConfig {
     /// Create from centralized CONFIG
     pub fn from_config() -> Self {
         Self {
-            model: CONFIG.model.clone(),
+            model: CONFIG.gpt5_model.clone(),
             verbosity: CONFIG.verbosity.clone(),
             reasoning_effort: CONFIG.reasoning_effort.clone(),
             max_output_tokens: CONFIG.max_output_tokens,

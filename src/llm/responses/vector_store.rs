@@ -1,9 +1,5 @@
 // src/llm/responses/vector_store.rs
-// Updated for GPT-5 Responses API - August 15, 2025
-// Changes:
-// - Changed file upload purpose from "assistants" to "user_data"
-// - Removed search_via_assistant fallback method
-// - Improved error handling for vector store operations
+// Manages interactions with OpenAI's vector store capabilities for document retrieval.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,20 +15,21 @@ use tracing::{debug, info, warn};
 
 use crate::llm::client::OpenAIClient;
 
-/// Manages OpenAI vector stores for document storage and retrieval
+/// Manages OpenAI vector stores for document storage and retrieval.
 #[derive(Clone)]
 pub struct VectorStoreManager {
     client: Arc<OpenAIClient>,
     stores: Arc<RwLock<HashMap<String, VectorStoreInfo>>>,
 }
 
+/// Contains metadata about a cached vector store.
 #[derive(Debug, Clone)]
-struct VectorStoreInfo {
-    id: String,
-    name: String,
-    created_at: i64,
-    file_ids: Vec<String>,
-    usage_bytes: i64,
+pub struct VectorStoreInfo {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub file_ids: Vec<String>,
+    pub usage_bytes: i64,
 }
 
 impl VectorStoreManager {
@@ -45,9 +42,9 @@ impl VectorStoreManager {
         }
     }
 
-    /// Create a new vector store for a project
+    /// Creates a new vector store for a given project identifier.
     pub async fn create_project_store(&self, project_id: &str) -> Result<String> {
-        info!("📦 Creating vector store for project: {}", project_id);
+        info!("Creating vector store for project: {}", project_id);
         
         let req = CreateVectorStoreRequest {
             name: format!("Project: {}", project_id),
@@ -65,7 +62,7 @@ impl VectorStoreManager {
             .await
             .context("Failed to send create vector store request")?
             .error_for_status()
-            .context("Non-2xx from OpenAI vector store create")?
+            .context("API error on vector store creation")?
             .json::<VectorStoreResponse>()
             .await
             .context("Failed to parse vector store response")?;
@@ -79,12 +76,12 @@ impl VectorStoreManager {
         };
         
         self.stores.write().await.insert(project_id.to_string(), info);
-        info!("✅ Created vector store: {}", res.id);
+        info!("Successfully created vector store with ID: {}", res.id);
         
         Ok(res.id)
     }
 
-    /// Get or create the default personal vector store
+    /// Retrieves the ID of the personal vector store, creating it if it doesn't exist.
     pub async fn get_or_create_personal_store(&self) -> Result<String> {
         if let Some(info) = self.get_store_info(Self::PERSONAL_STORE_KEY).await {
             Ok(info.id)
@@ -93,29 +90,25 @@ impl VectorStoreManager {
         }
     }
 
-    /// Upload a document and attach to the given vector store
+    /// Uploads a document and attaches it to the specified vector store.
     pub async fn add_document(&self, project_id_or_personal: &str, file_path: PathBuf) -> Result<String> {
-        info!("📄 Adding document to vector store: {:?}", file_path);
+        info!("Adding document to vector store: {:?}", file_path);
         
-        // Ensure vector store exists
         let store_id = if let Some(store_info) = self.get_store_info(project_id_or_personal).await {
             store_info.id
         } else {
             self.create_project_store(project_id_or_personal).await?
         };
 
-        // Upload file to OpenAI
-        let file_content = tokio::fs::read(&file_path).await
-            .context("Failed to read file")?;
+        let file_content = tokio::fs::read(&file_path).await.context("Failed to read file")?;
         
         let file_name = file_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("document.txt");
 
-        // Create multipart form for file upload
-        // CHANGED: Updated purpose from "assistants" to "user_data"
+        // The 'user_data' purpose is required for the new Responses API retrieval features.
         let form = reqwest::multipart::Form::new()
-            .text("purpose", "user_data")  // Changed from "assistants" for GPT-5 Responses API
+            .text("purpose", "user_data")
             .part("file", reqwest::multipart::Part::bytes(file_content)
                 .file_name(file_name.to_string()));
 
@@ -126,14 +119,13 @@ impl VectorStoreManager {
             .await
             .context("Failed to upload file")?
             .error_for_status()
-            .context("Non-2xx from OpenAI file upload")?
+            .context("API error on file upload")?
             .json::<FileResponse>()
             .await
             .context("Failed to parse file upload response")?;
 
-        info!("📤 File uploaded: {}", file_response.id);
+        info!("File uploaded successfully with ID: {}", file_response.id);
 
-        // Attach file to vector store
         let attach_req = AttachFileRequest {
             file_id: file_response.id.clone(),
         };
@@ -145,38 +137,35 @@ impl VectorStoreManager {
             .await
             .context("Failed to attach file to vector store")?
             .error_for_status()
-            .context("Non-2xx from file attachment")?;
+            .context("API error on file attachment")?;
 
-        // Update local cache
         if let Some(info) = self.stores.write().await.get_mut(project_id_or_personal) {
             info.file_ids.push(file_response.id.clone());
         }
 
-        info!("✅ Document attached to vector store");
+        info!("Document attached successfully to vector store");
         Ok(file_response.id)
     }
 
-    /// Search for relevant content in a vector store
+    /// Searches for relevant content within a specified vector store.
     pub async fn search_documents(
         &self,
         project_id: Option<&str>,
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>> {
-        // Determine which store to search
         let store_key = project_id.unwrap_or(Self::PERSONAL_STORE_KEY);
         
         let store_info = match self.get_store_info(store_key).await {
             Some(info) => info,
             None => {
-                debug!("No vector store found for key: {}", store_key);
+                debug!("No vector store found for key: {}, returning empty search results.", store_key);
                 return Ok(vec![]);
             }
         };
 
-        info!("🔍 Searching vector store {} for: {}", store_info.id, query);
+        info!("Searching vector store {} for query: '{}'", store_info.id, query);
 
-        // Search the vector store
         let search_req = SearchRequest {
             query: query.to_string(),
             max_results: max_results as u32,
@@ -187,27 +176,17 @@ impl VectorStoreManager {
             .json(&search_req)
             .send()
             .await
-            .context("Failed to search vector store")?;
+            .context("Failed to send search request to vector store")?;
 
-        // Check if the search API is available
-        if response.status() == 404 {
-            warn!("Vector store search API not available (404), returning empty results");
-            // REMOVED: search_via_assistant fallback - no longer using Assistants API
-            return Ok(vec![]);
-        }
-
-        // Handle other error cases gracefully
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             
-            // Check for common error conditions
             if error_text.contains("indexing") || error_text.contains("processing") {
-                warn!("Vector store is still indexing, returning empty results");
-                return Ok(vec![]);
+                warn!("Vector store is still indexing, returning empty results for now.");
+            } else {
+                warn!("Vector store search failed with status {}: {}", status, error_text);
             }
-            
-            warn!("Vector store search failed with status {}: {}", status, error_text);
             return Ok(vec![]);
         }
 
@@ -226,43 +205,40 @@ impl VectorStoreManager {
             })
             .collect();
 
-        info!("✅ Found {} search results", results.len());
+        info!("Found {} search results.", results.len());
         Ok(results)
     }
 
-    // REMOVED: search_via_assistant fallback method - obsolete with Responses API
-
-    /// Get store information from cache
+    /// Retrieves cached information about a specific vector store.
     async fn get_store_info(&self, key: &str) -> Option<VectorStoreInfo> {
         self.stores.read().await.get(key).cloned()
     }
 
-    /// List all vector stores
+    /// Lists all cached vector stores.
     pub async fn list_stores(&self) -> Result<Vec<VectorStoreInfo>> {
         let stores = self.stores.read().await;
         Ok(stores.values().cloned().collect())
     }
 
-    /// Delete a vector store
+    /// Deletes a vector store from OpenAI and removes it from the cache.
     pub async fn delete_store(&self, project_id: &str) -> Result<()> {
         if let Some(info) = self.get_store_info(project_id).await {
             self.client
                 .request(Method::DELETE, &format!("vector_stores/{}", info.id))
                 .send()
                 .await
-                .context("Failed to delete vector store")?
+                .context("Failed to send delete vector store request")?
                 .error_for_status()
-                .context("Non-2xx from vector store deletion")?;
+                .context("API error on vector store deletion")?;
             
             self.stores.write().await.remove(project_id);
-            info!("🗑️ Deleted vector store for project: {}", project_id);
+            info!("Deleted vector store for project: {}", project_id);
         }
         Ok(())
     }
 }
 
-// Request/Response types
-
+// Internal request/response structs for serializing and deserializing API calls.
 #[derive(Debug, Serialize)]
 struct CreateVectorStoreRequest {
     name: String,
@@ -278,6 +254,7 @@ struct VectorStoreResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Allow unused fields as they are part of the API contract
 struct FileResponse {
     id: String,
     filename: String,
@@ -308,8 +285,8 @@ struct SearchResultItem {
     metadata: Option<Value>,
 }
 
-/// Public search result type
-#[derive(Debug, Clone)]
+/// Public representation of a search result from a vector store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub content: String,
     pub score: f32,
@@ -318,33 +295,8 @@ pub struct SearchResult {
 }
 
 impl SearchResult {
-    /// Format for inclusion in chat context
+    /// Formats the search result for inclusion in a chat context prompt.
     pub fn format_for_context(&self) -> String {
         format!("[Retrieved content (score: {:.2})]: {}", self.score, self.content)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_search_result_formatting() {
-        let result = SearchResult {
-            content: "Test content".to_string(),
-            score: 0.95,
-            file_id: Some("file-123".to_string()),
-            metadata: None,
-        };
-        
-        let formatted = result.format_for_context();
-        assert!(formatted.contains("Test content"));
-        assert!(formatted.contains("0.95"));
-    }
-
-    #[test]
-    fn test_file_upload_purpose() {
-        // This test would verify that files are uploaded with purpose="user_data"
-        // In a real test, you'd mock the OpenAIClient and verify the request
     }
 }

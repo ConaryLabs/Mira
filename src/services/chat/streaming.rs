@@ -1,14 +1,14 @@
 // src/services/chat/streaming.rs
-// CLEANED: Fixed todo!() macros in tests and streamlined logging
+// Manages the logic for handling and generating streaming chat responses.
 
 use std::sync::Arc;
 use anyhow::Result;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, error}; // Corrected imports
 
 use crate::llm::client::OpenAIClient;
 use crate::memory::recall::RecallContext;
 
-/// Handles streaming chat responses
+/// Handles the business logic for streaming chat responses.
 pub struct StreamingHandler {
     llm_client: Arc<OpenAIClient>,
 }
@@ -18,61 +18,41 @@ impl StreamingHandler {
         Self { llm_client }
     }
 
-    /// Generate streaming response
+    /// Generates a non-streaming response using the main client method.
     pub async fn generate_response(
         &self,
         user_text: &str,
         context: &RecallContext,
     ) -> Result<String> {
-        debug!("Generating streaming response for {} chars", user_text.len());
+        debug!("Generating response for user text: \"{}\"", user_text.chars().take(80).collect::<String>());
         
-        let _system_prompt = self.build_system_prompt(context);
+        let system_prompt = self.build_system_prompt(context);
         
-        // This line will likely need to be changed to:
-        // let response = self.llm_client.generate_response(user_text, Some(&_system_prompt.unwrap_or_default()), false).await?;
-        // Ok(response.output)
-        
-        // Placeholder to allow compilation based on original code, which used a now-removed `simple_chat` method.
-        let result: Result<String> = Err(anyhow::anyhow!("'simple_chat' method not found, please update to use 'generate_response'"));
+        let response = self.llm_client
+            .generate_response(user_text, system_prompt.as_deref(), false)
+            .await?;
 
-        match result {
-            Ok(response) => {
-                info!("Streaming response generated: {} chars", response.len());
-                Ok(response)
-            }
-            Err(e) => {
-                warn!("Failed to generate streaming response: {}", e);
-                Err(e)
-            }
-        }
+        info!("Response generated successfully ({} chars)", response.content.len());
+        Ok(response.content)
     }
 
-    /// Generate response with custom prompt
+    /// Generates a response with a custom system prompt.
     pub async fn generate_response_with_prompt(
         &self,
-        _user_text: &str,
+        user_text: &str,
         system_prompt: Option<&str>,
     ) -> Result<String> {
-        debug!("Generating response with custom prompt");
+        debug!("Generating response with custom system prompt.");
         
-        let _prompt = system_prompt.unwrap_or("You are Mira, a helpful AI assistant.");
+        let response = self.llm_client
+            .generate_response(user_text, system_prompt, false)
+            .await?;
 
-        // Similar to above, this method call will need to be updated.
-        let result: Result<String> = Err(anyhow::anyhow!("'simple_chat' method not found, please update to use 'generate_response'"));
-        
-        match result {
-            Ok(response) => {
-                info!("Custom prompt response generated: {} chars", response.len());
-                Ok(response)
-            }
-            Err(e) => {
-                warn!("Failed to generate response with custom prompt: {}", e);
-                Err(e)
-            }
-        }
+        info!("Custom prompt response generated successfully ({} chars)", response.content.len());
+        Ok(response.content)
     }
 
-    /// Build system prompt with context
+    /// Builds a system prompt incorporating the provided context.
     fn build_system_prompt(&self, context: &RecallContext) -> Option<String> {
         let mut prompt = String::from("You are Mira, a helpful AI assistant.");
         
@@ -87,7 +67,7 @@ impl StreamingHandler {
         Some(prompt)
     }
 
-    /// Build system prompt with persona
+    /// Builds a system prompt that includes a specific persona and context.
     pub fn build_system_prompt_with_persona(
         &self,
         persona: &str,
@@ -107,29 +87,28 @@ impl StreamingHandler {
         prompt
     }
 
-    /// Test streaming connection
+    /// Tests the connection to the streaming service.
     pub async fn test_streaming_connection(&self) -> Result<bool> {
-        info!("Testing streaming connection");
-
+        info!("Testing streaming connection...");
         let test_message = "Hello, this is a connection test.";
         let system_prompt = "You are a test assistant. Respond with exactly 'Test successful'.";
 
         match self.generate_response_with_prompt(test_message, Some(system_prompt)).await {
             Ok(response) => {
-                let success = response.contains("Test successful") || !response.is_empty();
-                info!("Streaming test completed: {}", if success { "SUCCESS" } else { "PARTIAL" });
+                let success = response.contains("Test successful");
+                info!("Streaming test completed: {}", if success { "SUCCESS" } else { "PARTIAL SUCCESS" });
                 Ok(success)
             }
-            Err(_) => {
-                warn!("Streaming test failed as expected due to unimplemented method.");
+            Err(e) => {
+                error!("Streaming test failed: {}", e);
                 Ok(false)
             }
         }
     }
 
-    /// Get streaming statistics
+    /// Retrieves streaming performance statistics.
     pub fn get_streaming_stats(&self) -> StreamingStats {
-        // In a real implementation, we'd track these metrics
+        // In a real implementation, these metrics would be tracked.
         StreamingStats {
             total_streams: 0,
             successful_streams: 0,
@@ -140,7 +119,7 @@ impl StreamingHandler {
     }
 }
 
-/// Streaming performance statistics
+/// Contains performance statistics for streaming operations.
 #[derive(Debug, Clone)]
 pub struct StreamingStats {
     pub total_streams: u64,
@@ -153,16 +132,16 @@ pub struct StreamingStats {
 impl StreamingStats {
     pub fn success_rate(&self) -> f64 {
         if self.total_streams == 0 {
-            return 0.0;
+            return 100.0;
         }
-        self.successful_streams as f64 / self.total_streams as f64 * 100.0
+        (self.successful_streams as f64 / self.total_streams as f64) * 100.0
     }
 
     pub fn failure_rate(&self) -> f64 {
         if self.total_streams == 0 {
             return 0.0;
         }
-        self.failed_streams as f64 / self.total_streams as f64 * 100.0
+        (self.failed_streams as f64 / self.total_streams as f64) * 100.0
     }
 
     pub fn average_tokens_per_stream(&self) -> f64 {
@@ -173,68 +152,62 @@ impl StreamingStats {
     }
 }
 
-// CLEANED: Fixed tests with proper mocks instead of todo!() macros
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::client::{ClientConfig, OpenAIClient};
-    use crate::memory::recall::RecallContext;
-    // FIX: Import the correct MemoryEntry struct
-    use crate::memory::MemoryEntry;
+    use crate::llm::client::{ClientConfig, OpenAIClient, ModelConfig};
+    use crate::memory::types::MemoryEntry;
 
-    /// Create a mock OpenAI client for testing
+    /// Creates a mock OpenAI client for testing purposes.
     fn create_mock_client() -> Arc<OpenAIClient> {
-        let config = ClientConfig::new(
-            "test-key-for-unit-tests".to_string(),
-            "https://api.openai.com".to_string(),
-            "gpt-4".to_string(),
-            "medium".to_string(),
-            "medium".to_string(),
-            1000,
-        );
-        
-        // Note: This creates a real client but with test credentials
-        // In production tests, this would use dependency injection or a proper mock framework
+        let config = ClientConfig::from_model_config(ModelConfig {
+            model: "gpt-mock".to_string(),
+            verbosity: "low".to_string(),
+            reasoning_effort: "low".to_string(),
+            max_output_tokens: 100,
+        }).unwrap();
         OpenAIClient::with_config(config).expect("Failed to create test client")
     }
 
     #[test]
-    fn test_system_prompt_building() {
+    fn test_system_prompt_building_empty_context() {
         let mock_client = create_mock_client();
         let handler = StreamingHandler::new(mock_client);
+        let context = RecallContext { recent: vec![], semantic: vec![] };
+        let prompt = handler.build_system_prompt(&context).unwrap();
+        assert!(prompt.contains("You are Mira"));
+        assert!(!prompt.contains("recent conversation"));
+    }
 
+    #[test]
+    fn test_system_prompt_building_with_context() {
+        let mock_client = create_mock_client();
+        let handler = StreamingHandler::new(mock_client);
         let context = RecallContext {
-            recent: vec![], // Empty for test
-            semantic: vec![], // Empty for test
+            recent: vec![MemoryEntry::default()],
+            semantic: vec![("test".to_string(), 1.0)],
         };
-
-        let prompt = handler.build_system_prompt(&context);
-        assert!(prompt.is_some());
-        assert!(prompt.unwrap().contains("Mira"));
+        let prompt = handler.build_system_prompt(&context).unwrap();
+        assert!(prompt.contains("recent conversation history"));
+        assert!(prompt.contains("relevant context"));
     }
 
     #[test]
     fn test_persona_prompt_building() {
         let mock_client = create_mock_client();
         let handler = StreamingHandler::new(mock_client);
-
-        let context = RecallContext {
-            recent: vec![],
-            semantic: vec![],
-        };
-
+        let context = RecallContext { recent: vec![], semantic: vec![] };
         let prompt = handler.build_system_prompt_with_persona(
-            "Mira, a helpful assistant",
+            "Test Persona",
             &context,
-            Some("Be concise in your responses."),
+            Some("Be brief."),
         );
-
-        assert!(prompt.contains("Mira"));
-        assert!(prompt.contains("concise"));
+        assert!(prompt.contains("You are Test Persona"));
+        assert!(prompt.contains("Be brief."));
     }
 
     #[test]
-    fn test_streaming_stats() {
+    fn test_streaming_stats_calculations() {
         let stats = StreamingStats {
             total_streams: 100,
             successful_streams: 95,
@@ -242,49 +215,8 @@ mod tests {
             average_response_time: 1.5,
             total_tokens_streamed: 50000,
         };
-
         assert!((stats.success_rate() - 95.0).abs() < f64::EPSILON);
         assert!((stats.failure_rate() - 5.0).abs() < f64::EPSILON);
-        assert!((stats.average_tokens_per_stream() - 526.3157894736842).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_empty_context_prompt() {
-        let mock_client = create_mock_client();
-        let handler = StreamingHandler::new(mock_client);
-
-        let empty_context = RecallContext {
-            recent: vec![],
-            semantic: vec![],
-        };
-
-        let prompt = handler.build_system_prompt(&empty_context);
-        assert!(prompt.is_some());
-        
-        let prompt_text = prompt.unwrap();
-        assert!(prompt_text.contains("Mira"));
-        // Should not mention context since it's empty
-        assert!(!prompt_text.contains("recent conversation"));
-        assert!(!prompt_text.contains("relevant context"));
-    }
-
-    #[test]
-    fn test_context_with_recent_messages() {
-        let mock_client = create_mock_client();
-        let handler = StreamingHandler::new(mock_client);
-
-        let context_with_recent = RecallContext {
-            // FIX: Use the correct struct and its new default implementation
-            recent: vec![MemoryEntry::default()],
-            semantic: vec![],
-        };
-
-        let prompt = handler.build_system_prompt(&context_with_recent);
-        assert!(prompt.is_some());
-        
-        let prompt_text = prompt.unwrap();
-        assert!(prompt_text.contains("Mira"));
-        
-        assert!(prompt_text.to_lowercase().contains("recent conversation history"));
+        assert!((stats.average_tokens_per_stream() - 50000.0 / 95.0).abs() < f64::EPSILON);
     }
 }

@@ -42,7 +42,7 @@ pub struct ChatService {
 }
 
 impl ChatService {
-    /// Create new ChatService with a corrected signature
+    /// Create new ChatService, ensuring all components are correctly wired.
     pub fn new(
         client: Arc<OpenAIClient>,
         thread_manager: Arc<ThreadManager>,
@@ -66,10 +66,13 @@ impl ChatService {
             chat_config.clone(),
         );
 
+        // FIX: Pass the OpenAIClient to the ResponseProcessor.
+        // This allows it to call GPT-5 for structured metadata extraction.
         let response_processor = ResponseProcessor::new(
             memory.clone(),
             summarizer.clone(),
             persona.clone(),
+            client.clone(), // This dependency is now correctly injected.
         );
 
         let streaming_handler = StreamingHandler::new(
@@ -109,8 +112,10 @@ impl ChatService {
             .generate_response(user_text, &context)
             .await?;
 
+        // The process_response function now has the LLM client it needs
+        // to get structured metadata about the response it just generated.
         let response = self.response_processor
-            .process_response(session_id, response_content, &context)
+            .process_response(session_id, response_content, &context, project_id)
             .await?;
 
         self.response_processor

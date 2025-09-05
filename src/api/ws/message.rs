@@ -1,18 +1,10 @@
 // src/api/ws/message.rs
+// Defines the data structures for WebSocket client and server messages.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Enhanced client message with metadata support
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EnhancedClientMessage {
-    pub content: String,
-    pub project_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<MessageMetadata>,
-}
-
-/// Metadata about the current context (file being viewed, etc.)
+/// Contains metadata about the user's context, such as the file being viewed.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MessageMetadata {
     pub file_path: Option<String>,
@@ -22,7 +14,7 @@ pub struct MessageMetadata {
     pub selection: Option<TextSelection>,
 }
 
-/// Text selection information
+/// Represents a user's text selection in a file.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TextSelection {
     pub start_line: usize,
@@ -30,11 +22,11 @@ pub struct TextSelection {
     pub text: Option<String>,
 }
 
-/// Client messages from frontend
+/// Represents all possible messages sent from the client (frontend) to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum WsClientMessage {
-    /// Enhanced chat message with metadata
+    /// A standard chat message, potentially with file context.
     #[serde(rename = "chat")]
     Chat {
         content: String,
@@ -43,48 +35,39 @@ pub enum WsClientMessage {
         metadata: Option<MessageMetadata>,
     },
     
-    /// Command variant for control messages
+    /// A command for control messages, such as heartbeats.
     #[serde(rename = "command")]
     Command {
         command: String,
         args: Option<Value>,
     },
     
-    /// Status variant for heartbeat/status
+    /// A general status message from the client.
     #[serde(rename = "status")]
     Status {
         message: String,
     },
     
-    /// Typing indicator
+    /// Indicates whether the user is currently typing.
     #[serde(rename = "typing")]
     Typing {
         active: bool,
     },
 }
 
-/// Server messages to frontend
+/// Represents all possible messages sent from the server to the client (frontend).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum WsServerMessage {
-    /// Streaming chunk of response
-    #[serde(rename = "chunk")]
-    Chunk {
-        content: String,
-        mood: Option<String>,
-    },
-    
-    /// Stream chunk variant (for compatibility)
+    /// A part of a streaming text response.
     #[serde(rename = "stream_chunk")]
-    StreamChunk {
-        text: String,
-    },
+    StreamChunk { text: String },
     
-    /// Stream end marker
+    /// Signals the end of a streaming response.
     #[serde(rename = "stream_end")]
     StreamEnd,
     
-    /// Completion message with metadata
+    /// The final message in a response, containing all metadata.
     #[serde(rename = "complete")]
     Complete {
         mood: Option<String>,
@@ -92,49 +75,30 @@ pub enum WsServerMessage {
         tags: Option<Vec<String>>,
     },
     
-    /// Status messages for commands
+    /// A general status update for the client UI.
     #[serde(rename = "status")]
-    Status {
-        message: String,
-        detail: Option<String>,
-    },
+    Status { message: String },
     
-    /// Emotional aside (preserved from Phase 7)
-    #[serde(rename = "aside")]
-    Aside {
-        emotional_cue: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        intensity: Option<f32>,
-    },
-    
-    /// Error messages
+    /// An error message.
     #[serde(rename = "error")]
-    Error {
-        message: String,
-        code: String,
-    },
+    Error { message: String, code: String },
     
-    /// End of stream marker
+    /// Signals that the server is connected and ready.
+    #[serde(rename = "connection_ready")]
+    ConnectionReady,
+    
+    /// A pong response to a client's ping for heartbeats.
+    #[serde(rename = "pong")]
+    Pong,
+    
+    /// Signals that a tool-enabled response is finished.
     #[serde(rename = "done")]
     Done,
-}
 
-impl WsClientMessage {
-    /// Check if this is a heartbeat/pong message
-    pub fn is_heartbeat(&self) -> bool {
-        matches!(
-            self, 
-            WsClientMessage::Command { command, .. } if command == "pong" || command == "heartbeat"
-        )
-    }
-    
-    /// Extract content and metadata from any message variant
-    pub fn extract_content_and_metadata(&self) -> (Option<String>, Option<String>, Option<MessageMetadata>) {
-        match self {
-            WsClientMessage::Chat { content, project_id, metadata } => {
-                (Some(content.clone()), project_id.clone(), metadata.clone())
-            }
-            _ => (None, None, None)
-        }
-    }
+    /// A message containing the result of an image generation tool.
+    #[serde(rename = "image_generated")]
+    ImageGenerated {
+        urls: Vec<String>,
+        revised_prompt: Option<String>,
+    },
 }

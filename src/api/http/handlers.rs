@@ -20,7 +20,7 @@ pub async fn health_handler() -> impl IntoResponse {
     Json(json!({
         "status": "healthy", 
         "version": env!("CARGO_PKG_VERSION"),
-        "model": CONFIG.model,
+        "model": CONFIG.gpt5_model,
         "timestamp": Utc::now().to_rfc3339()
     }))
 }
