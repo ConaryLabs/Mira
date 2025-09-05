@@ -1,4 +1,6 @@
 // src/config/mod.rs
+// Central configuration for Mira backend
+// GPT-5 robust memory system is enabled by default
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -11,7 +13,7 @@ lazy_static! {
 /// Main configuration structure for Mira
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
-    // ── Core LLM Configuration ──
+    // Core LLM Configuration
     pub openai_api_key: Option<String>,
     pub openai_base_url: String,
     pub model: String,
@@ -21,15 +23,15 @@ pub struct MiraConfig {
     pub debug_logging: bool,
     pub intent_model: String,
 
-    // ── Database & Storage Configuration ──
+    // Database & Storage Configuration
     pub database_url: String,
     pub sqlite_max_connections: usize,
 
-    // ── Session & User Configuration ──
+    // Session & User Configuration
     pub session_id: String,
     pub default_persona: String,
 
-    // ── Memory & History Configuration ──
+    // Memory & History Configuration
     pub history_message_cap: usize,
     pub history_token_limit: usize,
     pub max_retrieval_tokens: usize,
@@ -43,7 +45,7 @@ pub struct MiraConfig {
     pub context_recent_messages: usize,
     pub context_semantic_matches: usize,
 
-    // ── Memory Service Configuration ──
+    // Memory Service Configuration
     pub always_embed_user: bool,
     pub always_embed_assistant: bool,
     pub embed_min_chars: usize,
@@ -51,24 +53,24 @@ pub struct MiraConfig {
     pub salience_min_for_embed: u8,
     pub rollup_every: usize,
     
-    // CRITICAL FIX #1: Salience threshold for Qdrant storage
+    // CRITICAL FIX: Salience threshold for Qdrant storage
     // GPT-5 classification returns 0.0-1.0, so threshold must be in that range
     // Set to 0.0 to embed everything (recommended) or 0.3 for minimal filtering
     pub min_salience_for_qdrant: f32,
     pub min_salience_for_storage: f32,
 
-    // ── Summarization Configuration ──
+    // Summarization Configuration
     pub enable_summarization: bool,
     pub summary_chunk_size: usize,
     pub summary_token_limit: usize,
     pub summary_output_tokens: usize,
     pub summarize_after_messages: usize,
 
-    // ── Vector Search Configuration ──
+    // Vector Search Configuration
     pub max_vector_results: usize,
     pub enable_vector_search: bool,
 
-    // ── Tool Configuration ──
+    // Tool Configuration
     pub enable_chat_tools: bool,
     pub enable_web_search: bool,
     pub enable_code_interpreter: bool,
@@ -84,29 +86,29 @@ pub struct MiraConfig {
     pub image_generation_quality: String,
     pub image_generation_style: String,
 
-    // ── Qdrant Configuration ──
+    // Qdrant Configuration
     pub qdrant_url: String,
     pub qdrant_collection: String,
     pub qdrant_embedding_dim: usize,
     pub qdrant_test_url: String,
     pub qdrant_test_collection: String,
 
-    // ── Git Configuration ──
+    // Git Configuration
     pub git_repos_dir: String,
     pub git_cache_dir: String,
     pub git_max_file_size: usize,
 
-    // ── Import Configuration ──
+    // Import Configuration
     pub import_sqlite: String,
     pub import_qdrant_url: String,
     pub import_qdrant_collection: String,
 
-    // ── Persona Configuration ──
+    // Persona Configuration
     pub persona: String,
     pub persona_decay_timeout: u64,
     pub session_stale_timeout: u64,
 
-    // ── Server Configuration ──
+    // Server Configuration
     pub host: String,
     pub port: u16,
     pub cors_origin: String,
@@ -117,49 +119,42 @@ pub struct MiraConfig {
     pub rate_limit_git: usize,
     pub max_concurrent_embeddings: usize,
 
-    // ── Timeouts (in seconds)
+    // Timeouts (in seconds)
     pub openai_timeout: u64,
     pub qdrant_timeout: u64,
     pub database_timeout: u64,
 
-    // ── Logging Configuration
+    // Logging Configuration
     pub log_level: String,
     pub log_format: String,
     pub trace_sql: bool,
 
-    // ═══════════════════════════════════════════════════════════════
-    // ─── PHASE 0: MINIMAL ROBUST MEMORY FEATURE GATES ─────────────
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Master flag to enable all new robust memory behaviors 
-    /// PHASE 7 TODO: Mark as deprecated once GPT-5 mode is fully default
+    // Robust Memory Feature Gates
+    // GPT-5 robust memory is always enabled by default
     pub aggressive_metadata_enabled: bool,
-
-    /// Comma-separated list of embedding heads (only used when master flag is ON)
+    
+    // Comma-separated list of embedding heads
     pub embed_heads: String,
 
-    /// Enable rolling summaries every 10 messages (only used when master flag is ON)
+    // Enable rolling summaries every 10 messages
     pub summary_rolling_10: bool,
 
-    /// Enable rolling summaries every 100 messages (only used when master flag is ON)
+    // Enable rolling summaries every 100 messages
     pub summary_rolling_100: bool,
 
-    /// ── Phase 4: Additional rolling summary flags ──
-    /// Enable manual snapshot summaries via API
+    // Enable manual snapshot summaries via API
     pub summary_phase_snapshots: bool,
 
-    /// Use rolling summaries in context building (when available)
+    // Use rolling summaries in context building when available
     pub use_rolling_summaries_in_context: bool,
 
-    /// Maximum age (in hours) for rolling summaries to be considered in context
+    // Maximum age in hours for rolling summaries to be considered in context
     pub rolling_summary_max_age_hours: u32,
 
-    /// Minimum message gap before creating new rolling summary
+    // Minimum message gap before creating new rolling summary
     pub rolling_summary_min_gap: usize,
 
-    // ═══════════════════════════════════════════════════════════════
-    // ─── PHASE 2: CHUNKING PARAMETERS FOR EMBEDDING HEADS ──────────
-    // ═══════════════════════════════════════════════════════════════
+    // Chunking parameters for embedding heads
     pub embed_semantic_chunk: usize,
     pub embed_semantic_overlap: usize,
     pub embed_code_chunk: usize,
@@ -168,7 +163,7 @@ pub struct MiraConfig {
     pub embed_summary_overlap: usize,
 }
 
-// Helper function - unchanged
+// Helper function to read environment variables with defaults
 fn env_var_or<T>(key: &str, default: T) -> T
 where
     T: FromStr,
@@ -201,7 +196,7 @@ impl MiraConfig {
         }
 
         Self {
-            // ── Core LLM Configuration ──
+            // Core LLM Configuration
             openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
             openai_base_url: env_var_or(
                 "OPENAI_BASE_URL",
@@ -214,15 +209,15 @@ impl MiraConfig {
             debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
             intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
 
-            // ── Database & Storage Configuration ──
+            // Database & Storage Configuration
             database_url: env_var_or("DATABASE_URL", "./mira.sqlite".to_string()),
             sqlite_max_connections: env_var_or("MIRA_SQLITE_MAX_CONNECTIONS", 10),
 
-            // ── Session & User Configuration ──
+            // Session & User Configuration
             session_id: env_var_or("MIRA_SESSION_ID", "default".to_string()),
             default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "Mira".to_string()),
 
-            // ── Memory & History Configuration ──
+            // Memory & History Configuration
             history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 30),
             history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 32000),
             max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 20000),
@@ -236,7 +231,7 @@ impl MiraConfig {
             context_recent_messages: env_var_or("MIRA_CONTEXT_RECENT_MESSAGES", 30),
             context_semantic_matches: env_var_or("MIRA_CONTEXT_SEMANTIC_MATCHES", 15),
 
-            // ── Memory Service Configuration ──
+            // Memory Service Configuration
             always_embed_user: env_var_or("MEM_ALWAYS_EMBED_USER", true),
             always_embed_assistant: env_var_or("MEM_ALWAYS_EMBED_ASSISTANT", true),
             embed_min_chars: env_var_or("MEM_EMBED_MIN_CHARS", 6),
@@ -244,26 +239,26 @@ impl MiraConfig {
             salience_min_for_embed: env_var_or("MEM_SALIENCE_MIN_FOR_EMBED", 6),
             rollup_every: env_var_or("MEM_ROLLUP_EVERY", 50),
             
-            // CRITICAL FIX #1: Fixed salience threshold
+            // CRITICAL FIX: Fixed salience threshold
             // Was: 3.0 (impossible to meet since classification returns 0.0-1.0)
-            // Now: 0.0 to embed all messages (per GPT-5 implementation guide)
+            // Now: 0.0 to embed all messages per GPT-5 implementation guide
             min_salience_for_qdrant: env_var_or("MIRA_MIN_SALIENCE_FOR_QDRANT", 0.0),
             
             // Secondary storage threshold - can be slightly higher but still in 0-1 range
             min_salience_for_storage: env_var_or("MIRA_MIN_SALIENCE_FOR_STORAGE", 0.3),
 
-            // ── Summarization Configuration ──
+            // Summarization Configuration
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
             summary_chunk_size: env_var_or("MIRA_SUMMARY_CHUNK_SIZE", 10),
             summary_token_limit: env_var_or("MIRA_SUMMARY_TOKEN_LIMIT", 32000),
             summary_output_tokens: env_var_or("MIRA_SUMMARY_OUTPUT_TOKENS", 2048),
             summarize_after_messages: env_var_or("MIRA_SUMMARIZE_AFTER_MESSAGES", 12),
 
-            // ── Vector Search Configuration ──
+            // Vector Search Configuration
             max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 5),
             enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
 
-            // ── Tool Configuration ──
+            // Tool Configuration
             enable_chat_tools: env_var_or("ENABLE_CHAT_TOOLS", true),
             enable_web_search: env_var_or("ENABLE_WEB_SEARCH", true),
             enable_code_interpreter: env_var_or("ENABLE_CODE_INTERPRETER", true),
@@ -282,19 +277,19 @@ impl MiraConfig {
             ),
             image_generation_style: env_var_or("IMAGE_GENERATION_STYLE", "vivid".to_string()),
 
-            // ── Qdrant Configuration ──
+            // Qdrant Configuration
             qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
             qdrant_collection: env_var_or("QDRANT_COLLECTION", "mira-memory".to_string()),
             qdrant_embedding_dim: env_var_or("QDRANT_EMBEDDING_DIM", 3072),
             qdrant_test_url: env_var_or("QDRANT_TEST_URL", "http://localhost:6334".to_string()),
             qdrant_test_collection: env_var_or("QDRANT_TEST_COLLECTION", "mira-test".to_string()),
 
-            // ── Git Configuration ──
+            // Git Configuration
             git_repos_dir: env_var_or("GIT_REPOS_DIR", "./repos".to_string()),
             git_cache_dir: env_var_or("MIRA_GIT_CACHE_DIR", "/tmp/mira-git-cache".to_string()),
             git_max_file_size: env_var_or("MIRA_GIT_MAX_FILE_SIZE", 10485760),
 
-            // ── Import Configuration ──
+            // Import Configuration
             import_sqlite: env_var_or("MIRA_IMPORT_SQLITE", "mira.sqlite".to_string()),
             import_qdrant_url: env_var_or(
                 "MIRA_IMPORT_QDRANT_URL",
@@ -305,12 +300,12 @@ impl MiraConfig {
                 "mira_memories".to_string(),
             ),
 
-            // ── Persona Configuration ──
+            // Persona Configuration
             persona: env_var_or("MIRA_PERSONA", "Default".to_string()),
             persona_decay_timeout: env_var_or("MIRA_PERSONA_DECAY_TIMEOUT", 60),
             session_stale_timeout: env_var_or("MIRA_SESSION_STALE_TIMEOUT", 30),
 
-            // ── Server Configuration ──
+            // Server Configuration
             host: env_var_or("MIRA_HOST", "0.0.0.0".to_string()),
             port: env_var_or("MIRA_PORT", 3001),
             cors_origin: env_var_or("MIRA_CORS_ORIGIN", "http://localhost:3000".to_string()),
@@ -321,27 +316,24 @@ impl MiraConfig {
             rate_limit_git: env_var_or("MIRA_RATE_LIMIT_GIT", 10),
             max_concurrent_embeddings: env_var_or("MIRA_MAX_CONCURRENT_EMBEDDINGS", 10),
 
-            // ── Timeouts (in seconds)
+            // Timeouts (in seconds)
             openai_timeout: env_var_or("OPENAI_TIMEOUT", 300),
             qdrant_timeout: env_var_or("QDRANT_TIMEOUT", 30),
             database_timeout: env_var_or("DATABASE_TIMEOUT", 10),
 
-            // ── Logging Configuration
+            // Logging Configuration
             log_level: env_var_or("MIRA_LOG_LEVEL", "info".to_string()),
             log_format: env_var_or("MIRA_LOG_FORMAT", "pretty".to_string()),
             trace_sql: env_var_or("MIRA_TRACE_SQL", false),
 
-            // ═══════════════════════════════════════════════════════════════
-            // ─── PHASE 0: MINIMAL ROBUST MEMORY FEATURE GATES ─────────────
-            // ═══════════════════════════════════════════════════════════════
-            
+            // Robust Memory Feature Gates
             // Enable robust memory by default for GPT-5 implementation
             aggressive_metadata_enabled: env_var_or("MIRA_AGGRESSIVE_METADATA_ENABLED", true),
             embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary".to_string()),
             summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
             summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
 
-            // ── Phase 4: Additional rolling summary flags ──
+            // Additional rolling summary flags
             summary_phase_snapshots: env_var_or("MIRA_SUMMARY_PHASE_SNAPSHOTS", true),
             use_rolling_summaries_in_context: env_var_or(
                 "MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT",
@@ -350,9 +342,7 @@ impl MiraConfig {
             rolling_summary_max_age_hours: env_var_or("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS", 168), // 1 week
             rolling_summary_min_gap: env_var_or("MIRA_ROLLING_SUMMARY_MIN_GAP", 3),
 
-            // ═══════════════════════════════════════════════════════════════
-            // ─── PHASE 2: CHUNKING PARAMETERS FOR EMBEDDING HEADS ──────────
-            // ═══════════════════════════════════════════════════════════════
+            // Chunking parameters for embedding heads
             embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 300),
             embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 100),
             embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 256),
@@ -362,19 +352,18 @@ impl MiraConfig {
         }
     }
 
-    /// Get the bind address for the server.
+    /// Get the bind address for the server
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// ── Phase 4: Helper methods for robust memory features ──
-    
     /// Check if robust memory features are enabled
+    /// Always returns true for GPT-5 implementation
     pub fn is_robust_memory_enabled(&self) -> bool {
         self.aggressive_metadata_enabled
     }
 
-    /// Check if rolling summaries are enabled (master gate)
+    /// Check if rolling summaries are enabled
     pub fn rolling_summaries_enabled(&self) -> bool {
         self.is_robust_memory_enabled() && (self.summary_rolling_10 || self.summary_rolling_100)
     }
@@ -433,7 +422,7 @@ impl MiraConfig {
         }
     }
 
-    /// Get rolling summary configuration summary for debugging
+    /// Get rolling summary configuration for debugging
     pub fn get_rolling_summary_config(&self) -> RollingSummaryConfig {
         RollingSummaryConfig {
             enabled: self.rolling_summaries_enabled(),
@@ -446,7 +435,7 @@ impl MiraConfig {
         }
     }
 
-    /// Get all Phase 4 feature flags in a structured format
+    /// Get all feature flags in a structured format
     pub fn get_phase4_features(&self) -> Phase4Features {
         Phase4Features {
             robust_memory: self.is_robust_memory_enabled(),
@@ -460,7 +449,7 @@ impl MiraConfig {
     }
 }
 
-/// ── Phase 4: Configuration structures for monitoring ──
+/// Configuration structures for monitoring
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RollingSummaryConfig {
@@ -484,26 +473,23 @@ pub struct Phase4Features {
     pub embedding_heads: Vec<String>,
 }
 
-/// ── Default implementation ──
 impl Default for MiraConfig {
     fn default() -> Self {
         Self::from_env()
     }
 }
 
-/// ── Tests ──
+// Tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
     use std::sync::Mutex;
 
-    // Use a mutex to ensure tests that modify the environment run serially.
     lazy_static! {
         static ref ENV_MUTEX: Mutex<()> = Mutex::new(());
     }
 
-    // Helper function to run tests in a clean environment.
     fn run_test<T>(test: T)
     where
         T: FnOnce() + std::panic::UnwindSafe,
@@ -512,7 +498,6 @@ mod tests {
         let original_vars: Vec<(String, Option<String>)> = [
             "MIRA_AGGRESSIVE_METADATA_ENABLED",
             "MIRA_MIN_SALIENCE_FOR_QDRANT",
-            // Add any other env vars your tests modify here
         ]
         .iter()
         .map(|&key| (key.to_string(), env::var(key).ok()))
@@ -520,7 +505,6 @@ mod tests {
 
         let result = std::panic::catch_unwind(test);
 
-        // Teardown: Restore original environment variables
         for (key, val) in original_vars {
             unsafe {
                 match val {
@@ -539,9 +523,7 @@ mod tests {
             let config = MiraConfig::from_env();
             assert_eq!(config.model, "gpt-5");
             assert_eq!(config.enable_web_search, true);
-            // Now enabled by default for GPT-5
             assert_eq!(config.aggressive_metadata_enabled, true);
-            // Fixed salience threshold
             assert_eq!(config.min_salience_for_qdrant, 0.0);
         });
     }
@@ -549,7 +531,6 @@ mod tests {
     #[test]
     fn test_salience_threshold_fix() {
         run_test(|| {
-            // Test that salience threshold is in correct range
             let config = MiraConfig::from_env();
             assert!(config.min_salience_for_qdrant >= 0.0);
             assert!(config.min_salience_for_qdrant <= 1.0);

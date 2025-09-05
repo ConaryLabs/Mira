@@ -1,4 +1,6 @@
 // src/services/memory.rs
+// Memory service with GPT-5 robust memory system
+// Handles memory storage, retrieval, and embeddings
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,6 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+use futures::future;
 
 use crate::config::CONFIG;
 use crate::llm::client::OpenAIClient;
@@ -94,7 +97,7 @@ impl MemoryService {
         // Determine which heads to search based on query classification
         let heads_to_search = self.determine_search_heads(query_text).await;
         
-        // Parallel multi-head search
+        // Parallel multi-head search using futures
         let search_futures: Vec<_> = heads_to_search
             .iter()
             .map(|&head| {
@@ -103,7 +106,6 @@ impl MemoryService {
                 let session_id = session_id.to_string();
                 
                 async move {
-                    // Fixed: Correct method signature - search(head, session_id, embedding, limit)
                     let results = multi_store
                         .search(head, &session_id, &embedding, semantic_count)
                         .await
@@ -117,11 +119,11 @@ impl MemoryService {
             .collect();
 
         // Execute all searches in parallel
-        let multi_search_results = futures::future::join_all(search_futures).await;
+        let multi_search_results = future::join_all(search_futures).await;
         
         info!("Parallel search completed for {} heads", heads_to_search.len());
 
-        // Merge and re-rank results
+        // Merge and deduplicate results
         let context_semantic = self.merge_and_deduplicate_results(multi_search_results)?;
 
         let context = RecallContext {
@@ -139,7 +141,7 @@ impl MemoryService {
     }
 
     async fn determine_search_heads(&self, query_text: &str) -> Vec<EmbeddingHead> {
-        let mut heads = vec![EmbeddingHead::Semantic]; // Always search semantic
+        let mut heads = vec![EmbeddingHead::Semantic];
         
         // Classify the query to determine if we should search code head
         match self.llm_client.classify_text(query_text).await {
@@ -172,18 +174,18 @@ impl MemoryService {
             let all_recent = self.sqlite_store.load_recent(session_id, recent_count * 2).await?;
             
             let (summaries, regular): (Vec<_>, Vec<_>) = all_recent.into_iter()
-                .partition(|entry| self.is_rolling_summary_entry(entry));
+                .partition(|entry| {
+                    entry.tags.as_ref()
+                        .map(|tags| tags.iter().any(|tag| tag.starts_with("summary:rolling:")))
+                        .unwrap_or(false)
+                });
 
             let mut context_recent = Vec::new();
-            
-            // Include recent actual messages
             let immediate_count = std::cmp::min(8, recent_count / 3);
             context_recent.extend(regular.into_iter().take(immediate_count));
 
-            // Add most relevant rolling summaries
-            if let (Some(summary_10), Some(summary_100)) = self.select_best_rolling_summaries(summaries) {
-                context_recent.push(summary_100);
-                context_recent.push(summary_10);
+            if !summaries.is_empty() {
+                context_recent.extend(summaries.into_iter().take(2));
             }
 
             Ok(context_recent)
@@ -192,46 +194,16 @@ impl MemoryService {
         }
     }
 
-    fn is_rolling_summary_entry(&self, entry: &MemoryEntry) -> bool {
-        entry.tags
-            .as_ref()
-            .map(|tags| tags.iter().any(|tag| tag.starts_with("summary:rolling:")))
-            .unwrap_or(false)
-    }
-
-    fn select_best_rolling_summaries(&self, summaries: Vec<MemoryEntry>) 
-        -> (Option<MemoryEntry>, Option<MemoryEntry>) {
-        let mut latest_10: Option<MemoryEntry> = None;
-        let mut latest_100: Option<MemoryEntry> = None;
-
-        for summary in summaries {
-            if let Some(tags) = &summary.tags {
-                if tags.iter().any(|tag| tag == "summary:rolling:10") {
-                    if latest_10.is_none() || summary.timestamp > latest_10.as_ref().unwrap().timestamp {
-                        latest_10 = Some(summary);
-                    }
-                } else if tags.iter().any(|tag| tag == "summary:rolling:100") {
-                    if latest_100.is_none() || summary.timestamp > latest_100.as_ref().unwrap().timestamp {
-                        latest_100 = Some(summary);
-                    }
-                }
-            }
-        }
-
-        (latest_10, latest_100)
-    }
-
     fn merge_and_deduplicate_results(
         &self,
-        multi_search_result: Vec<(EmbeddingHead, Vec<MemoryEntry>)>,
+        multi_search_results: Vec<(EmbeddingHead, Vec<MemoryEntry>)>,
     ) -> Result<Vec<MemoryEntry>> {
         let mut all_candidates = Vec::new();
         let mut content_dedup = HashMap::new();
 
-        for (_head, entries) in multi_search_result {
+        for (head, entries) in multi_search_results {
             for entry in entries {
-                // Simple deduplication by content hash to avoid identical chunks
-                let content_key = format!("{:?}", entry.content.chars().take(100).collect::<Vec<_>>());
+                let content_key = format!("{}:{}", head, entry.content.chars().take(100).collect::<String>());
                 
                 if !content_dedup.contains_key(&content_key) {
                     content_dedup.insert(content_key.clone(), true);
@@ -327,6 +299,18 @@ impl MemoryService {
         let message_count = self.increment_session_counter(session_id).await;
         debug!("Session {} message count now: {}", session_id, message_count);
 
+        // Rich metadata classification with GPT-5
+        info!("Classifying user message for rich metadata");
+        let classification_result = self.llm_client.classify_text(content).await;
+        
+        let (salience, is_code, classification) = match classification_result {
+            Ok(c) => (c.salience, c.is_code, Some(c)),
+            Err(e) => {
+                error!("Failed to classify message: {}. Using defaults.", e);
+                (0.5, false, None)
+            }
+        };
+
         let mut entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -334,7 +318,7 @@ impl MemoryService {
             content: content.to_string(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(self.calculate_user_message_salience(content) as f32),
+            salience: Some(salience), // Use GPT-5 provided salience
             tags: Some(vec!["conversational".to_string()]),
             summary: Some(format!(
                 "User query: {}",
@@ -353,19 +337,7 @@ impl MemoryService {
             last_accessed: Some(Utc::now()),
         };
 
-        // Rich metadata classification
-        info!("Classifying user message for rich metadata");
-        let classification_result = self.llm_client.classify_text(content).await;
-        
-        let is_code = match &classification_result {
-            Ok(c) => c.is_code,
-            Err(e) => {
-                error!("Failed to classify message: {}. Proceeding with default metadata.", e);
-                false
-            }
-        };
-
-        if let Ok(classification) = classification_result {
+        if let Some(classification) = classification {
             entry = entry.with_classification(classification.clone());
 
             let mut new_tags = entry.tags.clone().unwrap_or_default();
@@ -388,7 +360,7 @@ impl MemoryService {
         // Dynamic head selection based on classification
         if let Some(salience) = saved_entry.salience {
             if salience >= CONFIG.min_salience_for_qdrant {
-                let mut heads_to_use = vec![EmbeddingHead::Semantic]; // Always use semantic
+                let mut heads_to_use = vec![EmbeddingHead::Semantic];
                 
                 // Only add code head if content is actually code
                 if is_code {
@@ -525,7 +497,7 @@ impl MemoryService {
             content: summary.clone(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(1.0), // Lower salience for summaries
+            salience: Some(1.0),
             tags: Some(vec![
                 "summary".to_string(),
                 format!("summary:rolling:{}", window_size),
@@ -602,19 +574,6 @@ impl MemoryService {
         Ok(())
     }
 
-    fn calculate_user_message_salience(&self, content: &str) -> usize {
-        let base_salience = 5;
-        let length_bonus = std::cmp::min(content.len() / 100, 3);
-        let question_bonus = if content.contains('?') { 2 } else { 0 };
-        let code_bonus = if content.contains("```") || content.contains("fn ") || content.contains("def ") {
-            3
-        } else {
-            0
-        };
-
-        base_salience + length_bonus + question_bonus + code_bonus
-    }
-
     fn parse_memory_type(&self, memory_type: &str) -> MemoryType {
         match memory_type.to_lowercase().as_str() {
             "feeling" => MemoryType::Feeling,
@@ -649,24 +608,21 @@ impl MemoryService {
 
     pub async fn search_similar(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
         let query_embedding = self.llm_client.get_embedding(query).await?;
-        
-        // Fixed: Correct method signature - search(head, session_id, embedding, limit)
         self.multi_store.search(
             EmbeddingHead::Semantic,
-            "global", // Use a default session_id for global search
+            &CONFIG.session_id,
             &query_embedding,
-            limit,
+            limit
         ).await
     }
 
     pub async fn get_service_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
-        let total_messages = self.get_session_message_count(session_id).await;
-        let recent_messages = self.sqlite_store.load_recent(session_id, 100).await?.len();
+        let total = self.get_session_message_count(session_id).await;
+        let recent = self.sqlite_store.load_recent(session_id, 100).await?.len();
         
-        // TODO: Implement actual Qdrant collection queries
         Ok(MemoryServiceStats {
-            total_messages,
-            recent_messages,
+            total_messages: total,
+            recent_messages: recent,
             semantic_entries: 0,
             code_entries: 0,
             summary_entries: 0,
