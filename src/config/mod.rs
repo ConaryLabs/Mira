@@ -50,6 +50,10 @@ pub struct MiraConfig {
     pub dedup_sim_threshold: f32,
     pub salience_min_for_embed: u8,
     pub rollup_every: usize,
+    
+    // CRITICAL FIX #1: Salience threshold for Qdrant storage
+    // GPT-5 classification returns 0.0-1.0, so threshold must be in that range
+    // Set to 0.0 to embed everything (recommended) or 0.3 for minimal filtering
     pub min_salience_for_qdrant: f32,
     pub min_salience_for_storage: f32,
 
@@ -127,7 +131,8 @@ pub struct MiraConfig {
     // ─── PHASE 0: MINIMAL ROBUST MEMORY FEATURE GATES ─────────────
     // ═══════════════════════════════════════════════════════════════
 
-    /// Master flag to enable all new robust memory behaviors (OFF by default)
+    /// Master flag to enable all new robust memory behaviors 
+    /// PHASE 7 TODO: Mark as deprecated once GPT-5 mode is fully default
     pub aggressive_metadata_enabled: bool,
 
     /// Comma-separated list of embedding heads (only used when master flag is ON)
@@ -198,31 +203,34 @@ impl MiraConfig {
         Self {
             // ── Core LLM Configuration ──
             openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
-            openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()),
+            openai_base_url: env_var_or(
+                "OPENAI_BASE_URL",
+                "https://api.openai.com/v1".to_string(),
+            ),
             model: env_var_or("MIRA_MODEL", "gpt-5".to_string()),
-            verbosity: env_var_or("MIRA_VERBOSITY", "high".to_string()),
-            reasoning_effort: env_var_or("MIRA_REASONING_EFFORT", "high".to_string()),
-            max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 128000),
+            verbosity: env_var_or("MIRA_VERBOSITY", "low".to_string()),
+            reasoning_effort: env_var_or("MIRA_REASONING_EFFORT", "medium".to_string()),
+            max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 4096),
             debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
             intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
 
             // ── Database & Storage Configuration ──
-            database_url: env_var_or("DATABASE_URL", "sqlite:./mira.db".to_string()),
-            sqlite_max_connections: env_var_or("SQLITE_MAX_CONNECTIONS", 10),
+            database_url: env_var_or("DATABASE_URL", "./mira.sqlite".to_string()),
+            sqlite_max_connections: env_var_or("MIRA_SQLITE_MAX_CONNECTIONS", 10),
 
             // ── Session & User Configuration ──
-            session_id: env_var_or("MIRA_SESSION_ID", "peter-eternal".to_string()),
-            default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "default".to_string()),
+            session_id: env_var_or("MIRA_SESSION_ID", "default".to_string()),
+            default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "Mira".to_string()),
 
             // ── Memory & History Configuration ──
-            history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 50),
-            history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 65536),
-            max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 8192),
+            history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 30),
+            history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 32000),
+            max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 20000),
             ws_history_cap: env_var_or("MIRA_WS_HISTORY_CAP", 100),
-            ws_vector_search_k: env_var_or("MIRA_WS_VECTOR_SEARCH_K", 15),
+            ws_vector_search_k: env_var_or("MIRA_WS_VECTOR_SEARCH_K", 5),
             ws_heartbeat_interval: env_var_or("MIRA_WS_HEARTBEAT_INTERVAL", 30),
-            ws_connection_timeout: env_var_or("MIRA_WS_CONNECTION_TIMEOUT", 300),
-            ws_receive_timeout: env_var_or("MIRA_WS_RECEIVE_TIMEOUT", 60),
+            ws_connection_timeout: env_var_or("MIRA_WS_CONNECTION_TIMEOUT", 60),
+            ws_receive_timeout: env_var_or("MIRA_WS_RECEIVE_TIMEOUT", 30),
             history_default_limit: env_var_or("MIRA_HISTORY_DEFAULT_LIMIT", 30),
             history_max_limit: env_var_or("MIRA_HISTORY_MAX_LIMIT", 100),
             context_recent_messages: env_var_or("MIRA_CONTEXT_RECENT_MESSAGES", 30),
@@ -235,8 +243,14 @@ impl MiraConfig {
             dedup_sim_threshold: env_var_or("MEM_DEDUP_SIM_THRESHOLD", 0.97),
             salience_min_for_embed: env_var_or("MEM_SALIENCE_MIN_FOR_EMBED", 6),
             rollup_every: env_var_or("MEM_ROLLUP_EVERY", 50),
-            min_salience_for_qdrant: env_var_or("MIRA_MIN_SALIENCE_FOR_QDRANT", 3.0),
-            min_salience_for_storage: env_var_or("MIRA_MIN_SALIENCE_FOR_STORAGE", 5.0),
+            
+            // CRITICAL FIX #1: Fixed salience threshold
+            // Was: 3.0 (impossible to meet since classification returns 0.0-1.0)
+            // Now: 0.0 to embed all messages (per GPT-5 implementation guide)
+            min_salience_for_qdrant: env_var_or("MIRA_MIN_SALIENCE_FOR_QDRANT", 0.0),
+            
+            // Secondary storage threshold - can be slightly higher but still in 0-1 range
+            min_salience_for_storage: env_var_or("MIRA_MIN_SALIENCE_FOR_STORAGE", 0.3),
 
             // ── Summarization Configuration ──
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
@@ -320,7 +334,9 @@ impl MiraConfig {
             // ═══════════════════════════════════════════════════════════════
             // ─── PHASE 0: MINIMAL ROBUST MEMORY FEATURE GATES ─────────────
             // ═══════════════════════════════════════════════════════════════
-            aggressive_metadata_enabled: env_var_or("MIRA_AGGRESSIVE_METADATA_ENABLED", false),
+            
+            // Enable robust memory by default for GPT-5 implementation
+            aggressive_metadata_enabled: env_var_or("MIRA_AGGRESSIVE_METADATA_ENABLED", true),
             embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary".to_string()),
             summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
             summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
@@ -351,50 +367,48 @@ impl MiraConfig {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// ── Phase 4: Convenience methods for rolling summaries ──
-
+    /// ── Phase 4: Helper methods for robust memory features ──
+    
     /// Check if robust memory features are enabled
     pub fn is_robust_memory_enabled(&self) -> bool {
         self.aggressive_metadata_enabled
     }
 
-    /// Check if rolling summaries are enabled (any type)
+    /// Check if rolling summaries are enabled (master gate)
     pub fn rolling_summaries_enabled(&self) -> bool {
-        self.aggressive_metadata_enabled && (self.summary_rolling_10 || self.summary_rolling_100)
+        self.is_robust_memory_enabled() && (self.summary_rolling_10 || self.summary_rolling_100)
     }
 
     /// Check if 10-message rolling summaries are enabled
     pub fn rolling_10_enabled(&self) -> bool {
-        self.aggressive_metadata_enabled && self.summary_rolling_10
+        self.is_robust_memory_enabled() && self.summary_rolling_10
     }
 
     /// Check if 100-message rolling summaries are enabled
     pub fn rolling_100_enabled(&self) -> bool {
-        self.aggressive_metadata_enabled && self.summary_rolling_100
+        self.is_robust_memory_enabled() && self.summary_rolling_100
     }
 
     /// Check if snapshot summaries are enabled
     pub fn snapshot_summaries_enabled(&self) -> bool {
-        self.aggressive_metadata_enabled && self.summary_phase_snapshots
+        self.is_robust_memory_enabled() && self.summary_phase_snapshots
     }
 
-    /// Check if rolling summaries should be used in context building
+    /// Check if rolling summaries should be used in context
     pub fn should_use_rolling_summaries_in_context(&self) -> bool {
-        self.aggressive_metadata_enabled
-            && self.use_rolling_summaries_in_context
-            && (self.summary_rolling_10 || self.summary_rolling_100)
+        self.is_robust_memory_enabled() && self.use_rolling_summaries_in_context
     }
 
-    /// Get the list of embedding heads to use
+    /// Get the list of enabled embedding heads
     pub fn get_embedding_heads(&self) -> Vec<String> {
-        if self.aggressive_metadata_enabled {
+        if self.is_robust_memory_enabled() {
             self.embed_heads
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect()
         } else {
-            // Fallback to single semantic head when robust memory is disabled
+            // Fallback to semantic only when robust memory is disabled
             vec!["semantic".to_string()]
         }
     }
@@ -497,6 +511,7 @@ mod tests {
         let _lock = ENV_MUTEX.lock().unwrap();
         let original_vars: Vec<(String, Option<String>)> = [
             "MIRA_AGGRESSIVE_METADATA_ENABLED",
+            "MIRA_MIN_SALIENCE_FOR_QDRANT",
             // Add any other env vars your tests modify here
         ]
         .iter()
@@ -518,39 +533,35 @@ mod tests {
         assert!(result.is_ok());
     }
 
-
     #[test]
     fn test_default_config() {
         run_test(|| {
             let config = MiraConfig::from_env();
             assert_eq!(config.model, "gpt-5");
             assert_eq!(config.enable_web_search, true);
-            assert_eq!(config.aggressive_metadata_enabled, false);
+            // Now enabled by default for GPT-5
+            assert_eq!(config.aggressive_metadata_enabled, true);
+            // Fixed salience threshold
+            assert_eq!(config.min_salience_for_qdrant, 0.0);
         });
     }
 
     #[test]
-    fn test_phase4_robust_memory_disabled() {
+    fn test_salience_threshold_fix() {
         run_test(|| {
-            // Explicitly remove the variable to ensure a clean state
-            unsafe {
-                env::remove_var("MIRA_AGGRESSIVE_METADATA_ENABLED");
-            }
+            // Test that salience threshold is in correct range
             let config = MiraConfig::from_env();
-            assert!(!config.is_robust_memory_enabled());
-            assert!(!config.rolling_summaries_enabled());
-            assert_eq!(config.get_embedding_heads(), vec!["semantic"]);
+            assert!(config.min_salience_for_qdrant >= 0.0);
+            assert!(config.min_salience_for_qdrant <= 1.0);
+            assert!(config.min_salience_for_storage >= 0.0);
+            assert!(config.min_salience_for_storage <= 1.0);
         });
     }
 
     #[test]
-    fn test_phase4_robust_memory_enabled() {
+    fn test_phase4_robust_memory_enabled_by_default() {
         run_test(|| {
-            unsafe {
-                env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
-            }
             let config = MiraConfig::from_env();
-
             assert!(config.is_robust_memory_enabled());
             assert!(config.rolling_summaries_enabled());
             let heads = config.get_embedding_heads();
@@ -565,11 +576,21 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_rolling_summary_config() {
+    fn test_phase4_robust_memory_can_be_disabled() {
         run_test(|| {
             unsafe {
-                env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "true");
+                env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "false");
             }
+            let config = MiraConfig::from_env();
+            assert!(!config.is_robust_memory_enabled());
+            assert!(!config.rolling_summaries_enabled());
+            assert_eq!(config.get_embedding_heads(), vec!["semantic"]);
+        });
+    }
+
+    #[test]
+    fn test_phase4_rolling_summary_config() {
+        run_test(|| {
             let config = MiraConfig::from_env();
             let rolling_config = config.get_rolling_summary_config();
             assert!(rolling_config.enabled);

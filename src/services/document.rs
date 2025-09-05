@@ -1,4 +1,5 @@
 // src/services/document.rs
+// FIXED: Replaced deprecated evaluate_and_save_response with save_assistant_response
 
 use anyhow::Result;
 use std::path::Path;
@@ -127,10 +128,10 @@ impl DocumentService {
     }
 
     async fn process_for_personal_memory(&self, content: &str) -> Result<()> {
-        // Build a ChatResponse, since MemoryService::evaluate_and_save_response expects that type
+        // Build a ChatResponse for the document import
         let doc_response = ChatResponse {
             output: content.to_string(),
-            persona: "system".to_string(),  // FIXED: was Some("system".to_string())
+            persona: "system".to_string(),
             mood: "neutral".to_string(),
             salience: 7,
             summary: "Imported document".to_string(),
@@ -141,8 +142,10 @@ impl DocumentService {
             reasoning_summary: None,
         };
 
+        // FIXED: Use save_assistant_response instead of deprecated evaluate_and_save_response
+        // The session_id "document-import" is used for all document imports
         self.memory_service
-            .evaluate_and_save_response("document-import", &doc_response, None)
+            .save_assistant_response("document-import", &doc_response)
             .await?;
 
         Ok(())
@@ -155,7 +158,7 @@ impl DocumentService {
     ) -> Result<()> {
         let doc_response = ChatResponse {
             output: content.to_string(),
-            persona: "system".to_string(),  // FIXED: was Some("system".to_string())
+            persona: "system".to_string(),
             mood: "neutral".to_string(),
             salience: 7,
             summary: "Imported project document".to_string(),
@@ -166,8 +169,16 @@ impl DocumentService {
             reasoning_summary: None,
         };
 
+        // FIXED: Use save_assistant_response instead of deprecated evaluate_and_save_response
+        // For project documents, we use a session ID that includes the project
+        let session_id = if let Some(pid) = project_id {
+            format!("document-import-{}", pid)
+        } else {
+            "document-import".to_string()
+        };
+
         self.memory_service
-            .evaluate_and_save_response("document-import", &doc_response, project_id)
+            .save_assistant_response(&session_id, &doc_response)
             .await?;
 
         Ok(())

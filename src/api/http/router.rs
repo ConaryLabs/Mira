@@ -1,8 +1,9 @@
 // src/api/http/router.rs
 // HTTP router composition for REST API endpoints
+// PHASE 4: Complete memory API with rolling summaries and snapshot support
 
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use std::sync::Arc;
@@ -28,29 +29,50 @@ use super::{
         get_commit_diff,
         get_file_at_commit,
     },
-    // Phase 4 memory endpoints
-    memory::{pin_memory, unpin_memory, import_memories},
+    // Phase 4: Complete memory endpoints
+    memory::{
+        // Existing memory operations
+        pin_memory, 
+        unpin_memory, 
+        import_memories,
+        // NEW: Rolling summary endpoints (Critical Fix #3)
+        create_snapshot_summary,
+        create_rolling_summary,
+        get_summary_status,
+        list_summaries,
+        clear_summaries,
+    },
 };
 
 /// Main HTTP router for health, chat, and memory endpoints
 /// This router is nested under /api in main.rs (or used directly).
 pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
-        // Health
+        // ─── Health & Status ───
         .route("/health", get(health_handler))
-
-        // Chat (REST)
-        .route("/chat/history", get(get_chat_history))
+        
+        // ─── Chat Endpoints ───
         .route("/chat", post(rest_chat_handler))
-
-        // Project details
+        .route("/chat/history", get(get_chat_history))
+        
+        // ─── Project Management ───
         .route("/project/:project_id", get(project_details_handler))
-
-        // Memory maintenance (Phase 4)
+        
+        // ─── Memory Operations (Phase 4) ───
+        // Pinning operations
         .route("/memory/:id/pin", post(pin_memory))
         .route("/memory/:id/unpin", post(unpin_memory))
+        
+        // Import/Export
         .route("/memory/import", post(import_memories))
-
+        
+        // Rolling Summary Operations (NEW - Critical Fix #3)
+        .route("/memory/:session_id/snapshot_summary", post(create_snapshot_summary))
+        .route("/memory/:session_id/rolling_summary", post(create_rolling_summary))
+        .route("/memory/:session_id/summary_status", get(get_summary_status))
+        .route("/memory/:session_id/summaries", get(list_summaries))
+        .route("/memory/:session_id/summaries", delete(clear_summaries))
+        
         .with_state(app_state)
 }
 
@@ -58,22 +80,41 @@ pub fn http_router(app_state: Arc<AppState>) -> Router<Arc<AppState>> {
 /// This router is intended to be nested under /projects/:project_id/git
 pub fn project_git_router() -> Router<Arc<AppState>> {
     Router::new()
-        // Repository management
+        // ─── Repository Management ───
         .route("/attach", post(attach_repo_handler))
         .route("/repos", get(list_attached_repos_handler))
         .route("/sync/:attachment_id", post(sync_repo_handler))
-
-        // File operations
+        
+        // ─── File Operations ───
         .route("/files/:attachment_id/tree", get(get_file_tree_handler))
         .route("/files/:attachment_id/content/*path", get(get_file_content_handler))
         .route("/files/:attachment_id/content/*path", post(update_file_content_handler))
-
-        // Branch operations
+        
+        // ─── Branch Operations ───
         .route("/branches/:attachment_id", get(list_branches))
         .route("/branch/:attachment_id", post(switch_branch))
-
-        // Commit operations
+        
+        // ─── Commit Operations ───
         .route("/commits/:attachment_id", get(get_commit_history))
         .route("/diff/:attachment_id/:commit_sha", get(get_commit_diff))
         .route("/file-at-commit/:attachment_id/:commit_sha/*path", get(get_file_at_commit))
+}
+
+/// Memory-specific router (optional - for better organization)
+/// Could be mounted at /api/memory if you want cleaner separation
+pub fn memory_router() -> Router<Arc<AppState>> {
+    Router::new()
+        // Individual memory operations
+        .route("/:id/pin", post(pin_memory))
+        .route("/:id/unpin", post(unpin_memory))
+        
+        // Bulk operations
+        .route("/import", post(import_memories))
+        
+        // Summary operations (per session)
+        .route("/:session_id/snapshot_summary", post(create_snapshot_summary))
+        .route("/:session_id/rolling_summary", post(create_rolling_summary))
+        .route("/:session_id/summary_status", get(get_summary_status))
+        .route("/:session_id/summaries", get(list_summaries))
+        .route("/:session_id/summaries", delete(clear_summaries))
 }

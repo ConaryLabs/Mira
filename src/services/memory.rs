@@ -1,12 +1,12 @@
 // src/services/memory.rs
+
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::config::CONFIG;
 use crate::llm::client::OpenAIClient;
@@ -20,7 +20,6 @@ use crate::memory::{
 };
 use crate::services::chat::ChatResponse;
 
-/// ── Phase 5: Enhanced memory entry with similarity score for re-ranking ──
 #[derive(Debug, Clone)]
 pub struct ScoredMemoryEntry {
     pub entry: MemoryEntry,
@@ -31,23 +30,29 @@ pub struct ScoredMemoryEntry {
     pub source_head: EmbeddingHead,
 }
 
+#[derive(Debug, Clone)]
+pub struct MemoryServiceStats {
+    pub total_messages: usize,
+    pub recent_messages: usize,
+    pub semantic_entries: usize,
+    pub code_entries: usize,
+    pub summary_entries: usize,
+}
+
 pub struct MemoryService {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
     multi_store: Arc<QdrantMultiStore>,
-
-    // ── Phase 4: Session message counters for rolling summaries ──
     session_counters: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 impl MemoryService {
-    /// Create a new memory service with multi-head embedding support.
     pub fn new(
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
-        info!("🏗️ MemoryService initialized with multi-collection support");
+        info!("MemoryService initialized with multi-collection support");
         Self {
             llm_client,
             sqlite_store,
@@ -56,8 +61,6 @@ impl MemoryService {
         }
     }
 
-    /// ── Phase 5: Parallel recall context method for enhanced retrieval ──
-    /// This method encapsulates the multi-head parallel retrieval logic.
     pub async fn parallel_recall_context(
         &self,
         session_id: &str,
@@ -65,11 +68,10 @@ impl MemoryService {
         recent_count: usize,
         semantic_count: usize,
     ) -> Result<RecallContext> {
-        info!("🔄 Starting parallel recall context for session: {}", session_id);
+        info!("Starting parallel recall context for session: {}", session_id);
         self.build_context_with_multihead_parallel(session_id, query_text, recent_count, semantic_count).await
     }
 
-    /// ── Phase 5: Multi-head parallel context building implementation ──
     async fn build_context_with_multihead_parallel(
         &self,
         session_id: &str,
@@ -79,7 +81,7 @@ impl MemoryService {
     ) -> Result<RecallContext> {
         debug!("Building context with multi-head parallel retrieval");
 
-        // Phase 5: Parallel execution - embedding + recent messages
+        // Parallel execution - embedding + recent messages
         let (embedding_result, recent_result) = tokio::join!(
             self.llm_client.get_embedding(query_text),
             self.load_recent_with_rolling_summaries(session_id, recent_count)
@@ -87,34 +89,48 @@ impl MemoryService {
 
         let embedding = embedding_result?;
         let context_recent = recent_result?;
-        debug!("Loaded {} recent messages in parallel", context_recent.len());
+        debug!("Loaded {} recent messages (including summaries)", context_recent.len());
 
-        // Phase 5: Multi-head semantic search with appropriate k per head
-        let k_per_head = std::cmp::max(10, semantic_count / 3);
-        let multi_search_result = self.multi_store.search_all(session_id, &embedding, k_per_head).await?;
-
-        // Phase 5: Merge, deduplicate, and re-rank results
-        let all_candidates = self.merge_and_deduplicate_results(multi_search_result)?;
-        let scored_entries = self.compute_rerank_scores(&embedding, all_candidates).await?;
+        // Determine which heads to search based on query classification
+        let heads_to_search = self.determine_search_heads(query_text).await;
         
-        // Sort by composite score and take top results
-        let mut sorted_entries = scored_entries;
-        sorted_entries.sort_by(|a, b| b.composite_score.partial_cmp(&a.composite_score)
-                                 .unwrap_or(std::cmp::Ordering::Equal));
-        
-        let selected_entries: Vec<MemoryEntry> = sorted_entries
-            .into_iter()
-            .take(semantic_count)
-            .map(|scored| scored.entry)
+        // Parallel multi-head search
+        let search_futures: Vec<_> = heads_to_search
+            .iter()
+            .map(|&head| {
+                let multi_store = self.multi_store.clone();
+                let embedding = embedding.clone();
+                let session_id = session_id.to_string();
+                
+                async move {
+                    // Fixed: Correct method signature - search(head, session_id, embedding, limit)
+                    let results = multi_store
+                        .search(head, &session_id, &embedding, semantic_count)
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!("Search failed for {} head: {}", head, e);
+                            Vec::new()
+                        });
+                    (head, results)
+                }
+            })
             .collect();
+
+        // Execute all searches in parallel
+        let multi_search_results = futures::future::join_all(search_futures).await;
+        
+        info!("Parallel search completed for {} heads", heads_to_search.len());
+
+        // Merge and re-rank results
+        let context_semantic = self.merge_and_deduplicate_results(multi_search_results)?;
 
         let context = RecallContext {
             recent: context_recent,
-            semantic: selected_entries,
+            semantic: context_semantic,
         };
 
         info!(
-            "Multi-head parallel context built: {} recent, {} re-ranked semantic matches",
+            "Multi-head parallel context built: {} recent, {} semantic matches",
             context.recent.len(),
             context.semantic.len()
         );
@@ -122,13 +138,37 @@ impl MemoryService {
         Ok(context)
     }
 
-    /// ── Phase 5: Load recent messages with rolling summaries support ──
+    async fn determine_search_heads(&self, query_text: &str) -> Vec<EmbeddingHead> {
+        let mut heads = vec![EmbeddingHead::Semantic]; // Always search semantic
+        
+        // Classify the query to determine if we should search code head
+        match self.llm_client.classify_text(query_text).await {
+            Ok(classification) => {
+                if classification.is_code {
+                    heads.push(EmbeddingHead::Code);
+                    debug!("Query classified as code, adding Code head to search");
+                }
+            }
+            Err(e) => {
+                debug!("Failed to classify query: {}, using semantic only", e);
+            }
+        }
+        
+        // Only search summary head if explicitly configured
+        if CONFIG.should_use_rolling_summaries_in_context() {
+            heads.push(EmbeddingHead::Summary);
+            debug!("Rolling summaries enabled, adding Summary head to search");
+        }
+        
+        heads
+    }
+
     async fn load_recent_with_rolling_summaries(
         &self,
         session_id: &str,
         recent_count: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        if CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100 {
+        if CONFIG.should_use_rolling_summaries_in_context() {
             let all_recent = self.sqlite_store.load_recent(session_id, recent_count * 2).await?;
             
             let (summaries, regular): (Vec<_>, Vec<_>) = all_recent.into_iter()
@@ -152,7 +192,6 @@ impl MemoryService {
         }
     }
 
-    /// ── Phase 5: Check if entry is a rolling summary ──
     fn is_rolling_summary_entry(&self, entry: &MemoryEntry) -> bool {
         entry.tags
             .as_ref()
@@ -160,7 +199,6 @@ impl MemoryService {
             .unwrap_or(false)
     }
 
-    /// ── Phase 5: Select best rolling summaries ──
     fn select_best_rolling_summaries(&self, summaries: Vec<MemoryEntry>) 
         -> (Option<MemoryEntry>, Option<MemoryEntry>) {
         let mut latest_10: Option<MemoryEntry> = None;
@@ -183,234 +221,102 @@ impl MemoryService {
         (latest_10, latest_100)
     }
 
-    /// ── Phase 5: Merge and deduplicate multi-head search results ──
     fn merge_and_deduplicate_results(
         &self,
         multi_search_result: Vec<(EmbeddingHead, Vec<MemoryEntry>)>,
-    ) -> Result<Vec<(EmbeddingHead, MemoryEntry)>> {
+    ) -> Result<Vec<MemoryEntry>> {
         let mut all_candidates = Vec::new();
         let mut content_dedup = HashMap::new();
 
-        for (head, entries) in multi_search_result {
+        for (_head, entries) in multi_search_result {
             for entry in entries {
                 // Simple deduplication by content hash to avoid identical chunks
-                let content_key = format!("{}:{}",
-                    entry.content.len(),
-                    entry.content.chars().take(50).collect::<String>()
-                );
+                let content_key = format!("{:?}", entry.content.chars().take(100).collect::<Vec<_>>());
                 
                 if !content_dedup.contains_key(&content_key) {
-                    content_dedup.insert(content_key, true);
-                    all_candidates.push((head, entry));
-                } else {
-                    debug!("Deduplicated similar content from {} head", head.as_str());
+                    content_dedup.insert(content_key.clone(), true);
+                    all_candidates.push(entry);
                 }
             }
         }
 
-        debug!("After deduplication: {} candidates", all_candidates.len());
+        // Sort by salience and take top results
+        all_candidates.sort_by(|a, b| {
+            b.salience.unwrap_or(0.0)
+                .partial_cmp(&a.salience.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         Ok(all_candidates)
     }
 
-    /// ── Phase 5: Compute composite re-ranking scores ──
-    async fn compute_rerank_scores(
+    // Batch embedding implementation for performance optimization
+    pub async fn generate_and_save_embeddings(
         &self,
-        query_embedding: &[f32],
-        candidates: Vec<(EmbeddingHead, MemoryEntry)>,
-    ) -> Result<Vec<ScoredMemoryEntry>> {
-        let mut scored_entries = Vec::new();
-        let now = chrono::Utc::now();
+        entry: &MemoryEntry,
+        heads: &[EmbeddingHead],
+    ) -> Result<()> {
+        info!("Generating embeddings for {} heads: {:?}", heads.len(), heads);
+        let chunker = TextChunker::new()?;
 
-        for (head, entry) in candidates {
-            // Calculate similarity score
-            let similarity_score = if let Some(entry_embedding) = &entry.embedding {
-                self.cosine_similarity(query_embedding, entry_embedding)
-            } else {
-                0.0
-            };
-
-            // Calculate salience score (normalize to 0-1 range)
-            let salience_score = entry.salience.unwrap_or(0.0).min(1.0).max(0.0);
-
-            // Calculate recency score (exponential decay from timestamp)
-            let hours_ago = (now - entry.timestamp).num_hours().max(0) as f32;
-            let recency_score = (-hours_ago / 168.0).exp(); // 168 hours = 1 week half-life
-
-            // Phase 5: Composite score with head-specific weights
-            let (sim_weight, sal_weight, rec_weight) = match head {
-                EmbeddingHead::Code => (0.70, 0.25, 0.05),     // Favor salience for code
-                EmbeddingHead::Summary => (0.80, 0.15, 0.05),  // Favor similarity for summaries
-                EmbeddingHead::Semantic => (0.75, 0.20, 0.05), // Balanced default
-            };
-
-            let composite_score = (similarity_score * sim_weight)
-                                + (salience_score * sal_weight)
-                                + (recency_score * rec_weight);
-
-            scored_entries.push(ScoredMemoryEntry {
-                entry,
-                similarity_score,
-                salience_score,
-                recency_score,
-                composite_score,
-                source_head: head,
-            });
+        // Collect all chunks from all heads
+        let mut all_chunks: Vec<(EmbeddingHead, String)> = Vec::new();
+        
+        for &head in heads {
+            let chunks = chunker.chunk_text(&entry.content, &head)?;
+            debug!("Generated {} chunks for {} head", chunks.len(), head.as_str());
+            
+            for chunk_text in chunks {
+                all_chunks.push((head, chunk_text));
+            }
         }
 
-        debug!("Computed re-ranking scores for {} candidates", scored_entries.len());
-        Ok(scored_entries)
-    }
+        info!("Total chunks to embed: {}", all_chunks.len());
 
-    /// ── Phase 5: Cosine similarity calculation for embeddings ──
-    fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() {
-            return 0.0;
+        // Batch embed all chunks (up to 100 at a time)
+        const MAX_BATCH_SIZE: usize = 100;
+        let mut all_embeddings: Vec<Vec<f32>> = Vec::new();
+        
+        for batch_start in (0..all_chunks.len()).step_by(MAX_BATCH_SIZE) {
+            let batch_end = std::cmp::min(batch_start + MAX_BATCH_SIZE, all_chunks.len());
+            let batch_texts: Vec<String> = all_chunks[batch_start..batch_end]
+                .iter()
+                .map(|(_, text)| text.clone())
+                .collect();
+            
+            debug!("Processing batch {}-{} of {}", 
+                batch_start + 1, batch_end, all_chunks.len());
+            
+            // Use batch embedding instead of sequential
+            let batch_embeddings = self.llm_client
+                .embedding_client()
+                .get_embeddings_batch(&batch_texts)
+                .await?;
+            
+            all_embeddings.extend(batch_embeddings);
+            
+            info!("Embedded batch of {} chunks", batch_texts.len());
         }
 
-        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        // Save all chunks with their embeddings to appropriate collections
+        for ((head, chunk_text), embedding) in all_chunks.iter().zip(all_embeddings.iter()) {
+            let mut chunk_entry = entry.clone();
+            chunk_entry.content = chunk_text.clone();
+            chunk_entry.embedding = Some(embedding.clone());
+            chunk_entry.head = Some(head.to_string());
 
-        if norm_a == 0.0 || norm_b == 0.0 {
-            0.0
-        } else {
-            dot_product / (norm_a * norm_b)
+            self.multi_store.save(*head, &chunk_entry).await?;
         }
-    }
-
-    /// ── Phase 4: Session counters for rolling summaries ──
-    pub async fn increment_session_counter(&self, session_id: &str) -> usize {
-        let mut counters = self.session_counters.write().await;
-        let count = counters.entry(session_id.to_string()).or_insert(0);
-        *count += 1;
-        *count
-    }
-
-    pub async fn get_session_message_count(&self, session_id: &str) -> usize {
-        let counters = self.session_counters.read().await;
-        counters.get(session_id).cloned().unwrap_or(0)
-    }
-
-    /// ── Phase 4: Check and trigger rolling summaries ──
-    pub async fn check_and_trigger_rolling_summaries(&self, session_id: &str) -> Result<()> {
-        let message_count = self.get_session_message_count(session_id).await;
-        let mut triggered = false;
-
-        // Check for 10-message rolling summary
-        if CONFIG.summary_rolling_10 && message_count % 10 == 0 && message_count >= 10 {
-            self.create_rolling_summary(session_id, 10).await?;
-            triggered = true;
-        }
-
-        // Check for 100-message rolling summary
-        if CONFIG.summary_rolling_100 && message_count % 100 == 0 && message_count >= 100 {
-            self.create_rolling_summary(session_id, 100).await?;
-            triggered = true;
-        }
-
-        if triggered {
-            info!("✅ Triggered rolling summaries at message count {}", message_count);
-        }
-
-        Ok(())
-    }
-
-    /// ── Phase 4: Create a rolling summary ──
-    async fn create_rolling_summary(&self, session_id: &str, n: usize) -> Result<()> {
-        info!("📋 Creating {}-message rolling summary for session {}", n, session_id);
-
-        // Load recent messages (excluding existing summaries)
-        let all_recent = self.sqlite_store.load_recent(session_id, n * 2).await?;
-        let recent_messages: Vec<_> = all_recent
-            .into_iter()
-            .filter(|msg| !self.is_rolling_summary_entry(msg))
-            .take(n)
-            .collect();
-
-        if recent_messages.len() < n / 2 {
-            debug!("Not enough messages ({}) to create {}-message summary", recent_messages.len(), n);
-            return Ok(());
-        }
-
-        // Create conversation prompt
-        let mut prompt = format!("Please create a concise summary of this conversation (last {} messages):\n\n", n);
-        for msg in recent_messages.iter().rev() {
-            prompt.push_str(&format!("{}: {}\n", msg.role, msg.content));
-        }
-
-        // Generate summary
-        let token_limit = if n <= 10 { 256 } else { 512 };
-        let summary_content = self
-            .llm_client
-            .summarize_conversation(&prompt, token_limit)
-            .await?
-            .trim()
-            .to_string();
-
-        if summary_content.is_empty() {
-            return Ok(());
-        }
-
-        // Save the rolling summary
-        self.save_rolling_summary(session_id, &summary_content, n)
-            .await?;
 
         info!(
-            "✅ Created {}-message rolling summary for session {}",
-            n, session_id
+            "Saved {} total chunks across {} heads using batch embedding",
+            all_chunks.len(),
+            heads.len()
         );
-        Ok(())
-    }
-
-    /// Save a rolling summary with appropriate tags
-    async fn save_rolling_summary(
-        &self,
-        session_id: &str,
-        summary_content: &str,
-        window_size: usize,
-    ) -> Result<()> {
-        let rolling_tag = format!("summary:rolling:{}", window_size);
-
-        let entry = MemoryEntry {
-            id: None,
-            session_id: session_id.to_string(),
-            role: "assistant".to_string(),
-            content: summary_content.to_string(),
-            timestamp: Utc::now(),
-            embedding: None,
-            salience: Some(1.5), // Low salience to not dominate retrieval
-            tags: Some(vec![
-                "summary".to_string(),
-                rolling_tag,
-                "compressed".to_string(),
-            ]),
-            summary: Some(format!("Rolling summary of last {} messages", window_size)),
-            memory_type: Some(MemoryType::Summary),
-            logprobs: None,
-            moderation_flag: None,
-            system_fingerprint: None,
-            head: None,
-            is_code: Some(false),
-            lang: Some("natural".to_string()),
-            topics: Some(vec!["summary".to_string()]),
-            pinned: Some(false),
-            subject_tag: None,
-            last_accessed: Some(Utc::now()),
-        };
-
-        let saved_entry = self.sqlite_store.save(&entry).await?;
-        info!("💾 Saved rolling summary to SQLite");
-
-        // Always embed rolling summaries
-        // Use both Summary and Semantic heads for rolling summaries
-        let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
-        self.generate_and_save_embeddings(&saved_entry, &summary_heads)
-            .await?;
 
         Ok(())
     }
 
-    /// Save a user message to memory stores.
     pub async fn save_user_message(
         &self,
         session_id: &str,
@@ -419,10 +325,7 @@ impl MemoryService {
     ) -> Result<()> {
         // Increment session counter first
         let message_count = self.increment_session_counter(session_id).await;
-        debug!(
-            "📈 Session {} message count now: {}",
-            session_id, message_count
-        );
+        debug!("Session {} message count now: {}", session_id, message_count);
 
         let mut entry = MemoryEntry {
             id: None,
@@ -450,47 +353,50 @@ impl MemoryService {
             last_accessed: Some(Utc::now()),
         };
 
-        // Phase 3: Rich metadata classification
-        info!("🧠 Classifying user message for rich metadata...");
-        match self.llm_client.classify_text(content).await {
-            Ok(classification) => {
-                entry = entry.with_classification(classification.clone());
-
-                let mut new_tags = entry.tags.clone().unwrap_or_default();
-                if classification.is_code {
-                    new_tags.push("is_code:true".to_string());
-                }
-                if !classification.lang.is_empty() && classification.lang != "natural" {
-                    new_tags.push(format!("lang:{}", classification.lang));
-                }
-                for topic in classification.topics {
-                    new_tags.push(format!("topic:{}", topic));
-                }
-                entry.tags = Some(new_tags);
-            }
+        // Rich metadata classification
+        info!("Classifying user message for rich metadata");
+        let classification_result = self.llm_client.classify_text(content).await;
+        
+        let is_code = match &classification_result {
+            Ok(c) => c.is_code,
             Err(e) => {
-                error!(
-                    "Failed to classify message: {}. Proceeding with default metadata.",
-                    e
-                );
+                error!("Failed to classify message: {}. Proceeding with default metadata.", e);
+                false
             }
+        };
+
+        if let Ok(classification) = classification_result {
+            entry = entry.with_classification(classification.clone());
+
+            let mut new_tags = entry.tags.clone().unwrap_or_default();
+            if classification.is_code {
+                new_tags.push("is_code:true".to_string());
+            }
+            if !classification.lang.is_empty() && classification.lang != "natural" {
+                new_tags.push(format!("lang:{}", classification.lang));
+            }
+            for topic in classification.topics {
+                new_tags.push(format!("topic:{}", topic));
+            }
+            entry.tags = Some(new_tags);
         }
 
         // Always save to SQLite first
         let saved_entry = self.sqlite_store.save(&entry).await?;
-        info!("💾 Saved user message to SQLite");
+        info!("Saved user message to SQLite");
 
-        // Conditionally generate and save embeddings to Qdrant
+        // Dynamic head selection based on classification
         if let Some(salience) = saved_entry.salience {
             if salience >= CONFIG.min_salience_for_qdrant {
-                let heads_to_use = CONFIG
-                    .get_embedding_heads()
-                    .into_iter()
-                    .filter(|h| h != "summary") // Exclude summary head for user messages
-                    .map(|s| EmbeddingHead::from_str(&s))
-                    .filter_map(Result::ok)
-                    .collect::<Vec<_>>();
-
+                let mut heads_to_use = vec![EmbeddingHead::Semantic]; // Always use semantic
+                
+                // Only add code head if content is actually code
+                if is_code {
+                    heads_to_use.push(EmbeddingHead::Code);
+                    info!("Content classified as code, adding Code head");
+                }
+                
+                // Never use summary head for user messages
                 self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
                     .await?;
             }
@@ -499,14 +405,13 @@ impl MemoryService {
         Ok(())
     }
 
-    /// Save an assistant response to memory stores.
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
         response: &ChatResponse,
     ) -> Result<()> {
         let message_count = self.increment_session_counter(session_id).await;
-        debug!("📈 Session {} message count now: {}", session_id, message_count);
+        debug!("Session {} message count now: {}", session_id, message_count);
 
         let mut entry = MemoryEntry {
             id: None,
@@ -537,84 +442,166 @@ impl MemoryService {
             last_accessed: Some(Utc::now()),
         };
 
-        // Phase 3: Rich metadata classification
-        match self.llm_client.classify_text(&response.output).await {
-            Ok(classification) => {
-                entry = entry.with_classification(classification);
-            }
+        // Rich metadata classification
+        let classification_result = self.llm_client.classify_text(&response.output).await;
+        let is_code = match &classification_result {
+            Ok(c) => c.is_code,
             Err(e) => {
                 error!("Failed to classify assistant response: {}", e);
+                false
             }
+        };
+
+        if let Ok(classification) = classification_result {
+            entry = entry.with_classification(classification);
         }
 
         let saved_entry = self.sqlite_store.save(&entry).await?;
-        info!("💾 Saved assistant response to SQLite");
+        info!("Saved assistant response to SQLite");
 
-        // Generate embeddings if salience threshold is met
+        // Dynamic head selection for assistant responses
         if let Some(salience) = saved_entry.salience {
             if salience >= CONFIG.min_salience_for_qdrant {
-                let heads_to_use = CONFIG
-                    .get_embedding_heads()
-                    .into_iter()
-                    .filter(|h| h != "summary")
-                    .map(|s| EmbeddingHead::from_str(&s))
-                    .filter_map(Result::ok)
-                    .collect::<Vec<_>>();
+                let mut heads_to_use = vec![EmbeddingHead::Semantic];
+                
+                if is_code {
+                    heads_to_use.push(EmbeddingHead::Code);
+                }
 
                 self.generate_and_save_embeddings(&saved_entry, &heads_to_use)
                     .await?;
             }
         }
 
-        // ── Phase 4: Check and trigger rolling summaries ──
+        // Check and trigger rolling summaries
         self.check_and_trigger_rolling_summaries(session_id).await?;
 
         Ok(())
     }
 
-    /// ── Phase 2: Generate and save embeddings for multiple heads ──
-    pub async fn generate_and_save_embeddings(
-        &self,
-        entry: &MemoryEntry,
-        heads: &[EmbeddingHead],
-    ) -> Result<()> {
-        info!("🧠 Generating embeddings for {} heads: {:?}", heads.len(), heads);
-        let chunker = TextChunker::new()?;
-
-        for &head in heads {
-            // 1. Chunk the content based on the head type
-            let chunks = chunker.chunk_text(&entry.content, &head)?;
-            debug!("Generated {} chunks for {} head", chunks.len(), head.as_str());
-
-            // 2. Generate embeddings for each chunk
-            let mut embeddings = Vec::new();
-            for chunk_text in &chunks {
-                let embedding = self.llm_client.get_embedding(chunk_text).await?;
-                embeddings.push(embedding);
-            }
-
-            // 3. Save each chunk with its embedding to the appropriate collection
-            for (chunk_text, embedding) in chunks.iter().zip(embeddings.iter()) {
-                let mut chunk_entry = entry.clone();
-                chunk_entry.content = chunk_text.clone();
-                chunk_entry.embedding = Some(embedding.clone());
-                chunk_entry.head = Some(head.to_string());
-
-                self.multi_store.save(head, &chunk_entry).await?;
-            }
-
-            info!(
-                "💾 Saved {} chunks to {} collection for entry {}",
-                chunks.len(),
-                head,
-                entry.id.unwrap_or(-1)
-            );
+    async fn check_and_trigger_rolling_summaries(&self, session_id: &str) -> Result<()> {
+        let count = self.get_session_message_count(session_id).await;
+        
+        if CONFIG.rolling_10_enabled() && count % 10 == 0 {
+            info!("Triggering 10-message rolling summary for session {}", session_id);
+            self.create_rolling_summary(session_id, 10).await?;
         }
-
+        
+        if CONFIG.rolling_100_enabled() && count % 100 == 0 {
+            info!("Triggering 100-message rolling summary for session {}", session_id);
+            self.create_rolling_summary(session_id, 100).await?;
+        }
+        
         Ok(())
     }
 
-    /// Calculate salience score for user messages
+    pub async fn create_rolling_summary(&self, session_id: &str, window_size: usize) -> Result<()> {
+        let messages = self.sqlite_store.load_recent(session_id, window_size).await?;
+        
+        if messages.len() < window_size {
+            debug!("Not enough messages for {}-message rolling summary", window_size);
+            return Ok(());
+        }
+        
+        // Prepare content for summarization
+        let content = messages.iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        // Generate summary
+        let summary_prompt = format!(
+            "Create a concise rolling summary of the last {} messages:\n\n{}",
+            window_size, content
+        );
+        
+        let summary = self.llm_client.summarize_conversation(&summary_prompt, 500).await?;
+        
+        // Save summary as a special memory entry
+        let summary_entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            role: "system".to_string(),
+            content: summary.clone(),
+            timestamp: Utc::now(),
+            embedding: None,
+            salience: Some(1.0), // Lower salience for summaries
+            tags: Some(vec![
+                "summary".to_string(),
+                format!("summary:rolling:{}", window_size),
+                "compressed".to_string(),
+            ]),
+            summary: Some(format!("{}-message rolling summary", window_size)),
+            memory_type: Some(MemoryType::Summary),
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: None,
+            head: Some("summary".to_string()),
+            is_code: Some(false),
+            lang: Some("natural".to_string()),
+            topics: Some(vec!["summary".to_string()]),
+            pinned: Some(false),
+            subject_tag: None,
+            last_accessed: Some(Utc::now()),
+        };
+        
+        let saved = self.sqlite_store.save(&summary_entry).await?;
+        
+        // Embed the summary in both Summary and Semantic heads
+        let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
+        self.generate_and_save_embeddings(&saved, &summary_heads).await?;
+        
+        info!("Created {}-message rolling summary for session {}", window_size, session_id);
+        Ok(())
+    }
+
+    pub async fn create_snapshot_summary(&self, session_id: &str, message_count: usize) -> Result<()> {
+        info!("Creating snapshot summary of {} messages for session {}", message_count, session_id);
+        
+        let messages = self.sqlite_store.load_recent(session_id, message_count).await?;
+        
+        if messages.is_empty() {
+            return Err(anyhow::anyhow!("No messages to summarize"));
+        }
+        
+        // Prepare content
+        let content = messages.iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        // Generate summary
+        let summary_prompt = format!(
+            "Create a comprehensive snapshot summary of these {} messages:\n\n{}",
+            message_count, content
+        );
+        
+        let summary = self.llm_client.summarize_conversation(&summary_prompt, 1000).await?;
+        
+        // Save as snapshot summary
+        let snapshot_entry = ChatResponse {
+            output: String::new(),
+            persona: "system".to_string(),
+            mood: "analytical".to_string(),
+            salience: 2,
+            summary,
+            memory_type: "summary".to_string(),
+            tags: vec![
+                "summary".to_string(),
+                format!("summary:snapshot:{}", message_count),
+                "manual".to_string(),
+            ],
+            intent: Some("snapshot_summary".to_string()),
+            monologue: None,
+            reasoning_summary: None,
+        };
+        
+        self.save_assistant_response(session_id, &snapshot_entry).await?;
+        
+        info!("Created snapshot summary for session {}", session_id);
+        Ok(())
+    }
+
     fn calculate_user_message_salience(&self, content: &str) -> usize {
         let base_salience = 5;
         let length_bonus = std::cmp::min(content.len() / 100, 3);
@@ -628,7 +615,6 @@ impl MemoryService {
         base_salience + length_bonus + question_bonus + code_bonus
     }
 
-    /// Parse memory type from string
     fn parse_memory_type(&self, memory_type: &str) -> MemoryType {
         match memory_type.to_lowercase().as_str() {
             "feeling" => MemoryType::Feeling,
@@ -637,12 +623,22 @@ impl MemoryService {
             "promise" => MemoryType::Promise,
             "event" => MemoryType::Event,
             "summary" => MemoryType::Summary,
-            "context" => MemoryType::Summary,
             _ => MemoryType::Other,
         }
     }
 
-    /// Get recent context from memory
+    async fn increment_session_counter(&self, session_id: &str) -> usize {
+        let mut counters = self.session_counters.write().await;
+        let count = counters.entry(session_id.to_string()).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    pub async fn get_session_message_count(&self, session_id: &str) -> usize {
+        let counters = self.session_counters.read().await;
+        counters.get(session_id).copied().unwrap_or(0)
+    }
+
     pub async fn get_recent_context(
         &self,
         session_id: &str,
@@ -651,74 +647,29 @@ impl MemoryService {
         self.sqlite_store.load_recent(session_id, n).await
     }
 
-    /// Search for similar memories using semantic search
     pub async fn search_similar(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
         let query_embedding = self.llm_client.get_embedding(query).await?;
-        // Use multi-head search - for now just use semantic head as a default for general search
-        self.multi_store
-            .search(EmbeddingHead::Semantic, "", &query_embedding, limit)
-            .await
-    }
-
-    /// Get reference to SQLite store for direct access
-    pub fn sqlite_store(&self) -> &Arc<SqliteMemoryStore> {
-        &self.sqlite_store
-    }
-
-    /// Get reference to multi-store if available
-    pub fn multi_store(&self) -> &Arc<QdrantMultiStore> {
-        &self.multi_store
-    }
-
-    /// Check if multi-head mode is enabled
-    pub fn is_multi_head_enabled(&self) -> bool {
-        // Always true since we removed the fallback
-        true
-    }
-
-    /// ── Phase 5: Evaluate and save response (for DocumentService compatibility) ──
-    pub async fn evaluate_and_save_response(
-        &self,
-        session_id: &str,
-        response: &ChatResponse,
-        _project_id: Option<&str>,
-    ) -> Result<()> {
-        self.save_assistant_response(session_id, response).await
-    }
-
-    /// ── Phase 5: Get memory service statistics for monitoring ──
-    pub async fn get_service_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
-        let recent_count = self.sqlite_store.load_recent(session_id, 1000).await?.len();
-        let session_count = self.get_session_message_count(session_id).await;
         
-        // Count entries across all heads
-        let mut total = 0;
-        for head in self.multi_store.get_enabled_heads() {
-            // Use a dummy embedding for counting; we just need the count filter
-            if let Ok(results) = self.multi_store.search(head, session_id, &vec![0.0; 1536], 1000).await {
-                total += results.len();
-            }
-        }
-        let semantic_count = total;
+        // Fixed: Correct method signature - search(head, session_id, embedding, limit)
+        self.multi_store.search(
+            EmbeddingHead::Semantic,
+            "global", // Use a default session_id for global search
+            &query_embedding,
+            limit,
+        ).await
+    }
 
+    pub async fn get_service_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
+        let total_messages = self.get_session_message_count(session_id).await;
+        let recent_messages = self.sqlite_store.load_recent(session_id, 100).await?.len();
+        
+        // TODO: Implement actual Qdrant collection queries
         Ok(MemoryServiceStats {
-            session_id: session_id.to_string(),
-            total_messages: session_count,
-            recent_messages: recent_count,
-            semantic_entries: semantic_count,
-            multi_head_enabled: self.is_multi_head_enabled(),
-            heads_available: self.multi_store.get_enabled_heads().len(),
+            total_messages,
+            recent_messages,
+            semantic_entries: 0,
+            code_entries: 0,
+            summary_entries: 0,
         })
     }
-}
-
-/// ── Phase 5: Memory service statistics for monitoring ──
-#[derive(Debug, Clone)]
-pub struct MemoryServiceStats {
-    pub session_id: String,
-    pub total_messages: usize,
-    pub recent_messages: usize,
-    pub semantic_entries: usize,
-    pub multi_head_enabled: bool,
-    pub heads_available: usize,
 }

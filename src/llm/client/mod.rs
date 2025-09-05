@@ -10,6 +10,7 @@ use tracing::{debug, error, info};
 // Import our new classification struct and the centralized ApiError
 use crate::api::error::ApiError;
 use crate::llm::classification::Classification;
+use crate::config::CONFIG;
 
 // Import extracted modules
 pub mod config;
@@ -142,9 +143,14 @@ impl OpenAIClient {
             .ok_or_else(|| anyhow::anyhow!("Failed to extract summarization response"))
     }
 
-    /// Classifies text using the chat completions API with JSON mode.
+    /// CRITICAL FIX #2: Classifies text using GPT-5 Responses API with JSON mode
+    /// Was: Using GPT-4o with old chat/completions endpoint
+    /// Now: Using GPT-5 with /responses endpoint and proper parameters
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
-        let system_prompt = r#"
+        info!("🔍 Classifying text with GPT-5 Responses API");
+        
+        // Instructions for classification (replaces system prompt)
+        let instructions = r#"
             You are an expert at analyzing text to extract structured metadata.
             Analyze the following message and output a JSON object with the fields:
             is_code, lang, topics, and salience.
@@ -153,50 +159,50 @@ impl OpenAIClient {
             - lang: string - If is_code is true, specify the programming language (e.g., "rust", "python"). Otherwise, use "natural".
             - topics: array of strings - A list of keywords or domains that describe the content (e.g., ["git", "error_handling"]).
             - salience: float - A score from 0.0 to 1.0 indicating the importance of the message for future context. 1.0 is most important.
+            
+            Be concise and accurate. Use minimal reasoning.
         "#;
 
+        // Build the GPT-5 Responses API request
         let request_body = json!({
-            "model": "gpt-4o",
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": text }
-            ],
-            "response_format": { "type": "json_object" }
+            "model": CONFIG.model.clone(), // Use GPT-5 from config
+            "input": [{
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": text
+                }]
+            }],
+            "instructions": instructions,
+            "text": {
+                "format": "json_object",  // JSON mode for structured output
+                "verbosity": "low"        // Low verbosity for classification
+            },
+            "parameters": {
+                "verbosity": "low",              // Minimal verbosity
+                "reasoning_effort": "minimal",   // Minimal reasoning for speed
+                "max_output_tokens": 500         // Small output for classification
+            },
+            "temperature": 0.1  // Low temperature for consistency
         });
 
-        let response = self
-            .client
-            .post(&format!("{}/v1/chat/completions", &self.config.base_url()))
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
-            .header(header::CONTENT_TYPE, "application/json")
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|e| ApiError::internal(format!("LLM request failed: {}", e)))?;
+        debug!("Classification request: model={}, reasoning=minimal, verbosity=low", CONFIG.model);
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(ApiError::internal(format!(
-                "Classification API request failed with status {}: {}",
-                status, error_text
-            )).into());
-        }
+        // Make the API call to /responses endpoint
+        let response = self.post_response(request_body).await
+            .map_err(|e| ApiError::internal(format!("Classification request failed: {}", e)))?;
 
-        let response_data: Value = response.json().await
-            .map_err(|e| ApiError::internal(format!("Failed to parse JSON from LLM response: {}", e)))?;
+        // Extract the text content from the response
+        let content = responses::extract_text_from_responses(&response)
+            .ok_or_else(|| ApiError::internal("No content in classification response"))?;
 
-        if let Some(content) = response_data["choices"][0]["message"]["content"].as_str() {
-            serde_json::from_str::<Classification>(content)
-                .map_err(|e| {
-                    error!("Failed to parse classification from LLM content: {}", e);
-                    ApiError::internal("LLM returned malformed classification JSON").into()
-                })
-        } else {
-            Err(ApiError::internal("No content in classification response from LLM").into())
-        }
+        // Parse the JSON classification
+        serde_json::from_str::<Classification>(&content)
+            .map_err(|e| {
+                error!("Failed to parse classification JSON: {}\nRaw content: {}", e, content);
+                ApiError::internal("LLM returned malformed classification JSON").into()
+            })
     }
-
 
     /// Raw HTTP POST to the Responses API - Made public for ResponsesManager
     pub async fn post_response(&self, body: Value) -> Result<Value> {
