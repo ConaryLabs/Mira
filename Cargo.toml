@@ -14,7 +14,6 @@ tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 reqwest = { version = "0.12.4", features = ["json", "rustls-tls", "stream", "multipart"] }
-tower-http = { version = "0.5.2", features = ["fs", "cors"] }
 dotenv = "0.15.0"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"

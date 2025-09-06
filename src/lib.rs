@@ -12,6 +12,7 @@ pub mod tools;
 pub mod git;
 pub mod services;
 pub mod state;
+pub mod utils;
 
 // Export commonly used items
 pub use state::AppState;

@@ -24,34 +24,39 @@ pub struct TextSelection {
 
 /// Represents all possible messages sent from the client (frontend) to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "snake_case")]  // ADD rename_all = "snake_case"
 pub enum WsClientMessage {
-    /// A standard chat message, potentially with file context.
-    #[serde(rename = "chat")]
     Chat {
         content: String,
         project_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         metadata: Option<MessageMetadata>,
     },
-    
-    /// A command for control messages, such as heartbeats.
-    #[serde(rename = "command")]
     Command {
         command: String,
-        args: Option<Value>,
+        args: Option<serde_json::Value>,
     },
-    
-    /// A general status message from the client.
-    #[serde(rename = "status")]
     Status {
         message: String,
     },
-    
-    /// Indicates whether the user is currently typing.
-    #[serde(rename = "typing")]
     Typing {
         active: bool,
+    },
+    // New message types for WebSocket-only operations
+    ProjectCommand {
+        method: String,
+        params: serde_json::Value,
+    },
+    MemoryCommand {
+        method: String,
+        params: serde_json::Value,
+    },
+    GitCommand {
+        method: String,
+        params: serde_json::Value,
+    },
+    FileTransfer {
+        operation: String,
+        data: serde_json::Value,
     },
 }
 
@@ -76,11 +81,10 @@ pub enum WsServerMessage {
     },
     
     /// A general status update for the client UI.
-    /// FIXED: Added back the detail field that Gemini removed
     #[serde(rename = "status")]
     Status { 
         message: String,
-        detail: Option<String>,  // FIXED: Re-added this field
+        detail: Option<String>,
     },
     
     /// An error message.
@@ -98,7 +102,7 @@ pub enum WsServerMessage {
     /// Signals that a tool-enabled response is finished.
     #[serde(rename = "done")]
     Done,
-
+    
     /// A message containing the result of an image generation tool.
     #[serde(rename = "image_generated")]
     ImageGenerated {

@@ -1,4 +1,16 @@
-// src/api/ws/chat/message_router.rs
+#!/usr/bin/env python3
+"""
+Completely rewrite message_router.rs to fix the mangled file
+"""
+
+import os
+from pathlib import Path
+import argparse
+import sys
+
+def create_fixed_message_router():
+    """Create a properly formatted message_router.rs"""
+    return '''// src/api/ws/chat/message_router.rs
 // PHASE 3 UPDATE: Fixed tool detection logic for better routing
 // Handles routing between simple chat and tool-enabled chat based on CONFIG
 
@@ -233,7 +245,7 @@ impl MessageRouter {
 /// PHASE 3 FIX: Extracted to a standalone function for clarity
 pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
     // Check if metadata indicates tool usage should be enabled
-    if let Some(_meta) = metadata {
+    if let Some(meta) = metadata {
         // You can add more sophisticated logic here based on metadata fields
         return true;
     }
@@ -244,10 +256,49 @@ pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
 /// Extract file context from metadata if present
 pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
     // Extract file context from metadata if present
-    if let Some(_meta) = metadata {
+    if let Some(meta) = metadata {
         // You can extract file context from metadata here
         // For now, return None
         return None;
     }
     None
 }
+'''
+
+def main():
+    parser = argparse.ArgumentParser(description='Fix message_router.rs completely')
+    parser.add_argument('backend_path', help='Path to the Mira backend directory')
+    parser.add_argument('--execute', action='store_true', 
+                       help='Actually execute the changes (default is dry-run)')
+    
+    args = parser.parse_args()
+    
+    backend_path = Path(args.backend_path)
+    router_path = backend_path / "src" / "api" / "ws" / "chat" / "message_router.rs"
+    
+    if not args.execute:
+        print("\n⚠️  DRY RUN MODE - No changes will be made")
+        print("Add --execute flag to actually perform the fix\n")
+        print(f"Will rewrite: {router_path}")
+        return
+    
+    print(f"Rewriting {router_path}...")
+    
+    # Backup the current file
+    if router_path.exists():
+        backup_path = router_path.with_suffix('.rs.backup')
+        with open(router_path, 'r') as f:
+            backup_content = f.read()
+        with open(backup_path, 'w') as f:
+            f.write(backup_content)
+        print(f"Backed up current file to {backup_path}")
+    
+    # Write the fixed content
+    with open(router_path, 'w') as f:
+        f.write(create_fixed_message_router())
+    
+    print("✅ message_router.rs has been completely rewritten")
+    print("\nNext: Run 'cargo build' to check if it compiles")
+
+if __name__ == "__main__":
+    main()

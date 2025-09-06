@@ -17,7 +17,33 @@ use crate::git::GitClient;
 use crate::git::types::GitRepoAttachment;
 use crate::git::client::{FileNode, FileNodeType};
 use crate::config::CONFIG;
-use crate::api::http::git::common::{should_index_file, detect_language};
+// Helper functions moved from deleted http module
+fn should_index_file(path: &str) -> bool {
+    // Skip common non-source files
+    let skip_extensions = [".png", ".jpg", ".jpeg", ".gif", ".pdf", ".exe", ".bin"];
+    !skip_extensions.iter().any(|ext| path.ends_with(ext))
+}
+
+fn detect_language(path: &str) -> Option<String> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())?;
+    
+    match ext {
+        "rs" => Some("rust".to_string()),
+        "py" => Some("python".to_string()),
+        "js" | "jsx" => Some("javascript".to_string()),
+        "ts" | "tsx" => Some("typescript".to_string()),
+        "go" => Some("go".to_string()),
+        "java" => Some("java".to_string()),
+        "cpp" | "cc" | "cxx" => Some("cpp".to_string()),
+        "c" | "h" => Some("c".to_string()),
+        "cs" => Some("csharp".to_string()),
+        "rb" => Some("ruby".to_string()),
+        "php" => Some("php".to_string()),
+        _ => None,
+    }
+}
 
 /// File search service for finding content within project repositories
 #[derive(Clone)]
@@ -284,7 +310,7 @@ impl FileSearchService {
         let path_obj = Path::new(path);
         
         // Use the existing should_index_file function from git common utils
-        should_index_file(path_obj) && {
+        should_index_file(path_obj.to_str().unwrap_or("")) && {
             // Additional file size check
             path.len() < 100_000 // Skip very long paths (likely binary)
         }

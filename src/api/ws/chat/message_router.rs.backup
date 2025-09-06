@@ -17,6 +17,52 @@ pub struct MessageRouter {
     app_state: Arc<AppState>,
     connection: Arc<WebSocketConnection>,
     addr: SocketAddr,
+
+    // Stub handlers for new message types (to be implemented in Phase 2-6)
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Project command: {} with params: {:?}", method, params);
+        // Phase 4: Implement project operations
+        self.connection.send_error("Project commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+impl MessageRouter {
+
+    async fn handle_memory_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Memory command: {} with params: {:?}", method, params);
+        // Phase 2: Implement memory operations
+        self.connection.send_error("Memory commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_git_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Git command: {} with params: {:?}", method, params);
+        // Phase 5: Implement git operations
+        self.connection.send_error("Git commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_file_transfer(
+        &self,
+        operation: String,
+        data: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("File transfer: {} with data: {:?}", operation, data);
+        // Phase 6: Implement file transfers
+        self.connection.send_error("File transfers not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
 }
 
 impl MessageRouter {
@@ -46,19 +92,6 @@ impl MessageRouter {
             }
             WsClientMessage::Typing { active } => {
                 self.handle_typing_message(active).await
-            }
-            // New WebSocket-only command handlers
-            WsClientMessage::ProjectCommand { method, params } => {
-                self.handle_project_command(method, params).await
-            }
-            WsClientMessage::MemoryCommand { method, params } => {
-                self.handle_memory_command(method, params).await
-            }
-            WsClientMessage::GitCommand { method, params } => {
-                self.handle_git_command(method, params).await
-            }
-            WsClientMessage::FileTransfer { operation, data } => {
-                self.handle_file_transfer(operation, data).await
             }
         }
     }
@@ -167,22 +200,22 @@ impl MessageRouter {
         debug!("Status message: {}", message);
         
         if message == "pong" || message.to_lowercase().contains("heartbeat") {
-            debug!("Received heartbeat response from client");
+            debug!("Heartbeat acknowledged");
         }
         
         Ok(())
     }
 
-    /// Handle typing indicator
+    /// Handle typing indicator messages
     async fn handle_typing_message(
         &self,
         active: bool,
     ) -> Result<(), anyhow::Error> {
-        debug!("Typing indicator: {}", if active { "active" } else { "inactive" });
-        // Could broadcast to other clients in a multi-user scenario
+        debug!("Typing indicator: active={}", active);
+        // Could implement typing indicator broadcast to other clients here
         Ok(())
     }
-    
+
     // Stub handlers for new message types (to be implemented in Phase 2-6)
     async fn handle_project_command(
         &self,
@@ -229,11 +262,11 @@ impl MessageRouter {
     }
 }
 
-/// Determine if tools should be used based on metadata
-/// PHASE 3 FIX: Extracted to a standalone function for clarity
+/// Determine if we should use tools based on configuration and metadata
+/// PHASE 3 FIX: Centralized logic for consistent tool routing decisions
 pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
     // Check if metadata indicates tool usage should be enabled
-    if let Some(_meta) = metadata {
+    if let Some(meta) = metadata {
         // You can add more sophisticated logic here based on metadata fields
         return true;
     }
@@ -241,13 +274,137 @@ pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
     CONFIG.enable_chat_tools
 }
 
-/// Extract file context from metadata if present
+    // Check if client has metadata indicating it's in a context where tools would be helpful
+    // FIXED: Use the actual MessageMetadata fields instead of non-existent ones
+    if let Some(meta) = metadata {
+        // If we have file context (file_path, repo_id, attachment_id), use tools
+        if meta.file_path.is_some() || meta.repo_id.is_some() || meta.attachment_id.is_some() {
+            debug!("Using tools due to file/repo/attachment context");
+            return true;
+        }
+        
+        // If we have language context, use tools
+        if meta.language.is_some() {
+            debug!("Using tools due to language context");
+            return true;
+        }
+    } else {
+        // No metadata = likely a basic client, don't use tools
+        debug!("No metadata provided, not using tools");
+        return false;
+    }
+
+    // Metadata exists but no specific context - use tools if enabled (tool-capable client)
+    debug!("Using default tool behavior for metadata-capable client: {}", CONFIG.enable_chat_tools);
+    CONFIG.enable_chat_tools
+
+    // Stub handlers for new message types (to be implemented in Phase 2-6)
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Project command: {} with params: {:?}", method, params);
+        // Phase 4: Implement project operations
+        self.connection.send_error("Project commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_memory_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Memory command: {} with params: {:?}", method, params);
+        // Phase 2: Implement memory operations
+        self.connection.send_error("Memory commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_git_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Git command: {} with params: {:?}", method, params);
+        // Phase 5: Implement git operations
+        self.connection.send_error("Git commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_file_transfer(
+        &self,
+        operation: String,
+        data: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("File transfer: {} with data: {:?}", operation, data);
+        // Phase 6: Implement file transfers
+        self.connection.send_error("File transfers not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+}
+
+/// Extract context from uploaded files (placeholder implementation)
+/// PHASE 3: This should be implemented to process file uploads
+/// FIXED: Use actual MessageMetadata fields
 pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
     // Extract file context from metadata if present
-    if let Some(_meta) = metadata {
+    if let Some(meta) = metadata {
         // You can extract file context from metadata here
         // For now, return None
         return None;
     }
     None
+}", file_path))
+        } else if let Some(repo_id) = &meta.repo_id {
+            Some(format!("Repository: {}", repo_id))
+        } else if let Some(attachment_id) = &meta.attachment_id {
+            Some(format!("Attachment: {}", attachment_id))
+        } else {
+            None
+        }
+    })
+
+    // Stub handlers for new message types (to be implemented in Phase 2-6)
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Project command: {} with params: {:?}", method, params);
+        // Phase 4: Implement project operations
+        self.connection.send_error("Project commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_memory_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Memory command: {} with params: {:?}", method, params);
+        // Phase 2: Implement memory operations
+        self.connection.send_error("Memory commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_git_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("Git command: {} with params: {:?}", method, params);
+        // Phase 5: Implement git operations
+        self.connection.send_error("Git commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
+
+    async fn handle_file_transfer(
+        &self,
+        operation: String,
+        data: serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
+        info!("File transfer: {} with data: {:?}", operation, data);
+        // Phase 6: Implement file transfers
+        self.connection.send_error("File transfers not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        Ok(())
+    }
 }
