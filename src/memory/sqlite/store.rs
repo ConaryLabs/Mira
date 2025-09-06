@@ -1,12 +1,13 @@
 // src/memory/sqlite/store.rs
-//! Implements MemoryStore for SQLite (session/recency memory).
+// SQLite-backed memory store implementing the MemoryStore trait
+// with additional methods for WebSocket operations
 
-use crate::memory::sqlite::migration; // Import the migration module
+use crate::memory::sqlite::migration;
 use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryTag, MemoryType};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde_json;
 use sqlx::{Row, SqlitePool};
 
@@ -19,7 +20,7 @@ impl SqliteMemoryStore {
         Self { pool }
     }
 
-    /// **NEW**: Runs all required database migrations.
+    /// Runs all required database migrations
     pub async fn run_migrations(&self) -> Result<()> {
         migration::run_migrations(&self.pool).await
     }
@@ -46,6 +47,103 @@ impl SqliteMemoryStore {
     #[inline]
     fn bool_to_sqlite(v: Option<bool>) -> i64 {
         v.unwrap_or(false) as i64
+    }
+    
+    // New methods for WebSocket support
+    
+    /// Update the pin status of a memory
+    pub async fn update_pin_status(&self, memory_id: i64, pinned: bool) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE chat_history 
+            SET pinned = ?, last_accessed = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+        )
+        .bind(pinned as i64)
+        .bind(memory_id)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// Get a memory by its ID
+    pub async fn get_by_id(&self, memory_id: i64) -> Result<Option<MemoryEntry>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, session_id, role, content, timestamp, embedding, salience, tags, summary, memory_type,
+                   logprobs, moderation_flag, system_fingerprint,
+                   pinned, subject_tag, last_accessed
+            FROM chat_history
+            WHERE id = ?
+            "#,
+        )
+        .bind(memory_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        
+        let entry = row.map(|r| {
+            let id: i64 = r.get("id");
+            let session_id: String = r.get("session_id");
+            let role: String = r.get("role");
+            let content: String = r.get("content");
+            let timestamp: NaiveDateTime = r.get("timestamp");
+            let embedding = Self::blob_to_embedding(r.get("embedding"));
+            let salience: Option<f32> = r.get("salience");
+            let tags: Option<String> = r.get("tags");
+            let summary: Option<String> = r.get("summary");
+            let memory_type: Option<String> = r.get("memory_type");
+            let logprobs: Option<String> = r.get("logprobs");
+            let moderation_flag: Option<bool> = r.get("moderation_flag");
+            let system_fingerprint: Option<String> = r.get("system_fingerprint");
+            
+            let pinned_i: Option<i64> = r.get("pinned");
+            let subject_tag: Option<String> = r.get("subject_tag");
+            let last_accessed: Option<NaiveDateTime> = r.get("last_accessed");
+            
+            let tags_vec = tags
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+            let logprobs_val = logprobs
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok());
+            
+            let memory_type_enum = memory_type.as_ref().and_then(|mt| match mt.as_str() {
+                "Feeling" => Some(MemoryType::Feeling),
+                "Fact" => Some(MemoryType::Fact),
+                "Joke" => Some(MemoryType::Joke),
+                "Promise" => Some(MemoryType::Promise),
+                "Event" => Some(MemoryType::Event),
+                "Summary" => Some(MemoryType::Summary),
+                _ => Some(MemoryType::Other),
+            });
+            
+            MemoryEntry {
+                id: Some(id),
+                session_id,
+                role,
+                content,
+                timestamp: Utc.from_utc_datetime(&timestamp),
+                embedding,
+                salience,
+                tags: tags_vec,
+                summary,
+                memory_type: memory_type_enum,
+                logprobs: logprobs_val,
+                moderation_flag,
+                system_fingerprint,
+                head: None,
+                is_code: None,
+                lang: None,
+                topics: None,
+                pinned: Some(pinned_i.unwrap_or(0) != 0),
+                subject_tag,
+                last_accessed: last_accessed.map(|naive| Utc.from_utc_datetime(&naive)),
+            }
+        });
+        
+        Ok(entry)
     }
 }
 
@@ -181,6 +279,7 @@ impl MemoryStore for SqliteMemoryStore {
             });
         }
 
+        // Update last_accessed for all retrieved entries
         for id in ids {
             let _ = sqlx::query(
                 r#"
@@ -194,6 +293,9 @@ impl MemoryStore for SqliteMemoryStore {
             .await;
         }
 
+        // Reverse to get chronological order (oldest first)
+        entries.reverse();
+        
         Ok(entries)
     }
 
@@ -203,6 +305,7 @@ impl MemoryStore for SqliteMemoryStore {
         _embedding: &[f32],
         _k: usize,
     ) -> Result<Vec<MemoryEntry>> {
+        // SQLite doesn't do semantic search - that's Qdrant's job
         Ok(Vec::new())
     }
 
@@ -246,15 +349,20 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     async fn delete(&self, id: i64) -> Result<()> {
-        sqlx::query(
+        let rows_affected = sqlx::query(
             r#"
             DELETE FROM chat_history WHERE id = ?
             "#,
         )
         .bind(id)
         .execute(&self.pool)
-        .await?;
-
+        .await?
+        .rows_affected();
+        
+        if rows_affected == 0 {
+            return Err(anyhow::anyhow!("Memory with id {} not found", id));
+        }
+        
         Ok(())
     }
 }

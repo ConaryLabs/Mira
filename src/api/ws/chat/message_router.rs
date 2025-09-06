@@ -1,6 +1,6 @@
 // src/api/ws/chat/message_router.rs
-// PHASE 3 UPDATE: Fixed tool detection logic for better routing
-// Handles routing between simple chat and tool-enabled chat based on CONFIG
+// Routes incoming WebSocket messages to appropriate handlers based on message type.
+// Manages chat messages, commands, and domain-specific operations.
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -10,6 +10,7 @@ use tracing::{debug, error, info};
 use super::connection::WebSocketConnection;
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
+use crate::api::ws::memory;
 use crate::state::AppState;
 use crate::config::CONFIG;
 
@@ -47,7 +48,6 @@ impl MessageRouter {
             WsClientMessage::Typing { active } => {
                 self.handle_typing_message(active).await
             }
-            // New WebSocket-only command handlers
             WsClientMessage::ProjectCommand { method, params } => {
                 self.handle_project_command(method, params).await
             }
@@ -63,8 +63,7 @@ impl MessageRouter {
         }
     }
 
-    /// Routes chat messages based on improved tool detection logic
-    /// PHASE 3 FIX: Use should_use_tools() function for consistent logic
+    /// Routes chat messages to tool-enabled or simple handler based on configuration
     async fn handle_chat_message(
         &self,
         content: String,
@@ -74,15 +73,10 @@ impl MessageRouter {
         info!("Chat message received: {} chars", content.len());
         self.connection.set_processing(true).await;
 
-        // PHASE 3 FIX: Use the centralized tool detection logic
+        // Use the eternal session for single-user mode
+        let session_id = "peter-eternal".to_string();
+        
         let result = if should_use_tools(&metadata) {
-            // Use tool-enabled streaming handler
-            // Generate session ID dynamically for each WebSocket session
-            let session_id = format!("ws-{}-{}", 
-                chrono::Utc::now().timestamp(), 
-                self.addr.port()
-            );
-            
             debug!("Routing to tool-enabled handler with session_id: {}", session_id);
             
             handle_chat_message_with_tools(
@@ -94,7 +88,6 @@ impl MessageRouter {
                 session_id,
             ).await
         } else {
-            // Use simple streaming handler
             debug!("Routing to simple chat handler");
             self.handle_simple_chat_message(
                 content,
@@ -106,7 +99,6 @@ impl MessageRouter {
 
         if let Err(e) = result {
             error!("Error handling chat message: {}", e);
-            // FIXED: Added the missing error code parameter
             let _ = self.connection.send_error(
                 &format!("Failed to process message: {}", e), 
                 "PROCESSING_ERROR".to_string()
@@ -116,17 +108,14 @@ impl MessageRouter {
         Ok(())
     }
 
-    /// Handle simple chat messages (non-tool enabled)
+    /// Handle simple chat messages without tool support
     async fn handle_simple_chat_message(
         &self,
         content: String,
         project_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        // Call the simple chat handler from the main chat module
         use super::handle_simple_chat_message;
         
-        // FIXED: Corrected parameter order to match the function signature in mod.rs
-        // Function takes 5 parameters: content, project_id, app_state, sender, last_send_ref
         handle_simple_chat_message(
             content,
             project_id,
@@ -136,19 +125,17 @@ impl MessageRouter {
         ).await
     }
 
-    /// Handle command messages
+    /// Handle system commands like heartbeat/ping
     async fn handle_command_message(
         &self,
         command: String,
         args: Option<serde_json::Value>,
     ) -> Result<(), anyhow::Error> {
-        info!("Command received: {} with args: {:?}", command, args);
+        debug!("Command received: {} with args: {:?}", command, args);
         
-        // Handle specific commands
         match command.as_str() {
             "ping" | "heartbeat" => {
                 debug!("Heartbeat command received");
-                // FIXED: Added the missing detail parameter
                 self.connection.send_status("pong", None).await?;
             }
             _ => {
@@ -173,81 +160,96 @@ impl MessageRouter {
         Ok(())
     }
 
-    /// Handle typing indicator
+    /// Handle typing indicators
     async fn handle_typing_message(
         &self,
         active: bool,
     ) -> Result<(), anyhow::Error> {
         debug!("Typing indicator: {}", if active { "active" } else { "inactive" });
-        // Could broadcast to other clients in a multi-user scenario
         Ok(())
     }
     
-    // Stub handlers for new message types (to be implemented in Phase 2-6)
+    /// Handle project management commands
     async fn handle_project_command(
         &self,
         method: String,
         params: serde_json::Value,
     ) -> Result<(), anyhow::Error> {
         info!("Project command: {} with params: {:?}", method, params);
-        // Phase 4: Implement project operations
         self.connection.send_error("Project commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
         Ok(())
     }
 
+    /// Handle memory operations (save, search, context, etc.)
     async fn handle_memory_command(
         &self,
         method: String,
         params: serde_json::Value,
     ) -> Result<(), anyhow::Error> {
         info!("Memory command: {} with params: {:?}", method, params);
-        // Phase 2: Implement memory operations
-        self.connection.send_error("Memory commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
-        Ok(())
+        
+        match memory::handle_memory_command(&method, params, self.app_state.clone()).await {
+            Ok(response) => {
+                self.connection.send_message(response).await?;
+                Ok(())
+            }
+            Err(e) => {
+                error!("Memory command {} failed: {}", method, e);
+                self.connection.send_error(
+                    &format!("Memory operation '{}' failed: {}", method, e),
+                    "MEMORY_ERROR".to_string()
+                ).await?;
+                Ok(())
+            }
+        }
     }
 
+    /// Handle git repository operations
     async fn handle_git_command(
         &self,
         method: String,
         params: serde_json::Value,
     ) -> Result<(), anyhow::Error> {
         info!("Git command: {} with params: {:?}", method, params);
-        // Phase 5: Implement git operations
         self.connection.send_error("Git commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
         Ok(())
     }
 
+    /// Handle file transfer operations
     async fn handle_file_transfer(
         &self,
         operation: String,
         data: serde_json::Value,
     ) -> Result<(), anyhow::Error> {
         info!("File transfer: {} with data: {:?}", operation, data);
-        // Phase 6: Implement file transfers
         self.connection.send_error("File transfers not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
         Ok(())
     }
 }
 
-/// Determine if tools should be used based on metadata
-/// PHASE 3 FIX: Extracted to a standalone function for clarity
+/// Determines whether to use tool-enabled chat based on metadata and configuration
 pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
-    // Check if metadata indicates tool usage should be enabled
-    if let Some(_meta) = metadata {
-        // You can add more sophisticated logic here based on metadata fields
-        return true;
+    // Use the enable_chat_tools field from CONFIG
+    if !CONFIG.enable_chat_tools {
+        return false;
     }
-    // Default to checking CONFIG
-    CONFIG.enable_chat_tools
+    
+    // For now, default to true when tools are enabled globally
+    // In the future, could check metadata for tool-specific flags
+    true
 }
 
-/// Extract file context from metadata if present
+/// Extracts file context from message metadata if available
 pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
-    // Extract file context from metadata if present
-    if let Some(_meta) = metadata {
-        // You can extract file context from metadata here
-        // For now, return None
-        return None;
-    }
-    None
+    metadata.as_ref().and_then(|meta| {
+        if let Some(file_path) = &meta.file_path {
+            Some(format!("File context from: {}", file_path))
+        } else if let Some(repo_id) = &meta.repo_id {
+            Some(format!("Repository: {}", repo_id))
+        } else if let Some(attachment_id) = &meta.attachment_id {
+            Some(format!("Attachment: {}", attachment_id))
+        } else {
+            None
+        }
+    })
 }
