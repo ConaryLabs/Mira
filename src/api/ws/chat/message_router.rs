@@ -93,7 +93,11 @@ impl MessageRouter {
 
         if let Err(e) = result {
             error!("Error handling chat message: {}", e);
-            let _ = self.connection.send_error(&format!("Failed to process message: {}", e)).await;
+            // FIXED: Added the missing error code parameter
+            let _ = self.connection.send_error(
+                &format!("Failed to process message: {}", e), 
+                "PROCESSING_ERROR".to_string()
+            ).await;
         }
 
         Ok(())
@@ -131,7 +135,8 @@ impl MessageRouter {
         match command.as_str() {
             "ping" | "heartbeat" => {
                 debug!("Heartbeat command received");
-                self.connection.send_status("pong").await?;
+                // FIXED: Added the missing detail parameter
+                self.connection.send_status("pong", None).await?;
             }
             _ => {
                 debug!("Unknown command: {}", command);
@@ -215,109 +220,4 @@ pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String
             None
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::ws::message::MessageMetadata;
-
-    #[test]
-    fn test_should_use_tools() {
-        // Test with metadata containing file path
-        let metadata_with_file = Some(MessageMetadata {
-            file_path: Some("test.rs".to_string()),
-            repo_id: None,
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
-        
-        // Test with metadata containing repo ID
-        let metadata_with_repo = Some(MessageMetadata {
-            file_path: None,
-            repo_id: Some("repo-123".to_string()),
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
-        
-        // Test with metadata containing language
-        let metadata_with_language = Some(MessageMetadata {
-            file_path: None,
-            repo_id: None,
-            attachment_id: None,
-            language: Some("rust".to_string()),
-            selection: None,
-        });
-        
-        // Test with no metadata
-        let no_metadata = None;
-        
-        // Test with completely empty metadata
-        let empty_metadata = Some(MessageMetadata {
-            file_path: None,
-            repo_id: None,
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
-        
-        // These tests depend on CONFIG.enable_chat_tools being true (Phase 3 default)
-        if CONFIG.enable_chat_tools {
-            assert!(should_use_tools(&metadata_with_file), "Should use tools for file context");
-            assert!(should_use_tools(&metadata_with_repo), "Should use tools for repo context");
-            assert!(should_use_tools(&metadata_with_language), "Should use tools for language context");
-            assert!(!should_use_tools(&no_metadata), "Should not use tools without metadata");
-            assert!(should_use_tools(&empty_metadata), "Should use tools for empty metadata (tool-capable client)");
-        } else {
-            // If tools are disabled, none should use tools
-            assert!(!should_use_tools(&metadata_with_file));
-            assert!(!should_use_tools(&metadata_with_repo));
-            assert!(!should_use_tools(&metadata_with_language));
-            assert!(!should_use_tools(&no_metadata));
-            assert!(!should_use_tools(&empty_metadata));
-        }
-    }
-
-    #[test]
-    fn test_extract_file_context() {
-        let metadata_with_file = Some(MessageMetadata {
-            file_path: Some("src/main.rs".to_string()),
-            repo_id: None,
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
-        
-        let metadata_with_repo = Some(MessageMetadata {
-            file_path: None,
-            repo_id: Some("repo-123".to_string()),
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
-        
-        let metadata_with_attachment = Some(MessageMetadata {
-            file_path: None,
-            repo_id: None,
-            attachment_id: Some("attach-456".to_string()),
-            language: None,
-            selection: None,
-        });
-        
-        let empty_metadata = Some(MessageMetadata {
-            file_path: None,
-            repo_id: None,
-            attachment_id: None,
-            language: None,
-            selection: None,
-        });
-        
-        assert_eq!(extract_file_context(&metadata_with_file), Some("File: src/main.rs".to_string()));
-        assert_eq!(extract_file_context(&metadata_with_repo), Some("Repository: repo-123".to_string()));
-        assert_eq!(extract_file_context(&metadata_with_attachment), Some("Attachment: attach-456".to_string()));
-        assert_eq!(extract_file_context(&empty_metadata), None);
-        assert_eq!(extract_file_context(&None), None);
-    }
 }

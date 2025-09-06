@@ -76,8 +76,12 @@ pub enum WsServerMessage {
     },
     
     /// A general status update for the client UI.
+    /// FIXED: Added back the detail field that Gemini removed
     #[serde(rename = "status")]
-    Status { message: String },
+    Status { 
+        message: String,
+        detail: Option<String>,  // FIXED: Re-added this field
+    },
     
     /// An error message.
     #[serde(rename = "error")]

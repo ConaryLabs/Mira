@@ -39,7 +39,8 @@ impl ToolMessageHandler {
     ) -> Result<()> {
         info!("Handling tool message for session {}: {}", session_id, content.chars().take(80).collect::<String>());
 
-        self.connection.send_status("Initializing response...").await?;
+        // FIX: The send_status method only takes one argument.
+        self.connection.send_status("Initializing response...", None).await?;
 
         if !self.executor.tools_enabled() {
             warn!("Tools are not enabled, falling back to a simple response.");
@@ -56,25 +57,24 @@ impl ToolMessageHandler {
                             self.connection.send_message(WsServerMessage::StreamChunk { text: chunk }).await?;
                         }
                         ToolEvent::ToolCallStarted { tool_type, tool_id } => {
-                            self.connection.send_status(&format!("Executing tool: '{}' ({})", tool_type, tool_id)).await?;
+                            let status_detail = format!("Tool '{}' ({}) started.", tool_type, tool_id);
+                            self.connection.send_status("Executing tool...", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallCompleted { tool_type, tool_id, result } => {
                             let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-                            self.connection.send_status(&format!("Tool '{}({})' completed. Result: {}", tool_type, tool_id, result_str)).await?;
+                            let status_detail = format!("Tool '{}' ({}) completed. Result: {}", tool_type, tool_id, result_str);
+                            self.connection.send_status("Tool executed successfully.", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallFailed { tool_type, tool_id, error } => {
-                            self.connection.send_error(&format!("Tool '{}' ({}) failed: {}", tool_type, tool_id, error), "TOOL_FAILED".to_string()).await?;
+                            let err_msg = format!("Tool '{}' ({}) failed: {}", tool_type, tool_id, error);
+                            self.connection.send_error(&err_msg, "TOOL_FAILED".to_string()).await?;
                         }
                         ToolEvent::ImageGenerated { urls, revised_prompt } => {
                             info!("Image generated with {} URLs", urls.len());
                             self.connection.send_message(WsServerMessage::ImageGenerated { urls, revised_prompt }).await?;
                         }
                         ToolEvent::Complete { metadata } => {
-                            let (mood, salience, tags) = if let Some(meta) = metadata {
-                                (meta.mood, meta.salience, meta.tags)
-                            } else {
-                                (None, None, None)
-                            };
+                            let (mood, salience, tags) = if let Some(meta) = metadata { (meta.mood, meta.salience, meta.tags) } else { (None, None, None) };
                             self.connection.send_message(WsServerMessage::Complete { mood, salience, tags }).await?;
                         }
                         ToolEvent::Error(error_msg) => {

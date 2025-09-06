@@ -103,7 +103,8 @@ async fn handle_socket(
                     }
                     Err(e) => {
                         warn!("Failed to parse client message: {} - Text: {}", e, text);
-                        let _ = connection.send_error("Invalid message format").await;
+                        // FIXED: Added the missing error code parameter
+                        let _ = connection.send_error("Invalid message format", "INVALID_FORMAT".to_string()).await;
                     }
                 }
             }
@@ -141,80 +142,74 @@ pub async fn handle_simple_chat_message(
     // FIX: Prefix unused variable with underscore
     let _session_id = "websocket_session".to_string();
 
+    // FIXED: Added the missing 4th parameter (structured_json: bool)
     let stream = start_response_stream(
         &app_state.llm_client,
         &content,
         Some("You are Mira, a helpful AI assistant. Respond conversationally and naturally."),
-        false,
-    ).await?;
+        false,  // structured_json = false for regular chat
+    )
+    .await?;
 
-    handle_stream_response(stream, sender, last_send_ref).await?;
+    tokio::pin!(stream);
 
-    Ok(())
-}
-
-/// Processes a stream of events from the LLM and forwards them to the client.
-async fn handle_stream_response(
-    mut stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>,
-    sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
-    last_send_ref: Arc<Mutex<Instant>>,
-) -> Result<(), anyhow::Error> {
+    // FIXED: The stream returns Result<StreamEvent>, so we need to handle that
     while let Some(event_result) = stream.next().await {
-        match event_result? {
-            StreamEvent::Text(text) | StreamEvent::Delta(text) => {
-                let msg = WsServerMessage::StreamChunk { text };
-                send_ws_message(&msg, &sender).await?;
-                update_last_send(last_send_ref.clone()).await;
+        match event_result {
+            Ok(event) => {
+                match event {
+                    // Handle both Delta and Text variants (they're both text chunks)
+                    StreamEvent::Delta(text) | StreamEvent::Text(text) => {
+                        let msg = WsServerMessage::StreamChunk { text };
+                        let json_str = serde_json::to_string(&msg)?;
+                        sender.lock().await.send(Message::Text(json_str)).await?;
+                        *last_send_ref.lock().await = Instant::now();
+                    }
+                    // Handle completion
+                    StreamEvent::Done { full_text: _, raw: _ } => {
+                        let msg = WsServerMessage::StreamEnd;
+                        let json_str = serde_json::to_string(&msg)?;
+                        sender.lock().await.send(Message::Text(json_str)).await?;
+                        
+                        // Send completion metadata
+                        let complete_msg = WsServerMessage::Complete {
+                            mood: Some("helpful".to_string()),
+                            salience: None,
+                            tags: None,
+                        };
+                        let json_str = serde_json::to_string(&complete_msg)?;
+                        sender.lock().await.send(Message::Text(json_str)).await?;
+                        *last_send_ref.lock().await = Instant::now();
+                        break;
+                    }
+                    // Handle errors from the stream
+                    StreamEvent::Error(e) => {
+                        error!("Stream error: {}", e);
+                        let msg = WsServerMessage::Error {
+                            message: format!("Stream error: {}", e),
+                            code: "STREAM_ERROR".to_string(),
+                        };
+                        let json_str = serde_json::to_string(&msg)?;
+                        sender.lock().await.send(Message::Text(json_str)).await?;
+                        *last_send_ref.lock().await = Instant::now();
+                        break;
+                    }
+                }
             }
-            StreamEvent::Done { .. } => {
-                let end_msg = WsServerMessage::StreamEnd;
-                send_ws_message(&end_msg, &sender).await?;
-                
-                let complete_msg = WsServerMessage::Complete {
-                    mood: Some("helpful".to_string()),
-                    salience: None,
-                    tags: None,
+            Err(e) => {
+                // Handle Result errors from the stream
+                error!("Stream result error: {}", e);
+                let msg = WsServerMessage::Error {
+                    message: format!("Stream processing error: {}", e),
+                    code: "STREAM_RESULT_ERROR".to_string(),
                 };
-                send_ws_message(&complete_msg, &sender).await?;
-                break;
-            }
-            StreamEvent::Error(error_msg) => {
-                error!("Stream error from LLM: {}", error_msg);
-                let msg = WsServerMessage::Error { 
-                    message: format!("Stream error: {}", error_msg),
-                    code: "STREAM_ERROR".to_string(),
-                };
-                send_ws_message(&msg, &sender).await?;
+                let json_str = serde_json::to_string(&msg)?;
+                sender.lock().await.send(Message::Text(json_str)).await?;
+                *last_send_ref.lock().await = Instant::now();
                 break;
             }
         }
     }
-    Ok(())
-}
 
-/// A thread-safe helper to send a serialized message over the WebSocket.
-async fn send_ws_message(
-    msg: &WsServerMessage,
-    sender: &Arc<Mutex<SplitSink<WebSocket, Message>>>,
-) -> Result<(), anyhow::Error> {
-    let json = serde_json::to_string(msg)?;
-    let ws_msg = Message::Text(json);
-    
-    if let Ok(mut sender_lock) = sender.try_lock() {
-        if let Err(e) = sender_lock.send(ws_msg).await {
-            error!("Failed to send WebSocket message: {}", e);
-            return Err(e.into());
-        }
-    } else {
-        warn!("Could not acquire WebSocket sender lock to send message.");
-    }
-    
     Ok(())
-}
-
-/// A thread-safe helper to update the timestamp of the last message sent.
-async fn update_last_send(last_send_ref: Arc<Mutex<Instant>>) {
-    if let Ok(mut last_send) = last_send_ref.try_lock() {
-        *last_send = Instant::now();
-    }
 }

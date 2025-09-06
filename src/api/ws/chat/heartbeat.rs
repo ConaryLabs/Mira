@@ -139,7 +139,8 @@ async fn send_heartbeat(connection: &WebSocketConnection) -> Result<(), anyhow::
     });
     
     debug!("💓 Sending heartbeat");
-    connection.send_status(&heartbeat_msg.to_string()).await
+    // FIXED: Added the missing detail parameter (None)
+    connection.send_status(&heartbeat_msg.to_string(), None).await
 }
 
 /// Statistics for heartbeat monitoring

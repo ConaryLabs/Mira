@@ -8,7 +8,8 @@ use axum::{
     routing::get,
     Router,
 };
-use tokio::sync::Mutex;
+use futures_util::StreamExt;  // FIXED: Added missing import
+// REMOVED: use tokio::sync::Mutex; (unused)
 use tracing::info;
 
 // WebSocket-related modules
@@ -31,7 +32,8 @@ pub use chat_tools::{
     prompt_builder::ToolPromptBuilder,
 };
 pub use message::{MessageMetadata, WsClientMessage, WsServerMessage};
-pub use session_state::{SessionState, SessionStateBuilder};
+// FIXED: Changed from SessionState, SessionStateBuilder to actual types
+pub use session_state::{WsSessionState, WsSessionManager};
 
 use crate::state::AppState;
 
