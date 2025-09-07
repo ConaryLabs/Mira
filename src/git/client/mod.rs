@@ -19,7 +19,7 @@ pub mod branch_manager;
 // Re-export public types for backward compatibility
 pub use operations::GitOperations;
 pub use tree_builder::{FileNode, FileNodeType, TreeBuilder};
-pub use diff_parser::{DiffInfo, FileDiff, DiffStatus, DiffHunk, DiffLine, DiffLineType, DiffParser};
+pub use diff_parser::{DiffInfo, DiffParser};
 pub use branch_manager::{BranchInfo, CommitInfo, BranchManager};
 
 /// Main API for attaching, cloning, importing, and syncing a GitHub repo for a project.

@@ -47,7 +47,7 @@ impl VectorStoreManager {
         info!("Creating vector store for project: {}", project_id);
         
         let req = CreateVectorStoreRequest {
-            name: format!("Project: {}", project_id),
+            name: format!("Project: {project_id}"),
             metadata: Some(serde_json::json!({
                 "project_id": project_id,
                 "created_at": Utc::now().to_rfc3339(),
@@ -131,7 +131,7 @@ impl VectorStoreManager {
         };
 
         self.client
-            .request(Method::POST, &format!("vector_stores/{}/files", store_id))
+            .request(Method::POST, &format!("vector_stores/{store_id}/files"))
             .json(&attach_req)
             .send()
             .await

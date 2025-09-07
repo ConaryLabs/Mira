@@ -152,6 +152,12 @@ pub struct HeartbeatStats {
     pub timeouts: u64,
 }
 
+impl Default for HeartbeatStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeartbeatStats {
     pub fn new() -> Self {
         Self {

@@ -79,7 +79,7 @@ pub async fn handle_file_transfer(
         "cleanup_session" => cleanup_session(data).await,
         _ => {
             error!("Unknown file operation: {}", operation);
-            Err(ApiError::bad_request(format!("Unknown file operation: {}. Valid operations: upload_start, upload_chunk, upload_complete, download_request", operation)))
+            Err(ApiError::bad_request(format!("Unknown file operation: {operation}. Valid operations: upload_start, upload_chunk, upload_complete, download_request")))
         }
     }
 }
@@ -87,7 +87,7 @@ pub async fn handle_file_transfer(
 /// Initialize a new upload session
 async fn start_upload(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UploadStartRequest = serde_json::from_value(data)
-        .map_err(|e| ApiError::bad_request(format!("Invalid upload start request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid upload start request: {e}")))?;
     
     info!("Starting upload for file: {} ({})", request.filename, request.total_size);
     
@@ -138,13 +138,13 @@ async fn start_upload(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsSer
 /// Receive and store a file chunk
 async fn receive_chunk(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UploadChunkRequest = serde_json::from_value(data)
-        .map_err(|e| ApiError::bad_request(format!("Invalid chunk request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid chunk request: {e}")))?;
     
     debug!("Receiving chunk {} for session {}", request.chunk_index, request.session_id);
     
     // Decode the base64 chunk
     let chunk_data = BASE64.decode(&request.chunk)
-        .map_err(|e| ApiError::bad_request(format!("Failed to decode chunk: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Failed to decode chunk: {e}")))?;
     
     let mut sessions = UPLOAD_SESSIONS.write().await;
     let session = sessions.get_mut(&request.session_id)
@@ -202,7 +202,7 @@ async fn receive_chunk(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsSe
 /// Finalize an upload and integrate with the system
 async fn complete_upload(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {  // FIX: Added underscore to unused param
     let request: UploadCompleteRequest = serde_json::from_value(data)
-        .map_err(|e| ApiError::bad_request(format!("Invalid complete request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid complete request: {e}")))?;
     
     let mut sessions = UPLOAD_SESSIONS.write().await;
     let session = sessions.remove(&request.session_id)
@@ -265,7 +265,7 @@ async fn complete_upload(data: Value, _app_state: Arc<AppState>) -> ApiResult<Ws
 /// Handle file download requests
 async fn start_download(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: DownloadRequest = serde_json::from_value(data)
-        .map_err(|e| ApiError::bad_request(format!("Invalid download request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid download request: {e}")))?;
     
     info!("Download request: {:?}", request);
     
@@ -297,7 +297,7 @@ async fn start_download(data: Value, _app_state: Arc<AppState>) -> ApiResult<WsS
         debug!("Fetching file: {}", file_path);
         
         // TODO: Actually read the file
-        let file_content = format!("// File content for: {}\n", file_path).into_bytes();
+        let file_content = format!("// File content for: {file_path}\n").into_bytes();
         let encoded = BASE64.encode(&file_content);
         
         return Ok(WsServerMessage::Data {

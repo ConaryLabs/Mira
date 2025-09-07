@@ -66,7 +66,7 @@ impl OpenAIClient {
         let first = v
             .get("results")
             .and_then(|r| r.as_array())
-            .and_then(|arr| arr.get(0));
+            .and_then(|arr| arr.first());
 
         let flagged = first
             .and_then(|o| o.get("flagged"))

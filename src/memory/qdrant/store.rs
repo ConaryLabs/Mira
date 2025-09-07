@@ -26,7 +26,7 @@ impl QdrantMemoryStore {
         let base_url = url.to_string();
 
         // Ensure collection exists with proper configuration.
-        let collection_url = format!("{}/collections/{}", base_url, collection_name);
+        let collection_url = format!("{base_url}/collections/{collection_name}");
         match client.get(&collection_url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 info!("✅ Qdrant collection '{}' already exists", collection_name);

@@ -109,14 +109,14 @@ impl SqliteMemoryStore {
                 .as_ref()
                 .and_then(|s| serde_json::from_str(s).ok());
             
-            let memory_type_enum = memory_type.as_ref().and_then(|mt| match mt.as_str() {
-                "Feeling" => Some(MemoryType::Feeling),
-                "Fact" => Some(MemoryType::Fact),
-                "Joke" => Some(MemoryType::Joke),
-                "Promise" => Some(MemoryType::Promise),
-                "Event" => Some(MemoryType::Event),
-                "Summary" => Some(MemoryType::Summary),
-                _ => Some(MemoryType::Other),
+            let memory_type_enum = memory_type.as_ref().map(|mt| match mt.as_str() {
+                "Feeling" => MemoryType::Feeling,
+                "Fact" => MemoryType::Fact,
+                "Joke" => MemoryType::Joke,
+                "Promise" => MemoryType::Promise,
+                "Event" => MemoryType::Event,
+                "Summary" => MemoryType::Summary,
+                _ => MemoryType::Other,
             });
             
             MemoryEntry {
@@ -155,7 +155,7 @@ impl MemoryStore for SqliteMemoryStore {
             .as_ref()
             .map(|tags| serde_json::to_string(tags).unwrap_or("[]".to_string()));
 
-        let memory_type_str = entry.memory_type.as_ref().map(|mt| format!("{:?}", mt));
+        let memory_type_str = entry.memory_type.as_ref().map(|mt| format!("{mt:?}"));
         let logprobs_json = entry
             .logprobs
             .as_ref()
@@ -245,14 +245,14 @@ impl MemoryStore for SqliteMemoryStore {
                 .as_ref()
                 .and_then(|s| serde_json::from_str(s).ok());
 
-            let memory_type_enum = memory_type.as_ref().and_then(|mt| match mt.as_str() {
-                "Feeling" => Some(MemoryType::Feeling),
-                "Fact" => Some(MemoryType::Fact),
-                "Joke" => Some(MemoryType::Joke),
-                "Promise" => Some(MemoryType::Promise),
-                "Event" => Some(MemoryType::Event),
-                "Summary" => Some(MemoryType::Summary),
-                _ => Some(MemoryType::Other),
+            let memory_type_enum = memory_type.as_ref().map(|mt| match mt.as_str() {
+                "Feeling" => MemoryType::Feeling,
+                "Fact" => MemoryType::Fact,
+                "Joke" => MemoryType::Joke,
+                "Promise" => MemoryType::Promise,
+                "Event" => MemoryType::Event,
+                "Summary" => MemoryType::Summary,
+                _ => MemoryType::Other,
             });
 
             entries.push(MemoryEntry {
@@ -315,7 +315,7 @@ impl MemoryStore for SqliteMemoryStore {
             .as_ref()
             .map(|tags| serde_json::to_string(tags).unwrap_or("[]".to_string()));
 
-        let memory_type_str = updated.memory_type.as_ref().map(|mt| format!("{:?}", mt));
+        let memory_type_str = updated.memory_type.as_ref().map(|mt| format!("{mt:?}"));
         let logprobs_json = updated
             .logprobs
             .as_ref()

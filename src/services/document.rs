@@ -172,7 +172,7 @@ impl DocumentService {
         // FIXED: Use save_assistant_response instead of deprecated evaluate_and_save_response
         // For project documents, we use a session ID that includes the project
         let session_id = if let Some(pid) = project_id {
-            format!("document-import-{}", pid)
+            format!("document-import-{pid}")
         } else {
             "document-import".to_string()
         };

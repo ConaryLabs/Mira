@@ -25,8 +25,7 @@ impl OpenAIClient {
                     let error_str = e.to_string();
                     if error_str.contains("429") || error_str.contains("5") {
                         let jitter = Duration::from_millis(100 * attempt as u64 + rand::random::<u64>() % 100);
-                        eprintln!("⚠️ Memory evaluation attempt {} failed ({}), retrying after {:?}...", 
-                                 attempt, error_str, jitter);
+                        eprintln!("⚠️ Memory evaluation attempt {attempt} failed ({error_str}), retrying after {jitter:?}...");
                         sleep(jitter).await;
                         continue;
                     }

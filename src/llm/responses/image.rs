@@ -246,16 +246,14 @@ impl ImageOptions {
     /// Validate options against API constraints
     pub fn validate(&self) -> Result<()> {
         if let Some(n) = self.n {
-            if n < 1 || n > 10 {
+            if !(1..=10).contains(&n) {
                 return Err(anyhow::anyhow!("Number of images must be between 1 and 10"));
             }
         }
 
         if let Some(ref size) = self.size {
-            let valid_sizes = vec![
-                "256x256", "512x512", "1024x1024", 
-                "1792x1024", "1024x1792"
-            ];
+            let valid_sizes = ["256x256", "512x512", "1024x1024", 
+                "1792x1024", "1024x1792"];
             if !valid_sizes.contains(&size.as_str()) {
                 return Err(anyhow::anyhow!("Invalid image size: {}", size));
             }

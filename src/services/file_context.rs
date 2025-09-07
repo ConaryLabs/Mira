@@ -61,9 +61,9 @@ impl FileContextService {
             r#"You are analyzing whether a user's message needs the content of a file they're viewing.
 
 Context:
-{}
+{file_info}
 
-User's message: "{}"
+User's message: "{message}"
 
 Analyze if this message is asking about, referring to, or needs the content of the file being viewed.
 
@@ -72,8 +72,7 @@ Respond with JSON:
     "needs_file_content": boolean,
     "confidence": number (0.0-1.0),
     "reasoning": "explanation of why this decision was made"
-}}"#,
-            file_info, message
+}}"#
         );
 
         debug!("Intent detection prompt length: {} chars", prompt.len());
@@ -161,8 +160,7 @@ Respond with JSON:
         let lang = language.unwrap_or("text");
         
         format!(
-            "File: {}\nLanguage: {}\nContent:\n```{}\n{}\n```",
-            file_path, lang, lang, content
+            "File: {file_path}\nLanguage: {lang}\nContent:\n```{lang}\n{content}\n```"
         )
     }
 

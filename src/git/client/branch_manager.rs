@@ -34,6 +34,12 @@ pub struct CommitInfo {
 #[derive(Clone)]
 pub struct BranchManager;
 
+impl Default for BranchManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BranchManager {
     /// Create new branch manager
     pub fn new() -> Self {
@@ -100,7 +106,7 @@ impl BranchManager {
             .into_api_error("Failed to get branch commit")?;
         
         // Set HEAD to point to this branch
-        repo.set_head(&format!("refs/heads/{}", branch_name))
+        repo.set_head(&format!("refs/heads/{branch_name}"))
             .into_api_error("Failed to set HEAD")?;
         
         // Checkout the commit
@@ -196,7 +202,7 @@ impl BranchManager {
         let author_email = author.email().unwrap_or("").to_string();
         
         let timestamp = DateTime::from_timestamp(author.when().seconds(), 0)
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
         
         let parent_ids: Vec<String> = (0..commit.parent_count())
             .map(|i| commit.parent_id(i).map(|oid| oid.to_string()))

@@ -98,7 +98,7 @@ pub async fn batch_evaluate_messages(
         let response_json = loop {
             let response = client
                 .post("https://api.openai.com/v1/responses")
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", format!("Bearer {api_key}"))
                 .header("Content-Type", "application/json")
                 .json(&request_body)
                 .send()
@@ -223,7 +223,7 @@ async fn get_embedding(client: &Client, api_key: &str, text: &str) -> Result<Vec
 
     let response = client
         .post("https://api.openai.com/v1/embeddings")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .json(&request_body)
         .send()

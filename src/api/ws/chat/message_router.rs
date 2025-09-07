@@ -111,7 +111,7 @@ impl MessageRouter {
         if let Err(e) = result {
             error!("Error handling chat message: {}", e);
             let _ = self.connection.send_error(
-                &format!("Failed to process message: {}", e),
+                &format!("Failed to process message: {e}"),
                 "PROCESSING_ERROR".to_string()
             ).await;
         }
@@ -188,7 +188,7 @@ impl MessageRouter {
             }
             Err(api_error) => {
                 // Convert ApiError to appropriate error response
-                let error_msg = format!("{}", api_error);
+                let error_msg = format!("{api_error}");
                 let error_code = self.api_error_to_code(&api_error);
                 
                 error!("Project command failed: {} - {}", error_code, error_msg);
@@ -233,7 +233,7 @@ impl MessageRouter {
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("Memory command failed: {}", e);
+                let error_msg = format!("Memory command failed: {e}");
                 error!("{}", error_msg);
                 
                 if let Some(req_id) = request_id {
@@ -273,7 +273,7 @@ impl MessageRouter {
                 Ok(())
             }
             Err(api_error) => {
-                let error_msg = format!("{}", api_error);
+                let error_msg = format!("{api_error}");
                 let error_code = self.api_error_to_code(&api_error);
                 
                 error!("Git command failed: {} - {}", error_code, error_msg);
@@ -322,7 +322,7 @@ impl MessageRouter {
             }
             Err(api_error) => {
                 // Convert ApiError to appropriate error response
-                let error_msg = format!("{}", api_error);
+                let error_msg = format!("{api_error}");
                 let error_code = self.api_error_to_code(&api_error);
                 
                 error!("File transfer failed: {} - {}", error_code, error_msg);
@@ -398,13 +398,9 @@ pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
 pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
     metadata.as_ref().and_then(|meta| {
         if let Some(file_path) = &meta.file_path {
-            Some(format!("Working with file: {}", file_path))
+            Some(format!("Working with file: {file_path}"))
         } else if let Some(repo_id) = &meta.repo_id {
-            Some(format!("Repository context: {}", repo_id))
-        } else if let Some(attachment_id) = &meta.attachment_id {
-            Some(format!("Attachment: {}", attachment_id))
-        } else {
-            None
-        }
+            Some(format!("Repository context: {repo_id}"))
+        } else { meta.attachment_id.as_ref().map(|attachment_id| format!("Attachment: {attachment_id}")) }
     })
 }

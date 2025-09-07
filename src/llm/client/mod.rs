@@ -19,10 +19,10 @@ pub mod streaming;
 pub mod embedding;
 
 // Re-export types for external use
-pub use config::{ClientConfig, ModelConfig};
+pub use config::ClientConfig;
 pub use responses::{ResponseOutput, extract_text_from_responses};
-pub use streaming::{ResponseStream, StreamProcessor};
-pub use embedding::{EmbeddingClient, EmbeddingModel, EmbeddingUtils};
+pub use streaming::ResponseStream;
+pub use embedding::EmbeddingClient;
 
 /// Main OpenAI client with refactored architecture
 pub struct OpenAIClient {
@@ -51,20 +51,7 @@ impl OpenAIClient {
         }))
     }
 
-    /// Create client with custom configuration
-    pub fn with_config(config: ClientConfig) -> Result<Arc<Self>> {
-        config.validate()?;
-        
-        let embedding_client = EmbeddingClient::new(config.clone());
-
-        Ok(Arc::new(Self {
-            client: ReqwestClient::new(),
-            config,
-            embedding_client,
-        }))
-    }
-
-    // Configuration getters (preserved for compatibility)
+    // Configuration getters
     pub fn model(&self) -> &str {
         self.config.model()
     }
@@ -117,7 +104,7 @@ impl OpenAIClient {
         self.post_response_stream(body).await
     }
 
-    /// Conversation summarization (preserved for compatibility)
+    /// Conversation summarization
     pub async fn summarize_conversation(
         &self,
         prompt: &str,
@@ -148,9 +135,7 @@ impl OpenAIClient {
             .ok_or_else(|| anyhow::anyhow!("Failed to extract summarization response"))
     }
 
-    /// CRITICAL FIX #2: Classifies text using GPT-5 Responses API with JSON mode
-    /// Was: Using GPT-4o with old chat/completions endpoint
-    /// Now: Using GPT-5 with /responses endpoint and proper parameters from config
+    /// Classifies text using GPT-5 Responses API with JSON mode
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
         info!("🔍 Classifying text with GPT-5 Responses API");
         
@@ -167,7 +152,6 @@ impl OpenAIClient {
             Be concise and accurate. Use minimal reasoning.
         "#;
 
-        // Build the GPT-5 Responses API request using centralized config
         let request_body = json!({
             "model": CONFIG.gpt5_model,
             "input": [{
@@ -195,15 +179,12 @@ impl OpenAIClient {
             CONFIG.get_verbosity_for("classification")
         );
 
-        // Make the API call to /responses endpoint
         let response = self.post_response(request_body).await
-            .map_err(|e| ApiError::internal(format!("Classification request failed: {}", e)))?;
+            .map_err(|e| ApiError::internal(format!("Classification request failed: {e}")))?;
 
-        // Extract the text content from the response
         let content = responses::extract_text_from_responses(&response)
             .ok_or_else(|| ApiError::internal("No content in classification response"))?;
 
-        // Parse the JSON classification
         serde_json::from_str::<Classification>(&content)
             .map_err(|e| {
                 error!("Failed to parse classification JSON: {}\nRaw content: {}", e, content);
@@ -211,11 +192,11 @@ impl OpenAIClient {
             })
     }
 
-    /// Raw HTTP POST to the Responses API - Made public for ResponsesManager
+    /// Raw HTTP POST to the Responses API
     pub async fn post_response(&self, body: Value) -> Result<Value> {
         let response = self
             .client
-            .post(&format!("{}/v1/responses", &self.config.base_url()))
+            .post(format!("{}/v1/responses", &self.config.base_url()))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
@@ -232,35 +213,12 @@ impl OpenAIClient {
         Ok(response_data)
     }
 
-    /// Raw HTTP POST to streaming Responses API - Made public for ResponsesManager
+    /// Raw HTTP POST to streaming Responses API
     pub async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
         streaming::create_sse_stream(&self.client, &self.config, body).await
     }
 
-    /// Stream responses (preserved for compatibility)
-    async fn post_response_stream_internal(&self, body: Value) -> Result<ResponseStream> {
-        let req = self
-            .client
-            .post(&format!("{}/v1/responses", self.config.base_url()))
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::ACCEPT, "text/event-stream")
-            .json(&body);
-
-        let resp = req.send().await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let error_text = resp.text().await.unwrap_or_else(|_| "<no body>".into());
-            return Err(anyhow::anyhow!("OpenAI API error ({}): {}", status, error_text));
-        }
-
-        let bytes_stream = resp.bytes_stream();
-        let stream = streaming::sse_json_stream(bytes_stream);
-        Ok(Box::pin(stream))
-    }
-
-    /// Generic request builder (preserved for compatibility)
+    /// Generic request builder - Used by other LLM subsystems
     pub fn request(&self, method: reqwest::Method, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, format!("{}/v1/{}", self.config.base_url(), endpoint))
@@ -268,14 +226,14 @@ impl OpenAIClient {
             .header(header::CONTENT_TYPE, "application/json")
     }
 
-    /// Multipart request builder (preserved for compatibility)
+    /// Multipart request builder - Used for file uploads
     pub fn request_multipart(&self, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .post(format!("{}/v1/{}", self.config.base_url(), endpoint))
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
     }
 
-    /// Get embeddings for text - Fixed method name
+    /// Get embeddings for text
     pub async fn get_embeddings(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         self.embedding_client.get_embeddings_batch(texts).await
     }
@@ -293,25 +251,5 @@ impl OpenAIClient {
     /// Get reference to embedding client
     pub fn embedding_client(&self) -> &EmbeddingClient {
         &self.embedding_client
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_client_creation() {
-        // Test with environment variables
-        std::env::set_var("OPENAI_API_KEY", "test-key");
-        
-        let client_result = OpenAIClient::new();
-        assert!(client_result.is_ok());
-        
-        let client = client_result.unwrap();
-        // This test confirms client initializes; model details are in config tests
-        assert_eq!(client.config().api_key(), "test-key");
-
-        std::env::remove_var("OPENAI_API_KEY");
     }
 }

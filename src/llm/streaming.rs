@@ -185,12 +185,11 @@ pub async fn stream_response(
                                             if structured_json {
                                                 let mut jb = json_buf.lock().await;
                                                 jb.push_str(txt);
-                                                if try_parse_complete_json(&jb) {
-                                                    if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                                                if try_parse_complete_json(&jb)
+                                                    && !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
                                                         info!("Structured JSON became parseable (content_part.added)");
                                                         return Ok(Some(StreamEvent::Delta(jb.clone())));
                                                     }
-                                                }
                                                 return Ok(None);
                                             } else {
                                                 return Ok(Some(StreamEvent::Text(txt.to_string())));
@@ -205,12 +204,11 @@ pub async fn stream_response(
                                     debug!("output_item.done");
                                     if structured_json {
                                         let jb = json_buf.lock().await;
-                                        if !jb.is_empty() && try_parse_complete_json(&jb) {
-                                            if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                                        if !jb.is_empty() && try_parse_complete_json(&jb)
+                                            && !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
                                                 info!("Emitting buffered JSON at output_item.done");
                                                 return Ok(Some(StreamEvent::Delta(jb.clone())));
                                             }
-                                        }
                                     }
                                     Ok(None)
                                 }
@@ -220,17 +218,16 @@ pub async fn stream_response(
                                     info!("Response complete");
                                     if structured_json {
                                         let jb = json_buf.lock().await;
-                                        if !jb.is_empty() && try_parse_complete_json(&jb) {
-                                            if !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                                        if !jb.is_empty() && try_parse_complete_json(&jb)
+                                            && !json_announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
                                                 info!("Emitting buffered JSON at response.done");
                                                 // Emit once before Done so the UI can record the JSON payload early.
                                                 // The Done below still carries full_text.
                                                 return Ok(Some(StreamEvent::Delta(jb.clone())));
                                             }
-                                        }
                                     }
                                     let full = raw_text.lock().await.clone();
-                                    return Ok(Some(StreamEvent::Done { full_text: full, raw: Some(v) }));
+                                    Ok(Some(StreamEvent::Done { full_text: full, raw: Some(v) }))
                                 }
 
                                 // Everything else — ignore.

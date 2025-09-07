@@ -97,7 +97,7 @@ pub async fn handle_project_command(
         
         _ => {
             error!("Unknown project method: {}", method);
-            return Err(ApiError::bad_request(format!("Unknown project method: {}", method)));
+            return Err(ApiError::bad_request(format!("Unknown project method: {method}")));
         }
     };
     
@@ -113,7 +113,7 @@ pub async fn handle_project_command(
 
 async fn create_project(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: CreateProjectRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid create project request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid create project request: {e}")))?;
     
     info!("Creating project: {}", request.name);
     
@@ -129,7 +129,7 @@ async fn create_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
             Some("peter".to_string()), // Single-user mode
         )
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to create project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to create project: {e}")))?;
     
     info!("Project created successfully: {}", project.id);
     
@@ -148,7 +148,7 @@ async fn list_projects(app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let projects = app_state.project_store
         .list_projects()
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to list projects: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to list projects: {e}")))?;
     
     let mut project_list = Vec::new();
     for project in projects {
@@ -175,14 +175,14 @@ async fn list_projects(app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
 
 async fn get_project(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: GetProjectRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid get project request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid get project request: {e}")))?;
     
     debug!("Getting project: {}", request.id);
     
     let project = app_state.project_store
         .get_project(&request.id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to get project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get project: {e}")))?;
     
     match project {
         Some(p) => {
@@ -206,7 +206,7 @@ async fn get_project(params: Value, app_state: Arc<AppState>) -> ApiResult<WsSer
 
 async fn update_project(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UpdateProjectRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid update project request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid update project request: {e}")))?;
     
     info!("Updating project: {}", request.id);
     
@@ -228,7 +228,7 @@ async fn update_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
             request.tags,
         )
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to update project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to update project: {e}")))?;
     
     match project {
         Some(p) => {
@@ -247,14 +247,14 @@ async fn update_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
 
 async fn delete_project(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: DeleteProjectRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid delete project request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid delete project request: {e}")))?;
     
     info!("Deleting project: {}", request.id);
     
     let artifacts = app_state.project_store
         .list_project_artifacts(&request.id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to check artifacts: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to check artifacts: {e}")))?;
     
     if !artifacts.is_empty() {
         warn!("Deleting project {} with {} artifacts", request.id, artifacts.len());
@@ -263,7 +263,7 @@ async fn delete_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     let deleted = app_state.project_store
         .delete_project(&request.id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to delete project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to delete project: {e}")))?;
     
     if deleted {
         info!("Project deleted successfully: {}", request.id);
@@ -283,7 +283,7 @@ async fn delete_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
 
 async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: CreateArtifactRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid create artifact request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid create artifact request: {e}")))?;
     
     info!("Creating artifact: {} for project: {}", request.name, request.project_id);
     
@@ -294,7 +294,7 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to verify project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to verify project: {e}")))?;
     
     if project.is_none() {
         return Err(ApiError::not_found(format!("Project not found: {}", request.project_id)));
@@ -320,7 +320,7 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
             request.content,
         )
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to create artifact: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to create artifact: {e}")))?;
     
     info!("Artifact created successfully: {}", artifact.id);
     
@@ -335,14 +335,14 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
 
 async fn get_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: GetArtifactRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid get artifact request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid get artifact request: {e}")))?;
     
     debug!("Getting artifact: {}", request.id);
     
     let artifact = app_state.project_store
         .get_artifact(&request.id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to get artifact: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get artifact: {e}")))?;
     
     match artifact {
         Some(a) => {
@@ -360,7 +360,7 @@ async fn get_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<WsSe
 
 async fn update_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UpdateArtifactRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid update artifact request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid update artifact request: {e}")))?;
     
     info!("Updating artifact: {}", request.id);
     
@@ -381,7 +381,7 @@ async fn update_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
             request.content,
         )
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to update artifact: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to update artifact: {e}")))?;
     
     match artifact {
         Some(a) => {
@@ -400,14 +400,14 @@ async fn update_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
 
 async fn delete_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: DeleteArtifactRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid delete artifact request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid delete artifact request: {e}")))?;
     
     info!("Deleting artifact: {}", request.id);
     
     let deleted = app_state.project_store
         .delete_artifact(&request.id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to delete artifact: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to delete artifact: {e}")))?;
     
     if deleted {
         info!("Artifact deleted successfully: {}", request.id);
@@ -425,14 +425,14 @@ async fn delete_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
 
 async fn list_artifacts(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: ListArtifactsRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid list artifacts request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid list artifacts request: {e}")))?;
     
     debug!("Listing artifacts for project: {}", request.project_id);
     
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to verify project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to verify project: {e}")))?;
     
     if project.is_none() {
         return Err(ApiError::not_found(format!("Project not found: {}", request.project_id)));
@@ -441,7 +441,7 @@ async fn list_artifacts(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     let artifacts = app_state.project_store
         .list_project_artifacts(&request.project_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to list artifacts: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to list artifacts: {e}")))?;
     
     info!("Found {} artifacts for project {}", artifacts.len(), request.project_id);
     
@@ -492,7 +492,7 @@ async fn validate_project_access(
     let project = app_state.project_store
         .get_project(project_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to get project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get project: {e}")))?;
     
     match project {
         Some(p) => {
@@ -500,6 +500,6 @@ async fn validate_project_access(
             // In multi-user mode, check p.owner == user
             Ok(p)
         }
-        None => Err(ApiError::not_found(format!("Project not found: {}", project_id)))
+        None => Err(ApiError::not_found(format!("Project not found: {project_id}")))
     }
 }

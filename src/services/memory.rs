@@ -348,7 +348,7 @@ impl MemoryService {
                 new_tags.push(format!("lang:{}", classification.lang));
             }
             for topic in classification.topics {
-                new_tags.push(format!("topic:{}", topic));
+                new_tags.push(format!("topic:{topic}"));
             }
             entry.tags = Some(new_tags);
         }
@@ -483,8 +483,7 @@ impl MemoryService {
         
         // Generate summary
         let summary_prompt = format!(
-            "Create a concise rolling summary of the last {} messages:\n\n{}",
-            window_size, content
+            "Create a concise rolling summary of the last {window_size} messages:\n\n{content}"
         );
         
         let summary = self.llm_client.summarize_conversation(&summary_prompt, 500).await?;
@@ -542,8 +541,7 @@ impl MemoryService {
         }
         
         let summary_prompt = format!(
-            "Create a concise summary of the following conversation:\n\n{}",
-            context_text
+            "Create a concise summary of the following conversation:\n\n{context_text}"
         );
         
         // Generate summary

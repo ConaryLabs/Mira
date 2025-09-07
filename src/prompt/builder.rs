@@ -37,7 +37,7 @@ pub fn build_system_prompt(persona: &PersonaOverlay, context: &RecallContext) ->
        for entry in recent_reversed.iter().take(10) {  // Include up to 10 recent messages
            prompt.push_str(&format!("[{}] {}\n", entry.role, entry.content));
        }
-       prompt.push_str("\n");
+       prompt.push('\n');
    }
    
    // 5. Add specific memory summaries if we have significant semantic matches
@@ -51,14 +51,14 @@ pub fn build_system_prompt(persona: &PersonaOverlay, context: &RecallContext) ->
            prompt.push_str("Key moments from our past that might be relevant:\n");
            for memory in significant_memories {
                if let Some(summary) = &memory.summary {
-                   prompt.push_str(&format!("- {}\n", summary));
+                   prompt.push_str(&format!("- {summary}\n"));
                } else {
                    // Use first sentence if no summary
                    let first_sentence = memory.content.split('.').next().unwrap_or(&memory.content);
-                   prompt.push_str(&format!("- {}\n", first_sentence));
+                   prompt.push_str(&format!("- {first_sentence}\n"));
                }
            }
-           prompt.push_str("\n");
+           prompt.push('\n');
        }
    }
    

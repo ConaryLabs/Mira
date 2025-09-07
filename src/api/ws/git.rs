@@ -117,7 +117,7 @@ pub async fn handle_git_command(
         
         _ => {
             error!("Unknown git method: {}", method);
-            return Err(ApiError::bad_request(format!("Unknown git method: {}", method)));
+            return Err(ApiError::bad_request(format!("Unknown git method: {method}")));
         }
     };
     
@@ -133,7 +133,7 @@ pub async fn handle_git_command(
 
 async fn attach_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: AttachRepoRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid attach repo request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid attach repo request: {e}")))?;
     
     info!("Attaching repository {} to project {}", request.repo_url, request.project_id);
     
@@ -141,7 +141,7 @@ async fn attach_repository(params: Value, app_state: Arc<AppState>) -> ApiResult
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to verify project: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to verify project: {e}")))?;
     
     if project.is_none() {
         return Err(ApiError::not_found(format!("Project not found: {}", request.project_id)));
@@ -151,7 +151,7 @@ async fn attach_repository(params: Value, app_state: Arc<AppState>) -> ApiResult
     let attachment = app_state.git_client
         .attach_repo(&request.project_id, &request.repo_url)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to attach repository: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to attach repository: {e}")))?;
     
     info!("Repository attached successfully: {}", attachment.id);
     
@@ -166,14 +166,14 @@ async fn attach_repository(params: Value, app_state: Arc<AppState>) -> ApiResult
 
 async fn list_repositories(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: ListReposRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid list repos request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid list repos request: {e}")))?;
     
     debug!("Listing repositories for project: {}", request.project_id);
     
     let attachments = app_state.git_store
         .get_attachments_for_project(&request.project_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to list repositories: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to list repositories: {e}")))?;
     
     info!("Found {} repositories for project {}", attachments.len(), request.project_id);
     
@@ -189,7 +189,7 @@ async fn list_repositories(params: Value, app_state: Arc<AppState>) -> ApiResult
 
 async fn clone_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: CloneRepoRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid clone repo request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid clone repo request: {e}")))?;
     
     info!("Cloning repository: {}", request.attachment_id);
     
@@ -200,7 +200,7 @@ async fn clone_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<
     app_state.git_client
         .clone_repo(&attachment)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to clone repository: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to clone repository: {e}")))?;
     
     info!("Repository cloned successfully: {}", attachment.id);
     
@@ -216,7 +216,7 @@ async fn clone_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<
 
 async fn import_codebase(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: ImportCodebaseRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid import request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid import request: {e}")))?;
     
     info!("Importing codebase for repository: {}", request.attachment_id);
     
@@ -226,7 +226,7 @@ async fn import_codebase(params: Value, app_state: Arc<AppState>) -> ApiResult<W
     app_state.git_client
         .import_codebase(&attachment)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to import codebase: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to import codebase: {e}")))?;
     
     info!("Codebase imported successfully: {}", attachment.id);
     
@@ -242,7 +242,7 @@ async fn import_codebase(params: Value, app_state: Arc<AppState>) -> ApiResult<W
 
 async fn sync_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: SyncRepoRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid sync request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid sync request: {e}")))?;
     
     info!("Syncing repository: {}", request.attachment_id);
     
@@ -256,7 +256,7 @@ async fn sync_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<W
     app_state.git_client
         .sync_changes(&attachment, &request.commit_message)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to sync repository: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to sync repository: {e}")))?;
     
     info!("Repository synced successfully: {}", attachment.id);
     
@@ -274,7 +274,7 @@ async fn sync_repository(params: Value, app_state: Arc<AppState>) -> ApiResult<W
 
 async fn list_branches(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: ListBranchesRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid list branches request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid list branches request: {e}")))?;
     
     debug!("Listing branches for repository: {}", request.attachment_id);
     
@@ -282,7 +282,7 @@ async fn list_branches(params: Value, app_state: Arc<AppState>) -> ApiResult<WsS
     
     let branches = app_state.git_client
         .get_branches(&attachment)
-        .map_err(|e| ApiError::internal(format!("Failed to get branches: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get branches: {e}")))?;
     
     info!("Found {} branches", branches.len());
     
@@ -298,7 +298,7 @@ async fn list_branches(params: Value, app_state: Arc<AppState>) -> ApiResult<WsS
 
 async fn switch_branch(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: SwitchBranchRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid switch branch request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid switch branch request: {e}")))?;
     
     info!("Switching to branch {} in repository {}", request.branch_name, request.attachment_id);
     
@@ -306,7 +306,7 @@ async fn switch_branch(params: Value, app_state: Arc<AppState>) -> ApiResult<WsS
     
     app_state.git_client
         .switch_branch(&attachment, &request.branch_name)
-        .map_err(|e| ApiError::internal(format!("Failed to switch branch: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to switch branch: {e}")))?;
     
     info!("Switched to branch: {}", request.branch_name);
     
@@ -324,7 +324,7 @@ async fn switch_branch(params: Value, app_state: Arc<AppState>) -> ApiResult<WsS
 
 async fn list_commits(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: ListCommitsRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid list commits request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid list commits request: {e}")))?;
     
     debug!("Listing commits for repository: {}", request.attachment_id);
     
@@ -333,7 +333,7 @@ async fn list_commits(params: Value, app_state: Arc<AppState>) -> ApiResult<WsSe
     
     let commits = app_state.git_client
         .get_commits(&attachment, limit)
-        .map_err(|e| ApiError::internal(format!("Failed to get commits: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get commits: {e}")))?;
     
     info!("Found {} commits", commits.len());
     
@@ -349,7 +349,7 @@ async fn list_commits(params: Value, app_state: Arc<AppState>) -> ApiResult<WsSe
 
 async fn get_commit_diff(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: GetDiffRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid diff request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid diff request: {e}")))?;
     
     debug!("Getting diff for commit {} in repository {}", request.commit_id, request.attachment_id);
     
@@ -357,7 +357,7 @@ async fn get_commit_diff(params: Value, app_state: Arc<AppState>) -> ApiResult<W
     
     let diff = app_state.git_client
         .get_diff(&attachment, &request.commit_id)
-        .map_err(|e| ApiError::internal(format!("Failed to get diff: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get diff: {e}")))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -373,7 +373,7 @@ async fn get_commit_diff(params: Value, app_state: Arc<AppState>) -> ApiResult<W
 
 async fn list_files(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: ListFilesRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid list files request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid list files request: {e}")))?;
     
     debug!("Listing files for repository: {}", request.attachment_id);
     
@@ -381,7 +381,7 @@ async fn list_files(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
     
     let file_tree = app_state.git_client
         .get_file_tree(&attachment)
-        .map_err(|e| ApiError::internal(format!("Failed to get file tree: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get file tree: {e}")))?;
     
     info!("Retrieved file tree with {} top-level items", file_tree.len());
     
@@ -397,7 +397,7 @@ async fn list_files(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
 
 async fn get_file_content(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: GetFileRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid get file request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid get file request: {e}")))?;
     
     debug!("Getting file {} from repository {}", request.file_path, request.attachment_id);
     
@@ -405,7 +405,7 @@ async fn get_file_content(params: Value, app_state: Arc<AppState>) -> ApiResult<
     
     let content = app_state.git_client
         .get_file_content(&attachment, &request.file_path)
-        .map_err(|e| ApiError::internal(format!("Failed to get file content: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to get file content: {e}")))?;
     
     // Detect language from file extension
     let language = detect_language(&request.file_path);
@@ -424,7 +424,7 @@ async fn get_file_content(params: Value, app_state: Arc<AppState>) -> ApiResult<
 
 async fn update_file_content(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UpdateFileRequest = serde_json::from_value(params)
-        .map_err(|e| ApiError::bad_request(format!("Invalid update file request: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid update file request: {e}")))?;
     
     info!("Updating file {} in repository {}", request.file_path, request.attachment_id);
     
@@ -437,7 +437,7 @@ async fn update_file_content(params: Value, app_state: Arc<AppState>) -> ApiResu
             &request.content,
             request.commit_message.as_deref()
         )
-        .map_err(|e| ApiError::internal(format!("Failed to update file: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Failed to update file: {e}")))?;
     
     info!("File updated successfully: {}", request.file_path);
     
@@ -461,8 +461,8 @@ async fn get_validated_attachment(
     app_state.git_store
         .get_attachment(attachment_id)
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?
-        .ok_or_else(|| ApiError::not_found(format!("Repository attachment not found: {}", attachment_id)))
+        .map_err(|e| ApiError::internal(format!("Failed to get attachment: {e}")))?
+        .ok_or_else(|| ApiError::not_found(format!("Repository attachment not found: {attachment_id}")))
 }
 
 /// Converts attachment to JSON representation

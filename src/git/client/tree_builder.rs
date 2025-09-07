@@ -30,6 +30,12 @@ pub enum FileNodeType {
 #[derive(Clone)]
 pub struct TreeBuilder;
 
+impl Default for TreeBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeBuilder {
     /// Create new tree builder
     pub fn new() -> Self {
@@ -54,7 +60,7 @@ impl TreeBuilder {
             let path = if root.is_empty() {
                 name.clone()
             } else {
-                format!("{}/{}", root, name)
+                format!("{root}/{name}")
             };
 
             let node_type = if entry.kind() == Some(git2::ObjectType::Tree) {

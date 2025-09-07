@@ -188,7 +188,7 @@ impl ResponsesManager {
                 usage.total_tokens,
                 usage
                     .reasoning_tokens
-                    .map(|r| format!(", Reasoning: {}", r))
+                    .map(|r| format!(", Reasoning: {r}"))
                     .unwrap_or_default()
             );
         }

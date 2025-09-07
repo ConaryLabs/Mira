@@ -20,8 +20,6 @@ pub mod memory;
 pub mod project;
 pub mod git;    // PHASE 5: Git operations handler
 pub mod files;  // PHASE 6: File transfer handler
-pub mod session_state;
-
 // Re-export key components for external access
 pub use chat::ws_chat_handler;
          // PHASE 5: Export git command handler
@@ -39,6 +37,12 @@ pub fn ws_router(app_state: Arc<AppState>) -> Router {
 /// Manages WebSocket connections and shared state
 pub struct WsManager {
     // Placeholder for future shared connection state
+}
+
+impl Default for WsManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WsManager {

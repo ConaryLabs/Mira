@@ -132,14 +132,14 @@ macro_rules! internal_error {
     ($msg:expr) => {
         {
             tracing::error!($msg);
-            crate::api::error::ApiError::internal($msg)
+            $crate::api::error::ApiError::internal($msg)
         }
     };
     ($msg:expr, $($arg:tt)*) => {
         {
             let formatted_msg = format!($msg, $($arg)*);
             tracing::error!("{}", formatted_msg);
-            crate::api::error::ApiError::internal(formatted_msg)
+            $crate::api::error::ApiError::internal(formatted_msg)
         }
     };
 }
@@ -152,7 +152,7 @@ macro_rules! map_internal_error {
         $result.map_err(|e| {
             let error_msg = format!("{}: {:?}", $msg, e);
             tracing::error!("{}", error_msg);
-            crate::api::error::ApiError::internal($msg)
+            $crate::api::error::ApiError::internal($msg)
         })
     };
 }
@@ -197,46 +197,46 @@ impl<T> IntoApiErrorOption<T> for Option<T> {
 
 /// Helper function for database operation errors
 pub fn db_error(operation: &str, error: impl std::fmt::Debug) -> ApiError {
-    let message = format!("Database error during {}", operation);
+    let message = format!("Database error during {operation}");
     error!("{}: {:?}", message, error);
     ApiError::internal(message)
 }
 
 /// Helper function for file system operation errors
 pub fn fs_error(operation: &str, error: impl std::fmt::Debug) -> ApiError {
-    let message = format!("File system error during {}", operation);
+    let message = format!("File system error during {operation}");
     error!("{}: {:?}", message, error);
     ApiError::internal(message)
 }
 
 /// Helper function for git operation errors
 pub fn git_error(operation: &str, error: impl std::fmt::Debug) -> ApiError {
-    let message = format!("Git operation failed: {}", operation);
+    let message = format!("Git operation failed: {operation}");
     error!("{}: {:?}", message, error);
     ApiError::internal(message)
 }
 
 /// Helper function for serialization/deserialization errors
 pub fn serde_error(operation: &str, error: impl std::fmt::Debug) -> ApiError {
-    let message = format!("Serialization error during {}", operation);
+    let message = format!("Serialization error during {operation}");
     error!("{}: {:?}", message, error);
     ApiError::bad_request(message)
 }
 
 /// Helper function for validation errors
 pub fn validation_error(field: &str, reason: &str) -> ApiError {
-    let message = format!("Validation failed for {}: {}", field, reason);
+    let message = format!("Validation failed for {field}: {reason}");
     ApiError::bad_request(message)
 }
 
 /// Helper function for missing parameter errors
 pub fn missing_param_error(param_name: &str) -> ApiError {
-    ApiError::bad_request(format!("Missing required parameter: {}", param_name))
+    ApiError::bad_request(format!("Missing required parameter: {param_name}"))
 }
 
 /// Helper function for invalid parameter errors
 pub fn invalid_param_error(param_name: &str, reason: &str) -> ApiError {
-    ApiError::bad_request(format!("Invalid parameter '{}': {}", param_name, reason))
+    ApiError::bad_request(format!("Invalid parameter '{param_name}': {reason}"))
 }
 
 #[cfg(test)]

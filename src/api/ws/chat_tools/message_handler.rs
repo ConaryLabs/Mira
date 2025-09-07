@@ -57,16 +57,16 @@ impl ToolMessageHandler {
                             self.connection.send_message(WsServerMessage::StreamChunk { text: chunk }).await?;
                         }
                         ToolEvent::ToolCallStarted { tool_type, tool_id } => {
-                            let status_detail = format!("Tool '{}' ({}) started.", tool_type, tool_id);
+                            let status_detail = format!("Tool '{tool_type}' ({tool_id}) started.");
                             self.connection.send_status("Executing tool...", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallCompleted { tool_type, tool_id, result } => {
                             let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-                            let status_detail = format!("Tool '{}' ({}) completed. Result: {}", tool_type, tool_id, result_str);
+                            let status_detail = format!("Tool '{tool_type}' ({tool_id}) completed. Result: {result_str}");
                             self.connection.send_status("Tool executed successfully.", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallFailed { tool_type, tool_id, error } => {
-                            let err_msg = format!("Tool '{}' ({}) failed: {}", tool_type, tool_id, error);
+                            let err_msg = format!("Tool '{tool_type}' ({tool_id}) failed: {error}");
                             self.connection.send_error(&err_msg, "TOOL_FAILED".to_string()).await?;
                         }
                         ToolEvent::ImageGenerated { urls, revised_prompt } => {
@@ -89,7 +89,7 @@ impl ToolMessageHandler {
                 Ok(())
             }
             Err(e) => {
-                let error_message = format!("Tool execution failed: {}", e);
+                let error_message = format!("Tool execution failed: {e}");
                 error!("{}", error_message);
                 self.connection.send_error(&error_message, "TOOL_EXEC_ERROR".to_string()).await?;
                 Err(e)
@@ -100,7 +100,7 @@ impl ToolMessageHandler {
     /// Fallback handler for sending a simple response when tools are disabled.
     async fn handle_simple_response(&self, content: String) -> Result<()> {
         info!("Handling simple response because tools are disabled.");
-        let response_content = format!("Tools are currently disabled. You said: {}", content);
+        let response_content = format!("Tools are currently disabled. You said: {content}");
         self.connection.send_message(WsServerMessage::StreamChunk { text: response_content }).await?;
         self.connection.send_message(WsServerMessage::Complete { 
             mood: Some("informative".to_string()), 

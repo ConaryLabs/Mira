@@ -63,6 +63,12 @@ pub enum DiffLineType {
 #[derive(Clone)]
 pub struct DiffParser;
 
+impl Default for DiffParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiffParser {
     /// Create new diff parser
     pub fn new() -> Self {
@@ -279,7 +285,7 @@ impl DiffParser {
         }
 
         Ok(DiffInfo {
-            commit_id: format!("{}..{}", from_commit, to_commit),
+            commit_id: format!("{from_commit}..{to_commit}"),
             files_changed: files,
             additions: total_additions,
             deletions: total_deletions,

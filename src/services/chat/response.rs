@@ -236,9 +236,9 @@ impl ResponseProcessor {
 
     fn build_metadata_request(&self, content: &str, instructions: &str, continuation: Option<&str>) -> Value {
         let prompt = if let Some(existing_json) = continuation {
-            format!("The previous response was truncated. Please continue generating the JSON from this point:\n\n{}", existing_json)
+            format!("The previous response was truncated. Please continue generating the JSON from this point:\n\n{existing_json}")
         } else {
-            format!("Analyze this AI response and provide structured metadata:\n\n{}\n\n{}", content, instructions)
+            format!("Analyze this AI response and provide structured metadata:\n\n{content}\n\n{instructions}")
         };
         json!({
             "model": CONFIG.gpt5_model,

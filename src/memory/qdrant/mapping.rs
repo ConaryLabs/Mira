@@ -18,7 +18,7 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
         "salience": entry.salience,
         "tags": entry.tags,
         "summary": entry.summary,
-        "memory_type": entry.memory_type.as_ref().map(|mt| format!("{:?}", mt)),
+        "memory_type": entry.memory_type.as_ref().map(|mt| format!("{mt:?}")),
         "logprobs": entry.logprobs,
         "moderation_flag": entry.moderation_flag,
         "system_fingerprint": entry.system_fingerprint,

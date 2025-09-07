@@ -6,8 +6,7 @@ use anyhow::Error;
 /// Uses the LLM to rate how emotionally complex or weighty a message is, from 0.0 (not emotional) to 1.0 (maximum).
 pub async fn classify(client: &OpenAIClient, message: &str) -> Result<f32, Error> {
     let prompt = format!(
-        "On a scale from 0.0 (not emotional) to 1.0 (maximum emotional depth), rate the emotional complexity of the following message:\n\n\"{}\"\n\nOnly reply with a single number.",
-        message
+        "On a scale from 0.0 (not emotional) to 1.0 (maximum emotional depth), rate the emotional complexity of the following message:\n\n\"{message}\"\n\nOnly reply with a single number."
     );
 
     // Build a minimal system prompt for this specific task

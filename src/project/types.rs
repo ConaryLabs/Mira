@@ -59,7 +59,7 @@ impl std::str::FromStr for ArtifactType {
             "log" => Ok(ArtifactType::Log),
             "note" => Ok(ArtifactType::Note),
             "markdown" => Ok(ArtifactType::Markdown),
-            _ => Err(format!("Unknown artifact type: {}", s)),
+            _ => Err(format!("Unknown artifact type: {s}")),
         }
     }
 }

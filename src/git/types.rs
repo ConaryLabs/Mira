@@ -55,7 +55,7 @@ impl fmt::Display for GitImportStatus {
             GitImportStatus::Imported => "imported",
             GitImportStatus::Synced => "synced",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 

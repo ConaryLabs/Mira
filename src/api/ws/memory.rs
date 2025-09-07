@@ -214,7 +214,7 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
           session_id, request.query);
     
     let max_results = request.max_results.unwrap_or(10);
-    let min_salience = request.min_salience.unwrap_or(CONFIG.min_salience_for_qdrant as f32);
+    let min_salience = request.min_salience.unwrap_or(CONFIG.min_salience_for_qdrant);
     
     // Search with session ID parameter
     let search_results = match app_state.memory_service

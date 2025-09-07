@@ -229,7 +229,7 @@ where
         for entry in all_recent {
             // Always include summaries
             if entry.memory_type == Some(crate::memory::types::MemoryType::Other) 
-                && entry.tags.as_ref().map_or(false, |t| t.contains(&"summary".to_string())) {
+                && entry.tags.as_ref().is_some_and(|t| t.contains(&"summary".to_string())) {
                 selected.push(entry);
             } else if message_count < recent_count {
                 selected.push(entry);
@@ -252,9 +252,9 @@ fn merge_and_deduplicate_results_vec(
     
     for (head, entries) in multi_results {
         for (idx, entry) in entries.into_iter().enumerate() {
-            let id = entry.id.clone().unwrap_or_default();
+            let id = entry.id.unwrap_or_default();
             if !seen_ids.contains(&id) {
-                seen_ids.insert(id.clone());
+                seen_ids.insert(id);
                 
                 // Calculate similarity score from position
                 let similarity = 1.0 - (idx as f32 / 100.0);
@@ -265,7 +265,7 @@ fn merge_and_deduplicate_results_vec(
                     salience_score: 0.0,  // Will be calculated later
                     recency_score: 0.0,   // Will be calculated later
                     composite_score: 0.0, // Will be calculated later
-                    source_head: head.clone(),
+                    source_head: head,
                 });
             }
         }
@@ -283,9 +283,9 @@ fn merge_and_deduplicate_results(
     
     for (head, entries) in multi_results {
         for (idx, entry) in entries.into_iter().enumerate() {
-            let id = entry.id.clone().unwrap_or_default();
+            let id = entry.id.unwrap_or_default();
             if !seen_ids.contains(&id) {
-                seen_ids.insert(id.clone());
+                seen_ids.insert(id);
                 
                 // Calculate similarity score from position
                 let similarity = 1.0 - (idx as f32 / 100.0);
@@ -296,7 +296,7 @@ fn merge_and_deduplicate_results(
                     salience_score: 0.0,  // Will be calculated later
                     recency_score: 0.0,   // Will be calculated later
                     composite_score: 0.0, // Will be calculated later
-                    source_head: head.clone(),
+                    source_head: head,
                 });
             }
         }

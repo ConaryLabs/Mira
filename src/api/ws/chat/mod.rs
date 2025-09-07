@@ -199,7 +199,7 @@ pub async fn handle_simple_chat_message(
                     StreamEvent::Error(e) => {
                         error!("Stream error: {}", e);
                         let msg = WsServerMessage::Error {
-                            message: format!("Stream error: {}", e),
+                            message: format!("Stream error: {e}"),
                             code: "STREAM_ERROR".to_string(),
                         };
                         let json_str = serde_json::to_string(&msg)?;
@@ -213,7 +213,7 @@ pub async fn handle_simple_chat_message(
                 // Handle Result errors from the stream
                 error!("Stream result error: {}", e);
                 let msg = WsServerMessage::Error {
-                    message: format!("Stream processing error: {}", e),
+                    message: format!("Stream processing error: {e}"),
                     code: "STREAM_RESULT_ERROR".to_string(),
                 };
                 let json_str = serde_json::to_string(&msg)?;

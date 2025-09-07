@@ -40,7 +40,7 @@ impl ToolPromptBuilder {
                     Some(func) => format!("{}: {}", func.name, func.description),
                     None => format!("{} tool", tool.tool_type),
                 };
-                prompt.push_str(&format!("\n- {}", tool_description));
+                prompt.push_str(&format!("\n- {tool_description}"));
             }
             prompt.push_str("]\n\nUse tools naturally when they help, but stay in character as Mira. Never switch to assistant mode.");
         }
@@ -56,16 +56,16 @@ impl ToolPromptBuilder {
             if !context.semantic.is_empty() {
                 prompt.push_str(&format!("\n- Semantic context: {} relevant items", context.semantic.len()));
             }
-            prompt.push_str("]");
+            prompt.push(']');
         }
 
         // Add file context if available
         if let Some(meta) = metadata {
             if let Some(file_path) = &meta.file_path {
-                prompt.push_str(&format!("\n\n[FILE CONTEXT: {}]", file_path));
+                prompt.push_str(&format!("\n\n[FILE CONTEXT: {file_path}]"));
             }
             if let Some(language) = &meta.language {
-                prompt.push_str(&format!("\n[LANGUAGE: {}]", language));
+                prompt.push_str(&format!("\n[LANGUAGE: {language}]"));
             }
         }
 
