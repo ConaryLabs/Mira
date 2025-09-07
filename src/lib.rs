@@ -2,7 +2,6 @@
 
 pub mod api;
 pub mod config;
-pub mod handlers;
 pub mod llm;
 pub mod memory; // <--- FIX #1
 pub mod persona;

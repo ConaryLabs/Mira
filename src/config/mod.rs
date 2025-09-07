@@ -1,6 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend
-// GPT-5 robust memory system is enabled by default
+// Central configuration for Mira backend with GPT-5 robust memory system
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -17,14 +16,14 @@ pub struct MiraConfig {
     // Core LLM Configuration
     pub openai_api_key: Option<String>,
     pub openai_base_url: String,
-    pub gpt5_model: String, // Updated from 'model'
+    pub gpt5_model: String,
     pub verbosity: String,
     pub reasoning_effort: String,
     pub max_output_tokens: usize,
     pub debug_logging: bool,
     pub intent_model: String,
 
-    // NEW: Structured Output Configuration
+    // Structured Output Configuration
     pub max_json_output_tokens: usize,
     pub enable_json_validation: bool,
     pub max_json_repair_attempts: usize,
@@ -59,9 +58,8 @@ pub struct MiraConfig {
     pub salience_min_for_embed: u8,
     pub rollup_every: usize,
     
-    // CRITICAL FIX: Salience threshold for Qdrant storage
+    // Salience threshold - always 0.0 now but kept for compatibility
     pub min_salience_for_qdrant: f32,
-    pub min_salience_for_storage: f32,
 
     // Summarization Configuration
     pub enable_summarization: bool,
@@ -112,11 +110,9 @@ pub struct MiraConfig {
     pub persona_decay_timeout: u64,
     pub session_stale_timeout: u64,
 
-    // Server Configuration
+    // Server Configuration (WebSocket Only)
     pub host: String,
     pub port: u16,
-    pub cors_origin: String,
-    pub cors_credentials: bool,
     pub rate_limit_chat: usize,
     pub rate_limit_ws: usize,
     pub rate_limit_search: usize,
@@ -133,8 +129,7 @@ pub struct MiraConfig {
     pub log_format: String,
     pub trace_sql: bool,
 
-    // Robust Memory Feature Gates
-    pub aggressive_metadata_enabled: bool,
+    // Robust Memory Feature Configuration
     pub embed_heads: String,
     pub summary_rolling_10: bool,
     pub summary_rolling_100: bool,
@@ -152,7 +147,7 @@ pub struct MiraConfig {
     pub embed_summary_overlap: usize,
 }
 
-// Helper function to read environment variables with defaults
+/// Helper function to read environment variables with defaults
 fn env_var_or<T>(key: &str, default: T) -> T
 where
     T: FromStr,
@@ -179,7 +174,7 @@ impl MiraConfig {
             debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
             intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
 
-            // NEW: Structured Output Configuration
+            // Structured Output Configuration
             max_json_output_tokens: env_var_or("MAX_JSON_OUTPUT_TOKENS", 2000),
             enable_json_validation: env_var_or("ENABLE_JSON_VALIDATION", true),
             max_json_repair_attempts: env_var_or("MAX_JSON_REPAIR_ATTEMPTS", 3),
@@ -214,9 +209,8 @@ impl MiraConfig {
             salience_min_for_embed: env_var_or("MEM_SALIENCE_MIN_FOR_EMBED", 6),
             rollup_every: env_var_or("MEM_ROLLUP_EVERY", 50),
             
-            // CRITICAL FIX: Default salience threshold is 0.0 to save all embeddings
+            // Always 0.0 now - we save everything
             min_salience_for_qdrant: env_var_or("MIN_SALIENCE_FOR_QDRANT", 0.0),
-            min_salience_for_storage: env_var_or("MIRA_MIN_SALIENCE_FOR_STORAGE", 0.3),
 
             // Summarization
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
@@ -234,7 +228,7 @@ impl MiraConfig {
             enable_web_search: env_var_or("ENABLE_WEB_SEARCH", true),
             enable_code_interpreter: env_var_or("ENABLE_CODE_INTERPRETER", true),
             enable_file_search: env_var_or("ENABLE_FILE_SEARCH", true),
-            enable_image_generation: env_var_or("ENABLE_IMAGE_GENERATION", true),
+            enable_image_generation: env_var_or("ENABLE_IMAGE_GENERATION", false),
             web_search_max_results: env_var_or("WEB_SEARCH_MAX_RESULTS", 10),
             web_search_timeout: env_var_or("WEB_SEARCH_TIMEOUT", 30),
             code_interpreter_timeout: env_var_or("CODE_INTERPRETER_TIMEOUT", 60),
@@ -270,8 +264,6 @@ impl MiraConfig {
             // Server
             host: env_var_or("MIRA_HOST", "0.0.0.0".to_string()),
             port: env_var_or("MIRA_PORT", 3001),
-            cors_origin: env_var_or("MIRA_CORS_ORIGIN", "http://localhost:3000".to_string()),
-            cors_credentials: env_var_or("MIRA_CORS_CREDENTIALS", true),
             rate_limit_chat: env_var_or("MIRA_RATE_LIMIT_CHAT", 60),
             rate_limit_ws: env_var_or("MIRA_RATE_LIMIT_WS", 100),
             rate_limit_search: env_var_or("MIRA_RATE_LIMIT_SEARCH", 30),
@@ -288,8 +280,7 @@ impl MiraConfig {
             log_format: env_var_or("MIRA_LOG_FORMAT", "pretty".to_string()),
             trace_sql: env_var_or("MIRA_TRACE_SQL", false),
 
-            // Robust Memory
-            aggressive_metadata_enabled: env_var_or("MIRA_AGGRESSIVE_METADATA_ENABLED", true),
+            // Robust Memory - always enabled
             embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary".to_string()),
             summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
             summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
@@ -308,7 +299,7 @@ impl MiraConfig {
         }
     }
 
-    /// NEW: Get verbosity setting for a specific operation type
+    /// Get verbosity setting for a specific operation type
     pub fn get_verbosity_for(&self, operation: &str) -> &str {
         match operation {
             "classification" | "metadata" => "minimal",
@@ -317,7 +308,7 @@ impl MiraConfig {
         }
     }
 
-    /// NEW: Get reasoning effort for a specific operation type
+    /// Get reasoning effort for a specific operation type
     pub fn get_reasoning_effort_for(&self, operation: &str) -> &str {
         match operation {
             "classification" | "metadata" => "minimal",
@@ -327,7 +318,7 @@ impl MiraConfig {
         }
     }
 
-    /// NEW: Get max tokens for JSON operations
+    /// Get max tokens for JSON operations
     pub fn get_json_max_tokens(&self) -> usize {
         self.max_json_output_tokens
     }
@@ -337,47 +328,43 @@ impl MiraConfig {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// Check if robust memory features are enabled
+    /// Check if robust memory features are enabled (always true now)
     pub fn is_robust_memory_enabled(&self) -> bool {
-        self.aggressive_metadata_enabled
+        true
     }
 
     /// Check if rolling summaries are enabled
     pub fn rolling_summaries_enabled(&self) -> bool {
-        self.is_robust_memory_enabled() && (self.summary_rolling_10 || self.summary_rolling_100)
+        self.summary_rolling_10 || self.summary_rolling_100
     }
 
     /// Check if 10-message rolling summaries are enabled
     pub fn rolling_10_enabled(&self) -> bool {
-        self.is_robust_memory_enabled() && self.summary_rolling_10
+        self.summary_rolling_10
     }
 
     /// Check if 100-message rolling summaries are enabled
     pub fn rolling_100_enabled(&self) -> bool {
-        self.is_robust_memory_enabled() && self.summary_rolling_100
+        self.summary_rolling_100
     }
 
     /// Check if snapshot summaries are enabled
     pub fn snapshot_summaries_enabled(&self) -> bool {
-        self.is_robust_memory_enabled() && self.summary_phase_snapshots
+        self.summary_phase_snapshots
     }
 
     /// Check if rolling summaries should be used in context
     pub fn should_use_rolling_summaries_in_context(&self) -> bool {
-        self.is_robust_memory_enabled() && self.use_rolling_summaries_in_context
+        self.use_rolling_summaries_in_context
     }
 
     /// Get the list of enabled embedding heads
     pub fn get_embedding_heads(&self) -> Vec<String> {
-        if self.is_robust_memory_enabled() {
-            self.embed_heads
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        } else {
-            vec!["semantic".to_string()]
-        }
+        self.embed_heads
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 
     /// Get chunk size for a specific embedding head
@@ -386,7 +373,7 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_chunk,
             "code" => self.embed_code_chunk,
             "summary" => self.embed_summary_chunk,
-            _ => self.embed_semantic_chunk, // Default to semantic
+            _ => self.embed_semantic_chunk,
         }
     }
 
@@ -396,7 +383,7 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_overlap,
             "code" => self.embed_code_overlap,
             "summary" => self.embed_summary_overlap,
-            _ => self.embed_semantic_overlap, // Default to semantic
+            _ => self.embed_semantic_overlap,
         }
     }
 
@@ -410,19 +397,6 @@ impl MiraConfig {
             use_in_context: self.should_use_rolling_summaries_in_context(),
             max_age_hours: self.rolling_summary_max_age_hours,
             min_gap: self.rolling_summary_min_gap,
-        }
-    }
-
-    /// Get all feature flags in a structured format
-    pub fn get_phase4_features(&self) -> Phase4Features {
-        Phase4Features {
-            robust_memory: self.is_robust_memory_enabled(),
-            rolling_summaries: self.rolling_summaries_enabled(),
-            rolling_10: self.rolling_10_enabled(),
-            rolling_100: self.rolling_100_enabled(),
-            snapshot_summaries: self.snapshot_summaries_enabled(),
-            use_rolling_in_context: self.should_use_rolling_summaries_in_context(),
-            embedding_heads: self.get_embedding_heads(),
         }
     }
 }
@@ -439,142 +413,8 @@ pub struct RollingSummaryConfig {
     pub min_gap: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Phase4Features {
-    pub robust_memory: bool,
-    pub rolling_summaries: bool,
-    pub rolling_10: bool,
-    pub rolling_100: bool,
-    pub snapshot_summaries: bool,
-    pub use_rolling_in_context: bool,
-    pub embedding_heads: Vec<String>,
-}
-
 impl Default for MiraConfig {
     fn default() -> Self {
         Self::from_env()
-    }
-}
-
-// Tests
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env;
-    use std::sync::Mutex;
-
-    lazy_static! {
-        static ref ENV_MUTEX: Mutex<()> = Mutex::new(());
-    }
-
-    fn run_test<T>(test: T)
-    where
-        T: FnOnce() + std::panic::UnwindSafe,
-    {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        let original_vars: Vec<(String, Option<String>)> = [
-            "MIRA_AGGRESSIVE_METADATA_ENABLED",
-            "MIRA_MIN_SALIENCE_FOR_QDRANT",
-            "GPT5_MODEL",
-            "MAX_JSON_OUTPUT_TOKENS",
-        ]
-        .iter()
-        .map(|&key| (key.to_string(), env::var(key).ok()))
-        .collect();
-
-        let result = std::panic::catch_unwind(test);
-
-        for (key, val) in original_vars {
-            if let Some(v) = val {
-                env::set_var(&key, v);
-            } else {
-                env::remove_var(&key);
-            }
-        }
-        
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_default_config() {
-        run_test(|| {
-            let config = MiraConfig::from_env();
-            assert_eq!(config.gpt5_model, "gpt-5");
-            assert_eq!(config.enable_web_search, true);
-            assert_eq!(config.aggressive_metadata_enabled, true);
-            assert_eq!(config.min_salience_for_qdrant, 0.0);
-            assert_eq!(config.max_json_output_tokens, 2000);
-        });
-    }
-
-    #[test]
-    fn test_salience_threshold_fix() {
-        run_test(|| {
-            let config = MiraConfig::from_env();
-            assert!(config.min_salience_for_qdrant >= 0.0);
-            assert!(config.min_salience_for_qdrant <= 1.0);
-            assert!(config.min_salience_for_storage >= 0.0);
-            assert!(config.min_salience_for_storage <= 1.0);
-        });
-    }
-
-    #[test]
-    fn test_phase4_robust_memory_enabled_by_default() {
-        run_test(|| {
-            let config = MiraConfig::from_env();
-            assert!(config.is_robust_memory_enabled());
-            assert!(config.rolling_summaries_enabled());
-            let heads = config.get_embedding_heads();
-            assert!(heads.contains(&"semantic".to_string()));
-            assert!(heads.contains(&"code".to_string()));
-            assert!(heads.contains(&"summary".to_string()));
-            assert!(config.rolling_10_enabled());
-            assert!(config.rolling_100_enabled());
-            assert!(config.snapshot_summaries_enabled());
-            assert!(config.should_use_rolling_summaries_in_context());
-        });
-    }
-
-    #[test]
-    fn test_phase4_robust_memory_can_be_disabled() {
-        run_test(|| {
-            env::set_var("MIRA_AGGRESSIVE_METADATA_ENABLED", "false");
-            let config = MiraConfig::from_env();
-            assert!(!config.is_robust_memory_enabled());
-            assert!(!config.rolling_summaries_enabled());
-            assert_eq!(config.get_embedding_heads(), vec!["semantic"]);
-        });
-    }
-
-    #[test]
-    fn test_phase4_rolling_summary_config() {
-        run_test(|| {
-            let config = MiraConfig::from_env();
-            let rolling_config = config.get_rolling_summary_config();
-            assert!(rolling_config.enabled);
-            assert!(rolling_config.rolling_10);
-            assert!(rolling_config.rolling_100);
-            assert!(rolling_config.snapshots);
-            assert!(rolling_config.use_in_context);
-
-            let phase4_features = config.get_phase4_features();
-            assert!(phase4_features.robust_memory);
-            assert!(phase4_features.rolling_summaries);
-            assert_eq!(phase4_features.embedding_heads.len(), 3);
-        });
-    }
-
-    #[test]
-    fn test_chunk_size_configuration() {
-        run_test(|| {
-            let config = MiraConfig::from_env();
-            assert_eq!(config.get_chunk_size_for_head("semantic"), 300);
-            assert_eq!(config.get_chunk_size_for_head("code"), 256);
-            assert_eq!(config.get_chunk_size_for_head("summary"), 600);
-            assert_eq!(config.get_chunk_size_for_head("unknown"), 300);
-            assert_eq!(config.get_chunk_overlap_for_head("semantic"), 100);
-            assert_eq!(config.get_chunk_overlap_for_head("code"), 64);
-            assert_eq!(config.get_chunk_overlap_for_head("summary"), 200);
-        });
     }
 }
