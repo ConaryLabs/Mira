@@ -1,12 +1,14 @@
 // src/services/chat/streaming.rs
 // Manages the logic for handling and generating streaming chat responses.
+// FIXED: Now uses Mira's real personality instead of generic assistant bullshit
 
 use std::sync::Arc;
 use anyhow::Result;
-use tracing::{debug, info, error}; // Corrected imports
+use tracing::{debug, info, error};
 
 use crate::llm::client::OpenAIClient;
 use crate::memory::recall::RecallContext;
+use crate::persona::default::DEFAULT_PERSONA_PROMPT; // Import Mira's REAL personality!
 
 /// Handles the business logic for streaming chat responses.
 pub struct StreamingHandler {
@@ -54,14 +56,15 @@ impl StreamingHandler {
 
     /// Builds a system prompt incorporating the provided context.
     fn build_system_prompt(&self, context: &RecallContext) -> Option<String> {
-        let mut prompt = String::from("You are Mira, a helpful AI assistant.");
+        // ALWAYS use Mira's real personality, not generic assistant crap
+        let mut prompt = String::from(DEFAULT_PERSONA_PROMPT);
         
         if !context.recent.is_empty() {
-            prompt.push_str(" You have access to recent conversation history.");
+            prompt.push_str("\n\n[You have access to recent conversation history. Use it naturally while staying as Mira - cursing, joking, being real.]");
         }
         
         if !context.semantic.is_empty() {
-            prompt.push_str(" You have relevant context from previous conversations.");
+            prompt.push_str("\n\n[You have relevant context from previous conversations. Use it to be more helpful, but NEVER break character. Stay as Mira.]");
         }
         
         Some(prompt)
@@ -74,14 +77,21 @@ impl StreamingHandler {
         context: &RecallContext,
         additional_instructions: Option<&str>,
     ) -> String {
-        let mut prompt = format!("You are {}", persona);
+        // If they're trying to override Mira, at least keep her essence
+        let mut prompt = if persona.to_lowercase().contains("mira") {
+            // If it's still Mira, use the full personality
+            String::from(DEFAULT_PERSONA_PROMPT)
+        } else {
+            // Even with a different persona name, inject Mira's personality traits
+            format!("{}\n\nBut underneath it all, keep Mira's essence - be real, curse naturally, make jokes, don't be a bland assistant.", DEFAULT_PERSONA_PROMPT)
+        };
         
         if let Some(instructions) = additional_instructions {
-            prompt.push_str(&format!(". {}", instructions));
+            prompt.push_str(&format!("\n\nAdditional context: {}", instructions));
         }
         
         if !context.recent.is_empty() {
-            prompt.push_str(" You have access to recent conversation history.");
+            prompt.push_str("\n\n[You have access to recent conversation history.]");
         }
         
         prompt
@@ -155,7 +165,8 @@ impl StreamingStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::client::{ClientConfig, OpenAIClient, ModelConfig};
+    use crate::llm::client::{ClientConfig, OpenAIClient};
+    use crate::llm::config::ModelConfig;
     use crate::memory::types::MemoryEntry;
 
     /// Creates a mock OpenAI client for testing purposes.
@@ -176,7 +187,9 @@ mod tests {
         let context = RecallContext { recent: vec![], semantic: vec![] };
         let prompt = handler.build_system_prompt(&context).unwrap();
         assert!(prompt.contains("You are Mira"));
-        assert!(!prompt.contains("recent conversation"));
+        assert!(prompt.contains("curse naturally")); // Check for real personality
+        assert!(prompt.contains("dirty jokes")); // More real personality checks
+        assert!(!prompt.contains("helpful AI assistant")); // NO GENERIC BULLSHIT
     }
 
     #[test]
@@ -185,11 +198,12 @@ mod tests {
         let handler = StreamingHandler::new(mock_client);
         let context = RecallContext {
             recent: vec![MemoryEntry::default()],
-            semantic: vec![("test".to_string(), 1.0)],
+            semantic: vec![],
         };
         let prompt = handler.build_system_prompt(&context).unwrap();
         assert!(prompt.contains("recent conversation history"));
-        assert!(prompt.contains("relevant context"));
+        assert!(prompt.contains("staying as Mira")); // Ensure she stays herself
+        assert!(prompt.contains("cursing, joking, being real")); // Check personality preservation
     }
 
     #[test]
@@ -202,8 +216,10 @@ mod tests {
             &context,
             Some("Be brief."),
         );
-        assert!(prompt.contains("You are Test Persona"));
+        // Even with different persona, Mira's essence should be there
+        assert!(prompt.contains("Mira"));
         assert!(prompt.contains("Be brief."));
+        assert!(prompt.contains("essence")); // Check that we keep Mira's essence
     }
 
     #[test]

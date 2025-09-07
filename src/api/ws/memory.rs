@@ -1,7 +1,7 @@
 // src/api/ws/memory.rs
 // WebSocket handlers for memory operations including save, search, context retrieval,
 // pinning, import/export, and statistics.
-// UPDATED: Return Data messages instead of Status for request_id support
+// UPDATED: Strict session isolation for future multi-user support
 
 use std::sync::Arc;
 use std::str::FromStr;
@@ -18,6 +18,7 @@ use crate::{
 };
 
 // Default session ID for single-user mode
+// TODO: Remove when auth layer is implemented
 const DEFAULT_SESSION: &str = "peter-eternal";
 
 // Request types for memory operations
@@ -101,7 +102,10 @@ struct SerializableMemoryStats {
 }
 
 /// Returns the session ID, defaulting to the eternal session for single-user mode
+/// TODO: Replace with auth-based session when auth layer is implemented
 fn get_session_id(session_id: Option<String>) -> String {
+    // For now, always use the provided session_id or default
+    // In the future, this will validate against the authenticated user's session
     session_id.unwrap_or_else(|| DEFAULT_SESSION.to_string())
 }
 
@@ -121,24 +125,22 @@ pub async fn handle_memory_command(
         "memory.pin" => pin_memory(params, app_state).await,
         "memory.unpin" => unpin_memory(params, app_state).await,
         "memory.import" => import_memories(params, app_state).await,
+        "memory.export" => export_memories(params, app_state).await,
         "memory.get_recent" => get_recent_memories(params, app_state).await,
         "memory.delete" => delete_memory(params, app_state).await,
         "memory.update_salience" => update_salience(params, app_state).await,
         "memory.get_stats" => get_memory_stats(params, app_state).await,
-        "memory.check_status" => check_qdrant_status(app_state).await,
-        _ => {
-            error!("Unknown memory method: {}", method);
-            return Err(ApiError::bad_request(format!("Unknown memory method: {}", method)));
-        }
+        "memory.check_qdrant" => check_qdrant_status(app_state).await,
+        _ => Err(anyhow!("Unknown memory method: {}", method))
     };
     
     result.map_err(|e| {
-        error!("Memory command {} failed: {}", method, e);
-        ApiError::internal(format!("Memory operation failed: {}", e))
+        error!("Memory command error: {}", e);
+        ApiError::internal(e.to_string())
     })
 }
 
-/// Saves a user or assistant message to memory
+/// Saves a memory entry (user or assistant message)
 async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: SaveMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid save memory request: {}", e))?;
@@ -217,9 +219,9 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
     let max_results = request.max_results.unwrap_or(10);
     let min_salience = request.min_salience.unwrap_or(0.0);
     
-    // Try semantic search first
+    // Try semantic search first - NOW WITH SESSION_ID PARAMETER
     let search_results = match app_state.memory_service
-        .search_similar(&request.query, max_results * 2)
+        .search_similar(&session_id, &request.query, max_results * 2)
         .await
     {
         Ok(results) => {
@@ -236,12 +238,17 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
         }
     };
     
-    // Filter results
+    // STRICT SESSION ISOLATION
+    // No cross-session access, period. Each user's data is completely isolated.
+    // When auth is added, this ensures user privacy.
     let filtered_results: Vec<_> = search_results.into_iter()
         .filter(|entry| {
-            // Include memories from the current session
-            entry.session_id == session_id || 
-            // Or memories with high salience from any session
+            // ONLY return memories from the exact session requested
+            // No cross-session sharing, even for high salience
+            entry.session_id == session_id
+        })
+        .filter(|entry| {
+            // Apply salience filter WITHIN the session
             entry.salience.unwrap_or(0.0) >= min_salience
         })
         .take(max_results)
@@ -341,50 +348,72 @@ async fn unpin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServe
     pin_memory(unpin_params, app_state).await
 }
 
-// Continue with remaining functions updated to use Data messages...
-
-/// Imports multiple memories in batch
+/// Imports multiple memories
 async fn import_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: ImportMemoriesRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid import request: {}", e))?;
     
     let session_id = get_session_id(request.session_id);
-    info!("Importing {} memories for session: {}", 
-          request.memories.len(), session_id);
+    info!("Importing {} memories for session: {}", request.memories.len(), session_id);
     
     let mut imported_count = 0;
-    let mut failed_count = 0;
     let mut errors = Vec::new();
     
-    for (idx, memory_data) in request.memories.iter().enumerate() {
-        match app_state.memory_service
-            .save_user_message(&session_id, &memory_data.content, None)
-            .await
-        {
-            Ok(_) => imported_count += 1,
-            Err(e) => {
-                failed_count += 1;
-                errors.push(format!("Memory {}: {}", idx, e));
-                warn!("Failed to import memory {}: {}", idx, e);
+    for (idx, memory_data) in request.memories.into_iter().enumerate() {
+        let save_params = json!({
+            "session_id": session_id,
+            "content": memory_data.content,
+            "role": memory_data.role,
+            "metadata": {
+                "salience": memory_data.salience.unwrap_or(5.0),
+                "tags": memory_data.tags.unwrap_or_default(),
+                "memory_type": memory_data.memory_type.unwrap_or_else(|| "other".to_string()),
+                "persona": "assistant",
+                "mood": "neutral",
+                "summary": format!("Imported memory {}", idx + 1)
             }
+        });
+        
+        match save_memory(save_params, app_state.clone()).await {
+            Ok(_) => imported_count += 1,
+            Err(e) => errors.push(format!("Memory {}: {}", idx + 1, e))
         }
     }
     
-    let success = failed_count == 0;
-    
     Ok(WsServerMessage::Data {
         data: json!({
-            "success": success,
             "imported": imported_count,
-            "failed": failed_count,
-            "session_id": session_id,
-            "errors": if !errors.is_empty() { Some(errors) } else { None }
+            "errors": errors,
+            "session_id": session_id
         }),
         request_id: None,
     })
 }
 
-/// Retrieves recent memories for a session
+/// Exports memories for a session
+async fn export_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
+    let session_id = params["session_id"].as_str()
+        .map(String::from)
+        .unwrap_or_else(|| DEFAULT_SESSION.to_string());
+    
+    info!("Exporting memories for session: {}", session_id);
+    
+    let memories = app_state.memory_service
+        .get_recent_context(&session_id, 1000)
+        .await?;
+    
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "memories": memories,
+            "count": memories.len(),
+            "session_id": session_id,
+            "format": "json"
+        }),
+        request_id: None,
+    })
+}
+
+/// Gets recent memories for a session
 async fn get_recent_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: GetRecentRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid get recent request: {}", e))?;

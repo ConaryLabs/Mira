@@ -501,54 +501,55 @@ impl MemoryService {
             tags: Some(vec![
                 "summary".to_string(),
                 format!("summary:rolling:{}", window_size),
-                "compressed".to_string(),
+                "system".to_string(),
             ]),
-            summary: Some(format!("{}-message rolling summary", window_size)),
+            summary: Some(summary),
             memory_type: Some(MemoryType::Summary),
             logprobs: None,
             moderation_flag: None,
             system_fingerprint: None,
-            head: Some("summary".to_string()),
+            head: None,
             is_code: Some(false),
-            lang: Some("natural".to_string()),
-            topics: Some(vec!["summary".to_string()]),
+            lang: None,
+            topics: None,
             pinned: Some(false),
             subject_tag: None,
             last_accessed: Some(Utc::now()),
         };
         
-        let saved = self.sqlite_store.save(&summary_entry).await?;
-        
-        // Embed the summary in both Summary and Semantic heads
-        let summary_heads = vec![EmbeddingHead::Summary, EmbeddingHead::Semantic];
-        self.generate_and_save_embeddings(&saved, &summary_heads).await?;
-        
+        self.sqlite_store.save(&summary_entry).await?;
         info!("Created {}-message rolling summary for session {}", window_size, session_id);
+        
         Ok(())
     }
 
-    pub async fn create_snapshot_summary(&self, session_id: &str, message_count: usize) -> Result<()> {
-        info!("Creating snapshot summary of {} messages for session {}", message_count, session_id);
+    pub async fn create_snapshot_summary(&self, session_id: &str) -> Result<()> {
+        let message_count = self.get_session_message_count(session_id).await;
+        info!("Creating snapshot summary at message count {}", message_count);
         
-        let messages = self.sqlite_store.load_recent(session_id, message_count).await?;
+        // Get recent messages for summarization
+        let recent_messages = self.get_recent_context(session_id, 20).await?;
         
-        if messages.is_empty() {
-            return Err(anyhow::anyhow!("No messages to summarize"));
+        if recent_messages.len() < 10 {
+            info!("Not enough messages for summary ({}), skipping", recent_messages.len());
+            return Ok(());
         }
         
-        // Prepare content
-        let content = messages.iter()
-            .map(|m| format!("{}: {}", m.role, m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Build summary prompt
+        let mut context_text = String::new();
+        for msg in &recent_messages {
+            context_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+        }
         
-        // Generate summary
         let summary_prompt = format!(
-            "Create a comprehensive snapshot summary of these {} messages:\n\n{}",
-            message_count, content
+            "Create a concise summary of the following conversation:\n\n{}",
+            context_text
         );
         
-        let summary = self.llm_client.summarize_conversation(&summary_prompt, 1000).await?;
+        // Generate summary
+        let summary = self.llm_client
+            .simple_chat(&summary_prompt, "gpt-4o", "You are a summarization assistant.")
+            .await?;
         
         // Save as snapshot summary
         let snapshot_entry = ChatResponse {
@@ -606,11 +607,17 @@ impl MemoryService {
         self.sqlite_store.load_recent(session_id, n).await
     }
 
-    pub async fn search_similar(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+    // FIXED: Now accepts session_id as a parameter instead of using CONFIG.session_id!
+    pub async fn search_similar(
+        &self,
+        session_id: &str,  // <-- Added parameter
+        query: &str,
+        limit: usize
+    ) -> Result<Vec<MemoryEntry>> {
         let query_embedding = self.llm_client.get_embedding(query).await?;
         self.multi_store.search(
             EmbeddingHead::Semantic,
-            &CONFIG.session_id,
+            session_id,  // <-- Use the passed session_id instead of CONFIG.session_id
             &query_embedding,
             limit
         ).await

@@ -1,0 +1,11 @@
+--- src/memory/qdrant/multi_store.rs
++++ src/memory/qdrant/multi_store.rs
+@@ -50,6 +50,8 @@ impl QdrantMultiStore {
+         limit: usize,
+     ) -> Result<Vec<MemoryEntry>> {
+         let collection = self.get_collection_for_head(head);
++        
++        // Search WITH session filter at the Qdrant level for efficiency
+         collection.search_similar_memories(session_id, embedding, limit).await
+     }
+ }
