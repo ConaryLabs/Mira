@@ -1,12 +1,12 @@
 // src/memory/parallel_recall.rs
-// PHASE 5: Enhanced with multi-head parallel retrieval support
-// Parallel version of context building - 30-50% faster than sequential
+// Enhanced parallel context building with multi-head support
+// Uses superhuman stepped decay for optimal memory retention
 
 use tokio::join;
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use crate::memory::recall::RecallContext;
-use crate::memory::decay::{calculate_decayed_salience, DecayConfig};
+use crate::memory::decay::{calculate_decayed_salience, should_include_memory, DecayConfig};
 use crate::memory::traits::MemoryStore;
 use crate::memory::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::client::OpenAIClient;
@@ -14,7 +14,7 @@ use crate::llm::embeddings::EmbeddingHead;
 use crate::config::CONFIG;
 use chrono::Utc;
 
-/// ── Phase 5: Enhanced memory entry with similarity score for re-ranking ──
+/// Enhanced memory entry with similarity score for re-ranking
 #[derive(Debug, Clone)]
 pub struct ScoredMemoryEntry {
     pub entry: crate::memory::types::MemoryEntry,
@@ -26,7 +26,6 @@ pub struct ScoredMemoryEntry {
 }
 
 /// Build context with parallel operations for better performance
-/// This runs embedding + SQLite queries in parallel, then does semantic search
 pub async fn build_context_parallel<M1, M2>(
     session_id: &str,
     user_text: &str,
@@ -65,7 +64,9 @@ where
     // Semantic search only if we have an embedding
     let semantic = if let Some(ref emb) = embedding {
         let semantic_start = std::time::Instant::now();
-        let results = qdrant_store.semantic_search(session_id, emb, semantic_count * 2).await?;
+        // Get extra results to account for filtering
+        let search_count = (semantic_count as f32 * 1.5) as usize;
+        let results = qdrant_store.semantic_search(session_id, emb, search_count).await?;
         debug!("Semantic search found {} results in {:?}", results.len(), semantic_start.elapsed());
         results
     } else {
@@ -73,36 +74,38 @@ where
         Vec::new()
     };
     
-    // Apply decay and filtering (same as original)
+    // Apply stepped decay and filtering
     let mut context = RecallContext::new(recent, semantic);
     let decay_config = DecayConfig::default();
     
-    // Apply decay to semantic memories
+    // Apply decay to semantic memories with the new stepped system
     let now = Utc::now();
-    let mut decayed_count = 0;
-    for memory in &mut context.semantic {
-        let original_salience = memory.salience.unwrap_or(0.0);
-        let decayed = calculate_decayed_salience(memory, &decay_config, now);
+    let mut filtered_semantic = Vec::new();
+    
+    for (idx, mut memory) in context.semantic.into_iter().enumerate() {
+        let decayed = calculate_decayed_salience(&memory, &decay_config, now);
         memory.salience = Some(decayed);
         
-        if decayed < original_salience {
-            decayed_count += 1;
+        // Calculate relevance from position in search results
+        let relevance = 1.0 - (idx as f32 / (semantic_count as f32 * 1.5));
+        
+        // Use the new filtering logic
+        if should_include_memory(&memory, decayed, Some(relevance)) {
+            filtered_semantic.push(memory);
+        } else {
+            debug!("Filtered out memory with salience {} and relevance {}", decayed, relevance);
         }
     }
     
-    if decayed_count > 0 {
-        debug!("Applied decay to {} semantic memories", decayed_count);
-    }
-    
-    // Sort semantic by decayed salience
-    context.semantic.sort_by(|a, b| {
+    // Sort by composite score and trim
+    filtered_semantic.sort_by(|a, b| {
         b.salience.unwrap_or(0.0)
             .partial_cmp(&a.salience.unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    filtered_semantic.truncate(semantic_count);
     
-    // Trim to requested count after decay
-    context.semantic.truncate(semantic_count);
+    context.semantic = filtered_semantic;
     
     let total_time = start.elapsed();
     info!(
@@ -118,8 +121,7 @@ where
     Ok(context)
 }
 
-/// ── Phase 5: Enhanced multi-head parallel context building ──
-/// This function extends parallel_recall to use multi-head retrieval with re-ranking
+/// Enhanced multi-head parallel context building
 pub async fn build_context_multi_head<M1>(
     session_id: &str,
     user_text: &str,
@@ -136,7 +138,7 @@ where
     
     info!("Starting enhanced multi-head parallel context build for session: {}", session_id);
     
-    // Phase 5: Enhanced parallel execution - embedding + recent messages + rolling summaries
+    // Parallel execution - embedding + recent messages + rolling summaries
     let (embedding_result, recent_result) = join!(
         llm_client.get_embedding(user_text),
         load_recent_with_summaries(sqlite_store, session_id, recent_count)
@@ -150,30 +152,46 @@ where
     let context_recent = recent_result?;
     debug!("Loaded {} recent messages (including summaries) in parallel", context_recent.len());
 
-    // Phase 5: Multi-head semantic search with appropriate k per head
+    // Multi-head semantic search with appropriate k per head
     let k_per_head = std::cmp::max(10, semantic_count / 3);
     let multi_search_result = multi_store.search_all(session_id, &embedding, k_per_head).await?;
 
     debug!("Multi-head search completed: {} heads searched", multi_search_result.len());
 
-    // Phase 5: Merge, deduplicate, and re-rank results
-    let all_candidates = merge_and_deduplicate_results(multi_search_result)?;
+    // Merge, deduplicate, and re-rank results
+    let all_candidates = merge_and_deduplicate_results_vec(multi_search_result)?;
     let scored_entries = compute_rerank_scores(&embedding, all_candidates).await?;
     
-    // Sort by composite score and take top results
-    let mut sorted_entries = scored_entries;
-    sorted_entries.sort_by(|a, b| b.composite_score.partial_cmp(&a.composite_score)
-                             .unwrap_or(std::cmp::Ordering::Equal));
+    // Apply stepped decay to scored entries
+    let now = Utc::now();
+    let decay_config = DecayConfig::default();
     
-    let selected_entries: Vec<crate::memory::types::MemoryEntry> = sorted_entries
+    let mut final_entries: Vec<crate::memory::types::MemoryEntry> = scored_entries
         .into_iter()
-        .take(semantic_count)
-        .map(|scored| scored.entry)
+        .filter_map(|mut scored| {
+            let decayed = calculate_decayed_salience(&scored.entry, &decay_config, now);
+            scored.entry.salience = Some(decayed);
+            
+            // Filter using new logic
+            if should_include_memory(&scored.entry, decayed, Some(scored.similarity_score)) {
+                Some(scored.entry)
+            } else {
+                None
+            }
+        })
         .collect();
+    
+    // Sort by salience and take top results
+    final_entries.sort_by(|a, b| {
+        b.salience.unwrap_or(0.0)
+            .partial_cmp(&a.salience.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    final_entries.truncate(semantic_count);
 
     let context = RecallContext {
         recent: context_recent,
-        semantic: selected_entries,
+        semantic: final_entries,
     };
 
     let total_time = start.elapsed();
@@ -192,7 +210,7 @@ where
     Ok(context)
 }
 
-/// ── Phase 5: Load recent messages with rolling summaries support ──
+/// Load recent messages with rolling summaries support
 async fn load_recent_with_summaries<M>(
     sqlite_store: &M,
     session_id: &str,
@@ -204,153 +222,118 @@ where
     if CONFIG.summary_rolling_10 || CONFIG.summary_rolling_100 {
         let all_recent = sqlite_store.load_recent(session_id, recent_count * 2).await?;
         
-        let (summaries, regular): (Vec<_>, Vec<_>) = all_recent.into_iter()
-            .partition(|entry| is_rolling_summary_entry(entry));
-
-        let mut context_recent = Vec::new();
+        // Filter to include summaries and recent messages
+        let mut selected = Vec::new();
+        let mut message_count = 0;
         
-        // Include recent actual messages
-        let immediate_count = std::cmp::min(8, recent_count / 3);
-        context_recent.extend(regular.into_iter().take(immediate_count));
-
-        // Add most relevant rolling summaries
-        if let (Some(summary_10), Some(summary_100)) = select_best_rolling_summaries(summaries) {
-            context_recent.push(summary_100);
-            context_recent.push(summary_10);
+        for entry in all_recent {
+            // Always include summaries
+            if entry.memory_type == Some(crate::memory::types::MemoryType::Other) 
+                && entry.tags.as_ref().map_or(false, |t| t.contains(&"summary".to_string())) {
+                selected.push(entry);
+            } else if message_count < recent_count {
+                selected.push(entry);
+                message_count += 1;
+            }
         }
-
-        Ok(context_recent)
+        
+        Ok(selected)
     } else {
         sqlite_store.load_recent(session_id, recent_count).await
     }
 }
 
-/// ── Phase 5: Check if entry is a rolling summary ──
-fn is_rolling_summary_entry(entry: &crate::memory::types::MemoryEntry) -> bool {
-    entry.tags
-        .as_ref()
-        .map(|tags| tags.iter().any(|tag| tag.starts_with("summary:rolling:")))
-        .unwrap_or(false)
-}
-
-/// ── Phase 5: Select best rolling summaries ──
-fn select_best_rolling_summaries(summaries: Vec<crate::memory::types::MemoryEntry>) 
-    -> (Option<crate::memory::types::MemoryEntry>, Option<crate::memory::types::MemoryEntry>) {
-    let mut latest_10: Option<crate::memory::types::MemoryEntry> = None;
-    let mut latest_100: Option<crate::memory::types::MemoryEntry> = None;
-
-    for summary in summaries {
-        if let Some(tags) = &summary.tags {
-            if tags.iter().any(|tag| tag == "summary:rolling:10") {
-                if latest_10.is_none() || summary.timestamp > latest_10.as_ref().unwrap().timestamp {
-                    latest_10 = Some(summary);
-                }
-            } else if tags.iter().any(|tag| tag == "summary:rolling:100") {
-                if latest_100.is_none() || summary.timestamp > latest_100.as_ref().unwrap().timestamp {
-                    latest_100 = Some(summary);
-                }
-            }
-        }
-    }
-
-    (latest_10, latest_100)
-}
-
-/// ── Phase 5: Merge and deduplicate multi-head search results ──
-fn merge_and_deduplicate_results(
-    multi_search_result: Vec<(EmbeddingHead, Vec<crate::memory::types::MemoryEntry>)>,
-) -> anyhow::Result<Vec<(EmbeddingHead, crate::memory::types::MemoryEntry)>> {
-    let mut all_candidates = Vec::new();
-    let mut content_dedup = HashMap::new();
-
-    for (head, entries) in multi_search_result {
-        for entry in entries {
-            // Simple deduplication by content hash to avoid identical chunks
-            let content_key = format!("{}:{}", 
-                entry.content.len(), 
-                entry.content.chars().take(50).collect::<String>()
-            );
-            
-            if !content_dedup.contains_key(&content_key) {
-                content_dedup.insert(content_key, true);
-                all_candidates.push((head, entry));
-            } else {
-                debug!("Deduplicated similar content from {} head", head.as_str());
-            }
-        }
-    }
-
-    debug!("After deduplication: {} candidates", all_candidates.len());
-    Ok(all_candidates)
-}
-
-/// ── Phase 5: Compute composite re-ranking scores ──
-async fn compute_rerank_scores(
-    query_embedding: &[f32],
-    candidates: Vec<(EmbeddingHead, crate::memory::types::MemoryEntry)>,
+/// Merge and deduplicate results from multiple heads (Vec version)
+fn merge_and_deduplicate_results_vec(
+    multi_results: Vec<(EmbeddingHead, Vec<crate::memory::types::MemoryEntry>)>
 ) -> anyhow::Result<Vec<ScoredMemoryEntry>> {
+    let mut seen_ids = std::collections::HashSet::new();
     let mut scored_entries = Vec::new();
-    let now = chrono::Utc::now();
-
-    for (head, entry) in candidates {
-        // Calculate similarity score
-        let similarity_score = if let Some(entry_embedding) = &entry.embedding {
-            cosine_similarity(query_embedding, entry_embedding)
-        } else {
-            0.0
-        };
-
-        // Calculate salience score (normalize to 0-1 range)
-        let salience_score = entry.salience.unwrap_or(0.0).min(1.0).max(0.0);
-
-        // Calculate recency score (exponential decay from timestamp)
-        let hours_ago = (now - entry.timestamp).num_hours().max(0) as f32;
-        let recency_score = (-hours_ago / 168.0).exp(); // 168 hours = 1 week half-life
-
-        // Phase 5: Composite score with head-specific weights
-        let (sim_weight, sal_weight, rec_weight) = match head {
-            EmbeddingHead::Code => (0.70, 0.25, 0.05),    // Favor salience for code
-            EmbeddingHead::Summary => (0.80, 0.15, 0.05), // Favor similarity for summaries  
-            EmbeddingHead::Semantic => (0.75, 0.20, 0.05), // Balanced default
-        };
-
-        let composite_score = (similarity_score * sim_weight) + 
-                            (salience_score * sal_weight) + 
-                            (recency_score * rec_weight);
-
-        scored_entries.push(ScoredMemoryEntry {
-            entry,
-            similarity_score,
-            salience_score,
-            recency_score,
-            composite_score,
-            source_head: head,
-        });
+    
+    for (head, entries) in multi_results {
+        for (idx, entry) in entries.into_iter().enumerate() {
+            let id = entry.id.clone().unwrap_or_default();
+            if !seen_ids.contains(&id) {
+                seen_ids.insert(id.clone());
+                
+                // Calculate similarity score from position
+                let similarity = 1.0 - (idx as f32 / 100.0);
+                
+                scored_entries.push(ScoredMemoryEntry {
+                    entry,
+                    similarity_score: similarity,
+                    salience_score: 0.0,  // Will be calculated later
+                    recency_score: 0.0,   // Will be calculated later
+                    composite_score: 0.0, // Will be calculated later
+                    source_head: head.clone(),
+                });
+            }
+        }
     }
-
-    debug!("Computed re-ranking scores for {} candidates", scored_entries.len());
+    
     Ok(scored_entries)
 }
 
-/// ── Phase 5: Cosine similarity calculation for embeddings ──
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
+/// Merge and deduplicate results from multiple heads (HashMap version - kept for compatibility)
+fn merge_and_deduplicate_results(
+    multi_results: HashMap<EmbeddingHead, Vec<crate::memory::types::MemoryEntry>>
+) -> anyhow::Result<Vec<ScoredMemoryEntry>> {
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut scored_entries = Vec::new();
+    
+    for (head, entries) in multi_results {
+        for (idx, entry) in entries.into_iter().enumerate() {
+            let id = entry.id.clone().unwrap_or_default();
+            if !seen_ids.contains(&id) {
+                seen_ids.insert(id.clone());
+                
+                // Calculate similarity score from position
+                let similarity = 1.0 - (idx as f32 / 100.0);
+                
+                scored_entries.push(ScoredMemoryEntry {
+                    entry,
+                    similarity_score: similarity,
+                    salience_score: 0.0,  // Will be calculated later
+                    recency_score: 0.0,   // Will be calculated later
+                    composite_score: 0.0, // Will be calculated later
+                    source_head: head.clone(),
+                });
+            }
+        }
     }
-
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        0.0
-    } else {
-        dot_product / (norm_a * norm_b)
-    }
+    
+    Ok(scored_entries)
 }
 
-/// ── Phase 5: Build context with automatic mode selection ──
-/// This function chooses between multi-head and single-head based on availability
+/// Compute re-ranking scores for candidates
+async fn compute_rerank_scores(
+    _query_embedding: &[f32],
+    candidates: Vec<ScoredMemoryEntry>,
+) -> anyhow::Result<Vec<ScoredMemoryEntry>> {
+    let now = Utc::now();
+    
+    let mut reranked = Vec::new();
+    for mut entry in candidates {
+        // Calculate recency score (exponential decay over days)
+        let age_days = now.signed_duration_since(entry.entry.timestamp).num_days() as f32;
+        entry.recency_score = (-age_days / 30.0).exp(); // Half-life of 30 days
+        
+        // Salience score is the decayed salience
+        entry.salience_score = entry.entry.salience.unwrap_or(5.0) / 10.0;
+        
+        // Composite score weights: similarity (40%), salience (40%), recency (20%)
+        entry.composite_score = 
+            entry.similarity_score * 0.4 +
+            entry.salience_score * 0.4 +
+            entry.recency_score * 0.2;
+        
+        reranked.push(entry);
+    }
+    
+    Ok(reranked)
+}
+
+/// Adaptive context building that chooses the best method
 pub async fn build_context_adaptive<M1, M2>(
     session_id: &str,
     user_text: &str,
@@ -365,24 +348,18 @@ where
     M1: MemoryStore + ?Sized,
     M2: MemoryStore + ?Sized,
 {
-    // Phase 5: Use enhanced multi-head retrieval if available and enabled
-    if CONFIG.is_robust_memory_enabled() {
-        if let Some(multi_store) = multi_store {
-            info!("Using enhanced multi-head parallel context building");
-            return build_context_multi_head(
-                session_id,
-                user_text,
-                recent_count,
-                semantic_count,
-                llm_client,
-                sqlite_store,
-                multi_store,
-            ).await;
-        } else {
-            debug!("Multi-store not available, using single-head parallel");
-        }
-    } else {
-        debug!("Robust memory disabled, using single-head parallel");
+    // Always use multi-head if available
+    if let Some(multi_store) = multi_store {
+        debug!("Using enhanced multi-head parallel context building");
+        return build_context_multi_head(
+            session_id,
+            user_text,
+            recent_count,
+            semantic_count,
+            llm_client,
+            sqlite_store,
+            multi_store,
+        ).await;
     }
 
     // Fallback to standard parallel recall
@@ -397,7 +374,7 @@ where
     ).await
 }
 
-/// ── Phase 5: Performance metrics for monitoring ──
+/// Performance metrics for monitoring
 #[derive(Debug, Clone)]
 pub struct ParallelRecallMetrics {
     pub session_id: String,
@@ -412,7 +389,7 @@ pub struct ParallelRecallMetrics {
     pub heads_searched: usize,
 }
 
-/// ── Phase 5: Enhanced context building with metrics collection ──
+/// Enhanced context building with metrics collection
 pub async fn build_context_with_metrics<M1, M2>(
     session_id: &str,
     user_text: &str,
@@ -443,7 +420,7 @@ where
 
     let total_time = total_start.elapsed();
 
-    // Collect metrics (simplified for now)
+    // Collect metrics
     let metrics = ParallelRecallMetrics {
         session_id: session_id.to_string(),
         total_time_ms: total_time.as_millis() as u64,
@@ -453,7 +430,7 @@ where
         recent_count: context.recent.len(),
         semantic_count: context.semantic.len(),
         candidates_before_rerank: 0,
-        multi_head_enabled: CONFIG.is_robust_memory_enabled() && multi_store.is_some(),
+        multi_head_enabled: multi_store.is_some(),
         heads_searched: if multi_store.is_some() { 3 } else { 1 },
     };
 

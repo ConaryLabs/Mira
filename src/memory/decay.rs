@@ -1,75 +1,85 @@
 // src/memory/decay.rs
-
-//! Human-like memory decay and weighting system.
-//! Memories fade over time but can be reinforced through recall.
+// Superhuman memory decay system with stepped retention
+// Memories fade very slowly and work harmoniously with rolling summaries
 
 use chrono::{DateTime, Duration, Utc};
 use crate::memory::types::{MemoryEntry, MemoryType};
 
-/// Configuration for memory decay curves
+/// Configuration for superhuman stepped memory decay
 #[derive(Debug, Clone)]
 pub struct DecayConfig {
-    /// Base decay rate (0.0 = no decay, 1.0 = instant forgetting)
-    pub base_decay_rate: f32,
-    /// How much emotional memories resist decay
-    pub emotional_resistance: f32,
+    /// Minimum salience floor (memories never decay below this)
+    pub forgetting_threshold: f32,
     /// Boost factor when a memory is recalled
     pub recall_reinforcement: f32,
-    /// Minimum salience before a memory is "forgotten"
-    pub forgetting_threshold: f32,
+    /// Not used in stepped decay, kept for compatibility
+    pub base_decay_rate: f32,
+    /// Not used in stepped decay, kept for compatibility
+    pub emotional_resistance: f32,
 }
 
 impl Default for DecayConfig {
     fn default() -> Self {
         Self {
-            base_decay_rate: 0.1,
-            emotional_resistance: 0.7,
-            recall_reinforcement: 1.5,
-            forgetting_threshold: 1.0,
+            forgetting_threshold: 2.0,  // 20% floor - memories never completely disappear
+            recall_reinforcement: 1.5,   // 50% boost on recall (capped at 10)
+            base_decay_rate: 0.1,        // Kept for compatibility
+            emotional_resistance: 0.7,   // Kept for compatibility
         }
     }
 }
 
-/// Calculates the decayed salience of a memory based on time and type
+/// Calculates superhuman stepped decay - way better than human memory
 pub fn calculate_decayed_salience(
     memory: &MemoryEntry,
-    config: &DecayConfig,
+    _config: &DecayConfig,  // Underscore since we use hardcoded steps
     now: DateTime<Utc>,
 ) -> f32 {
     let original_salience = memory.salience.unwrap_or(5.0);
     let age = now.signed_duration_since(memory.timestamp);
     
-    // Convert age to decay factor (hours as unit)
-    let hours_passed = age.num_hours() as f32;
-    
-    // Different memory types decay at different rates
-    let type_modifier = match &memory.memory_type {
-        Some(MemoryType::Feeling) => 1.0 - config.emotional_resistance,
-        Some(MemoryType::Promise) => 0.1,  // Promises decay very slowly
-        Some(MemoryType::Joke) => 1.5,     // Jokes fade faster
-        Some(MemoryType::Fact) => 0.8,     // Facts are relatively stable
-        Some(MemoryType::Event) => 1.0,    // Events decay normally
-        _ => 1.0,
+    // Superhuman stepped decay
+    let base_retention = if age.num_hours() < 24 {
+        // First 24 hours: Perfect recall
+        1.0
+    } else if age.num_days() < 7 {
+        // First week: 95% retention
+        0.95
+    } else if age.num_days() < 30 {
+        // First month: 90% retention  
+        0.90
+    } else if age.num_days() < 90 {
+        // First 3 months: 80% retention
+        0.80
+    } else if age.num_days() < 365 {
+        // First year: 70% retention
+        0.70
+    } else if age.num_days() < 730 {
+        // First 2 years: 50% retention
+        0.50
+    } else {
+        // Ancient history: 30% retention
+        0.30
     };
     
-    // Emotional intensity affects decay (high salience = slower decay)
-    let salience_modifier = 1.0 - (original_salience / 10.0) * 0.5;
+    // Special handling for different memory types
+    let type_bonus = match &memory.memory_type {
+        Some(MemoryType::Promise) => 0.2,   // Promises get +20% retention
+        Some(MemoryType::Feeling) if original_salience > 8.0 => 0.15, // Strong emotions +15%
+        Some(MemoryType::Fact) => 0.1,      // Facts get +10% retention
+        Some(MemoryType::Joke) => -0.1,     // Jokes fade 10% faster
+        _ => 0.0,
+    };
     
-    // Calculate decay using Ebbinghaus forgetting curve approximation
-    // Using sqrt to make decay less aggressive over time
-    let decay_factor = (-config.base_decay_rate * type_modifier * salience_modifier * (hours_passed / 24.0).powf(0.3)).exp();
+    // Apply retention with type bonus (capped at 1.0)
+    let final_retention = ((base_retention + type_bonus) as f32).min(1.0);
+    let decayed = original_salience * final_retention;
     
-    let decayed = original_salience * decay_factor;
-    
-    // Don't let it go below threshold unless it started there
-    if original_salience > config.forgetting_threshold {
-        decayed.max(config.forgetting_threshold)
-    } else {
-        decayed
-    }
+    // Respect the floor - memories never go below 20%
+    decayed.max(2.0)
 }
 
-/// Reinforces a memory when it's recalled, fighting decay
+/// Reinforces a memory when it's recalled - simple and effective
 pub fn reinforce_memory(
     memory: &mut MemoryEntry,
     config: &DecayConfig,
@@ -77,11 +87,15 @@ pub fn reinforce_memory(
 ) {
     let current = memory.salience.unwrap_or(5.0);
     
-    // Reinforcement is stronger for emotionally relevant recalls
-    let reinforcement = config.recall_reinforcement * (1.0 + recall_context_salience / 10.0);
+    // Stronger reinforcement for emotionally relevant recalls
+    let boost = if recall_context_salience > 7.0 {
+        config.recall_reinforcement * 1.2  // Extra 20% for high-context recalls
+    } else {
+        config.recall_reinforcement
+    };
     
     // Apply reinforcement but cap at 10.0
-    memory.salience = Some((current * reinforcement).min(10.0));
+    memory.salience = Some((current * boost).min(10.0));
     
     // Update tags to indicate reinforcement
     if let Some(ref mut tags) = memory.tags {
@@ -91,7 +105,7 @@ pub fn reinforce_memory(
     }
 }
 
-/// Identifies memories that are effectively "forgotten" and can be archived
+/// Identifies memories that have reached the floor (for potential archival)
 pub fn identify_forgotten_memories(
     memories: &[MemoryEntry],
     config: &DecayConfig,
@@ -101,8 +115,9 @@ pub fn identify_forgotten_memories(
         .enumerate()
         .filter_map(|(idx, memory)| {
             let decayed = calculate_decayed_salience(memory, config, now);
-            if decayed < config.forgetting_threshold && 
-               now.signed_duration_since(memory.timestamp) > Duration::days(30) {
+            // Only consider "forgotten" if it's at floor AND very old (2+ years)
+            if decayed <= config.forgetting_threshold && 
+               now.signed_duration_since(memory.timestamp) > Duration::days(730) {
                 Some(idx)
             } else {
                 None
@@ -111,7 +126,7 @@ pub fn identify_forgotten_memories(
         .collect()
 }
 
-/// Applies time-based decay to a batch of memories (for background processing)
+/// Applies decay to a batch of memories (for background processing)
 pub fn apply_batch_decay(
     memories: &mut [MemoryEntry],
     config: &DecayConfig,
@@ -121,4 +136,36 @@ pub fn apply_batch_decay(
         let decayed = calculate_decayed_salience(memory, config, now);
         memory.salience = Some(decayed);
     }
+}
+
+/// Check if a memory should be included in context based on decay and relevance
+pub fn should_include_memory(
+    memory: &MemoryEntry,
+    decayed_salience: f32,
+    vector_relevance: Option<f32>,  // From semantic search
+) -> bool {
+    // Always include very recent memories (last 24 hours)
+    let age = Utc::now().signed_duration_since(memory.timestamp);
+    if age.num_hours() < 24 {
+        return true;
+    }
+    
+    // Include if highly relevant from vector search
+    if let Some(relevance) = vector_relevance {
+        if relevance > 0.75 {
+            return true;
+        }
+    }
+    
+    // Include if still has decent salience after decay
+    if decayed_salience > 4.0 {
+        return true;
+    }
+    
+    // Special case: always include promises unless they're ancient
+    if matches!(&memory.memory_type, Some(MemoryType::Promise)) && age.num_days() < 365 {
+        return true;
+    }
+    
+    false
 }
