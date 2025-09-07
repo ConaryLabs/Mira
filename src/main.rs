@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use axum::{
     routing::get,
     Router,
-    extract::ConnectInfo,
 };
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;

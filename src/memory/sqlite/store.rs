@@ -7,7 +7,7 @@ use crate::memory::traits::MemoryStore;
 use crate::memory::types::{MemoryEntry, MemoryTag, MemoryType};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use serde_json;
 use sqlx::{Row, SqlitePool};
 

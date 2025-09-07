@@ -6,9 +6,9 @@ pub mod message_handler;
 pub mod prompt_builder;
 
 // Re-export key components for easier access from other parts of the application.
-pub use executor::{ToolChatRequest, ToolEvent, ToolExecutor, ToolConfig};
+pub use executor::ToolExecutor;
 pub use message_handler::ToolMessageHandler;
-pub use prompt_builder::{ToolPromptBuilder, PromptTemplates};
+pub use prompt_builder::ToolPromptBuilder;
 
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
 use crate::state::AppState;

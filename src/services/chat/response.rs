@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::{debug, info, warn, error};
+use tracing::{info, warn, error};
 
 use crate::services::memory::MemoryService;
 use crate::services::summarization::SummarizationService;

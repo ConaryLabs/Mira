@@ -23,8 +23,8 @@ pub mod heartbeat;
 
 // Re-export key components for easier access from other modules.
 pub use connection::WebSocketConnection;
-pub use message_router::{MessageRouter, should_use_tools, extract_file_context};
-pub use heartbeat::{HeartbeatManager, HeartbeatConfig, HeartbeatStats};
+pub use message_router::MessageRouter;
+pub use heartbeat::HeartbeatManager;
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
 use crate::llm::streaming::{start_response_stream, StreamEvent};

@@ -16,19 +16,11 @@ pub mod schema;
 pub mod streaming;
 
 // Export the main client and its components
-pub use client::{
-    ClientConfig, EmbeddingClient, EmbeddingModel, EmbeddingUtils, ModelConfig, OpenAIClient,
-    ResponseOutput, ResponseStream, StreamProcessor,
-};
+pub use client::OpenAIClient;
 
 // PHASE 2: Export new multi-head embedding components
-pub use embeddings::{EmbeddingHead, TextChunker};
 
 // Export responses manager and related types
-pub use responses::{ResponsesManager, ThreadManager, VectorStoreManager};
 
 // Re-export schema types for services
-pub use schema::{
-    function_schema, EvaluateMemoryRequest, EvaluateMemoryResponse, MiraStructuredReply,
-};
 

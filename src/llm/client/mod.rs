@@ -20,8 +20,8 @@ pub mod embedding;
 
 // Re-export types for external use
 pub use config::{ClientConfig, ModelConfig};
-pub use responses::{ResponseOutput, extract_text_from_responses, normalize_verbosity, normalize_reasoning_effort};
-pub use streaming::{ResponseStream, sse_json_stream, StreamProcessor};
+pub use responses::{ResponseOutput, extract_text_from_responses};
+pub use streaming::{ResponseStream, StreamProcessor};
 pub use embedding::{EmbeddingClient, EmbeddingModel, EmbeddingUtils};
 
 /// Main OpenAI client with refactored architecture

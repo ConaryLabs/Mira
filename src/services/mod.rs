@@ -16,17 +16,9 @@ pub use chat::ChatService;
 pub use context::ContextService;
 pub use document::DocumentService;
 pub use memory::MemoryService;
-pub use summarization::SummarizationService;
-pub use file_context::FileContextService;
-pub use file_search::{FileSearchService, FileSearchParams, FileSearchResult, SearchMatchType}; // PHASE 3 NEW
+pub use file_search::{FileSearchService, FileSearchParams}; // PHASE 3 NEW
 
 // Export chat response types for compatibility (from refactored modules)
-pub use chat::{ChatResponse, ChatConfig};
+pub use chat::ChatResponse;
 
 // Export tool-related functionality
-pub use chat_with_tools::{
-    get_enabled_tools,
-    ChatResponseWithTools,
-    ChatServiceToolExt,
-    ChatServiceWithTools,
-};

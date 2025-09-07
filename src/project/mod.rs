@@ -5,4 +5,3 @@ pub mod handlers;
 
 // Re-export for easy use elsewhere
 pub use types::{Project, Artifact, ArtifactType};
-pub use store::ProjectStore;

@@ -176,5 +176,3 @@ pub async fn create_app_state(
     })
 }
 
-/// Back-compat alias for Phase 5 naming (same signature as `create_app_state`).
-pub use create_app_state as create_app_state_with_multi_qdrant;

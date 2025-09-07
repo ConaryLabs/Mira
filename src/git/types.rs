@@ -71,15 +71,3 @@ pub struct GitRepoAttachment {
 }
 
 // Re-export the Phase 3 types from client.rs
-pub use super::client::{
-    FileNode,
-    FileNodeType,
-    BranchInfo,
-    CommitInfo,
-    DiffInfo,
-    FileDiff,
-    DiffStatus,
-    DiffHunk,
-    DiffLine,
-    DiffLineType,
-};
