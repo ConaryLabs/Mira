@@ -3,6 +3,7 @@
 // Manages chat messages, commands, and domain-specific operations.
 // PHASE 4 UPDATE: Added full project command handling
 // PHASE 5 UPDATE: Added git command handling
+// PHASE 6 UPDATE: Added file transfer handling
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -14,7 +15,8 @@ use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata}
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
 use crate::api::ws::memory;
 use crate::api::ws::project;  // Added for Phase 4
-use crate::api::ws::git;      // Added for Phase 5 - THIS WAS MISSING!
+use crate::api::ws::git;      // Added for Phase 5
+use crate::api::ws::files;    // Added for Phase 6
 use crate::api::error::ApiError;  // Added for Phase 4
 use crate::state::AppState;
 use crate::config::CONFIG;
@@ -94,7 +96,14 @@ impl MessageRouter {
             ).await
         } else {
             debug!("Routing to simple chat handler");
-            self.handle_simple_chat_message(content, project_id).await
+            // FIX: Call the correct function from the parent module
+            super::handle_simple_chat_message(
+                content,
+                project_id,
+                self.app_state.clone(),
+                self.connection.get_sender(),
+                self.connection.get_last_send_ref(),
+            ).await
         };
 
         self.connection.set_processing(false).await;
@@ -108,23 +117,6 @@ impl MessageRouter {
         }
 
         Ok(())
-    }
-
-    /// Handle simple chat messages (non-tool enabled)
-    async fn handle_simple_chat_message(
-        &self,
-        content: String,
-        project_id: Option<String>,
-    ) -> Result<(), anyhow::Error> {
-        use super::handle_simple_chat_message;
-        
-        handle_simple_chat_message(
-            content,
-            project_id,
-            self.app_state.clone(),
-            self.connection.get_sender(),
-            self.connection.get_last_send_ref(),
-        ).await
     }
 
     /// Handle command messages
@@ -238,9 +230,11 @@ impl MessageRouter {
         match result {
             Ok(response) => {
                 self.connection.send_message(response).await?;
+                Ok(())
             }
             Err(e) => {
-                let error_msg = format!("Memory operation failed: {}", e);
+                let error_msg = format!("Memory command failed: {}", e);
+                error!("{}", error_msg);
                 
                 if let Some(req_id) = request_id {
                     let response = WsServerMessage::Data {
@@ -253,9 +247,9 @@ impl MessageRouter {
                 } else {
                     self.connection.send_error(&error_msg, "MEMORY_ERROR".to_string()).await?;
                 }
+                Ok(())
             }
         }
-        Ok(())
     }
 
     /// PHASE 5: Handle git commands
@@ -267,7 +261,6 @@ impl MessageRouter {
     ) -> Result<(), anyhow::Error> {
         info!("Git command: {} with params: {:?}", method, params);
         
-        // Call the actual git handler
         let result = git::handle_git_command(
             &method,
             params,
@@ -276,18 +269,15 @@ impl MessageRouter {
         
         match result {
             Ok(response) => {
-                // Send the successful response
                 self.connection.send_message(response).await?;
                 Ok(())
             }
             Err(api_error) => {
-                // Convert ApiError to appropriate error response
                 let error_msg = format!("{}", api_error);
                 let error_code = self.api_error_to_code(&api_error);
                 
                 error!("Git command failed: {} - {}", error_code, error_msg);
                 
-                // Send error response with request_id if available
                 if let Some(req_id) = request_id {
                     let error_response = WsServerMessage::Data {
                         data: serde_json::json!({
@@ -305,30 +295,55 @@ impl MessageRouter {
         }
     }
 
-    /// PHASE 6: Handle file transfer operations (stub for now)
+    /// PHASE 6: Handle file transfer operations
     async fn handle_file_transfer(
         &self,
         operation: String,
         data: serde_json::Value,
         request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("File transfer: {} with data: {:?}", operation, data);
+        info!("File transfer operation: {} with {} bytes of data", 
+            operation, 
+            serde_json::to_string(&data).unwrap_or_default().len()
+        );
         
-        // Phase 6: Will be implemented later
-        let error_msg = "File transfers not yet implemented";
+        // Call the actual file transfer handler
+        let result = files::handle_file_transfer(
+            &operation,
+            data,
+            self.app_state.clone()
+        ).await;
         
-        if let Some(req_id) = request_id {
-            let response = WsServerMessage::Data {
-                data: serde_json::json!({
-                    "error": error_msg
-                }),
-                request_id: Some(req_id),
-            };
-            self.connection.send_message(response).await?;
-        } else {
-            self.connection.send_error(error_msg, "NOT_IMPLEMENTED".to_string()).await?;
+        match result {
+            Ok(response) => {
+                // Send the successful response
+                self.connection.send_message(response).await?;
+                Ok(())
+            }
+            Err(api_error) => {
+                // Convert ApiError to appropriate error response
+                let error_msg = format!("{}", api_error);
+                let error_code = self.api_error_to_code(&api_error);
+                
+                error!("File transfer failed: {} - {}", error_code, error_msg);
+                
+                // Send error response with request_id if available
+                if let Some(req_id) = request_id {
+                    let error_response = WsServerMessage::Data {
+                        data: serde_json::json!({
+                            "error": error_msg,
+                            "code": error_code,
+                            "operation": operation
+                        }),
+                        request_id: Some(req_id),
+                    };
+                    self.connection.send_message(error_response).await?;
+                } else {
+                    self.connection.send_error(&error_msg, error_code.to_string()).await?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     /// Helper to convert ApiError to error code string
@@ -343,6 +358,10 @@ impl MessageRouter {
             "UNAUTHORIZED"
         } else if error_str.contains("forbidden") {
             "FORBIDDEN"
+        } else if error_str.contains("too large") {
+            "FILE_TOO_LARGE"
+        } else if error_str.contains("in progress") {
+            "UPLOAD_IN_PROGRESS"
         } else {
             "INTERNAL_ERROR"
         }
@@ -371,17 +390,17 @@ pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
         }
     }
     
-    // Default to true when tools are enabled globally
-    true
+    // Default to not using tools for simple messages
+    false
 }
 
-/// Extracts file context from message metadata if available
+/// Extract context from uploaded files (for future enhancement)
 pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
     metadata.as_ref().and_then(|meta| {
         if let Some(file_path) = &meta.file_path {
-            Some(format!("File context from: {}", file_path))
+            Some(format!("Working with file: {}", file_path))
         } else if let Some(repo_id) = &meta.repo_id {
-            Some(format!("Repository: {}", repo_id))
+            Some(format!("Repository context: {}", repo_id))
         } else if let Some(attachment_id) = &meta.attachment_id {
             Some(format!("Attachment: {}", attachment_id))
         } else {
