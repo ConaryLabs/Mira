@@ -2,6 +2,7 @@
 // Routes incoming WebSocket messages to appropriate handlers based on message type.
 // Manages chat messages, commands, and domain-specific operations.
 // PHASE 4 UPDATE: Added full project command handling
+// PHASE 5 UPDATE: Added git command handling
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -13,6 +14,7 @@ use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata}
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
 use crate::api::ws::memory;
 use crate::api::ws::project;  // Added for Phase 4
+use crate::api::ws::git;      // Added for Phase 5 - THIS WAS MISSING!
 use crate::api::error::ApiError;  // Added for Phase 4
 use crate::state::AppState;
 use crate::config::CONFIG;
@@ -256,7 +258,7 @@ impl MessageRouter {
         Ok(())
     }
 
-    /// PHASE 5: Handle git commands (stub for now)
+    /// PHASE 5: Handle git commands
     async fn handle_git_command(
         &self,
         method: String,
@@ -265,21 +267,42 @@ impl MessageRouter {
     ) -> Result<(), anyhow::Error> {
         info!("Git command: {} with params: {:?}", method, params);
         
-        // Phase 5: Will be implemented next
-        let error_msg = "Git commands not yet implemented";
+        // Call the actual git handler
+        let result = git::handle_git_command(
+            &method,
+            params,
+            self.app_state.clone()
+        ).await;
         
-        if let Some(req_id) = request_id {
-            let response = WsServerMessage::Data {
-                data: serde_json::json!({
-                    "error": error_msg
-                }),
-                request_id: Some(req_id),
-            };
-            self.connection.send_message(response).await?;
-        } else {
-            self.connection.send_error(error_msg, "NOT_IMPLEMENTED".to_string()).await?;
+        match result {
+            Ok(response) => {
+                // Send the successful response
+                self.connection.send_message(response).await?;
+                Ok(())
+            }
+            Err(api_error) => {
+                // Convert ApiError to appropriate error response
+                let error_msg = format!("{}", api_error);
+                let error_code = self.api_error_to_code(&api_error);
+                
+                error!("Git command failed: {} - {}", error_code, error_msg);
+                
+                // Send error response with request_id if available
+                if let Some(req_id) = request_id {
+                    let error_response = WsServerMessage::Data {
+                        data: serde_json::json!({
+                            "error": error_msg,
+                            "code": error_code
+                        }),
+                        request_id: Some(req_id),
+                    };
+                    self.connection.send_message(error_response).await?;
+                } else {
+                    self.connection.send_error(&error_msg, error_code.to_string()).await?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     /// PHASE 6: Handle file transfer operations (stub for now)
