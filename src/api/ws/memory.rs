@@ -1,27 +1,27 @@
 // src/api/ws/memory.rs
 // WebSocket handlers for memory operations including save, search, context retrieval,
 // pinning, import/export, and statistics.
-// UPDATED: Strict session isolation for future multi-user support
 
 use std::sync::Arc;
-use std::str::FromStr;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    api::error::{ApiError, ApiResult},
-    api::ws::message::WsServerMessage,
-    memory::types::{MemoryEntry, MemoryType},
+    api::{
+        error::{ApiError, ApiResult},
+        ws::message::WsServerMessage,
+    },
+    config::CONFIG,
     state::AppState,
 };
 
 // Default session ID for single-user mode
-// TODO: Remove when auth layer is implemented
 const DEFAULT_SESSION: &str = "peter-eternal";
 
 // Request types for memory operations
+
 #[derive(Debug, Deserialize)]
 struct SaveMemoryRequest {
     session_id: Option<String>,
@@ -63,6 +63,7 @@ struct ImportMemoriesRequest {
 struct MemoryImportData {
     content: String,
     role: String,
+    #[allow(dead_code)]
     timestamp: Option<String>,
     salience: Option<f32>,
     tags: Option<Vec<String>>,
@@ -102,10 +103,7 @@ struct SerializableMemoryStats {
 }
 
 /// Returns the session ID, defaulting to the eternal session for single-user mode
-/// TODO: Replace with auth-based session when auth layer is implemented
 fn get_session_id(session_id: Option<String>) -> String {
-    // For now, always use the provided session_id or default
-    // In the future, this will validate against the authenticated user's session
     session_id.unwrap_or_else(|| DEFAULT_SESSION.to_string())
 }
 
@@ -196,14 +194,13 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
         _ => return Err(anyhow!("Invalid role: {}. Must be 'user' or 'assistant'", role))
     }
     
-    // Return Data message with request_id support
     Ok(WsServerMessage::Data {
         data: json!({
             "success": true,
             "session_id": session_id,
             "message": format!("Memory saved for session {}", session_id)
         }),
-        request_id: None, // Will be filled by router
+        request_id: None,
     })
 }
 
@@ -217,9 +214,9 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
           session_id, request.query);
     
     let max_results = request.max_results.unwrap_or(10);
-    let min_salience = request.min_salience.unwrap_or(0.0);
+    let min_salience = request.min_salience.unwrap_or(CONFIG.min_salience_for_qdrant as f32);
     
-    // Try semantic search first - NOW WITH SESSION_ID PARAMETER
+    // Search with session ID parameter
     let search_results = match app_state.memory_service
         .search_similar(&session_id, &request.query, max_results * 2)
         .await
@@ -230,7 +227,6 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
         }
         Err(e) => {
             warn!("Semantic search failed ({}), falling back to recent memories", e);
-            // Fallback: just get recent memories if semantic search fails
             app_state.memory_service
                 .get_recent_context(&session_id, max_results)
                 .await
@@ -238,25 +234,15 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
         }
     };
     
-    // STRICT SESSION ISOLATION
-    // No cross-session access, period. Each user's data is completely isolated.
-    // When auth is added, this ensures user privacy.
+    // Strict session isolation - only return memories from the requested session
     let filtered_results: Vec<_> = search_results.into_iter()
-        .filter(|entry| {
-            // ONLY return memories from the exact session requested
-            // No cross-session sharing, even for high salience
-            entry.session_id == session_id
-        })
-        .filter(|entry| {
-            // Apply salience filter WITHIN the session
-            entry.salience.unwrap_or(0.0) >= min_salience
-        })
+        .filter(|entry| entry.session_id == session_id)
+        .filter(|entry| entry.salience.unwrap_or(0.0) >= min_salience)
         .take(max_results)
         .collect();
     
     debug!("Returning {} memories after filtering", filtered_results.len());
     
-    // Return Data message
     Ok(WsServerMessage::Data {
         data: json!({
             "memories": filtered_results,
@@ -315,15 +301,14 @@ async fn get_context(params: Value, app_state: Arc<AppState>) -> Result<WsServer
 }
 
 /// Pins a memory to prevent decay
-async fn pin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
+async fn pin_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: PinMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid pin request: {}", e))?;
     
     info!("Pinning memory with id: {}, pinned: {}", request.memory_id, request.pinned);
     
-    // This would require adding a pin_memory method to MemoryService
-    // For now, return a placeholder response
-    warn!("Pin operation requires adding pin_memory method to MemoryService");
+    // TODO: Implement pin_memory in MemoryService
+    warn!("Pin operation not yet implemented");
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -438,13 +423,14 @@ async fn get_recent_memories(params: Value, app_state: Arc<AppState>) -> Result<
 }
 
 /// Deletes a memory by ID
-async fn delete_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
+async fn delete_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: DeleteMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid delete request: {}", e))?;
     
     info!("Deleting memory with id: {}", request.memory_id);
     
-    warn!("Delete operation requires adding delete_memory method to MemoryService");
+    // TODO: Implement delete_memory in MemoryService
+    warn!("Delete operation not yet implemented");
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -456,13 +442,14 @@ async fn delete_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
 }
 
 /// Updates the salience score of a memory
-async fn update_salience(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
+async fn update_salience(params: Value, _app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: UpdateSalienceRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid salience update request: {}", e))?;
     
     info!("Updating salience for memory {}: {}", request.memory_id, request.salience);
     
-    warn!("Salience update requires adding update_salience method to MemoryService");
+    // TODO: Implement update_salience in MemoryService
+    warn!("Salience update not yet implemented");
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -505,8 +492,6 @@ async fn get_memory_stats(params: Value, app_state: Arc<AppState>) -> Result<WsS
 
 /// Debug function to check if Qdrant is properly configured
 async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage> {
-    use crate::config::CONFIG;
-    
     let mut status = json!({
         "qdrant_url": CONFIG.qdrant_url.clone(),
         "qdrant_configured": !CONFIG.qdrant_url.is_empty(),

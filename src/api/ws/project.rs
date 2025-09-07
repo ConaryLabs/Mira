@@ -1,22 +1,22 @@
 // src/api/ws/project.rs
-// Complete WebSocket handler implementation for project and artifact operations
-// Phase 4: Migrate Project Management to WebSockets
-// FIXED: Using correct WsServerMessage::Data variant and proper ArtifactType values
+// WebSocket handler implementation for project and artifact operations
 
 use std::sync::Arc;
-use anyhow::anyhow;
-use serde::{Deserialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    api::error::{ApiError, ApiResult},
-    api::ws::message::WsServerMessage,
+    api::{
+        error::{ApiError, ApiResult},
+        ws::message::WsServerMessage,
+    },
     project::{Project, Artifact, ArtifactType},
     state::AppState,
 };
 
-// Request/Response types for better type safety
+// Request types for project operations
+
 #[derive(Debug, Deserialize)]
 struct CreateProjectRequest {
     name: String,
@@ -80,7 +80,6 @@ pub async fn handle_project_command(
 ) -> ApiResult<WsServerMessage> {
     debug!("Processing project command: {} with params: {:?}", method, params);
     
-    // Route to specific handlers based on method
     let result = match method {
         // Project operations
         "project.create" => create_project(params, app_state).await,
@@ -102,7 +101,6 @@ pub async fn handle_project_command(
         }
     };
     
-    // Log the result for debugging
     match &result {
         Ok(_) => info!("Successfully processed project command: {}", method),
         Err(e) => error!("Failed to process project command {}: {:?}", method, e),
@@ -119,12 +117,10 @@ async fn create_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     
     info!("Creating project: {}", request.name);
     
-    // Validate project name
     if request.name.trim().is_empty() {
         return Err(ApiError::bad_request("Project name cannot be empty"));
     }
     
-    // Create the project using the store
     let project = app_state.project_store
         .create_project(
             request.name,
@@ -154,7 +150,6 @@ async fn list_projects(app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
         .await
         .map_err(|e| ApiError::internal(format!("Failed to list projects: {}", e)))?;
     
-    // Get artifact counts for each project
     let mut project_list = Vec::new();
     for project in projects {
         let artifacts = app_state.project_store
@@ -191,7 +186,6 @@ async fn get_project(params: Value, app_state: Arc<AppState>) -> ApiResult<WsSer
     
     match project {
         Some(p) => {
-            // Also get artifacts for this project
             let artifacts = app_state.project_store
                 .list_project_artifacts(&p.id)
                 .await
@@ -216,12 +210,10 @@ async fn update_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     
     info!("Updating project: {}", request.id);
     
-    // Validate that at least one field is being updated
     if request.name.is_none() && request.description.is_none() && request.tags.is_none() {
         return Err(ApiError::bad_request("No fields to update"));
     }
     
-    // Validate name if provided
     if let Some(ref name) = request.name {
         if name.trim().is_empty() {
             return Err(ApiError::bad_request("Project name cannot be empty"));
@@ -259,16 +251,13 @@ async fn delete_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     
     info!("Deleting project: {}", request.id);
     
-    // First check if project has artifacts
     let artifacts = app_state.project_store
         .list_project_artifacts(&request.id)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to check artifacts: {}", e)))?;
     
     if !artifacts.is_empty() {
-        warn!("Attempting to delete project {} with {} artifacts", request.id, artifacts.len());
-        // You might want to enforce this or cascade delete
-        // return Err(ApiError::bad_request("Cannot delete project with artifacts"));
+        warn!("Deleting project {} with {} artifacts", request.id, artifacts.len());
     }
     
     let deleted = app_state.project_store
@@ -298,12 +287,10 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
     
     info!("Creating artifact: {} for project: {}", request.name, request.project_id);
     
-    // Validate artifact name
     if request.name.trim().is_empty() {
         return Err(ApiError::bad_request("Artifact name cannot be empty"));
     }
     
-    // Verify project exists
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await
@@ -313,7 +300,6 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
         return Err(ApiError::not_found(format!("Project not found: {}", request.project_id)));
     }
     
-    // Parse artifact type - using the actual enum values from ArtifactType
     let artifact_type = match request.artifact_type.to_lowercase().as_str() {
         "code" => ArtifactType::Code,
         "image" => ArtifactType::Image,
@@ -378,12 +364,10 @@ async fn update_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
     
     info!("Updating artifact: {}", request.id);
     
-    // Validate that at least one field is being updated
     if request.name.is_none() && request.content.is_none() {
         return Err(ApiError::bad_request("No fields to update"));
     }
     
-    // Validate name if provided
     if let Some(ref name) = request.name {
         if name.trim().is_empty() {
             return Err(ApiError::bad_request("Artifact name cannot be empty"));
@@ -445,7 +429,6 @@ async fn list_artifacts(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     
     debug!("Listing artifacts for project: {}", request.project_id);
     
-    // Verify project exists
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await
@@ -472,7 +455,7 @@ async fn list_artifacts(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     })
 }
 
-// Helper functions to convert domain types to JSON
+// Helper functions
 
 fn project_to_json(project: &Project) -> Value {
     json!({
@@ -499,7 +482,8 @@ fn artifact_to_json(artifact: &Artifact) -> Value {
     })
 }
 
-// Helper function to validate project ownership (for future multi-user support)
+/// Validates project ownership for future multi-user support
+#[allow(dead_code)]
 async fn validate_project_access(
     project_id: &str,
     _user: &str,

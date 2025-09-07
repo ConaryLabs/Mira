@@ -1,30 +1,22 @@
 // src/api/ws/git.rs
-// Complete WebSocket handler implementation for Git operations
-// Phase 5: Migrate Git Integration to WebSockets
+// WebSocket handler implementation for Git operations
 
 use std::sync::Arc;
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::{
-    api::error::{ApiError, ApiResult},
-    api::ws::message::WsServerMessage,
-    git::{
-        GitClient,
-        GitStore,
-        GitRepoAttachment,
-        GitImportStatus,
-        BranchInfo,
-        CommitInfo,
-        FileNode,
-        DiffInfo,
+    api::{
+        error::{ApiError, ApiResult},
+        ws::message::WsServerMessage,
     },
+    git::GitRepoAttachment,
     state::AppState,
 };
 
-// Request types for better type safety
+// Request types for Git operations
+
 #[derive(Debug, Deserialize)]
 struct AttachRepoRequest {
     project_id: String,
@@ -178,7 +170,7 @@ async fn list_repositories(params: Value, app_state: Arc<AppState>) -> ApiResult
     
     debug!("Listing repositories for project: {}", request.project_id);
     
-    let attachments = app_state.git_client.store
+    let attachments = app_state.git_store
         .get_attachments_for_project(&request.project_id)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to list repositories: {}", e)))?;
@@ -466,7 +458,7 @@ async fn get_validated_attachment(
     attachment_id: &str,
     app_state: &AppState,
 ) -> ApiResult<GitRepoAttachment> {
-    app_state.git_client.store
+    app_state.git_store
         .get_attachment(attachment_id)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?
@@ -480,9 +472,9 @@ fn attachment_to_json(attachment: &GitRepoAttachment) -> Value {
         "project_id": attachment.project_id,
         "repo_url": attachment.repo_url,
         "local_path": attachment.local_path,
-        "import_status": attachment.import_status.to_string(),
-        "last_imported_at": attachment.last_imported_at.map(|dt| dt.to_rfc3339()),
-        "last_sync_at": attachment.last_sync_at.map(|dt| dt.to_rfc3339())
+        "import_status": attachment.import_status,
+        "last_sync_at": attachment.last_sync_at.map(|dt| dt.to_rfc3339()),
+        "last_imported_at": attachment.last_imported_at.map(|dt| dt.to_rfc3339())
     })
 }
 
