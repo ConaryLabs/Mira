@@ -1,5 +1,6 @@
 // src/api/ws/chat/mod.rs
 // Handles the primary WebSocket chat endpoint, connection lifecycle, and message routing.
+// UPDATED: Added request_id parsing and passing to message router
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -75,7 +76,6 @@ async fn handle_socket(
     let heartbeat_handle = tokio::spawn({
         let manager = heartbeat_manager.clone();
         async move {
-            // FIX: Handle the Result from the start method.
             if let Err(e) = manager.start().await {
                 warn!("Heartbeat manager for client {} exited with error: {}", addr, e);
             }
@@ -94,17 +94,33 @@ async fn handle_socket(
         match msg {
             Ok(Message::Text(text)) => {
                 *last_activity.lock().await = Instant::now();
-                match serde_json::from_str::<WsClientMessage>(&text) {
-                    Ok(client_msg) => {
-                        info!("Received WebSocket message: {:?}", &client_msg);
-                        if let Err(e) = message_router.route_message(client_msg).await {
-                            error!("Error routing message: {}", e);
+                
+                // Parse the message and extract request_id if present
+                match serde_json::from_str::<serde_json::Value>(&text) {
+                    Ok(json_msg) => {
+                        // Extract request_id before parsing the actual message
+                        let request_id = json_msg.get("request_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        
+                        // Now parse the actual WebSocket message
+                        match serde_json::from_value::<WsClientMessage>(json_msg.clone()) {
+                            Ok(client_msg) => {
+                                info!("Received WebSocket message: {:?}", &client_msg);
+                                // Pass the request_id along with the message
+                                if let Err(e) = message_router.route_message(client_msg, request_id).await {
+                                    error!("Error routing message: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse client message: {} - JSON: {:?}", e, json_msg);
+                                let _ = connection.send_error("Invalid message format", "INVALID_FORMAT".to_string()).await;
+                            }
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to parse client message: {} - Text: {}", e, text);
-                        // FIXED: Added the missing error code parameter
-                        let _ = connection.send_error("Invalid message format", "INVALID_FORMAT".to_string()).await;
+                        warn!("Failed to parse JSON: {} - Text: {}", e, text);
+                        let _ = connection.send_error("Invalid JSON format", "INVALID_JSON".to_string()).await;
                     }
                 }
             }
@@ -139,10 +155,8 @@ pub async fn handle_simple_chat_message(
 ) -> Result<(), anyhow::Error> {
     info!("Processing simple chat message: {}", content.chars().take(80).collect::<String>());
 
-    // FIX: Prefix unused variable with underscore
     let _session_id = "websocket_session".to_string();
 
-    // FIXED: Added the missing 4th parameter (structured_json: bool)
     let stream = start_response_stream(
         &app_state.llm_client,
         &content,
@@ -153,7 +167,6 @@ pub async fn handle_simple_chat_message(
 
     tokio::pin!(stream);
 
-    // FIXED: The stream returns Result<StreamEvent>, so we need to handle that
     while let Some(event_result) = stream.next().await {
         match event_result {
             Ok(event) => {

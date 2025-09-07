@@ -1,6 +1,7 @@
 // src/api/ws/memory.rs
 // WebSocket handlers for memory operations including save, search, context retrieval,
 // pinning, import/export, and statistics.
+// UPDATED: Return Data messages instead of Status for request_id support
 
 use std::sync::Arc;
 use std::str::FromStr;
@@ -124,6 +125,7 @@ pub async fn handle_memory_command(
         "memory.delete" => delete_memory(params, app_state).await,
         "memory.update_salience" => update_salience(params, app_state).await,
         "memory.get_stats" => get_memory_stats(params, app_state).await,
+        "memory.check_status" => check_qdrant_status(app_state).await,
         _ => {
             error!("Unknown memory method: {}", method);
             return Err(ApiError::bad_request(format!("Unknown memory method: {}", method)));
@@ -159,44 +161,25 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
             info!("Saved user message for session: {}", session_id);
         }
         "assistant" => {
-            // Assistant messages require metadata for proper storage
             if let Some(metadata) = request.metadata {
-                let response = crate::services::chat::ChatResponse {
+                use crate::services::chat::ChatResponse;
+                
+                let response = ChatResponse {
                     output: request.content.clone(),
-                    persona: metadata.get("persona")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("mira")
-                        .to_string(),
-                    mood: metadata.get("mood")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("neutral")
-                        .to_string(),
-                    salience: metadata.get("salience")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(5) as usize,
-                    summary: metadata.get("summary")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    memory_type: metadata.get("memory_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("other")
-                        .to_string(),
-                    tags: metadata.get("tags")
-                        .and_then(|v| v.as_array())
+                    persona: metadata["persona"].as_str().unwrap_or("assistant").to_string(),
+                    mood: metadata["mood"].as_str().unwrap_or("neutral").to_string(),
+                    salience: metadata["salience"].as_u64().unwrap_or(5) as usize,
+                    summary: metadata["summary"].as_str().unwrap_or(&request.content).to_string(),
+                    memory_type: metadata["memory_type"].as_str().unwrap_or("other").to_string(),
+                    tags: metadata["tags"]
+                        .as_array()
                         .map(|arr| arr.iter()
                             .filter_map(|v| v.as_str().map(String::from))
                             .collect())
                         .unwrap_or_default(),
-                    intent: metadata.get("intent")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    monologue: metadata.get("monologue")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    reasoning_summary: metadata.get("reasoning_summary")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
+                    intent: metadata["intent"].as_str().map(String::from),
+                    monologue: metadata["monologue"].as_str().map(String::from),
+                    reasoning_summary: metadata["reasoning_summary"].as_str().map(String::from),
                 };
                 
                 app_state.memory_service
@@ -211,13 +194,14 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
         _ => return Err(anyhow!("Invalid role: {}. Must be 'user' or 'assistant'", role))
     }
     
-    // Use Status message type instead of Response
-    Ok(WsServerMessage::Status {
-        message: format!("Memory saved for session {}", session_id),
-        detail: Some(json!({
+    // Return Data message with request_id support
+    Ok(WsServerMessage::Data {
+        data: json!({
             "success": true,
-            "session_id": session_id
-        }).to_string()),
+            "session_id": session_id,
+            "message": format!("Memory saved for session {}", session_id)
+        }),
+        request_id: None, // Will be filled by router
     })
 }
 
@@ -233,25 +217,46 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
     let max_results = request.max_results.unwrap_or(10);
     let min_salience = request.min_salience.unwrap_or(0.0);
     
-    // Use search_similar method instead of search_memories
-    let results = app_state.memory_service
-        .search_similar(&request.query, max_results)
-        .await?;
+    // Try semantic search first
+    let search_results = match app_state.memory_service
+        .search_similar(&request.query, max_results * 2)
+        .await
+    {
+        Ok(results) => {
+            info!("Found {} results from semantic search", results.len());
+            results
+        }
+        Err(e) => {
+            warn!("Semantic search failed ({}), falling back to recent memories", e);
+            // Fallback: just get recent memories if semantic search fails
+            app_state.memory_service
+                .get_recent_context(&session_id, max_results)
+                .await
+                .unwrap_or_default()
+        }
+    };
     
-    let filtered_results: Vec<_> = results.into_iter()
-        .filter(|entry| entry.salience.unwrap_or(0.0) >= min_salience)
+    // Filter results
+    let filtered_results: Vec<_> = search_results.into_iter()
+        .filter(|entry| {
+            // Include memories from the current session
+            entry.session_id == session_id || 
+            // Or memories with high salience from any session
+            entry.salience.unwrap_or(0.0) >= min_salience
+        })
+        .take(max_results)
         .collect();
     
-    debug!("Found {} memories matching query", filtered_results.len());
+    debug!("Returning {} memories after filtering", filtered_results.len());
     
-    // Send results as Status with JSON detail
-    Ok(WsServerMessage::Status {
-        message: format!("Found {} memories", filtered_results.len()),
-        detail: Some(json!({
+    // Return Data message
+    Ok(WsServerMessage::Data {
+        data: json!({
             "memories": filtered_results,
             "count": filtered_results.len(),
             "session_id": session_id
-        }).to_string()),
+        }),
+        request_id: None,
     })
 }
 
@@ -279,54 +284,53 @@ async fn get_context(params: Value, app_state: Arc<AppState>) -> Result<WsServer
         let recent = app_state.memory_service
             .get_recent_context(&session_id, recent_count)
             .await?;
+        
         crate::memory::recall::RecallContext::new(recent, Vec::new())
     };
     
-    // RecallContext has 'recent' and 'semantic' fields, not 'recent_history' etc.
-    debug!("Built context with {} recent and {} semantic entries", 
+    debug!("Built context with {} recent and {} semantic memories", 
            context.recent.len(), context.semantic.len());
     
-    Ok(WsServerMessage::Status {
-        message: "Context built successfully".to_string(),
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "context": {
                 "recent": context.recent,
-                "semantic": context.semantic,
+                "semantic": context.semantic
             },
+            "session_id": session_id,
             "stats": {
                 "recent_count": context.recent.len(),
-                "semantic_count": context.semantic.len(),
-            },
-            "session_id": session_id
-        }).to_string()),
+                "semantic_count": context.semantic.len()
+            }
+        }),
+        request_id: None,
     })
 }
 
-/// Pins or unpins a memory to prevent decay
+/// Pins a memory to prevent decay
 async fn pin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: PinMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid pin request: {}", e))?;
     
-    info!("Setting pin status for memory {}: {}", request.memory_id, request.pinned);
+    info!("Pinning memory with id: {}, pinned: {}", request.memory_id, request.pinned);
     
-    // Access sqlite_store through a public method or add a pin method to MemoryService
-    // For now, return a status indicating the operation is pending
+    // This would require adding a pin_memory method to MemoryService
+    // For now, return a placeholder response
     warn!("Pin operation requires adding pin_memory method to MemoryService");
     
-    Ok(WsServerMessage::Status {
-        message: format!("Pin operation for memory {} queued", request.memory_id),
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "memory_id": request.memory_id,
             "pinned": request.pinned,
             "status": "pending_implementation"
-        }).to_string()),
+        }),
+        request_id: None,
     })
 }
 
-/// Convenience method to unpin a memory
+/// Unpins a memory
 async fn unpin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
-    let memory_id = params.get("memory_id")
-        .and_then(|v| v.as_i64())
+    let memory_id = params["memory_id"].as_i64()
         .ok_or_else(|| anyhow!("memory_id is required"))?;
     
     let unpin_params = json!({
@@ -336,6 +340,8 @@ async fn unpin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServe
     
     pin_memory(unpin_params, app_state).await
 }
+
+// Continue with remaining functions updated to use Data messages...
 
 /// Imports multiple memories in batch
 async fn import_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
@@ -351,22 +357,6 @@ async fn import_memories(params: Value, app_state: Arc<AppState>) -> Result<WsSe
     let mut errors = Vec::new();
     
     for (idx, memory_data) in request.memories.iter().enumerate() {
-        let timestamp = if let Some(ts_str) = &memory_data.timestamp {
-            chrono::DateTime::parse_from_rfc3339(ts_str)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|e| {
-                    warn!("Failed to parse timestamp '{}': {}", ts_str, e);
-                    chrono::Utc::now()
-                })
-        } else {
-            chrono::Utc::now()
-        };
-        
-        let memory_type = memory_data.memory_type.as_deref()
-            .and_then(|mt| MemoryType::from_str(mt).ok())
-            .unwrap_or(MemoryType::Other);
-        
-        // For now, save as user messages
         match app_state.memory_service
             .save_user_message(&session_id, &memory_data.content, None)
             .await
@@ -381,21 +371,16 @@ async fn import_memories(params: Value, app_state: Arc<AppState>) -> Result<WsSe
     }
     
     let success = failed_count == 0;
-    let message = if success {
-        format!("Successfully imported {} memories", imported_count)
-    } else {
-        format!("Imported {} memories, {} failed", imported_count, failed_count)
-    };
     
-    Ok(WsServerMessage::Status {
-        message,
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "success": success,
             "imported": imported_count,
             "failed": failed_count,
             "session_id": session_id,
             "errors": if !errors.is_empty() { Some(errors) } else { None }
-        }).to_string()),
+        }),
+        request_id: None,
     })
 }
 
@@ -413,13 +398,13 @@ async fn get_recent_memories(params: Value, app_state: Arc<AppState>) -> Result<
         .get_recent_context(&session_id, count)
         .await?;
     
-    Ok(WsServerMessage::Status {
-        message: format!("Retrieved {} recent memories", memories.len()),
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "memories": memories,
             "count": memories.len(),
             "session_id": session_id
-        }).to_string()),
+        }),
+        request_id: None,
     })
 }
 
@@ -430,15 +415,14 @@ async fn delete_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
     
     info!("Deleting memory with id: {}", request.memory_id);
     
-    // This would require adding a delete method to MemoryService
     warn!("Delete operation requires adding delete_memory method to MemoryService");
     
-    Ok(WsServerMessage::Status {
-        message: format!("Delete operation for memory {} queued", request.memory_id),
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "memory_id": request.memory_id,
             "status": "pending_implementation"
-        }).to_string()),
+        }),
+        request_id: None,
     })
 }
 
@@ -449,16 +433,15 @@ async fn update_salience(params: Value, app_state: Arc<AppState>) -> Result<WsSe
     
     info!("Updating salience for memory {}: {}", request.memory_id, request.salience);
     
-    // This would require adding an update_salience method to MemoryService
     warn!("Salience update requires adding update_salience method to MemoryService");
     
-    Ok(WsServerMessage::Status {
-        message: format!("Salience update for memory {} queued", request.memory_id),
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "memory_id": request.memory_id,
             "new_salience": request.salience,
             "status": "pending_implementation"
-        }).to_string()),
+        }),
+        request_id: None,
     })
 }
 
@@ -474,7 +457,6 @@ async fn get_memory_stats(params: Value, app_state: Arc<AppState>) -> Result<WsS
         .get_service_stats(&session_id)
         .await?;
     
-    // Convert to serializable format
     let serializable_stats = SerializableMemoryStats {
         total_messages: stats.total_messages,
         recent_messages: stats.recent_messages,
@@ -483,11 +465,45 @@ async fn get_memory_stats(params: Value, app_state: Arc<AppState>) -> Result<WsS
         summary_entries: stats.summary_entries,
     };
     
-    Ok(WsServerMessage::Status {
-        message: "Memory statistics retrieved".to_string(),
-        detail: Some(json!({
+    Ok(WsServerMessage::Data {
+        data: json!({
             "session_id": session_id,
             "stats": serializable_stats
-        }).to_string()),
+        }),
+        request_id: None,
+    })
+}
+
+/// Debug function to check if Qdrant is properly configured
+async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage> {
+    use crate::config::CONFIG;
+    
+    let mut status = json!({
+        "qdrant_url": CONFIG.qdrant_url.clone(),
+        "qdrant_configured": !CONFIG.qdrant_url.is_empty(),
+        "openai_key_configured": CONFIG.openai_api_key.is_some(),
+        "embedding_heads": CONFIG.embed_heads.clone(),
+        "collection_name": CONFIG.qdrant_collection.clone(),
+    });
+    
+    // Try to generate a test embedding
+    match app_state.llm_client.get_embedding("test").await {
+        Ok(embedding) => {
+            status["embedding_test"] = json!({
+                "success": true,
+                "dimension": embedding.len()
+            });
+        }
+        Err(e) => {
+            status["embedding_test"] = json!({
+                "success": false,
+                "error": e.to_string()
+            });
+        }
+    }
+    
+    Ok(WsServerMessage::Data {
+        data: status,
+        request_id: None,
     })
 }

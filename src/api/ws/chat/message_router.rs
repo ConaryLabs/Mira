@@ -1,6 +1,7 @@
 // src/api/ws/chat/message_router.rs
 // Routes incoming WebSocket messages to appropriate handlers based on message type.
 // Manages chat messages, commands, and domain-specific operations.
+// UPDATED: Added request_id handling for memory operations
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -8,7 +9,7 @@ use std::net::SocketAddr;
 use tracing::{debug, error, info};
 
 use super::connection::WebSocketConnection;
-use crate::api::ws::message::{WsClientMessage, MessageMetadata};
+use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
 use crate::api::ws::memory;
 use crate::state::AppState;
@@ -33,8 +34,8 @@ impl MessageRouter {
         }
     }
 
-    /// Main message routing entry point
-    pub async fn route_message(&self, msg: WsClientMessage) -> Result<(), anyhow::Error> {
+    /// Main message routing entry point with request_id support
+    pub async fn route_message(&self, msg: WsClientMessage, request_id: Option<String>) -> Result<(), anyhow::Error> {
         match msg {
             WsClientMessage::Chat { content, project_id, metadata } => {
                 self.handle_chat_message(content, project_id, metadata).await
@@ -49,16 +50,16 @@ impl MessageRouter {
                 self.handle_typing_message(active).await
             }
             WsClientMessage::ProjectCommand { method, params } => {
-                self.handle_project_command(method, params).await
+                self.handle_project_command(method, params, request_id).await
             }
             WsClientMessage::MemoryCommand { method, params } => {
-                self.handle_memory_command(method, params).await
+                self.handle_memory_command(method, params, request_id).await
             }
             WsClientMessage::GitCommand { method, params } => {
-                self.handle_git_command(method, params).await
+                self.handle_git_command(method, params, request_id).await
             }
             WsClientMessage::FileTransfer { operation, data } => {
-                self.handle_file_transfer(operation, data).await
+                self.handle_file_transfer(operation, data, request_id).await
             }
         }
     }
@@ -89,10 +90,7 @@ impl MessageRouter {
             ).await
         } else {
             debug!("Routing to simple chat handler");
-            self.handle_simple_chat_message(
-                content,
-                project_id,
-            ).await
+            self.handle_simple_chat_message(content, project_id).await
         };
 
         self.connection.set_processing(false).await;
@@ -100,7 +98,7 @@ impl MessageRouter {
         if let Err(e) = result {
             error!("Error handling chat message: {}", e);
             let _ = self.connection.send_error(
-                &format!("Failed to process message: {}", e), 
+                &format!("Failed to process message: {}", e),
                 "PROCESSING_ERROR".to_string()
             ).await;
         }
@@ -108,7 +106,7 @@ impl MessageRouter {
         Ok(())
     }
 
-    /// Handle simple chat messages without tool support
+    /// Handle simple chat messages (non-tool enabled)
     async fn handle_simple_chat_message(
         &self,
         content: String,
@@ -125,13 +123,13 @@ impl MessageRouter {
         ).await
     }
 
-    /// Handle system commands like heartbeat/ping
+    /// Handle command messages
     async fn handle_command_message(
         &self,
         command: String,
         args: Option<serde_json::Value>,
     ) -> Result<(), anyhow::Error> {
-        debug!("Command received: {} with args: {:?}", command, args);
+        info!("Command received: {} with args: {:?}", command, args);
         
         match command.as_str() {
             "ping" | "heartbeat" => {
@@ -174,31 +172,82 @@ impl MessageRouter {
         &self,
         method: String,
         params: serde_json::Value,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
         info!("Project command: {} with params: {:?}", method, params);
-        self.connection.send_error("Project commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        
+        // For now, just return not implemented
+        // When implementing, follow the same pattern as memory commands
+        if let Some(req_id) = request_id {
+            let response = WsServerMessage::Data {
+                data: serde_json::json!({
+                    "error": "Project commands not yet implemented"
+                }),
+                request_id: Some(req_id),
+            };
+            self.connection.send_message(response).await?;
+        } else {
+            self.connection.send_error("Project commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        }
         Ok(())
     }
 
-    /// Handle memory operations (save, search, context, etc.)
+    /// Handle memory operations with request_id tracking
     async fn handle_memory_command(
         &self,
         method: String,
         params: serde_json::Value,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
         info!("Memory command: {} with params: {:?}", method, params);
         
         match memory::handle_memory_command(&method, params, self.app_state.clone()).await {
-            Ok(response) => {
+            Ok(mut response) => {
+                // If we have a request_id and the response is Data type, add it
+                if let Some(req_id) = request_id {
+                    match &mut response {
+                        WsServerMessage::Data { request_id, .. } => {
+                            *request_id = Some(req_id);
+                        }
+                        // For backward compatibility, convert Status to Data if we have request_id
+                        WsServerMessage::Status { message, detail } => {
+                            let data = serde_json::json!({
+                                "message": message,
+                                "detail": detail
+                            });
+                            response = WsServerMessage::Data {
+                                data,
+                                request_id: Some(req_id),
+                            };
+                        }
+                        _ => {
+                            // Other message types don't get request_id
+                        }
+                    }
+                }
                 self.connection.send_message(response).await?;
                 Ok(())
             }
             Err(e) => {
                 error!("Memory command {} failed: {}", method, e);
-                self.connection.send_error(
-                    &format!("Memory operation '{}' failed: {}", method, e),
-                    "MEMORY_ERROR".to_string()
-                ).await?;
+                
+                if let Some(req_id) = request_id {
+                    // Send error as Data with request_id
+                    let response = WsServerMessage::Data {
+                        data: serde_json::json!({
+                            "error": format!("Memory operation '{}' failed: {}", method, e),
+                            "code": "MEMORY_ERROR"
+                        }),
+                        request_id: Some(req_id),
+                    };
+                    self.connection.send_message(response).await?;
+                } else {
+                    // Fallback to regular error
+                    self.connection.send_error(
+                        &format!("Memory operation '{}' failed: {}", method, e),
+                        "MEMORY_ERROR".to_string()
+                    ).await?;
+                }
                 Ok(())
             }
         }
@@ -209,9 +258,21 @@ impl MessageRouter {
         &self,
         method: String,
         params: serde_json::Value,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
         info!("Git command: {} with params: {:?}", method, params);
-        self.connection.send_error("Git commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        
+        if let Some(req_id) = request_id {
+            let response = WsServerMessage::Data {
+                data: serde_json::json!({
+                    "error": "Git commands not yet implemented"
+                }),
+                request_id: Some(req_id),
+            };
+            self.connection.send_message(response).await?;
+        } else {
+            self.connection.send_error("Git commands not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        }
         Ok(())
     }
 
@@ -220,15 +281,27 @@ impl MessageRouter {
         &self,
         operation: String,
         data: serde_json::Value,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
         info!("File transfer: {} with data: {:?}", operation, data);
-        self.connection.send_error("File transfers not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        
+        if let Some(req_id) = request_id {
+            let response = WsServerMessage::Data {
+                data: serde_json::json!({
+                    "error": "File transfers not yet implemented"
+                }),
+                request_id: Some(req_id),
+            };
+            self.connection.send_message(response).await?;
+        } else {
+            self.connection.send_error("File transfers not yet implemented", "NOT_IMPLEMENTED".to_string()).await?;
+        }
         Ok(())
     }
 }
 
 /// Determines whether to use tool-enabled chat based on metadata and configuration
-pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
+pub fn should_use_tools(_metadata: &Option<MessageMetadata>) -> bool {
     // Use the enable_chat_tools field from CONFIG
     if !CONFIG.enable_chat_tools {
         return false;

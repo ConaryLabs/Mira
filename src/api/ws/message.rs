@@ -2,7 +2,6 @@
 // Defines the data structures for WebSocket client and server messages.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Contains metadata about the user's context, such as the file being viewed.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -24,7 +23,7 @@ pub struct TextSelection {
 
 /// Represents all possible messages sent from the client (frontend) to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "snake_case")]  // ADD rename_all = "snake_case"
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsClientMessage {
     Chat {
         content: String,
@@ -108,5 +107,13 @@ pub enum WsServerMessage {
     ImageGenerated {
         urls: Vec<String>,
         revised_prompt: Option<String>,
+    },
+    
+    /// NEW: A data response with optional request_id for matching
+    #[serde(rename = "data")]
+    Data {
+        data: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 }
