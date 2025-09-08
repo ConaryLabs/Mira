@@ -118,32 +118,66 @@ impl MemoryService {
         session_id: &str,
         count: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        // Load recent messages
+        // Load recent messages first
         let mut entries = self.sqlite_store.load_recent(session_id, count).await?;
         
-        // If rolling summaries are enabled and should be used in context, include them
+        // ACTUALLY CHECK THE CONFIG FLAG!
         if CONFIG.should_use_rolling_summaries_in_context() {
-            // Load summaries for this session
-            let all_messages = self.sqlite_store.load_recent(session_id, count * 2).await?;
+            info!("Rolling summaries in context is enabled, looking for summaries...");
             
-            // Find and inject rolling summaries
+            // Load extra messages to find summaries (they might be further back)
+            let search_window = count * 3; // Look back further for summaries
+            let all_messages = self.sqlite_store.load_recent(session_id, search_window).await?;
+            
+            // Find all rolling summaries
             let mut summaries: Vec<MemoryEntry> = Vec::new();
             for entry in all_messages {
                 if let Some(ref tags) = entry.tags {
-                    if tags.iter().any(|t| t.contains("summary:rolling")) {
+                    // Check for rolling summary tags
+                    if tags.iter().any(|t| t.starts_with("summary:rolling:")) {
                         summaries.push(entry);
                     }
                 }
             }
             
-            // Intelligently merge summaries with recent messages
             if !summaries.is_empty() {
-                info!("Including {} rolling summaries in context", summaries.len());
-                // Add summaries at the beginning for better context
-                summaries.extend(entries);
-                entries = summaries;
+                info!("Found {} rolling summaries to inject into context", summaries.len());
+                
+                // Sort summaries by timestamp (oldest first)
+                summaries.sort_by_key(|s| s.timestamp);
+                
+                // Strategy: Include the most recent rolling summary at the beginning
+                // This gives the model context about earlier conversation
+                if let Some(latest_summary) = summaries.last() {
+                    info!("Injecting latest rolling summary into context");
+                    entries.insert(0, latest_summary.clone());
+                }
+                
+                // If we have a 100-message mega summary, prioritize it
+                for summary in &summaries {
+                    if let Some(ref tags) = summary.tags {
+                        if tags.iter().any(|t| t == "summary:rolling:100") {
+                            info!("Found mega summary, prioritizing in context");
+                            // Remove any 10-message summary we added and use mega instead
+                            entries.retain(|e| {
+                                e.tags.as_ref()
+                                    .map(|t| !t.iter().any(|tag| tag.starts_with("summary:rolling:")))
+                                    .unwrap_or(true)
+                            });
+                            entries.insert(0, summary.clone());
+                            break;
+                        }
+                    }
+                }
+            } else {
+                debug!("No rolling summaries found for session {}", session_id);
             }
+        } else {
+            debug!("Rolling summaries in context is disabled");
         }
+        
+        // Ensure we don't exceed the requested count
+        entries.truncate(count);
         
         Ok(entries)
     }
@@ -616,6 +650,25 @@ impl MemoryService {
         info!("Created snapshot summary at message count {}", message_count);
         
         Ok(())
+    }
+    
+    // Manual trigger methods for WebSocket commands
+    pub async fn trigger_rolling_summary(
+        &self, 
+        session_id: &str, 
+        window_size: usize
+    ) -> Result<String> {
+        if window_size != 10 && window_size != 100 {
+            return Err(anyhow::anyhow!("Window size must be 10 or 100"));
+        }
+        
+        self.create_rolling_summary(session_id, window_size).await?;
+        Ok(format!("Successfully created {}-message rolling summary", window_size))
+    }
+    
+    pub async fn trigger_snapshot_summary(&self, session_id: &str) -> Result<String> {
+        self.create_snapshot_summary(session_id).await?;
+        Ok("Successfully created snapshot summary".to_string())
     }
 
     pub async fn search_similar(
