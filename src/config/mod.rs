@@ -61,6 +61,10 @@ pub struct MiraConfig {
     // Salience threshold - always 0.0 now but kept for compatibility
     pub min_salience_for_qdrant: f32,
 
+    // 🔴 BUG FIX #1: Adding decay interval configuration
+    // This was missing - the decay system was built but had no interval config!
+    pub decay_interval_seconds: Option<u64>,
+    
     // Summarization Configuration
     pub enable_summarization: bool,
     pub summary_chunk_size: usize,
@@ -211,6 +215,13 @@ impl MiraConfig {
             
             // Always 0.0 now - we save everything
             min_salience_for_qdrant: env_var_or("MIN_SALIENCE_FOR_QDRANT", 0.0),
+
+            // 🔴 BUG FIX #1: Memory decay interval configuration
+            // Default: 3600 seconds (1 hour) if not specified
+            // Set to None to disable decay (not recommended!)
+            decay_interval_seconds: env::var("MIRA_DECAY_INTERVAL_SECONDS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok()),
 
             // Summarization
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),

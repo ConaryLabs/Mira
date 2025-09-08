@@ -8,8 +8,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
-use futures::future;
+use tracing::{debug, error, info};
 
 use crate::config::CONFIG;
 use crate::llm::client::OpenAIClient;
@@ -94,75 +93,41 @@ impl MemoryService {
         let context_recent = recent_result?;
         debug!("Loaded {} recent messages (including summaries)", context_recent.len());
 
-        // Determine which heads to search based on query classification
-        let heads_to_search = self.determine_search_heads(query_text).await;
+        // 🔴 BUG FIX #2: Use search_all instead of individual searches
+        // Calculate how many results to get from each head
+        let k_per_head = (semantic_count + 2) / 3; // Divide semantic_count among heads, round up
         
-        // Parallel multi-head search using futures
-        let search_futures: Vec<_> = heads_to_search
-            .iter()
-            .map(|&head| {
-                let multi_store = self.multi_store.clone();
-                let embedding = embedding.clone();
-                let session_id = session_id.to_string();
-                
-                async move {
-                    let results = multi_store
-                        .search(head, &session_id, &embedding, semantic_count)
-                        .await
-                        .unwrap_or_else(|e| {
-                            warn!("Search failed for {} head: {}", head, e);
-                            Vec::new()
-                        });
-                    (head, results)
-                }
-            })
-            .collect();
-
-        // Execute all searches in parallel
-        let multi_search_results = future::join_all(search_futures).await;
+        // Search ALL collections in parallel with the built-in method
+        let multi_search_results = self.multi_store
+            .search_all(session_id, &embedding, k_per_head)
+            .await?;
         
-        info!("Parallel search completed for {} heads", heads_to_search.len());
+        info!("🔍 Multi-head search completed: searched {} collections", multi_search_results.len());
+        
+        // Log results from each head for debugging
+        for (head, entries) in &multi_search_results {
+            info!("  {} collection returned {} entries", head.as_str(), entries.len());
+        }
 
         // Merge and deduplicate results
         let context_semantic = self.merge_and_deduplicate_results(multi_search_results)?;
 
+        // Take only the requested number of semantic results
+        let mut final_semantic = context_semantic;
+        final_semantic.truncate(semantic_count);
+
         let context = RecallContext {
             recent: context_recent,
-            semantic: context_semantic,
+            semantic: final_semantic,
         };
 
         info!(
-            "Multi-head parallel context built: {} recent, {} semantic matches",
+            "✅ Multi-head parallel context built: {} recent, {} semantic matches from all collections",
             context.recent.len(),
             context.semantic.len()
         );
 
         Ok(context)
-    }
-
-    async fn determine_search_heads(&self, query_text: &str) -> Vec<EmbeddingHead> {
-        let mut heads = vec![EmbeddingHead::Semantic];
-        
-        // Classify the query to determine if we should search code head
-        match self.llm_client.classify_text(query_text).await {
-            Ok(classification) => {
-                if classification.is_code {
-                    heads.push(EmbeddingHead::Code);
-                    debug!("Query classified as code, adding Code head to search");
-                }
-            }
-            Err(e) => {
-                debug!("Failed to classify query: {}, using semantic only", e);
-            }
-        }
-        
-        // Only search summary head if explicitly configured
-        if CONFIG.should_use_rolling_summaries_in_context() {
-            heads.push(EmbeddingHead::Summary);
-            debug!("Rolling summaries enabled, adding Summary head to search");
-        }
-        
-        heads
     }
 
     async fn load_recent_with_rolling_summaries(
@@ -203,7 +168,12 @@ impl MemoryService {
 
         for (head, entries) in multi_search_results {
             for entry in entries {
-                let content_key = format!("{}:{}", head, entry.content.chars().take(100).collect::<String>());
+                // Use a more robust deduplication key
+                let content_key = format!("{}:{}:{}", 
+                    head.as_str(), 
+                    entry.id.clone().unwrap_or_default(),
+                    entry.content.chars().take(100).collect::<String>()
+                );
                 
                 if !content_dedup.contains_key(&content_key) {
                     content_dedup.insert(content_key.clone(), true);
@@ -300,14 +270,13 @@ impl MemoryService {
         debug!("Session {} message count now: {}", session_id, message_count);
 
         // Rich metadata classification with GPT-5
-        info!("Classifying user message for rich metadata");
+        info!("Classifying user message with GPT-5...");
         let classification_result = self.llm_client.classify_text(content).await;
-        
-        let (salience, is_code, classification) = match classification_result {
-            Ok(c) => (c.salience, c.is_code, Some(c)),
+        let is_code = match &classification_result {
+            Ok(c) => c.is_code,
             Err(e) => {
-                error!("Failed to classify message: {}. Using defaults.", e);
-                (0.5, false, None)
+                error!("Failed to classify user message: {}", e);
+                false
             }
         };
 
@@ -318,18 +287,15 @@ impl MemoryService {
             content: content.to_string(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(salience), // Use GPT-5 provided salience
-            tags: Some(vec!["conversational".to_string()]),
-            summary: Some(format!(
-                "User query: {}",
-                content.chars().take(50).collect::<String>()
-            )),
+            salience: Some(7.0),
+            tags: Some(vec!["user".to_string()]),
+            summary: None,
             memory_type: Some(MemoryType::Other),
             logprobs: None,
             moderation_flag: None,
-            system_fingerprint: project_id.map(String::from),
+            system_fingerprint: None,
             head: None,
-            is_code: None,
+            is_code: Some(is_code),
             lang: None,
             topics: None,
             pinned: Some(false),
@@ -337,18 +303,21 @@ impl MemoryService {
             last_accessed: Some(Utc::now()),
         };
 
-        if let Some(classification) = classification {
-            entry = entry.with_classification(classification.clone());
-
-            let mut new_tags = entry.tags.clone().unwrap_or_default();
+        // Apply classification results if available
+        if let Ok(classification) = &classification_result {
+            entry.is_code = Some(classification.is_code);
+            entry.lang = Some(classification.lang.clone());  // FIX: Wrap in Some() since lang is Option<String>
+            entry.topics = Some(classification.topics.clone());
+            
+            let mut new_tags = entry.tags.unwrap_or_default();
             if classification.is_code {
-                new_tags.push("is_code:true".to_string());
+                new_tags.push("code".to_string());
             }
-            if !classification.lang.is_empty() && classification.lang != "natural" {
+            if !classification.lang.is_empty() {  // FIX: Check string directly, not as Option
                 new_tags.push(format!("lang:{}", classification.lang));
             }
-            for topic in classification.topics {
-                new_tags.push(format!("topic:{topic}"));
+            for topic in &classification.topics {
+                new_tags.push(format!("topic:{}", topic));
             }
             entry.tags = Some(new_tags);
         }
