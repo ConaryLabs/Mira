@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use reqwest::{header, Client as ReqwestClient};
 use serde_json::{json, Value};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::api::error::ApiError;
 use crate::llm::classification::Classification;
@@ -99,12 +99,15 @@ impl OpenAIClient {
         self.post_response_stream(body).await
     }
 
-    /// Conversation summarization
+    /// Conversation summarization with proper text output format
     pub async fn summarize_conversation(
         &self,
         prompt: &str,
         max_output_tokens: usize,
     ) -> Result<String> {
+        info!("Generating conversation summary with GPT-5");
+        
+        // Build the request with proper text formatting
         let body = json!({
             "model": CONFIG.gpt5_model,
             "input": [{
@@ -114,13 +117,42 @@ impl OpenAIClient {
                     "text": prompt
                 }]
             }],
-            "max_output_tokens": max_output_tokens
+            "instructions": "Create a concise, factual summary of the conversation. Focus on key points, decisions, and important context.",
+            "text": {
+                "format": {
+                    "type": "text"  // Explicitly request text output, not JSON
+                },
+                "verbosity": "low"  // Keep summaries concise
+            },
+            "parameters": {
+                "verbosity": "low",  // We want brief summaries
+                "reasoning_effort": "low",  // Simple extraction task
+                "max_output_tokens": max_output_tokens
+            }
         });
 
+        debug!("Summarization request: model={}, max_tokens={}", 
+            CONFIG.gpt5_model, max_output_tokens);
+
         let response = self.post_response(body).await?;
+        
+        // Log the response structure for debugging
+        if response.get("output").and_then(|o| o.as_array()).map(|a| a.is_empty()).unwrap_or(false) {
+            error!("GPT-5 returned empty output array for summarization");
+            // We'll just return an error instead of trying fallback since simple_chat is elsewhere
+            return Err(anyhow::anyhow!("GPT-5 returned empty output for summarization"));
+        }
+        
         responses::extract_text_from_responses(&response)
-            .ok_or_else(|| anyhow::anyhow!("Failed to extract summarization response"))
+            .ok_or_else(|| {
+                error!("Failed to extract text from summarization response. Response: {:?}", response);
+                anyhow::anyhow!("Failed to extract summarization response")
+            })
     }
+
+    // NOTE: simple_chat() method is intentionally NOT included here to avoid duplication.
+    // The simple_chat() implementation remains in src/llm/chat.rs where it's already
+    // being used by other parts of the codebase (emotional_weight.rs, memory.rs, etc.)
 
     /// Classifies text using GPT-5 Responses API with JSON mode
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
@@ -172,10 +204,6 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
                 ApiError::internal("LLM returned malformed classification JSON").into()
             })
     }
-
-    // NOTE: simple_chat() method is intentionally NOT included here to avoid duplication.
-    // The simple_chat() implementation remains in src/llm/chat.rs where it's already
-    // being used by other parts of the codebase (emotional_weight.rs, memory.rs, etc.)
 
     /// Raw HTTP POST to the Responses API
     pub async fn post_response(&self, body: Value) -> Result<Value> {
