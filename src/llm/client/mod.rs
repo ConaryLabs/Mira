@@ -114,9 +114,6 @@ impl OpenAIClient {
                     "text": prompt
                 }]
             }],
-            "text": {
-                "verbosity": CONFIG.get_verbosity_for("summary")
-            },
             "max_output_tokens": max_output_tokens
         });
 
@@ -129,18 +126,16 @@ impl OpenAIClient {
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
         info!("Classifying text with GPT-5 Responses API");
         
-        let instructions = r#"
-            You are an expert at analyzing text to extract structured metadata.
-            Analyze the following message and output a JSON object with the fields:
-            is_code, lang, topics, and salience.
+        let instructions = r#"You are an expert at analyzing text to extract structured metadata.
+Analyze the following message and return your response as a JSON object.
 
-            - is_code: boolean - True if the message is primarily code, false otherwise.
-            - lang: string - If is_code is true, specify the programming language (e.g., "rust", "python"). Otherwise, use "natural".
-            - topics: array of strings - A list of keywords or domains that describe the content (e.g., ["git", "error_handling"]).
-            - salience: float - A score from 0.0 to 1.0 indicating the importance of the message for future context. 1.0 is most important.
-            
-            Be concise and accurate. Use minimal reasoning.
-        "#;
+The JSON response must include these fields:
+- is_code: boolean - True if the message is primarily code, false otherwise.
+- lang: string - If is_code is true, specify the programming language (e.g., "rust", "python"). Otherwise, use "natural".
+- topics: array of strings - A list of keywords or domains that describe the content (e.g., ["git", "error_handling"]).
+- salience: float - A score from 0.0 to 1.0 indicating the importance of the message for future context. 1.0 is most important.
+
+Be concise and accurate. Output your analysis as valid JSON only."#;
 
         let request_body = json!({
             "model": CONFIG.gpt5_model,
@@ -148,20 +143,21 @@ impl OpenAIClient {
                 "role": "user", 
                 "content": [{
                     "type": "input_text",
-                    "text": text
+                    "text": format!("Analyze this text and return a JSON classification:\n\n{}", text)
                 }]
             }],
             "instructions": instructions,
             "text": {
-                "format": "json_object",
-                "verbosity": CONFIG.get_verbosity_for("classification")
+                "format": {
+                    "type": "json_object"
+                }
             },
             "max_output_tokens": CONFIG.get_json_max_tokens()
         });
 
-        debug!("Classification request: model={}, verbosity={}", 
+        debug!("Classification request: model={}, max_tokens={}", 
             CONFIG.gpt5_model, 
-            CONFIG.get_verbosity_for("classification")
+            CONFIG.get_json_max_tokens()
         );
 
         let response = self.post_response(request_body).await
@@ -177,44 +173,9 @@ impl OpenAIClient {
             })
     }
 
-    /// Simple chat helper that doesn't enforce JSON format
-    pub async fn simple_chat(
-        &self,
-        message: &str,
-        model: &str,
-        system_prompt: &str,
-    ) -> Result<String> {
-        let input = json!([
-            {
-                "role": "system",
-                "content": [{
-                    "type": "input_text",
-                    "text": system_prompt
-                }]
-            },
-            {
-                "role": "user",
-                "content": [{
-                    "type": "input_text", 
-                    "text": message
-                }]
-            }
-        ]);
-
-        let body = json!({
-            "model": model,
-            "input": input,
-            "text": {
-                "verbosity": "medium"
-            },
-            "max_output_tokens": 128000
-        });
-
-        let response = self.post_response(body).await?;
-        
-        responses::extract_text_from_responses(&response)
-            .ok_or_else(|| anyhow::anyhow!("No content in response"))
-    }
+    // NOTE: simple_chat() method is intentionally NOT included here to avoid duplication.
+    // The simple_chat() implementation remains in src/llm/chat.rs where it's already
+    // being used by other parts of the codebase (emotional_weight.rs, memory.rs, etc.)
 
     /// Raw HTTP POST to the Responses API
     pub async fn post_response(&self, body: Value) -> Result<Value> {
