@@ -7,18 +7,15 @@ use reqwest::{header, Client as ReqwestClient};
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
-// Import our new classification struct and the centralized ApiError
 use crate::api::error::ApiError;
 use crate::llm::classification::Classification;
 use crate::config::CONFIG;
 
-// Import extracted modules
 pub mod config;
 pub mod responses;
 pub mod streaming;
 pub mod embedding;
 
-// Re-export types for external use
 pub use config::ClientConfig;
 pub use responses::{ResponseOutput, extract_text_from_responses};
 pub use streaming::ResponseStream;
@@ -51,7 +48,6 @@ impl OpenAIClient {
         }))
     }
 
-    // Configuration getters
     pub fn model(&self) -> &str {
         self.config.model()
     }
@@ -88,7 +84,6 @@ impl OpenAIClient {
         debug!("Sending request to GPT-5 Responses API (non-streaming)");
         let response_value = self.post_response(request_body).await?;
 
-        // Validate and extract response
         responses::validate_response(&response_value)?;
         
         let text_content = responses::extract_text_from_responses(&response_value)
@@ -122,12 +117,7 @@ impl OpenAIClient {
             "text": {
                 "verbosity": CONFIG.get_verbosity_for("summary")
             },
-            "parameters": {
-                "verbosity": CONFIG.get_verbosity_for("summary"),
-                "reasoning_effort": CONFIG.get_reasoning_effort_for("summary"),
-                "max_output_tokens": max_output_tokens,
-                "temperature": 0.3
-            }
+            "max_output_tokens": max_output_tokens
         });
 
         let response = self.post_response(body).await?;
@@ -137,7 +127,7 @@ impl OpenAIClient {
 
     /// Classifies text using GPT-5 Responses API with JSON mode
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
-        info!("🔍 Classifying text with GPT-5 Responses API");
+        info!("Classifying text with GPT-5 Responses API");
         
         let instructions = r#"
             You are an expert at analyzing text to extract structured metadata.
@@ -155,7 +145,7 @@ impl OpenAIClient {
         let request_body = json!({
             "model": CONFIG.gpt5_model,
             "input": [{
-                "role": "user",
+                "role": "user", 
                 "content": [{
                     "type": "input_text",
                     "text": text
@@ -166,16 +156,11 @@ impl OpenAIClient {
                 "format": "json_object",
                 "verbosity": CONFIG.get_verbosity_for("classification")
             },
-            "parameters": {
-                "verbosity": CONFIG.get_verbosity_for("classification"),
-                "reasoning_effort": CONFIG.get_reasoning_effort_for("classification"),
-                "max_output_tokens": CONFIG.get_json_max_tokens()
-            }
+            "max_output_tokens": CONFIG.get_json_max_tokens()
         });
 
-        debug!("Classification request: model={}, reasoning={}, verbosity={}", 
+        debug!("Classification request: model={}, verbosity={}", 
             CONFIG.gpt5_model, 
-            CONFIG.get_reasoning_effort_for("classification"),
             CONFIG.get_verbosity_for("classification")
         );
 
@@ -190,6 +175,45 @@ impl OpenAIClient {
                 error!("Failed to parse classification JSON: {}\nRaw content: {}", e, content);
                 ApiError::internal("LLM returned malformed classification JSON").into()
             })
+    }
+
+    /// Simple chat helper that doesn't enforce JSON format
+    pub async fn simple_chat(
+        &self,
+        message: &str,
+        model: &str,
+        system_prompt: &str,
+    ) -> Result<String> {
+        let input = json!([
+            {
+                "role": "system",
+                "content": [{
+                    "type": "input_text",
+                    "text": system_prompt
+                }]
+            },
+            {
+                "role": "user",
+                "content": [{
+                    "type": "input_text", 
+                    "text": message
+                }]
+            }
+        ]);
+
+        let body = json!({
+            "model": model,
+            "input": input,
+            "text": {
+                "verbosity": "medium"
+            },
+            "max_output_tokens": 128000
+        });
+
+        let response = self.post_response(body).await?;
+        
+        responses::extract_text_from_responses(&response)
+            .ok_or_else(|| anyhow::anyhow!("No content in response"))
     }
 
     /// Raw HTTP POST to the Responses API
