@@ -1,7 +1,6 @@
 // src/services/memory.rs
 // Memory service with GPT-5 robust memory system
-// Handles memory storage, retrieval, and embeddings
-// Sprint 3: Rolling summaries implementation complete
+// Sprint 3: Rolling summaries with working counter
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -118,22 +117,17 @@ impl MemoryService {
         session_id: &str,
         count: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        // Load recent messages first
         let mut entries = self.sqlite_store.load_recent(session_id, count).await?;
         
-        // ACTUALLY CHECK THE CONFIG FLAG!
         if CONFIG.should_use_rolling_summaries_in_context() {
             info!("Rolling summaries in context is enabled, looking for summaries...");
             
-            // Load extra messages to find summaries (they might be further back)
-            let search_window = count * 3; // Look back further for summaries
+            let search_window = count * 3;
             let all_messages = self.sqlite_store.load_recent(session_id, search_window).await?;
             
-            // Find all rolling summaries
             let mut summaries: Vec<MemoryEntry> = Vec::new();
             for entry in all_messages {
                 if let Some(ref tags) = entry.tags {
-                    // Check for rolling summary tags
                     if tags.iter().any(|t| t.starts_with("summary:rolling:")) {
                         summaries.push(entry);
                     }
@@ -143,22 +137,17 @@ impl MemoryService {
             if !summaries.is_empty() {
                 info!("Found {} rolling summaries to inject into context", summaries.len());
                 
-                // Sort summaries by timestamp (oldest first)
                 summaries.sort_by_key(|s| s.timestamp);
                 
-                // Strategy: Include the most recent rolling summary at the beginning
-                // This gives the model context about earlier conversation
                 if let Some(latest_summary) = summaries.last() {
                     info!("Injecting latest rolling summary into context");
                     entries.insert(0, latest_summary.clone());
                 }
                 
-                // If we have a 100-message mega summary, prioritize it
                 for summary in &summaries {
                     if let Some(ref tags) = summary.tags {
                         if tags.iter().any(|t| t == "summary:rolling:100") {
                             info!("Found mega summary, prioritizing in context");
-                            // Remove any 10-message summary we added and use mega instead
                             entries.retain(|e| {
                                 e.tags.as_ref()
                                     .map(|t| !t.iter().any(|tag| tag.starts_with("summary:rolling:")))
@@ -176,7 +165,6 @@ impl MemoryService {
             debug!("Rolling summaries in context is disabled");
         }
         
-        // Ensure we don't exceed the requested count
         entries.truncate(count);
         
         Ok(entries)
@@ -186,38 +174,23 @@ impl MemoryService {
         self.sqlite_store.load_recent(session_id, count).await
     }
 
+    // FIXED: Actually increment the counter!
     async fn increment_session_counter(&self, session_id: &str) -> usize {
-        // Note: The database trigger automatically increments the count
-        // This method now just retrieves the current count
-        // The actual increment happens via the trigger when we save to chat_history
-        self.get_session_message_count_from_db(session_id).await.unwrap_or(0)
+        let mut counters = self.session_counters.write().await;
+        let counter = counters.entry(session_id.to_string()).or_insert(0);
+        *counter += 1;
+        
+        debug!("Incremented counter for session {} to {}", session_id, *counter);
+        
+        *counter
     }
 
     async fn get_session_message_count(&self, session_id: &str) -> usize {
-        // Check cache first
-        {
-            let counters = self.session_counters.read().await;
-            if let Some(&count) = counters.get(session_id) {
-                return count;
-            }
-        }
-        
-        // Not in cache, get from database
-        let count = self.get_session_message_count_from_db(session_id).await.unwrap_or(0);
-        
-        // Update cache
-        {
-            let mut counters = self.session_counters.write().await;
-            counters.insert(session_id.to_string(), count);
-        }
-        
-        count
+        let counters = self.session_counters.read().await;
+        *counters.get(session_id).unwrap_or(&0)
     }
     
     async fn get_session_message_count_from_db(&self, session_id: &str) -> Result<usize> {
-        // Query the session_message_counts table
-        // This would be implemented in SqliteMemoryStore
-        // For now, fall back to counting messages
         let messages = self.sqlite_store.load_recent(session_id, 1000).await?;
         let count = messages.iter()
             .filter(|m| m.role == "user" || m.role == "assistant")
@@ -237,7 +210,6 @@ impl MemoryService {
         }
     }
 
-    // Sprint 2 Feature 1: Classification-based routing helpers
     fn should_embed_content(&self, classification: &Classification, entry_salience: f32) -> bool {
         if classification.salience < 0.2 {
             info!("Skipping embedding for low-salience content ({})", classification.salience);
@@ -279,7 +251,6 @@ impl MemoryService {
         heads
     }
 
-    // Sprint 2: Batch embedding implementation
     async fn generate_and_save_embeddings(
         &self,
         entry: &MemoryEntry,
@@ -399,7 +370,6 @@ impl MemoryService {
         let saved_entry = self.sqlite_store.save(&entry).await?;
         info!("Saved user message to SQLite");
 
-        // Sprint 2: Enhanced routing with salience filtering
         if !self.should_embed_content(&classification, saved_entry.salience.unwrap_or(0.0)) {
             info!("Skipping embedding for low-importance content");
         } else {
@@ -413,7 +383,6 @@ impl MemoryService {
             }
         }
 
-        // Sprint 3: Check and trigger rolling summaries
         if CONFIG.rolling_summaries_enabled() {
             self.check_and_trigger_rolling_summaries(session_id).await?;
         }
@@ -476,7 +445,6 @@ impl MemoryService {
         let saved_entry = self.sqlite_store.save(&entry).await?;
         info!("Saved assistant response to SQLite");
 
-        // Sprint 2: Enhanced routing for assistant responses
         if !self.should_embed_content(&classification, saved_entry.salience.unwrap_or(0.0)) {
             info!("Skipping embedding for low-importance assistant response");
         } else {
@@ -488,7 +456,6 @@ impl MemoryService {
             }
         }
 
-        // Sprint 3: Check and trigger rolling summaries
         if CONFIG.rolling_summaries_enabled() {
             self.check_and_trigger_rolling_summaries(session_id).await?;
         }
@@ -496,17 +463,19 @@ impl MemoryService {
         Ok(())
     }
 
-    // Sprint 3: Rolling summaries implementation
+    // ENHANCED: Better logging for summary triggers
     async fn check_and_trigger_rolling_summaries(&self, session_id: &str) -> Result<()> {
         let count = self.get_session_message_count(session_id).await;
         
+        debug!("Checking rolling summaries for session {} at message count {}", session_id, count);
+        
         if CONFIG.rolling_10_enabled() && count > 0 && count % 10 == 0 {
-            info!("Triggering 10-message rolling summary for session {} at message {}", session_id, count);
+            info!("🎉 TRIGGERING 10-message rolling summary for session {} at message {}", session_id, count);
             self.create_rolling_summary(session_id, 10).await?;
         }
         
         if CONFIG.rolling_100_enabled() && count > 0 && count % 100 == 0 {
-            info!("Triggering 100-message mega summary for session {} at message {}", session_id, count);
+            info!("🎊 TRIGGERING 100-message mega summary for session {} at message {}", session_id, count);
             self.create_rolling_summary(session_id, 100).await?;
         }
         
@@ -521,10 +490,8 @@ impl MemoryService {
             return Ok(());
         }
         
-        // Build conversation text for summarization
         let mut content = String::new();
-        for msg in messages.iter().rev() {  // Reverse to get chronological order
-            // Skip existing summaries to avoid recursive summarization
+        for msg in messages.iter().rev() {
             if let Some(ref tags) = msg.tags {
                 if tags.iter().any(|t| t.contains("summary")) {
                     continue;
@@ -556,7 +523,6 @@ impl MemoryService {
         let token_limit = if window_size == 100 { 800 } else { 500 };
         let summary = self.llm_client.summarize_conversation(&summary_prompt, token_limit).await?;
         
-        // Create summary entry
         let summary_entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -564,7 +530,7 @@ impl MemoryService {
             content: summary.clone(),
             timestamp: Utc::now(),
             embedding: None,
-            salience: Some(1.0),  // High salience for summaries
+            salience: Some(1.0),
             tags: Some(vec![
                 "summary".to_string(),
                 format!("summary:rolling:{}", window_size),
@@ -579,15 +545,13 @@ impl MemoryService {
             is_code: Some(false),
             lang: None,
             topics: None,
-            pinned: Some(true),  // Pin summaries to prevent decay
+            pinned: Some(true),
             subject_tag: None,
             last_accessed: Some(Utc::now()),
         };
         
-        // Save summary to SQLite
         let saved_summary = self.sqlite_store.save(&summary_entry).await?;
         
-        // Also embed summary to Summary collection for retrieval
         if CONFIG.embed_heads.contains("summary") {
             let embedding = self.llm_client.get_embedding(&summary).await?;
             let mut embedded_summary = saved_summary.clone();
@@ -623,7 +587,6 @@ impl MemoryService {
             "Create a concise summary of the following conversation:\n\n{context_text}"
         );
         
-        // ✅ FIXED: Now using CONFIG.gpt5_model instead of hardcoded "gpt-4o"
         let summary = self.llm_client
             .simple_chat(&summary_prompt, &CONFIG.gpt5_model, "You are a summarization assistant.")
             .await?;
@@ -652,7 +615,6 @@ impl MemoryService {
         Ok(())
     }
     
-    // Manual trigger methods for WebSocket commands
     pub async fn trigger_rolling_summary(
         &self, 
         session_id: &str, 
@@ -707,16 +669,12 @@ impl MemoryService {
         let total_messages = self.get_session_message_count(session_id).await;
         let recent_messages = self.get_recent_context(session_id, 10).await?.len();
         
-        let semantic_entries = 0;
-        let code_entries = 0;
-        let summary_entries = 0;
-        
         Ok(MemoryServiceStats {
             total_messages,
             recent_messages,
-            semantic_entries,
-            code_entries,
-            summary_entries,
+            semantic_entries: 0,
+            code_entries: 0,
+            summary_entries: 0,
         })
     }
 

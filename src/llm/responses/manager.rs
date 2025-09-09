@@ -5,6 +5,7 @@
 // - Integrated with ThreadManager for response ID tracking
 // - Added tool calling support
 // - Streamlined response generation (removed duplication with OpenAIClient)
+// - FIXED: build_gpt5_parameters now returns flat structure for GPT-5 API compliance
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -106,7 +107,7 @@ impl ResponsesManager {
             request_body["response_format"] = fmt;
         }
 
-        // Merge parameters into the request
+        // Merge parameters into the request at top level (not nested)
         if let Some(params) = parameters {
             if let Some(obj) = params.as_object() {
                 for (key, value) in obj {
@@ -226,6 +227,7 @@ impl ResponsesManager {
             request_body["previous_response_id"] = json!(prev_id);
         }
 
+        // Merge parameters at top level (not nested)
         if let Some(params) = parameters {
             if let Some(obj) = params.as_object() {
                 for (key, value) in obj {
@@ -241,11 +243,13 @@ impl ResponsesManager {
     }
 
     /// Helper to build standard GPT-5 parameters
+    /// IMPORTANT: Returns a flat JSON object with parameters at top level
+    /// These should be merged directly into the request body, not nested
     pub fn build_gpt5_parameters(
         verbosity: &str,
         reasoning_effort: &str,
         max_output_tokens: Option<i32>,
-        temperature: Option<f64>, // <-- FIX: Changed from f32 to f64
+        temperature: Option<f64>,
     ) -> Value {
         let mut params = json!({
             "verbosity": verbosity,
@@ -260,6 +264,7 @@ impl ResponsesManager {
             params["temperature"] = json!(temp);
         }
 
+        // Return flat structure - caller should merge these at top level
         params
     }
 
@@ -331,7 +336,7 @@ mod tests {
         assert_eq!(params["reasoning_effort"], "high");
         assert_eq!(params["max_output_tokens"], 4096);
 
-        // THE FIX: Compare floating-point numbers for approximate equality.
+        // Compare floating-point numbers for approximate equality
         let temp = params["temperature"].as_f64().unwrap();
         assert!((temp - 0.7).abs() < f64::EPSILON);
     }

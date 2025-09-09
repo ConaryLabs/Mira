@@ -120,14 +120,14 @@ impl<'a> JsonValidator<'a> {
             "model": CONFIG.gpt5_model,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": format!("Fix this malformed JSON and return only the corrected JSON object:\n\n{}", malformed_json)}]}],
             "text": { "format": "json_object", "verbosity": CONFIG.get_verbosity_for("metadata") },
-            "parameters": {
-                "verbosity": CONFIG.get_verbosity_for("metadata"),
-                "reasoning_effort": CONFIG.get_reasoning_effort_for("metadata"),
-                "max_output_tokens": CONFIG.get_json_max_tokens()
-            }
+            // FIX: Parameters are now top-level, not nested
+            "verbosity": CONFIG.get_verbosity_for("metadata"),
+            "reasoning_effort": CONFIG.get_reasoning_effort_for("metadata"),
+            "max_output_tokens": CONFIG.get_json_max_tokens()
         });
         let response_value = self.llm_client.post_response(request_body).await?;
-        crate::llm::client::responses::extract_text_from_responses(&response_value)
+        // FIX: Correct import path
+        crate::llm::client::extract_text_from_responses(&response_value)
             .ok_or_else(|| anyhow::anyhow!("GPT-5 repair returned no text content"))
     }
 }
@@ -156,7 +156,6 @@ impl ResponseProcessor {
         project_id: Option<&str>,
     ) -> Result<()> {
         info!("Persisting user message for session: {}", session_id);
-        // FIX: Added '?' to handle the Result type mismatch
         self.memory_service
             .save_user_message(session_id, user_text, project_id)
             .await
@@ -187,8 +186,6 @@ impl ResponseProcessor {
             reasoning_summary: structured_response.reasoning.map(|r| r.summary),
         };
 
-        // FIX: The method is `save_assistant_response`, not `save_ai_response`
-        // It also correctly takes the whole `&response` object.
         self.memory_service
             .save_assistant_response(session_id, &response)
             .await?;
@@ -212,7 +209,8 @@ impl ResponseProcessor {
             );
             
             let response_value = self.llm_client.post_response(request_body).await?;
-            let text_content = crate::llm::client::responses::extract_text_from_responses(&response_value)
+            // FIX: Correct import path
+            let text_content = crate::llm::client::extract_text_from_responses(&response_value)
                 .ok_or_else(|| anyhow::anyhow!("No text content in GPT-5 metadata response"))?;
 
             accumulated_json.push_str(&text_content);
@@ -243,12 +241,13 @@ impl ResponseProcessor {
         json!({
             "model": CONFIG.gpt5_model,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            "text": { "format": "json_object", "verbosity": CONFIG.get_verbosity_for("metadata") },
-            "parameters": {
-                "verbosity": CONFIG.get_verbosity_for("metadata"),
-                "reasoning_effort": CONFIG.get_reasoning_effort_for("metadata"),
-                "max_output_tokens": CONFIG.get_json_max_tokens()
-            }
+            "text": { "format": "json_object" },
+            // API UPDATE Sept 2025: reasoning_effort → reasoning.effort
+            "verbosity": CONFIG.get_verbosity_for("metadata"),
+            "reasoning": {
+                "effort": CONFIG.get_reasoning_effort_for("metadata")
+            },
+            "max_output_tokens": CONFIG.get_json_max_tokens()
         })
     }
 
@@ -264,7 +263,6 @@ impl ResponseProcessor {
     }
     
     pub async fn handle_summarization(&self, session_id: &str) -> Result<()> {
-        // FIX: Replaced the two broken method calls with a single, clean one.
         self.summarizer.summarize_if_needed(session_id).await
     }
 }

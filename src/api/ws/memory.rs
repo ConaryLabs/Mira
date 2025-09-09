@@ -1,6 +1,5 @@
 // src/api/ws/memory.rs
-// WebSocket handlers for memory operations including save, search, context retrieval,
-// pinning, import/export, and statistics.
+// WebSocket handlers for memory operations
 
 use std::sync::Arc;
 use anyhow::{anyhow, Result};
@@ -17,11 +16,9 @@ use crate::{
     state::AppState,
 };
 
-// Default session ID for single-user mode
 const DEFAULT_SESSION: &str = "peter-eternal";
 
-// Request types for memory operations
-
+// Request types
 #[derive(Debug, Deserialize)]
 struct SaveMemoryRequest {
     session_id: Option<String>,
@@ -92,7 +89,6 @@ struct GetStatsRequest {
     session_id: Option<String>,
 }
 
-// Make MemoryServiceStats serializable
 #[derive(Debug, Clone, Serialize)]
 struct SerializableMemoryStats {
     total_messages: usize,
@@ -102,7 +98,6 @@ struct SerializableMemoryStats {
     summary_entries: usize,
 }
 
-/// Returns the session ID, defaulting to the eternal session for single-user mode
 fn get_session_id(session_id: Option<String>) -> String {
     session_id.unwrap_or_else(|| DEFAULT_SESSION.to_string())
 }
@@ -129,6 +124,11 @@ pub async fn handle_memory_command(
         "memory.update_salience" => update_salience(params, app_state).await,
         "memory.get_stats" => get_memory_stats(params, app_state).await,
         "memory.check_qdrant" => check_qdrant_status(app_state).await,
+        
+        // Sprint 3: Manual summary triggers
+        "memory.trigger_rolling_summary" => trigger_rolling_summary(params, app_state).await,
+        "memory.trigger_snapshot_summary" => trigger_snapshot_summary(params, app_state).await,
+        
         _ => Err(anyhow!("Unknown memory method: {}", method))
     };
     
@@ -161,10 +161,11 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
             info!("Saved user message for session: {}", session_id);
         }
         "assistant" => {
-            if let Some(metadata) = request.metadata {
-                use crate::services::chat::ChatResponse;
-                
-                let response = ChatResponse {
+            use crate::services::chat::ChatResponse;
+            
+            // Create ChatResponse with defaults for testing
+            let response = if let Some(metadata) = request.metadata {
+                ChatResponse {
                     output: request.content.clone(),
                     persona: metadata["persona"].as_str().unwrap_or("assistant").to_string(),
                     mood: metadata["mood"].as_str().unwrap_or("neutral").to_string(),
@@ -176,20 +177,32 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
                         .map(|arr| arr.iter()
                             .filter_map(|v| v.as_str().map(String::from))
                             .collect())
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| vec!["assistant".to_string()]),
                     intent: metadata["intent"].as_str().map(String::from),
                     monologue: metadata["monologue"].as_str().map(String::from),
                     reasoning_summary: metadata["reasoning_summary"].as_str().map(String::from),
-                };
-                
-                app_state.memory_service
-                    .save_assistant_response(&session_id, &response)
-                    .await?;
-                
-                info!("Saved assistant response for session: {}", session_id);
+                }
             } else {
-                return Err(anyhow!("Assistant messages require metadata"));
-            }
+                // Provide sensible defaults for testing without metadata
+                ChatResponse {
+                    output: request.content.clone(),
+                    persona: "assistant".to_string(),
+                    mood: "neutral".to_string(),
+                    salience: 5,
+                    summary: request.content.clone(),
+                    memory_type: "other".to_string(),
+                    tags: vec!["assistant".to_string(), "test".to_string()],
+                    intent: None,
+                    monologue: None,
+                    reasoning_summary: None,
+                }
+            };
+            
+            app_state.memory_service
+                .save_assistant_response(&session_id, &response)
+                .await?;
+            
+            info!("Saved assistant response for session: {}", session_id);
         }
         _ => return Err(anyhow!("Invalid role: {}. Must be 'user' or 'assistant'", role))
     }
@@ -216,7 +229,6 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
     let max_results = request.max_results.unwrap_or(10);
     let min_salience = request.min_salience.unwrap_or(CONFIG.min_salience_for_qdrant);
     
-    // Search with session ID parameter
     let search_results = match app_state.memory_service
         .search_similar(&session_id, &request.query, max_results * 2)
         .await
@@ -234,7 +246,6 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
         }
     };
     
-    // Strict session isolation - only return memories from the requested session
     let filtered_results: Vec<_> = search_results.into_iter()
         .filter(|entry| entry.session_id == session_id)
         .filter(|entry| entry.salience.unwrap_or(0.0) >= min_salience)
@@ -307,7 +318,7 @@ async fn pin_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsServer
     
     info!("Pinning memory with id: {}, pinned: {}", request.memory_id, request.pinned);
     
-    // TODO: Implement pin_memory in MemoryService
+    // TODO: Implement in MemoryService
     warn!("Pin operation not yet implemented");
     
     Ok(WsServerMessage::Data {
@@ -429,7 +440,7 @@ async fn delete_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsSer
     
     info!("Deleting memory with id: {}", request.memory_id);
     
-    // TODO: Implement delete_memory in MemoryService
+    // TODO: Implement in MemoryService
     warn!("Delete operation not yet implemented");
     
     Ok(WsServerMessage::Data {
@@ -448,7 +459,7 @@ async fn update_salience(params: Value, _app_state: Arc<AppState>) -> Result<WsS
     
     info!("Updating salience for memory {}: {}", request.memory_id, request.salience);
     
-    // TODO: Implement update_salience in MemoryService
+    // TODO: Implement in MemoryService
     warn!("Salience update not yet implemented");
     
     Ok(WsServerMessage::Data {
@@ -490,7 +501,7 @@ async fn get_memory_stats(params: Value, app_state: Arc<AppState>) -> Result<WsS
     })
 }
 
-/// Debug function to check if Qdrant is properly configured
+/// Check Qdrant configuration status
 async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let mut status = json!({
         "qdrant_url": CONFIG.qdrant_url.clone(),
@@ -500,7 +511,6 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage
         "collection_name": CONFIG.qdrant_collection.clone(),
     });
     
-    // Try to generate a test embedding
     match app_state.llm_client.get_embedding("test").await {
         Ok(embedding) => {
             status["embedding_test"] = json!({
@@ -518,6 +528,49 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage
     
     Ok(WsServerMessage::Data {
         data: status,
+        request_id: None,
+    })
+}
+
+// Sprint 3: Manual summary triggers
+
+/// Manually trigger a rolling summary
+async fn trigger_rolling_summary(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
+    let session_id = get_session_id(params["session_id"].as_str().map(String::from));
+    let window_size = params["window_size"].as_u64().unwrap_or(10) as usize;
+    
+    info!("Manually triggering {}-message rolling summary for session: {}", window_size, session_id);
+    
+    let message = app_state.memory_service
+        .trigger_rolling_summary(&session_id, window_size)
+        .await?;
+    
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "success": true,
+            "session_id": session_id,
+            "message": message
+        }),
+        request_id: None,
+    })
+}
+
+/// Manually trigger a snapshot summary
+async fn trigger_snapshot_summary(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
+    let session_id = get_session_id(params["session_id"].as_str().map(String::from));
+    
+    info!("Manually triggering snapshot summary for session: {}", session_id);
+    
+    let message = app_state.memory_service
+        .trigger_snapshot_summary(&session_id)
+        .await?;
+    
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "success": true,
+            "session_id": session_id,
+            "message": message
+        }),
         request_id: None,
     })
 }

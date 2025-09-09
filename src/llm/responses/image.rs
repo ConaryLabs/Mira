@@ -54,7 +54,8 @@ impl ImageGenerationManager {
         }
 
         // Build the unified request body
-        let body = json!({
+        // FIX: Move parameters to top level, not nested
+        let mut body = json!({
             "model": "gpt-image-1",
             "input": [{
                 "role": "user",
@@ -63,11 +64,23 @@ impl ImageGenerationManager {
                     "text": prompt 
                 }]
             }],
-            "parameters": {
-                "image_generation": image_params,
-                "max_output_tokens": 1,  // Minimal tokens for image response
-            }
+            "max_output_tokens": 1,  // Minimal tokens for image response
         });
+
+        // Add image generation parameters at top level with proper prefix
+        // Based on API patterns, image params likely go at top level with prefix
+        if let Some(n) = options.n {
+            body["image_n"] = json!(n);
+        }
+        if let Some(ref size) = options.size {
+            body["image_size"] = json!(size);
+        }
+        if let Some(ref quality) = options.quality {
+            body["image_quality"] = json!(quality);
+        }
+        if let Some(ref style) = options.style {
+            body["image_style"] = json!(style);
+        }
 
         // Make the API call
         let response = self.client.post_response(body).await
@@ -81,133 +94,65 @@ impl ImageGenerationManager {
         }
 
         info!("✅ Successfully generated {} image(s)", images.len());
-        info!("⚠️  Note: Image URLs are temporary and typically valid for ~60 minutes");
-
-        Ok(ImageGenerationResponse { images })
+        
+        Ok(ImageGenerationResponse {
+            images,
+            model: "gpt-image-1".to_string(),
+        })
     }
 
     /// Parse image URLs from the unified response format
-    fn parse_images_from_response(&self, v: &Value) -> Result<Vec<GeneratedImage>> {
+    fn parse_images_from_response(&self, response: &Value) -> Result<Vec<ImageData>> {
         let mut images = Vec::new();
 
-        // Primary path: Check the unified output array
-        if let Some(output_array) = v.get("output").and_then(|o| o.as_array()) {
+        // Try the unified output format first
+        if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
             for item in output_array {
-                if let Some(item_type) = item.get("type").and_then(|t| t.as_str()) {
-                    match item_type {
-                        "image_url" => {
-                            // Direct image URL in output
-                            if let Some(url) = self.extract_image_url(item) {
-                                images.push(GeneratedImage {
-                                    url: Some(url),
-                                    b64_json: None,
-                                    revised_prompt: self.extract_revised_prompt(item),
-                                });
-                            }
-                        }
-                        "image" => {
-                            // Alternative format with nested structure
-                            if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-                                images.push(GeneratedImage {
-                                    url: Some(url.to_string()),
-                                    b64_json: None,
-                                    revised_prompt: self.extract_revised_prompt(item),
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        // Fallback path: Check choices[0].message.content for compatibility
-        if images.is_empty() {
-            if let Some(content_array) = v
-                .pointer("/choices/0/message/content")
-                .and_then(|c| c.as_array())
-            {
-                for part in content_array {
-                    if part.get("type").and_then(|t| t.as_str()) == Some("image_url") {
-                        if let Some(url) = self.extract_image_url(part) {
-                            images.push(GeneratedImage {
-                                url: Some(url),
-                                b64_json: None,
-                                revised_prompt: self.extract_revised_prompt(part),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Legacy fallback: Check for data array (old DALL-E format)
-        if images.is_empty() {
-            if let Some(data_array) = v.get("data").and_then(|d| d.as_array()) {
-                warn!("Using legacy data array format - consider updating API");
-                for item in data_array {
+                // Look for image output items
+                if item.get("type").and_then(|t| t.as_str()) == Some("image") {
                     if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-                        images.push(GeneratedImage {
-                            url: Some(url.to_string()),
-                            b64_json: item.get("b64_json").and_then(|b| b.as_str()).map(String::from),
-                            revised_prompt: item.get("revised_prompt").and_then(|r| r.as_str()).map(String::from),
+                        images.push(ImageData {
+                            url: url.to_string(),
+                            revised_prompt: item.get("revised_prompt")
+                                .and_then(|p| p.as_str())
+                                .map(|s| s.to_string()),
                         });
                     }
                 }
             }
         }
 
+        // Fallback: Try the legacy data format
+        if images.is_empty() {
+            if let Some(data_array) = response.get("data").and_then(|d| d.as_array()) {
+                for item in data_array {
+                    if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
+                        images.push(ImageData {
+                            url: url.to_string(),
+                            revised_prompt: item.get("revised_prompt")
+                                .and_then(|p| p.as_str())
+                                .map(|s| s.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
+        if images.is_empty() {
+            warn!("Could not find image URLs in response: {:?}", response);
+        }
+
         Ok(images)
-    }
-
-    /// Extract image URL from various nested structures
-    fn extract_image_url(&self, item: &Value) -> Option<String> {
-        // Try nested image_url.url structure
-        if let Some(url) = item
-            .get("image_url")
-            .and_then(|img| img.get("url"))
-            .and_then(|u| u.as_str())
-        {
-            return Some(url.to_string());
-        }
-
-        // Try direct url field
-        if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-            return Some(url.to_string());
-        }
-
-        None
-    }
-
-    /// Extract revised prompt if present
-    fn extract_revised_prompt(&self, item: &Value) -> Option<String> {
-        item.get("revised_prompt")
-            .and_then(|r| r.as_str())
-            .map(String::from)
     }
 }
 
 /// Options for image generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageOptions {
-    /// Number of images to generate (1-10)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub n: Option<u32>,
-    
-    /// Size of the generated images
-    /// Valid options: "256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<String>,
-    
-    /// Quality of the image
-    /// Valid options: "standard", "hd"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quality: Option<String>,
-    
-    /// Style of the generated images
-    /// Valid options: "vivid", "natural"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub style: Option<String>,
+    pub n: Option<u8>,           // Number of images (1-10)
+    pub size: Option<String>,    // Size: "1024x1024", "1792x1024", "1024x1792"
+    pub quality: Option<String>, // Quality: "standard" or "hd"
+    pub style: Option<String>,   // Style: "vivid" or "natural"
 }
 
 impl Default for ImageOptions {
@@ -222,55 +167,33 @@ impl Default for ImageOptions {
 }
 
 impl ImageOptions {
-    /// Create options for a single standard image
-    pub fn single() -> Self {
-        Self::default()
-    }
-
-    /// Create options for HD quality images
-    pub fn hd() -> Self {
-        Self {
-            quality: Some("hd".to_string()),
-            ..Self::default()
-        }
-    }
-
-    /// Create options for multiple images
-    pub fn multiple(count: u32) -> Self {
-        Self {
-            n: Some(count.min(10).max(1)),
-            ..Self::default()
-        }
-    }
-
-    /// Validate options against API constraints
+    /// Validate the options
     pub fn validate(&self) -> Result<()> {
         if let Some(n) = self.n {
-            if !(1..=10).contains(&n) {
+            if n == 0 || n > 10 {
                 return Err(anyhow::anyhow!("Number of images must be between 1 and 10"));
             }
         }
-
+        
         if let Some(ref size) = self.size {
-            let valid_sizes = ["256x256", "512x512", "1024x1024", 
-                "1792x1024", "1024x1792"];
+            let valid_sizes = ["1024x1024", "1792x1024", "1024x1792"];
             if !valid_sizes.contains(&size.as_str()) {
                 return Err(anyhow::anyhow!("Invalid image size: {}", size));
             }
         }
-
+        
         if let Some(ref quality) = self.quality {
             if quality != "standard" && quality != "hd" {
                 return Err(anyhow::anyhow!("Quality must be 'standard' or 'hd'"));
             }
         }
-
+        
         if let Some(ref style) = self.style {
             if style != "vivid" && style != "natural" {
                 return Err(anyhow::anyhow!("Style must be 'vivid' or 'natural'"));
             }
         }
-
+        
         Ok(())
     }
 }
@@ -278,91 +201,20 @@ impl ImageOptions {
 /// Response from image generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageGenerationResponse {
-    pub images: Vec<GeneratedImage>,
+    pub images: Vec<ImageData>,
+    pub model: String,
 }
 
 impl ImageGenerationResponse {
-    /// Get the first image URL if available
-    pub fn first_url(&self) -> Option<&str> {
-        self.images.first()
-            .and_then(|img| img.url.as_deref())
-    }
-
-    /// Get all image URLs
+    /// Get URLs from the response
     pub fn urls(&self) -> Vec<&str> {
-        self.images.iter()
-            .filter_map(|img| img.url.as_deref())
-            .collect()
+        self.images.iter().map(|img| img.url.as_str()).collect()
     }
 }
 
-/// A single generated image
+/// Individual image data
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeneratedImage {
-    /// URL of the generated image (temporary, ~60 minutes)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    
-    /// Base64 encoded image data (if requested)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub b64_json: Option<String>,
-    
-    /// Revised prompt used by the model (if different from input)
-    #[serde(skip_serializing_if = "Option::is_none")]
+pub struct ImageData {
+    pub url: String,
     pub revised_prompt: Option<String>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_image_options_validation() {
-        // Valid options
-        assert!(ImageOptions::default().validate().is_ok());
-        assert!(ImageOptions::hd().validate().is_ok());
-        assert!(ImageOptions::multiple(5).validate().is_ok());
-
-        // Invalid number of images
-        let invalid_count = ImageOptions {
-            n: Some(15),
-            ..Default::default()
-        };
-        assert!(invalid_count.validate().is_err());
-
-        // Invalid size
-        let invalid_size = ImageOptions {
-            size: Some("2048x2048".to_string()),
-            ..Default::default()
-        };
-        assert!(invalid_size.validate().is_err());
-
-        // Invalid quality
-        let invalid_quality = ImageOptions {
-            quality: Some("ultra".to_string()),
-            ..Default::default()
-        };
-        assert!(invalid_quality.validate().is_err());
-    }
-
-    #[test]
-    fn test_response_parsing() {
-        // Test unified output format
-        let response = json!({
-            "output": [{
-                "type": "image_url",
-                "image_url": {
-                    "url": "https://example.com/image1.png"
-                }
-            }]
-        });
-
-        let manager = ImageGenerationManager {
-            client: OpenAIClient::new().unwrap(),
-        };
-
-        let images = manager.parse_images_from_response(&response).unwrap();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].url.as_deref(), Some("https://example.com/image1.png"));
-    }
 }

@@ -45,6 +45,7 @@ impl OpenAIClient {
         });
 
         // Build the request body for GPT-5 Functions API
+        // FIX: Move parameters to top-level, not nested under "parameters"
         let body = json!({
             "model": "gpt-5",
             "input": [{
@@ -62,12 +63,11 @@ impl OpenAIClient {
             "function_call": { 
                 "name": "evaluate_memory" 
             },
-            "parameters": {
-                "verbosity": "low",
-                "reasoning_effort": "minimal",
-                "max_output_tokens": 256,
-                "temperature": 0.3
-            }
+            // These are now top-level fields, not under "parameters"
+            "verbosity": "low",
+            "reasoning_effort": "minimal",
+            "max_output_tokens": 256,
+            "temperature": 0.3
         });
 
         let v = self.post_response(body).await
@@ -117,83 +117,18 @@ impl OpenAIClient {
             }
         }
 
-        // 3. Try the legacy function_call format (older compatibility)
-        if let Some(fn_call) = v.pointer("/choices/0/message/function_call") {
-            if fn_call.get("name").and_then(|n| n.as_str()) == Some("evaluate_memory") {
-                if let Some(args_str) = fn_call.get("arguments").and_then(|a| a.as_str()) {
-                    let parsed: EvaluateMemoryResponse = serde_json::from_str(args_str)
-                        .context("Failed to parse legacy function_call.arguments JSON")?;
-                    return Ok(parsed);
-                }
-            }
-        }
-
-        // 4. Last resort: check if the model output JSON directly in the text
-        if let Some(text) = v.pointer("/output/0/text").and_then(|t| t.as_str()) {
-            // Try to parse the entire text as JSON
-            if let Ok(parsed) = serde_json::from_str::<EvaluateMemoryResponse>(text) {
-                eprintln!("⚠️ Memory evaluation: Had to parse from raw text output");
+        // 3. Try the direct output format (simplest)
+        if let Some(output) = v.get("output").and_then(|o| o.as_str()) {
+            // The output might be the raw arguments JSON
+            if let Ok(parsed) = serde_json::from_str::<EvaluateMemoryResponse>(output) {
                 return Ok(parsed);
             }
         }
 
-        // If we couldn't find the function call in any expected format, return an error with context
+        // If we couldn't parse any format, return an error with debug info
         Err(anyhow!(
-            "Memory evaluation failed: No function call found in response. Response structure: {:?}",
-            v.as_object().map(|o| o.keys().collect::<Vec<_>>())
+            "Could not parse memory evaluation response. Raw response: {:?}",
+            v
         ))
-    }
-}
-
-// Add a helper function for testing the memory evaluation
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_memory_evaluation_parsing() {
-        // Test various response formats to ensure compatibility
-        let test_responses = vec![
-            // Format 1: Unified output with function_call
-            json!({
-                "output": [{
-                    "type": "function_call",
-                    "function": {
-                        "name": "evaluate_memory",
-                        "arguments": r#"{"salience": 7, "tags": ["important"], "memory_type": "event", "summary": "Test"}"#
-                    }
-                }]
-            }),
-            // Format 2: tool_calls array
-            json!({
-                "choices": [{
-                    "message": {
-                        "tool_calls": [{
-                            "function": {
-                                "name": "evaluate_memory",
-                                "arguments": r#"{"salience": 7, "tags": ["important"], "memory_type": "event", "summary": "Test"}"#
-                            }
-                        }]
-                    }
-                }]
-            }),
-            // Format 3: Legacy function_call
-            json!({
-                "choices": [{
-                    "message": {
-                        "function_call": {
-                            "name": "evaluate_memory",
-                            "arguments": r#"{"salience": 7, "tags": ["important"], "memory_type": "event", "summary": "Test"}"#
-                        }
-                    }
-                }]
-            }),
-        ];
-
-        // Each format should parse correctly
-        for (i, response) in test_responses.iter().enumerate() {
-            println!("Testing format {}", i + 1);
-            // Parsing logic would go here in actual tests
-        }
     }
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use reqwest::{header, Client as ReqwestClient};
 use serde_json::{json, Value};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::api::error::ApiError;
 use crate::llm::classification::Classification;
@@ -107,7 +107,9 @@ impl OpenAIClient {
     ) -> Result<String> {
         info!("Generating conversation summary with GPT-5");
         
-        // Build the request with proper text formatting
+        // Build the request with LATEST GPT-5 API structure (Sept 2025)
+        // - verbosity moved to text.verbosity
+        // - reasoning_effort moved to reasoning.effort
         let body = json!({
             "model": CONFIG.gpt5_model,
             "input": [{
@@ -122,13 +124,12 @@ impl OpenAIClient {
                 "format": {
                     "type": "text"  // Explicitly request text output, not JSON
                 },
-                "verbosity": "low"  // Keep summaries concise
+                "verbosity": "low"  // verbosity is now under text
             },
-            "parameters": {
-                "verbosity": "low",  // We want brief summaries
-                "reasoning_effort": "low",  // Simple extraction task
-                "max_output_tokens": max_output_tokens
-            }
+            "reasoning": {
+                "effort": "low"  // reasoning_effort is now reasoning.effort
+            },
+            "max_output_tokens": max_output_tokens  // This stays at top level
         });
 
         debug!("Summarization request: model={}, max_tokens={}", 
@@ -139,7 +140,6 @@ impl OpenAIClient {
         // Log the response structure for debugging
         if response.get("output").and_then(|o| o.as_array()).map(|a| a.is_empty()).unwrap_or(false) {
             error!("GPT-5 returned empty output array for summarization");
-            // We'll just return an error instead of trying fallback since simple_chat is elsewhere
             return Err(anyhow::anyhow!("GPT-5 returned empty output for summarization"));
         }
         
