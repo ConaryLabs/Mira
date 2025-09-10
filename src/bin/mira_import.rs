@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use mira_backend::memory::storage::qdrant::store::QdrantMemoryStore;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
-use mira_backend::tools::mira_import::{import_conversations, schema};
+use mira_backend::mira_import::{import_conversations, schema};
 use sqlx::SqlitePool;
 
 #[derive(Parser)]

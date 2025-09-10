@@ -68,4 +68,4 @@ uuid = { version = "1.8", features = ["v4"] }
 
 [[bin]]
 name = "mira-import"
-path = "src/tools/mira_import/main.rs"
+path = "src/bin/mira_import.rs"

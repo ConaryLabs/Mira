@@ -1,5 +1,4 @@
 // src/main.rs
-
 use std::sync::Arc;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -10,20 +9,8 @@ use axum::{
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use sqlx::sqlite::SqlitePoolOptions;
-
-mod api;
-mod config;
-mod git;
-mod llm;
-mod memory;
-mod project;
-mod services;
-mod state;
-mod utils;
-mod persona;
-
-use api::ws::ws_chat_handler;
-use config::CONFIG;
+use mira_backend::api::ws::ws_chat_handler;
+use mira_backend::config::CONFIG;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -45,25 +32,25 @@ async fn main() -> anyhow::Result<()> {
     
     // Initialize all required components for AppState
     let sqlite_store = Arc::new(
-        crate::memory::storage::sqlite::store::SqliteMemoryStore::new(pool.clone())
+        mira_backend::memory::storage::sqlite::store::SqliteMemoryStore::new(pool.clone())
     );
     
-    let llm_client = llm::client::OpenAIClient::new()?;
+    let llm_client = mira_backend::llm::client::OpenAIClient::new()?;
     
     let project_store = Arc::new(
-        project::store::ProjectStore::new(pool.clone())
+        mira_backend::project::store::ProjectStore::new(pool.clone())
     );
     
-    let git_store = git::store::GitStore::new(pool.clone());
+    let git_store = mira_backend::git::store::GitStore::new(pool.clone());
     
-    let git_client = git::client::GitClient::new(
+    let git_client = mira_backend::git::client::GitClient::new(
         CONFIG.git_repos_dir.clone(),
         git_store.clone(),
     );
 
     // Create AppState with all required arguments
     let app_state = Arc::new(
-        state::create_app_state(
+        mira_backend::state::create_app_state(
             sqlite_store,
             &CONFIG.qdrant_url,
             llm_client,
@@ -76,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     // 🔴 BUG FIX #1: SPAWN THE MEMORY DECAY SCHEDULER
     // This was built but never actually started - like buying a dishwasher and never plugging it in
     let decay_interval = Duration::from_secs(CONFIG.decay_interval_seconds.unwrap_or(3600)); // Default 1 hour
-    let decay_handle = crate::memory::features::decay_scheduler::spawn_decay_scheduler(
+    let decay_handle = mira_backend::memory::features::decay_scheduler::spawn_decay_scheduler(
         app_state.clone(), 
         decay_interval
     );
