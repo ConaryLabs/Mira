@@ -1,5 +1,6 @@
 // src/api/ws/chat_tools/message_handler.rs
 // Handles WebSocket message processing and streaming for tool-enabled chat.
+// Manages the flow of tool execution events and response streaming.
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -12,7 +13,8 @@ use crate::api::ws::chat_tools::executor::{ToolExecutor, ToolChatRequest, ToolEv
 use crate::memory::recall::RecallContext;
 use crate::state::AppState;
 
-/// Handles the logic for processing tool-related messages over a WebSocket connection.
+/// Processes tool-enhanced messages and streams responses over WebSocket.
+/// Coordinates between the tool executor and WebSocket connection.
 pub struct ToolMessageHandler {
     executor: Arc<ToolExecutor>,
     connection: Arc<WebSocketConnection>,
@@ -27,7 +29,8 @@ impl ToolMessageHandler {
         Self { executor, connection }
     }
 
-    /// Handles a tool-enabled chat message and streams the response events to the client.
+    /// Main entry point for processing a tool-enabled chat message.
+    /// Streams response events including content chunks, tool executions, and completion status.
     pub async fn handle_tool_message(
         &self,
         content: String,
@@ -39,48 +42,70 @@ impl ToolMessageHandler {
     ) -> Result<()> {
         info!("Handling tool message for session {}: {}", session_id, content.chars().take(80).collect::<String>());
 
-        // FIX: The send_status method only takes one argument.
+        // Notify client that processing has started
         self.connection.send_status("Initializing response...", None).await?;
 
+        // Check if tools are enabled in configuration
         if !self.executor.tools_enabled() {
             warn!("Tools are not enabled, falling back to a simple response.");
             return self.handle_simple_response(content).await;
         }
 
-        let request = ToolChatRequest { content, project_id, metadata, session_id, context, system_prompt };
+        // Package all request data for the executor
+        let request = ToolChatRequest { 
+            content, 
+            project_id,  // Project context passed through for tool execution
+            metadata, 
+            session_id, 
+            context, 
+            system_prompt  // Contains project awareness from prompt builder
+        };
 
+        // Execute the request and stream results
         match self.executor.stream_with_tools(&request).await {
             Ok(mut stream) => {
                 while let Some(event) = stream.next().await {
                     match event {
                         ToolEvent::ContentChunk(chunk) => {
+                            // Stream text content as it's generated
                             self.connection.send_message(WsServerMessage::StreamChunk { text: chunk }).await?;
                         }
                         ToolEvent::ToolCallStarted { tool_type, tool_id } => {
+                            // Notify client that a tool is being executed
                             let status_detail = format!("Tool '{tool_type}' ({tool_id}) started.");
                             self.connection.send_status("Executing tool...", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallCompleted { tool_type, tool_id, result } => {
+                            // Report successful tool execution
                             let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
                             let status_detail = format!("Tool '{tool_type}' ({tool_id}) completed. Result: {result_str}");
                             self.connection.send_status("Tool executed successfully.", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallFailed { tool_type, tool_id, error } => {
+                            // Report tool execution failure
                             let err_msg = format!("Tool '{tool_type}' ({tool_id}) failed: {error}");
                             self.connection.send_error(&err_msg, "TOOL_FAILED".to_string()).await?;
                         }
                         ToolEvent::ImageGenerated { urls, revised_prompt } => {
+                            // Handle image generation results
                             info!("Image generated with {} URLs", urls.len());
                             self.connection.send_message(WsServerMessage::ImageGenerated { urls, revised_prompt }).await?;
                         }
                         ToolEvent::Complete { metadata } => {
-                            let (mood, salience, tags) = if let Some(meta) = metadata { (meta.mood, meta.salience, meta.tags) } else { (None, None, None) };
+                            // Send completion metadata
+                            let (mood, salience, tags) = if let Some(meta) = metadata { 
+                                (meta.mood, meta.salience, meta.tags) 
+                            } else { 
+                                (None, None, None) 
+                            };
                             self.connection.send_message(WsServerMessage::Complete { mood, salience, tags }).await?;
                         }
                         ToolEvent::Error(error_msg) => {
+                            // Handle streaming errors
                             self.connection.send_error(&error_msg, "STREAM_ERROR".to_string()).await?;
                         }
                         ToolEvent::Done => {
+                            // Signal end of stream
                             self.connection.send_message(WsServerMessage::Done).await?;
                             break;
                         }
@@ -97,7 +122,8 @@ impl ToolMessageHandler {
         }
     }
 
-    /// Fallback handler for sending a simple response when tools are disabled.
+    /// Provides a fallback response when tool execution is disabled.
+    /// Sends a simple text response informing the user that tools are unavailable.
     async fn handle_simple_response(&self, content: String) -> Result<()> {
         info!("Handling simple response because tools are disabled.");
         let response_content = format!("Tools are currently disabled. You said: {content}");

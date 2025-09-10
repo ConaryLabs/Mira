@@ -1,11 +1,12 @@
 // src/api/ws/chat_tools/mod.rs
-// Organizes the modules related to tool execution in a WebSocket context.
+// Orchestrates tool-enhanced chat functionality for WebSocket connections.
+// Manages the flow from message receipt through tool execution to response delivery.
 
 pub mod executor;
 pub mod message_handler;
 pub mod prompt_builder;
 
-// Re-export key components for easier access from other parts of the application.
+// Re-export key components for easier access
 pub use executor::ToolExecutor;
 pub use message_handler::ToolMessageHandler;
 pub use prompt_builder::ToolPromptBuilder;
@@ -20,7 +21,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-/// Handles an incoming chat message by setting up the context and routing it to the tool handler.
+/// Main entry point for processing tool-enhanced chat messages.
+/// Coordinates memory storage, context building, and tool execution.
 pub async fn handle_chat_message_with_tools(
     content: String,
     project_id: Option<String>,
@@ -30,7 +32,13 @@ pub async fn handle_chat_message_with_tools(
     session_id: String,
 ) -> Result<()> {
     info!("Processing tool-enabled chat message for session: {}", session_id);
+    
+    // Log project context if present
+    if let Some(ref pid) = project_id {
+        info!("Active project context: {}", pid);
+    }
 
+    // Save the user's message to memory for context persistence
     if let Err(e) = app_state
         .memory_service
         .save_user_message(&session_id, &content, project_id.as_deref())
@@ -44,6 +52,7 @@ pub async fn handle_chat_message_with_tools(
         CONFIG.ws_history_cap, CONFIG.ws_vector_search_k
     );
     
+    // Retrieve relevant conversation context from memory
     let context = app_state.memory_service.parallel_recall_context(
         &session_id,
         &content,
@@ -56,14 +65,18 @@ pub async fn handle_chat_message_with_tools(
         crate::memory::recall::RecallContext::default()
     });
 
+    // Initialize the tool executor with available services
     let executor = ToolExecutor::from_app_state(&app_state);
 
+    // Build system prompt with tool descriptions and project context
     let system_prompt = ToolPromptBuilder::build_tool_aware_system_prompt(
         &context,
         &crate::services::chat_with_tools::get_enabled_tools(),
-        metadata.as_ref()
+        metadata.as_ref(),
+        project_id.as_deref(),  // Pass project context for LLM awareness
     );
 
+    // Create WebSocket connection handler for response streaming
     let connection = Arc::new(crate::api::ws::chat::connection::WebSocketConnection::new_with_parts(
         sender,
         Arc::new(Mutex::new(std::time::Instant::now())),
@@ -71,12 +84,14 @@ pub async fn handle_chat_message_with_tools(
         Arc::new(Mutex::new(std::time::Instant::now())),
     ));
 
+    // Initialize message handler with executor and connection
     let message_handler = ToolMessageHandler::new(
         Arc::new(executor),
         connection,
         app_state.clone(),
     );
 
+    // Process the message with tool capabilities
     message_handler.handle_tool_message(
         content,
         project_id,
@@ -90,15 +105,23 @@ pub async fn handle_chat_message_with_tools(
     Ok(())
 }
 
-/// A simplified router for WebSocket messages to dispatch to the tool handler.
-pub async fn update_ws_handler_for_tools(
+/// Routes incoming WebSocket messages to appropriate tool handlers.
+/// Provides a flexible routing layer for different message types.
+pub async fn route_tool_message(
     msg: WsClientMessage,
     app_state: Arc<AppState>,
     sender: Arc<Mutex<SplitSink<axum::extract::ws::WebSocket, Message>>>,
-    session_id: String,
 ) -> Result<()> {
     match msg {
         WsClientMessage::Chat { content, project_id, metadata } => {
+            // Generate a unique session identifier for this conversation
+            let session_id = format!("tool-session-{}", uuid::Uuid::new_v4());
+            
+            // Log project context for debugging
+            if let Some(ref pid) = project_id {
+                info!("Routing tool message with project context: {}", pid);
+            }
+            
             handle_chat_message_with_tools(
                 content,
                 project_id,
@@ -109,7 +132,7 @@ pub async fn update_ws_handler_for_tools(
             ).await
         }
         _ => {
-            info!("Received non-chat message, ignoring in this handler.");
+            warn!("Unsupported message type for tool router");
             Ok(())
         }
     }

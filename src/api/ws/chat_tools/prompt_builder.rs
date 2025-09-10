@@ -1,38 +1,39 @@
 // src/api/ws/chat_tools/prompt_builder.rs
-// Phase 3: Extract System Prompt Building from chat_tools.rs
-// Handles building system prompts with tool awareness and context
-// FIXED: Now uses Mira's real personality instead of generic assistant bullshit
+// Builds system prompts for tool-aware chat interactions.
+// Integrates Mira's personality with tool capabilities and context awareness.
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::recall::RecallContext;
 use crate::llm::responses::types::Tool;
-use crate::persona::default::DEFAULT_PERSONA_PROMPT; // Import Mira's REAL personality!
+use crate::persona::default::DEFAULT_PERSONA_PROMPT;
 
 /// Template collection for tool prompts
 pub struct PromptTemplates;
 
 impl PromptTemplates {
-    // NO MORE GENERIC ASSISTANT LANGUAGE - Always use Mira's real personality
+    // Base templates use Mira's personality as the foundation
     pub const TOOL_SYSTEM_BASE: &'static str = DEFAULT_PERSONA_PROMPT;
     pub const CONTEXT_SYSTEM_BASE: &'static str = DEFAULT_PERSONA_PROMPT;
 }
 
-/// Tool-aware system prompt builder
+/// Constructs system prompts that combine personality, tools, and context
 pub struct ToolPromptBuilder;
 
 impl ToolPromptBuilder {
-    /// Build a tool-aware system prompt with context
+    /// Creates a comprehensive system prompt with tool awareness, context, and project information.
+    /// This is the primary prompt builder for tool-enabled conversations.
     pub fn build_tool_aware_system_prompt(
         context: &RecallContext,
         enabled_tools: &[Tool],
         metadata: Option<&MessageMetadata>,
+        project_id: Option<&str>,
     ) -> String {
         let mut prompt = String::new();
 
-        // ALWAYS start with Mira's real personality, never generic assistant crap
+        // Start with Mira's personality as the base
         prompt.push_str(DEFAULT_PERSONA_PROMPT);
 
-        // Add tool information if available (but keep Mira's personality intact)
+        // Describe available tools while maintaining character
         if !enabled_tools.is_empty() {
             prompt.push_str(&format!("\n\n[TOOLS AVAILABLE: You have access to {} tools:", enabled_tools.len()));
             for tool in enabled_tools {
@@ -45,7 +46,7 @@ impl ToolPromptBuilder {
             prompt.push_str("]\n\nUse tools naturally when they help, but stay in character as Mira. Never switch to assistant mode.");
         }
 
-        // Add context information
+        // Include conversation context information
         if !context.recent.is_empty() || !context.semantic.is_empty() {
             prompt.push_str("\n\n[CONVERSATION CONTEXT:");
             
@@ -59,7 +60,7 @@ impl ToolPromptBuilder {
             prompt.push(']');
         }
 
-        // Add file context if available
+        // Add file context from metadata
         if let Some(meta) = metadata {
             if let Some(file_path) = &meta.file_path {
                 prompt.push_str(&format!("\n\n[FILE CONTEXT: {file_path}]"));
@@ -69,29 +70,50 @@ impl ToolPromptBuilder {
             }
         }
 
-        // REINFORCE: Never break character, even with tools
+        // Include active project context for awareness
+        if let Some(project_id) = project_id {
+            prompt.push_str(&format!(
+                "\n\n[ACTIVE PROJECT: {}]\n\
+                The user is currently working in this project. When they refer to \
+                'the project', 'this project', or ask project-related questions without \
+                specifying a project name, they mean this one.",
+                project_id
+            ));
+        }
+
+        // Reinforce character consistency
         prompt.push_str("\n\nRemember: You are ALWAYS Mira. Never switch to assistant mode, even when using tools. Stay real, stay yourself, keep your edge.");
 
         prompt
     }
 
-    /// Build a simple system prompt without tools
-    pub fn build_simple_system_prompt(context: &RecallContext) -> String {
+    /// Creates a simplified system prompt without tool descriptions.
+    /// Used for basic conversations that don't require tool execution.
+    pub fn build_simple_system_prompt(context: &RecallContext, project_id: Option<&str>) -> String {
         let mut prompt = String::from(DEFAULT_PERSONA_PROMPT);
 
         if !context.recent.is_empty() || !context.semantic.is_empty() {
             prompt.push_str("\n\n[Conversation context available. Use it naturally while staying as Mira.]");
         }
 
+        // Include project awareness even in simple prompts
+        if let Some(project_id) = project_id {
+            prompt.push_str(&format!(
+                "\n\n[ACTIVE PROJECT: {}] - Any references to 'the project' mean this one.",
+                project_id
+            ));
+        }
+
         prompt
     }
 
-    /// Build a prompt for specific tool types
+    /// Builds a prompt optimized for specific tool types.
+    /// Useful when only certain tools are relevant to the conversation.
     pub fn build_tool_specific_prompt(
         tool_types: &[String],
         context: &RecallContext,
+        project_id: Option<&str>,
     ) -> String {
-        // Start with Mira's real personality, not generic assistant
         let mut prompt = String::from(DEFAULT_PERSONA_PROMPT);
 
         if !tool_types.is_empty() {
@@ -100,6 +122,14 @@ impl ToolPromptBuilder {
 
         if !context.recent.is_empty() || !context.semantic.is_empty() {
             prompt.push_str("\n\n[Use available conversation context to provide better responses, but never break character.]");
+        }
+
+        // Add project context
+        if let Some(project_id) = project_id {
+            prompt.push_str(&format!(
+                "\n\n[ACTIVE PROJECT: {}] - The user is working in this project.",
+                project_id
+            ));
         }
 
         prompt
@@ -113,17 +143,31 @@ mod tests {
     #[test]
     fn test_build_tool_aware_system_prompt() {
         let context = RecallContext {
-            recent: vec![], // Empty for test
+            recent: vec![],
             semantic: vec![],
         };
         let tools: Vec<Tool> = vec![];
         
-        let prompt = ToolPromptBuilder::build_tool_aware_system_prompt(&context, &tools, None);
+        let prompt = ToolPromptBuilder::build_tool_aware_system_prompt(&context, &tools, None, None);
         assert!(!prompt.is_empty());
         assert!(prompt.contains("You are Mira"));
-        assert!(prompt.contains("curse naturally")); // Check for real personality
-        assert!(prompt.contains("dirty jokes")); // Check for real personality
-        assert!(!prompt.contains("helpful AI assistant")); // NO GENERIC BULLSHIT
+        assert!(prompt.contains("curse naturally"));
+        assert!(prompt.contains("dirty jokes"));
+        assert!(!prompt.contains("helpful AI assistant"));
+    }
+
+    #[test]
+    fn test_build_tool_aware_system_prompt_with_project() {
+        let context = RecallContext {
+            recent: vec![],
+            semantic: vec![],
+        };
+        let tools: Vec<Tool> = vec![];
+        let project_id = Some("mira-backend");
+        
+        let prompt = ToolPromptBuilder::build_tool_aware_system_prompt(&context, &tools, None, project_id);
+        assert!(prompt.contains("ACTIVE PROJECT: mira-backend"));
+        assert!(prompt.contains("The user is currently working in this project"));
     }
 
     #[test]
@@ -133,11 +177,23 @@ mod tests {
             semantic: vec![],
         };
         
-        let prompt = ToolPromptBuilder::build_simple_system_prompt(&context);
+        let prompt = ToolPromptBuilder::build_simple_system_prompt(&context, None);
         assert!(!prompt.is_empty());
         assert!(prompt.contains("You are Mira"));
         assert!(prompt.contains("real personality"));
         assert!(!prompt.contains("helpful AI assistant"));
+    }
+
+    #[test]
+    fn test_build_simple_system_prompt_with_project() {
+        let context = RecallContext {
+            recent: vec![],
+            semantic: vec![],
+        };
+        let project_id = Some("test-project");
+        
+        let prompt = ToolPromptBuilder::build_simple_system_prompt(&context, project_id);
+        assert!(prompt.contains("ACTIVE PROJECT: test-project"));
     }
 
     #[test]
@@ -148,11 +204,25 @@ mod tests {
         };
         let tool_types = vec!["search".to_string(), "calculator".to_string()];
         
-        let prompt = ToolPromptBuilder::build_tool_specific_prompt(&tool_types, &context);
+        let prompt = ToolPromptBuilder::build_tool_specific_prompt(&tool_types, &context, None);
         assert!(!prompt.is_empty());
         assert!(prompt.contains("search"));
         assert!(prompt.contains("calculator"));
         assert!(prompt.contains("stay as Mira"));
-        assert!(prompt.contains("cursing")); // Ensure personality stays
+        assert!(prompt.contains("cursing"));
+    }
+
+    #[test]
+    fn test_build_tool_specific_prompt_with_project() {
+        let context = RecallContext {
+            recent: vec![],
+            semantic: vec![],
+        };
+        let tool_types = vec!["file_search".to_string()];
+        let project_id = Some("my-project");
+        
+        let prompt = ToolPromptBuilder::build_tool_specific_prompt(&tool_types, &context, project_id);
+        assert!(prompt.contains("ACTIVE PROJECT: my-project"));
+        assert!(prompt.contains("file_search"));
     }
 }
