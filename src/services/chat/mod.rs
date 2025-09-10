@@ -7,7 +7,6 @@ use tracing::{info, instrument};
 pub mod config;
 pub mod context;
 pub mod response;
-pub mod streaming_temp;
 
 // Re-export types for external compatibility
 pub use config::ChatConfig;
@@ -33,7 +32,7 @@ pub struct ChatService {
     // Extracted components that hold the logic
     context_builder: ContextBuilder,
     response_processor: ResponseProcessor,
-    streaming_handler: self::streaming_temp::StreamingHandler,
+    streaming_handler: crate::llm::streaming::StreamingHandler,
 
     // These fields are kept for compatibility with the AppState struct
     _thread_manager: Arc<ThreadManager>,
@@ -74,7 +73,7 @@ impl ChatService {
             client.clone(), // This dependency is now correctly injected.
         );
 
-        let streaming_handler = self::streaming_temp::StreamingHandler::new(
+        let streaming_handler = crate::llm::streaming::StreamingHandler::new(
             client.clone(),
         );
 
