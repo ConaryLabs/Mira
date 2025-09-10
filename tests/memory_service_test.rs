@@ -3,8 +3,8 @@
 use mira_backend::config::CONFIG;
 use mira_backend::llm::client::OpenAIClient;
 use mira_backend::memory::sqlite::store::SqliteMemoryStore;
-use mira_backend::services::chat::ChatResponse;
-use mira_backend::services::memory::MemoryService;
+use mira_backend::llm::chat_service::ChatResponse;
+use mira_backend::memory::MemoryService;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use uuid::Uuid;

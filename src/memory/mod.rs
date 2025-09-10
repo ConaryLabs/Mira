@@ -30,3 +30,4 @@ pub use self::core::traits;
 pub use self::core::types;
 pub use self::features::decay;
 pub use self::features::decay_scheduler;
+pub mod context;

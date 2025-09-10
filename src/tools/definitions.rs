@@ -9,7 +9,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tracing::{debug, info};
 
-use crate::services::chat::{ChatService, ChatResponse};
+use crate::llm::chat_service::{ChatService, ChatResponse};
 use crate::llm::responses::types::{Tool, FunctionDefinition, CodeInterpreterConfig, ContainerConfig};
 use crate::config::CONFIG;
 

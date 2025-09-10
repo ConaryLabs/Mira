@@ -8,7 +8,6 @@ pub mod persona;
 pub mod prompt;
 pub mod project;
 pub mod git;
-pub mod services;
 pub mod state;
 pub mod utils;
 

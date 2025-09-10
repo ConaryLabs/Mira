@@ -1,3 +1,7 @@
+#!/bin/bash
+# Fix state.rs imports
+
+cat > src/state.rs.fixed << 'EOFILE'
 // src/state.rs
 use crate::{
     config::CONFIG,
@@ -14,14 +18,13 @@ use crate::{
     },
     persona::PersonaOverlay,
     project::store::ProjectStore,
-    memory::{
-        context::ContextService,
-        
+    services::{
+        ContextService,
+        DocumentService,
         MemoryService,
     },
 };
 use crate::tools::file_search::FileSearchService;
-use crate::tools::document::DocumentService;
 use std::sync::Arc;
 use tracing::info;
 
@@ -114,3 +117,7 @@ pub async fn create_app_state(
         file_search_service,
     })
 }
+EOFILE
+
+mv src/state.rs.fixed src/state.rs
+echo "Fixed state.rs"

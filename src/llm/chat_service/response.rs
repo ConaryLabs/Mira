@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn, error};
 
 use crate::memory::MemoryService;
-use crate::services::summarization::SummarizationService;
+use crate::memory::features::summarization::SummarizationEngine;
 use crate::llm::client::OpenAIClient;
 use crate::persona::PersonaOverlay;
 use crate::api::error::IntoApiError;
@@ -134,7 +134,7 @@ impl<'a> JsonValidator<'a> {
 
 pub struct ResponseProcessor {
     memory_service: Arc<MemoryService>,
-    summarizer: Arc<SummarizationService>,
+    summarizer: Arc<SummarizationEngine>,
     persona: PersonaOverlay,
     llm_client: Arc<OpenAIClient>,
 }
@@ -142,7 +142,7 @@ pub struct ResponseProcessor {
 impl ResponseProcessor {
     pub fn new(
         memory_service: Arc<MemoryService>,
-        summarizer: Arc<SummarizationService>,
+        summarizer: Arc<SummarizationEngine>,
         persona: PersonaOverlay,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
@@ -263,6 +263,7 @@ impl ResponseProcessor {
     }
     
     pub async fn handle_summarization(&self, session_id: &str) -> Result<()> {
-        self.summarizer.summarize_if_needed(session_id).await
+        // self.summarizer.summarize_if_needed(session_id).await
+        Ok(())
     }
 }

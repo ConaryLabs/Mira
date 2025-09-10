@@ -5,7 +5,7 @@ use anyhow::Result;
 use tracing::{info, warn};
 use crate::config::CONFIG;
 use crate::memory::recall::RecallContext;
-use crate::services::chat::config::ChatConfig;
+use super::config::ChatConfig;
 use crate::memory::MemoryService;
 
 #[derive(Clone)]

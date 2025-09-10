@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::llm::responses::VectorStoreManager;
-use crate::services::chat::ChatResponse;
-use crate::services::MemoryService;
+use crate::llm::chat_service::ChatResponse;
+use crate::memory::MemoryService;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DocumentDestination {

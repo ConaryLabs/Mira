@@ -22,3 +22,4 @@ pub use client::OpenAIClient;
 
 // Re-export schema types for services
 
+pub mod chat_service;

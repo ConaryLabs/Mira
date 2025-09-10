@@ -161,7 +161,7 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
             info!("Saved user message for session: {}", session_id);
         }
         "assistant" => {
-            use crate::services::chat::ChatResponse;
+            use crate::llm::chat_service::ChatResponse;
             
             // Create ChatResponse with defaults for testing
             let response = if let Some(metadata) = request.metadata {

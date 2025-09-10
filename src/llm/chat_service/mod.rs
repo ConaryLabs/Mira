@@ -19,7 +19,7 @@ use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::ThreadManager;
 use crate::llm::responses::vector_store::VectorStoreManager;
 use crate::memory::MemoryService;
-use crate::services::summarization::SummarizationService;
+use crate::memory::features::summarization::SummarizationEngine;
 use crate::memory::recall::RecallContext;
 use crate::persona::PersonaOverlay;
 
@@ -47,7 +47,7 @@ impl ChatService {
         vector_store_manager: Arc<VectorStoreManager>,
         persona: PersonaOverlay,
         memory: Arc<MemoryService>,
-        summarizer: Arc<SummarizationService>,
+        summarizer: Arc<SummarizationEngine>,
         config: Option<ChatConfig>,
     ) -> Self {
         let chat_config = config.unwrap_or_default();

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, debug};
 use crate::memory::recall::RecallContext;
-use crate::services::MemoryService;
+use crate::memory::MemoryService;
 use crate::config::CONFIG;
 
 /// Service responsible for constructing context for chat interactions
