@@ -15,7 +15,7 @@ use crate::llm::responses::{
     ImageOptions,
 };
 use crate::memory::recall::RecallContext;
-use crate::services::{chat_with_tools::get_enabled_tools, FileSearchService, FileSearchParams};
+use crate::tools::{definitions::get_enabled_tools, file_search::{FileSearchService, FileSearchParams}};
 use crate::state::AppState;
 use crate::config::CONFIG;
 

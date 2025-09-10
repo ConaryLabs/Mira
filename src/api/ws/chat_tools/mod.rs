@@ -2,15 +2,6 @@
 // Orchestrates tool-enhanced chat functionality for WebSocket connections.
 // Manages the flow from message receipt through tool execution to response delivery.
 
-pub mod executor;
-pub mod message_handler;
-pub mod prompt_builder;
-
-// Re-export key components for easier access
-pub use executor::ToolExecutor;
-pub use message_handler::ToolMessageHandler;
-pub use prompt_builder::ToolPromptBuilder;
-
 use crate::api::ws::message::{WsClientMessage, MessageMetadata};
 use crate::state::AppState;
 use crate::config::CONFIG;
@@ -20,6 +11,12 @@ use futures_util::stream::SplitSink;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+
+// Import the tools we need
+use crate::tools::executor::ToolExecutor;
+use crate::tools::prompt_builder::ToolPromptBuilder;
+use crate::tools::message_handler::ToolMessageHandler;
+use crate::tools::definitions::get_enabled_tools;
 
 /// Main entry point for processing tool-enhanced chat messages.
 /// Coordinates memory storage, context building, and tool execution.
@@ -71,7 +68,7 @@ pub async fn handle_chat_message_with_tools(
     // Build system prompt with tool descriptions and project context
     let system_prompt = ToolPromptBuilder::build_tool_aware_system_prompt(
         &context,
-        &crate::services::chat_with_tools::get_enabled_tools(),
+        &get_enabled_tools(),
         metadata.as_ref(),
         project_id.as_deref(),  // Pass project context for LLM awareness
     );
