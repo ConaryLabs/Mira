@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::config::CONFIG;
 use crate::memory::recall::RecallContext;
 use crate::services::chat::config::ChatConfig;
-use crate::services::memory::MemoryService;
+use crate::memory::MemoryService;
 
 #[derive(Clone)]
 pub struct ContextBuilder {

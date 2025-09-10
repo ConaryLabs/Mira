@@ -3,9 +3,9 @@
 
 use chrono::{DateTime, Utc};
 use tracing::{debug, info};
-use crate::memory::types::MemoryEntry;
+use crate::memory::core::types::MemoryEntry;
 use crate::llm::embeddings::EmbeddingHead;
-use super::types::ScoredMemoryEntry;
+use crate::memory::features::memory_types::ScoredMemoryEntry;
 
 /// Advanced memory scoring with multiple factors
 pub struct MemoryScorer {

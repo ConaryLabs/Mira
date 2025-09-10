@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     
     // Initialize all required components for AppState
     let sqlite_store = Arc::new(
-        memory::sqlite::store::SqliteMemoryStore::new(pool.clone())
+        crate::memory::storage::sqlite::store::SqliteMemoryStore::new(pool.clone())
     );
     
     let llm_client = llm::client::OpenAIClient::new()?;
@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
     // 🔴 BUG FIX #1: SPAWN THE MEMORY DECAY SCHEDULER
     // This was built but never actually started - like buying a dishwasher and never plugging it in
     let decay_interval = Duration::from_secs(CONFIG.decay_interval_seconds.unwrap_or(3600)); // Default 1 hour
-    let decay_handle = memory::decay_scheduler::spawn_decay_scheduler(
+    let decay_handle = crate::memory::features::decay_scheduler::spawn_decay_scheduler(
         app_state.clone(), 
         decay_interval
     );

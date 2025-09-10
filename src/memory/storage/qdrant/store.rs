@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::memory::qdrant::mapping::{memory_entry_to_payload, payload_to_memory_entry};
-use crate::memory::traits::MemoryStore;
-use crate::memory::types::MemoryEntry;
+use crate::memory::storage::qdrant::mapping::{memory_entry_to_payload, payload_to_memory_entry};
+use crate::memory::core::traits::MemoryStore;
+use crate::memory::core::types::MemoryEntry;
 
 /// Qdrant-based vector store for semantic memory search.
 #[derive(Debug)]

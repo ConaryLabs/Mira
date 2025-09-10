@@ -1,6 +1,6 @@
 //! Handles LLM-driven summarization of memories for long-term retention/context condensation.
 
-use crate::memory::types::MemoryEntry;
+use crate::memory::core::types::MemoryEntry;
 
 /// Summarize a batch of memory entries (calls LLM outside this function).
 pub async fn summarize_memories(entries: &[MemoryEntry]) -> Option<String> {

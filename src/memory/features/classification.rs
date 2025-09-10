@@ -7,8 +7,8 @@ use tracing::{debug, info, error};
 use crate::llm::client::OpenAIClient;
 use crate::llm::classification::Classification;
 use crate::llm::embeddings::EmbeddingHead;
-use crate::memory::types::MemoryType;
-use super::types::{RoutingDecision, ClassificationResult};
+use crate::memory::core::types::MemoryType;
+use crate::memory::features::memory_types::{RoutingDecision, ClassificationResult};
 
 /// Handles message classification and determines routing to appropriate memory heads
 pub struct MessageClassifier {

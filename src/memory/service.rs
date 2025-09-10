@@ -1,12 +1,12 @@
 // src/services/memory/mod.rs
 // Public API and orchestration for the refactored memory service
 
-mod types;
-mod classification;
-mod embedding;
-mod scoring;
-mod session;
-mod summarization;
+// Types are in core now
+use crate::memory::features::classification;
+use crate::memory::features::embedding;
+use crate::memory::features::scoring;
+use crate::memory::features::session;
+use crate::memory::features::summarization;
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -24,7 +24,7 @@ use crate::memory::{
 };
 
 // Re-export key types
-pub use types::{
+pub use crate::memory::features::memory_types::{
     ScoredMemoryEntry, 
     MemoryServiceStats, 
     RoutingStats,

@@ -6,8 +6,8 @@ use anyhow::Result;
 use tracing::{debug, info, warn};
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::{EmbeddingHead, TextChunker};
-use crate::memory::types::MemoryEntry;
-use super::types::BatchEmbeddingConfig;
+use crate::memory::core::types::MemoryEntry;
+use crate::memory::features::memory_types::BatchEmbeddingConfig;
 
 /// Manages embedding generation with intelligent batching
 /// The crown jewel of API optimization - saves 90% of API calls

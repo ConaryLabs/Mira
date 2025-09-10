@@ -6,9 +6,9 @@ use tokio::join;
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use crate::memory::recall::RecallContext;
-use crate::memory::decay::{calculate_decayed_salience, should_include_memory, DecayConfig};
-use crate::memory::traits::MemoryStore;
-use crate::memory::qdrant::multi_store::QdrantMultiStore;
+use crate::memory::features::decay::{calculate_decayed_salience, should_include_memory, DecayConfig};
+use crate::memory::core::traits::MemoryStore;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::config::CONFIG;
@@ -17,7 +17,7 @@ use chrono::Utc;
 /// Enhanced memory entry with similarity score for re-ranking
 #[derive(Debug, Clone)]
 pub struct ScoredMemoryEntry {
-    pub entry: crate::memory::types::MemoryEntry,
+    pub entry: crate::memory::core::types::MemoryEntry,
     pub similarity_score: f32,
     pub salience_score: f32,
     pub recency_score: f32,
@@ -166,7 +166,7 @@ where
     let now = Utc::now();
     let decay_config = DecayConfig::default();
     
-    let mut final_entries: Vec<crate::memory::types::MemoryEntry> = scored_entries
+    let mut final_entries: Vec<crate::memory::core::types::MemoryEntry> = scored_entries
         .into_iter()
         .filter_map(|mut scored| {
             let decayed = calculate_decayed_salience(&scored.entry, &decay_config, now);
@@ -215,7 +215,7 @@ async fn load_recent_with_summaries<M>(
     sqlite_store: &M,
     session_id: &str,
     recent_count: usize,
-) -> anyhow::Result<Vec<crate::memory::types::MemoryEntry>>
+) -> anyhow::Result<Vec<crate::memory::core::types::MemoryEntry>>
 where
     M: MemoryStore + ?Sized,
 {
@@ -228,7 +228,7 @@ where
         
         for entry in all_recent {
             // Always include summaries
-            if entry.memory_type == Some(crate::memory::types::MemoryType::Other) 
+            if entry.memory_type == Some(crate::memory::core::types::MemoryType::Other) 
                 && entry.tags.as_ref().is_some_and(|t| t.contains(&"summary".to_string())) {
                 selected.push(entry);
             } else if message_count < recent_count {
@@ -245,7 +245,7 @@ where
 
 /// Merge and deduplicate results from multiple heads (Vec version)
 fn merge_and_deduplicate_results_vec(
-    multi_results: Vec<(EmbeddingHead, Vec<crate::memory::types::MemoryEntry>)>
+    multi_results: Vec<(EmbeddingHead, Vec<crate::memory::core::types::MemoryEntry>)>
 ) -> anyhow::Result<Vec<ScoredMemoryEntry>> {
     let mut seen_ids = std::collections::HashSet::new();
     let mut scored_entries = Vec::new();
@@ -276,7 +276,7 @@ fn merge_and_deduplicate_results_vec(
 
 /// Merge and deduplicate results from multiple heads (HashMap version - kept for compatibility)
 fn merge_and_deduplicate_results(
-    multi_results: HashMap<EmbeddingHead, Vec<crate::memory::types::MemoryEntry>>
+    multi_results: HashMap<EmbeddingHead, Vec<crate::memory::core::types::MemoryEntry>>
 ) -> anyhow::Result<Vec<ScoredMemoryEntry>> {
     let mut seen_ids = std::collections::HashSet::new();
     let mut scored_entries = Vec::new();

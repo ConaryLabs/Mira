@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn, error};
 
-use crate::services::memory::MemoryService;
+use crate::memory::MemoryService;
 use crate::services::summarization::SummarizationService;
 use crate::llm::client::OpenAIClient;
 use crate::persona::PersonaOverlay;

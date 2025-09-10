@@ -2,9 +2,9 @@
 // SQLite-backed memory store implementing the MemoryStore trait
 // with additional methods for WebSocket operations
 
-use crate::memory::sqlite::migration;
-use crate::memory::traits::MemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryTag, MemoryType};
+use crate::memory::storage::sqlite::migration;
+use crate::memory::core::traits::MemoryStore;
+use crate::memory::core::types::{MemoryEntry, MemoryTag, MemoryType};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};

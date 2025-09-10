@@ -2,7 +2,7 @@
 
 //! Qdrant search and filter helpers for semantic recall.
 
-use crate::memory::types::{MemoryEntry, MemoryType, MemoryTag};
+use crate::memory::core::types::{MemoryEntry, MemoryType, MemoryTag};
 use chrono::{DateTime, Utc};
 use std::str::FromStr; // Needed for MemoryType parsing
 

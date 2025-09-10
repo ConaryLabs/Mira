@@ -5,10 +5,10 @@ use super::schema::MiraMessage;
 use anyhow::Result;
 use chrono::Utc;
 
-use crate::memory::qdrant::store::QdrantMemoryStore;
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::traits::MemoryStore;
-use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::storage::qdrant::store::QdrantMemoryStore;
+use crate::memory::storage::sqlite::store::SqliteMemoryStore;
+use crate::memory::core::traits::MemoryStore;
+use crate::memory::core::types::{MemoryEntry, MemoryType};
 
 /// Import a batch of messages into both SQLite and Qdrant stores as needed.
 /// - `sqlite_store`: the real SqliteMemoryStore instance

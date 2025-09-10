@@ -18,7 +18,7 @@ pub use response::ResponseProcessor;
 use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::ThreadManager;
 use crate::llm::responses::vector_store::VectorStoreManager;
-use crate::services::memory::MemoryService;
+use crate::memory::MemoryService;
 use crate::services::summarization::SummarizationService;
 use crate::memory::recall::RecallContext;
 use crate::persona::PersonaOverlay;

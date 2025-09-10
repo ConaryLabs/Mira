@@ -2,9 +2,9 @@
 // Context-building strategies for memory recall
 // Uses superhuman stepped decay for realistic but powerful memory
 
-use crate::memory::traits::MemoryStore;
-use crate::memory::types::MemoryEntry;
-use crate::memory::decay::{calculate_decayed_salience, DecayConfig};
+use crate::memory::core::traits::MemoryStore;
+use crate::memory::core::types::MemoryEntry;
+use crate::memory::features::decay::{calculate_decayed_salience, DecayConfig};
 use chrono::Utc;
 
 /// The context returned for LLM prompting: recent + semantic memories

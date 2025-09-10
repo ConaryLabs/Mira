@@ -4,10 +4,10 @@ use anyhow::{anyhow, Result};
 use tracing::{debug, info};
 
 use crate::llm::client::OpenAIClient;
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::traits::MemoryStore;
+use crate::memory::storage::sqlite::store::SqliteMemoryStore;
+use crate::memory::core::traits::MemoryStore;
 use crate::services::chat::{ChatConfig, ChatResponse};
-use crate::services::memory::MemoryService;
+use crate::memory::MemoryService;
 use crate::config::CONFIG;
 
 pub struct SummarizationService {

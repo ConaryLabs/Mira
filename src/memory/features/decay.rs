@@ -3,7 +3,7 @@
 // Memories fade very slowly and work harmoniously with rolling summaries
 
 use chrono::{DateTime, Duration, Utc};
-use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::core::types::{MemoryEntry, MemoryType};
 
 /// Configuration for superhuman stepped memory decay
 #[derive(Debug, Clone)]

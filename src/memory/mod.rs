@@ -1,24 +1,32 @@
-// src/memory/mod.rs
+//! Consolidated Memory Module
+//! 
+//! Unified memory management with:
+//! - Core: Configuration, traits, and types
+//! - Features: Classification, scoring, decay, embeddings
+//! - Recall: Context building and parallel retrieval
+//! - Storage: SQLite and Qdrant backends
 
-pub mod types;
-pub mod traits;
+pub mod core;
+pub mod features;
 pub mod recall;
-pub mod salience;
-pub mod summarizer;
-pub mod decay;         // existing subject-aware decay logic (policies/helpers)
-pub mod decay_scheduler; // NEW: background scheduler for periodic decay
-pub mod sqlite;        // <--- THIS IS THE FIX
-pub mod qdrant;
-pub mod parallel_recall; // parallel optimization module
+pub mod storage;
+pub mod service;
 
-// Add the missing MemoryMessage type that ChatService needs
-use serde::{Deserialize, Serialize};
+// Re-export commonly used items
+pub use self::core::{config::MemoryConfig, traits::*, types::*};
+pub use self::features::{
+    classification::*,
+    decay::*,
+    scoring::*,
+    session::*,
+};
+pub use self::recall::{recall::RecallContext, parallel_recall::*};
+pub use self::service::MemoryService;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryMessage {
-    pub role: String,
-    pub content: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-}
-
-// Re-export commonly used types and helpers
+// Temporary compatibility re-exports
+pub use self::storage::sqlite;
+pub use self::storage::qdrant;
+pub use self::core::traits;
+pub use self::core::types;
+pub use self::features::decay;
+pub use self::features::decay_scheduler;

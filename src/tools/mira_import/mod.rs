@@ -7,8 +7,8 @@ pub mod writer;
 use schema::{ChatExport, MiraMessage};
 use openai::batch_memory_eval;
 use writer::insert_messages;
-use crate::memory::sqlite::store::SqliteMemoryStore;
-use crate::memory::qdrant::store::QdrantMemoryStore;
+use crate::memory::storage::sqlite::store::SqliteMemoryStore;
+use crate::memory::storage::qdrant::store::QdrantMemoryStore;
 
 use anyhow::Result;
 

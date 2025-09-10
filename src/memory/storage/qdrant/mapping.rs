@@ -2,7 +2,7 @@
 
 //! Maps between MemoryEntry structs and Qdrant payload JSON for point upserts/search.
 
-use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::core::types::{MemoryEntry, MemoryType};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::str::FromStr;

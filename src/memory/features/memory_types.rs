@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use crate::llm::embeddings::EmbeddingHead;
-use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::core::types::{MemoryEntry, MemoryType};
 
 /// Scored memory entry with all scoring components
 #[derive(Debug, Clone)]

@@ -7,9 +7,9 @@ use chrono::Utc;
 use tracing::{info, debug, warn};
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
-use crate::memory::types::{MemoryEntry, MemoryType};
+use crate::memory::core::types::{MemoryEntry, MemoryType};
 use crate::config::CONFIG;
-use super::types::{SummaryRequest, SummaryType};
+use crate::memory::features::memory_types::{SummaryRequest, SummaryType};
 
 /// Manages rolling summaries and memory compression
 pub struct SummarizationEngine {
