@@ -11,7 +11,9 @@ use crate::api::ws::message::{WsServerMessage, MessageMetadata};
 use crate::state::AppState;
 use crate::tools::executor::ToolExecutor;
 use crate::tools::ToolExecutorExt;
+use crate::tools::prompt_builder::ToolPromptBuilder;
 use crate::llm::responses::{ResponsesManager, types::Message};
+use crate::memory::recall::RecallContext;
 
 /// Handle a chat message with tool support
 pub async fn handle_chat_message_with_tools(
@@ -27,11 +29,27 @@ pub async fn handle_chat_message_with_tools(
     // Initialize tool executor
     let tool_executor = ToolExecutor::new();
     
-    // Build context from metadata
-    let file_context = extract_file_context(&metadata);
+    // Get memory context (empty for now, can be enhanced later)
+    let context = RecallContext {
+        recent: vec![],
+        semantic: vec![],
+    };
     
-    // Build system prompt with tool awareness
-    let system_prompt = build_system_prompt_with_tools(&file_context);
+    // Get tool definitions as Tool structs
+    let tool_structs = crate::tools::definitions::get_enabled_tools();
+    
+    // Convert Tool structs to Values for passing to ResponsesManager
+    let tool_values: Vec<serde_json::Value> = tool_structs.iter()
+        .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+        .collect();
+    
+    // Build system prompt with tool awareness using ToolPromptBuilder
+    let system_prompt = ToolPromptBuilder::build_tool_aware_system_prompt(
+        &context,
+        &tool_structs,
+        metadata.as_ref(),
+        project_id.as_deref(),
+    );
     
     // Create messages in the format ResponsesManager expects
     let input = vec![
@@ -47,9 +65,6 @@ pub async fn handle_chat_message_with_tools(
         }
     ];
     
-    // Get tool definitions
-    let tools = get_enabled_tools();
-    
     // Create ResponsesManager and stream response with tools
     let response_manager = ResponsesManager::new(app_state.llm_client.clone());
     
@@ -58,7 +73,7 @@ pub async fn handle_chat_message_with_tools(
         "verbosity": crate::config::CONFIG.verbosity,
         "reasoning_effort": crate::config::CONFIG.reasoning_effort,
         "max_output_tokens": crate::config::CONFIG.max_output_tokens,
-        "tools": tools,
+        "tools": tool_values,
     });
     
     // Create streaming response
@@ -76,7 +91,7 @@ pub async fn handle_chat_message_with_tools(
     let mut full_text = String::new();
     let mut tool_calls = Vec::new();
     
-    while let Some(chunk_result) = futures::StreamExt::next(&mut stream).await {
+    while let Some(chunk_result) = futures_util::StreamExt::next(&mut stream).await {
         match chunk_result {
             Ok(chunk) => {
                 // Extract text content from chunk
@@ -172,155 +187,6 @@ pub async fn handle_chat_message_with_tools(
     Ok(())
 }
 
-/// Get enabled tool definitions
-fn get_enabled_tools() -> Vec<Value> {
-    let mut tools = vec![
-        // File search tool
-        json!({
-            "type": "function",
-            "function": {
-                "name": "file_search",
-                "description": "Search for files and code snippets in the project",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query for files or code"
-                        },
-                        "project_id": {
-                            "type": "string",
-                            "description": "Optional project ID to search within"
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default: 10)"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        }),
-        
-        // File context loader
-        json!({
-            "type": "function",
-            "function": {
-                "name": "load_file_context",
-                "description": "Load full contents of files from the repository",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "project_id": {
-                            "type": "string",
-                            "description": "Project ID to load files from"
-                        },
-                        "file_paths": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            },
-                            "description": "List of file paths to load (optional, loads all if not specified)"
-                        }
-                    },
-                    "required": ["project_id"]
-                }
-            }
-        }),
-    ];
-    
-    // Web search tool
-    if crate::config::CONFIG.enable_web_search {
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Search the web for current information",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        }));
-    }
-    
-    // Code interpreter
-    if crate::config::CONFIG.enable_code_interpreter {
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": "code_interpreter",
-                "description": "Execute code in a sandboxed environment",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "Code to execute"
-                        },
-                        "language": {
-                            "type": "string",
-                            "description": "Programming language (python, javascript, etc.)",
-                            "enum": ["python", "javascript", "rust", "go", "java"]
-                        }
-                    },
-                    "required": ["code"]
-                }
-            }
-        }));
-    }
-    
-    // Image generation with gpt-image-1
-    if crate::config::CONFIG.enable_image_generation {
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": "image_generation",
-                "description": "Generate an image from a text description using gpt-image-1",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {
-                            "type": "string",
-                            "description": "Text description of the image to generate"
-                        },
-                        "size": {
-                            "type": "string",
-                            "description": "Image size",
-                            "enum": ["1024x1024", "1792x1024", "1024x1792"]
-                        },
-                        "quality": {
-                            "type": "string",
-                            "description": "Image quality",
-                            "enum": ["standard", "hd"]
-                        },
-                        "style": {
-                            "type": "string", 
-                            "description": "Image style",
-                            "enum": ["vivid", "natural"]
-                        },
-                        "n": {
-                            "type": "integer",
-                            "description": "Number of images to generate (1-10)",
-                            "minimum": 1,
-                            "maximum": 10
-                        }
-                    },
-                    "required": ["prompt"]
-                }
-            }
-        }));
-    }
-    
-    tools
-}
-
 /// Extract file context from metadata
 fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
     metadata.as_ref().and_then(|meta| {
@@ -350,46 +216,52 @@ fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
             }
         }
         
-        if context_parts.is_empty() {
-            None
-        } else {
+        if let Some(attachment_id) = &meta.attachment_id {
+            context_parts.push(format!("Attachment ID: {}", attachment_id));
+        }
+        
+        if !context_parts.is_empty() {
             Some(context_parts.join("\n"))
+        } else {
+            None
         }
     })
 }
 
 /// Save tool interaction to memory
 async fn save_tool_interaction(
-    app_state: &AppState,
+    app_state: &Arc<AppState>,
     session_id: &str,
     user_message: &str,
-    assistant_response: &str,
+    assistant_message: &str,
     project_id: Option<String>,
 ) -> Result<()> {
     // Save user message
-    let _user_id = app_state.memory_service
-        .save_user_message(session_id, user_message, project_id.as_deref())
-        .await?;
+    app_state.memory_service.save_user_message(
+        session_id,
+        user_message,
+        project_id.as_deref(),
+    ).await?;
     
-    // Create response object for memory with actual ChatResponse fields
+    // Create a minimal ChatResponse for the assistant message
     let response = crate::llm::chat_service::ChatResponse {
-        output: assistant_response.to_string(),
+        output: assistant_message.to_string(),
+        persona: "mira".to_string(),
+        mood: "helpful".to_string(),
         salience: 5,
-        summary: format!("Tool-assisted response about: {}", 
-            user_message.chars().take(50).collect::<String>()),
-        reasoning_summary: None,
-        mood: String::new(),
-        tags: vec!["tools".to_string()],
+        summary: "Tool-assisted response".to_string(),
+        memory_type: "Response".to_string(),
+        tags: vec!["tool".to_string()],
         intent: None,
-        memory_type: String::from("interaction"),
         monologue: None,
-        persona: String::from("Mira"),
+        reasoning_summary: None,
     };
     
     // Save assistant response
-    let _assistant_id = app_state.memory_service
-        .save_assistant_response(session_id, &response)
-        .await?;
+    app_state.memory_service.save_assistant_response(
+        session_id,
+        &response,
+    ).await?;
     
     Ok(())
 }

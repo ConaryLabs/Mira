@@ -1,4 +1,4 @@
-// src/api/ws/chat_tools/message_handler.rs
+// src/tools/message_handler.rs
 // Handles WebSocket message processing and streaming for tool-enabled chat.
 // Manages the flow of tool execution events and response streaming.
 
@@ -70,20 +70,29 @@ impl ToolMessageHandler {
                             // Stream text content as it's generated
                             self.connection.send_message(WsServerMessage::StreamChunk { text: chunk }).await?;
                         }
+                        ToolEvent::ToolExecution { tool_name, status } => {
+                            // Notify about tool execution status
+                            let status_detail = format!("Executing {} - {}", tool_name, status);
+                            self.connection.send_status("Tool execution in progress", Some(status_detail)).await?;
+                        }
+                        ToolEvent::ToolResult { tool_name, result } => {
+                            // Log tool results (could be sent to client if needed)
+                            info!("Tool {} completed with result: {:?}", tool_name, result);
+                        }
                         ToolEvent::ToolCallStarted { tool_type, tool_id } => {
                             // Notify client that a tool is being executed
-                            let status_detail = format!("Tool '{tool_type}' ({tool_id}) started.");
+                            let status_detail = format!("Tool '{}' ({}) started.", tool_type, tool_id);
                             self.connection.send_status("Executing tool...", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallCompleted { tool_type, tool_id, result } => {
                             // Report successful tool execution
                             let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-                            let status_detail = format!("Tool '{tool_type}' ({tool_id}) completed. Result: {result_str}");
+                            let status_detail = format!("Tool '{}' ({}) completed. Result: {}", tool_type, tool_id, result_str);
                             self.connection.send_status("Tool executed successfully.", Some(status_detail)).await?;
                         }
                         ToolEvent::ToolCallFailed { tool_type, tool_id, error } => {
                             // Report tool execution failure
-                            let err_msg = format!("Tool '{tool_type}' ({tool_id}) failed: {error}");
+                            let err_msg = format!("Tool '{}' ({}) failed: {}", tool_type, tool_id, error);
                             self.connection.send_error(&err_msg, "TOOL_FAILED".to_string()).await?;
                         }
                         ToolEvent::ImageGenerated { urls, revised_prompt } => {
@@ -93,10 +102,24 @@ impl ToolMessageHandler {
                         }
                         ToolEvent::Complete { metadata } => {
                             // Send completion metadata
-                            let (mood, salience, tags) = if let Some(meta) = metadata { 
-                                (meta.mood, meta.salience, meta.tags) 
-                            } else { 
-                                (None, None, None) 
+                            // Properly extract fields from the JSON metadata
+                            let (mood, salience, tags) = if let Some(meta) = metadata {
+                                let mood = meta.get("mood")
+                                    .and_then(|m| m.as_str())
+                                    .map(String::from);
+                                let salience = meta.get("salience")
+                                    .and_then(|s| s.as_f64())
+                                    .map(|s| s as f32);
+                                let tags = meta.get("tags")
+                                    .and_then(|t| t.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    });
+                                (mood, salience, tags)
+                            } else {
+                                (None, None, None)
                             };
                             self.connection.send_message(WsServerMessage::Complete { mood, salience, tags }).await?;
                         }
@@ -114,7 +137,7 @@ impl ToolMessageHandler {
                 Ok(())
             }
             Err(e) => {
-                let error_message = format!("Tool execution failed: {e}");
+                let error_message = format!("Tool execution failed: {}", e);
                 error!("{}", error_message);
                 self.connection.send_error(&error_message, "TOOL_EXEC_ERROR".to_string()).await?;
                 Err(e)
@@ -126,7 +149,7 @@ impl ToolMessageHandler {
     /// Sends a simple text response informing the user that tools are unavailable.
     async fn handle_simple_response(&self, content: String) -> Result<()> {
         info!("Handling simple response because tools are disabled.");
-        let response_content = format!("Tools are currently disabled. You said: {content}");
+        let response_content = format!("Tools are currently disabled. You said: {}", content);
         self.connection.send_message(WsServerMessage::StreamChunk { text: response_content }).await?;
         self.connection.send_message(WsServerMessage::Complete { 
             mood: Some("informative".to_string()), 
