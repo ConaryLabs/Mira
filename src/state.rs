@@ -9,21 +9,34 @@ use crate::{
     },
     memory::{
         features::summarization::SummarizationEngine,
-        qdrant::multi_store::QdrantMultiStore,
-        sqlite::store::SqliteMemoryStore,
+        storage::qdrant::multi_store::QdrantMultiStore,
+        storage::sqlite::store::SqliteMemoryStore,
     },
     persona::PersonaOverlay,
     project::store::ProjectStore,
     memory::{
         context::ContextService,
-        
         MemoryService,
     },
 };
 use crate::tools::file_search::FileSearchService;
 use crate::tools::document::DocumentService;
 use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tracing::info;
+
+// Upload session for file transfers
+#[derive(Debug, Clone)]
+pub struct UploadSession {
+    pub id: String,
+    pub filename: String,
+    pub content_type: String,
+    pub chunks: Vec<Vec<u8>>,
+    pub total_size: usize,
+    pub received_size: usize,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -41,6 +54,9 @@ pub struct AppState {
     // Services
     pub memory_service: Arc<MemoryService>,
     pub file_search_service: Arc<FileSearchService>,
+    
+    // File upload sessions (single-user, in-memory is fine)
+    pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
 }
 
 /// Factory function for creating the application state
@@ -112,5 +128,6 @@ pub async fn create_app_state(
         image_generation_manager,
         memory_service,
         file_search_service,
+        upload_sessions: Arc::new(RwLock::new(HashMap::new())),
     })
 }

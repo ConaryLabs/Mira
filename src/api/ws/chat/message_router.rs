@@ -1,6 +1,7 @@
 // src/api/ws/chat/message_router.rs
 // Routes incoming WebSocket messages to appropriate handlers based on message type.
 // Manages chat messages, commands, and domain-specific operations.
+// REFACTORED: Moved tool decision logic to ToolExecutor
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -14,15 +15,16 @@ use crate::api::ws::memory;
 use crate::api::ws::project;
 use crate::api::ws::git;
 use crate::api::ws::files;
-use crate::api::ws::filesystem;  // Added for filesystem operations
+use crate::api::ws::filesystem;
 use crate::api::error::ApiError;
 use crate::state::AppState;
-use crate::config::CONFIG;
+use crate::tools::executor::ToolExecutor;
 
 pub struct MessageRouter {
     app_state: Arc<AppState>,
     connection: Arc<WebSocketConnection>,
     addr: SocketAddr,
+    tool_executor: ToolExecutor,  // Add tool executor instance
 }
 
 impl MessageRouter {
@@ -35,6 +37,7 @@ impl MessageRouter {
             app_state,
             connection,
             addr,
+            tool_executor: ToolExecutor::new(),
         }
     }
 
@@ -84,7 +87,8 @@ impl MessageRouter {
         // Use the eternal session for single-user mode
         let session_id = "peter-eternal".to_string();
         
-        let result = if should_use_tools(&metadata) {
+        // Use ToolExecutor to determine if tools should be used
+        let result = if self.tool_executor.should_use_tools(&metadata) {
             debug!("Routing to tool-enabled handler with session_id: {}", session_id);
             
             handle_chat_message_with_tools(
@@ -290,7 +294,7 @@ impl MessageRouter {
         }
     }
 
-    /// Handle filesystem commands (save, read, list, delete files)
+    /// Handle filesystem commands (save, read, list, delete)
     async fn handle_filesystem_command(
         &self,
         method: String,
@@ -399,43 +403,4 @@ impl MessageRouter {
             "INTERNAL_ERROR"
         }
     }
-}
-
-/// Determines whether to use tool-enabled chat based on metadata and configuration
-pub fn should_use_tools(metadata: &Option<MessageMetadata>) -> bool {
-    // Check if tools are disabled globally
-    if !CONFIG.enable_chat_tools {
-        return false;
-    }
-    
-    // Check metadata for context that would benefit from tools
-    if let Some(meta) = metadata {
-        // If we have file context, repository, or attachments, use tools
-        if meta.file_path.is_some() || meta.repo_id.is_some() || meta.attachment_id.is_some() {
-            debug!("Using tools due to file/repo/attachment context");
-            return true;
-        }
-        
-        // If we have language context, use tools
-        if meta.language.is_some() {
-            debug!("Using tools due to language context");
-            return true;
-        }
-    }
-    
-    // Default to not using tools for simple messages
-    false
-}
-
-/// Extract context from uploaded files (for future enhancement)
-pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
-    metadata.as_ref().and_then(|meta| {
-        if let Some(file_path) = &meta.file_path {
-            Some(format!("Working with file: {file_path}"))
-        } else if let Some(repo_id) = &meta.repo_id {
-            Some(format!("Repository context: {repo_id}"))
-        } else { 
-            meta.attachment_id.as_ref().map(|attachment_id| format!("Attachment: {attachment_id}"))
-        }
-    })
 }

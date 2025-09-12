@@ -14,6 +14,7 @@ use crate::{
         ws::message::WsServerMessage,
     },
     state::AppState,
+    utils::is_path_allowed,  // Now using the utility function
 };
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +74,7 @@ async fn save_file(params: Value) -> ApiResult<WsServerMessage> {
     
     info!("Saving file to: {}", req.path);
     
-    // Validate path is within allowed directories
+    // Validate path using utility function
     let path = Path::new(&req.path);
     if !is_path_allowed(path) {
         return Err(ApiError::forbidden("Path outside allowed directories"));
@@ -104,7 +105,7 @@ async fn read_file(params: Value) -> ApiResult<WsServerMessage> {
     
     debug!("Reading file from: {}", req.path);
     
-    // Validate path
+    // Validate path using utility function
     let path = Path::new(&req.path);
     if !is_path_allowed(path) {
         return Err(ApiError::forbidden("Path outside allowed directories"));
@@ -239,42 +240,6 @@ async fn check_file_exists(params: Value) -> ApiResult<WsServerMessage> {
         }),
         request_id: None,
     })
-}
-
-/// Helper: Check if a path is within allowed directories
-fn is_path_allowed(path: &Path) -> bool {
-    // Security: Only allow specific directories
-    // You can make this configurable via environment variables
-    let allowed_prefixes = vec![
-        "/home",
-        "/tmp",
-        "/var/www",
-        "./repos",  // For git repositories
-        "./uploads", // For uploaded files
-    ];
-    
-    let path_str = path.to_string_lossy();
-    
-    // Check for directory traversal attempts
-    if path_str.contains("..") {
-        warn!("Blocked directory traversal attempt: {}", path_str);
-        return false;
-    }
-    
-    // Check if path starts with any allowed prefix
-    for prefix in &allowed_prefixes {
-        if path_str.starts_with(prefix) {
-            return true;
-        }
-    }
-    
-    // Also allow relative paths in the current working directory
-    if !path.is_absolute() {
-        return true;
-    }
-    
-    warn!("Path outside allowed directories: {}", path_str);
-    false
 }
 
 /// Helper: Recursively collect files

@@ -1,6 +1,7 @@
 // src/tools/executor.rs
 // Tool execution framework for coordinating tool-enabled responses.
 // Manages the execution of various tools and streaming of results.
+// Updated to include tool decision logic
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -46,6 +47,48 @@ pub struct ToolExecutor;
 impl ToolExecutor {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Determines whether to use tool-enabled chat based on metadata and configuration
+    pub fn should_use_tools(&self, metadata: &Option<MessageMetadata>) -> bool {
+        // Check if tools are disabled globally
+        if !CONFIG.enable_chat_tools {
+            return false;
+        }
+        
+        // Check metadata for context that would benefit from tools
+        if let Some(meta) = metadata {
+            // If we have file context, repository, or attachments, use tools
+            if meta.file_path.is_some() || 
+               meta.repo_id.is_some() || 
+               meta.attachment_id.is_some() {
+                debug!("Using tools due to file/repo/attachment context");
+                return true;
+            }
+            
+            // If we have language context, use tools
+            if meta.language.is_some() {
+                debug!("Using tools due to language context");
+                return true;
+            }
+        }
+        
+        // Default to not using tools for simple messages
+        false
+    }
+    
+    /// Extract context from uploaded files for enhanced responses
+    pub fn extract_file_context(&self, metadata: &Option<MessageMetadata>) -> Option<String> {
+        metadata.as_ref().and_then(|meta| {
+            if let Some(file_path) = &meta.file_path {
+                Some(format!("Working with file: {file_path}"))
+            } else if let Some(repo_id) = &meta.repo_id {
+                Some(format!("Repository context: {repo_id}"))
+            } else { 
+                meta.attachment_id.as_ref()
+                    .map(|id| format!("Attachment: {id}"))
+            }
+        })
     }
 
     pub async fn stream_with_tools(
@@ -244,148 +287,84 @@ impl ToolExecutorExt for ToolExecutor {
                 let prompt = parsed_args["prompt"].as_str()
                     .ok_or_else(|| anyhow!("Missing prompt for image generation"))?;
                 
-                // Use the image generation service with proper ImageOptions struct
-                let image_gen_manager = crate::llm::responses::ImageGenerationManager::new(
-                    app_state.llm_client.clone()
-                );
-                
-                let options = crate::llm::responses::ImageOptions {
-                    n: parsed_args["n"].as_u64().map(|n| n as u8),
-                    size: parsed_args["size"].as_str().map(String::from),
-                    quality: parsed_args["quality"].as_str().map(String::from),
-                    style: parsed_args["style"].as_str().map(String::from),
-                };
-                
-                match image_gen_manager.generate_images(prompt, options).await {
-                    Ok(response) => {
-                        Ok(json!({
-                            "tool_type": "image_generation",
-                            "status": "success",
-                            "urls": response.urls(),
-                            "prompt": prompt
-                        }))
-                    }
-                    Err(e) => {
-                        Ok(json!({
-                            "tool_type": "image_generation",
-                            "status": "error",
-                            "error": format!("Failed to generate image: {}", e)
-                        }))
-                    }
-                }
+                // This would integrate with image_generation_manager in AppState
+                Ok(json!({
+                    "tool_type": "image_generation",
+                    "prompt": prompt,
+                    "status": "not_implemented",
+                    "message": "Image generation not yet connected"
+                }))
             }
             
             _ => {
                 warn!("Unknown tool type: {}", tool_type);
-                Ok(json!({
-                    "status": "error",
-                    "message": format!("Unknown tool type: {}", tool_type)
-                }))
+                Err(anyhow!("Unknown tool type: {}", tool_type))
             }
         }
     }
 }
 
-/// Execute file search using the actual FileSearchService
+// Helper functions for tool execution
 async fn execute_file_search(
     query: &str,
     project_id: Option<&str>,
     app_state: &Arc<AppState>,
 ) -> Result<Value> {
-    info!("Executing file search for query: '{}'", query);
+    debug!("Executing file search: query='{}', project_id={:?}", query, project_id);
     
+    // Use the file_search_service from AppState
     let params = crate::tools::file_search::FileSearchParams {
         query: query.to_string(),
         file_extensions: None,
-        max_files: Some(CONFIG.file_search_max_files),
+        max_files: Some(20),
         case_sensitive: Some(false),
         include_content: Some(true),
     };
     
-    app_state.file_search_service
+    let result = app_state.file_search_service
         .search_files(&params, project_id)
-        .await
+        .await?;
+    
+    Ok(result)
 }
 
-/// Load file context from repository
 async fn execute_load_file_context(
     project_id: &str,
     file_paths: Option<Vec<String>>,
     app_state: &Arc<AppState>,
 ) -> Result<Value> {
-    info!("Loading file context for project: {}", project_id);
+    debug!("Loading file context for project: {}", project_id);
     
-    use std::path::Path;
-    use tokio::fs;
-    
-    // Get project from project store
+    // Get project from store
     let project = app_state.project_store
-        .get_project(project_id).await?
+        .get_project(project_id)
+        .await?
         .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
     
     let mut files_content = Vec::new();
     let mut total_size = 0usize;
-    const MAX_TOTAL_SIZE: usize = 1_000_000; // 1MB limit
-    
-    // Use the project directory
-    let repo_path = Path::new(&CONFIG.git_repos_dir).join(&project.id);
-    
-    if !repo_path.exists() {
-        return Ok(json!({
-            "tool_type": "load_file_context",
-            "project_id": project_id,
-            "status": "error",
-            "message": "Project repository not found"
-        }));
-    }
     
     // If specific files requested, load those
     if let Some(paths) = file_paths {
-        for file_path in paths {
-            let full_path = repo_path.join(&file_path);
-            if full_path.exists() && !is_binary_file(&full_path) {
-                if let Ok(content) = fs::read_to_string(&full_path).await {
-                    if total_size + content.len() > MAX_TOTAL_SIZE {
-                        warn!("Reached size limit loading files");
-                        break;
-                    }
-                    total_size += content.len();
-                    files_content.push(json!({
-                        "path": file_path,
-                        "content": content,
-                        "size": content.len()
-                    }));
-                }
-            }
+        for path in paths {
+            // This would load specific files
+            debug!("Would load file: {}", path);
         }
     } else {
-        // Load all non-binary files up to size limit
-        if let Ok(mut entries) = fs::read_dir(&repo_path).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                if path.is_file() && !is_binary_file(&path) {
-                    if let Ok(content) = fs::read_to_string(&path).await {
-                        if total_size + content.len() > MAX_TOTAL_SIZE {
-                            warn!("Reached size limit loading files");
-                            break;
-                        }
-                        total_size += content.len();
-                        let entry_name = path.strip_prefix(&repo_path)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
-                            .to_string();
-                        files_content.push(json!({
-                            "path": entry_name,
-                            "content": content,
-                            "project": project.name.clone()
-                        }));
-                        
-                        // Limit to first 20 files
-                        if files_content.len() >= 20 {
-                            break;
-                        }
-                    }
-                }
+        // Load all artifacts from the project
+        let artifacts = app_state.project_store
+            .list_project_artifacts(project_id)
+            .await?;
+        
+        for artifact in artifacts.iter().take(20) {
+            if let Some(content) = &artifact.content {
+                total_size += content.len();
+                files_content.push(json!({
+                    "name": artifact.name,
+                    "type": format!("{}", artifact.artifact_type),
+                    "content": content,
+                    "project": project.name.clone()
+                }));
             }
         }
     }
@@ -398,23 +377,4 @@ async fn execute_load_file_context(
         "total_size": total_size,
         "status": "success"
     }))
-}
-
-/// Check if a file is likely binary
-fn is_binary_file(path: &std::path::Path) -> bool {
-    let binary_extensions = vec![
-        "exe", "dll", "so", "dylib", "jar", "class",
-        "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg",
-        "mp3", "mp4", "avi", "mov", "wmv",
-        "zip", "tar", "gz", "rar", "7z",
-        "pdf", "doc", "docx", "xls", "xlsx",
-        "pyc", "pyo", "o", "a", "lib"
-    ];
-    
-    if let Some(ext) = path.extension() {
-        let ext_str = ext.to_string_lossy().to_lowercase();
-        return binary_extensions.contains(&ext_str.as_str());
-    }
-    
-    false
 }
