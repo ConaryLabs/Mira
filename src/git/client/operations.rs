@@ -1,18 +1,18 @@
 // src/git/client/operations.rs
 // Core git repository operations: attach, clone, import, sync
-// Extracted from monolithic GitClient for focused responsibility
+// FIXED: All git2 operations wrapped in spawn_blocking for thread safety
 
 use anyhow::Result;
 use chrono::Utc;
 use git2::Repository;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 use uuid::Uuid;
 
 use crate::git::types::{GitRepoAttachment, GitImportStatus};
 use crate::git::store::GitStore;
-use crate::api::error::IntoApiError;
+use crate::api::error::{IntoApiError, ApiResult};
 
 /// Handles core Git repository operations
 #[derive(Clone)]
@@ -68,11 +68,15 @@ impl GitOperations {
                 .into_api_error("Failed to create repository directory")?;
         }
 
-        // Clone using git2
-        Repository::clone(
-            &attachment.repo_url,
-            &attachment.local_path,
-        )
+        // Clone using git2 - wrap in spawn_blocking for thread safety
+        let repo_url = attachment.repo_url.clone();
+        let local_path = attachment.local_path.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            Repository::clone(&repo_url, &local_path)
+        })
+        .await
+        .into_api_error("Failed to spawn blocking task")?
         .into_api_error("Failed to clone repository")?;
 
         self.store.update_import_status(&attachment.id, GitImportStatus::Cloned)
@@ -93,31 +97,14 @@ impl GitOperations {
         }
 
         // Walk through files and import them
-        fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
-            let mut files = Vec::new();
-            
-            if dir.is_dir() {
-                for entry in fs::read_dir(dir)? {
-                    let entry = entry?;
-                    let path = entry.path();
-                    
-                    if should_ignore_file(&path) {
-                        continue;
-                    }
-                    
-                    if path.is_dir() {
-                        files.extend(walk_directory(&path)?);
-                    } else if path.is_file() {
-                        files.push(path);
-                    }
-                }
-            }
-            
-            Ok(files)
-        }
-
-        let files = walk_directory(repo_path)
-            .into_api_error("Failed to walk repository directory")?;
+        let repo_path = repo_path.to_path_buf();
+        let files = tokio::task::spawn_blocking(move || {
+            walk_directory(&repo_path)
+        })
+        .await
+        .into_api_error("Failed to spawn blocking task")?
+        .into_api_error("Failed to walk repository directory")?;
+        
         debug!("Found {} files to import", files.len());
 
         // For MVP, we'll just update the status
@@ -138,9 +125,12 @@ impl GitOperations {
     pub async fn sync_changes(&self, attachment: &GitRepoAttachment, commit_message: &str) -> Result<()> {
         info!("Syncing changes for repository {}", attachment.id);
 
-        // All git2 operations in this block
-        {
-            let repo = Repository::open(&attachment.local_path)
+        // All git2 operations wrapped in spawn_blocking
+        let local_path = attachment.local_path.clone();
+        let commit_msg = commit_message.to_string();
+        
+        tokio::task::spawn_blocking(move || {
+            let repo = Repository::open(&local_path)
                 .into_api_error("Could not open local repo for syncing")?;
 
             // Stage all changes
@@ -170,7 +160,7 @@ impl GitOperations {
                 Some("HEAD"),
                 &signature,
                 &signature,
-                commit_message,
+                &commit_msg,
                 &tree,
                 &[&parent_commit],
             )
@@ -182,10 +172,12 @@ impl GitOperations {
             remote.push(&["refs/heads/main:refs/heads/main"], None)
                 .into_api_error("Failed to push to remote")?;
             
-            // Drop all git2 types before async operations
-        }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .into_api_error("Failed to spawn blocking task")??;
 
-        // Now do async operations after git2 types are dropped
+        // Now do async operations after git2 operations complete
         self.store.update_last_sync(&attachment.id, Utc::now())
             .await
             .into_api_error("Failed to update last sync time")?;
@@ -193,6 +185,104 @@ impl GitOperations {
         info!("Successfully synced changes for repository {}", attachment.id);
         Ok(())
     }
+
+    /// Pull latest changes from remote
+    pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
+        // Get attachment first
+        let attachment = self.store.get_attachment(attachment_id).await
+            .into_api_error("Failed to get attachment")?
+            .ok_or_else(|| anyhow::anyhow!("Git attachment not found"))
+            .into_api_error("Git attachment not found")?;
+            
+        info!("Pulling changes for repository {}", attachment.id);
+        
+        let local_path = attachment.local_path.clone();
+        
+        let result = tokio::task::spawn_blocking(move || -> Result<()> {
+            let repo = Repository::open(&local_path)?;
+            
+            let mut remote = repo.find_remote("origin")?;
+            
+            remote.fetch(&["main"], None, None)?;
+            
+            // Fast-forward merge
+            let fetch_head = repo.find_reference("FETCH_HEAD")?;
+            let fetch_commit = fetch_head.peel_to_commit()?;
+            
+            let mut branch = repo.find_branch("main", git2::BranchType::Local)?;
+            branch.get_mut().set_target(fetch_commit.id(), "Fast-forward pull")?;
+            
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+            
+            Ok(())
+        })
+        .await
+        .into_api_error("Failed to spawn blocking task")?;
+        
+        result.into_api_error("Failed to pull changes")?;
+        
+        info!("Successfully pulled changes for repository {}", attachment_id);
+        Ok(())
+    }
+    
+    /// Reset to remote HEAD (destructive)
+    pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
+        // Get attachment first
+        let attachment = self.store.get_attachment(attachment_id).await
+            .into_api_error("Failed to get attachment")?
+            .ok_or_else(|| anyhow::anyhow!("Git attachment not found"))
+            .into_api_error("Git attachment not found")?;
+            
+        warn!("Resetting repository {} to origin/main", attachment.id);
+        
+        let local_path = attachment.local_path.clone();
+        
+        let result = tokio::task::spawn_blocking(move || -> Result<()> {
+            let repo = Repository::open(&local_path)?;
+            
+            let mut remote = repo.find_remote("origin")?;
+            
+            remote.fetch(&["main"], None, None)?;
+            
+            let oid = repo.refname_to_id("refs/remotes/origin/main")?;
+            let object = repo.find_object(oid, None)?;
+            
+            repo.reset(&object, git2::ResetType::Hard, None)?;
+            
+            Ok(())
+        })
+        .await
+        .into_api_error("Failed to spawn blocking task")?;
+        
+        result.into_api_error("Failed to reset repository")?;
+        
+        warn!("Hard reset repository {} to origin/main complete", attachment_id);
+        Ok(())
+    }
+}
+
+/// Walk directory and collect files (helper function)
+fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
+    let mut files = Vec::new();
+    
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if should_ignore_file(&path) {
+                continue;
+            }
+            
+            if path.is_dir() {
+                files.extend(walk_directory(&path)?);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    
+    Ok(files)
 }
 
 /// Check if a file should be ignored during import
@@ -207,11 +297,10 @@ fn should_ignore_file(path: &Path) -> bool {
     // Skip common binary file extensions
     if let Some(extension) = path.extension() {
         let ext = extension.to_string_lossy().to_lowercase();
-        match ext.as_str() {
-            "exe" | "dll" | "so" | "dylib" | "bin" | "jar" | "zip" | "tar" | "gz" | "png" 
-            | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "pdf" | "mp3" | "mp4" | "avi" => true,
-            _ => false,
-        }
+        matches!(ext.as_str(),
+            "exe" | "dll" | "so" | "dylib" | "bin" | "jar" | "zip" | "tar" | "gz" | 
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "pdf" | "mp3" | "mp4" | "avi"
+        )
     } else {
         false
     }

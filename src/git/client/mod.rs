@@ -9,6 +9,7 @@ use std::fs;
 
 use crate::git::types::GitRepoAttachment;
 use crate::git::store::GitStore;
+use crate::api::error::ApiResult;
 
 // Keep internal modules for their substantial logic
 pub mod operations;
@@ -75,6 +76,20 @@ impl GitClient {
     pub async fn sync_changes(&self, attachment: &GitRepoAttachment, commit_message: &str) -> Result<()> {
         let ops = GitOperations::new(self.git_dir.clone(), self.store.clone());
         ops.sync_changes(attachment, commit_message).await
+    }
+
+    /// Pull latest changes from remote
+    /// NEW: Added for Phase 1 MVP completion
+    pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
+        let ops = GitOperations::new(self.git_dir.clone(), self.store.clone());
+        ops.pull_changes(attachment_id).await
+    }
+    
+    /// Reset to remote HEAD (destructive)
+    /// NEW: Added for Phase 1 MVP completion
+    pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
+        let ops = GitOperations::new(self.git_dir.clone(), self.store.clone());
+        ops.reset_to_remote(attachment_id).await
     }
 
     // ===== FILE TREE OPERATIONS =====
@@ -148,13 +163,6 @@ impl GitClient {
         diff_parser.get_commit_diff(attachment, commit_id)
     }
 
-    /// Get diff information for a specific commit (alternative name)
-    /// CRITICAL: Added for semantic clarity
-    pub fn get_commit_diff(&self, attachment: &GitRepoAttachment, commit_id: &str) -> Result<DiffInfo> {
-        let diff_parser = DiffParser::new();
-        diff_parser.get_commit_diff(attachment, commit_id)
-    }
-
     /// Get file content at a specific commit
     /// CRITICAL: Maintains exact same signature and behavior
     pub fn get_file_at_commit(
@@ -166,19 +174,6 @@ impl GitClient {
         let diff_parser = DiffParser::new();
         diff_parser.get_file_at_commit(attachment, commit_id, file_path)
     }
-
-    // ===== UTILITY METHODS =====
-    
-    /// Get the local path for an attachment
-    /// FIXED: Lifetime issue by returning owned String instead of borrowed &str
-    pub fn get_local_path(&self, attachment: &GitRepoAttachment) -> String {
-        attachment.local_path.clone()
-    }
-
-    /// Check if a repository exists locally
-    pub fn repository_exists(&self, attachment: &GitRepoAttachment) -> bool {
-        Path::new(&attachment.local_path).exists()
-    }
 }
 
 #[cfg(test)]
@@ -186,10 +181,16 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_api_compatibility() {
-        // This test ensures we maintain API compatibility
-        // All the original method signatures should still exist
-        // This is a compile-time test - if it compiles, the API is preserved
+    #[tokio::test]
+    async fn test_client_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect(":memory:")
+            .await
+            .unwrap();
+        let store = GitStore::new(pool);
+        
+        let client = GitClient::new(temp_dir.path(), store);
+        assert!(temp_dir.path().exists());
     }
 }

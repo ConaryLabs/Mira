@@ -40,7 +40,6 @@ pub enum WsClientMessage {
     Typing {
         active: bool,
     },
-    // New message types for WebSocket-only operations
     ProjectCommand {
         method: String,
         params: serde_json::Value,
@@ -50,6 +49,10 @@ pub enum WsClientMessage {
         params: serde_json::Value,
     },
     GitCommand {
+        method: String,
+        params: serde_json::Value,
+    },
+    FileSystemCommand {
         method: String,
         params: serde_json::Value,
     },
@@ -88,7 +91,10 @@ pub enum WsServerMessage {
     
     /// An error message.
     #[serde(rename = "error")]
-    Error { message: String, code: String },
+    Error { 
+        message: String, 
+        code: String,
+    },
     
     /// Signals that the server is connected and ready.
     #[serde(rename = "connection_ready")]
@@ -109,7 +115,7 @@ pub enum WsServerMessage {
         revised_prompt: Option<String>,
     },
     
-    /// NEW: A data response with optional request_id for matching
+    /// A data response with optional request_id for matching
     #[serde(rename = "data")]
     Data {
         data: serde_json::Value,

@@ -251,6 +251,7 @@ async fn delete_project(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     
     info!("Deleting project: {}", request.id);
     
+    // Check if project has artifacts
     let artifacts = app_state.project_store
         .list_project_artifacts(&request.id)
         .await
@@ -291,6 +292,7 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
         return Err(ApiError::bad_request("Artifact name cannot be empty"));
     }
     
+    // Verify project exists
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await
@@ -300,6 +302,7 @@ async fn create_artifact(params: Value, app_state: Arc<AppState>) -> ApiResult<W
         return Err(ApiError::not_found(format!("Project not found: {}", request.project_id)));
     }
     
+    // Parse artifact type
     let artifact_type = match request.artifact_type.to_lowercase().as_str() {
         "code" => ArtifactType::Code,
         "image" => ArtifactType::Image,
@@ -429,6 +432,7 @@ async fn list_artifacts(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     
     debug!("Listing artifacts for project: {}", request.project_id);
     
+    // Verify project exists
     let project = app_state.project_store
         .get_project(&request.project_id)
         .await

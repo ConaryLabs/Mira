@@ -1,9 +1,6 @@
 // src/api/ws/chat/message_router.rs
 // Routes incoming WebSocket messages to appropriate handlers based on message type.
 // Manages chat messages, commands, and domain-specific operations.
-// PHASE 4 UPDATE: Added full project command handling
-// PHASE 5 UPDATE: Added git command handling
-// PHASE 6 UPDATE: Added file transfer handling
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -14,10 +11,11 @@ use super::connection::WebSocketConnection;
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
 use crate::api::ws::chat_tools::handle_chat_message_with_tools;
 use crate::api::ws::memory;
-use crate::api::ws::project;  // Added for Phase 4
-use crate::api::ws::git;      // Added for Phase 5
-use crate::api::ws::files;    // Added for Phase 6
-use crate::api::error::ApiError;  // Added for Phase 4
+use crate::api::ws::project;
+use crate::api::ws::git;
+use crate::api::ws::files;
+use crate::api::ws::filesystem;  // Added for filesystem operations
+use crate::api::error::ApiError;
 use crate::state::AppState;
 use crate::config::CONFIG;
 
@@ -64,6 +62,9 @@ impl MessageRouter {
             WsClientMessage::GitCommand { method, params } => {
                 self.handle_git_command(method, params, request_id).await
             }
+            WsClientMessage::FileSystemCommand { method, params } => {
+                self.handle_filesystem_command(method, params, request_id).await
+            }
             WsClientMessage::FileTransfer { operation, data } => {
                 self.handle_file_transfer(operation, data, request_id).await
             }
@@ -96,7 +97,6 @@ impl MessageRouter {
             ).await
         } else {
             debug!("Routing to simple chat handler");
-            // FIX: Call the correct function from the parent module
             super::handle_simple_chat_message(
                 content,
                 project_id,
@@ -164,7 +164,7 @@ impl MessageRouter {
         Ok(())
     }
 
-    /// PHASE 4: Handle project and artifact commands
+    /// Handle project and artifact commands
     async fn handle_project_command(
         &self,
         method: String,
@@ -173,7 +173,6 @@ impl MessageRouter {
     ) -> Result<(), anyhow::Error> {
         info!("Project command: {} with params: {:?}", method, params);
         
-        // Call the actual project handler
         let result = project::handle_project_command(
             &method,
             params,
@@ -182,18 +181,15 @@ impl MessageRouter {
         
         match result {
             Ok(response) => {
-                // Send the successful response
                 self.connection.send_message(response).await?;
                 Ok(())
             }
             Err(api_error) => {
-                // Convert ApiError to appropriate error response
                 let error_msg = format!("{api_error}");
                 let error_code = self.api_error_to_code(&api_error);
                 
                 error!("Project command failed: {} - {}", error_code, error_msg);
                 
-                // Send error response with request_id if available
                 if let Some(req_id) = request_id {
                     let error_response = WsServerMessage::Data {
                         data: serde_json::json!({
@@ -220,7 +216,6 @@ impl MessageRouter {
     ) -> Result<(), anyhow::Error> {
         info!("Memory command: {} with params: {:?}", method, params);
         
-        // Call the memory handler (it only takes 3 params, not 4)
         let result = memory::handle_memory_command(
             &method,
             params,
@@ -252,7 +247,7 @@ impl MessageRouter {
         }
     }
 
-    /// PHASE 5: Handle git commands
+    /// Handle git commands
     async fn handle_git_command(
         &self,
         method: String,
@@ -295,7 +290,50 @@ impl MessageRouter {
         }
     }
 
-    /// PHASE 6: Handle file transfer operations
+    /// Handle filesystem commands (save, read, list, delete files)
+    async fn handle_filesystem_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+        request_id: Option<String>,
+    ) -> Result<(), anyhow::Error> {
+        info!("Filesystem command: {} with params: {:?}", method, params);
+        
+        let result = filesystem::handle_filesystem_command(
+            &method,
+            params,
+            self.app_state.clone()
+        ).await;
+        
+        match result {
+            Ok(response) => {
+                self.connection.send_message(response).await?;
+                Ok(())
+            }
+            Err(api_error) => {
+                let error_msg = format!("{api_error}");
+                let error_code = self.api_error_to_code(&api_error);
+                
+                error!("Filesystem command failed: {} - {}", error_code, error_msg);
+                
+                if let Some(req_id) = request_id {
+                    let error_response = WsServerMessage::Data {
+                        data: serde_json::json!({
+                            "error": error_msg,
+                            "code": error_code
+                        }),
+                        request_id: Some(req_id),
+                    };
+                    self.connection.send_message(error_response).await?;
+                } else {
+                    self.connection.send_error(&error_msg, error_code.to_string()).await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Handle file transfer operations (upload/download)
     async fn handle_file_transfer(
         &self,
         operation: String,
@@ -307,7 +345,6 @@ impl MessageRouter {
             serde_json::to_string(&data).unwrap_or_default().len()
         );
         
-        // Call the actual file transfer handler
         let result = files::handle_file_transfer(
             &operation,
             data,
@@ -316,18 +353,15 @@ impl MessageRouter {
         
         match result {
             Ok(response) => {
-                // Send the successful response
                 self.connection.send_message(response).await?;
                 Ok(())
             }
             Err(api_error) => {
-                // Convert ApiError to appropriate error response
                 let error_msg = format!("{api_error}");
                 let error_code = self.api_error_to_code(&api_error);
                 
                 error!("File transfer failed: {} - {}", error_code, error_msg);
                 
-                // Send error response with request_id if available
                 if let Some(req_id) = request_id {
                     let error_response = WsServerMessage::Data {
                         data: serde_json::json!({
@@ -348,7 +382,6 @@ impl MessageRouter {
 
     /// Helper to convert ApiError to error code string
     fn api_error_to_code(&self, error: &ApiError) -> &'static str {
-        // Match on the error message since ApiError structure isn't fully known
         let error_str = error.to_string();
         if error_str.contains("not found") {
             "NOT_FOUND"
@@ -401,6 +434,8 @@ pub fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String
             Some(format!("Working with file: {file_path}"))
         } else if let Some(repo_id) = &meta.repo_id {
             Some(format!("Repository context: {repo_id}"))
-        } else { meta.attachment_id.as_ref().map(|attachment_id| format!("Attachment: {attachment_id}")) }
+        } else { 
+            meta.attachment_id.as_ref().map(|attachment_id| format!("Attachment: {attachment_id}"))
+        }
     })
 }

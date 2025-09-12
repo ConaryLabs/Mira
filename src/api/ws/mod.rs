@@ -20,6 +20,7 @@ pub mod memory;
 pub mod project;
 pub mod git;    // PHASE 5: Git operations handler
 pub mod files;  // PHASE 6: File transfer handler
+pub mod filesystem;
 // Re-export key components for external access
 pub use chat::ws_chat_handler;
          // PHASE 5: Export git command handler
