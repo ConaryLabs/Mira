@@ -61,8 +61,7 @@ pub struct MiraConfig {
     // Salience threshold - always 0.0 now but kept for compatibility
     pub min_salience_for_qdrant: f32,
 
-    // 🔴 BUG FIX #1: Adding decay interval configuration
-    // This was missing - the decay system was built but had no interval config!
+    // Memory decay interval configuration
     pub decay_interval_seconds: Option<u64>,
     
     // Summarization Configuration
@@ -91,6 +90,7 @@ pub struct MiraConfig {
     pub image_generation_size: String,
     pub image_generation_quality: String,
     pub image_generation_style: String,
+    pub tool_timeout_seconds: u64,
 
     // Qdrant Configuration
     pub qdrant_url: String,
@@ -149,6 +149,12 @@ pub struct MiraConfig {
     pub embed_code_overlap: usize,
     pub embed_summary_chunk: usize,
     pub embed_summary_overlap: usize,
+
+    // Memory Decay Configuration
+    pub decay_recent_half_life_days: f32,
+    pub decay_gentle_factor: f32,
+    pub decay_stronger_factor: f32,
+    pub decay_floor: f32,
 }
 
 /// Helper function to read environment variables with defaults
@@ -216,9 +222,8 @@ impl MiraConfig {
             // Always 0.0 now - we save everything
             min_salience_for_qdrant: env_var_or("MIN_SALIENCE_FOR_QDRANT", 0.0),
 
-            // 🔴 BUG FIX #1: Memory decay interval configuration
+            // Memory decay interval configuration
             // Default: 3600 seconds (1 hour) if not specified
-            // Set to None to disable decay (not recommended!)
             decay_interval_seconds: env::var("MIRA_DECAY_INTERVAL_SECONDS")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok()),
@@ -234,21 +239,22 @@ impl MiraConfig {
             max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 5),
             enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
 
-            // Tools
-            enable_chat_tools: env_var_or("ENABLE_CHAT_TOOLS", true),
-            enable_web_search: env_var_or("ENABLE_WEB_SEARCH", true),
-            enable_code_interpreter: env_var_or("ENABLE_CODE_INTERPRETER", true),
-            enable_file_search: env_var_or("ENABLE_FILE_SEARCH", true),
-            enable_image_generation: env_var_or("ENABLE_IMAGE_GENERATION", false),
-            web_search_max_results: env_var_or("WEB_SEARCH_MAX_RESULTS", 10),
-            web_search_timeout: env_var_or("WEB_SEARCH_TIMEOUT", 30),
-            code_interpreter_timeout: env_var_or("CODE_INTERPRETER_TIMEOUT", 60),
-            code_interpreter_max_output: env_var_or("CODE_INTERPRETER_MAX_OUTPUT", 10000),
-            file_search_max_files: env_var_or("FILE_SEARCH_MAX_FILES", 20),
-            file_search_chunk_size: env_var_or("FILE_SEARCH_CHUNK_SIZE", 1000),
-            image_generation_size: env_var_or("IMAGE_GENERATION_SIZE", "1024x1024".to_string()),
-            image_generation_quality: env_var_or("IMAGE_GENERATION_QUALITY", "standard".to_string()),
-            image_generation_style: env_var_or("IMAGE_GENERATION_STYLE", "vivid".to_string()),
+            // Tools - Updated to use MIRA_ prefix consistently
+            enable_chat_tools: env_var_or("MIRA_ENABLE_CHAT_TOOLS", true),
+            enable_web_search: env_var_or("MIRA_ENABLE_WEB_SEARCH", true),
+            enable_code_interpreter: env_var_or("MIRA_ENABLE_CODE_INTERPRETER", false),
+            enable_file_search: env_var_or("MIRA_ENABLE_FILE_SEARCH", true),
+            enable_image_generation: env_var_or("MIRA_ENABLE_IMAGE_GENERATION", true),
+            web_search_max_results: env_var_or("MIRA_WEB_SEARCH_MAX_RESULTS", 10),
+            web_search_timeout: env_var_or("MIRA_WEB_SEARCH_TIMEOUT", 30),
+            code_interpreter_timeout: env_var_or("MIRA_CODE_INTERPRETER_TIMEOUT", 60),
+            code_interpreter_max_output: env_var_or("MIRA_CODE_INTERPRETER_MAX_OUTPUT", 10000),
+            file_search_max_files: env_var_or("MIRA_FILE_SEARCH_MAX_FILES", 20),
+            file_search_chunk_size: env_var_or("MIRA_FILE_SEARCH_CHUNK_SIZE", 1000),
+            image_generation_size: env_var_or("MIRA_IMAGE_GENERATION_SIZE", "1024x1024".to_string()),
+            image_generation_quality: env_var_or("MIRA_IMAGE_GENERATION_QUALITY", "standard".to_string()),
+            image_generation_style: env_var_or("MIRA_IMAGE_GENERATION_STYLE", "vivid".to_string()),
+            tool_timeout_seconds: env_var_or("MIRA_TOOL_TIMEOUT_SECONDS", 30),
 
             // Qdrant
             qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
@@ -307,6 +313,12 @@ impl MiraConfig {
             embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 64),
             embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 600),
             embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 200),
+
+            // Memory Decay
+            decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 7.0),
+            decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.98),
+            decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.93),
+            decay_floor: env_var_or("MIRA_DECAY_FLOOR", 0.01),
         }
     }
 
@@ -396,6 +408,34 @@ impl MiraConfig {
             "summary" => self.embed_summary_overlap,
             _ => self.embed_semantic_overlap,
         }
+    }
+
+    /// Get list of enabled tools
+    pub fn get_enabled_tools(&self) -> Vec<String> {
+        let mut tools = Vec::new();
+        if self.enable_web_search {
+            tools.push("web_search".to_string());
+        }
+        if self.enable_code_interpreter {
+            tools.push("code_interpreter".to_string());
+        }
+        if self.enable_file_search {
+            tools.push("file_search".to_string());
+        }
+        if self.enable_image_generation {
+            tools.push("image_generation".to_string());
+        }
+        tools
+    }
+
+    /// Check if any tools are enabled
+    pub fn has_tools_enabled(&self) -> bool {
+        self.enable_chat_tools && (
+            self.enable_web_search ||
+            self.enable_code_interpreter ||
+            self.enable_file_search ||
+            self.enable_image_generation
+        )
     }
 
     /// Get rolling summary configuration for debugging

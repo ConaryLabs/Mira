@@ -4,14 +4,14 @@
 use std::sync::Arc;
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
 use tracing::{info, error, debug, warn};
+use futures_util::SinkExt;
 
 use crate::api::ws::message::{WsServerMessage, MessageMetadata};
 use crate::state::AppState;
-use crate::tools::executor::{ToolRegistry, ToolCall};
-use crate::llm::responses::ResponseManager;
-use crate::llm::streaming::processor::StreamEvent;
+use crate::tools::executor::ToolExecutor;
+use crate::tools::ToolExecutorExt;
+use crate::llm::responses::{ResponsesManager, types::Message};
 
 /// Handle a chat message with tool support
 pub async fn handle_chat_message_with_tools(
@@ -19,76 +19,108 @@ pub async fn handle_chat_message_with_tools(
     project_id: Option<String>,
     metadata: Option<MessageMetadata>,
     app_state: Arc<AppState>,
-    sender: mpsc::UnboundedSender<WsServerMessage>,
+    sender: Arc<tokio::sync::Mutex<futures_util::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message>>>,
     session_id: String,
 ) -> Result<()> {
     info!("Processing tool-enabled chat for session: {}", session_id);
     
-    // Initialize tool registry
-    let tool_registry = Arc::new(ToolRegistry::new(app_state.clone()));
+    // Initialize tool executor
+    let tool_executor = ToolExecutor::new();
     
     // Build context from metadata
     let file_context = extract_file_context(&metadata);
     
-    // Create messages with context
-    let mut messages = vec![
-        json!({
-            "role": "system",
-            "content": build_system_prompt_with_tools(&file_context)
-        })
+    // Build system prompt with tool awareness
+    let system_prompt = build_system_prompt_with_tools(&file_context);
+    
+    // Create messages in the format ResponsesManager expects
+    let input = vec![
+        Message {
+            role: "system".to_string(),
+            content: Some(system_prompt),
+            ..Default::default()
+        },
+        Message {
+            role: "user".to_string(),
+            content: Some(content.clone()),
+            ..Default::default()
+        }
     ];
     
-    // Add user message
-    messages.push(json!({
-        "role": "user",
-        "content": content
-    }));
-    
     // Get tool definitions
-    let tools = get_enabled_tools(&app_state);
+    let tools = get_enabled_tools();
     
-    // Stream response with tools
-    let response_manager = ResponseManager::new(app_state.llm_client.clone());
+    // Create ResponsesManager and stream response with tools
+    let response_manager = ResponsesManager::new(app_state.llm_client.clone());
     
-    let stream = response_manager.stream_with_tools(
-        messages,
-        tools,
-        session_id.clone(),
+    // Build parameters including tools
+    let parameters = json!({
+        "verbosity": crate::config::CONFIG.verbosity,
+        "reasoning_effort": crate::config::CONFIG.reasoning_effort,
+        "max_output_tokens": crate::config::CONFIG.max_output_tokens,
+        "tools": tools,
+    });
+    
+    // Create streaming response
+    let stream = response_manager.create_streaming_response(
+        &crate::config::CONFIG.gpt5_model,
+        input,
+        Some("Respond helpfully using available tools when appropriate.".to_string()),
+        Some(&session_id),
+        Some(parameters),
     ).await?;
     
     // Process stream
     tokio::pin!(stream);
     
     let mut full_text = String::new();
-    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut tool_calls = Vec::new();
     
-    while let Some(event) = futures::StreamExt::next(&mut stream).await {
-        match event {
-            Ok(StreamEvent::Delta(text)) => {
-                full_text.push_str(&text);
-                sender.send(WsServerMessage::StreamChunk { text })?;
-            }
-            Ok(StreamEvent::ToolCall(tc)) => {
-                debug!("Received tool call: {:?}", tc);
-                tool_calls.push(tc);
-            }
-            Ok(StreamEvent::Done { .. }) => {
-                debug!("Stream complete");
-                break;
-            }
-            Ok(StreamEvent::Error(e)) => {
-                error!("Stream error: {}", e);
-                sender.send(WsServerMessage::Error {
-                    message: e,
-                    code: "STREAM_ERROR".to_string(),
-                })?;
-                break;
+    while let Some(chunk_result) = futures::StreamExt::next(&mut stream).await {
+        match chunk_result {
+            Ok(chunk) => {
+                // Extract text content from chunk
+                if let Some(text) = chunk.get("content").and_then(|c| c.as_str()) {
+                    full_text.push_str(text);
+                    
+                    // Send directly through WebSocket
+                    let msg = WsServerMessage::StreamChunk { text: text.to_string() };
+                    let ws_msg = axum::extract::ws::Message::Text(serde_json::to_string(&msg)?);
+                    sender.lock().await.send(ws_msg).await?;
+                } else if let Some(text) = chunk.pointer("/choices/0/delta/content").and_then(|c| c.as_str()) {
+                    full_text.push_str(text);
+                    
+                    // Send directly through WebSocket
+                    let msg = WsServerMessage::StreamChunk { text: text.to_string() };
+                    let ws_msg = axum::extract::ws::Message::Text(serde_json::to_string(&msg)?);
+                    sender.lock().await.send(ws_msg).await?;
+                }
+                
+                // Check for tool calls in the chunk
+                if let Some(tc) = chunk.get("tool_call") {
+                    debug!("Received tool call: {:?}", tc);
+                    tool_calls.push(tc.clone());
+                }
+                
+                // Check for completion
+                if chunk.get("done").is_some() || 
+                   chunk.pointer("/choices/0/finish_reason").is_some() {
+                    debug!("Stream complete");
+                    break;
+                }
             }
             Err(e) => {
                 error!("Stream processing error: {}", e);
+                
+                // Send error through WebSocket
+                let msg = WsServerMessage::Error {
+                    message: format!("Stream error: {}", e),
+                    code: "STREAM_ERROR".to_string(),
+                };
+                let ws_msg = axum::extract::ws::Message::Text(serde_json::to_string(&msg)?);
+                sender.lock().await.send(ws_msg).await?;
                 break;
             }
-            _ => {}
         }
     }
     
@@ -96,24 +128,30 @@ pub async fn handle_chat_message_with_tools(
     if !tool_calls.is_empty() {
         info!("Executing {} tool calls", tool_calls.len());
         
-        let results = tool_registry.execute_tool_calls(tool_calls).await;
-        
-        // Send tool results back to the user
-        for result in results {
-            let tool_message = if let Some(output) = result.result {
-                format!("🔧 {} completed:\n{}", 
-                    result.tool_name,
-                    serde_json::to_string_pretty(&output).unwrap_or_default()
-                )
-            } else if let Some(error) = result.error {
-                format!("❌ {} failed: {}", result.tool_name, error)
-            } else {
-                format!("🔧 {} completed", result.tool_name)
+        for tool_call in tool_calls {
+            let result = tool_executor.handle_tool_call(&tool_call, &app_state).await;
+            
+            let tool_message = match result {
+                Ok(output) => {
+                    format!("Tool {} completed:\n{}", 
+                        tool_call.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"),
+                        serde_json::to_string_pretty(&output).unwrap_or_default()
+                    )
+                }
+                Err(e) => {
+                    format!("Tool {} failed: {}", 
+                        tool_call.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"),
+                        e
+                    )
+                }
             };
             
-            sender.send(WsServerMessage::StreamChunk { 
+            // Send tool result through WebSocket
+            let msg = WsServerMessage::StreamChunk { 
                 text: format!("\n\n{}\n", tool_message) 
-            })?;
+            };
+            let ws_msg = axum::extract::ws::Message::Text(serde_json::to_string(&msg)?);
+            sender.lock().await.send(ws_msg).await?;
         }
     }
     
@@ -122,44 +160,20 @@ pub async fn handle_chat_message_with_tools(
         warn!("Failed to save tool interaction to memory: {}", e);
     }
     
-    // Send completion signal
-    sender.send(WsServerMessage::StreamEnd)?;
-    sender.send(WsServerMessage::Done)?;
+    // Send completion signals through WebSocket
+    let end_msg = WsServerMessage::StreamEnd;
+    let ws_end = axum::extract::ws::Message::Text(serde_json::to_string(&end_msg)?);
+    sender.lock().await.send(ws_end).await?;
+    
+    let done_msg = WsServerMessage::Done;
+    let ws_done = axum::extract::ws::Message::Text(serde_json::to_string(&done_msg)?);
+    sender.lock().await.send(ws_done).await?;
     
     Ok(())
 }
 
-/// Build system prompt with tool context
-fn build_system_prompt_with_tools(file_context: &Option<String>) -> String {
-    let mut prompt = String::from("You are Mira, an AI development assistant with access to various tools. ");
-    
-    if let Some(context) = file_context {
-        prompt.push_str(&format!("\n\nFile context:\n{}", context));
-    }
-    
-    prompt.push_str("\n\nYou have access to the following tools:");
-    prompt.push_str("\n- file_search: Search for files and code in the project");
-    prompt.push_str("\n- load_file_context: Load full file contents from the repository");
-    
-    if crate::config::CONFIG.enable_web_search {
-        prompt.push_str("\n- web_search: Search the web for current information");
-    }
-    
-    if crate::config::CONFIG.enable_code_interpreter {
-        prompt.push_str("\n- code_interpreter: Execute code in a sandboxed environment");
-    }
-    
-    if crate::config::CONFIG.enable_image_generation {
-        prompt.push_str("\n- generate_image: Create images from text descriptions");
-    }
-    
-    prompt.push_str("\n\nUse tools when they would help answer the user's question more accurately.");
-    
-    prompt
-}
-
 /// Get enabled tool definitions
-fn get_enabled_tools(app_state: &AppState) -> Vec<Value> {
+fn get_enabled_tools() -> Vec<Value> {
     let mut tools = vec![
         // File search tool
         json!({
@@ -262,13 +276,13 @@ fn get_enabled_tools(app_state: &AppState) -> Vec<Value> {
         }));
     }
     
-    // Image generation
+    // Image generation with gpt-image-1
     if crate::config::CONFIG.enable_image_generation {
         tools.push(json!({
             "type": "function",
             "function": {
-                "name": "generate_image",
-                "description": "Generate an image from a text description",
+                "name": "image_generation",
+                "description": "Generate an image from a text description using gpt-image-1",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -279,12 +293,17 @@ fn get_enabled_tools(app_state: &AppState) -> Vec<Value> {
                         "size": {
                             "type": "string",
                             "description": "Image size",
-                            "enum": ["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]
+                            "enum": ["1024x1024", "1792x1024", "1024x1792"]
                         },
                         "quality": {
                             "type": "string",
                             "description": "Image quality",
                             "enum": ["standard", "hd"]
+                        },
+                        "style": {
+                            "type": "string", 
+                            "description": "Image style",
+                            "enum": ["vivid", "natural"]
                         },
                         "n": {
                             "type": "integer",
@@ -349,18 +368,22 @@ async fn save_tool_interaction(
 ) -> Result<()> {
     // Save user message
     let _user_id = app_state.memory_service
-        .save_user_message(session_id, user_message)
+        .save_user_message(session_id, user_message, project_id.as_deref())
         .await?;
     
-    // Create response object for memory
+    // Create response object for memory with actual ChatResponse fields
     let response = crate::llm::chat_service::ChatResponse {
         output: assistant_response.to_string(),
-        salience: 5, // Tool interactions are moderately important
+        salience: 5,
         summary: format!("Tool-assisted response about: {}", 
-            user_message.chars().take(50).collect::<String>()
-        ),
-        mood: None,
-        tags: Some(vec!["tools".to_string()]),
+            user_message.chars().take(50).collect::<String>()),
+        reasoning_summary: None,
+        mood: String::new(),
+        tags: vec!["tools".to_string()],
+        intent: None,
+        memory_type: String::from("interaction"),
+        monologue: None,
+        persona: String::from("Mira"),
     };
     
     // Save assistant response
