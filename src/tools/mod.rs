@@ -7,10 +7,12 @@ pub mod message_handler;
 pub mod definitions;
 pub mod file_context;
 pub mod file_search;
+pub mod document;
+pub mod implementations;
 
 // Re-export commonly used items
 pub use executor::ToolExecutor;
 pub use prompt_builder::ToolPromptBuilder;
 pub use message_handler::ToolMessageHandler;
 pub use definitions::get_enabled_tools;
-pub mod document;
+pub use implementations::ToolExecutorExt;
