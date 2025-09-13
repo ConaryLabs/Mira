@@ -1,6 +1,6 @@
 // src/api/ws/chat/mod.rs
 // Handles the primary WebSocket chat endpoint, connection lifecycle, and message routing.
-// UPDATED: Added request_id parsing and passing to message router
+// Uses unified handler for all chat processing.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,18 +16,19 @@ use futures_util::stream::SplitSink;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-// Module organization for WebSocket chat functionalities.
+// Module organization for WebSocket chat functionalities
 pub mod connection;
 pub mod message_router;
 pub mod heartbeat;
+pub mod unified_handler;
 
-// Re-export key components for easier access from other modules.
+// Re-export key components for easier access from other modules
 pub use connection::WebSocketConnection;
 pub use message_router::MessageRouter;
 pub use heartbeat::HeartbeatManager;
+pub use unified_handler::{UnifiedChatHandler, ChatRequest, ChatEvent};
 
 use crate::api::ws::message::{WsClientMessage, WsServerMessage};
-use crate::llm::streaming::{start_response_stream, StreamEvent};
 use crate::state::AppState;
 
 /// Main WebSocket handler entry point.
@@ -52,7 +53,7 @@ async fn handle_socket(
     
     info!("WebSocket client connected from {}", addr);
 
-    // Atomically shared state for managing the connection's activity.
+    // Atomically shared state for managing the connection's activity
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let last_any_send = Arc::new(Mutex::new(Instant::now()));
     let is_processing = Arc::new(Mutex::new(false));
@@ -65,13 +66,13 @@ async fn handle_socket(
         last_any_send.clone(),
     ));
 
-    // Notify the client that the connection is established and ready.
+    // Notify the client that the connection is established and ready
     if let Err(e) = connection.send_connection_ready().await {
         error!("Failed to send connection ready message: {}", e);
         return;
     }
 
-    // Initialize and start the heartbeat manager to keep the connection alive.
+    // Initialize and start the heartbeat manager to keep the connection alive
     let heartbeat_manager = Arc::new(HeartbeatManager::new(connection.clone()));
     let heartbeat_handle = tokio::spawn({
         let manager = heartbeat_manager.clone();
@@ -82,53 +83,67 @@ async fn handle_socket(
         }
     });
 
-    // Initialize the message router to handle incoming client messages.
-    let message_router = MessageRouter::new(
-        app_state.clone(),
-        connection.clone(),
-        addr,
-    );
+    // Initialize the message router with unified handler support
+    let router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
 
-    // Main loop to process incoming messages from the client.
-    while let Some(msg) = receiver.next().await {
-        match msg {
+    // Main message processing loop
+    while let Some(result) = receiver.next().await {
+        match result {
             Ok(Message::Text(text)) => {
-                *last_activity.lock().await = Instant::now();
+                connection.update_activity().await;
                 
-                // Parse the message and extract request_id if present
-                match serde_json::from_str::<serde_json::Value>(&text) {
-                    Ok(json_msg) => {
-                        // Extract request_id before parsing the actual message
+                // Parse message with optional request_id
+                let (msg, request_id) = match serde_json::from_str::<serde_json::Value>(&text) {
+                    Ok(mut json_msg) => {
                         let request_id = json_msg.get("request_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                            .and_then(|id| id.as_str())
+                            .map(String::from);
                         
-                        // Now parse the actual WebSocket message
-                        match serde_json::from_value::<WsClientMessage>(json_msg.clone()) {
-                            Ok(client_msg) => {
-                                info!("Received WebSocket message: {:?}", &client_msg);
-                                // Pass the request_id along with the message
-                                if let Err(e) = message_router.route_message(client_msg, request_id).await {
-                                    error!("Error routing message: {}", e);
-                                }
-                            }
+                        // Remove request_id before parsing as WsClientMessage
+                        if json_msg.get("request_id").is_some() {
+                            json_msg.as_object_mut().unwrap().remove("request_id");
+                        }
+                        
+                        match serde_json::from_value::<WsClientMessage>(json_msg) {
+                            Ok(msg) => (msg, request_id),
                             Err(e) => {
-                                warn!("Failed to parse client message: {} - JSON: {:?}", e, json_msg);
-                                let _ = connection.send_error("Invalid message format", "INVALID_FORMAT".to_string()).await;
+                                error!("Failed to parse WebSocket message: {}", e);
+                                let _ = connection.send_error(
+                                    "Invalid message format",
+                                    "INVALID_FORMAT".to_string()
+                                ).await;
+                                continue;
                             }
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to parse JSON: {} - Text: {}", e, text);
+                        error!("Failed to parse JSON: {} - Text: {}", e, text);
                         let _ = connection.send_error("Invalid JSON format", "INVALID_JSON".to_string()).await;
+                        continue;
                     }
+                };
+                
+                // Route the message through our unified system
+                if let Err(e) = router.route_message(msg, request_id).await {
+                    error!("Error routing message: {}", e);
                 }
+            }
+            Ok(Message::Binary(data)) => {
+                warn!("Received unexpected binary data ({} bytes) from {}", data.len(), addr);
+            }
+            Ok(Message::Ping(data)) => {
+                if let Err(e) = connection.send_pong(data).await {
+                    error!("Failed to send pong: {}", e);
+                }
+            }
+            Ok(Message::Pong(_)) => {
+                // Pong received, connection is alive
+                connection.update_activity().await;
             }
             Ok(Message::Close(_)) => {
                 info!("Client {} initiated disconnection", addr);
                 break;
             }
-            Ok(_) => {}
             Err(e) => {
                 error!("WebSocket transport error for client {}: {}", addr, e);
                 break;
@@ -136,93 +151,11 @@ async fn handle_socket(
         }
     }
 
-    // Cleanup resources on disconnection.
+    // Cleanup resources on disconnection
     heartbeat_handle.abort();
     info!(
         "WebSocket connection closed for {} after {:?}",
         addr,
         connection_start.elapsed()
     );
-}
-
-/// Handles a simple (non-tool-enabled) chat message and streams the response.
-pub async fn handle_simple_chat_message(
-    content: String,
-    _project_id: Option<String>,
-    app_state: Arc<AppState>,
-    sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
-    last_send_ref: Arc<Mutex<Instant>>,
-) -> Result<(), anyhow::Error> {
-    info!("Processing simple chat message: {}", content.chars().take(80).collect::<String>());
-
-    let _session_id = "websocket_session".to_string();
-
-    let stream = start_response_stream(
-        &app_state.llm_client,
-        &content,
-        Some("You are Mira, a helpful AI assistant. Respond conversationally and naturally."),
-        false,  // structured_json = false for regular chat
-    )
-    .await?;
-
-    tokio::pin!(stream);
-
-    while let Some(event_result) = stream.next().await {
-        match event_result {
-            Ok(event) => {
-                match event {
-                    // Handle both Delta and Text variants (they're both text chunks)
-                    StreamEvent::Delta(text) | StreamEvent::Text(text) => {
-                        let msg = WsServerMessage::StreamChunk { text };
-                        let json_str = serde_json::to_string(&msg)?;
-                        sender.lock().await.send(Message::Text(json_str)).await?;
-                        *last_send_ref.lock().await = Instant::now();
-                    }
-                    // Handle completion
-                    StreamEvent::Done { full_text: _, raw: _ } => {
-                        let msg = WsServerMessage::StreamEnd;
-                        let json_str = serde_json::to_string(&msg)?;
-                        sender.lock().await.send(Message::Text(json_str)).await?;
-                        
-                        // Send completion metadata
-                        let complete_msg = WsServerMessage::Complete {
-                            mood: Some("helpful".to_string()),
-                            salience: None,
-                            tags: None,
-                        };
-                        let json_str = serde_json::to_string(&complete_msg)?;
-                        sender.lock().await.send(Message::Text(json_str)).await?;
-                        *last_send_ref.lock().await = Instant::now();
-                        break;
-                    }
-                    // Handle errors from the stream
-                    StreamEvent::Error(e) => {
-                        error!("Stream error: {}", e);
-                        let msg = WsServerMessage::Error {
-                            message: format!("Stream error: {e}"),
-                            code: "STREAM_ERROR".to_string(),
-                        };
-                        let json_str = serde_json::to_string(&msg)?;
-                        sender.lock().await.send(Message::Text(json_str)).await?;
-                        *last_send_ref.lock().await = Instant::now();
-                        break;
-                    }
-                }
-            }
-            Err(e) => {
-                // Handle Result errors from the stream
-                error!("Stream result error: {}", e);
-                let msg = WsServerMessage::Error {
-                    message: format!("Stream processing error: {e}"),
-                    code: "STREAM_RESULT_ERROR".to_string(),
-                };
-                let json_str = serde_json::to_string(&msg)?;
-                sender.lock().await.send(Message::Text(json_str)).await?;
-                *last_send_ref.lock().await = Instant::now();
-                break;
-            }
-        }
-    }
-
-    Ok(())
 }
