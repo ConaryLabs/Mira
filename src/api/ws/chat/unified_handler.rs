@@ -182,14 +182,36 @@ impl UnifiedChatHandler {
             warn!("Failed to save user message to memory: {}", e);
         }
         
-        // 9. Create stream via ResponsesManager (tracks response_id)
-        let stream = self.response_manager.create_streaming_response(
-            &CONFIG.gpt5_model,
-            messages,
-            Some("Respond helpfully using available tools when appropriate.".to_string()),
-            Some(&request.session_id),
-            Some(parameters),
-        ).await?;
+        // 9. Get previous_response_id if we have thread manager
+        let previous_response_id = self.thread_manager
+            .get_previous_response_id(&request.session_id)
+            .await;
+        
+        // Build request body with all parameters
+        let mut request_body = json!({
+            "model": CONFIG.gpt5_model,
+            "input": messages,
+            "stream": true,
+            "instructions": "Respond helpfully using available tools when appropriate.",
+        });
+        
+        // Add previous_response_id if available
+        if let Some(prev_id) = previous_response_id {
+            request_body["previous_response_id"] = json!(prev_id);
+            debug!("Using previous_response_id: {}", prev_id);
+        }
+        
+        // Merge parameters at top level
+        if let Some(obj) = parameters.as_object() {
+            for (key, value) in obj {
+                request_body[key] = value.clone();
+            }
+        }
+        
+        // Create stream directly using the client
+        let stream = self.app_state.llm_client
+            .post_response_stream(request_body)
+            .await?;
         
         // 10. Process the stream into ChatEvents
         let event_stream = self.process_stream(
@@ -199,7 +221,8 @@ impl UnifiedChatHandler {
             request.project_id
         );
         
-        Ok(event_stream)
+        // Box::pin the stream to ensure it implements Unpin
+        Ok(Box::pin(event_stream))
     }
     
     /// Build context using memory service
