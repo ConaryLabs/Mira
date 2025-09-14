@@ -1,7 +1,6 @@
-// src/services/memory/types.rs
+// src/memory/features/memory_types.rs
 // Shared types and structs for the memory service modules
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::{MemoryEntry, MemoryType};

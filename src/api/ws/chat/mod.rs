@@ -11,8 +11,6 @@ use axum::{
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures::StreamExt;
-use futures_util::SinkExt;
-use futures_util::stream::SplitSink;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -28,8 +26,9 @@ pub use message_router::MessageRouter;
 pub use heartbeat::HeartbeatManager;
 pub use unified_handler::{UnifiedChatHandler, ChatRequest, ChatEvent};
 
-use crate::api::ws::message::{WsClientMessage, WsServerMessage};
+use crate::api::ws::message::WsClientMessage;
 use crate::state::AppState;
+use crate::utils::ConnectionGuard;
 
 /// Main WebSocket handler entry point.
 /// Upgrades the HTTP connection to a WebSocket and establishes the session.
@@ -72,16 +71,20 @@ async fn handle_socket(
         return;
     }
 
-    // Initialize and start the heartbeat manager to keep the connection alive
+    // Initialize and start the heartbeat manager with automatic cleanup guard
     let heartbeat_manager = Arc::new(HeartbeatManager::new(connection.clone()));
     let heartbeat_handle = tokio::spawn({
         let manager = heartbeat_manager.clone();
+        let addr = addr;
         async move {
             if let Err(e) = manager.start().await {
                 warn!("Heartbeat manager for client {} exited with error: {}", addr, e);
             }
         }
     });
+    
+    // Use connection guard for automatic cleanup on drop
+    let _heartbeat_guard = ConnectionGuard::new(heartbeat_handle);
 
     // Initialize the message router with unified handler support
     let router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
@@ -151,8 +154,7 @@ async fn handle_socket(
         }
     }
 
-    // Cleanup resources on disconnection
-    heartbeat_handle.abort();
+    // The heartbeat guard will automatically abort the task when dropped
     info!(
         "WebSocket connection closed for {} after {:?}",
         addr,

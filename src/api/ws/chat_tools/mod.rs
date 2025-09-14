@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::json;
 use tracing::{info, error, debug, warn};
 use futures_util::SinkExt;
 
@@ -185,47 +185,6 @@ pub async fn handle_chat_message_with_tools(
     sender.lock().await.send(ws_done).await?;
     
     Ok(())
-}
-
-/// Extract file context from metadata
-fn extract_file_context(metadata: &Option<MessageMetadata>) -> Option<String> {
-    metadata.as_ref().and_then(|meta| {
-        let mut context_parts = Vec::new();
-        
-        if let Some(file_path) = &meta.file_path {
-            context_parts.push(format!("Current file: {}", file_path));
-        }
-        
-        if let Some(repo_id) = &meta.repo_id {
-            context_parts.push(format!("Repository: {}", repo_id));
-        }
-        
-        if let Some(language) = &meta.language {
-            context_parts.push(format!("Language: {}", language));
-        }
-        
-        if let Some(selection) = &meta.selection {
-            context_parts.push(format!(
-                "Selected lines {}-{}", 
-                selection.start_line, 
-                selection.end_line
-            ));
-            
-            if let Some(text) = &selection.text {
-                context_parts.push(format!("Selected text:\n{}", text));
-            }
-        }
-        
-        if let Some(attachment_id) = &meta.attachment_id {
-            context_parts.push(format!("Attachment ID: {}", attachment_id));
-        }
-        
-        if !context_parts.is_empty() {
-            Some(context_parts.join("\n"))
-        } else {
-            None
-        }
-    })
 }
 
 /// Save tool interaction to memory

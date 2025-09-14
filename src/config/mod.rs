@@ -155,6 +155,16 @@ pub struct MiraConfig {
     pub decay_gentle_factor: f32,
     pub decay_stronger_factor: f32,
     pub decay_floor: f32,
+    
+    // NEW: Robustness & Performance Features
+    pub api_max_retries: usize,
+    pub api_retry_delay_ms: u64,
+    pub enable_request_cache: bool,
+    pub cache_ttl_seconds: u64,
+    pub enable_response_compression: bool,
+    pub max_response_size_mb: usize,
+    pub enable_batch_operations: bool,
+    pub batch_size: usize,
 }
 
 /// Helper function to read environment variables with defaults
@@ -176,85 +186,86 @@ impl MiraConfig {
         Self {
             // Core LLM Configuration
             openai_api_key: env::var("OPENAI_API_KEY").ok(),
-            openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com/v1".to_string()),
+            openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()), // No /v1
             gpt5_model: env_var_or("GPT5_MODEL", "gpt-5".to_string()),
-            verbosity: env_var_or("GPT5_VERBOSITY", "medium".to_string()),
-            reasoning_effort: env_var_or("GPT5_REASONING_EFFORT", "medium".to_string()),
-            max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 4096),
+            verbosity: env_var_or("GPT5_VERBOSITY", "high".to_string()),
+            reasoning_effort: env_var_or("GPT5_REASONING_EFFORT", "high".to_string()),
+            max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 128000),
             debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
             intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
 
             // Structured Output Configuration
-            max_json_output_tokens: env_var_or("MAX_JSON_OUTPUT_TOKENS", 2000),
+            max_json_output_tokens: env_var_or("MAX_JSON_OUTPUT_TOKENS", 4000),
             enable_json_validation: env_var_or("ENABLE_JSON_VALIDATION", true),
             max_json_repair_attempts: env_var_or("MAX_JSON_REPAIR_ATTEMPTS", 3),
             
             // Database & Storage
             database_url: env_var_or("DATABASE_URL", "./mira.sqlite".to_string()),
-            sqlite_max_connections: env_var_or("MIRA_SQLITE_MAX_CONNECTIONS", 10),
+            sqlite_max_connections: env_var_or("MIRA_SQLITE_MAX_CONNECTIONS", 100),
 
             // Session & User
-            session_id: env_var_or("MIRA_SESSION_ID", "default".to_string()),
-            default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "Mira".to_string()),
+            session_id: env_var_or("MIRA_SESSION_ID", "peter-eternal".to_string()),
+            default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "Default".to_string()),
 
             // Memory & History
-            history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 30),
-            history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 32000),
-            max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 20000),
-            ws_history_cap: env_var_or("MIRA_WS_HISTORY_CAP", 100),
-            ws_vector_search_k: env_var_or("MIRA_WS_VECTOR_SEARCH_K", 5),
+            history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 100),
+            history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 131072),
+            max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 32768),
+            ws_history_cap: env_var_or("MIRA_WS_HISTORY_CAP", 200),
+            ws_vector_search_k: env_var_or("MIRA_WS_VECTOR_SEARCH_K", 25),
             ws_heartbeat_interval: env_var_or("MIRA_WS_HEARTBEAT_INTERVAL", 30),
-            ws_connection_timeout: env_var_or("MIRA_WS_CONNECTION_TIMEOUT", 60),
-            ws_receive_timeout: env_var_or("MIRA_WS_RECEIVE_TIMEOUT", 30),
-            history_default_limit: env_var_or("MIRA_HISTORY_DEFAULT_LIMIT", 30),
-            history_max_limit: env_var_or("MIRA_HISTORY_MAX_LIMIT", 100),
-            context_recent_messages: env_var_or("MIRA_CONTEXT_RECENT_MESSAGES", 30),
-            context_semantic_matches: env_var_or("MIRA_CONTEXT_SEMANTIC_MATCHES", 15),
+            ws_connection_timeout: env_var_or("MIRA_WS_CONNECTION_TIMEOUT", 600),
+            ws_receive_timeout: env_var_or("MIRA_WS_RECEIVE_TIMEOUT", 120),
+            history_default_limit: env_var_or("MIRA_HISTORY_DEFAULT_LIMIT", 50),
+            history_max_limit: env_var_or("MIRA_HISTORY_MAX_LIMIT", 200),
+            context_recent_messages: env_var_or("MIRA_CONTEXT_RECENT_MESSAGES", 50),
+            context_semantic_matches: env_var_or("MIRA_CONTEXT_SEMANTIC_MATCHES", 25),
 
             // Memory Service
             always_embed_user: env_var_or("MEM_ALWAYS_EMBED_USER", true),
             always_embed_assistant: env_var_or("MEM_ALWAYS_EMBED_ASSISTANT", true),
             embed_min_chars: env_var_or("MEM_EMBED_MIN_CHARS", 6),
             dedup_sim_threshold: env_var_or("MEM_DEDUP_SIM_THRESHOLD", 0.97),
-            salience_min_for_embed: env_var_or("MEM_SALIENCE_MIN_FOR_EMBED", 6),
-            rollup_every: env_var_or("MEM_ROLLUP_EVERY", 50),
+            salience_min_for_embed: env_var_or("MEM_SALIENCE_MIN_FOR_EMBED", 1),
+            rollup_every: env_var_or("MEM_ROLLUP_EVERY", 100),
             
             // Always 0.0 now - we save everything
             min_salience_for_qdrant: env_var_or("MIN_SALIENCE_FOR_QDRANT", 0.0),
 
             // Memory decay interval configuration
-            // Default: 3600 seconds (1 hour) if not specified
+            // Default: 7200 seconds (2 hours) if not specified
             decay_interval_seconds: env::var("MIRA_DECAY_INTERVAL_SECONDS")
                 .ok()
-                .and_then(|s| s.parse::<u64>().ok()),
+                .and_then(|s| s.parse::<u64>().ok())
+                .or(Some(7200)),
 
             // Summarization
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
-            summary_chunk_size: env_var_or("MIRA_SUMMARY_CHUNK_SIZE", 10),
-            summary_token_limit: env_var_or("MIRA_SUMMARY_TOKEN_LIMIT", 32000),
-            summary_output_tokens: env_var_or("MIRA_SUMMARY_OUTPUT_TOKENS", 2048),
-            summarize_after_messages: env_var_or("MIRA_SUMMARIZE_AFTER_MESSAGES", 12),
+            summary_chunk_size: env_var_or("MIRA_SUMMARY_CHUNK_SIZE", 20),
+            summary_token_limit: env_var_or("MIRA_SUMMARY_TOKEN_LIMIT", 64000),
+            summary_output_tokens: env_var_or("MIRA_SUMMARY_OUTPUT_TOKENS", 4096),
+            summarize_after_messages: env_var_or("MIRA_SUMMARIZE_AFTER_MESSAGES", 20),
 
             // Vector Search
-            max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 5),
+            max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 10),
             enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
 
             // Tools - Updated to use MIRA_ prefix consistently
             enable_chat_tools: env_var_or("MIRA_ENABLE_CHAT_TOOLS", true),
             enable_web_search: env_var_or("MIRA_ENABLE_WEB_SEARCH", true),
-            enable_code_interpreter: env_var_or("MIRA_ENABLE_CODE_INTERPRETER", false),
+            enable_code_interpreter: env_var_or("MIRA_ENABLE_CODE_INTERPRETER", true),
             enable_file_search: env_var_or("MIRA_ENABLE_FILE_SEARCH", true),
             enable_image_generation: env_var_or("MIRA_ENABLE_IMAGE_GENERATION", true),
-            web_search_max_results: env_var_or("MIRA_WEB_SEARCH_MAX_RESULTS", 10),
-            web_search_timeout: env_var_or("MIRA_WEB_SEARCH_TIMEOUT", 30),
-            code_interpreter_timeout: env_var_or("MIRA_CODE_INTERPRETER_TIMEOUT", 60),
-            code_interpreter_max_output: env_var_or("MIRA_CODE_INTERPRETER_MAX_OUTPUT", 10000),
-            file_search_max_files: env_var_or("MIRA_FILE_SEARCH_MAX_FILES", 20),
-            file_search_chunk_size: env_var_or("MIRA_FILE_SEARCH_CHUNK_SIZE", 1000),
+            web_search_max_results: env_var_or("MIRA_WEB_SEARCH_MAX_RESULTS", 20),
+            web_search_timeout: env_var_or("MIRA_WEB_SEARCH_TIMEOUT", 60),
+            code_interpreter_timeout: env_var_or("MIRA_CODE_INTERPRETER_TIMEOUT", 120),
+            code_interpreter_max_output: env_var_or("MIRA_CODE_INTERPRETER_MAX_OUTPUT", 50000),
+            file_search_max_files: env_var_or("MIRA_FILE_SEARCH_MAX_FILES", 50),
+            file_search_chunk_size: env_var_or("MIRA_FILE_SEARCH_CHUNK_SIZE", 2000),
             image_generation_size: env_var_or("MIRA_IMAGE_GENERATION_SIZE", "1024x1024".to_string()),
-            image_generation_quality: env_var_or("MIRA_IMAGE_GENERATION_QUALITY", "standard".to_string()),
+            image_generation_quality: env_var_or("MIRA_IMAGE_GENERATION_QUALITY", "hd".to_string()),
             image_generation_style: env_var_or("MIRA_IMAGE_GENERATION_STYLE", "vivid".to_string()),
-            tool_timeout_seconds: env_var_or("MIRA_TOOL_TIMEOUT_SECONDS", 30),
+            tool_timeout_seconds: env_var_or("MIRA_TOOL_TIMEOUT_SECONDS", 60),
 
             // Qdrant
             qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
@@ -281,16 +292,16 @@ impl MiraConfig {
             // Server
             host: env_var_or("MIRA_HOST", "0.0.0.0".to_string()),
             port: env_var_or("MIRA_PORT", 3001),
-            rate_limit_chat: env_var_or("MIRA_RATE_LIMIT_CHAT", 60),
-            rate_limit_ws: env_var_or("MIRA_RATE_LIMIT_WS", 100),
-            rate_limit_search: env_var_or("MIRA_RATE_LIMIT_SEARCH", 30),
-            rate_limit_git: env_var_or("MIRA_RATE_LIMIT_GIT", 10),
-            max_concurrent_embeddings: env_var_or("MIRA_MAX_CONCURRENT_EMBEDDINGS", 10),
+            rate_limit_chat: env_var_or("MIRA_RATE_LIMIT_CHAT", 200),
+            rate_limit_ws: env_var_or("MIRA_RATE_LIMIT_WS", 200),
+            rate_limit_search: env_var_or("MIRA_RATE_LIMIT_SEARCH", 60),
+            rate_limit_git: env_var_or("MIRA_RATE_LIMIT_GIT", 20),
+            max_concurrent_embeddings: env_var_or("MIRA_MAX_CONCURRENT_EMBEDDINGS", 25),
 
             // Timeouts
-            openai_timeout: env_var_or("OPENAI_TIMEOUT", 300),
-            qdrant_timeout: env_var_or("QDRANT_TIMEOUT", 30),
-            database_timeout: env_var_or("DATABASE_TIMEOUT", 10),
+            openai_timeout: env_var_or("OPENAI_TIMEOUT", 600),
+            qdrant_timeout: env_var_or("QDRANT_TIMEOUT", 60),
+            database_timeout: env_var_or("DATABASE_TIMEOUT", 30),
 
             // Logging
             log_level: env_var_or("MIRA_LOG_LEVEL", "info".to_string()),
@@ -307,18 +318,28 @@ impl MiraConfig {
             rolling_summary_min_gap: env_var_or("MIRA_ROLLING_SUMMARY_MIN_GAP", 3),
 
             // Chunking
-            embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 300),
-            embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 100),
-            embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 256),
-            embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 64),
-            embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 600),
-            embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 200),
+            embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 600),
+            embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 200),
+            embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 512),
+            embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 128),
+            embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 1200),
+            embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 400),
 
             // Memory Decay
-            decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 7.0),
-            decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.98),
-            decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.93),
-            decay_floor: env_var_or("MIRA_DECAY_FLOOR", 0.01),
+            decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 14.0),
+            decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.99),
+            decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.95),
+            decay_floor: env_var_or("MIRA_DECAY_FLOOR", 0.05),
+            
+            // NEW: Robustness & Performance Features
+            api_max_retries: env_var_or("MIRA_API_MAX_RETRIES", 5),
+            api_retry_delay_ms: env_var_or("MIRA_API_RETRY_DELAY_MS", 1000),
+            enable_request_cache: env_var_or("MIRA_ENABLE_REQUEST_CACHE", true),
+            cache_ttl_seconds: env_var_or("MIRA_CACHE_TTL_SECONDS", 300),
+            enable_response_compression: env_var_or("MIRA_ENABLE_RESPONSE_COMPRESSION", true),
+            max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 50),
+            enable_batch_operations: env_var_or("MIRA_ENABLE_BATCH_OPERATIONS", true),
+            batch_size: env_var_or("MIRA_BATCH_SIZE", 50),
         }
     }
 

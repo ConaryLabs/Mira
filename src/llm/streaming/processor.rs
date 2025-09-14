@@ -1,12 +1,12 @@
-//! Event processing for streaming responses
+// src/llm/streaming/processor.rs
+// Event processing for streaming responses from GPT-5 Responses API
 
 use anyhow::Result;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Events emitted while streaming
 #[derive(Debug, Clone)]

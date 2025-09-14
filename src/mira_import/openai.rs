@@ -1,13 +1,12 @@
 // src/tools/mira_import/openai.rs
-// Phase 9: Updated to use GPT-5 Functions API and centralized config
-
-//! Batch OpenAI memory_eval runner for import (GPT-5, strict, retcon)
+// Batch OpenAI memory_eval runner for import using GPT-5 Functions API
 
 use super::schema::MiraMessage;
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 use crate::config::CONFIG;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -22,7 +21,7 @@ pub struct MemoryEvalResult {
 /// This is the main export for the import tool
 pub async fn batch_memory_eval(
     messages: &[MiraMessage],
-    _api_key: &str,  // Fixed: Added underscore prefix to indicate intentionally unused
+    _api_key: &str,  // Unused - kept for backward compatibility
 ) -> Result<HashMap<String, MemoryEvalResult>> {
     batch_evaluate_messages(messages).await
 }
@@ -31,7 +30,6 @@ pub async fn batch_memory_eval(
 pub async fn batch_evaluate_messages(
     messages: &[MiraMessage],
 ) -> Result<HashMap<String, MemoryEvalResult>> {
-    // Get API key from environment (still needed for import tool which isn't part of main app)
     let api_key = std::env::var("OPENAI_API_KEY")?;
     let client = Client::new();
     let mut results = HashMap::new();
@@ -43,9 +41,8 @@ pub async fn batch_evaluate_messages(
         }
 
         // Build the Functions API request for memory evaluation
-        // Using centralized config for model settings where applicable
         let request_body = serde_json::json!({
-            "model": CONFIG.gpt5_model,  // Use centralized model config
+            "model": CONFIG.gpt5_model,
             "input": [
                 {
                     "role": "user",
@@ -83,48 +80,18 @@ pub async fn batch_evaluate_messages(
                     }
                 }
             ],
-            "function_call": {"name": "memory_eval"},  // Force this function to be called
+            "function_call": {"name": "memory_eval"},
             "parameters": {
-                "verbosity": CONFIG.verbosity,  // Use centralized verbosity config
-                "reasoning_effort": CONFIG.reasoning_effort,  // Use centralized reasoning config
-                "max_output_tokens": 256  // Override for import efficiency
+                "verbosity": CONFIG.verbosity,
+                "reasoning_effort": CONFIG.reasoning_effort,
+                "max_output_tokens": 256
             }
         });
 
-        // Make the API call to /v1/responses
-        let mut retry_count = 0;
-        let max_retries = 3;
-        
-        let response_json = loop {
-            let response = client
-                .post(format!("{}/responses", CONFIG.openai_base_url))
-                .header("Authorization", format!("Bearer {api_key}"))
-                .header("Content-Type", "application/json")
-                .json(&request_body)
-                .send()
-                .await?;
-            
-            if response.status().is_success() {
-                break response.json().await?;
-            } else if response.status() == 429 || response.status().is_server_error() {
-                // Rate limit or server error - retry with backoff
-                if retry_count < max_retries {
-                    retry_count += 1;
-                    let jitter = std::time::Duration::from_millis(100 * retry_count);
-                    tokio::time::sleep(jitter).await;
-                    continue;
-                }
-            }
-            
-            // If we get here, it's a non-retryable error
-            return Err(anyhow::anyhow!(
-                "OpenAI API error: {} - {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            ));
-        };
+        // Make the API call with retry logic
+        let response_json = retry_api_call(&client, &api_key, &request_body).await?;
 
-        // Parse the function call result from various possible formats
+        // Parse the function call result
         let eval_result = parse_function_response(&response_json)?;
 
         // Get embedding for the message
@@ -140,14 +107,65 @@ pub async fn batch_evaluate_messages(
             },
         );
 
-        // Small delay to avoid rate limiting
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // Rate limiting delay
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     Ok(results)
 }
 
-/// Parse function response from various GPT-5 response formats
+/// Retry API call with exponential backoff
+async fn retry_api_call(
+    client: &Client,
+    api_key: &str,
+    request_body: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let max_retries = CONFIG.api_max_retries;
+    let mut retry_count = 0;
+    let mut retry_delay = Duration::from_millis(CONFIG.api_retry_delay_ms);
+    
+    loop {
+        let response = client
+            .post(format!("{}/openai/v1/responses", CONFIG.openai_base_url))  // Fixed endpoint
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
+        
+        if response.status().is_success() {
+            return Ok(response.json().await?);
+        }
+        
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        
+        // Check if error is retryable
+        let is_retryable = status == 429 || status.is_server_error();
+        
+        if is_retryable && retry_count < max_retries {
+            retry_count += 1;
+            eprintln!(
+                "API request failed (attempt {}/{}), retrying in {:?}: {} - {}",
+                retry_count, max_retries, retry_delay, status, error_text
+            );
+            
+            tokio::time::sleep(retry_delay).await;
+            
+            // Exponential backoff with cap
+            retry_delay = Duration::from_millis(
+                (retry_delay.as_millis() as u64 * 2).min(10000)
+            );
+        } else {
+            return Err(anyhow::anyhow!(
+                "OpenAI API error after {} attempts: {} - {}",
+                retry_count + 1, status, error_text
+            ));
+        }
+    }
+}
+
+/// Parse function response from GPT-5 response formats
 fn parse_function_response(response: &serde_json::Value) -> Result<MemoryEvalResult> {
     // Try unified output format first
     if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
@@ -164,7 +182,7 @@ fn parse_function_response(response: &serde_json::Value) -> Result<MemoryEvalRes
         }
     }
 
-    // Try tool_calls format (newer format)
+    // Try tool_calls format (alternative format)
     if let Some(tool_calls) = response
         .pointer("/choices/0/message/tool_calls")
         .and_then(|tc| tc.as_array())
@@ -209,35 +227,54 @@ fn parse_eval_args(args_str: &str) -> Result<MemoryEvalResult> {
             .and_then(|m| m.as_str())
             .unwrap_or("other")
             .to_string(),
-        embedding: vec![], // Will be filled by get_embedding
+        embedding: vec![],
     })
 }
 
-/// Get embedding for text using text-embedding-3-large
+/// Get embedding for text using text-embedding-3-large with retry
 async fn get_embedding(client: &Client, api_key: &str, text: &str) -> Result<Vec<f32>> {
     let request_body = serde_json::json!({
         "model": "text-embedding-3-large",
         "input": text,
-        "dimensions": 3072
+        "dimensions": CONFIG.qdrant_embedding_dim  // Use config dimension
     });
 
-    let response = client
-        .post(format!("{}/embeddings", CONFIG.openai_base_url))
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    let response_json: serde_json::Value = response.json().await?;
+    let max_retries = CONFIG.api_max_retries;
+    let mut retry_count = 0;
+    let mut retry_delay = Duration::from_millis(CONFIG.api_retry_delay_ms);
     
-    let embedding = response_json
-        .pointer("/data/0/embedding")
-        .and_then(|e| e.as_array())
-        .ok_or_else(|| anyhow::anyhow!("No embedding in response"))?
-        .iter()
-        .filter_map(|v| v.as_f64().map(|f| f as f32))
-        .collect::<Vec<_>>();
+    loop {
+        let response = client
+            .post(format!("{}/v1/embeddings", CONFIG.openai_base_url))  // Fixed endpoint
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
 
-    Ok(embedding)
+        if response.status().is_success() {
+            let response_json: serde_json::Value = response.json().await?;
+            
+            let embedding = response_json
+                .pointer("/data/0/embedding")
+                .and_then(|e| e.as_array())
+                .ok_or_else(|| anyhow::anyhow!("No embedding in response"))?
+                .iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect::<Vec<_>>();
+
+            return Ok(embedding);
+        }
+        
+        let status = response.status();
+        let is_retryable = status == 429 || status.is_server_error();
+        
+        if is_retryable && retry_count < max_retries {
+            retry_count += 1;
+            tokio::time::sleep(retry_delay).await;
+            retry_delay = Duration::from_millis((retry_delay.as_millis() as u64 * 2).min(10000));
+        } else {
+            return Err(anyhow::anyhow!("Failed to get embedding after {} attempts", retry_count + 1));
+        }
+    }
 }
