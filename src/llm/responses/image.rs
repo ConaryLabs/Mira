@@ -1,5 +1,5 @@
 // src/llm/responses/image.rs
-// Phase 5: Image generation using gpt-image-1 via unified /v1/responses API
+// Image generation using gpt-image-1 via unified /v1/responses API
 
 use std::sync::Arc;
 
@@ -27,34 +27,10 @@ impl ImageGenerationManager {
         prompt: &str,
         options: ImageOptions,
     ) -> Result<ImageGenerationResponse> {
-        info!("🎨 Generating image with GPT-Image-1 via /v1/responses");
-        info!("   Prompt: {}", prompt);
+        info!("Generating image with GPT-Image-1 via /v1/responses");
+        info!("Prompt: {}", prompt);
         
-        // Build parameters for image generation
-        let mut image_params = json!({});
-        
-        if let Some(n) = options.n {
-            image_params["n"] = json!(n);
-            info!("   Number of images: {}", n);
-        }
-        
-        if let Some(ref size) = options.size {
-            image_params["size"] = json!(size);
-            info!("   Size: {}", size);
-        }
-        
-        if let Some(ref quality) = options.quality {
-            image_params["quality"] = json!(quality);
-            info!("   Quality: {}", quality);
-        }
-        
-        if let Some(ref style) = options.style {
-            image_params["style"] = json!(style);
-            info!("   Style: {}", style);
-        }
-
         // Build the unified request body
-        // FIX: Move parameters to top level, not nested
         let mut body = json!({
             "model": "gpt-image-1",
             "input": [{
@@ -64,22 +40,25 @@ impl ImageGenerationManager {
                     "text": prompt 
                 }]
             }],
-            "max_output_tokens": 1,  // Minimal tokens for image response
+            "max_output_tokens": 1,
         });
 
         // Add image generation parameters at top level with proper prefix
-        // Based on API patterns, image params likely go at top level with prefix
         if let Some(n) = options.n {
             body["image_n"] = json!(n);
+            info!("Number of images: {}", n);
         }
         if let Some(ref size) = options.size {
             body["image_size"] = json!(size);
+            info!("Size: {}", size);
         }
         if let Some(ref quality) = options.quality {
             body["image_quality"] = json!(quality);
+            info!("Quality: {}", quality);
         }
         if let Some(ref style) = options.style {
             body["image_style"] = json!(style);
+            info!("Style: {}", style);
         }
 
         // Make the API call
@@ -93,7 +72,7 @@ impl ImageGenerationManager {
             return Err(anyhow::anyhow!("No images returned from GPT-Image-1"));
         }
 
-        info!("✅ Successfully generated {} image(s)", images.len());
+        info!("Successfully generated {} image(s)", images.len());
         
         Ok(ImageGenerationResponse {
             images,

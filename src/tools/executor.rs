@@ -1,7 +1,6 @@
 // src/tools/executor.rs
 // Tool execution framework for coordinating tool-enabled responses.
 // Manages the execution of various tools and streaming of results.
-// Updated to include tool decision logic
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,6 +15,9 @@ use crate::api::ws::message::MessageMetadata;
 use crate::config::CONFIG;
 use crate::memory::recall::RecallContext;
 use crate::state::AppState;
+use crate::utils::with_timeout;
+use crate::llm::responses::image::{ImageOptions, ImageGenerationResponse};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct ToolChatRequest {
@@ -51,29 +53,21 @@ impl ToolExecutor {
 
     /// Determines whether to use tool-enabled chat based on metadata and configuration
     pub fn should_use_tools(&self, metadata: &Option<MessageMetadata>) -> bool {
-        // Check if tools are disabled globally
         if !CONFIG.enable_chat_tools {
             return false;
         }
         
-        // Check metadata for context that would benefit from tools
         if let Some(meta) = metadata {
-            // If we have file context, repository, or attachments, use tools
+            // Use tools if we have file context, repository, or attachments
             if meta.file_path.is_some() || 
                meta.repo_id.is_some() || 
-               meta.attachment_id.is_some() {
-                debug!("Using tools due to file/repo/attachment context");
-                return true;
-            }
-            
-            // If we have language context, use tools
-            if meta.language.is_some() {
-                debug!("Using tools due to language context");
+               meta.attachment_id.is_some() ||
+               meta.language.is_some() {
+                debug!("Using tools based on metadata context");
                 return true;
             }
         }
         
-        // Default to not using tools for simple messages
         false
     }
     
@@ -97,7 +91,6 @@ impl ToolExecutor {
     ) -> Result<Pin<Box<dyn Stream<Item = ToolEvent> + Send>>> {
         debug!("Starting tool-enabled stream for session: {}", request.session_id);
 
-        // Check if tools are enabled
         if !CONFIG.enable_chat_tools {
             warn!("Tools disabled in config, returning error event");
             let event_stream = futures_util::stream::once(async move {
@@ -106,27 +99,12 @@ impl ToolExecutor {
             return Ok(Box::pin(event_stream));
         }
 
-        // Get enabled tools based on configuration
-        let _tools = if CONFIG.enable_chat_tools {
-            vec![
-                "file_search".to_string(),
-                "code_interpreter".to_string(),
-                "image_generation".to_string(),
-                "web_search".to_string(),
-            ]
-        } else {
-            vec![]
-        };
-
-        // Simplified streaming implementation
-        // In production, this would integrate with the actual tool execution pipeline
         let content = request.content.clone();
         let session_id = request.session_id.clone();
 
         let event_stream = async_stream::stream! {
             info!("Processing request for session: {}", session_id);
 
-            // Simulate initial response
             yield ToolEvent::ContentChunk(format!("Processing your request: {}", content.chars().take(50).collect::<String>()));
 
             // Check if any tools might be needed based on content
@@ -136,7 +114,6 @@ impl ToolExecutor {
                     status: "starting".to_string(),
                 };
 
-                // Simulate tool execution delay
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
                 yield ToolEvent::ToolResult {
@@ -148,7 +125,6 @@ impl ToolExecutor {
                 };
             }
 
-            // Final response
             yield ToolEvent::ContentChunk("\n\nI'll help you with that request.".to_string());
             yield ToolEvent::Complete { metadata: None };
         };
@@ -173,44 +149,23 @@ pub trait ToolExecutorExt {
 impl ToolExecutorExt for ToolExecutor {
     async fn execute_tool(&self, tool_name: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         debug!("Executing tool: {} with params: {:?}", tool_name, params);
-
-        match tool_name {
-            "file_search" => {
-                // Placeholder for file search implementation
-                Ok(serde_json::json!({
-                    "status": "completed",
-                    "results": []
-                }))
-            }
-            "code_interpreter" => {
-                // Placeholder for code interpreter
-                Ok(serde_json::json!({
-                    "status": "completed",
-                    "output": "Code execution not yet implemented"
-                }))
-            }
-            _ => {
-                warn!("Unknown tool requested: {}", tool_name);
-                Ok(serde_json::json!({
-                    "status": "error",
-                    "message": format!("Unknown tool: {}", tool_name)
-                }))
-            }
-        }
+        
+        // This method is a placeholder - actual tool execution happens in handle_tool_call
+        Ok(json!({
+            "status": "redirected",
+            "message": format!("Tool {} should be executed via handle_tool_call", tool_name)
+        }))
     }
 
     async fn validate_tool_params(&self, tool_name: &str, params: &serde_json::Value) -> Result<bool> {
         debug!("Validating params for tool: {}", tool_name);
 
         match tool_name {
-            "file_search" => {
-                // Validate file search params
-                Ok(params.get("query").is_some())
-            }
-            "code_interpreter" => {
-                // Validate code interpreter params
-                Ok(params.get("code").is_some())
-            }
+            "file_search" => Ok(params.get("query").is_some()),
+            "code_interpreter" => Ok(params.get("code").is_some()),
+            "load_file_context" => Ok(params.get("project_id").is_some()),
+            "web_search" => Ok(params.get("query").is_some()),
+            "image_generation" => Ok(params.get("prompt").is_some()),
             _ => Ok(false),
         }
     }
@@ -224,13 +179,35 @@ impl ToolExecutorExt for ToolExecutor {
             .or_else(|| tool_call.get("function").and_then(|f| f.get("arguments")))
             .ok_or_else(|| anyhow!("Missing tool arguments"))?;
         
-        // Parse arguments if they're a string
         let parsed_args: Value = if args.is_string() {
             serde_json::from_str(args.as_str().unwrap())?
         } else {
             args.clone()
         };
         
+        // Apply timeout based on tool type
+        let timeout_duration = match tool_type {
+            "code_interpreter" => Duration::from_secs(CONFIG.code_interpreter_timeout),
+            "web_search" => Duration::from_secs(CONFIG.web_search_timeout),
+            "file_search" => Duration::from_secs(CONFIG.tool_timeout_seconds),
+            _ => Duration::from_secs(CONFIG.tool_timeout_seconds),
+        };
+
+        with_timeout(
+            timeout_duration,
+            self.handle_tool_call_internal(tool_type, parsed_args, app_state),
+            &format!("Tool call: {}", tool_type),
+        ).await
+    }
+}
+
+impl ToolExecutor {
+    async fn handle_tool_call_internal(
+        &self,
+        tool_type: &str,
+        parsed_args: Value,
+        app_state: &Arc<AppState>,
+    ) -> Result<Value> {
         match tool_type {
             "file_search" => {
                 let query = parsed_args["query"].as_str()
@@ -255,29 +232,17 @@ impl ToolExecutorExt for ToolExecutor {
             }
             
             "web_search" => {
-                let query = parsed_args["query"].as_str()
-                    .ok_or_else(|| anyhow!("Missing query for web search"))?;
-                
-                // GPT-5 has native web search - just indicate it should be used
+                // GPT-5 has native web search capability
                 Ok(json!({
                     "tool_type": "web_search",
-                    "query": query,
                     "status": "delegated_to_gpt5",
                     "message": "Web search handled by GPT-5's native capability"
                 }))
             }
             
             "code_interpreter" => {
-                let code = parsed_args["code"].as_str()
-                    .ok_or_else(|| anyhow!("Missing code for interpreter"))?;
-                let language = parsed_args["language"].as_str()
-                    .unwrap_or("python");
-                
-                // Placeholder for code execution
                 Ok(json!({
                     "tool_type": "code_interpreter",
-                    "language": language,
-                    "code": code,
                     "status": "not_implemented",
                     "output": "Code execution not yet implemented"
                 }))
@@ -287,13 +252,8 @@ impl ToolExecutorExt for ToolExecutor {
                 let prompt = parsed_args["prompt"].as_str()
                     .ok_or_else(|| anyhow!("Missing prompt for image generation"))?;
                 
-                // This would integrate with image_generation_manager in AppState
-                Ok(json!({
-                    "tool_type": "image_generation",
-                    "prompt": prompt,
-                    "status": "not_implemented",
-                    "message": "Image generation not yet connected"
-                }))
+                // Clone parsed_args before moving it
+                execute_image_generation(prompt, parsed_args.clone(), app_state).await
             }
             
             _ => {
@@ -312,11 +272,10 @@ async fn execute_file_search(
 ) -> Result<Value> {
     debug!("Executing file search: query='{}', project_id={:?}", query, project_id);
     
-    // Use the file_search_service from AppState
     let params = crate::tools::file_search::FileSearchParams {
         query: query.to_string(),
         file_extensions: None,
-        max_files: Some(20),
+        max_files: Some(CONFIG.file_search_max_files),
         case_sensitive: Some(false),
         include_content: Some(true),
     };
@@ -335,7 +294,6 @@ async fn execute_load_file_context(
 ) -> Result<Value> {
     debug!("Loading file context for project: {}", project_id);
     
-    // Get project from store
     let project = app_state.project_store
         .get_project(project_id)
         .await?
@@ -344,19 +302,16 @@ async fn execute_load_file_context(
     let mut files_content = Vec::new();
     let mut total_size = 0usize;
     
-    // If specific files requested, load those
     if let Some(paths) = file_paths {
         for path in paths {
-            // This would load specific files
             debug!("Would load file: {}", path);
         }
     } else {
-        // Load all artifacts from the project
         let artifacts = app_state.project_store
             .list_project_artifacts(project_id)
             .await?;
         
-        for artifact in artifacts.iter().take(20) {
+        for artifact in artifacts.iter().take(CONFIG.file_search_max_files) {
             if let Some(content) = &artifact.content {
                 total_size += content.len();
                 files_content.push(json!({
@@ -376,5 +331,41 @@ async fn execute_load_file_context(
         "file_count": files_content.len(),
         "total_size": total_size,
         "status": "success"
+    }))
+}
+
+async fn execute_image_generation(
+    prompt: &str,
+    parsed_args: Value,
+    app_state: &Arc<AppState>,
+) -> Result<Value> {
+    debug!("Executing image generation with prompt: {}", prompt);
+    
+    // Build image options from parsed arguments
+    let options = ImageOptions {
+        n: parsed_args["n"].as_u64().map(|n| n as u8),
+        size: parsed_args["size"].as_str().map(String::from)
+            .or_else(|| Some(CONFIG.image_generation_size.clone())),
+        quality: parsed_args["quality"].as_str().map(String::from)
+            .or_else(|| Some(CONFIG.image_generation_quality.clone())),
+        style: parsed_args["style"].as_str().map(String::from)
+            .or_else(|| Some(CONFIG.image_generation_style.clone())),
+    };
+    
+    // Validate options
+    options.validate()?;
+    
+    // Generate images using the image generation manager
+    let response: ImageGenerationResponse = app_state.image_generation_manager
+        .generate_images(prompt, options)
+        .await?;
+    
+    Ok(json!({
+        "tool_type": "image_generation",
+        "status": "success",
+        "urls": response.urls(),
+        "revised_prompt": response.images.first()
+            .and_then(|img| img.revised_prompt.as_ref()),
+        "count": response.images.len()
     }))
 }
