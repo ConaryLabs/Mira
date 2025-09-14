@@ -203,7 +203,7 @@ async fn save_tool_interaction(
     ).await?;
     
     // Create a minimal ChatResponse for the assistant message
-    let response = crate::llm::chat_service::ChatResponse {
+    let response = crate::llm::types::ChatResponse {
         output: assistant_message.to_string(),
         persona: "mira".to_string(),
         mood: "helpful".to_string(),

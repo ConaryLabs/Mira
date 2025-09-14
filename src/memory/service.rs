@@ -115,7 +115,7 @@ impl MemoryService {
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
-        response: &crate::llm::chat_service::ChatResponse,
+        response: &crate::llm::types::ChatResponse,
     ) -> Result<String> {
         info!("Saving assistant response for session: {}", session_id);
         

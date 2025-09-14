@@ -344,7 +344,7 @@ async fn save_assistant_to_memory(
     content: &str,
     project_id: Option<&str>,
 ) -> Result<()> {
-    let response = crate::llm::chat_service::ChatResponse {
+    let response = crate::llm::types::ChatResponse {
         output: content.to_string(),
         persona: "mira".to_string(),
         mood: "helpful".to_string(),

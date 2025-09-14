@@ -3,20 +3,16 @@ use crate::{
     config::CONFIG,
     git::{GitClient, GitStore},
     llm::{
-        chat_service::{ChatConfig, ChatService},
         client::OpenAIClient,
         responses::{ImageGenerationManager, ResponsesManager, ThreadManager, VectorStoreManager},
     },
     memory::{
         storage::qdrant::multi_store::QdrantMultiStore,
         storage::sqlite::store::SqliteMemoryStore,
-    },
-    persona::PersonaOverlay,
-    project::store::ProjectStore,
-    memory::{
         context::ContextService,
         MemoryService,
     },
+    project::store::ProjectStore,
 };
 use crate::tools::file_search::FileSearchService;
 use crate::tools::document::DocumentService;
@@ -79,25 +75,7 @@ pub async fn create_app_state(
         llm_client.clone(),
     ));
     
-    let _context_service = Arc::new(ContextService::new(memory_service.clone()));
-    
-    let _document_service =
-        Arc::new(DocumentService::new(memory_service.clone(), vector_store_manager.clone()));
-    
     let file_search_service = Arc::new(FileSearchService::new(vector_store_manager.clone(), git_client.clone()));
-    
-    let default_persona = PersonaOverlay::Default;
-    
-    let chat_config = ChatConfig::default();
-    
-    let _chat_service = Arc::new(ChatService::new(
-        llm_client.clone(),
-        thread_manager.clone(),
-        vector_store_manager.clone(),
-        default_persona,
-        memory_service.clone(),
-        Some(chat_config),
-    ));
     
     info!("AppState initialized successfully");
     

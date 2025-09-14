@@ -194,3 +194,7 @@ mod tests {
         assert!(temp_dir.path().exists());
     }
 }
+
+// Add project-aware operations
+pub mod project_ops;
+pub use project_ops::ProjectOps;

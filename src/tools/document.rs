@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::llm::responses::VectorStoreManager;
-use crate::llm::chat_service::ChatResponse;
+use crate::llm::types::ChatResponse;
 use crate::memory::MemoryService;
 
 #[derive(Debug, Clone, Copy)]
