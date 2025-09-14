@@ -2,7 +2,6 @@
 // Thin WebSocket routing layer for memory commands - delegates to MemoryService
 
 use std::sync::Arc;
-use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, error, info, warn};
@@ -67,7 +66,7 @@ pub async fn handle_memory_command(
             })
         }
         
-        _ => Err(anyhow!("Unknown memory method: {}", method))
+        _ => Err(ApiError::bad_request(format!("Unknown memory method: {}", method)))
     };
     
     result.map_err(|e| {
@@ -76,15 +75,15 @@ pub async fn handle_memory_command(
     })
 }
 
-async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let content = params["content"].as_str()
-        .ok_or_else(|| anyhow!("content is required"))?;
+        .ok_or_else(|| ApiError::bad_request("content is required"))?;
     let role = params["role"].as_str().unwrap_or("user");
     
     match role {
         "user" => {
-            memory.save_user_message(&session_id, content, params["project_id"].as_str()).await?;
+            memory.save_user_message(&session_id, content, params["project_id"].as_str()).await.map_err(|e| ApiError::internal(e.to_string()))?;
             info!("Saved user message for session: {}", session_id);
         }
         "assistant" => {
@@ -124,10 +123,10 @@ async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) 
                 }
             };
             
-            memory.save_assistant_response(&session_id, &response).await?;
+            memory.save_assistant_response(&session_id, &response).await.map_err(|e| ApiError::internal(e.to_string()))?;
             info!("Saved assistant response for session: {}", session_id);
         }
-        _ => return Err(anyhow!("Invalid role: {}. Must be 'user' or 'assistant'", role))
+        _ => return Err(ApiError::bad_request(format!("Invalid role: {}. Must be 'user' or 'assistant'", role)))
     }
     
     Ok(WsServerMessage::Data {
@@ -140,10 +139,10 @@ async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) 
     })
 }
 
-async fn search_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn search_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let query = params["query"].as_str()
-        .ok_or_else(|| anyhow!("query is required"))?;
+        .ok_or_else(|| ApiError::bad_request("query is required"))?;
     let max_results = params["max_results"].as_u64().unwrap_or(10) as usize;
     
     let results = memory.search_similar(&session_id, query, max_results).await
@@ -162,15 +161,15 @@ async fn search_memory(params: Value, memory: &Arc<crate::memory::MemoryService>
     })
 }
 
-async fn get_context(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn get_context(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let recent_count = params["recent_count"].as_u64().unwrap_or(10) as usize;
     let semantic_count = params["semantic_count"].as_u64().unwrap_or(5) as usize;
     
     let context = if let Some(user_text) = params["user_text"].as_str() {
-        memory.parallel_recall_context(&session_id, user_text, recent_count, semantic_count).await?
+        memory.parallel_recall_context(&session_id, user_text, recent_count, semantic_count).await.map_err(|e| ApiError::internal(e.to_string()))?
     } else {
-        let recent = memory.get_recent_context(&session_id, recent_count).await?;
+        let recent = memory.get_recent_context(&session_id, recent_count).await.map_err(|e| ApiError::internal(e.to_string()))?;
         RecallContext::new(recent, Vec::new())
     };
     
@@ -190,11 +189,11 @@ async fn get_context(params: Value, memory: &Arc<crate::memory::MemoryService>) 
     })
 }
 
-async fn get_recent_memories(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn get_recent_memories(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let count = params["count"].as_u64().unwrap_or(20) as usize;
     
-    let memories = memory.get_recent_context(&session_id, count).await?;
+    let memories = memory.get_recent_context(&session_id, count).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -206,9 +205,9 @@ async fn get_recent_memories(params: Value, memory: &Arc<crate::memory::MemorySe
     })
 }
 
-async fn get_memory_stats(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn get_memory_stats(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
-    let stats = memory.get_service_stats(&session_id).await?;
+    let stats = memory.get_service_stats(&session_id).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -219,11 +218,11 @@ async fn get_memory_stats(params: Value, memory: &Arc<crate::memory::MemoryServi
     })
 }
 
-async fn trigger_rolling_summary(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn trigger_rolling_summary(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let window_size = params["window_size"].as_u64().unwrap_or(10) as usize;
     
-    let message = memory.trigger_rolling_summary(&session_id, window_size).await?;
+    let message = memory.trigger_rolling_summary(&session_id, window_size).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -235,10 +234,10 @@ async fn trigger_rolling_summary(params: Value, memory: &Arc<crate::memory::Memo
     })
 }
 
-async fn trigger_snapshot_summary(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn trigger_snapshot_summary(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     
-    let message = memory.trigger_snapshot_summary(&session_id).await?;
+    let message = memory.trigger_snapshot_summary(&session_id).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -250,10 +249,10 @@ async fn trigger_snapshot_summary(params: Value, memory: &Arc<crate::memory::Mem
     })
 }
 
-async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let memories: Vec<ImportMemoryData> = serde_json::from_value(params["memories"].clone())
-        .map_err(|e| anyhow!("Invalid memories array: {}", e))?;
+        .map_err(|e| ApiError::bad_request(format!("Invalid memories array: {}", e)))?;
     
     let mut imported = 0;
     let mut errors = Vec::new();
@@ -261,7 +260,7 @@ async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryServic
     for (idx, mem) in memories.into_iter().enumerate() {
         let result = match mem.role.as_str() {
             "user" => {
-                memory.save_user_message(&session_id, &mem.content, None).await
+                memory.save_user_message(&session_id, &mem.content, None).await.map_err(|e| ApiError::internal(e.to_string()))
             }
             "assistant" => {
                 use crate::llm::types::ChatResponse;
@@ -277,9 +276,9 @@ async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryServic
                     monologue: None,
                     reasoning_summary: None,
                 };
-                memory.save_assistant_response(&session_id, &response).await
+                memory.save_assistant_response(&session_id, &response).await.map_err(|e| ApiError::internal(e.to_string()))
             }
-            _ => Err(anyhow!("Invalid role: {}", mem.role))
+            _ => Err(ApiError::bad_request(format!("Invalid role: {}", mem.role)))
         };
         
         match result {
@@ -298,11 +297,11 @@ async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryServic
     })
 }
 
-async fn export_memories(params: Value, memory: &Arc<crate::memory::MemoryService>) -> Result<WsServerMessage> {
+async fn export_memories(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     let count = params["count"].as_u64().unwrap_or(1000) as usize;
     
-    let memories = memory.get_recent_context(&session_id, count).await?;
+    let memories = memory.get_recent_context(&session_id, count).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -315,7 +314,7 @@ async fn export_memories(params: Value, memory: &Arc<crate::memory::MemoryServic
     })
 }
 
-async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage> {
+async fn check_qdrant_status(app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let mut status = json!({
         "qdrant_url": CONFIG.qdrant_url.clone(),
         "qdrant_configured": !CONFIG.qdrant_url.is_empty(),
