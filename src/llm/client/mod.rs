@@ -347,7 +347,7 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
         loop {
             match self.embedding_client.get_embeddings_batch(texts).await {
                 Ok(embeddings) => return Ok(embeddings),
-                Err(e) if retry_count < max_retries => {
+                Err(_e) if retry_count < max_retries => {
                     retry_count += 1;
                     let delay = Duration::from_millis(CONFIG.api_retry_delay_ms * retry_count as u64);
                     warn!("Embedding request failed (attempt {}/{}), retrying in {:?}", 

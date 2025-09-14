@@ -181,7 +181,7 @@ impl UnifiedChatHandler {
         });
         
         // Format tools for GPT-5 if provided
-        if let Some(tool_list) = tools {
+        if let Some(_tool_list) = tools {
             let mut valid_tools = Vec::new();
             
             // Only add web_search if it's actually enabled

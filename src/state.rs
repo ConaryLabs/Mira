@@ -9,13 +9,11 @@ use crate::{
     memory::{
         storage::qdrant::multi_store::QdrantMultiStore,
         storage::sqlite::store::SqliteMemoryStore,
-        context::ContextService,
         MemoryService,
     },
     project::store::ProjectStore,
 };
 use crate::tools::file_search::FileSearchService;
-use crate::tools::document::DocumentService;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -63,7 +61,7 @@ pub async fn create_app_state(
     
     let responses_manager = Arc::new(ResponsesManager::new(llm_client.clone()));
     let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
-    let thread_manager = Arc::new(ThreadManager::new(
+    let _thread_manager = Arc::new(ThreadManager::new(
         CONFIG.history_message_cap,
         CONFIG.history_token_limit,
     ));

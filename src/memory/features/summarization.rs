@@ -4,9 +4,8 @@
 use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 use crate::llm::client::OpenAIClient;
-use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::{MemoryEntry, MemoryType};
 use crate::config::CONFIG;
 use crate::memory::features::memory_types::{SummaryRequest, SummaryType};

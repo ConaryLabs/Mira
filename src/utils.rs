@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::num::NonZeroU32;
 use anyhow::Result;
 use futures::Future;
-use tracing::{warn, debug};
+use tracing::warn;
 
 // Rate limiting support
 use governor::{Quota, RateLimiter as GovRateLimiter, Jitter};

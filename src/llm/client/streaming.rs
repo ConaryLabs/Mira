@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn, error};
 use reqwest::{header, Client};
