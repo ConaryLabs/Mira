@@ -1,19 +1,45 @@
 // src/llm/client/streaming.rs
-// Fixed version with corrected API endpoint
+// Consolidated streaming implementation for GPT-5 Responses API
 
 use std::pin::Pin;
+use std::sync::Arc;
 
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use serde_json::Value;
-use tracing::{debug, warn};
+use serde::Serialize;
+use serde_json::{json, Value};
+use tokio::time::{timeout, Duration};
+use tracing::{debug, info, warn, error};
 use reqwest::{header, Client};
 
 use crate::llm::client::config::ClientConfig;
+use crate::state::AppState;
 
-/// Stream of JSON payloads from the OpenAI Responses SSE.
+/// Stream of JSON payloads from the OpenAI Responses SSE
 pub type ResponseStream = Pin<Box<dyn Stream<Item = Result<Value>> + Send>>;
+
+/// Unified chat event types for streaming responses
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum ChatEvent {
+    Content { text: String },
+    ToolExecution { 
+        tool_name: String, 
+        status: String 
+    },
+    ToolResult {
+        tool_name: String,
+        result: Value,
+    },
+    Complete {
+        mood: Option<String>,
+        salience: Option<f32>,
+        tags: Option<Vec<String>>,
+    },
+    Done,
+    Error { message: String },
+}
 
 /// Create SSE stream for streaming responses
 pub async fn create_sse_stream(
@@ -22,7 +48,7 @@ pub async fn create_sse_stream(
     body: Value,
 ) -> Result<ResponseStream> {
     let req = client
-        .post(format!("{}/v1/responses", config.base_url()))  // FIXED: removed /openai prefix
+        .post(format!("{}/v1/responses", config.base_url()))
         .header(header::AUTHORIZATION, format!("Bearer {}", config.api_key()))
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "text/event-stream")
@@ -41,8 +67,7 @@ pub async fn create_sse_stream(
     Ok(Box::pin(stream))
 }
 
-/// Parse SSE stream of JSON into a Stream of Value.
-/// Filters out empty lines, "data: " prefixes, and parses JSON chunks.
+/// Parse SSE stream of JSON into a Stream of Value
 pub fn sse_json_stream(
     bytes_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl Stream<Item = Result<Value>> + Send {
@@ -99,12 +124,18 @@ pub fn parse_sse_chunk(chunk_text: &str) -> Result<Option<Value>> {
             // Try to parse as JSON
             match serde_json::from_str::<Value>(data_part) {
                 Ok(json_value) => {
-                    debug!("Parsed SSE JSON chunk: {}", 
-                           serde_json::to_string(&json_value).unwrap_or_default());
                     return Ok(Some(json_value));
                 }
                 Err(e) => {
-                    warn!("Failed to parse SSE JSON: {} - Data: {}", e, data_part);
+                    // Only warn for actual JSON-like content that failed to parse
+                    if data_part.starts_with('{') || data_part.starts_with('[') {
+                        let preview = if data_part.len() > 100 {
+                            format!("{}...", &data_part[..100])
+                        } else {
+                            data_part.to_string()
+                        };
+                        warn!("Failed to parse SSE JSON: {} - Data: {}", e, preview);
+                    }
                     continue;
                 }
             }
@@ -115,11 +146,242 @@ pub fn parse_sse_chunk(chunk_text: &str) -> Result<Option<Value>> {
     Ok(None)
 }
 
-/// Extract content delta from streaming chunk
+/// Process GPT-5 response stream into ChatEvents
+/// This is the main streaming logic moved from unified_handler
+pub fn process_gpt5_stream(
+    mut stream: impl Stream<Item = Result<Value>> + Send + Unpin + 'static,
+    has_tools: bool,
+    session_id: String,
+    app_state: Arc<AppState>,
+    project_id: Option<String>,
+) -> impl Stream<Item = Result<ChatEvent>> + Send {
+    let buffer = Arc::new(std::sync::Mutex::new(String::new()));
+    let tool_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let completion_sent = Arc::new(std::sync::Mutex::new(false));
+    let chunk_count = Arc::new(std::sync::Mutex::new(0));
+    
+    // Create a channel for sending events
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    
+    // Spawn a task to process the stream
+    tokio::spawn(async move {
+        loop {
+            match timeout(Duration::from_secs(300), stream.next()).await {
+                Ok(Some(chunk_result)) => {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            // Get count and immediately drop the lock
+                            let count = {
+                                let mut guard = chunk_count.lock().unwrap();
+                                *guard += 1;
+                                *guard
+                            };
+                            
+                            // Log first 5 chunks in detail for debugging
+                            if count <= 5 {
+                                info!("RAW CHUNK #{}: {}", count, serde_json::to_string(&chunk).unwrap_or_default());
+                            }
+                            
+                            if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
+                                debug!("Processing event #{} type: {}", count, event_type);
+                                
+                                match event_type {
+                                    // GPT-5 text streaming event - this is what we care about!
+                                    "response.output_text.delta" => {
+                                        if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
+                                            info!("Got text delta: {} chars", delta.len());
+                                            // Update buffer
+                                            {
+                                                let mut buf = buffer.lock().unwrap();
+                                                buf.push_str(delta);
+                                            }
+                                            let _ = tx.send(Ok(ChatEvent::Content { text: delta.to_string() }));
+                                        }
+                                    }
+                                    
+                                    // GPT-5 text completion - marks end of text streaming
+                                    "response.output_text.done" => {
+                                        // Stream is complete - get buffer content
+                                        let final_text = {
+                                            let buf = buffer.lock().unwrap();
+                                            buf.clone()
+                                        };
+                                        
+                                        info!("Text streaming complete - Final buffer: {} chars", final_text.len());
+                                        
+                                        if !final_text.is_empty() {
+                                            if let Err(e) = save_assistant_to_memory(
+                                                &app_state,
+                                                &session_id,
+                                                &final_text,
+                                                project_id.as_deref(),
+                                            ).await {
+                                                warn!("Failed to save assistant response: {}", e);
+                                            }
+                                        } else {
+                                            warn!("Stream completed but buffer is empty!");
+                                        }
+                                        
+                                        // Set completion flag
+                                        {
+                                            let mut sent = completion_sent.lock().unwrap();
+                                            *sent = true;
+                                        }
+                                        
+                                        let _ = tx.send(Ok(ChatEvent::Done));
+                                        break; // Exit the loop after completion
+                                    }
+                                    
+                                    // These are informational events we can safely ignore
+                                    "response.created" | "response.in_progress" | 
+                                    "response.output_item.added" | "response.output_item.done" => {
+                                        debug!("Ignoring informational event: {}", event_type);
+                                    }
+                                    
+                                    // Tool events (if they come through)
+                                    "tool_call" if has_tools => {
+                                        {
+                                            let mut calls = tool_calls.lock().unwrap();
+                                            calls.push(chunk.clone());
+                                        }
+                                        
+                                        let tool_name = chunk.get("name")
+                                            .and_then(|n| n.as_str())
+                                            .unwrap_or("unknown");
+                                        
+                                        let _ = tx.send(Ok(ChatEvent::ToolExecution {
+                                            tool_name: tool_name.to_string(),
+                                            status: "started".to_string(),
+                                        }));
+                                    }
+                                    
+                                    // Error events
+                                    "error" => {
+                                        let error_msg = chunk.get("error")
+                                            .and_then(|e| e.get("message"))
+                                            .and_then(|m| m.as_str())
+                                            .unwrap_or("Unknown error");
+                                        error!("Stream error: {}", error_msg);
+                                        let _ = tx.send(Ok(ChatEvent::Error { message: error_msg.to_string() }));
+                                        break;
+                                    }
+                                    
+                                    // Rate limit or other metadata
+                                    "rate_limit" | "ping" => {
+                                        debug!("Metadata event: {}", event_type);
+                                    }
+                                    
+                                    // Legacy format fallback (shouldn't happen with GPT-5)
+                                    "text_delta" => {
+                                        warn!("Got legacy text_delta event - API mismatch?");
+                                        if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
+                                            {
+                                                let mut buf = buffer.lock().unwrap();
+                                                buf.push_str(delta);
+                                            }
+                                            let _ = tx.send(Ok(ChatEvent::Content { text: delta.to_string() }));
+                                        }
+                                    }
+                                    
+                                    _ => {
+                                        // Only warn about truly unexpected events
+                                        if !event_type.starts_with("response.") {
+                                            warn!("Unhandled event type: {}", event_type);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // No type field - shouldn't happen with GPT-5
+                                debug!("Chunk #{} without 'type' field", count);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Stream error: {}", e);
+                            let _ = tx.send(Ok(ChatEvent::Error { 
+                                message: format!("Stream error: {}", e) 
+                            }));
+                            break;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Stream ended naturally
+                    info!("Stream ended naturally");
+                    break;
+                }
+                Err(_) => {
+                    // Timeout
+                    warn!("Stream timeout after 300 seconds - forcing completion");
+                    let _ = tx.send(Ok(ChatEvent::Error { 
+                        message: "Stream timeout - response may be incomplete".to_string() 
+                    }));
+                    let _ = tx.send(Ok(ChatEvent::Done));
+                    break;
+                }
+            }
+        }
+        
+        // Check if we sent completion
+        let completed = {
+            let sent = completion_sent.lock().unwrap();
+            *sent
+        };
+        
+        if !completed {
+            info!("Sending final Done event");
+            let _ = tx.send(Ok(ChatEvent::Done));
+        }
+    });
+    
+    // Convert the receiver into a Stream
+    tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+}
+
+/// Save assistant response to memory
+async fn save_assistant_to_memory(
+    app_state: &Arc<AppState>,
+    session_id: &str,
+    content: &str,
+    project_id: Option<&str>,
+) -> Result<()> {
+    let response = crate::llm::chat_service::ChatResponse {
+        output: content.to_string(),
+        persona: "mira".to_string(),
+        mood: "helpful".to_string(),
+        salience: 5,
+        summary: if content.len() > 100 {
+            format!("{}...", &content[..100])
+        } else {
+            content.to_string()
+        },
+        memory_type: "Response".to_string(),
+        tags: vec!["chat".to_string()],
+        intent: None,
+        monologue: None,
+        reasoning_summary: None,
+    };
+    
+    app_state.memory_service.save_assistant_response(session_id, &response).await?;
+    
+    if let Some(proj_id) = project_id {
+        debug!("Assistant response saved with project context: {}", proj_id);
+    }
+    
+    Ok(())
+}
+
+/// Extract content from streaming chunk (legacy helper)
 pub fn extract_content_from_chunk(chunk: &Value) -> Option<String> {
     // Try different paths for content extraction
     
-    // 1) Standard delta format: choices[0].delta.content
+    // 1) GPT-5 Responses API format: delta field
+    if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
+        if !delta.is_empty() {
+            return Some(delta.to_string());
+        }
+    }
+    
+    // 2) Standard delta format: choices[0].delta.content
     if let Some(content) = chunk.pointer("/choices/0/delta/content").and_then(|c| c.as_str()) {
         if !content.is_empty() {
             debug!("Extracted delta content: {} chars", content.len());
@@ -127,18 +389,10 @@ pub fn extract_content_from_chunk(chunk: &Value) -> Option<String> {
         }
     }
     
-    // 2) Response API format: output[0].content[0].text
+    // 3) Response API format: output[0].content[0].text
     if let Some(content) = chunk.pointer("/output/0/content/0/text").and_then(|c| c.as_str()) {
         if !content.is_empty() {
             debug!("Extracted response API content: {} chars", content.len());
-            return Some(content.to_string());
-        }
-    }
-    
-    // 3) Delta text format
-    if let Some(content) = chunk.pointer("/delta/text").and_then(|c| c.as_str()) {
-        if !content.is_empty() {
-            debug!("Extracted delta text: {} chars", content.len());
             return Some(content.to_string());
         }
     }
@@ -164,120 +418,18 @@ pub fn extract_content_from_chunk(chunk: &Value) -> Option<String> {
 
 /// Check if streaming chunk indicates completion
 pub fn is_completion_chunk(chunk: &Value) -> bool {
+    // Check for GPT-5 response completion events
+    if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
+        return event_type == "response.output_text.done" || 
+               event_type == "response.done" || 
+               event_type == "message_stop";
+    }
+    
     // Check for finish reasons
     if let Some(finish_reason) = chunk.pointer("/choices/0/finish_reason") {
         return !finish_reason.is_null();
     }
     
-    // Check for completion signals in response API format
-    if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
-        return event_type == "response.done" || event_type == "response.completed";
-    }
-    
-    false
-}
-
-/// Tool call delta for streaming
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ToolCallDelta {
-    pub index: Option<usize>,
-    pub id: Option<String>,
-    #[serde(rename = "type")]
-    pub tool_type: Option<String>,
-    pub function: Option<FunctionDelta>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FunctionDelta {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-}
-
-/// Usage information for streaming
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StreamingUsage {
-    pub prompt_tokens: Option<i32>,
-    pub completion_tokens: Option<i32>,
-    pub total_tokens: Option<i32>,
-    pub reasoning_tokens: Option<i32>,
-}
-
-/// Streaming response processor
-pub struct StreamProcessor {
-    content_buffer: String,
-    tool_calls_buffer: Vec<ToolCallDelta>,
-    usage_info: Option<StreamingUsage>,
-}
-
-impl StreamProcessor {
-    pub fn new() -> Self {
-        Self {
-            content_buffer: String::new(),
-            tool_calls_buffer: Vec::new(),
-            usage_info: None,
-        }
-    }
-    
-    /// Process a streaming chunk and update internal state
-    pub fn process_chunk(&mut self, chunk: &Value) -> Option<StreamingEvent> {
-        // Extract content delta
-        if let Some(content) = extract_content_from_chunk(chunk) {
-            self.content_buffer.push_str(&content);
-            return Some(StreamingEvent::ContentDelta(content));
-        }
-        
-        // Check for tool call deltas
-        if let Some(tool_calls) = chunk.pointer("/choices/0/delta/tool_calls") {
-            if let Some(calls) = tool_calls.as_array() {
-                for call in calls {
-                    if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(call.clone()) {
-                        self.tool_calls_buffer.push(tool_call.clone());
-                        return Some(StreamingEvent::ToolCallDelta(tool_call));
-                    }
-                }
-            }
-        }
-        
-        // Check for usage information
-        if let Some(usage) = chunk.get("usage") {
-            if let Ok(usage_info) = serde_json::from_value::<StreamingUsage>(usage.clone()) {
-                self.usage_info = Some(usage_info.clone());
-                return Some(StreamingEvent::Usage(usage_info));
-            }
-        }
-        
-        // Check for completion
-        if is_completion_chunk(chunk) {
-            return Some(StreamingEvent::Complete {
-                content: self.content_buffer.clone(),
-                tool_calls: self.tool_calls_buffer.clone(),
-                usage: self.usage_info.clone(),
-            });
-        }
-        
-        None
-    }
-    
-    /// Get accumulated content
-    pub fn get_content(&self) -> &str {
-        &self.content_buffer
-    }
-    
-    /// Get accumulated tool calls
-    pub fn get_tool_calls(&self) -> &[ToolCallDelta] {
-        &self.tool_calls_buffer
-    }
-}
-
-/// Events emitted during streaming
-#[derive(Debug, Clone)]
-pub enum StreamingEvent {
-    ContentDelta(String),
-    ToolCallDelta(ToolCallDelta),
-    Usage(StreamingUsage),
-    Complete {
-        content: String,
-        tool_calls: Vec<ToolCallDelta>,
-        usage: Option<StreamingUsage>,
-    },
+    // Check for done field
+    chunk.get("done").is_some()
 }

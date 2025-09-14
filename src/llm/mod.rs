@@ -12,7 +12,6 @@ pub mod memory_eval;
 pub mod moderation;
 pub mod responses;
 pub mod schema;
-pub mod streaming;
 
 // Export the main client
 pub use client::OpenAIClient;
