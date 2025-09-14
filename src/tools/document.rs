@@ -1,5 +1,4 @@
-// src/services/document.rs
-// FIXED: Replaced deprecated evaluate_and_save_response with save_assistant_response
+// src/tools/document.rs
 
 use anyhow::Result;
 use std::path::Path;
@@ -11,9 +10,9 @@ use crate::memory::MemoryService;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DocumentDestination {
-    PersonalMemory,      // Goes to Qdrant
-    ProjectVectorStore,  // Goes to OpenAI vector store (must have project_id)
-    Both,                // Hybrid storage (must have project_id)
+    PersonalMemory,
+    ProjectVectorStore,
+    Both,
 }
 
 pub struct DocumentService {
@@ -84,7 +83,6 @@ impl DocumentService {
             .unwrap_or("document")
             .to_ascii_lowercase();
 
-        // 1) STRICTLY personal: filename or content markers (check *first*)
         if file_name.contains("diary")
             || file_name.contains("personal")
             || file_name.contains("journal")
@@ -94,7 +92,6 @@ impl DocumentService {
             return Ok(DocumentDestination::PersonalMemory);
         }
 
-        // 2) Technical file extensions REQUIRE project ID
         let technical_exts = ["md", "pdf", "txt", "rs", "js", "py"];
         if technical_exts.contains(&extension.as_str()) {
             if project_id.is_none() {
@@ -105,7 +102,6 @@ impl DocumentService {
             return Ok(DocumentDestination::ProjectVectorStore);
         }
 
-        // 3) Large "both" content (still must require project ID for upload)
         if content.len() > 5000
             && (content.contains("insight") || content.contains("reflection"))
         {
@@ -117,7 +113,6 @@ impl DocumentService {
             return Ok(DocumentDestination::Both);
         }
 
-        // 4) By default, route to project vector store (iff project ID is set)
         if project_id.is_some() {
             Ok(DocumentDestination::ProjectVectorStore)
         } else {
@@ -128,7 +123,6 @@ impl DocumentService {
     }
 
     async fn process_for_personal_memory(&self, content: &str) -> Result<()> {
-        // Build a ChatResponse for the document import
         let doc_response = ChatResponse {
             output: content.to_string(),
             persona: "system".to_string(),
@@ -142,8 +136,6 @@ impl DocumentService {
             reasoning_summary: None,
         };
 
-        // FIXED: Use save_assistant_response instead of deprecated evaluate_and_save_response
-        // The session_id "document-import" is used for all document imports
         self.memory_service
             .save_assistant_response("document-import", &doc_response)
             .await?;
@@ -169,8 +161,6 @@ impl DocumentService {
             reasoning_summary: None,
         };
 
-        // FIXED: Use save_assistant_response instead of deprecated evaluate_and_save_response
-        // For project documents, we use a session ID that includes the project
         let session_id = if let Some(pid) = project_id {
             format!("document-import-{pid}")
         } else {

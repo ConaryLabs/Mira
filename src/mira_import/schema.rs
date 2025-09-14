@@ -1,4 +1,4 @@
-// backend/src/tools/mira_import/schema.rs
+// src/mira_import/schema.rs
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

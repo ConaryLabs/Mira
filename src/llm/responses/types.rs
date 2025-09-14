@@ -79,7 +79,7 @@ pub struct Tool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<FunctionDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub web_search_preview: Option<Value>,
+    pub web_search: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_interpreter: Option<CodeInterpreterConfig>,
 }

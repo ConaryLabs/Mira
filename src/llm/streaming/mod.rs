@@ -1,4 +1,4 @@
-//! Refactored streaming module - from 219 lines to clean components
+// src/llm/streaming/mod.rs
 
 mod request;
 mod processor;
@@ -13,7 +13,6 @@ use crate::llm::client::OpenAIClient;
 
 pub type StreamResult = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
-/// Clean orchestrator for streaming responses
 pub async fn start_response_stream(
     client: &OpenAIClient,
     user_text: &str,
@@ -22,7 +21,6 @@ pub async fn start_response_stream(
 ) -> Result<StreamResult> {
     info!("Starting response stream - structured_json: {}", structured_json);
     
-    // Step 1: Build request
     let body = request::build_request_body(
         client,
         user_text,
@@ -30,16 +28,13 @@ pub async fn start_response_stream(
         structured_json
     )?;
     
-    // Step 2: Create SSE stream using client's method
     let sse_stream = client.post_response_stream(body).await?;
     
-    // Step 3: Process events
     let event_stream = processor::process_stream(sse_stream, structured_json);
     
     Ok(Box::pin(event_stream))
 }
 
-/// Compatibility wrapper for old interface
 pub async fn stream_response(
     client: &OpenAIClient,
     user_text: &str,
@@ -49,7 +44,6 @@ pub async fn stream_response(
     start_response_stream(client, user_text, system_prompt, structured_json).await
 }
 
-/// Compatibility wrapper for ChatService
 pub struct StreamingHandler {
     client: std::sync::Arc<OpenAIClient>,
 }

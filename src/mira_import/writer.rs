@@ -1,4 +1,4 @@
-// backend/src/tools/mira_import/writer.rs
+// src/mira_import/writer.rs
 
 use super::openai::MemoryEvalResult;
 use super::schema::MiraMessage;
@@ -10,12 +10,6 @@ use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::core::types::{MemoryEntry, MemoryType};
 
-/// Import a batch of messages into both SQLite and Qdrant stores as needed.
-/// - `sqlite_store`: the real SqliteMemoryStore instance
-/// - `qdrant_store`: the real QdrantMemoryStore instance
-/// - `thread_id`: session/conversation id for this batch
-/// - `messages`: all messages to import
-/// - `evals`: evaluated memory metadata (indexed by message_id)
 pub async fn insert_messages(
     sqlite_store: &SqliteMemoryStore,
     qdrant_store: &QdrantMemoryStore,
@@ -48,23 +42,19 @@ pub async fn insert_messages(
                 moderation_flag: None,
                 system_fingerprint: None,
 
-                // Robust memory extras
                 head: None,
                 is_code: None,
                 lang: None,
                 topics: None,
 
-                // Phase 4 additions
                 pinned: Some(false),
-                subject_tag: None,                 // could derive from eval if you add it
+                subject_tag: None,
                 last_accessed: Some(Utc::now()),
             };
 
-            // The `save` method now returns the entry, so we capture it.
             let saved_memory = sqlite_store.save(&memory).await?;
             if let Some(s) = saved_memory.salience {
                 if s >= 3.0 && saved_memory.embedding.is_some() {
-                    // Qdrant also needs the updated entry
                     qdrant_store.save(&saved_memory).await?;
                 }
             }

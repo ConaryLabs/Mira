@@ -1,5 +1,4 @@
 // src/api/ws/memory.rs
-// WebSocket handlers for memory operations
 
 use std::sync::Arc;
 use anyhow::{anyhow, Result};
@@ -18,7 +17,6 @@ use crate::{
 
 const DEFAULT_SESSION: &str = "peter-eternal";
 
-// Request types
 #[derive(Debug, Deserialize)]
 struct SaveMemoryRequest {
     session_id: Option<String>,
@@ -102,7 +100,6 @@ fn get_session_id(session_id: Option<String>) -> String {
     session_id.unwrap_or_else(|| DEFAULT_SESSION.to_string())
 }
 
-/// Routes memory commands to appropriate handlers
 pub async fn handle_memory_command(
     method: &str,
     params: Value,
@@ -124,8 +121,6 @@ pub async fn handle_memory_command(
         "memory.update_salience" => update_salience(params, app_state).await,
         "memory.get_stats" => get_memory_stats(params, app_state).await,
         "memory.check_qdrant" => check_qdrant_status(app_state).await,
-        
-        // Sprint 3: Manual summary triggers
         "memory.trigger_rolling_summary" => trigger_rolling_summary(params, app_state).await,
         "memory.trigger_snapshot_summary" => trigger_snapshot_summary(params, app_state).await,
         
@@ -138,7 +133,6 @@ pub async fn handle_memory_command(
     })
 }
 
-/// Saves a memory entry (user or assistant message)
 async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: SaveMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid save memory request: {}", e))?;
@@ -163,13 +157,12 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
         "assistant" => {
             use crate::llm::chat_service::ChatResponse;
             
-            // Create ChatResponse with defaults for testing
             let response = if let Some(metadata) = request.metadata {
                 ChatResponse {
                     output: request.content.clone(),
                     persona: metadata["persona"].as_str().unwrap_or("assistant").to_string(),
                     mood: metadata["mood"].as_str().unwrap_or("neutral").to_string(),
-                    salience: metadata["salience"].as_u64().unwrap_or(5) as usize,
+                    salience: metadata["salience"].as_u64().unwrap_or(5) as u8,
                     summary: metadata["summary"].as_str().unwrap_or(&request.content).to_string(),
                     memory_type: metadata["memory_type"].as_str().unwrap_or("other").to_string(),
                     tags: metadata["tags"]
@@ -183,7 +176,6 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
                     reasoning_summary: metadata["reasoning_summary"].as_str().map(String::from),
                 }
             } else {
-                // Provide sensible defaults for testing without metadata
                 ChatResponse {
                     output: request.content.clone(),
                     persona: "assistant".to_string(),
@@ -217,7 +209,6 @@ async fn save_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServer
     })
 }
 
-/// Performs semantic search across memories
 async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: SearchMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid search request: {}", e))?;
@@ -264,7 +255,6 @@ async fn search_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServ
     })
 }
 
-/// Builds conversation context with recent and semantically relevant memories
 async fn get_context(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: GetContextRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid context request: {}", e))?;
@@ -311,14 +301,12 @@ async fn get_context(params: Value, app_state: Arc<AppState>) -> Result<WsServer
     })
 }
 
-/// Pins a memory to prevent decay
 async fn pin_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: PinMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid pin request: {}", e))?;
     
     info!("Pinning memory with id: {}, pinned: {}", request.memory_id, request.pinned);
     
-    // TODO: Implement in MemoryService
     warn!("Pin operation not yet implemented");
     
     Ok(WsServerMessage::Data {
@@ -331,7 +319,6 @@ async fn pin_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsServer
     })
 }
 
-/// Unpins a memory
 async fn unpin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let memory_id = params["memory_id"].as_i64()
         .ok_or_else(|| anyhow!("memory_id is required"))?;
@@ -344,7 +331,6 @@ async fn unpin_memory(params: Value, app_state: Arc<AppState>) -> Result<WsServe
     pin_memory(unpin_params, app_state).await
 }
 
-/// Imports multiple memories
 async fn import_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: ImportMemoriesRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid import request: {}", e))?;
@@ -386,7 +372,6 @@ async fn import_memories(params: Value, app_state: Arc<AppState>) -> Result<WsSe
     })
 }
 
-/// Exports memories for a session
 async fn export_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let session_id = params["session_id"].as_str()
         .map(String::from)
@@ -409,7 +394,6 @@ async fn export_memories(params: Value, app_state: Arc<AppState>) -> Result<WsSe
     })
 }
 
-/// Gets recent memories for a session
 async fn get_recent_memories(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: GetRecentRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid get recent request: {}", e))?;
@@ -433,14 +417,12 @@ async fn get_recent_memories(params: Value, app_state: Arc<AppState>) -> Result<
     })
 }
 
-/// Deletes a memory by ID
 async fn delete_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: DeleteMemoryRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid delete request: {}", e))?;
     
     info!("Deleting memory with id: {}", request.memory_id);
     
-    // TODO: Implement in MemoryService
     warn!("Delete operation not yet implemented");
     
     Ok(WsServerMessage::Data {
@@ -452,14 +434,12 @@ async fn delete_memory(params: Value, _app_state: Arc<AppState>) -> Result<WsSer
     })
 }
 
-/// Updates the salience score of a memory
 async fn update_salience(params: Value, _app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: UpdateSalienceRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid salience update request: {}", e))?;
     
     info!("Updating salience for memory {}: {}", request.memory_id, request.salience);
     
-    // TODO: Implement in MemoryService
     warn!("Salience update not yet implemented");
     
     Ok(WsServerMessage::Data {
@@ -472,7 +452,6 @@ async fn update_salience(params: Value, _app_state: Arc<AppState>) -> Result<WsS
     })
 }
 
-/// Retrieves memory statistics for a session
 async fn get_memory_stats(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let request: GetStatsRequest = serde_json::from_value(params)
         .map_err(|e| anyhow!("Invalid stats request: {}", e))?;
@@ -501,7 +480,6 @@ async fn get_memory_stats(params: Value, app_state: Arc<AppState>) -> Result<WsS
     })
 }
 
-/// Check Qdrant configuration status
 async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let mut status = json!({
         "qdrant_url": CONFIG.qdrant_url.clone(),
@@ -532,9 +510,6 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> Result<WsServerMessage
     })
 }
 
-// Sprint 3: Manual summary triggers
-
-/// Manually trigger a rolling summary
 async fn trigger_rolling_summary(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str().map(String::from));
     let window_size = params["window_size"].as_u64().unwrap_or(10) as usize;
@@ -555,7 +530,6 @@ async fn trigger_rolling_summary(params: Value, app_state: Arc<AppState>) -> Res
     })
 }
 
-/// Manually trigger a snapshot summary
 async fn trigger_snapshot_summary(params: Value, app_state: Arc<AppState>) -> Result<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str().map(String::from));
     

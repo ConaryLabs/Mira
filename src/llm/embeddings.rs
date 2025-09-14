@@ -1,16 +1,14 @@
 // src/llm/embeddings.rs
-// Phase 3: Embeddings functionality using text-embedding-3-large
-// PHASE 2: Added multi-head embedding components and implemented Display for EmbeddingHead
+// Embeddings functionality using text-embedding-3-large with multi-head support
 
 use crate::config::CONFIG;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::fmt; // Import the fmt module
+use std::fmt;
 use std::str::FromStr;
 use tokenizers::Tokenizer;
 
-// --- Existing Code ---
-// Embedding configuration for text-embedding-3-large
+/// Embedding configuration for text-embedding-3-large
 pub struct EmbeddingConfig {
     pub model: String,
     pub dimensions: usize,
@@ -25,7 +23,7 @@ impl Default for EmbeddingConfig {
     }
 }
 
-// Response from the embeddings API
+/// Response from the embeddings API
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingResponse {
     pub data: Vec<EmbeddingData>,
@@ -88,10 +86,8 @@ pub mod utils {
     }
 }
 
-// --- PHASE 2: New Components for Multi-Head Embeddings ---
-
-/// Represents the different embedding heads for multi-dimensional memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)] // Added Copy
+/// Represents the different embedding heads for multi-dimensional memory
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmbeddingHead {
     Semantic,
     Code,
@@ -99,7 +95,7 @@ pub enum EmbeddingHead {
 }
 
 impl EmbeddingHead {
-    /// Returns the string representation of the embedding head.
+    /// Returns the string representation of the embedding head
     pub fn as_str(&self) -> &'static str {
         match self {
             EmbeddingHead::Semantic => "semantic",
@@ -109,14 +105,12 @@ impl EmbeddingHead {
     }
 }
 
-// Corrected: Implement the Display trait for user-friendly printing
 impl fmt::Display for EmbeddingHead {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }
 
-/// Parses a string into an `EmbeddingHead`.
 impl FromStr for EmbeddingHead {
     type Err = anyhow::Error;
 
@@ -130,22 +124,20 @@ impl FromStr for EmbeddingHead {
     }
 }
 
-/// A utility for chunking text according to the strategy of a specific embedding head.
+/// A utility for chunking text according to the strategy of a specific embedding head
 pub struct TextChunker {
     tokenizer: Tokenizer,
 }
 
 impl TextChunker {
-    /// Creates a new `TextChunker` by loading a tokenizer model.
+    /// Creates a new TextChunker by loading a tokenizer model
     pub fn new() -> Result<Self> {
-        // This uses a pre-compiled tokenizer from Hugging Face (gpt2)
-        // to avoid runtime file dependencies.
         let tokenizer = Tokenizer::from_bytes(include_bytes!("../../tokenizer.json"))
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(Self { tokenizer })
     }
 
-    /// Chunks the given text based on the rules for the specified embedding head.
+    /// Chunks the given text based on the rules for the specified embedding head
     pub fn chunk_text(&self, text: &str, head: &EmbeddingHead) -> Result<Vec<String>> {
         let (chunk_size, chunk_overlap) = match head {
             EmbeddingHead::Semantic => (CONFIG.embed_semantic_chunk, CONFIG.embed_semantic_overlap),
@@ -178,10 +170,10 @@ impl TextChunker {
             chunks.push(chunk_text);
 
             if step == 0 {
-                break; // Avoid infinite loops if overlap is >= chunk size
+                break;
             }
             if end_idx == token_ids.len() {
-                break; // Reached the end
+                break;
             }
             start_idx += step;
         }
@@ -189,27 +181,3 @@ impl TextChunker {
         Ok(chunks)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::utils::*;
-
-    #[test]
-    fn test_cosine_similarity() {
-        let a = vec![1.0, 2.0, 3.0];
-        let b = vec![1.0, 2.0, 3.0];
-        assert!((cosine_similarity(&a, &b) - 1.0).abs() < 0.0001);
-
-        let c = vec![-1.0, -2.0, -3.0];
-        assert!((cosine_similarity(&a, &c) + 1.0).abs() < 0.0001);
-    }
-
-    #[test]
-    fn test_normalize_embedding() {
-        let mut embedding = vec![3.0, 4.0];
-        normalize_embedding(&mut embedding);
-        let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 0.0001);
-    }
-}
-

@@ -1,6 +1,4 @@
 // src/api/ws/chat/mod.rs
-// Handles the primary WebSocket chat endpoint, connection lifecycle, and message routing.
-// Uses unified handler for all chat processing.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,13 +12,11 @@ use futures::StreamExt;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-// Module organization for WebSocket chat functionalities
 pub mod connection;
 pub mod message_router;
 pub mod heartbeat;
 pub mod unified_handler;
 
-// Re-export key components for easier access from other modules
 pub use connection::WebSocketConnection;
 pub use message_router::MessageRouter;
 pub use heartbeat::HeartbeatManager;
@@ -30,8 +26,6 @@ use crate::api::ws::message::WsClientMessage;
 use crate::state::AppState;
 use crate::utils::ConnectionGuard;
 
-/// Main WebSocket handler entry point.
-/// Upgrades the HTTP connection to a WebSocket and establishes the session.
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<Arc<AppState>>,
@@ -41,7 +35,6 @@ pub async fn ws_chat_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, app_state, addr))
 }
 
-/// Manages the entire lifecycle of a single WebSocket connection.
 async fn handle_socket(
     socket: WebSocket,
     app_state: Arc<AppState>,
@@ -52,7 +45,6 @@ async fn handle_socket(
     
     info!("WebSocket client connected from {}", addr);
 
-    // Atomically shared state for managing the connection's activity
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let last_any_send = Arc::new(Mutex::new(Instant::now()));
     let is_processing = Arc::new(Mutex::new(false));
@@ -65,13 +57,11 @@ async fn handle_socket(
         last_any_send.clone(),
     ));
 
-    // Notify the client that the connection is established and ready
     if let Err(e) = connection.send_connection_ready().await {
         error!("Failed to send connection ready message: {}", e);
         return;
     }
 
-    // Initialize and start the heartbeat manager with automatic cleanup guard
     let heartbeat_manager = Arc::new(HeartbeatManager::new(connection.clone()));
     let heartbeat_handle = tokio::spawn({
         let manager = heartbeat_manager.clone();
@@ -83,26 +73,21 @@ async fn handle_socket(
         }
     });
     
-    // Use connection guard for automatic cleanup on drop
     let _heartbeat_guard = ConnectionGuard::new(heartbeat_handle);
 
-    // Initialize the message router with unified handler support
     let router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
 
-    // Main message processing loop
     while let Some(result) = receiver.next().await {
         match result {
             Ok(Message::Text(text)) => {
                 connection.update_activity().await;
                 
-                // Parse message with optional request_id
                 let (msg, request_id) = match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(mut json_msg) => {
                         let request_id = json_msg.get("request_id")
                             .and_then(|id| id.as_str())
                             .map(String::from);
                         
-                        // Remove request_id before parsing as WsClientMessage
                         if json_msg.get("request_id").is_some() {
                             json_msg.as_object_mut().unwrap().remove("request_id");
                         }
@@ -126,7 +111,6 @@ async fn handle_socket(
                     }
                 };
                 
-                // Route the message through our unified system
                 if let Err(e) = router.route_message(msg, request_id).await {
                     error!("Error routing message: {}", e);
                 }
@@ -140,7 +124,6 @@ async fn handle_socket(
                 }
             }
             Ok(Message::Pong(_)) => {
-                // Pong received, connection is alive
                 connection.update_activity().await;
             }
             Ok(Message::Close(_)) => {
@@ -154,7 +137,6 @@ async fn handle_socket(
         }
     }
 
-    // The heartbeat guard will automatically abort the task when dropped
     info!(
         "WebSocket connection closed for {} after {:?}",
         addr,

@@ -1,5 +1,4 @@
-// src/tools/mira_import/openai.rs
-// Batch OpenAI memory_eval runner for import using GPT-5 Functions API
+// src/mira_import/openai.rs
 
 use super::schema::MiraMessage;
 use anyhow::Result;
@@ -17,16 +16,13 @@ pub struct MemoryEvalResult {
     pub embedding: Vec<f32>,
 }
 
-/// Batch evaluate messages using GPT-5 Functions API for memory metadata
-/// This is the main export for the import tool
 pub async fn batch_memory_eval(
     messages: &[MiraMessage],
-    _api_key: &str,  // Unused - kept for backward compatibility
+    _api_key: &str,
 ) -> Result<HashMap<String, MemoryEvalResult>> {
     batch_evaluate_messages(messages).await
 }
 
-/// Batch evaluate messages using GPT-5 Functions API for memory metadata
 pub async fn batch_evaluate_messages(
     messages: &[MiraMessage],
 ) -> Result<HashMap<String, MemoryEvalResult>> {
@@ -35,12 +31,11 @@ pub async fn batch_evaluate_messages(
     let mut results = HashMap::new();
 
     for msg in messages {
-        // Skip system messages
         if msg.role == "system" {
             continue;
         }
 
-        // Build the Functions API request for memory evaluation
+        // Build request using Responses API with JSON mode (Sept 2025)
         let request_body = serde_json::json!({
             "model": CONFIG.gpt5_model,
             "input": [
@@ -52,49 +47,46 @@ pub async fn batch_evaluate_messages(
                     }]
                 }
             ],
-            "functions": [
-                {
-                    "name": "memory_eval",
-                    "description": "Evaluate a message for memory storage metadata",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "salience": {
-                                "type": "number",
-                                "minimum": 1,
-                                "maximum": 10,
-                                "description": "Emotional importance (1-10)"
+            "instructions": "Analyze the message and return a JSON object with: salience (1-10 emotional importance), tags (array of contextual tags), and memory_type (feeling/fact/joke/promise/event/other).",
+            "max_output_tokens": 256,
+            "text": {
+                "verbosity": CONFIG.verbosity,
+                "format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "memory_eval",
+                        "strict": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "salience": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 10
+                                },
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "memory_type": {
+                                    "type": "string",
+                                    "enum": ["feeling", "fact", "joke", "promise", "event", "other"]
+                                }
                             },
-                            "tags": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Contextual tags for this memory"
-                            },
-                            "memory_type": {
-                                "type": "string",
-                                "enum": ["feeling", "fact", "joke", "promise", "event", "other"],
-                                "description": "Type of memory"
-                            }
-                        },
-                        "required": ["salience", "tags", "memory_type"]
+                            "required": ["salience", "tags", "memory_type"]
+                        }
                     }
                 }
-            ],
-            "function_call": {"name": "memory_eval"},
-            "parameters": {
-                "verbosity": CONFIG.verbosity,
-                "reasoning_effort": CONFIG.reasoning_effort,
-                "max_output_tokens": 256
+            },
+            "reasoning": {
+                "effort": CONFIG.reasoning_effort
             }
         });
 
-        // Make the API call with retry logic
         let response_json = retry_api_call(&client, &api_key, &request_body).await?;
 
-        // Parse the function call result
-        let eval_result = parse_function_response(&response_json)?;
+        let eval_result = parse_json_response(&response_json)?;
 
-        // Get embedding for the message
         let embedding = get_embedding(&client, &api_key, &msg.content).await?;
 
         results.insert(
@@ -107,14 +99,12 @@ pub async fn batch_evaluate_messages(
             },
         );
 
-        // Rate limiting delay
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     Ok(results)
 }
 
-/// Retry API call with exponential backoff
 async fn retry_api_call(
     client: &Client,
     api_key: &str,
@@ -126,7 +116,7 @@ async fn retry_api_call(
     
     loop {
         let response = client
-            .post(format!("{}/openai/v1/responses", CONFIG.openai_base_url))  // Fixed endpoint
+            .post(format!("{}/v1/responses", CONFIG.openai_base_url))
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
             .json(&request_body)
@@ -140,7 +130,6 @@ async fn retry_api_call(
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
         
-        // Check if error is retryable
         let is_retryable = status == 429 || status.is_server_error();
         
         if is_retryable && retry_count < max_retries {
@@ -152,7 +141,6 @@ async fn retry_api_call(
             
             tokio::time::sleep(retry_delay).await;
             
-            // Exponential backoff with cap
             retry_delay = Duration::from_millis(
                 (retry_delay.as_millis() as u64 * 2).min(10000)
             );
@@ -165,57 +153,33 @@ async fn retry_api_call(
     }
 }
 
-/// Parse function response from GPT-5 response formats
-fn parse_function_response(response: &serde_json::Value) -> Result<MemoryEvalResult> {
-    // Try unified output format first
-    if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
-        for item in output {
-            if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                if let Some(function) = item.get("function") {
-                    if function.get("name").and_then(|n| n.as_str()) == Some("memory_eval") {
-                        if let Some(args_str) = function.get("arguments").and_then(|a| a.as_str()) {
-                            return parse_eval_args(args_str);
-                        }
-                    }
-                }
-            }
-        }
-    }
+fn parse_json_response(response: &serde_json::Value) -> Result<MemoryEvalResult> {
+    // Extract text content using the same paths as main client
+    let content = if let Some(text) = response.pointer("/output/1/content/0/text").and_then(|t| t.as_str()) {
+        text
+    } else if let Some(text) = response.pointer("/output/message/content/0/text/value").and_then(|t| t.as_str()) {
+        text
+    } else if let Some(text) = response.pointer("/output/message/content/0/text").and_then(|t| t.as_str()) {
+        text
+    } else if let Some(text) = response.get("output").and_then(|o| o.as_str()) {
+        text
+    } else {
+        return Ok(MemoryEvalResult {
+            salience: 5.0,
+            tags: vec!["imported".to_string()],
+            memory_type: "other".to_string(),
+            embedding: vec![],
+        });
+    };
 
-    // Try tool_calls format (alternative format)
-    if let Some(tool_calls) = response
-        .pointer("/choices/0/message/tool_calls")
-        .and_then(|tc| tc.as_array())
-    {
-        for tool_call in tool_calls {
-            if let Some(function) = tool_call.get("function") {
-                if function.get("name").and_then(|n| n.as_str()) == Some("memory_eval") {
-                    if let Some(args_str) = function.get("arguments").and_then(|a| a.as_str()) {
-                        return parse_eval_args(args_str);
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback defaults
-    Ok(MemoryEvalResult {
-        salience: 5.0,
-        tags: vec!["imported".to_string()],
-        memory_type: "other".to_string(),
-        embedding: vec![],
-    })
-}
-
-/// Parse evaluation arguments from JSON string
-fn parse_eval_args(args_str: &str) -> Result<MemoryEvalResult> {
-    let args: serde_json::Value = serde_json::from_str(args_str)?;
+    // Parse the JSON content
+    let eval_data: serde_json::Value = serde_json::from_str(content)?;
     
     Ok(MemoryEvalResult {
-        salience: args.get("salience")
+        salience: eval_data.get("salience")
             .and_then(|s| s.as_f64())
             .unwrap_or(5.0) as f32,
-        tags: args.get("tags")
+        tags: eval_data.get("tags")
             .and_then(|t| t.as_array())
             .map(|arr| {
                 arr.iter()
@@ -223,7 +187,7 @@ fn parse_eval_args(args_str: &str) -> Result<MemoryEvalResult> {
                     .collect()
             })
             .unwrap_or_else(|| vec!["imported".to_string()]),
-        memory_type: args.get("memory_type")
+        memory_type: eval_data.get("memory_type")
             .and_then(|m| m.as_str())
             .unwrap_or("other")
             .to_string(),
@@ -231,12 +195,11 @@ fn parse_eval_args(args_str: &str) -> Result<MemoryEvalResult> {
     })
 }
 
-/// Get embedding for text using text-embedding-3-large with retry
 async fn get_embedding(client: &Client, api_key: &str, text: &str) -> Result<Vec<f32>> {
     let request_body = serde_json::json!({
         "model": "text-embedding-3-large",
         "input": text,
-        "dimensions": CONFIG.qdrant_embedding_dim  // Use config dimension
+        "dimensions": CONFIG.qdrant_embedding_dim
     });
 
     let max_retries = CONFIG.api_max_retries;
@@ -245,7 +208,7 @@ async fn get_embedding(client: &Client, api_key: &str, text: &str) -> Result<Vec
     
     loop {
         let response = client
-            .post(format!("{}/v1/embeddings", CONFIG.openai_base_url))  // Fixed endpoint
+            .post(format!("{}/v1/embeddings", CONFIG.openai_base_url))
             .header("Authorization", format!("Bearer {api_key}"))
             .header("Content-Type", "application/json")
             .json(&request_body)

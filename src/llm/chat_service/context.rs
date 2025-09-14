@@ -1,4 +1,4 @@
-// src/services/chat/context.rs
+// src/llm/chat_service/context.rs
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -31,7 +31,7 @@ impl ContextBuilder {
             config,
         }
     }
-
+    
     pub async fn build_context_with_fallbacks(
         &self,
         session_id: &str,
@@ -43,12 +43,12 @@ impl ContextBuilder {
         } else {
             0
         };
-
+        
         let context_result = self
             .memory_service
             .parallel_recall_context(session_id, user_text, recent_count, semantic_count)
             .await;
-
+            
         match context_result {
             Ok(context) => Ok(context),
             Err(e) => {
@@ -57,18 +57,21 @@ impl ContextBuilder {
             }
         }
     }
-
+    
     pub async fn build_minimal_context(&self, session_id: &str) -> Result<RecallContext> {
         info!("Building minimal context (recent messages only) for session: {}", session_id);
+        
         let recent = self
             .memory_service
             .get_recent_context(session_id, self.config.history_message_cap())
             .await?;
+            
         Ok(RecallContext::new(recent, Vec::new()))
     }
-
+    
     pub async fn get_context_stats(&self, session_id: &str) -> Result<ContextStats> {
         let memory_stats = self.memory_service.get_service_stats(session_id).await?;
+        
         Ok(ContextStats {
             total_messages: memory_stats.total_messages,
             recent_messages: memory_stats.recent_messages,
@@ -85,11 +88,11 @@ impl ContextBuilder {
             },
         })
     }
-
+    
     pub fn can_use_vector_search(&self) -> bool {
         self.config.enable_vector_search()
     }
-
+    
     pub fn config(&self) -> &ChatConfig {
         &self.config
     }

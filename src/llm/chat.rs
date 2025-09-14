@@ -1,18 +1,19 @@
+// src/llm/chat.rs
+// Chat methods for OpenAI client using GPT-5 Responses API with correct parameter structure
+
 use crate::llm::client::OpenAIClient;
 use crate::llm::schema::MiraStructuredReply;
 use anyhow::{Result, anyhow};
 use serde_json::json;
 
 impl OpenAIClient {
-    /// Persona-aware JSON reply via Responses API.
-    /// Uses `instructions` for persona (cleaner than a system turn) and enforces JSON.
+    /// Persona-aware JSON reply via Responses API
     pub async fn chat_with_custom_prompt(
         &self,
         message: &str,
         model: &str,
         system_prompt: &str,
     ) -> Result<MiraStructuredReply, anyhow::Error> {
-        // Build Responses API payload
         let input = json!([
             {
                 "role": "user",
@@ -23,17 +24,18 @@ impl OpenAIClient {
         ]);
 
         let body = json!({
-            "model": model,                 // expected to be "gpt-5"
+            "model": model,
             "input": input,
-            "instructions": system_prompt,  // persona lives here
+            "instructions": system_prompt,
+            "max_output_tokens": 128000,
             "text": { 
-                "format": "json_object",     // Use text.format instead of response_format
+                "format": {
+                    "type": "json_object"
+                },
                 "verbosity": "medium" 
             },
-            "parameters": {                  // Add proper parameters
-                "verbosity": "medium",
-                "reasoning_effort": "medium",
-                "max_output_tokens": 128000  // Maximum for GPT-5
+            "reasoning": {
+                "effort": "medium"
             }
         });
 
@@ -52,18 +54,16 @@ impl OpenAIClient {
 
         let resp_json: serde_json::Value = resp.json().await?;
 
-        // Extract unified output text from Responses payload
         let content = crate::llm::client::extract_text_from_responses(&resp_json)
             .ok_or_else(|| anyhow!("No content in GPT-5 Responses output"))?;
 
-        // Parse into your structured schema; if it fails, surface the raw content
         let reply: MiraStructuredReply = serde_json::from_str(&content)
             .map_err(|e| anyhow!("Failed to parse MiraStructuredReply: {}\nRaw content:\n{}", e, content))?;
 
         Ok(reply)
     }
 
-    /// Simple text chat via Responses API (no JSON schema required).
+    /// Simple text chat via Responses API
     pub async fn simple_chat(
         &self,
         message: &str,
@@ -86,13 +86,14 @@ impl OpenAIClient {
         ]);
 
         let body = json!({
-            "model": model,  // "gpt-5"
+            "model": model,
             "input": input,
-            "text": { "verbosity": "medium" },
-            "parameters": {
-                "verbosity": "medium",
-                "reasoning_effort": "medium",
-                "max_output_tokens": 128000  // Maximum
+            "max_output_tokens": 128000,
+            "text": { 
+                "verbosity": "medium" 
+            },
+            "reasoning": {
+                "effort": "medium"
             }
         });
 
@@ -116,8 +117,7 @@ impl OpenAIClient {
         Ok(content)
     }
 
-    /// New GPT-5 Responses API chat helper for structured persona prompts.
-    /// Wraps text in `input_text` parts and enforces JSON; resilient to API shape.
+    /// GPT-5 Responses API chat helper for structured persona prompts
     pub async fn chat_with_gpt5_responses(
         &self,
         message: &str,
@@ -141,14 +141,15 @@ impl OpenAIClient {
         let body = json!({
             "model": "gpt-5",
             "input": input,
+            "max_output_tokens": 128000,
             "text": { 
-                "format": "json_object",     // Use text.format instead of response_format
+                "format": {
+                    "type": "json_object"
+                },
                 "verbosity": "medium" 
             },
-            "parameters": {                  // Add proper parameters
-                "verbosity": "medium",
-                "reasoning_effort": "medium",
-                "max_output_tokens": 128000  // Maximum
+            "reasoning": {
+                "effort": "medium"
             }
         });
 

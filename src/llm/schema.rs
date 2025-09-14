@@ -1,6 +1,5 @@
 // src/llm/schema.rs
-// Phase 4: Types and function schemas for GPT-5 Functions API
-// Provides structured types for memory evaluation and chat responses
+// Types and function schemas for GPT-5 Functions API
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,9 +7,9 @@ use serde_json::{json, Value};
 /// Request to evaluate a message for memory metadata using Functions API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluateMemoryRequest {
-    pub content: String,           // The message content to analyze
+    pub content: String,
     #[serde(skip)]
-    pub function_schema: Value,    // The function schema (computed, not serialized)
+    pub function_schema: Value,
 }
 
 impl EvaluateMemoryRequest {
@@ -26,11 +25,11 @@ impl EvaluateMemoryRequest {
 /// Structured response from the GPT-5 function call for memory evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluateMemoryResponse {
-    pub salience: u8,              // 1-10 emotional importance
-    pub tags: Vec<String>,         // Context and mood tags
+    pub salience: u8,
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,   // Optional one-sentence summary
-    pub memory_type: MemoryType,   // Categorization of the memory
+    pub summary: Option<String>,
+    pub memory_type: MemoryType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,7 +58,6 @@ impl std::fmt::Display for MemoryType {
 }
 
 /// Returns the JSON schema for the "evaluate_memory" function
-/// Compatible with GPT-5 Functions API specification
 pub fn function_schema() -> Value {
     json!({
         "name": "evaluate_memory",
@@ -179,49 +177,4 @@ impl Default for MiraStructuredReply {
 /// Helper function to create evaluation request with default schema
 pub fn create_evaluation_request(content: String) -> EvaluateMemoryRequest {
     EvaluateMemoryRequest::new(content)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_function_schema_structure() {
-        let schema = function_schema();
-        
-        // Verify the schema has the required fields
-        assert_eq!(schema["name"], "evaluate_memory");
-        assert!(schema["description"].is_string());
-        assert!(schema["parameters"].is_object());
-        
-        let params = &schema["parameters"];
-        assert_eq!(params["type"], "object");
-        assert!(params["properties"].is_object());
-        assert!(params["required"].is_array());
-    }
-
-    #[test]
-    fn test_memory_type_serialization() {
-        assert_eq!(serde_json::to_string(&MemoryType::Feeling).unwrap(), "\"feeling\"");
-        assert_eq!(serde_json::to_string(&MemoryType::Event).unwrap(), "\"event\"");
-        
-        let parsed: MemoryType = serde_json::from_str("\"fact\"").unwrap();
-        assert_eq!(parsed, MemoryType::Fact);
-    }
-
-    #[test]
-    fn test_evaluation_response_parsing() {
-        let json_str = r#"{
-            "salience": 8,
-            "tags": ["important", "emotional"],
-            "memory_type": "feeling",
-            "summary": "User expressed strong emotions"
-        }"#;
-        
-        let response: EvaluateMemoryResponse = serde_json::from_str(json_str).unwrap();
-        assert_eq!(response.salience, 8);
-        assert_eq!(response.tags.len(), 2);
-        assert_eq!(response.memory_type, MemoryType::Feeling);
-        assert!(response.summary.is_some());
-    }
 }

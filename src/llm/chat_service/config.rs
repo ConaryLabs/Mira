@@ -1,5 +1,4 @@
-// src/services/chat/config.rs
-// Configuration management for chat services with GPT-5 robust memory support
+// src/llm/chat_service/config.rs
 
 use serde::{Deserialize, Serialize};
 use crate::config::CONFIG;
@@ -22,8 +21,6 @@ pub struct ChatConfig {
     enable_vector_search: bool,
     enable_web_search: bool,
     enable_code_interpreter: bool,
-
-    // Robust Memory Configuration
     enable_robust_memory: bool,
     embedding_heads: Vec<String>,
     enable_rolling_summaries: bool,
@@ -36,7 +33,7 @@ impl Default for ChatConfig {
         } else {
             vec!["semantic".to_string()]
         };
-
+        
         ChatConfig {
             model: CONFIG.gpt5_model.clone(),
             verbosity: CONFIG.verbosity.clone(),
@@ -57,43 +54,42 @@ impl Default for ChatConfig {
 }
 
 impl ChatConfig {
-    // Getters
     pub fn model(&self) -> &str {
         &self.model
     }
-
+    
     pub fn verbosity(&self) -> &str {
         &self.verbosity
     }
-
+    
     pub fn reasoning_effort(&self) -> &str {
         &self.reasoning_effort
     }
-
+    
     pub fn max_output_tokens(&self) -> usize {
         self.max_output_tokens
     }
-
+    
     pub fn history_message_cap(&self) -> usize {
         self.history_message_cap
     }
-
+    
     pub fn history_token_limit(&self) -> usize {
         self.history_token_limit
     }
-
+    
     pub fn max_retrieval_tokens(&self) -> usize {
         self.max_retrieval_tokens
     }
-
+    
     pub fn max_vector_search_results(&self) -> usize {
         self.max_vector_search_results
     }
-
+    
     pub fn enable_vector_search(&self) -> bool {
         self.enable_vector_search
     }
-
+    
     pub fn enable_robust_memory(&self) -> bool {
         self.enable_robust_memory
     }

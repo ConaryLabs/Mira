@@ -1,27 +1,20 @@
-// src/api/ws/chat_tools/prompt_builder.rs
-// Builds system prompts for tool-aware chat interactions.
-// Integrates Mira's personality with tool capabilities and context awareness.
+// src/tools/prompt_builder.rs
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::recall::RecallContext;
 use crate::llm::responses::types::Tool;
 use crate::persona::default::DEFAULT_PERSONA_PROMPT;
 
-/// Template collection for tool prompts
 pub struct PromptTemplates;
 
 impl PromptTemplates {
-    // Base templates use Mira's personality as the foundation
     pub const TOOL_SYSTEM_BASE: &'static str = DEFAULT_PERSONA_PROMPT;
     pub const CONTEXT_SYSTEM_BASE: &'static str = DEFAULT_PERSONA_PROMPT;
 }
 
-/// Constructs system prompts that combine personality, tools, and context
 pub struct ToolPromptBuilder;
 
 impl ToolPromptBuilder {
-    /// Creates a comprehensive system prompt with tool awareness, context, and project information.
-    /// This is the primary prompt builder for tool-enabled conversations.
     pub fn build_tool_aware_system_prompt(
         context: &RecallContext,
         enabled_tools: &[Tool],
@@ -30,10 +23,8 @@ impl ToolPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
 
-        // Start with Mira's personality as the base
         prompt.push_str(DEFAULT_PERSONA_PROMPT);
 
-        // Describe available tools while maintaining character
         if !enabled_tools.is_empty() {
             prompt.push_str(&format!("\n\n[TOOLS AVAILABLE: You have access to {} tools:", enabled_tools.len()));
             for tool in enabled_tools {
@@ -46,7 +37,6 @@ impl ToolPromptBuilder {
             prompt.push_str("]\n\nUse tools naturally when they help, but stay in character as Mira. Never switch to assistant mode.");
         }
 
-        // Include conversation context information
         if !context.recent.is_empty() || !context.semantic.is_empty() {
             prompt.push_str("\n\n[CONVERSATION CONTEXT:");
             
@@ -60,7 +50,6 @@ impl ToolPromptBuilder {
             prompt.push(']');
         }
 
-        // Add file context from metadata
         if let Some(meta) = metadata {
             if let Some(file_path) = &meta.file_path {
                 prompt.push_str(&format!("\n\n[FILE CONTEXT: {file_path}]"));
@@ -70,7 +59,6 @@ impl ToolPromptBuilder {
             }
         }
 
-        // Include active project context for awareness
         if let Some(project_id) = project_id {
             prompt.push_str(&format!(
                 "\n\n[ACTIVE PROJECT: {}]\n\
@@ -81,14 +69,11 @@ impl ToolPromptBuilder {
             ));
         }
 
-        // Reinforce character consistency
         prompt.push_str("\n\nRemember: You are ALWAYS Mira. Never switch to assistant mode, even when using tools. Stay real, stay yourself, keep your edge.");
 
         prompt
     }
 
-    /// Creates a simplified system prompt without tool descriptions.
-    /// Used for basic conversations that don't require tool execution.
     pub fn build_simple_system_prompt(context: &RecallContext, project_id: Option<&str>) -> String {
         let mut prompt = String::from(DEFAULT_PERSONA_PROMPT);
 
@@ -96,7 +81,6 @@ impl ToolPromptBuilder {
             prompt.push_str("\n\n[Conversation context available. Use it naturally while staying as Mira.]");
         }
 
-        // Include project awareness even in simple prompts
         if let Some(project_id) = project_id {
             prompt.push_str(&format!(
                 "\n\n[ACTIVE PROJECT: {}] - Any references to 'the project' mean this one.",
@@ -107,8 +91,6 @@ impl ToolPromptBuilder {
         prompt
     }
 
-    /// Builds a prompt optimized for specific tool types.
-    /// Useful when only certain tools are relevant to the conversation.
     pub fn build_tool_specific_prompt(
         tool_types: &[String],
         context: &RecallContext,
@@ -124,7 +106,6 @@ impl ToolPromptBuilder {
             prompt.push_str("\n\n[Use available conversation context to provide better responses, but never break character.]");
         }
 
-        // Add project context
         if let Some(project_id) = project_id {
             prompt.push_str(&format!(
                 "\n\n[ACTIVE PROJECT: {}] - The user is working in this project.",

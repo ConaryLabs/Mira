@@ -1,5 +1,4 @@
-// src/services/file_context.rs
-// Determines if a user's message requires the content of a file they are currently viewing.
+// src/tools/file_context.rs
 
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
@@ -13,14 +12,12 @@ use crate::{
     config::CONFIG,
 };
 
-/// Service to analyze user intent regarding file content.
 #[derive(Clone)]
 pub struct FileContextService {
     llm_client: Arc<OpenAIClient>,
     git_client: Arc<GitClient>,
 }
 
-/// Represents the analyzed intent of a user's message regarding a file.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileIntent {
     pub needs_file_content: bool,
@@ -41,7 +38,6 @@ impl FileContextService {
         }
     }
     
-    /// Checks if a user's message implies a need for the content of the currently viewed file.
     pub async fn check_intent(&self, message: &str, metadata: &MessageMetadata) -> Result<FileIntent> {
         let model = &CONFIG.intent_model;
         let file_path = metadata.file_path.as_deref().unwrap_or("unknown");
@@ -95,7 +91,6 @@ Respond with JSON:
         Ok(intent)
     }
 
-    /// Retrieves file content if the user's intent meets a certain confidence threshold.
     pub async fn get_context_if_needed(
         &self,
         message: &str,
@@ -155,7 +150,6 @@ Respond with JSON:
         }
     }
 
-    /// Formats the file path and content for inclusion in a prompt.
     pub fn format_file_context(&self, file_path: &str, content: &str, language: Option<&str>) -> String {
         let lang = language.unwrap_or("text");
         
@@ -164,7 +158,6 @@ Respond with JSON:
         )
     }
 
-    /// Retrieves statistics about the service's operation.
     pub fn get_stats(&self) -> FileContextStats {
         FileContextStats {
             total_checks: 0,
@@ -174,7 +167,6 @@ Respond with JSON:
     }
 }
 
-/// Contains statistics about file context operations.
 #[derive(Debug, Serialize)]
 pub struct FileContextStats {
     pub total_checks: u64,

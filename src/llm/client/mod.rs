@@ -22,13 +22,11 @@ pub use responses::{ResponseOutput, extract_text_from_responses};
 pub use streaming::ResponseStream;
 pub use embedding::EmbeddingClient;
 
-// Rate limiting support
 use governor::{Quota, RateLimiter as GovRateLimiter, Jitter};
 use governor::clock::DefaultClock;
 use governor::state::{InMemoryState, NotKeyed};
 use std::num::NonZeroU32;
 
-/// Rate limiter for API calls
 struct RateLimiter {
     limiter: Arc<GovRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     jitter: Jitter,
@@ -56,7 +54,6 @@ impl RateLimiter {
     }
 }
 
-/// Main OpenAI client with refactored architecture
 pub struct OpenAIClient {
     client: ReqwestClient,
     config: ClientConfig,
@@ -65,7 +62,6 @@ pub struct OpenAIClient {
 }
 
 impl OpenAIClient {
-    /// Create new OpenAI client from environment configuration
     pub fn new() -> Result<Arc<Self>> {
         let config = ClientConfig::from_env()?;
         config.validate()?;
@@ -75,7 +71,6 @@ impl OpenAIClient {
             config.model(), config.verbosity(), config.reasoning_effort(), config.max_output_tokens()
         );
 
-        // Enhanced client with connection pooling for GPT-5 performance
         let client = ReqwestClient::builder()
             .timeout(Duration::from_secs(CONFIG.openai_timeout))
             .pool_max_idle_per_host(10)
@@ -85,7 +80,6 @@ impl OpenAIClient {
 
         let embedding_client = EmbeddingClient::new(config.clone());
         
-        // Create rate limiter based on config
         let rate_limiter = Arc::new(RateLimiter::new(CONFIG.rate_limit_chat as u32)?);
 
         Ok(Arc::new(Self {
@@ -112,7 +106,6 @@ impl OpenAIClient {
         self.config.max_output_tokens()
     }
 
-    /// Generate a response using the GPT-5 Responses API (non-streaming)
     pub async fn generate_response(
         &self,
         user_text: &str,
@@ -142,12 +135,10 @@ impl OpenAIClient {
         Ok(ResponseOutput::with_raw(text_content, response_value))
     }
 
-    /// Stream a response using the GPT-5 Responses API (SSE)
     pub async fn stream_response(&self, body: Value) -> Result<ResponseStream> {
         self.post_response_stream(body).await
     }
 
-    /// Conversation summarization with proper text output format
     pub async fn summarize_conversation(
         &self,
         prompt: &str,
@@ -155,7 +146,6 @@ impl OpenAIClient {
     ) -> Result<String> {
         info!("Generating conversation summary with GPT-5");
         
-        // Build the request with LATEST GPT-5 API structure (Sept 2025)
         let body = json!({
             "model": CONFIG.gpt5_model,
             "input": [{
@@ -167,10 +157,10 @@ impl OpenAIClient {
             }],
             "instructions": "Create a concise, factual summary of the conversation. Focus on key points, decisions, and important context.",
             "text": {
+                "verbosity": "low",
                 "format": {
                     "type": "text"
-                },
-                "verbosity": "low"
+                }
             },
             "reasoning": {
                 "effort": "low"
@@ -183,7 +173,6 @@ impl OpenAIClient {
 
         let response = self.post_response_with_retry(body).await?;
         
-        // Log the response structure for debugging
         if response.get("output").and_then(|o| o.as_array()).map(|a| a.is_empty()).unwrap_or(false) {
             error!("GPT-5 returned empty output array for summarization");
             return Err(anyhow::anyhow!("GPT-5 returned empty output for summarization"));
@@ -196,7 +185,6 @@ impl OpenAIClient {
             })
     }
 
-    /// Classifies text using GPT-5 Responses API with JSON mode
     pub async fn classify_text(&self, text: &str) -> Result<Classification> {
         info!("Classifying text with GPT-5 Responses API");
         
@@ -226,6 +214,9 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
                     "type": "json_object"
                 }
             },
+            "reasoning": {
+                "effort": "minimal"
+            },
             "max_output_tokens": CONFIG.get_json_max_tokens()
         });
 
@@ -247,14 +238,12 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
             })
     }
 
-    /// Raw HTTP POST to the Responses API with retry logic
     pub async fn post_response_with_retry(&self, body: Value) -> Result<Value> {
         let max_retries = CONFIG.api_max_retries;
         let mut retry_count = 0;
         let mut retry_delay = Duration::from_millis(CONFIG.api_retry_delay_ms);
 
         loop {
-            // Apply rate limiting
             self.rate_limiter.acquire().await?;
 
             match self.post_response_internal(body.clone()).await {
@@ -262,7 +251,6 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
                 Err(e) => {
                     let error_str = e.to_string();
                     
-                    // Check if error is retryable
                     let is_retryable = error_str.contains("429") || 
                                       error_str.contains("500") || 
                                       error_str.contains("502") || 
@@ -278,7 +266,6 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
                         
                         tokio::time::sleep(retry_delay).await;
                         
-                        // Exponential backoff
                         retry_delay = Duration::from_millis(
                             (retry_delay.as_millis() as u64 * 2).min(10000)
                         );
@@ -291,11 +278,13 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
         }
     }
 
-    /// Internal POST method without retry
     async fn post_response_internal(&self, body: Value) -> Result<Value> {
+        let url = format!("{}/v1/responses", &self.config.base_url());
+        debug!("Making request to: {}", url);
+        
         let response = self
             .client
-            .post(format!("{}/openai/v1/responses", &self.config.base_url()))
+            .post(url)
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
@@ -305,41 +294,52 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("API request failed with status {}: {}", status, error_text));
+            return Err(anyhow::anyhow!("OpenAI API error ({} {}): {}", 
+                status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text));
         }
 
         let response_data: Value = response.json().await?;
         Ok(response_data)
     }
 
-    /// Raw HTTP POST to the Responses API (backward compatibility)
     pub async fn post_response(&self, body: Value) -> Result<Value> {
         self.post_response_with_retry(body).await
     }
 
-    /// Raw HTTP POST to streaming Responses API
     pub async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
-        // Apply rate limiting before streaming
         self.rate_limiter.acquire().await?;
         streaming::create_sse_stream(&self.client, &self.config, body).await
     }
 
-    /// Generic request builder - Fixed to not double /v1
     pub fn request(&self, method: reqwest::Method, endpoint: &str) -> reqwest::RequestBuilder {
+        let url = if endpoint.starts_with("/v1/") {
+            format!("{}{}", self.config.base_url(), endpoint)
+        } else if endpoint.starts_with("v1/") {
+            format!("{}/{}", self.config.base_url(), endpoint)
+        } else {
+            format!("{}/v1/{}", self.config.base_url(), endpoint)
+        };
+        
         self.client
-            .request(method, format!("{}/{}", self.config.base_url(), endpoint))
+            .request(method, url)
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
             .header(header::CONTENT_TYPE, "application/json")
     }
 
-    /// Multipart request builder - Fixed to not double /v1
     pub fn request_multipart(&self, endpoint: &str) -> reqwest::RequestBuilder {
+        let url = if endpoint.starts_with("/v1/") {
+            format!("{}{}", self.config.base_url(), endpoint)
+        } else if endpoint.starts_with("v1/") {
+            format!("{}/{}", self.config.base_url(), endpoint)
+        } else {
+            format!("{}/v1/{}", self.config.base_url(), endpoint)
+        };
+        
         self.client
-            .post(format!("{}/{}", self.config.base_url(), endpoint))
+            .post(url)
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
     }
 
-    /// Get embeddings for text with automatic retry
     pub async fn get_embeddings(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let max_retries = CONFIG.api_max_retries;
         let mut retry_count = 0;
@@ -359,17 +359,14 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
         }
     }
 
-    /// Get single embedding for text
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
         self.embedding_client.get_embedding(text).await
     }
 
-    /// Get reference to embedded configuration
     pub fn config(&self) -> &ClientConfig {
         &self.config
     }
 
-    /// Get reference to embedding client
     pub fn embedding_client(&self) -> &EmbeddingClient {
         &self.embedding_client
     }

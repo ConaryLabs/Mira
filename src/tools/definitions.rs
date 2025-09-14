@@ -1,112 +1,17 @@
-// src/services/chat_with_tools.rs
-// PHASE 3 UPDATE: Added file search and image generation tools to get_enabled_tools()
-// FIXED: Use proper FunctionDefinition structure instead of json!() values
+// src/tools/definitions.rs
 
-use std::sync::Arc;
-use serde::{Serialize, Deserialize};
 use serde_json::json;
-use anyhow::Result;
-use async_trait::async_trait;
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::llm::chat_service::{ChatService, ChatResponse};
 use crate::llm::responses::types::{Tool, FunctionDefinition, CodeInterpreterConfig, ContainerConfig};
 use crate::config::CONFIG;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub tool_type: String,
-    pub tool_id: String,
-    pub status: String,
-    pub result: Option<serde_json::Value>,
-    pub error: Option<String>,
-    pub metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Citation {
-    pub file_id: Option<String>,
-    pub filename: Option<String>,
-    pub url: Option<String>,
-    pub snippet: Option<String>,
-    pub title: Option<String>,
-    pub source_type: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatResponseWithTools {
-    pub base: ChatResponse,
-    pub tool_results: Option<Vec<ToolResult>>,
-    pub citations: Option<Vec<Citation>>,
-    pub previous_response_id: Option<String>,
-}
-
-#[async_trait]
-pub trait ChatServiceToolExt {
-    async fn chat_with_tools(
-        &self,
-        session_id: &str,
-        message: &str,
-        project_id: Option<&str>,
-        file_context: Option<serde_json::Value>,
-    ) -> Result<ChatResponseWithTools>;
-}
-
-pub trait ChatServiceWithTools {
-    fn chat_service(&self) -> Arc<ChatService>;
-}
-
-#[async_trait]
-impl ChatServiceToolExt for ChatService {
-    async fn chat_with_tools(
-        &self,
-        session_id: &str,
-        message: &str,
-        project_id: Option<&str>,
-        _file_context: Option<serde_json::Value>,
-    ) -> Result<ChatResponseWithTools> {
-        info!("Processing chat with tools for session: {}", session_id);
-        
-        let base_response = self.chat(session_id, message, project_id).await?;
-        
-        let tool_results = if CONFIG.enable_chat_tools {
-            Some(vec![
-                ToolResult {
-                    tool_type: "web_search_preview".to_string(),
-                    tool_id: "search_1".to_string(),
-                    status: "completed".to_string(),
-                    result: Some(json!({
-                        "query": message,
-                        "results_count": 0
-                    })),
-                    error: None,
-                    metadata: Some(json!({
-                        "search_time_ms": 150
-                    })),
-                },
-            ])
-        } else {
-            None
-        };
-
-        Ok(ChatResponseWithTools {
-            base: base_response,
-            tool_results,
-            citations: None,
-            previous_response_id: None,
-        })
-    }
-}
-
-/// Get list of enabled tools based on configuration
-/// PHASE 3 UPDATE: Added file search and image generation tools with proper FunctionDefinition
 pub fn get_enabled_tools() -> Vec<Tool> {
     let mut tools = Vec::new();
     
-    // Web search preview (enabled by default when tools are enabled)
     if CONFIG.enable_web_search {
         tools.push(Tool {
-            tool_type: "web_search_preview".to_string(),
+            tool_type: "web_search".to_string(),
             function: Some(FunctionDefinition {
                 name: "web_search".to_string(),
                 description: "Search the web for current information, news, or real-time data. Use when the user asks about recent events, current data, or information that might not be in training data.".to_string(),
@@ -126,17 +31,16 @@ pub fn get_enabled_tools() -> Vec<Tool> {
                     "required": ["query"]
                 }),
             }),
-            web_search_preview: None,
+            web_search: None,
             code_interpreter: None,
         });
     }
 
-    // Code interpreter (enabled by default when tools are enabled)
     if CONFIG.enable_code_interpreter {
         tools.push(Tool {
             tool_type: "code_interpreter".to_string(),
             function: None,
-            web_search_preview: None,
+            web_search: None,
             code_interpreter: Some(CodeInterpreterConfig {
                 container: ContainerConfig {
                     container_type: "python".to_string(),
@@ -145,7 +49,6 @@ pub fn get_enabled_tools() -> Vec<Tool> {
         });
     }
 
-    // PHASE 3 NEW: File search tool
     if CONFIG.enable_file_search {
         tools.push(Tool {
             tool_type: "file_search".to_string(),
@@ -176,12 +79,11 @@ pub fn get_enabled_tools() -> Vec<Tool> {
                     "required": ["query"]
                 }),
             }),
-            web_search_preview: None,
+            web_search: None,
             code_interpreter: None,
         });
     }
     
-    // PHASE 3 NEW: Image generation tool
     if CONFIG.enable_image_generation {
         tools.push(Tool {
             tool_type: "image_generation".to_string(),
@@ -214,7 +116,7 @@ pub fn get_enabled_tools() -> Vec<Tool> {
                     "required": ["prompt"]
                 }),
             }),
-            web_search_preview: None,
+            web_search: None,
             code_interpreter: None,
         });
     }

@@ -1,4 +1,5 @@
 // src/llm/client/streaming.rs
+// Fixed version with corrected API endpoint
 
 use std::pin::Pin;
 
@@ -21,7 +22,7 @@ pub async fn create_sse_stream(
     body: Value,
 ) -> Result<ResponseStream> {
     let req = client
-        .post(format!("{}/openai/v1/responses", config.base_url()))  // Fixed: /openai/v1/responses
+        .post(format!("{}/v1/responses", config.base_url()))  // FIXED: removed /openai prefix
         .header(header::AUTHORIZATION, format!("Bearer {}", config.api_key()))
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "text/event-stream")
@@ -218,100 +219,65 @@ impl StreamProcessor {
     }
     
     /// Process a streaming chunk and update internal state
-    pub fn process_chunk(&mut self, chunk: &Value) -> ProcessResult {
-        let mut result = ProcessResult::default();
-        
+    pub fn process_chunk(&mut self, chunk: &Value) -> Option<StreamingEvent> {
         // Extract content delta
         if let Some(content) = extract_content_from_chunk(chunk) {
             self.content_buffer.push_str(&content);
-            result.content_delta = Some(content);
+            return Some(StreamingEvent::ContentDelta(content));
         }
         
-        // Extract tool calls
-        let tool_calls = extract_tool_calls_from_chunk(chunk);
-        if !tool_calls.is_empty() {
-            self.tool_calls_buffer.extend(tool_calls.clone());
-            result.tool_calls = Some(tool_calls);
-        }
-        
-        // Extract usage info
-        if let Some(usage) = extract_usage_from_chunk(chunk) {
-            self.usage_info = Some(usage.clone());
-            result.usage = Some(usage);
-        }
-        
-        // Check completion
-        result.is_complete = is_completion_chunk(chunk);
-        
-        result
-    }
-    
-    /// Get the accumulated content
-    pub fn get_content(&self) -> &str {
-        &self.content_buffer
-    }
-    
-    /// Get the accumulated tool calls
-    pub fn get_tool_calls(&self) -> &[ToolCallDelta] {
-        &self.tool_calls_buffer
-    }
-    
-    /// Get usage information
-    pub fn get_usage(&self) -> Option<&StreamingUsage> {
-        self.usage_info.as_ref()
-    }
-}
-
-/// Result of processing a single chunk
-#[derive(Debug, Default)]
-pub struct ProcessResult {
-    pub content_delta: Option<String>,
-    pub tool_calls: Option<Vec<ToolCallDelta>>,
-    pub usage: Option<StreamingUsage>,
-    pub is_complete: bool,
-}
-
-impl Default for StreamProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Extract tool calls from streaming chunk
-pub fn extract_tool_calls_from_chunk(chunk: &Value) -> Vec<ToolCallDelta> {
-    let mut tool_calls = Vec::new();
-    
-    // Try different paths for tool call extraction
-    if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
-        for choice in choices {
-            if let Some(delta) = choice.get("delta") {
-                if let Some(calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
-                    for call in calls {
-                        if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(call.clone()) {
-                            tool_calls.push(tool_call);
-                        }
+        // Check for tool call deltas
+        if let Some(tool_calls) = chunk.pointer("/choices/0/delta/tool_calls") {
+            if let Some(calls) = tool_calls.as_array() {
+                for call in calls {
+                    if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(call.clone()) {
+                        self.tool_calls_buffer.push(tool_call.clone());
+                        return Some(StreamingEvent::ToolCallDelta(tool_call));
                     }
                 }
             }
         }
-    }
-    
-    // Response API format
-    if let Some(output) = chunk.get("output").and_then(|o| o.as_array()) {
-        for item in output {
-            if item.get("type").and_then(|t| t.as_str()) == Some("tool_call") {
-                if let Ok(tool_call) = serde_json::from_value::<ToolCallDelta>(item.clone()) {
-                    tool_calls.push(tool_call);
-                }
+        
+        // Check for usage information
+        if let Some(usage) = chunk.get("usage") {
+            if let Ok(usage_info) = serde_json::from_value::<StreamingUsage>(usage.clone()) {
+                self.usage_info = Some(usage_info.clone());
+                return Some(StreamingEvent::Usage(usage_info));
             }
         }
+        
+        // Check for completion
+        if is_completion_chunk(chunk) {
+            return Some(StreamingEvent::Complete {
+                content: self.content_buffer.clone(),
+                tool_calls: self.tool_calls_buffer.clone(),
+                usage: self.usage_info.clone(),
+            });
+        }
+        
+        None
     }
     
-    tool_calls
+    /// Get accumulated content
+    pub fn get_content(&self) -> &str {
+        &self.content_buffer
+    }
+    
+    /// Get accumulated tool calls
+    pub fn get_tool_calls(&self) -> &[ToolCallDelta] {
+        &self.tool_calls_buffer
+    }
 }
 
-/// Extract usage information from final chunk
-pub fn extract_usage_from_chunk(chunk: &Value) -> Option<StreamingUsage> {
-    chunk.get("usage")
-        .and_then(|u| serde_json::from_value(u.clone()).ok())
+/// Events emitted during streaming
+#[derive(Debug, Clone)]
+pub enum StreamingEvent {
+    ContentDelta(String),
+    ToolCallDelta(ToolCallDelta),
+    Usage(StreamingUsage),
+    Complete {
+        content: String,
+        tool_calls: Vec<ToolCallDelta>,
+        usage: Option<StreamingUsage>,
+    },
 }

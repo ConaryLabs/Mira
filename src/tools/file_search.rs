@@ -1,24 +1,20 @@
-// src/services/file_search.rs
-// File search service for project-aware document search
+// src/tools/file_search.rs
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::info;
-
 use crate::llm::responses::VectorStoreManager;
 use crate::git::GitClient;
 use crate::config::CONFIG;
 
-/// File search service for finding content within project repositories
 #[derive(Clone)]
 pub struct FileSearchService {
     vector_store_manager: Arc<VectorStoreManager>,
     git_client: GitClient,
 }
 
-/// Search result for individual files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSearchResult {
     pub file_path: String,
@@ -29,7 +25,6 @@ pub struct FileSearchResult {
     pub match_type: SearchMatchType,
 }
 
-/// Type of search match found
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SearchMatchType {
     ContentMatch,
@@ -38,7 +33,6 @@ pub enum SearchMatchType {
     FunctionMatch,
 }
 
-/// Parameters for file search requests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSearchParams {
     pub query: String,
@@ -57,7 +51,6 @@ impl FileSearchService {
         }
     }
     
-    /// Search files - minimal implementation to satisfy the executor
     pub async fn search_files(
         &self,
         params: &FileSearchParams,
@@ -67,7 +60,6 @@ impl FileSearchService {
         
         let max_files = params.max_files.unwrap_or(CONFIG.file_search_max_files);
         
-        // Try vector store search
         let results = if let Ok(vector_results) = self.vector_store_manager
             .search_documents(project_id, &params.query, max_files)
             .await 
