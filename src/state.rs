@@ -100,7 +100,7 @@ pub async fn create_app_state(
     let file_search_service = Arc::new(FileSearchService::new(vector_store_manager.clone(), git_client.clone()));
     
     // Create default persona for chat service initialization
-    let default_persona = PersonaOverlay::mira();
+    let default_persona = PersonaOverlay::Default;
     
     // Create chat service
     let chat_config = ChatConfig::default();

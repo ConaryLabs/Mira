@@ -1,6 +1,5 @@
 // src/llm/client/embedding.rs
 // Handles text embedding generation using OpenAI's embedding models.
-// SPRINT 2 OPTIMIZATION: Batch embedding support confirmed and optimized
 
 use anyhow::{anyhow, Result};
 use reqwest::{header, Client};
@@ -74,20 +73,14 @@ impl EmbeddingClient {
         Ok(embedding)
     }
 
-    /// SPRINT 2 OPTIMIZATION: Batch embedding implementation
-    /// Generates embeddings for multiple texts in a single batch request using the default model.
-    /// This reduces API calls by up to 100x for large batches!
+    /// Generates embeddings for multiple texts in a single batch request.
+    /// Processes up to 100 texts in a single API call, reducing API calls by 90%+.
     pub async fn get_embeddings_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         self.get_embeddings_batch_with_model(texts, "text-embedding-3-large", Some(3072)).await
     }
 
-    /// SPRINT 2 OPTIMIZATION: Core batch embedding functionality
-    /// Generates embeddings for multiple texts in a single batch request.
-    /// 
-    /// # Performance Notes
-    /// - Processes up to 100 texts in a single API call
-    /// - Reduces API calls by 90%+ compared to individual requests
-    /// - Maintains exact order of embeddings matching input texts
+    /// Generates embeddings for multiple texts with a specific model.
+    /// Maintains exact order of embeddings matching input texts.
     pub async fn get_embeddings_batch_with_model(
         &self,
         texts: &[String],
@@ -106,14 +99,14 @@ impl EmbeddingClient {
 
         let mut body = json!({
             "model": model,
-            "input": texts,  // Send entire array at once!
+            "input": texts,
         });
 
         if let Some(dims) = dimensions {
             body["dimensions"] = json!(dims);
         }
 
-        info!("🚀 BATCH EMBEDDING: Requesting embeddings for {} texts in ONE API call", texts.len());
+        info!("Batch embedding: requesting embeddings for {} texts in one API call", texts.len());
         debug!("Total characters to embed: {}", texts.iter().map(|t| t.len()).sum::<usize>());
 
         let response = self
@@ -150,19 +143,18 @@ impl EmbeddingClient {
             .map(|item| item.embedding)
             .collect();
         
-        info!("✅ BATCH EMBEDDING SUCCESS: Generated {} embeddings in 1 API call (saved {} calls!)", 
+        info!("Batch embedding success: generated {} embeddings (saved {} API calls)", 
               texts.len(), texts.len() - 1);
         
-        // Log token usage for cost tracking
-        info!("📊 Token usage - Prompt: {}, Total: {}", 
+        info!("Token usage - Prompt: {}, Total: {}", 
               result.usage.prompt_tokens, 
               result.usage.total_tokens);
         
         Ok(embeddings)
     }
 
-    /// Splits texts into optimal batches for processing
-    /// Use this when you have more than 100 texts to embed
+    /// Splits texts into optimal batches for processing.
+    /// Use this when you have more than 100 texts to embed.
     pub async fn get_embeddings_batch_chunked(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         const MAX_BATCH_SIZE: usize = 100;
         let mut all_embeddings = Vec::new();
@@ -220,14 +212,14 @@ impl EmbeddingUtils {
         chunks
     }
 
-    /// Estimates the token count for embedding cost calculation
-    /// Rough estimate: ~4 characters per token
+    /// Estimates the token count for embedding cost calculation.
+    /// Rough estimate: ~4 characters per token.
     pub fn estimate_tokens(texts: &[String]) -> usize {
         texts.iter().map(|t| (t.len() + 3) / 4).sum()
     }
 
-    /// Calculates estimated cost for embeddings
-    /// Based on text-embedding-3-large pricing: $0.00013 per 1K tokens
+    /// Calculates estimated cost for embeddings.
+    /// Based on text-embedding-3-large pricing: $0.00013 per 1K tokens.
     pub fn estimate_cost(texts: &[String]) -> f64 {
         let tokens = Self::estimate_tokens(texts);
         (tokens as f64 / 1000.0) * 0.00013

@@ -21,7 +21,7 @@ pub async fn create_sse_stream(
     body: Value,
 ) -> Result<ResponseStream> {
     let req = client
-        .post(format!("{}/responses", config.base_url()))
+        .post(format!("{}/openai/v1/responses", config.base_url()))  // Fixed: /openai/v1/responses
         .header(header::AUTHORIZATION, format!("Bearer {}", config.api_key()))
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "text/event-stream")

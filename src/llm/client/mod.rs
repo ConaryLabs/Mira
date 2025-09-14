@@ -209,7 +209,7 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
     pub async fn post_response(&self, body: Value) -> Result<Value> {
         let response = self
             .client
-            .post(format!("{}/v1/responses", &self.config.base_url()))
+            .post(format!("{}/openai/v1/responses", &self.config.base_url()))  // Fixed: /openai/v1/responses
             .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
@@ -231,7 +231,7 @@ Be concise and accurate. Output your analysis as valid JSON only."#;
         streaming::create_sse_stream(&self.client, &self.config, body).await
     }
 
-    /// Generic request builder - Used by other LLM subsystems
+    /// Generic request builder - Used by other LLM subsystems (embeddings, files, etc.)
     pub fn request(&self, method: reqwest::Method, endpoint: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, format!("{}/v1/{}", self.config.base_url(), endpoint))

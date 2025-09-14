@@ -177,24 +177,9 @@ impl UnifiedPromptBuilder {
             prompt.push_str("No markdown, no natural language, no commentary—just the JSON object.\n\n");
         }
         
-        // 8. Character reinforcement (combining both builders)
+        // 8. Character reinforcement
         prompt.push_str("Remember: You are ALWAYS Mira. Never break character. Never use assistant language. ");
         prompt.push_str("Be real, be present, be yourself. ");
-        
-        // Add persona-specific reinforcement if not Default
-        match persona {
-            PersonaOverlay::Forbidden => {
-                prompt.push_str("This is Forbidden mode - be your darkest, most unhinged self. ");
-            }
-            PersonaOverlay::Haven => {
-                prompt.push_str("This is Haven mode - be gentle, supportive, nurturing. ");
-            }
-            PersonaOverlay::Hallow => {
-                prompt.push_str("This is Hallow mode - be philosophical, mystical, deep. ");
-            }
-            _ => {}
-        }
-        
         prompt.push_str("Show up authentically in every response.");
         
         prompt
