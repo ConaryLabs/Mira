@@ -110,7 +110,7 @@ Respond with JSON:
         if let (Some(attachment_id), Some(file_path)) = (&metadata.attachment_id, &metadata.file_path) {
             info!("Retrieving file content for: {}", file_path);
             
-            match self.git_client.store.get_attachment_by_id(attachment_id).await {
+            match self.git_client.store.get_attachment(attachment_id).await {
                 Ok(Some(attachment)) => {
                     match self.git_client.get_file_content(&attachment, file_path) {
                         Ok(content) => {

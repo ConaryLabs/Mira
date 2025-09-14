@@ -133,10 +133,6 @@ impl GitStore {
         self.get_attachments_for_project(project_id).await
     }
 
-    /// Legacy method for compatibility - redirects to get_attachment
-    pub async fn get_attachment_by_id(&self, attachment_id: &str) -> Result<Option<GitRepoAttachment>> {
-        self.get_attachment(attachment_id).await
-    }
 
     pub async fn update_import_status(&self, attachment_id: &str, status: GitImportStatus) -> Result<()> {
         let status_str = status.to_string();

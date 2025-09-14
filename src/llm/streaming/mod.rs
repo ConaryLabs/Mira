@@ -73,7 +73,7 @@ impl StreamingHandler {
         
         while let Some(event) = stream.next().await {
             match event? {
-                StreamEvent::Delta(text) | StreamEvent::Text(text) => {
+                StreamEvent::Delta(text) => {
                     full_response.push_str(&text);
                 }
                 StreamEvent::Done { full_text, .. } => {

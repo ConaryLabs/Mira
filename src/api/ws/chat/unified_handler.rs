@@ -6,6 +6,7 @@ use futures::{Stream, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tracing::{debug, info, warn, error};
+use tokio::time::{timeout, Duration};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::config::CONFIG;
@@ -15,7 +16,6 @@ use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
 use crate::tools::executor::ToolExecutor;
-use crate::tools::ToolExecutorExt;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
@@ -140,12 +140,32 @@ impl UnifiedChatHandler {
             }
         });
         
-        if let Some(tool_list) = tools.as_deref() {
-            let tool_values: Vec<Value> = tool_list.iter()
-                .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
-                .collect();
-            request_body["tools"] = json!(tool_values);
-            request_body["tool_choice"] = json!("auto");
+        // Format tools according to GPT-5 Responses API spec (09/14/25)
+        // FIXED: Only add valid, non-empty tools
+        if use_tools {
+            let mut valid_tools = Vec::new();
+            
+            // Only add web_search if it's actually enabled
+            // GPT-5 wants just {"type": "web_search"} - no nested object
+            if CONFIG.enable_web_search {
+                valid_tools.push(json!({
+                    "type": "web_search"
+                }));
+                info!("Added web_search tool to request");
+            }
+            
+            // Add other built-in tools that don't require special setup
+            // Note: code_interpreter requires container management, so we skip it
+            
+            // Only set tools if we have at least one valid tool
+            if !valid_tools.is_empty() {
+                request_body["tools"] = json!(valid_tools);
+                request_body["tool_choice"] = json!("auto");
+                info!("Sending {} tools with request", valid_tools.len());
+            } else {
+                // Don't send tools field at all if empty
+                info!("No valid tools to send");
+            }
         }
         
         if let Err(e) = self.app_state.memory_service.save_user_message(
@@ -165,10 +185,13 @@ impl UnifiedChatHandler {
             debug!("Using previous_response_id: {}", prev_id);
         }
         
+        info!("Creating response stream for session: {}", request.session_id);
         let stream = self.app_state.llm_client
             .post_response_stream(request_body)
             .await?;
+        info!("Response stream created successfully");
         
+        info!("Processing stream events...");
         let event_stream = self.process_stream(
             stream, 
             use_tools, 
@@ -194,150 +217,215 @@ impl UnifiedChatHandler {
     
     fn process_stream(
         &self,
-        stream: impl Stream<Item = Result<Value>> + Send + 'static,
+        mut stream: impl Stream<Item = Result<Value>> + Send + Unpin + 'static,
         has_tools: bool,
         session_id: String,
         project_id: Option<String>,
     ) -> impl Stream<Item = Result<ChatEvent>> + Send {
         let app_state = self.app_state.clone();
-        let tool_executor = self.tool_executor.clone();
+        let _tool_executor = self.tool_executor.clone();
         
-        let buffer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let tool_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let completion_sent = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let buffer = Arc::new(std::sync::Mutex::new(String::new()));
+        let tool_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let completion_sent = Arc::new(std::sync::Mutex::new(false));
+        let chunk_count = Arc::new(std::sync::Mutex::new(0));
         
-        stream.then(move |result| {
-            let buffer = buffer.clone();
-            let tool_calls = tool_calls.clone();
-            let completion_sent = completion_sent.clone();
-            let app_state = app_state.clone();
-            let tool_executor = tool_executor.clone();
-            let session_id = session_id.clone();
-            let project_id = project_id.clone();
-            
-            async move {
-                match result {
-                    Ok(chunk) => {
-                        if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
-                            match event_type {
-                                "text_delta" => {
-                                    if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
-                                        buffer.lock().unwrap().push_str(delta);
-                                        Ok(ChatEvent::Content { text: delta.to_string() })
-                                    } else {
-                                        Ok(ChatEvent::Content { text: String::new() })
-                                    }
+        // Create a channel for sending events
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        
+        // Spawn a task to process the stream
+        tokio::spawn(async move {
+            loop {
+                match timeout(Duration::from_secs(120), stream.next()).await {
+                    Ok(Some(chunk_result)) => {
+                        match chunk_result {
+                            Ok(chunk) => {
+                                // Get count and immediately drop the lock
+                                let count = {
+                                    let mut guard = chunk_count.lock().unwrap();
+                                    *guard += 1;
+                                    *guard
+                                };
+                                
+                                // Log first 5 chunks in detail for debugging
+                                if count <= 5 {
+                                    info!("RAW CHUNK #{}: {}", count, serde_json::to_string(&chunk).unwrap_or_default());
                                 }
-                                "tool_call" if has_tools => {
-                                    tool_calls.lock().unwrap().push(chunk.clone());
+                                
+                                if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
+                                    debug!("Processing event #{} type: {}", count, event_type);
                                     
-                                    let tool_name = chunk.get("name")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("unknown");
-                                    
-                                    Ok(ChatEvent::ToolExecution {
-                                        tool_name: tool_name.to_string(),
-                                        status: "started".to_string(),
-                                    })
-                                }
-                                "response.done" | "response_done" => {
-                                    let calls = tool_calls.lock().unwrap().clone();
-                                    if has_tools && !calls.is_empty() {
-                                        info!("Executing {} tool calls", calls.len());
-                                        for tool_call in &calls {
-                                            match tool_executor.handle_tool_call(&tool_call, &app_state).await {
-                                                Ok(_result) => {
-                                                    let tool_name = tool_call.get("name")
-                                                        .and_then(|n| n.as_str())
-                                                        .unwrap_or("unknown");
-                                                    debug!("Tool {} completed", tool_name);
+                                    match event_type {
+                                        // GPT-5 text streaming event - this is what we care about!
+                                        "response.output_text.delta" => {
+                                            if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
+                                                info!("Got text delta: {} chars", delta.len());
+                                                // Update buffer
+                                                {
+                                                    let mut buf = buffer.lock().unwrap();
+                                                    buf.push_str(delta);
                                                 }
-                                                Err(e) => {
-                                                    warn!("Tool execution failed: {}", e);
+                                                let _ = tx.send(Ok(ChatEvent::Content { text: delta.to_string() }));
+                                            }
+                                        }
+                                        
+                                        // GPT-5 text completion - marks end of text streaming
+                                        "response.output_text.done" => {
+                                            // Stream is complete - get buffer content
+                                            let final_text = {
+                                                let buf = buffer.lock().unwrap();
+                                                buf.clone()
+                                            };
+                                            
+                                            info!("Text streaming complete - Final buffer: {} chars", final_text.len());
+                                            
+                                            if !final_text.is_empty() {
+                                                if let Err(e) = Self::save_assistant_to_memory(
+                                                    &app_state,
+                                                    &session_id,
+                                                    &final_text,
+                                                    project_id.as_deref(),
+                                                ).await {
+                                                    warn!("Failed to save assistant response: {}", e);
                                                 }
+                                            } else {
+                                                warn!("Stream completed but buffer is empty!");
+                                            }
+                                            
+                                            // Set completion flag
+                                            {
+                                                let mut sent = completion_sent.lock().unwrap();
+                                                *sent = true;
+                                            }
+                                            
+                                            let _ = tx.send(Ok(ChatEvent::Done));
+                                            break; // Exit the loop after completion
+                                        }
+                                        
+                                        // These are informational events we can safely ignore
+                                        "response.created" | "response.in_progress" | 
+                                        "response.output_item.added" | "response.output_item.done" => {
+                                            debug!("Ignoring informational event: {}", event_type);
+                                        }
+                                        
+                                        // Tool events (if they come through)
+                                        "tool_call" if has_tools => {
+                                            {
+                                                let mut calls = tool_calls.lock().unwrap();
+                                                calls.push(chunk.clone());
+                                            }
+                                            
+                                            let tool_name = chunk.get("name")
+                                                .and_then(|n| n.as_str())
+                                                .unwrap_or("unknown");
+                                            
+                                            let _ = tx.send(Ok(ChatEvent::ToolExecution {
+                                                tool_name: tool_name.to_string(),
+                                                status: "started".to_string(),
+                                            }));
+                                        }
+                                        
+                                        // Error events
+                                        "error" => {
+                                            let error_msg = chunk.get("error")
+                                                .and_then(|e| e.get("message"))
+                                                .and_then(|m| m.as_str())
+                                                .unwrap_or("Unknown error");
+                                            error!("Stream error: {}", error_msg);
+                                            let _ = tx.send(Ok(ChatEvent::Error { message: error_msg.to_string() }));
+                                            break;
+                                        }
+                                        
+                                        // Rate limit or other metadata
+                                        "rate_limit" | "ping" => {
+                                            debug!("Metadata event: {}", event_type);
+                                        }
+                                        
+                                        // Legacy format fallback (shouldn't happen with GPT-5)
+                                        "text_delta" => {
+                                            warn!("Got legacy text_delta event - API mismatch?");
+                                            if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
+                                                {
+                                                    let mut buf = buffer.lock().unwrap();
+                                                    buf.push_str(delta);
+                                                }
+                                                let _ = tx.send(Ok(ChatEvent::Content { text: delta.to_string() }));
+                                            }
+                                        }
+                                        
+                                        _ => {
+                                            // Only warn about truly unexpected events
+                                            if !event_type.starts_with("response.") {
+                                                warn!("Unhandled event type: {}", event_type);
                                             }
                                         }
                                     }
-                                    
-                                    let content = buffer.lock().unwrap().clone();
-                                    if !content.is_empty() {
-                                        if let Err(e) = Self::save_assistant_to_memory(
-                                            &app_state,
-                                            &session_id,
-                                            &content,
-                                            project_id.as_deref(),
-                                        ).await {
-                                            warn!("Failed to save assistant response to memory: {}", e);
-                                        }
-                                    }
-                                    
-                                    *completion_sent.lock().unwrap() = true;
-                                    Ok(ChatEvent::Done)
-                                }
-                                _ => {
-                                    debug!("Unhandled event type: {}", event_type);
-                                    Ok(ChatEvent::Content { text: String::new() })
+                                } else {
+                                    // No type field - shouldn't happen with GPT-5
+                                    debug!("Chunk #{} without 'type' field", count);
                                 }
                             }
-                        } else {
-                            let text = Self::extract_text_from_chunk(&chunk);
-                            if let Some(content) = text {
-                                buffer.lock().unwrap().push_str(&content);
-                                Ok(ChatEvent::Content { text: content })
-                            } else if Self::is_completion_chunk(&chunk) && !*completion_sent.lock().unwrap() {
-                                *completion_sent.lock().unwrap() = true;
-                                
-                                let content = buffer.lock().unwrap().clone();
-                                if !content.is_empty() {
-                                    if let Err(e) = Self::save_assistant_to_memory(
-                                        &app_state,
-                                        &session_id,
-                                        &content,
-                                        project_id.as_deref(),
-                                    ).await {
-                                        warn!("Failed to save assistant response: {}", e);
-                                    }
-                                }
-                                
-                                Ok(ChatEvent::Done)
-                            } else {
-                                Ok(ChatEvent::Content { text: String::new() })
+                            Err(e) => {
+                                error!("Stream error: {}", e);
+                                let _ = tx.send(Ok(ChatEvent::Error { 
+                                    message: format!("Stream error: {}", e) 
+                                }));
+                                break;
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("Stream error: {}", e);
-                        Ok(ChatEvent::Error { 
-                            message: format!("Stream error: {}", e) 
-                        })
+                    Ok(None) => {
+                        // Stream ended naturally
+                        info!("Stream ended naturally");
+                        break;
+                    }
+                    Err(_) => {
+                        // Timeout
+                        warn!("Stream timeout after 120 seconds - forcing completion");
+                        let _ = tx.send(Ok(ChatEvent::Error { 
+                            message: "Stream timeout - response may be incomplete".to_string() 
+                        }));
+                        let _ = tx.send(Ok(ChatEvent::Done));
+                        break;
                     }
                 }
             }
-        })
+            
+            // Check if we sent completion
+            let completed = {
+                let sent = completion_sent.lock().unwrap();
+                *sent
+            };
+            
+            if !completed {
+                info!("Sending final Done event");
+                let _ = tx.send(Ok(ChatEvent::Done));
+            }
+        });
+        
+        // Convert the receiver into a Stream
+        tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
     }
     
     fn extract_text_from_chunk(chunk: &Value) -> Option<String> {
-        if let Some(content) = chunk.get("content").and_then(|c| c.as_str()) {
-            if !content.is_empty() {
-                return Some(content.to_string());
-            }
-        }
-        
-        if let Some(content) = chunk.pointer("/choices/0/delta/content").and_then(|c| c.as_str()) {
-            if !content.is_empty() {
-                return Some(content.to_string());
-            }
-        }
-        
-        if let Some(content) = chunk.get("text").and_then(|c| c.as_str()) {
-            if !content.is_empty() {
-                return Some(content.to_string());
-            }
-        }
-        
+        // GPT-5 Responses API: delta field directly contains text
         if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
             if !delta.is_empty() {
                 return Some(delta.to_string());
+            }
+        }
+        
+        // Direct text field
+        if let Some(text) = chunk.get("text").and_then(|t| t.as_str()) {
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+        
+        // Direct content field
+        if let Some(content) = chunk.get("content").and_then(|c| c.as_str()) {
+            if !content.is_empty() {
+                return Some(content.to_string());
             }
         }
         
@@ -345,20 +433,19 @@ impl UnifiedChatHandler {
     }
     
     fn is_completion_chunk(chunk: &Value) -> bool {
-        if let Some(finish_reason) = chunk.pointer("/choices/0/finish_reason") {
-            if !finish_reason.is_null() {
+        // Check for GPT-5 response completion events
+        if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
+            // GPT-5 uses "response.output_text.done" for text completion
+            if event_type == "response.output_text.done" || 
+               event_type == "response.done" ||
+               event_type == "message_stop" {
                 return true;
             }
         }
         
+        // Check for done field
         if chunk.get("done").is_some() {
             return true;
-        }
-        
-        if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
-            if event_type == "response.done" || event_type == "response_done" {
-                return true;
-            }
         }
         
         false

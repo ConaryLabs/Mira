@@ -101,21 +101,6 @@ impl ImageGenerationManager {
             }
         }
 
-        // Fallback: Try the legacy data format
-        if images.is_empty() {
-            if let Some(data_array) = response.get("data").and_then(|d| d.as_array()) {
-                for item in data_array {
-                    if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-                        images.push(ImageData {
-                            url: url.to_string(),
-                            revised_prompt: item.get("revised_prompt")
-                                .and_then(|p| p.as_str())
-                                .map(|s| s.to_string()),
-                        });
-                    }
-                }
-            }
-        }
 
         if images.is_empty() {
             warn!("Could not find image URLs in response: {:?}", response);
