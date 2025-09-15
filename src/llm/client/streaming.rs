@@ -129,8 +129,13 @@ pub fn parse_sse_chunk(chunk_text: &str) -> Result<Option<Value>> {
                 Err(e) => {
                     // Only warn for actual JSON-like content that failed to parse
                     if data_part.starts_with('{') || data_part.starts_with('[') {
+                        // Safe preview that respects UTF-8 boundaries
                         let preview = if data_part.len() > 100 {
-                            format!("{}...", &data_part[..100])
+                            let mut end = 100;
+                            while !data_part.is_char_boundary(end) && end > 0 {
+                                end -= 1;
+                            }
+                            format!("{}...", &data_part[..end])
                         } else {
                             data_part.to_string()
                         };
@@ -344,16 +349,24 @@ async fn save_assistant_to_memory(
     content: &str,
     project_id: Option<&str>,
 ) -> Result<()> {
+    // Create safe UTF-8 summary that won't panic
+    let summary = if content.len() > 100 {
+        // Find the nearest valid UTF-8 boundary before position 100
+        let mut end = 100;
+        while !content.is_char_boundary(end) && end > 0 {
+            end -= 1;
+        }
+        format!("{}...", &content[..end])
+    } else {
+        content.to_string()
+    };
+    
     let response = crate::llm::types::ChatResponse {
         output: content.to_string(),
         persona: "mira".to_string(),
         mood: "helpful".to_string(),
         salience: 5,
-        summary: if content.len() > 100 {
-            format!("{}...", &content[..100])
-        } else {
-            content.to_string()
-        },
+        summary,
         memory_type: "Response".to_string(),
         tags: vec!["chat".to_string()],
         intent: None,
