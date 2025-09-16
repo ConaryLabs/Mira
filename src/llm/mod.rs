@@ -1,11 +1,9 @@
 // src/llm/mod.rs
 // LLM module exports and submodule declarations
 
-pub mod chat;
 pub mod classification;
 pub mod client;
 pub mod embeddings;
-pub mod emotional_weight;
 pub mod intent;
 pub mod memory_eval;
 pub mod moderation;

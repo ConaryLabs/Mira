@@ -14,7 +14,6 @@ use tracing::info;
 
 // WebSocket submodules
 pub mod chat;
-pub mod chat_tools;
 pub mod message;
 pub mod memory;
 pub mod project;

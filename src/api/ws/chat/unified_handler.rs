@@ -173,8 +173,11 @@ impl UnifiedChatHandler {
             "instructions": "Respond helpfully using available tools when appropriate.",
             "max_output_tokens": CONFIG.max_output_tokens,
             "text": {
-                "verbosity": CONFIG.verbosity
-            },
+                "verbosity": CONFIG.verbosity,
+            	"format": {
+	            "type": "text"	
+	        }
+	    },
             "reasoning": {
                 "effort": CONFIG.reasoning_effort
             }
