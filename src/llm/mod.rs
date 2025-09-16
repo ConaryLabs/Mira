@@ -5,7 +5,7 @@ pub mod classification;
 pub mod client;
 pub mod embeddings;
 pub mod intent;
-pub mod memory_eval;
+pub mod message_analyzer;
 pub mod moderation;
 pub mod responses;
 pub mod schema;

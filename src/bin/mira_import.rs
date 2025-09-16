@@ -1,45 +1,74 @@
-// backend/src/tools/mira_import/main.rs
+// src/bin/mira_import.rs
 
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-
+use std::collections::HashMap;
+use anyhow::Result;
 use clap::Parser;
-use mira_backend::memory::storage::qdrant::store::QdrantMemoryStore;
-use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
-use mira_backend::mira_import::{import_conversations, schema};
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use sqlx::SqlitePool;
+
+use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
+use mira_backend::memory::MemoryEntry;
+use mira_backend::memory::core::traits::MemoryStore;
 
 #[derive(Parser)]
 #[command(name = "mira-import")]
-#[command(about = "Import and reprocess ChatGPT exports into Mira's memory system", long_about = None)]
+#[command(about = "Import ChatGPT export into Mira's memory system", long_about = None)]
 struct Cli {
-    /// Path to conversations.json (unzipped from ChatGPT export)
+    /// Path to conversations.json
     #[arg(short, long)]
     input: PathBuf,
-
+    
     /// SQLite DB path
     #[arg(long, default_value = "mira.sqlite")]
     sqlite: String,
-
-    /// Qdrant base URL (e.g. http://localhost:6333)
-    #[arg(long, default_value = "http://localhost:6333")]
-    qdrant_url: String,
-
-    /// Qdrant collection name
-    #[arg(long, default_value = "mira_memories")]
-    qdrant_collection: String,
-
+    
     /// Enable debug logging
     #[arg(short, long, default_value_t = false)]
     debug: bool,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+// Minimal schema just for parsing the export
+#[derive(Debug, Deserialize)]
+struct ChatExport(Vec<ChatThread>);
 
-    // Set up logging before any async code runs
+#[derive(Debug, Deserialize)]
+struct ChatThread {
+    title: Option<String>,
+    mapping: HashMap<String, MessageNode>,
+    conversation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageNode {
+    message: Option<Message>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Message {
+    author: Author,
+    content: Content,
+    create_time: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Author {
+    role: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Content {
+    parts: Vec<serde_json::Value>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    
+    // Setup logging
     if cli.debug {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
@@ -47,21 +76,75 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing_subscriber::fmt().init();
     }
-
+    
+    // Load the export file
+    let file = File::open(&cli.input)?;
+    let reader = BufReader::new(file);
+    let export: ChatExport = serde_json::from_reader(reader)?;
+    
     // Connect to SQLite
     let pool = SqlitePool::connect(&cli.sqlite).await?;
-    let sqlite_store = SqliteMemoryStore::new(pool);
-
-    // Connect to Qdrant (constructor is async and takes &strs)
-    let qdrant_store = QdrantMemoryStore::new(&cli.qdrant_url, &cli.qdrant_collection).await?;
-
-    // Load export
-    let file = File::open(cli.input)?;
-    let reader = BufReader::new(file);
-    let json: schema::ChatExport = serde_json::from_reader(reader)?;
-
-    // Import
-    import_conversations(json, &sqlite_store, &qdrant_store).await?;
-
+    let store = SqliteMemoryStore::new(pool);
+    
+    // Process each conversation
+    for thread in export.0 {
+        let session_id = thread.conversation_id
+            .or(thread.title)
+            .unwrap_or_else(|| "imported".to_string());
+        
+        println!("Importing conversation: {}", session_id);
+        
+        // Extract and sort messages by time
+        let mut messages: Vec<_> = thread.mapping.values()
+            .filter_map(|node| node.message.as_ref())
+            .filter(|msg| msg.author.role != "system")
+            .collect();
+        
+        messages.sort_by_key(|m| m.create_time.unwrap_or(0.0) as i64);
+        
+        // Save each message
+        for message in messages {
+            let content = message.content.parts.iter()
+                .filter_map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            
+            if content.is_empty() {
+                continue;
+            }
+            
+            let timestamp = message.create_time.map(|secs| {
+                DateTime::from_timestamp(secs as i64, 0).unwrap_or(Utc::now())
+            }).unwrap_or(Utc::now());
+            
+            let entry = MemoryEntry {
+                id: None,
+                session_id: session_id.clone(),
+                role: message.author.role.clone(),
+                content,
+                timestamp,
+                salience: Some(5.0),
+                summary: None,
+                tags: None,
+                memory_type: None,
+                embedding: None,
+                // Additional required fields
+                logprobs: None,
+                moderation_flag: None,
+                system_fingerprint: None,
+                head: None,
+                is_code: None,
+                lang: None,
+                topics: None,
+                pinned: Some(false),
+                subject_tag: None,
+                last_accessed: Some(Utc::now()),
+            };
+            
+            store.save(&entry).await?;
+        }
+    }
+    
+    println!("Import complete!");
     Ok(())
 }
