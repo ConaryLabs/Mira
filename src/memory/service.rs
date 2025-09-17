@@ -5,7 +5,7 @@
 use crate::memory::features::classification;
 use crate::memory::features::embedding;
 use crate::memory::features::message_analyzer;
-use crate::memory::features::scoring;
+use crate::memory::features::recall_engine;  // CHANGED from scoring
 use crate::memory::features::session;
 use crate::memory::features::summarization;
 
@@ -19,7 +19,6 @@ use crate::memory::{
     storage::sqlite::store::SqliteMemoryStore,
     storage::qdrant::multi_store::QdrantMultiStore,
     core::types::MemoryEntry,
-    recall::recall::RecallContext,
     core::traits::MemoryStore,
 };
 
@@ -33,7 +32,7 @@ pub use crate::memory::features::memory_types::{
 use classification::MessageClassifier;
 use embedding::EmbeddingManager;
 use message_analyzer::AnalysisService;
-use scoring::MemoryScorer;
+use recall_engine::{RecallEngine, RecallContext, RecallConfig, SearchMode};  // CHANGED
 use session::SessionManager;
 use summarization::SummarizationEngine;
 
@@ -48,9 +47,9 @@ pub struct MemoryService {
     analysis_service: Arc<AnalysisService>,
     classifier: Arc<MessageClassifier>,
     embedding_mgr: Arc<EmbeddingManager>,
-    scorer: Arc<MemoryScorer>,
+    recall_engine: Arc<RecallEngine>,  // CHANGED from scorer
     session_mgr: Arc<SessionManager>,
-    pub summarization_engine: Arc<SummarizationEngine>, // Made public for TaskManager
+    pub summarization_engine: Arc<SummarizationEngine>,
 }
 
 impl MemoryService {
@@ -69,7 +68,14 @@ impl MemoryService {
         ));
         let classifier = Arc::new(MessageClassifier::new(llm_client.clone()));
         let embedding_mgr = Arc::new(EmbeddingManager::new(llm_client.clone()).expect("Failed to create embedding manager"));
-        let scorer = Arc::new(MemoryScorer::new());
+        
+        // Initialize recall engine instead of scorer
+        let recall_engine = Arc::new(RecallEngine::new(
+            llm_client.clone(),
+            sqlite_store.clone(),
+            multi_store.clone(),
+        ));
+        
         let session_mgr = Arc::new(SessionManager::new());
         
         // Initialize summarization engine with all its dependencies
@@ -88,7 +94,7 @@ impl MemoryService {
             analysis_service,
             classifier,
             embedding_mgr,
-            scorer,
+            recall_engine,  // CHANGED
             session_mgr,
             summarization_engine,
         }
@@ -194,7 +200,7 @@ impl MemoryService {
         });
     }
     
-    /// Builds parallel recall context with multi-head search
+    /// Builds parallel recall context - DELEGATES TO ENGINE
     pub async fn parallel_recall_context(
         &self,
         session_id: &str,
@@ -202,44 +208,28 @@ impl MemoryService {
         recent_count: usize,
         semantic_count: usize,
     ) -> Result<RecallContext> {
-        info!("Building parallel recall context for session: {}", session_id);
+        let config = RecallConfig {
+            recent_count,
+            semantic_count,
+            ..Default::default()
+        };
         
-        // Parallel retrieval using tokio::join!
-        let (embedding_result, recent_result) = tokio::join!(
-            self.llm_client.get_embedding(query_text),
-            self.sqlite_store.load_recent(session_id, recent_count)
-        );
-        
-        let embedding = embedding_result?;
-        let recent = recent_result?;
-        
-        // Multi-head search
-        let k_per_head = std::cmp::max(10, semantic_count / 3);
-        let multi_results = self.multi_store.search_all(session_id, &embedding, k_per_head).await?;
-        
-        // Score and rank results
-        let now = chrono::Utc::now();
-        let scored = self.scorer.score_entries(multi_results, &embedding, now);
-        
-        // Take top semantic results
-        let semantic: Vec<MemoryEntry> = scored.into_iter()
-            .take(semantic_count)
-            .map(|s| s.entry)
-            .collect();
-        
-        Ok(RecallContext {
-            recent,
-            semantic,
-        })
+        self.recall_engine
+            .build_recall_context(session_id, query_text, Some(config))
+            .await
     }
     
-    /// Gets recent context including summaries
+    /// Gets recent context - DELEGATES TO ENGINE
     pub async fn get_recent_context(
         &self,
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        self.sqlite_store.load_recent(session_id, limit).await
+        let results = self.recall_engine
+            .search(session_id, SearchMode::Recent { limit })
+            .await?;
+        
+        Ok(results.into_iter().map(|s| s.entry).collect())
     }
     
     /// Gets memory service statistics
@@ -256,23 +246,21 @@ impl MemoryService {
         })
     }
     
-    /// Search for similar memories
+    /// Search for similar memories - DELEGATES TO ENGINE
     pub async fn search_similar(
         &self,
         session_id: &str,
         query: &str,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        let embedding = self.llm_client.get_embedding(query).await?;
-        let results = self.multi_store.search_all(session_id, &embedding, limit).await?;
+        let results = self.recall_engine
+            .search(session_id, SearchMode::Semantic { 
+                query: query.to_string(), 
+                limit 
+            })
+            .await?;
         
-        let now = chrono::Utc::now();
-        let scored = self.scorer.score_entries(results, &embedding, now);
-        
-        Ok(scored.into_iter()
-            .take(limit)
-            .map(|s| s.entry)
-            .collect())
+        Ok(results.into_iter().map(|s| s.entry).collect())
     }
     
     /// Performs cleanup of old inactive sessions

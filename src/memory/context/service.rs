@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, debug};
-use crate::memory::recall::RecallContext;
+use crate::memory::RecallContext;
 use crate::memory::MemoryService;
 use crate::config::CONFIG;
 

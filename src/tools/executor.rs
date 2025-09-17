@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::config::CONFIG;
-use crate::memory::recall::RecallContext;
+use crate::memory::RecallContext;
 use crate::state::AppState;
 use crate::utils::with_timeout;
 use crate::llm::responses::image::{ImageOptions, ImageGenerationResponse};

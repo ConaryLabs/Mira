@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 use crate::api::ws::message::MessageMetadata;
 use crate::config::CONFIG;
 use crate::llm::responses::thread::ThreadManager;
-use crate::memory::recall::RecallContext;
+use crate::memory::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;

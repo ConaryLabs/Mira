@@ -2,31 +2,32 @@
 //! 
 //! Unified memory management with:
 //! - Core: Configuration, traits, and types
-//! - Features: Classification, scoring, decay, embeddings
-//! - Recall: Context building and parallel retrieval
+//! - Features: Advanced processing (classification, embeddings, recall, summarization)
 //! - Storage: SQLite and Qdrant backends
+//! - Service: High-level orchestration
 
 pub mod core;
 pub mod features;
-pub mod recall;
 pub mod storage;
 pub mod service;
+pub mod context;  // Keep if still needed
 
 // Re-export commonly used items
-pub use self::core::{config::MemoryConfig, traits::*, types::*};
+pub use self::core::{
+    config::MemoryConfig, 
+    traits::*,
+    types::*
+};
+
 pub use self::features::{
     classification::*,
     decay::*,
-    scoring::*,
     session::*,
+    recall_engine::{RecallContext, RecallEngine, RecallConfig, SearchMode},
+    summarization::SummarizationEngine,
 };
-pub use self::recall::{recall::RecallContext, parallel_recall::*};
+
 pub use self::service::MemoryService;
 
-// Temporary compatibility re-exports
-pub use self::storage::sqlite;
-pub use self::storage::qdrant;
-pub use self::core::traits;
-pub use self::core::types;
-pub use self::features::decay;
-pub mod context;
+// Storage backend exports
+pub use self::storage::{sqlite, qdrant};

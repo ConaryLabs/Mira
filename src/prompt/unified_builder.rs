@@ -1,7 +1,7 @@
 // src/prompt/unified_builder.rs
 
 use crate::api::ws::message::MessageMetadata;
-use crate::memory::recall::RecallContext;
+use crate::memory::RecallContext;
 use crate::llm::responses::types::Tool;
 use crate::persona::PersonaOverlay;
 

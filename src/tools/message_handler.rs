@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 use crate::api::ws::chat::connection::WebSocketConnection;
 use crate::api::ws::message::{MessageMetadata, WsServerMessage};
 use crate::tools::executor::{ToolExecutor, ToolChatRequest, ToolEvent};
-use crate::memory::recall::RecallContext;
+use crate::memory::RecallContext;
 use crate::state::AppState;
 
 /// Processes tool-enhanced messages and streams responses over WebSocket.
