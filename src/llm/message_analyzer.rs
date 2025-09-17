@@ -150,7 +150,7 @@ impl MessageAnalyzer {
     /// Fire-and-forget async message enrichment
     pub fn analyze_async(
         app_state: Arc<AppState>,
-        session_id: String,
+        _session_id: String,
         message_id: i64,
         content: String,
     ) {

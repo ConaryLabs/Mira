@@ -1,5 +1,5 @@
 // src/llm/embeddings.rs
-// Embeddings functionality using text-embedding-3-large with multi-head support
+// Embeddings functionality using text-embedding-3-large with multi-head support including Documents
 
 use crate::config::CONFIG;
 use anyhow::Result;
@@ -89,9 +89,10 @@ pub mod utils {
 /// Represents the different embedding heads for multi-dimensional memory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmbeddingHead {
-    Semantic,
-    Code,
-    Summary,
+    Semantic,   // General conversation embeddings
+    Code,       // Programming-specific embeddings
+    Summary,    // Rolling summary embeddings
+    Documents,  // Project documents (PDFs, markdown, etc.) - NEW!
 }
 
 impl EmbeddingHead {
@@ -101,6 +102,39 @@ impl EmbeddingHead {
             EmbeddingHead::Semantic => "semantic",
             EmbeddingHead::Code => "code",
             EmbeddingHead::Summary => "summary",
+            EmbeddingHead::Documents => "documents",
+        }
+    }
+    
+    /// Get all available heads
+    pub fn all() -> Vec<EmbeddingHead> {
+        vec![
+            EmbeddingHead::Semantic,
+            EmbeddingHead::Code,
+            EmbeddingHead::Summary,
+            EmbeddingHead::Documents,
+        ]
+    }
+    
+    /// Check if this head should be used for a given content type
+    pub fn should_route(&self, content: &str, role: &str) -> bool {
+        match self {
+            EmbeddingHead::Semantic => {
+                // Always route normal conversation here
+                role == "user" || role == "assistant"
+            },
+            EmbeddingHead::Code => {
+                // Route if content contains code indicators
+                contains_code_indicators(content)
+            },
+            EmbeddingHead::Summary => {
+                // Only for system-generated summaries
+                role == "system" && content.contains("Summary:")
+            },
+            EmbeddingHead::Documents => {
+                // For uploaded documents
+                role == "document"
+            },
         }
     }
 }
@@ -119,6 +153,7 @@ impl FromStr for EmbeddingHead {
             "semantic" => Ok(EmbeddingHead::Semantic),
             "code" => Ok(EmbeddingHead::Code),
             "summary" => Ok(EmbeddingHead::Summary),
+            "documents" => Ok(EmbeddingHead::Documents),  // NEW!
             _ => Err(anyhow::anyhow!("Unknown embedding head: {}", s)),
         }
     }
@@ -143,6 +178,10 @@ impl TextChunker {
             EmbeddingHead::Semantic => (CONFIG.embed_semantic_chunk, CONFIG.embed_semantic_overlap),
             EmbeddingHead::Code => (CONFIG.embed_code_chunk, CONFIG.embed_code_overlap),
             EmbeddingHead::Summary => (CONFIG.embed_summary_chunk, CONFIG.embed_summary_overlap),
+            EmbeddingHead::Documents => (
+                CONFIG.embed_document_chunk.unwrap_or(1000),
+                CONFIG.embed_document_overlap.unwrap_or(200)
+            ),
         };
 
         let encoding = self
@@ -180,4 +219,32 @@ impl TextChunker {
 
         Ok(chunks)
     }
+}
+
+/// Helper function to check if content contains code indicators
+fn contains_code_indicators(content: &str) -> bool {
+    // Common code patterns
+    let code_patterns = [
+        "```",           // Markdown code blocks
+        "fn ",           // Rust functions
+        "def ",          // Python functions
+        "function ",     // JavaScript
+        "class ",        // Classes
+        "import ",       // Imports
+        "const ",        // Constants
+        "let ",          // Variables
+        "var ",          // Variables
+        "return ",       // Returns
+        "if (",          // Conditionals
+        "for (",         // Loops
+        "while (",       // Loops
+        "SELECT ",       // SQL
+        "CREATE TABLE",  // SQL
+        "pub struct",    // Rust
+        "async fn",      // Rust async
+        "#include",      // C/C++
+    ];
+    
+    let lower_content = content.to_lowercase();
+    code_patterns.iter().any(|pattern| lower_content.contains(&pattern.to_lowercase()))
 }

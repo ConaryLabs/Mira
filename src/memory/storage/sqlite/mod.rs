@@ -2,4 +2,3 @@
 
 pub mod store;
 pub mod query;
-pub mod migration;

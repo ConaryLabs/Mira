@@ -1,10 +1,11 @@
-// src/memory/qdrant/store.rs
+// src/memory/storage/qdrant/store.rs
+// Qdrant store for individual collection management
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::memory::storage::qdrant::mapping::{memory_entry_to_payload, payload_to_memory_entry};
@@ -12,7 +13,7 @@ use crate::memory::core::traits::MemoryStore;
 use crate::memory::core::types::MemoryEntry;
 
 /// Qdrant-based vector store for semantic memory search.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QdrantMemoryStore {
     client: Client,
     pub collection_name: String,
@@ -29,16 +30,20 @@ impl QdrantMemoryStore {
         let collection_url = format!("{base_url}/collections/{collection_name}");
         match client.get(&collection_url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                info!("✅ Qdrant collection '{}' already exists", collection_name);
+                info!("Qdrant collection '{}' already exists", collection_name);
             }
             _ => {
-                info!("📦 Creating Qdrant collection '{}'", collection_name);
+                info!("Creating Qdrant collection '{}'", collection_name);
 
                 let create_body = json!({
                     "vectors": {
                         "size": 3072, // text-embedding-3-large dimension
                         "distance": "Cosine"
-                    }
+                    },
+                    "optimizers_config": {
+                        "default_segment_number": 2
+                    },
+                    "replication_factor": 1
                 });
 
                 let resp = client
@@ -48,13 +53,17 @@ impl QdrantMemoryStore {
                     .await?;
 
                 if !resp.status().is_success() {
-                    return Err(anyhow!(
-                        "Failed to create Qdrant collection: {}",
-                        resp.text().await.unwrap_or_default()
-                    ));
+                    let error_text = resp.text().await.unwrap_or_default();
+                    // Check if it's just an "already exists" error
+                    if !error_text.contains("already exists") {
+                        return Err(anyhow!(
+                            "Failed to create Qdrant collection: {}",
+                            error_text
+                        ));
+                    }
                 }
 
-                info!("✅ Created Qdrant collection '{}'", collection_name);
+                info!("Created Qdrant collection '{}'", collection_name);
             }
         }
 
@@ -72,9 +81,9 @@ impl QdrantMemoryStore {
         embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        info!(
-            "🔍 Searching similar vectors in Qdrant for session: {}",
-            session_id
+        debug!(
+            "Searching similar vectors in Qdrant collection '{}' for session: {}",
+            self.collection_name, session_id
         );
 
         let search_url = format!(
@@ -86,7 +95,7 @@ impl QdrantMemoryStore {
             "vector": embedding,
             "limit": limit,
             "with_payload": true,
-            "with_vector": true, // Also request the vector
+            "with_vector": true,
             "filter": {
                 "must": [
                     {
@@ -119,7 +128,11 @@ impl QdrantMemoryStore {
         if let Some(result_array) = result["result"].as_array() {
             for point in result_array {
                 if let (Some(payload), Some(vector_val)) = (point.get("payload"), point.get("vector")) {
-                    if let Some(vector) = vector_val.as_array().map(|arr| arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect::<Vec<f32>>()) {
+                    if let Some(vector) = vector_val.as_array().map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect::<Vec<f32>>()
+                    }) {
                         let id = point.get("id").and_then(|v| v.as_i64());
                         entries.push(payload_to_memory_entry(payload, &vector, id));
                     }
@@ -127,8 +140,61 @@ impl QdrantMemoryStore {
             }
         }
 
-        info!("Found {} similar memories", entries.len());
+        debug!("Found {} similar memories in {}", entries.len(), self.collection_name);
         Ok(entries)
+    }
+    
+    /// Delete a point by its Qdrant point ID
+    pub async fn delete_by_point_id(&self, point_id: &str) -> Result<()> {
+        let delete_url = format!(
+            "{}/collections/{}/points/delete?wait=true",
+            self.base_url, self.collection_name
+        );
+
+        let delete_body = json!({
+            "points": [point_id]
+        });
+
+        let response = self
+            .client
+            .post(&delete_url)
+            .json(&delete_body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Qdrant delete failed: {}",
+                response.text().await.unwrap_or_default()
+            ));
+        }
+
+        debug!("Deleted point {} from {}", point_id, self.collection_name);
+        Ok(())
+    }
+    
+    /// Count points in the collection
+    pub async fn count_points(&self) -> Result<usize> {
+        let count_url = format!(
+            "{}/collections/{}/points/count",
+            self.base_url, self.collection_name
+        );
+
+        let response = self.client.post(&count_url).send().await?;
+        
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Qdrant count failed: {}",
+                response.text().await.unwrap_or_default()
+            ));
+        }
+
+        let result: Value = response.json().await?;
+        let count = result["result"]["count"]
+            .as_u64()
+            .unwrap_or(0) as usize;
+        
+        Ok(count)
     }
 }
 
@@ -172,15 +238,17 @@ impl MemoryStore for QdrantMemoryStore {
             ));
         }
 
-        info!(
-            "✅ Saved memory to Qdrant (salience: {:?})",
-            entry.salience
+        debug!(
+            "Saved memory to Qdrant collection '{}' (salience: {:?})",
+            self.collection_name, entry.salience
         );
         Ok(entry.clone())
     }
 
     async fn load_recent(&self, _session_id: &str, _n: usize) -> Result<Vec<MemoryEntry>> {
-        warn!("load_recent called on Qdrant store - not supported");
+        // Qdrant doesn't support time-based queries efficiently
+        // This is handled by SQLite instead
+        debug!("load_recent called on Qdrant store - not supported");
         Ok(Vec::new())
     }
 
@@ -194,12 +262,16 @@ impl MemoryStore for QdrantMemoryStore {
     }
 
     async fn update_metadata(&self, _id: i64, updated: &MemoryEntry) -> Result<MemoryEntry> {
-        warn!("update_metadata not implemented for Qdrant store");
+        // Qdrant uses point IDs, not SQLite IDs
+        // Metadata updates should be handled through SQLite
+        debug!("update_metadata not implemented for Qdrant store");
         Ok(updated.clone())
     }
 
     async fn delete(&self, _id: i64) -> Result<()> {
-        warn!("delete by ID not implemented for Qdrant store");
+        // This expects a SQLite ID, but Qdrant uses point IDs
+        // Deletion should be coordinated through the service layer
+        debug!("delete by SQLite ID not implemented for Qdrant store");
         Ok(())
     }
 }

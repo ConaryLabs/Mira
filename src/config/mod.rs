@@ -149,6 +149,8 @@ pub struct MiraConfig {
     pub embed_code_overlap: usize,
     pub embed_summary_chunk: usize,
     pub embed_summary_overlap: usize,
+    pub embed_document_chunk: Option<usize>,  // NEW!
+    pub embed_document_overlap: Option<usize>, // NEW!
 
     // Memory Decay Configuration
     pub decay_recent_half_life_days: f32,
@@ -188,8 +190,8 @@ impl MiraConfig {
             openai_api_key: env::var("OPENAI_API_KEY").ok(),
             openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()), // No /v1
             gpt5_model: env_var_or("GPT5_MODEL", "gpt-5".to_string()),
-            verbosity: env_var_or("GPT5_VERBOSITY", "high".to_string()),
-            reasoning_effort: env_var_or("GPT5_REASONING_EFFORT", "high".to_string()),
+            verbosity: env_var_or("GPT5_VERBOSITY", "low".to_string()),
+            reasoning_effort: env_var_or("GPT5_REASONING_EFFORT", "low".to_string()),
             max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 128000),
             debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
             intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
@@ -267,9 +269,9 @@ impl MiraConfig {
             image_generation_style: env_var_or("MIRA_IMAGE_GENERATION_STYLE", "vivid".to_string()),
             tool_timeout_seconds: env_var_or("MIRA_TOOL_TIMEOUT_SECONDS", 60),
 
-            // Qdrant
+            // Qdrant - UPDATED to mira-memories
             qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
-            qdrant_collection: env_var_or("QDRANT_COLLECTION", "mira-memory".to_string()),
+            qdrant_collection: env_var_or("QDRANT_COLLECTION", "mira-memories".to_string()),
             qdrant_embedding_dim: env_var_or("QDRANT_EMBEDDING_DIM", 3072),
             qdrant_test_url: env_var_or("QDRANT_TEST_URL", "http://localhost:6334".to_string()),
             qdrant_test_collection: env_var_or("QDRANT_TEST_COLLECTION", "mira-test".to_string()),
@@ -308,38 +310,40 @@ impl MiraConfig {
             log_format: env_var_or("MIRA_LOG_FORMAT", "pretty".to_string()),
             trace_sql: env_var_or("MIRA_TRACE_SQL", false),
 
-            // Robust Memory - always enabled
-            embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary".to_string()),
+            // Robust Memory - UPDATED with documents
+            embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary,documents".to_string()),
             summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
             summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
-            summary_phase_snapshots: env_var_or("MIRA_SUMMARY_PHASE_SNAPSHOTS", true),
+            summary_phase_snapshots: env_var_or("MIRA_SUMMARY_PHASE_SNAPSHOTS", false),
             use_rolling_summaries_in_context: env_var_or("MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT", true),
             rolling_summary_max_age_hours: env_var_or("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS", 168),
             rolling_summary_min_gap: env_var_or("MIRA_ROLLING_SUMMARY_MIN_GAP", 3),
 
-            // Chunking
-            embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 600),
-            embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 200),
-            embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 512),
-            embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 128),
-            embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 1200),
-            embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 400),
+            // Chunking - UPDATED to match guide
+            embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 500),
+            embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 100),
+            embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 1000),
+            embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 200),
+            embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 2000),
+            embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 0),
+            embed_document_chunk: Some(env_var_or("MIRA_EMBED_DOCUMENT_CHUNK", 1000)),  // NEW!
+            embed_document_overlap: Some(env_var_or("MIRA_EMBED_DOCUMENT_OVERLAP", 200)), // NEW!
 
-            // Memory Decay
-            decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 14.0),
-            decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.99),
-            decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.95),
-            decay_floor: env_var_or("MIRA_DECAY_FLOOR", 0.05),
+            // Memory Decay - UPDATED floor to 2.0
+            decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 30.0),
+            decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.1),
+            decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.3),
+            decay_floor: env_var_or("MIRA_DECAY_FLOOR", 2.0),
             
-            // NEW: Robustness & Performance Features
-            api_max_retries: env_var_or("MIRA_API_MAX_RETRIES", 5),
+            // NEW: Robustness & Performance Features - UPDATED batch_size to 10
+            api_max_retries: env_var_or("MIRA_API_MAX_RETRIES", 3),
             api_retry_delay_ms: env_var_or("MIRA_API_RETRY_DELAY_MS", 1000),
             enable_request_cache: env_var_or("MIRA_ENABLE_REQUEST_CACHE", true),
             cache_ttl_seconds: env_var_or("MIRA_CACHE_TTL_SECONDS", 300),
             enable_response_compression: env_var_or("MIRA_ENABLE_RESPONSE_COMPRESSION", true),
-            max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 50),
+            max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 10),
             enable_batch_operations: env_var_or("MIRA_ENABLE_BATCH_OPERATIONS", true),
-            batch_size: env_var_or("MIRA_BATCH_SIZE", 50),
+            batch_size: env_var_or("MIRA_BATCH_SIZE", 10),
         }
     }
 
@@ -417,6 +421,7 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_chunk,
             "code" => self.embed_code_chunk,
             "summary" => self.embed_summary_chunk,
+            "documents" => self.embed_document_chunk.unwrap_or(1000),  // NEW!
             _ => self.embed_semantic_chunk,
         }
     }
@@ -427,6 +432,7 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_overlap,
             "code" => self.embed_code_overlap,
             "summary" => self.embed_summary_overlap,
+            "documents" => self.embed_document_overlap.unwrap_or(200),  // NEW!
             _ => self.embed_semantic_overlap,
         }
     }
