@@ -7,10 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
-use tracing::{error, info};
+use tracing::{debug, error, info};  // Added debug
 use sqlx::Row;
 
-use crate::memory::features::decay;  // Changed from decay_scheduler
+use crate::memory::features::decay;
 use crate::memory::features::message_analyzer::AnalysisService;
 use crate::state::AppState;
 
@@ -218,28 +218,27 @@ impl TaskManager {
                 match check_summary_candidates(&app_state).await {
                     Ok(candidates) => {
                         for (session_id, message_count) in candidates {
-                            let memory_service = &app_state.memory_service;
+                            // ACCESS THE SUMMARIZATION ENGINE DIRECTLY
+                            let summarization_engine = &app_state.memory_service.summarization_engine;
                             
-                            // Trigger summary if needed
-                            let window = if message_count % 100 == 0 {
-                                Some(100)
-                            } else if message_count % 10 == 0 {
-                                Some(10)
-                            } else {
-                                None
-                            };
-
-                            if let Some(window_size) = window {
-                                // FIXED: Changed from trigger_rolling_summary to create_rolling_summary
-                                match memory_service.create_rolling_summary(&session_id, window_size).await {
-                                    Ok(msg) => {
-                                        info!("Summary created: {}", msg);
-                                        metrics.add_processed_items("summary", 1);
-                                    }
-                                    Err(e) => {
-                                        error!("Summary generation failed: {}", e);
-                                        metrics.record_error("summary");
-                                    }
+                            // Use the engine's check_and_process_summaries method
+                            // This handles all the logic for determining what summaries to create
+                            match summarization_engine
+                                .check_and_process_summaries(&session_id, message_count)
+                                .await 
+                            {
+                                Ok(Some(summary_id)) => {
+                                    info!("Created summary {} for session {}", summary_id, session_id);
+                                    metrics.add_processed_items("summary", 1);
+                                }
+                                Ok(None) => {
+                                    // No summary needed at this message count
+                                    debug!("No summary needed for session {} at {} messages", 
+                                        session_id, message_count);
+                                }
+                                Err(e) => {
+                                    error!("Summary processing failed for session {}: {}", session_id, e);
+                                    metrics.record_error("summary");
                                 }
                             }
                         }
@@ -304,17 +303,20 @@ async fn get_active_sessions(app_state: &Arc<AppState>) -> anyhow::Result<Vec<St
     Ok(sessions)
 }
 
-/// Helper to find sessions needing summaries
+/// Helper to find sessions needing summaries  
 async fn check_summary_candidates(app_state: &Arc<AppState>) -> anyhow::Result<Vec<(String, usize)>> {
     let pool = &app_state.sqlite_store.pool;
     
+    // Get all sessions with their message counts
+    // Let the summarization engine decide what to do with them
     let rows = sqlx::query(
         r#"
         SELECT session_id, COUNT(*) as message_count
         FROM memory_entries
         WHERE role IN ('user', 'assistant')
         GROUP BY session_id
-        HAVING message_count % 10 = 0
+        HAVING message_count >= 10  -- Minimum threshold for any summary
+        ORDER BY message_count DESC
         "#
     )
     .fetch_all(pool)

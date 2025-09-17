@@ -13,7 +13,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, debug};
 
-use crate::config::CONFIG;
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::{
@@ -29,8 +28,6 @@ pub use crate::memory::features::memory_types::{
     ScoredMemoryEntry, 
     MemoryServiceStats, 
     RoutingStats,
-    SummaryRequest,
-    SummaryType,
 };
 
 use classification::MessageClassifier;
@@ -53,7 +50,7 @@ pub struct MemoryService {
     embedding_mgr: Arc<EmbeddingManager>,
     scorer: Arc<MemoryScorer>,
     session_mgr: Arc<SessionManager>,
-    summarization_engine: Arc<SummarizationEngine>,
+    pub summarization_engine: Arc<SummarizationEngine>, // Made public for TaskManager
 }
 
 impl MemoryService {
@@ -74,7 +71,13 @@ impl MemoryService {
         let embedding_mgr = Arc::new(EmbeddingManager::new(llm_client.clone()).expect("Failed to create embedding manager"));
         let scorer = Arc::new(MemoryScorer::new());
         let session_mgr = Arc::new(SessionManager::new());
-        let summarization_engine = Arc::new(SummarizationEngine::new(llm_client.clone()));
+        
+        // Initialize summarization engine with all its dependencies
+        let summarization_engine = Arc::new(SummarizationEngine::new(
+            llm_client.clone(),
+            sqlite_store.clone(),
+            multi_store.clone(),
+        ));
         
         info!("All memory service modules initialized successfully");
         
@@ -106,7 +109,7 @@ impl MemoryService {
         let message_count = self.session_mgr.increment_counter(session_id).await;
         debug!("Session {} now has {} messages", session_id, message_count);
         
-        // Create memory entry - FIXED METHOD NAME
+        // Create memory entry
         let entry = MemoryEntry::user_message(session_id.to_string(), content.to_string());
         
         // Save and process with analysis
@@ -115,8 +118,10 @@ impl MemoryService {
         // Trigger async analysis for enrichment
         self.trigger_analysis(session_id).await;
         
-        // Check for rolling summaries
-        self.check_rolling_summaries(session_id, message_count).await?;
+        // Check for rolling summaries - delegate to engine
+        self.summarization_engine
+            .check_and_process_summaries(session_id, message_count)
+            .await?;
         
         Ok(entry_id)
     }
@@ -132,7 +137,7 @@ impl MemoryService {
         // Increment session counter
         let message_count = self.session_mgr.increment_counter(session_id).await;
         
-        // Create memory entry from ChatResponse - FIXED METHOD NAME
+        // Create memory entry from ChatResponse
         let mut entry = MemoryEntry::assistant_message(
             session_id.to_string(), 
             response.output.clone()
@@ -146,10 +151,34 @@ impl MemoryService {
         // Trigger async analysis
         self.trigger_analysis(session_id).await;
         
-        // Check for rolling summaries
-        self.check_rolling_summaries(session_id, message_count).await?;
+        // Check for rolling summaries - delegate to engine
+        self.summarization_engine
+            .check_and_process_summaries(session_id, message_count)
+            .await?;
         
         Ok(entry_id)
+    }
+    
+    /// Creates a snapshot summary - DELEGATES TO ENGINE
+    pub async fn create_snapshot_summary(
+        &self,
+        session_id: &str,
+        max_tokens: Option<usize>,
+    ) -> Result<String> {
+        self.summarization_engine
+            .create_snapshot_summary(session_id, max_tokens)
+            .await
+    }
+    
+    /// Creates a rolling summary - DELEGATES TO ENGINE
+    pub async fn create_rolling_summary(
+        &self,
+        session_id: &str,
+        window_size: usize,
+    ) -> Result<String> {
+        self.summarization_engine
+            .create_rolling_summary(session_id, window_size)
+            .await
     }
     
     /// Triggers background analysis of unanalyzed messages
@@ -213,48 +242,6 @@ impl MemoryService {
         self.sqlite_store.load_recent(session_id, limit).await
     }
     
-    /// Creates an on-demand snapshot summary - SINGLE PUBLIC METHOD
-    pub async fn create_snapshot_summary(
-        &self,
-        session_id: &str,
-        max_tokens: Option<usize>,
-    ) -> Result<String> {
-        info!("Creating snapshot summary for session: {}", session_id);
-        
-        let messages = self.sqlite_store.load_recent(session_id, 50).await?;
-        let summary_entry = self.summarization_engine
-            .create_snapshot_summary(session_id, &messages, max_tokens)
-            .await?;
-        
-        // Save the summary
-        let saved = self.sqlite_store.save(&summary_entry).await?;
-        
-        // Embed and store in Summary head
-        self.embed_and_store_summary(saved).await?;
-        
-        Ok(summary_entry.content)
-    }
-    
-    /// Creates a rolling summary with specified window size - SINGLE PUBLIC METHOD
-    pub async fn create_rolling_summary(
-        &self,
-        session_id: &str,
-        window_size: usize,
-    ) -> Result<String> {
-        let request = SummaryRequest {
-            session_id: session_id.to_string(),
-            window_size,
-            summary_type: if window_size == 100 { 
-                SummaryType::Rolling100 
-            } else { 
-                SummaryType::Rolling10 
-            },
-        };
-        
-        self.create_and_store_rolling_summary(request).await?;
-        Ok(format!("Created {}-message rolling summary", window_size))
-    }
-    
     /// Gets memory service statistics
     pub async fn get_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
         let recent = self.sqlite_store.load_recent(session_id, 100).await?;
@@ -286,6 +273,17 @@ impl MemoryService {
             .take(limit)
             .map(|s| s.entry)
             .collect())
+    }
+    
+    /// Performs cleanup of old inactive sessions
+    pub async fn cleanup_inactive_sessions(&self, max_age_hours: i64) -> Result<usize> {
+        let cleaned = self.session_mgr.cleanup_inactive_sessions(max_age_hours).await;
+        
+        if cleaned > 0 {
+            info!("Cleaned up {} inactive sessions", cleaned);
+        }
+        
+        Ok(cleaned)
     }
     
     // ===== INTERNAL PROCESSING =====
@@ -361,92 +359,5 @@ impl MemoryService {
         }
         
         Ok(())
-    }
-    
-    /// Checks and triggers rolling summaries if needed
-    async fn check_rolling_summaries(
-        &self,
-        session_id: &str,
-        message_count: usize,
-    ) -> Result<()> {
-        if !CONFIG.rolling_summaries_enabled() {
-            return Ok(());
-        }
-        
-        // Check if summaries should be triggered
-        if let Some(summary_request) = self.summarization_engine
-            .check_and_trigger_rolling_summaries(session_id, message_count)
-            .await? 
-        {
-            // Create the summary
-            self.create_and_store_rolling_summary(summary_request).await?;
-        }
-        
-        Ok(())
-    }
-    
-    /// Creates and stores a rolling summary (internal)
-    async fn create_and_store_rolling_summary(
-        &self,
-        request: SummaryRequest,
-    ) -> Result<()> {
-        info!("Creating {}-message rolling summary for session {}", 
-              request.window_size, request.session_id);
-        
-        // Load messages for summarization
-        let messages = self.sqlite_store
-            .load_recent(&request.session_id, request.window_size)
-            .await?;
-        
-        if messages.len() < request.window_size / 2 {
-            debug!("Not enough messages for summary");
-            return Ok(());
-        }
-        
-        // Generate summary
-        let summary_entry = self.summarization_engine
-            .create_rolling_summary(&messages, request.window_size)
-            .await?;
-        
-        // Save to SQLite
-        let saved = self.sqlite_store.save(&summary_entry).await?;
-        
-        // Embed and store in Summary head
-        self.embed_and_store_summary(saved).await?;
-        
-        // Update session metadata
-        self.session_mgr.increment_summary_count(&request.session_id).await;
-        
-        Ok(())
-    }
-    
-    /// Embeds and stores a summary in the Summary collection (internal)
-    async fn embed_and_store_summary(&self, summary: MemoryEntry) -> Result<()> {
-        if !CONFIG.embed_heads.contains("summary") {
-            return Ok(());
-        }
-        
-        let embedding = self.llm_client.get_embedding(&summary.content).await?;
-        
-        let mut embedded_summary = summary;
-        embedded_summary.embedding = Some(embedding);
-        embedded_summary.embedding_heads = Some(vec!["summary".to_string()]);
-        
-        self.multi_store.save(EmbeddingHead::Summary, &embedded_summary).await?;
-        
-        info!("Stored summary in Summary collection");
-        
-        Ok(())
-    }
-    
-    /// Performs cleanup of old inactive sessions
-    pub async fn cleanup_inactive_sessions(&self, max_age_hours: i64) -> Result<usize> {
-        let cleaned = self.session_mgr.cleanup_inactive_sessions(max_age_hours).await;
-        
-        if cleaned > 0 {
-            info!("Cleaned up {} inactive sessions", cleaned);
-        }
-        
-        Ok(cleaned)
     }
 }
