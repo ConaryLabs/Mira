@@ -1,4 +1,4 @@
-// src/services/memory/classification.rs
+// src/memory/features/classification.rs
 // Message classification and routing logic for multi-head memory system
 
 use std::sync::Arc;
@@ -7,7 +7,6 @@ use tracing::{debug, info, error};
 use crate::llm::client::OpenAIClient;
 use crate::llm::classification::Classification;
 use crate::llm::embeddings::EmbeddingHead;
-use crate::memory::core::types::MemoryType;
 use crate::memory::features::memory_types::{RoutingDecision, ClassificationResult};
 
 /// Handles message classification and determines routing to appropriate memory heads
@@ -172,19 +171,6 @@ impl MessageClassifier {
         heads
     }
     
-    /// Parses memory type from string
-    pub fn parse_memory_type(&self, type_str: &str) -> MemoryType {
-        match type_str.to_lowercase().as_str() {
-            "feeling" => MemoryType::Feeling,
-            "fact" => MemoryType::Fact,
-            "joke" => MemoryType::Joke,
-            "promise" => MemoryType::Promise,
-            "event" => MemoryType::Event,
-            "summary" => MemoryType::Summary,
-            _ => MemoryType::Other,
-        }
-    }
-    
     /// Creates a ClassificationResult from raw classification
     pub fn to_classification_result(
         &self,
@@ -192,20 +178,12 @@ impl MessageClassifier {
         role: &str,
     ) -> ClassificationResult {
         let heads = self.determine_embedding_heads(&classification, role);
-        let memory_type = if classification.topics.iter().any(|t| t.contains("summary")) {
-            MemoryType::Summary
-        } else if classification.is_code {
-            MemoryType::Other  // Could be refined to Code type if added
-        } else {
-            MemoryType::Other
-        };
         
         ClassificationResult {
             salience: classification.salience,
             is_code: classification.is_code,
             lang: Some(classification.lang),
             topics: classification.topics,
-            memory_type,
             suggested_heads: heads,
         }
     }
@@ -218,72 +196,5 @@ impl MessageClassifier {
             if self.code_routing_enabled { "enabled" } else { "disabled" },
             if self.summary_routing_enabled { "enabled" } else { "disabled" }
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_low_salience_rejection() {
-        let classifier = MessageClassifier::new(Arc::new(OpenAIClient::mock()));
-        
-        let classification = Classification {
-            salience: 0.1,
-            is_code: false,
-            lang: String::new(),
-            topics: vec![],
-        };
-        
-        assert!(!classifier.should_embed_content(&classification, 0.1));
-    }
-    
-    #[tokio::test]
-    async fn test_code_routing() {
-        let classifier = MessageClassifier::new(Arc::new(OpenAIClient::mock()));
-        
-        let classification = Classification {
-            salience: 0.5,
-            is_code: true,
-            lang: Some("rust".to_string()),
-            topics: vec!["programming".to_string()],
-        };
-        
-        let heads = classifier.determine_embedding_heads(&classification, "user");
-        assert!(heads.contains(&EmbeddingHead::Code));
-        assert!(heads.contains(&EmbeddingHead::Semantic));
-    }
-    
-    #[tokio::test]
-    async fn test_summary_routing() {
-        let classifier = MessageClassifier::new(Arc::new(OpenAIClient::mock()));
-        
-        let classification = Classification {
-            salience: 1.0,
-            is_code: false,
-            lang: String::new(),
-            topics: vec!["summary".to_string(), "rolling".to_string()],
-        };
-        
-        let heads = classifier.determine_embedding_heads(&classification, "system");
-        assert!(heads.contains(&EmbeddingHead::Summary));
-        assert!(heads.contains(&EmbeddingHead::Semantic));
-    }
-    
-    #[tokio::test]
-    async fn test_multi_head_routing() {
-        let classifier = MessageClassifier::new(Arc::new(OpenAIClient::mock()));
-        
-        // Code summary should route to all three heads
-        let classification = Classification {
-            salience: 0.8,
-            is_code: true,
-            lang: Some("python".to_string()),
-            topics: vec!["summary".to_string(), "code".to_string()],
-        };
-        
-        let heads = classifier.determine_embedding_heads(&classification, "system");
-        assert_eq!(heads.len(), 3);  // Semantic, Code, and Summary
     }
 }

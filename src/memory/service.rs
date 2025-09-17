@@ -17,11 +17,11 @@ use crate::config::CONFIG;
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::{
-    sqlite::store::SqliteMemoryStore,
-    qdrant::multi_store::QdrantMultiStore,
-    types::MemoryEntry,
-    recall::RecallContext,
-    traits::MemoryStore,
+    storage::sqlite::store::SqliteMemoryStore,
+    storage::qdrant::multi_store::QdrantMultiStore,
+    core::types::MemoryEntry,
+    recall::recall::RecallContext,
+    core::traits::MemoryStore,
 };
 
 // Re-export key types
@@ -106,8 +106,8 @@ impl MemoryService {
         let message_count = self.session_mgr.increment_counter(session_id).await;
         debug!("Session {} now has {} messages", session_id, message_count);
         
-        // Create memory entry
-        let entry = MemoryEntry::from_user_message(session_id.to_string(), content.to_string());
+        // Create memory entry - FIXED METHOD NAME
+        let entry = MemoryEntry::user_message(session_id.to_string(), content.to_string());
         
         // Save and process with analysis
         let entry_id = self.process_and_save_entry(entry, "user").await?;
@@ -132,12 +132,11 @@ impl MemoryService {
         // Increment session counter
         let message_count = self.session_mgr.increment_counter(session_id).await;
         
-        // Create memory entry from ChatResponse
-        let mut entry = MemoryEntry::from_user_message(
+        // Create memory entry from ChatResponse - FIXED METHOD NAME
+        let mut entry = MemoryEntry::assistant_message(
             session_id.to_string(), 
             response.output.clone()
         );
-        entry.role = "assistant".to_string();
         entry.salience = Some(response.salience as f32);
         entry.summary = Some(response.summary.clone());
         
@@ -214,7 +213,7 @@ impl MemoryService {
         self.sqlite_store.load_recent(session_id, limit).await
     }
     
-    /// Creates an on-demand snapshot summary
+    /// Creates an on-demand snapshot summary - SINGLE PUBLIC METHOD
     pub async fn create_snapshot_summary(
         &self,
         session_id: &str,
@@ -236,6 +235,26 @@ impl MemoryService {
         Ok(summary_entry.content)
     }
     
+    /// Creates a rolling summary with specified window size - SINGLE PUBLIC METHOD
+    pub async fn create_rolling_summary(
+        &self,
+        session_id: &str,
+        window_size: usize,
+    ) -> Result<String> {
+        let request = SummaryRequest {
+            session_id: session_id.to_string(),
+            window_size,
+            summary_type: if window_size == 100 { 
+                SummaryType::Rolling100 
+            } else { 
+                SummaryType::Rolling10 
+            },
+        };
+        
+        self.create_and_store_rolling_summary(request).await?;
+        Ok(format!("Created {}-message rolling summary", window_size))
+    }
+    
     /// Gets memory service statistics
     pub async fn get_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
         let recent = self.sqlite_store.load_recent(session_id, 100).await?;
@@ -248,11 +267,6 @@ impl MemoryService {
             code_entries: 0,
             summary_entries: 0,
         })
-    }
-    
-    /// Alias for get_stats for backward compatibility
-    pub async fn get_service_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
-        self.get_stats(session_id).await
     }
     
     /// Search for similar memories
@@ -274,42 +288,27 @@ impl MemoryService {
             .collect())
     }
     
-    /// Trigger a rolling summary manually
-    pub async fn trigger_rolling_summary(
-        &self,
-        session_id: &str,
-        window_size: usize,
-    ) -> Result<String> {
-        let request = SummaryRequest {
-            session_id: session_id.to_string(),
-            window_size,
-            summary_type: if window_size == 100 { 
-                SummaryType::Rolling100 
-            } else { 
-                SummaryType::Rolling10 
-            },
-        };
-        
-        self.create_and_store_rolling_summary(request).await?;
-        Ok(format!("Created {}-message rolling summary", window_size))
-    }
-    
-    /// Trigger a snapshot summary
-    pub async fn trigger_snapshot_summary(&self, session_id: &str) -> Result<String> {
-        self.create_snapshot_summary(session_id, None).await
-    }
-    
     // ===== INTERNAL PROCESSING =====
     
     /// Processes and saves an entry with classification and routing
     async fn process_and_save_entry(
         &self,
-        mut entry: MemoryEntry,
+        entry: MemoryEntry,
         role: &str,
     ) -> Result<String> {
         // Classify the content
         let classification = self.classifier.classify_message(&entry.content).await?;
-        entry = entry.with_classification(classification.clone());
+        
+        // Update entry with classification results
+        let mut entry = entry;
+        entry.salience = Some(classification.salience);
+        entry.topics = Some(classification.topics.clone());
+        entry.contains_code = Some(classification.is_code);
+        entry.programming_lang = if classification.is_code {
+            Some(classification.lang.clone())
+        } else {
+            None
+        };
         
         // Save to SQLite
         let saved_entry = self.sqlite_store.save(&entry).await?;
@@ -351,7 +350,9 @@ impl MemoryService {
                 let mut chunk_entry = entry.clone();
                 chunk_entry.content = chunk_text.clone();
                 chunk_entry.embedding = Some(embedding.clone());
-                chunk_entry.head = Some(head.as_str().to_string());
+                
+                // Update embedding_heads to track which collections this is stored in
+                chunk_entry.embedding_heads = Some(vec![head.as_str().to_string()]);
                 
                 self.multi_store.save(head, &chunk_entry).await?;
             }
@@ -384,7 +385,7 @@ impl MemoryService {
         Ok(())
     }
     
-    /// Creates and stores a rolling summary
+    /// Creates and stores a rolling summary (internal)
     async fn create_and_store_rolling_summary(
         &self,
         request: SummaryRequest,
@@ -419,7 +420,7 @@ impl MemoryService {
         Ok(())
     }
     
-    /// Embeds and stores a summary in the Summary collection
+    /// Embeds and stores a summary in the Summary collection (internal)
     async fn embed_and_store_summary(&self, summary: MemoryEntry) -> Result<()> {
         if !CONFIG.embed_heads.contains("summary") {
             return Ok(());
@@ -429,7 +430,7 @@ impl MemoryService {
         
         let mut embedded_summary = summary;
         embedded_summary.embedding = Some(embedding);
-        embedded_summary.head = Some("summary".to_string());
+        embedded_summary.embedding_heads = Some(vec!["summary".to_string()]);
         
         self.multi_store.save(EmbeddingHead::Summary, &embedded_summary).await?;
         

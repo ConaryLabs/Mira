@@ -5,7 +5,7 @@
 use tokio::join;
 use tracing::{debug, info, warn};
 use std::collections::HashSet;
-use crate::memory::recall::RecallContext;
+use crate::memory::recall::recall::RecallContext;
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::client::OpenAIClient;
@@ -186,8 +186,12 @@ where
         let mut message_count = 0;
         
         for entry in all_recent {
-            if entry.memory_type == Some(crate::memory::core::types::MemoryType::Other) 
-                && entry.tags.as_ref().is_some_and(|t| t.contains(&"summary".to_string())) {
+            // Check if it's a summary using tags instead of memory_type
+            let is_summary = entry.tags.as_ref()
+                .map(|tags| tags.iter().any(|t| t.contains("summary")))
+                .unwrap_or(false);
+                
+            if is_summary {
                 selected.push(entry);
             } else if message_count < recent_count {
                 selected.push(entry);

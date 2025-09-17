@@ -13,7 +13,7 @@ use crate::{
     },
     config::CONFIG,
     state::AppState,
-    memory::recall::RecallContext,
+    memory::recall::recall::RecallContext,
 };
 
 const DEFAULT_SESSION: &str = "peter-eternal";
@@ -207,7 +207,8 @@ async fn get_recent_memories(params: Value, memory: &Arc<crate::memory::MemorySe
 
 async fn get_memory_stats(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
-    let stats = memory.get_service_stats(&session_id).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    // FIXED: Changed from get_service_stats to get_stats
+    let stats = memory.get_stats(&session_id).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -222,7 +223,8 @@ async fn trigger_rolling_summary(params: Value, memory: &Arc<crate::memory::Memo
     let session_id = get_session_id(params["session_id"].as_str());
     let window_size = params["window_size"].as_u64().unwrap_or(10) as usize;
     
-    let message = memory.trigger_rolling_summary(&session_id, window_size).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    // FIXED: Changed from trigger_rolling_summary to create_rolling_summary
+    let message = memory.create_rolling_summary(&session_id, window_size).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
@@ -237,13 +239,14 @@ async fn trigger_rolling_summary(params: Value, memory: &Arc<crate::memory::Memo
 async fn trigger_snapshot_summary(params: Value, memory: &Arc<crate::memory::MemoryService>) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     
-    let message = memory.trigger_snapshot_summary(&session_id).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    // FIXED: Changed from trigger_snapshot_summary to create_snapshot_summary with None for max_tokens
+    let summary = memory.create_snapshot_summary(&session_id, None).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(WsServerMessage::Data {
         data: json!({
             "success": true,
             "session_id": session_id,
-            "message": message
+            "summary": summary
         }),
         request_id: None,
     })

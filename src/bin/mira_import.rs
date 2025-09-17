@@ -11,7 +11,7 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
-use mira_backend::memory::MemoryEntry;
+use mira_backend::memory::core::types::MemoryEntry;
 use mira_backend::memory::core::traits::MemoryStore;
 
 #[derive(Parser)]
@@ -23,7 +23,7 @@ struct Cli {
     input: PathBuf,
     
     /// SQLite DB path
-    #[arg(long, default_value = "mira.sqlite")]
+    #[arg(long, default_value = "mira.db")]  // FIXED: Changed from mira.sqlite to mira.db
     sqlite: String,
     
     /// Enable debug logging
@@ -118,27 +118,52 @@ async fn main() -> Result<()> {
             }).unwrap_or(Utc::now());
             
             let entry = MemoryEntry {
+                // Core fields
                 id: None,
                 session_id: session_id.clone(),
+                response_id: None,
+                parent_id: None,
                 role: message.author.role.clone(),
                 content,
                 timestamp,
+                tags: Some(vec!["imported".to_string(), "chatgpt".to_string()]),
+                
+                // Analysis fields
+                mood: None,
+                intensity: None,
                 salience: Some(5.0),
-                summary: None,
-                tags: None,
-                memory_type: None,
-                embedding: None,
-                // Additional required fields
-                logprobs: None,
-                moderation_flag: None,
-                system_fingerprint: None,
-                head: None,
-                is_code: None,
-                lang: None,
+                intent: None,
                 topics: None,
-                pinned: Some(false),
-                subject_tag: None,
-                last_accessed: Some(Utc::now()),
+                summary: None,
+                relationship_impact: None,
+                contains_code: None,
+                language: None,
+                programming_lang: None,
+                analyzed_at: None,
+                analysis_version: None,
+                routed_to_heads: None,
+                last_recalled: Some(Utc::now()),
+                recall_count: None,
+                
+                // GPT5 metadata fields
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                reasoning_effort: None,
+                verbosity: None,
+                
+                // Embedding info
+                embedding: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
             };
             
             store.save(&entry).await?;

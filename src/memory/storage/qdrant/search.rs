@@ -1,10 +1,9 @@
-// src/memory/qdrant/search.rs
+// src/memory/storage/qdrant/search.rs
 
 //! Qdrant search and filter helpers for semantic recall.
 
-use crate::memory::core::types::{MemoryEntry, MemoryType, MemoryTag};
+use crate::memory::core::types::MemoryEntry;
 use chrono::{DateTime, Utc};
-use std::str::FromStr; // Needed for MemoryType parsing
 
 /// Builds the JSON filter block for a session (and, optionally, tags/salience).
 pub fn build_session_filter(session_id: &str) -> serde_json::Value {
@@ -19,7 +18,7 @@ pub fn build_session_filter(session_id: &str) -> serde_json::Value {
 /// Optionally, build an advanced filter.
 pub fn build_advanced_filter(
     session_id: &str,
-    tags: Option<&[MemoryTag]>,
+    tags: Option<&[String]>,
     min_salience: Option<f32>,
 ) -> serde_json::Value {
     let mut must = vec![serde_json::json!({
@@ -62,31 +61,28 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
         .map(millis_to_datetime)
         .unwrap_or_else(Utc::now);
 
-    // Phase 4: try to read last_accessed (ms), else default to now
-    let last_accessed = payload
-        .get("last_accessed")
+    let analyzed_at = payload
+        .get("analyzed_at")
         .and_then(|v| v.as_i64())
-        .map(millis_to_datetime)
-        .unwrap_or_else(Utc::now);
+        .map(millis_to_datetime);
+
+    let last_recalled = payload
+        .get("last_recalled")
+        .and_then(|v| v.as_i64())
+        .map(millis_to_datetime);
 
     Some(MemoryEntry {
+        // Core fields
         id: payload.get("id").and_then(|id| id.as_i64()),
         session_id: payload.get("session_id")?.as_str()?.to_string(),
+        response_id: payload
+            .get("response_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        parent_id: payload.get("parent_id").and_then(|v| v.as_i64()),
         role: payload.get("role")?.as_str()?.to_string(),
         content: payload.get("content")?.as_str()?.to_string(),
         timestamp,
-
-        embedding: vector.and_then(|v| {
-            v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|val| val.as_f64().map(|f| f as f32))
-                    .collect()
-            })
-        }),
-        salience: payload
-            .get("salience")
-            .and_then(|v| v.as_f64())
-            .map(|f| f as f32),
         tags: payload
             .get("tags")
             .and_then(|v| v.as_array())
@@ -95,25 +91,24 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
                     .filter_map(|tag| tag.as_str().map(|s| s.to_string()))
                     .collect()
             }),
-        summary: payload
-            .get("summary")
+        
+        // Analysis fields
+        mood: payload
+            .get("mood")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        memory_type: payload
-            .get("memory_type")
-            .and_then(|v| v.as_str())
-            .and_then(|s| MemoryType::from_str(s).ok()),
-        logprobs: payload.get("logprobs").cloned(),
-        moderation_flag: payload.get("moderation_flag").and_then(|v| v.as_bool()),
-        system_fingerprint: payload
-            .get("system_fingerprint")
+        intensity: payload
+            .get("intensity")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32),
+        salience: payload
+            .get("salience")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32),
+        intent: payload
+            .get("intent")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-
-        // Robust memory (Phase 3)
-        head: payload.get("head").and_then(|v| v.as_str()).map(String::from),
-        is_code: payload.get("is_code").and_then(|v| v.as_bool()),
-        lang: payload.get("lang").and_then(|v| v.as_str()).map(String::from),
         topics: payload
             .get("topics")
             .and_then(|v| v.as_array())
@@ -122,13 +117,123 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
                     .filter_map(|topic| topic.as_str().map(String::from))
                     .collect()
             }),
-
-        // Phase 4 additions
-        pinned: payload.get("pinned").and_then(|v| v.as_bool()).or(Some(false)),
-        subject_tag: payload
-            .get("subject_tag")
+        summary: payload
+            .get("summary")
             .and_then(|v| v.as_str())
-            .map(String::from),
-        last_accessed: Some(last_accessed),
+            .map(|s| s.to_string()),
+        relationship_impact: payload
+            .get("relationship_impact")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        contains_code: payload.get("contains_code").and_then(|v| v.as_bool()),
+        language: payload
+            .get("language")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        programming_lang: payload
+            .get("programming_lang")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        analyzed_at,
+        analysis_version: payload
+            .get("analysis_version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        routed_to_heads: payload
+            .get("routed_to_heads")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|h| h.as_str().map(String::from))
+                    .collect()
+            }),
+        last_recalled,
+        recall_count: payload
+            .get("recall_count")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        
+        // GPT5 metadata fields
+        model_version: payload
+            .get("model_version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        prompt_tokens: payload
+            .get("prompt_tokens")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        completion_tokens: payload
+            .get("completion_tokens")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        reasoning_tokens: payload
+            .get("reasoning_tokens")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        total_tokens: payload
+            .get("total_tokens")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        latency_ms: payload
+            .get("latency_ms")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        generation_time_ms: payload
+            .get("generation_time_ms")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        finish_reason: payload
+            .get("finish_reason")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        tool_calls: payload
+            .get("tool_calls")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| tc.as_str().map(String::from))
+                    .collect()
+            }),
+        temperature: payload
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32),
+        max_tokens: payload
+            .get("max_tokens")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32),
+        reasoning_effort: payload
+            .get("reasoning_effort")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        verbosity: payload
+            .get("verbosity")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        
+        // Embedding info
+        embedding: vector.and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|val| val.as_f64().map(|f| f as f32))
+                    .collect()
+            })
+        }),
+        embedding_heads: payload
+            .get("embedding_heads")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|h| h.as_str().map(String::from))
+                    .collect()
+            }),
+        qdrant_point_ids: payload
+            .get("qdrant_point_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|id| id.as_str().map(String::from))
+                    .collect()
+            }),
     })
 }

@@ -230,7 +230,8 @@ impl TaskManager {
                             };
 
                             if let Some(window_size) = window {
-                                match memory_service.trigger_rolling_summary(&session_id, window_size).await {
+                                // FIXED: Changed from trigger_rolling_summary to create_rolling_summary
+                                match memory_service.create_rolling_summary(&session_id, window_size).await {
                                     Ok(msg) => {
                                         info!("Summary created: {}", msg);
                                         metrics.add_processed_items("summary", 1);

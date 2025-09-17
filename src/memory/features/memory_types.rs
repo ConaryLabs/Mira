@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::llm::embeddings::EmbeddingHead;
-use crate::memory::core::types::{MemoryEntry, MemoryType};
+use crate::memory::core::types::MemoryEntry;
 
 /// Scored memory entry with all scoring components
 #[derive(Debug, Clone)]
@@ -106,7 +106,6 @@ pub struct ClassificationResult {
     pub is_code: bool,
     pub lang: Option<String>,
     pub topics: Vec<String>,
-    pub memory_type: MemoryType,
     pub suggested_heads: Vec<EmbeddingHead>,
 }
 

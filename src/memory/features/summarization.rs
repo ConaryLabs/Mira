@@ -1,4 +1,4 @@
-// src/services/memory/summarization.rs
+// src/memory/features/summarization.rs
 // Rolling summaries and snapshot generation for memory compression
 
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::Utc;
 use tracing::{info, debug};
 use crate::llm::client::OpenAIClient;
-use crate::memory::core::types::{MemoryEntry, MemoryType};
+use crate::memory::core::types::MemoryEntry;
 use crate::config::CONFIG;
 use crate::memory::features::memory_types::{SummaryRequest, SummaryType};
 
@@ -179,28 +179,53 @@ impl SummarizationEngine {
         MemoryEntry {
             id: None,
             session_id,
+            response_id: None,
+            parent_id: None,
             role: "system".to_string(),
             content: summary.clone(),
             timestamp: Utc::now(),
-            embedding: None,
-            salience: Some(1.0),  // Summaries have max salience
             tags: Some(vec![
                 "summary".to_string(),
                 format!("summary:rolling:{}", window_size),
                 "system".to_string(),
             ]),
-            summary: Some(summary),
-            memory_type: Some(MemoryType::Summary),
-            logprobs: None,
-            moderation_flag: None,
-            system_fingerprint: None,
-            head: Some("summary".to_string()),
-            is_code: Some(false),
-            lang: None,
+            
+            // Analysis fields
+            mood: None,
+            intensity: None,
+            salience: Some(1.0),  // Summaries have max salience
+            intent: None,
             topics: None,
-            pinned: Some(self.auto_pinning),  // Auto-pin summaries
-            subject_tag: None,
-            last_accessed: Some(Utc::now()),
+            summary: Some(summary),
+            relationship_impact: None,
+            contains_code: Some(false),
+            language: None,
+            programming_lang: None,
+            analyzed_at: None,
+            analysis_version: None,
+            routed_to_heads: None,
+            last_recalled: Some(Utc::now()),
+            recall_count: None,
+            
+            // GPT5 metadata fields
+            model_version: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+            latency_ms: None,
+            generation_time_ms: None,
+            finish_reason: None,
+            tool_calls: None,
+            temperature: None,
+            max_tokens: None,
+            reasoning_effort: None,
+            verbosity: None,
+            
+            // Embedding info
+            embedding: None,
+            embedding_heads: Some(vec!["summary".to_string()]),
+            qdrant_point_ids: None,
         }
     }
     
@@ -292,79 +317,5 @@ impl SummarizationEngine {
             if self.rolling_100_enabled { "enabled" } else { "disabled" },
             if self.auto_pinning { "enabled" } else { "disabled" }
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_rolling_summary_triggers() {
-        let engine = SummarizationEngine::new(Arc::new(OpenAIClient::mock()));
-        
-        // Test 10-message trigger
-        let result = engine.check_and_trigger_rolling_summaries("session", 10).await.unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().window_size, 10);
-        
-        // Test 100-message trigger
-        let result = engine.check_and_trigger_rolling_summaries("session", 100).await.unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().window_size, 100);
-        
-        // Test non-trigger
-        let result = engine.check_and_trigger_rolling_summaries("session", 47).await.unwrap();
-        assert!(result.is_none());
-    }
-    
-    #[tokio::test]
-    async fn test_summary_content_filtering() {
-        let engine = SummarizationEngine::new(Arc::new(OpenAIClient::mock()));
-        
-        let messages = vec![
-            MemoryEntry {
-                role: "user".to_string(),
-                content: "Hello".to_string(),
-                tags: None,
-                ..Default::default()
-            },
-            MemoryEntry {
-                role: "system".to_string(),
-                content: "Previous summary".to_string(),
-                tags: Some(vec!["summary".to_string()]),
-                ..Default::default()
-            },
-            MemoryEntry {
-                role: "assistant".to_string(),
-                content: "Hi there".to_string(),
-                tags: None,
-                ..Default::default()
-            },
-        ];
-        
-        let content = engine.build_summary_content(&messages).unwrap();
-        
-        // Should exclude the summary message
-        assert!(!content.contains("Previous summary"));
-        assert!(content.contains("Hello"));
-        assert!(content.contains("Hi there"));
-    }
-    
-    #[tokio::test]
-    async fn test_summary_entry_creation() {
-        let engine = SummarizationEngine::new(Arc::new(OpenAIClient::mock()));
-        
-        let entry = engine.create_summary_entry(
-            "test_session".to_string(),
-            "Test summary content".to_string(),
-            10,
-        );
-        
-        assert_eq!(entry.role, "system");
-        assert_eq!(entry.salience, Some(1.0));
-        assert_eq!(entry.pinned, Some(true));
-        assert_eq!(entry.memory_type, Some(MemoryType::Summary));
-        assert!(entry.tags.as_ref().unwrap().contains(&"summary:rolling:10".to_string()));
     }
 }

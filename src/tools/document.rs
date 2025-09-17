@@ -80,12 +80,11 @@ impl DocumentService {
         let entry = MemoryEntry {
             id: None,
             session_id: format!("project-{}", project_id),
+            response_id: None,
+            parent_id: None,
             role: "document".to_string(),
             content: content.to_string(),
             timestamp: Utc::now(),
-            embedding: None,
-            salience: Some(7.0),
-            memory_type: None,
             tags: Some(vec![
                 "document".to_string(),
                 "imported".to_string(),
@@ -94,11 +93,43 @@ impl DocumentService {
                 format!("ext:{}", extension),
                 format!("project:{}", project_id),
             ]),
+            
+            // Analysis fields
+            mood: None,
+            intensity: None,
+            salience: Some(7.0),
+            intent: Some("document_import".to_string()),
+            topics: None,
             summary: Some(format!("Document: {}", file_name)),
-            logprobs: None,
-            moderation_flag: None,
-            system_fingerprint: None,
-            head: None,
+            relationship_impact: None,
+            contains_code: None,
+            language: None,
+            programming_lang: None,
+            analyzed_at: None,
+            analysis_version: None,
+            routed_to_heads: None,
+            last_recalled: None,
+            recall_count: None,
+            
+            // GPT5 metadata fields
+            model_version: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+            latency_ms: None,
+            generation_time_ms: None,
+            finish_reason: None,
+            tool_calls: None,
+            temperature: None,
+            max_tokens: None,
+            reasoning_effort: None,
+            verbosity: None,
+            
+            // Embedding info
+            embedding: None,
+            embedding_heads: Some(vec!["documents".to_string()]),
+            qdrant_point_ids: None,
         };
 
         // Store in Documents collection

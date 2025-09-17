@@ -3,7 +3,7 @@
 // Correctly matches the new schema with all proper tables
 
 use crate::memory::core::traits::MemoryStore;
-use crate::memory::core::types::{MemoryEntry, MemoryTag};
+use crate::memory::core::types::MemoryEntry;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};
@@ -85,17 +85,23 @@ impl SqliteMemoryStore {
             let content: String = r.get("content");
             let timestamp: NaiveDateTime = r.get("timestamp");
             let tags: Option<String> = r.get("tags");
+            let response_id: Option<String> = r.get("response_id");
+            let parent_id: Option<i64> = r.get("parent_id");
             
             // Analysis fields (may be null if not analyzed yet)
+            let mood: Option<String> = r.get("mood");
+            let intensity: Option<f32> = r.get("intensity");
             let salience: Option<f32> = r.get("salience");
+            let intent: Option<String> = r.get("intent");
             let summary: Option<String> = r.get("summary");
             let topics: Option<String> = r.get("topics");
             let contains_code: Option<bool> = r.get("contains_code");
             let programming_lang: Option<String> = r.get("programming_lang");
+            let last_recalled: Option<NaiveDateTime> = r.get("last_recalled");
             
             let tags_vec = tags
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
             
             let topics_vec = topics
                 .as_ref()
@@ -104,25 +110,49 @@ impl SqliteMemoryStore {
             MemoryEntry {
                 id: Some(id),
                 session_id,
+                response_id,
+                parent_id,
                 role,
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
-                embedding: None,  // Stored in Qdrant
-                salience,
                 tags: tags_vec,
-                summary,
-                memory_type: None,  // Could infer from analysis
-                logprobs: None,     // In gpt5_metadata if needed
-                moderation_flag: None,
-                system_fingerprint: None,
-                head: None,
-                is_code: contains_code,
-                lang: programming_lang,
+                
+                // Analysis fields
+                mood,
+                intensity,
+                salience,
+                intent,
                 topics: topics_vec,
-                pinned: None,
-                subject_tag: None,
-                last_accessed: r.get::<Option<NaiveDateTime>, _>("last_recalled")
-                    .map(|dt| Utc.from_utc_datetime(&dt)),
+                summary,
+                relationship_impact: None, // Not in query
+                contains_code,
+                language: None, // Not in query
+                programming_lang,
+                analyzed_at: None, // Not in query
+                analysis_version: None, // Not in query
+                routed_to_heads: None, // Not in query
+                last_recalled: last_recalled.map(|dt| Utc.from_utc_datetime(&dt)),
+                recall_count: None, // Not in query
+                
+                // GPT5 metadata fields (all None for this query)
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                reasoning_effort: None,
+                verbosity: None,
+                
+                // Embedding info (stored in Qdrant)
+                embedding: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
             }
         });
         
@@ -162,32 +192,59 @@ impl SqliteMemoryStore {
             let content: String = row.get("content");
             let timestamp: NaiveDateTime = row.get("timestamp");
             let tags: Option<String> = row.get("tags");
+            let response_id: Option<String> = row.get("response_id");
+            let parent_id: Option<i64> = row.get("parent_id");
             
             let tags_vec = tags
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
             
             entries.push(MemoryEntry {
                 id: Some(id),
                 session_id,
+                response_id,
+                parent_id,
                 role,
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
-                embedding: None,
-                salience: None,
                 tags: tags_vec,
-                summary: None,
-                memory_type: None,
-                logprobs: None,
-                moderation_flag: None,
-                system_fingerprint: None,
-                head: None,
-                is_code: None,
-                lang: None,
+                
+                // All analysis fields are None (unanalyzed)
+                mood: None,
+                intensity: None,
+                salience: None,
+                intent: None,
                 topics: None,
-                pinned: None,
-                subject_tag: None,
-                last_accessed: None,
+                summary: None,
+                relationship_impact: None,
+                contains_code: None,
+                language: None,
+                programming_lang: None,
+                analyzed_at: None,
+                analysis_version: None,
+                routed_to_heads: None,
+                last_recalled: None,
+                recall_count: None,
+                
+                // GPT5 metadata fields
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                reasoning_effort: None,
+                verbosity: None,
+                
+                // Embedding info
+                embedding: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
             });
         }
         
@@ -233,6 +290,7 @@ impl SqliteMemoryStore {
             r#"
             SELECT 
                 m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
+                m.response_id, m.parent_id,
                 a.salience, a.summary, a.topics
             FROM memory_entries m
             LEFT JOIN message_analysis a ON m.id = a.message_id
@@ -257,13 +315,15 @@ impl SqliteMemoryStore {
             let content: String = row.get("content");
             let timestamp: NaiveDateTime = row.get("timestamp");
             let tags: Option<String> = row.get("tags");
+            let response_id: Option<String> = row.get("response_id");
+            let parent_id: Option<i64> = row.get("parent_id");
             let salience: Option<f32> = row.get("salience");
             let summary: Option<String> = row.get("summary");
             let topics: Option<String> = row.get("topics");
             
             let tags_vec = tags
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
             
             let topics_vec = topics
                 .as_ref()
@@ -272,24 +332,49 @@ impl SqliteMemoryStore {
             entries.push(MemoryEntry {
                 id: Some(id),
                 session_id,
+                response_id,
+                parent_id,
                 role,
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
-                embedding: None,
-                salience,
                 tags: tags_vec,
-                summary,
-                memory_type: None,
-                logprobs: None,
-                moderation_flag: None,
-                system_fingerprint: None,
-                head: None,
-                is_code: None,
-                lang: None,
+                
+                // Partial analysis fields
+                mood: None,
+                intensity: None,
+                salience,
+                intent: None,
                 topics: topics_vec,
-                pinned: None,
-                subject_tag: None,
-                last_accessed: None,
+                summary,
+                relationship_impact: None,
+                contains_code: None,
+                language: None,
+                programming_lang: None,
+                analyzed_at: None,
+                analysis_version: None,
+                routed_to_heads: None,
+                last_recalled: None,
+                recall_count: None,
+                
+                // GPT5 metadata fields
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                reasoning_effort: None,
+                verbosity: None,
+                
+                // Embedding info
+                embedding: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
             });
         }
         
@@ -328,14 +413,14 @@ impl SqliteMemoryStore {
             r#"
             WITH RECURSIVE thread AS (
                 -- Start with the response message
-                SELECT id, parent_id, session_id, role, content, timestamp, tags
+                SELECT id, parent_id, session_id, role, content, timestamp, tags, response_id
                 FROM memory_entries 
                 WHERE response_id = ?
                 
                 UNION ALL
                 
                 -- Recursively get parent messages
-                SELECT m.id, m.parent_id, m.session_id, m.role, m.content, m.timestamp, m.tags
+                SELECT m.id, m.parent_id, m.session_id, m.role, m.content, m.timestamp, m.tags, m.response_id
                 FROM memory_entries m
                 INNER JOIN thread t ON m.id = t.parent_id
             )
@@ -354,32 +439,59 @@ impl SqliteMemoryStore {
             let content: String = row.get("content");
             let timestamp: NaiveDateTime = row.get("timestamp");
             let tags: Option<String> = row.get("tags");
+            let response_id: Option<String> = row.get("response_id");
+            let parent_id: Option<i64> = row.get("parent_id");
             
             let tags_vec = tags
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
             
             entries.push(MemoryEntry {
                 id: Some(id),
                 session_id,
+                response_id,
+                parent_id,
                 role,
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
-                embedding: None,
-                salience: None,
                 tags: tags_vec,
-                summary: None,
-                memory_type: None,
-                logprobs: None,
-                moderation_flag: None,
-                system_fingerprint: None,
-                head: None,
-                is_code: None,
-                lang: None,
+                
+                // No analysis data in this query
+                mood: None,
+                intensity: None,
+                salience: None,
+                intent: None,
                 topics: None,
-                pinned: None,
-                subject_tag: None,
-                last_accessed: None,
+                summary: None,
+                relationship_impact: None,
+                contains_code: None,
+                language: None,
+                programming_lang: None,
+                analyzed_at: None,
+                analysis_version: None,
+                routed_to_heads: None,
+                last_recalled: None,
+                recall_count: None,
+                
+                // GPT5 metadata fields
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                reasoning_effort: None,
+                verbosity: None,
+                
+                // Embedding info
+                embedding: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
             });
         }
         
@@ -456,7 +568,7 @@ impl SqliteMemoryStore {
         // Generate response_id for assistant messages
         let response_id = match &entry.role[..] {
             "assistant" => Some(uuid::Uuid::new_v4().to_string()),
-            _ => None,
+            _ => entry.response_id.clone(),
         };
 
         let row = sqlx::query(
@@ -480,6 +592,7 @@ impl SqliteMemoryStore {
         let new_id: i64 = row.get("id");
         let mut saved_entry = entry.clone();
         saved_entry.id = Some(new_id);
+        saved_entry.response_id = response_id;
 
         debug!("Saved memory entry {} with explicit parent {:?}", new_id, parent_id);
         Ok(saved_entry)
@@ -497,7 +610,7 @@ impl MemoryStore for SqliteMemoryStore {
         // Generate a response_id for tracking conversation threads
         let response_id = match &entry.role[..] {
             "assistant" => Some(uuid::Uuid::new_v4().to_string()),
-            _ => None,
+            _ => entry.response_id.clone(),
         };
 
         // Find parent_id by getting the most recent message in this session
@@ -538,6 +651,7 @@ impl MemoryStore for SqliteMemoryStore {
         let new_id: i64 = row.get("id");
         let mut saved_entry = entry.clone();
         saved_entry.id = Some(new_id);
+        saved_entry.response_id = response_id.clone(); // FIXED: Clone here to avoid move
 
         debug!("Saved memory entry {} for session {} (parent: {:?}, response_id: {:?})", 
                new_id, entry.session_id, parent_id, response_id);
@@ -550,6 +664,7 @@ impl MemoryStore for SqliteMemoryStore {
             r#"
             SELECT 
                 m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
+                m.response_id, m.parent_id,
                 a.salience, a.summary, a.topics, a.contains_code, a.programming_lang
             FROM memory_entries m
             LEFT JOIN message_analysis a ON m.id = a.message_id
@@ -575,6 +690,8 @@ impl MemoryStore for SqliteMemoryStore {
             let content: String = row.get("content");
             let timestamp: NaiveDateTime = row.get("timestamp");
             let tags: Option<String> = row.get("tags");
+            let response_id: Option<String> = row.get("response_id");
+            let parent_id: Option<i64> = row.get("parent_id");
             let salience: Option<f32> = row.get("salience");
             let summary: Option<String> = row.get("summary");
             let topics: Option<String> = row.get("topics");
@@ -583,7 +700,7 @@ impl MemoryStore for SqliteMemoryStore {
 
             let tags_vec = tags
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
             
             let topics_vec = topics
                 .as_ref()
@@ -592,24 +709,49 @@ impl MemoryStore for SqliteMemoryStore {
             entries.push(MemoryEntry {
                 id: Some(id),
                 session_id,
+                response_id,
+                parent_id,
                 role,
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
-                embedding: None,  // In Qdrant
-                salience,
                 tags: tags_vec,
-                summary,
-                memory_type: None,
-                logprobs: None,
-                moderation_flag: None,
-                system_fingerprint: None,
-                head: None,
-                is_code: contains_code,
-                lang: programming_lang,
+                
+                // Partial analysis fields from the query
+                mood: None,
+                intensity: None,
+                salience,
+                intent: None,
                 topics: topics_vec,
-                pinned: None,
-                subject_tag: None,
-                last_accessed: None,
+                summary,
+                relationship_impact: None,
+                contains_code,
+                language: None,
+                programming_lang,
+                analyzed_at: None,
+                analysis_version: None,
+                routed_to_heads: None,
+                last_recalled: None,
+                recall_count: None,
+                
+                // GPT5 metadata fields
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                reasoning_effort: None,
+                verbosity: None,
+                
+                // Embedding info (in Qdrant)
+                embedding: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
             });
         }
 
