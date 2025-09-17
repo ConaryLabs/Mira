@@ -4,7 +4,6 @@
 
 pub mod classification;
 pub mod decay;
-pub mod decay_scheduler;
 pub mod embedding;
 pub mod memory_types;
 pub mod message_analyzer;  // NEW!

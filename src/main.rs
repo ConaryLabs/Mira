@@ -1,5 +1,4 @@
 // src/main.rs
-
 use std::sync::Arc;
 use std::net::SocketAddr;
 use axum::{
@@ -9,9 +8,9 @@ use axum::{
 use tracing::{info, error, Level};
 use tracing_subscriber::FmtSubscriber;
 use sqlx::sqlite::SqlitePoolOptions;
-
 use mira_backend::api::ws::ws_chat_handler;
 use mira_backend::config::CONFIG;
+use mira_backend::tasks::TaskManager;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -61,15 +60,10 @@ async fn main() -> anyhow::Result<()> {
         ).await?
     );
     
-    // Start decay scheduler as a background task
-    let decay_interval = std::time::Duration::from_secs(
-        CONFIG.decay_interval_seconds.unwrap_or(7200)
-    );
-    let decay_handle = mira_backend::memory::features::decay_scheduler::spawn_decay_scheduler(
-        app_state.clone(), 
-        decay_interval
-    );
-    info!("Memory decay scheduler started - running every {} seconds", decay_interval.as_secs());
+    // Start all background tasks using TaskManager
+    let mut task_manager = TaskManager::new(app_state.clone());
+    task_manager.start().await;
+    info!("Background task manager started");
     
     // Create WebSocket-only router
     let app = Router::new()
@@ -83,23 +77,14 @@ async fn main() -> anyhow::Result<()> {
     info!("WebSocket server listening on ws://{}/ws", bind_address);
     info!("Server ready - all HTTP endpoints removed, WebSocket-only mode active");
     
-    // Use axum::serve with make_service_with_connect_info to provide ConnectInfo
-    let server_future = axum::serve(
+    // Run server
+    axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>()
-    );
+    ).await?;
     
-    // Run server and decay scheduler concurrently
-    tokio::select! {
-        result = server_future => {
-            if let Err(e) = result {
-                error!("Server error: {}", e);
-            }
-        }
-        _ = decay_handle => {
-            error!("Decay scheduler unexpectedly terminated");
-        }
-    }
+    // Shutdown tasks on exit
+    task_manager.shutdown().await;
     
     Ok(())
 }

@@ -8,9 +8,9 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{error, info};
-use sqlx::Row;  // Added this import
+use sqlx::Row;
 
-use crate::memory::features::decay_scheduler;
+use crate::memory::features::decay;  // Changed from decay_scheduler
 use crate::memory::features::message_analyzer::AnalysisService;
 use crate::state::AppState;
 
@@ -135,8 +135,36 @@ impl TaskManager {
     fn spawn_decay_scheduler(&self) -> JoinHandle<()> {
         let app_state = self.app_state.clone();
         let interval = self.config.decay_interval;
+        let metrics = self.metrics.clone();
         
-        decay_scheduler::spawn_decay_scheduler(app_state, interval)
+        info!(
+            "Decay scheduler started (interval: {} hours)", 
+            interval.as_secs() / 3600
+        );
+        
+        // Wrap the decay scheduler to add metrics tracking
+        tokio::spawn(async move {
+            let mut interval_timer = time::interval(interval);
+            interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+            
+            loop {
+                interval_timer.tick().await;
+                
+                let start = std::time::Instant::now();
+                
+                match decay::run_decay_cycle(app_state.clone()).await {
+                    Ok(()) => {
+                        let duration = start.elapsed();
+                        metrics.record_task_duration("decay", duration);
+                        metrics.add_processed_items("decay", 1); // 1 cycle completed
+                    }
+                    Err(e) => {
+                        error!("Decay cycle failed: {:#}", e);
+                        metrics.record_error("decay");
+                    }
+                }
+            }
+        })
     }
 
     /// Spawns the session cleanup task

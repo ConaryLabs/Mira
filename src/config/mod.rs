@@ -61,7 +61,7 @@ pub struct MiraConfig {
     // Salience threshold - always 0.0 now but kept for compatibility
     pub min_salience_for_qdrant: f32,
 
-    // Memory decay interval configuration
+    // Legacy decay interval - kept for compatibility, not used
     pub decay_interval_seconds: Option<u64>,
     
     // Summarization Configuration
@@ -149,24 +149,48 @@ pub struct MiraConfig {
     pub embed_code_overlap: usize,
     pub embed_summary_chunk: usize,
     pub embed_summary_overlap: usize,
-    pub embed_document_chunk: Option<usize>,  // NEW!
-    pub embed_document_overlap: Option<usize>, // NEW!
+    pub embed_document_chunk: Option<usize>,
+    pub embed_document_overlap: Option<usize>,
 
     // Memory Decay Configuration
     pub decay_recent_half_life_days: f32,
     pub decay_gentle_factor: f32,
     pub decay_stronger_factor: f32,
     pub decay_floor: f32,
+    pub decay_high_salience_threshold: f32,
     
-    // NEW: Robustness & Performance Features
+    // Recall & Context Configuration
+    pub recall_recent: usize,
+    pub recall_semantic: usize,
+    pub recall_k_per_head: usize,
+    pub context_window_strategy: String,
+    pub context_window_size: usize,
+    pub recent_message_limit: usize,
+    
+    // Analysis & Batching
+    pub analysis_batch_size: usize,
+    pub analysis_max_wait_ms: u64,
+    pub batch_size: usize,
+    
+    // Fast Lane Processing
+    pub fast_lane_enabled: bool,
+    pub fast_lane_default_salience: f32,
+    
+    // Response Configuration
+    pub max_response_tokens: usize,
+    pub max_response_size_mb: usize,
+    
+    // Robustness & Performance Features
     pub api_max_retries: usize,
     pub api_retry_delay_ms: u64,
     pub enable_request_cache: bool,
     pub cache_ttl_seconds: u64,
     pub enable_response_compression: bool,
-    pub max_response_size_mb: usize,
     pub enable_batch_operations: bool,
-    pub batch_size: usize,
+    
+    // Embedding Model Configuration
+    pub embed_model: String,
+    pub embed_dimensions: usize,
 }
 
 /// Helper function to read environment variables with defaults
@@ -188,7 +212,7 @@ impl MiraConfig {
         Self {
             // Core LLM Configuration
             openai_api_key: env::var("OPENAI_API_KEY").ok(),
-            openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()), // No /v1
+            openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()),
             gpt5_model: env_var_or("GPT5_MODEL", "gpt-5".to_string()),
             verbosity: env_var_or("GPT5_VERBOSITY", "low".to_string()),
             reasoning_effort: env_var_or("GPT5_REASONING_EFFORT", "low".to_string()),
@@ -202,7 +226,7 @@ impl MiraConfig {
             max_json_repair_attempts: env_var_or("MAX_JSON_REPAIR_ATTEMPTS", 3),
             
             // Database & Storage
-            database_url: env_var_or("DATABASE_URL", "./mira.sqlite".to_string()),
+            database_url: env_var_or("DATABASE_URL", "sqlite:./mira.db".to_string()),
             sqlite_max_connections: env_var_or("MIRA_SQLITE_MAX_CONNECTIONS", 100),
 
             // Session & User
@@ -234,12 +258,10 @@ impl MiraConfig {
             // Always 0.0 now - we save everything
             min_salience_for_qdrant: env_var_or("MIN_SALIENCE_FOR_QDRANT", 0.0),
 
-            // Memory decay interval configuration
-            // Default: 7200 seconds (2 hours) if not specified
+            // Legacy decay interval - not used with new task system
             decay_interval_seconds: env::var("MIRA_DECAY_INTERVAL_SECONDS")
                 .ok()
-                .and_then(|s| s.parse::<u64>().ok())
-                .or(Some(7200)),
+                .and_then(|s| s.parse::<u64>().ok()),
 
             // Summarization
             enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
@@ -252,7 +274,7 @@ impl MiraConfig {
             max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 10),
             enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
 
-            // Tools - Updated to use MIRA_ prefix consistently
+            // Tools
             enable_chat_tools: env_var_or("MIRA_ENABLE_CHAT_TOOLS", true),
             enable_web_search: env_var_or("MIRA_ENABLE_WEB_SEARCH", true),
             enable_code_interpreter: env_var_or("MIRA_ENABLE_CODE_INTERPRETER", true),
@@ -269,7 +291,7 @@ impl MiraConfig {
             image_generation_style: env_var_or("MIRA_IMAGE_GENERATION_STYLE", "vivid".to_string()),
             tool_timeout_seconds: env_var_or("MIRA_TOOL_TIMEOUT_SECONDS", 60),
 
-            // Qdrant - UPDATED to mira-memories
+            // Qdrant
             qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
             qdrant_collection: env_var_or("QDRANT_COLLECTION", "mira-memories".to_string()),
             qdrant_embedding_dim: env_var_or("QDRANT_EMBEDDING_DIM", 3072),
@@ -310,7 +332,7 @@ impl MiraConfig {
             log_format: env_var_or("MIRA_LOG_FORMAT", "pretty".to_string()),
             trace_sql: env_var_or("MIRA_TRACE_SQL", false),
 
-            // Robust Memory - UPDATED with documents
+            // Robust Memory
             embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary,documents".to_string()),
             summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
             summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
@@ -319,31 +341,55 @@ impl MiraConfig {
             rolling_summary_max_age_hours: env_var_or("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS", 168),
             rolling_summary_min_gap: env_var_or("MIRA_ROLLING_SUMMARY_MIN_GAP", 3),
 
-            // Chunking - UPDATED to match guide
+            // Chunking
             embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 500),
             embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 100),
             embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 1000),
             embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 200),
             embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 2000),
             embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 0),
-            embed_document_chunk: Some(env_var_or("MIRA_EMBED_DOCUMENT_CHUNK", 1000)),  // NEW!
-            embed_document_overlap: Some(env_var_or("MIRA_EMBED_DOCUMENT_OVERLAP", 200)), // NEW!
+            embed_document_chunk: Some(env_var_or("MIRA_EMBED_DOCUMENT_CHUNK", 1000)),
+            embed_document_overlap: Some(env_var_or("MIRA_EMBED_DOCUMENT_OVERLAP", 200)),
 
-            // Memory Decay - UPDATED floor to 2.0
+            // Memory Decay
             decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 30.0),
             decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.1),
             decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.3),
             decay_floor: env_var_or("MIRA_DECAY_FLOOR", 2.0),
+            decay_high_salience_threshold: env_var_or("MIRA_DECAY_HIGH_SALIENCE_THRESHOLD", 7.0),
             
-            // NEW: Robustness & Performance Features - UPDATED batch_size to 10
+            // Recall & Context (NEW)
+            recall_recent: env_var_or("MIRA_RECALL_RECENT", 10),
+            recall_semantic: env_var_or("MIRA_RECALL_SEMANTIC", 20),
+            recall_k_per_head: env_var_or("MIRA_RECALL_K_PER_HEAD", 10),
+            context_window_strategy: env_var_or("MIRA_CONTEXT_WINDOW_STRATEGY", "semantic".to_string()),
+            context_window_size: env_var_or("MIRA_CONTEXT_WINDOW_SIZE", 10),
+            recent_message_limit: env_var_or("MIRA_RECENT_MESSAGE_LIMIT", 50),
+            
+            // Analysis & Batching (NEW)
+            analysis_batch_size: env_var_or("MIRA_ANALYSIS_BATCH_SIZE", 10),
+            analysis_max_wait_ms: env_var_or("MIRA_ANALYSIS_MAX_WAIT_MS", 500),
+            batch_size: env_var_or("MIRA_BATCH_SIZE", 10),
+            
+            // Fast Lane Processing (NEW)
+            fast_lane_enabled: env_var_or("MIRA_FAST_LANE_ENABLED", true),
+            fast_lane_default_salience: env_var_or("MIRA_FAST_LANE_DEFAULT_SALIENCE", 8.0),
+            
+            // Response Configuration (NEW)
+            max_response_tokens: env_var_or("MIRA_MAX_RESPONSE_TOKENS", 32768),
+            max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 10),
+            
+            // Robustness & Performance Features
             api_max_retries: env_var_or("MIRA_API_MAX_RETRIES", 3),
             api_retry_delay_ms: env_var_or("MIRA_API_RETRY_DELAY_MS", 1000),
             enable_request_cache: env_var_or("MIRA_ENABLE_REQUEST_CACHE", true),
             cache_ttl_seconds: env_var_or("MIRA_CACHE_TTL_SECONDS", 300),
             enable_response_compression: env_var_or("MIRA_ENABLE_RESPONSE_COMPRESSION", true),
-            max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 10),
             enable_batch_operations: env_var_or("MIRA_ENABLE_BATCH_OPERATIONS", true),
-            batch_size: env_var_or("MIRA_BATCH_SIZE", 10),
+            
+            // Embedding Model Configuration (NEW)
+            embed_model: env_var_or("MIRA_EMBED_MODEL", "text-embedding-3-large".to_string()),
+            embed_dimensions: env_var_or("MIRA_EMBED_DIMENSIONS", 3072),
         }
     }
 
@@ -421,7 +467,7 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_chunk,
             "code" => self.embed_code_chunk,
             "summary" => self.embed_summary_chunk,
-            "documents" => self.embed_document_chunk.unwrap_or(1000),  // NEW!
+            "documents" => self.embed_document_chunk.unwrap_or(1000),
             _ => self.embed_semantic_chunk,
         }
     }
@@ -432,7 +478,7 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_overlap,
             "code" => self.embed_code_overlap,
             "summary" => self.embed_summary_overlap,
-            "documents" => self.embed_document_overlap.unwrap_or(200),  // NEW!
+            "documents" => self.embed_document_overlap.unwrap_or(200),
             _ => self.embed_semantic_overlap,
         }
     }
@@ -476,6 +522,21 @@ impl MiraConfig {
             max_age_hours: self.rolling_summary_max_age_hours,
             min_gap: self.rolling_summary_min_gap,
         }
+    }
+    
+    /// Check if fast lane processing is enabled
+    pub fn is_fast_lane_enabled(&self) -> bool {
+        self.fast_lane_enabled
+    }
+    
+    /// Get embedding model name
+    pub fn get_embed_model(&self) -> &str {
+        &self.embed_model
+    }
+    
+    /// Get embedding dimensions
+    pub fn get_embed_dimensions(&self) -> usize {
+        self.embed_dimensions
     }
 }
 

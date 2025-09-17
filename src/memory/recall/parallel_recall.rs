@@ -1,10 +1,11 @@
 // src/memory/recall/parallel_recall.rs
+// Parallel recall with multi-head search - no decay calculations
+// Database salience values are already current from scheduled decay
 
 use tokio::join;
 use tracing::{debug, info, warn};
 use std::collections::HashSet;
 use crate::memory::recall::RecallContext;
-use crate::memory::features::decay::{calculate_decayed_salience, should_include_memory, DecayConfig};
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::client::OpenAIClient;
@@ -22,6 +23,7 @@ pub struct ScoredMemoryEntry {
     pub source_head: EmbeddingHead,
 }
 
+/// Build context with parallel fetching - no decay needed
 pub async fn build_context_parallel<M1, M2>(
     session_id: &str,
     user_text: &str,
@@ -39,13 +41,14 @@ where
     
     debug!("Starting parallel context build for session: {}", session_id);
     
+    // Parallel fetch embedding and recent messages
     let (embedding_result, recent_result): (Result<Vec<f32>, _>, Result<Vec<_>, _>) = join!(
         llm_client.get_embedding(user_text),
         sqlite_store.load_recent(session_id, recent_count)
     );
     
     let parallel_time = start.elapsed();
-    debug!("Parallel fetch completed in {:?} (embedding + SQLite)", parallel_time);
+    debug!("Parallel fetch completed in {:?}", parallel_time);
     
     let embedding = embedding_result.ok();
     if embedding.is_none() {
@@ -55,44 +58,28 @@ where
     let recent = recent_result?;
     debug!("Loaded {} recent messages", recent.len());
     
-    let semantic = if let Some(ref emb) = embedding {
+    // Semantic search if we have an embedding
+    let mut semantic = if let Some(ref emb) = embedding {
         let semantic_start = std::time::Instant::now();
         let search_count = (semantic_count as f32 * 1.5) as usize;
         let results = qdrant_store.semantic_search(session_id, emb, search_count).await?;
         debug!("Semantic search found {} results in {:?}", results.len(), semantic_start.elapsed());
         results
     } else {
-        debug!("Skipping semantic search - no embedding available");
         Vec::new()
     };
     
-    let mut context = RecallContext::new(recent, semantic);
-    let decay_config = DecayConfig::default();
-    
-    let now = Utc::now();
-    let mut filtered_semantic = Vec::new();
-    
-    for (idx, mut memory) in context.semantic.into_iter().enumerate() {
-        let decayed = calculate_decayed_salience(&memory, &decay_config, now);
-        memory.salience = Some(decayed);
-        
-        let relevance = 1.0 - (idx as f32 / (semantic_count as f32 * 1.5));
-        
-        if should_include_memory(&memory, decayed, Some(relevance)) {
-            filtered_semantic.push(memory);
-        } else {
-            debug!("Filtered out memory with salience {} and relevance {}", decayed, relevance);
-        }
-    }
-    
-    filtered_semantic.sort_by(|a, b| {
+    // Filter by salience threshold and sort
+    // Salience is already decayed in DB - just use it directly
+    semantic.retain(|m| m.salience.unwrap_or(0.0) >= 3.0);
+    semantic.sort_by(|a, b| {
         b.salience.unwrap_or(0.0)
             .partial_cmp(&a.salience.unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    filtered_semantic.truncate(semantic_count);
+    semantic.truncate(semantic_count);
     
-    context.semantic = filtered_semantic;
+    let context = RecallContext::new(recent, semantic);
     
     let total_time = start.elapsed();
     info!(
@@ -107,6 +94,7 @@ where
     Ok(context)
 }
 
+/// Build context using multi-head search
 pub async fn build_context_multi_head<M1>(
     session_id: &str,
     user_text: &str,
@@ -121,46 +109,42 @@ where
 {
     let start = std::time::Instant::now();
     
-    info!("Starting enhanced multi-head parallel context build for session: {}", session_id);
+    info!("Starting multi-head parallel context build for session: {}", session_id);
     
+    // Parallel fetch embedding and recent messages
     let (embedding_result, recent_result) = join!(
         llm_client.get_embedding(user_text),
         load_recent_with_summaries(sqlite_store, session_id, recent_count)
     );
     
     let embedding = embedding_result.map_err(|e| {
-        warn!("Failed to get embedding for multi-head context building: {}", e);
+        warn!("Failed to get embedding: {}", e);
         e
     })?;
 
     let context_recent = recent_result?;
-    debug!("Loaded {} recent messages (including summaries) in parallel", context_recent.len());
+    debug!("Loaded {} recent messages (including summaries)", context_recent.len());
 
+    // Search across all heads
     let k_per_head = std::cmp::max(10, semantic_count / 3);
     let multi_search_result = multi_store.search_all(session_id, &embedding, k_per_head).await?;
-
     debug!("Multi-head search completed: {} heads searched", multi_search_result.len());
 
+    // Merge and deduplicate
     let all_candidates = merge_and_deduplicate_results(multi_search_result)?;
     let scored_entries = compute_rerank_scores(&embedding, all_candidates).await?;
     
-    let now = Utc::now();
-    let decay_config = DecayConfig::default();
-    
+    // Filter and sort by composite score
     let mut final_entries: Vec<crate::memory::core::types::MemoryEntry> = scored_entries
         .into_iter()
-        .filter_map(|mut scored| {
-            let decayed = calculate_decayed_salience(&scored.entry, &decay_config, now);
-            scored.entry.salience = Some(decayed);
-            
-            if should_include_memory(&scored.entry, decayed, Some(scored.similarity_score)) {
-                Some(scored.entry)
-            } else {
-                None
-            }
+        .filter(|scored| {
+            // Use DB salience (already decayed) as filter
+            scored.entry.salience.unwrap_or(0.0) >= 3.0
         })
+        .map(|scored| scored.entry)
         .collect();
     
+    // Sort by salience (DB values are current)
     final_entries.sort_by(|a, b| {
         b.salience.unwrap_or(0.0)
             .partial_cmp(&a.salience.unwrap_or(0.0))
@@ -175,19 +159,18 @@ where
 
     let total_time = start.elapsed();
     info!(
-        "Enhanced multi-head context built in {:?}: {} recent messages, {} re-ranked semantic matches",
-        total_time,
-        context.recent.len(),
-        context.semantic.len()
+        "Multi-head context built in {:?}: {} recent, {} semantic",
+        total_time, context.recent.len(), context.semantic.len()
     );
 
     if total_time.as_millis() > 1500 {
-        warn!("Slow multi-head context build: {:?} (consider optimization)", total_time);
+        warn!("Slow multi-head context build: {:?}", total_time);
     }
 
     Ok(context)
 }
 
+/// Load recent messages including summaries if enabled
 async fn load_recent_with_summaries<M>(
     sqlite_store: &M,
     session_id: &str,
@@ -218,6 +201,7 @@ where
     }
 }
 
+/// Merge results from multiple heads and deduplicate
 fn merge_and_deduplicate_results(
     multi_results: Vec<(EmbeddingHead, Vec<crate::memory::core::types::MemoryEntry>)>
 ) -> anyhow::Result<Vec<ScoredMemoryEntry>> {
@@ -247,6 +231,7 @@ fn merge_and_deduplicate_results(
     Ok(scored_entries)
 }
 
+/// Compute reranking scores for candidates
 async fn compute_rerank_scores(
     _query_embedding: &[f32],
     candidates: Vec<ScoredMemoryEntry>,
@@ -255,11 +240,14 @@ async fn compute_rerank_scores(
     
     let mut reranked = Vec::new();
     for mut entry in candidates {
+        // Recency score based on age
         let age_days = now.signed_duration_since(entry.entry.timestamp).num_days() as f32;
         entry.recency_score = (-age_days / 30.0).exp();
         
+        // Use DB salience directly (already decayed)
         entry.salience_score = entry.entry.salience.unwrap_or(5.0) / 10.0;
         
+        // Composite score
         entry.composite_score = 
             entry.similarity_score * 0.4 +
             entry.salience_score * 0.4 +
@@ -271,6 +259,7 @@ async fn compute_rerank_scores(
     Ok(reranked)
 }
 
+/// Adaptive context building - uses multi-head if available
 pub async fn build_context_adaptive<M1, M2>(
     session_id: &str,
     user_text: &str,
@@ -286,7 +275,7 @@ where
     M2: MemoryStore + ?Sized,
 {
     if let Some(multi_store) = multi_store {
-        debug!("Using enhanced multi-head parallel context building");
+        debug!("Using multi-head parallel context building");
         return build_context_multi_head(
             session_id,
             user_text,
@@ -323,6 +312,7 @@ pub struct ParallelRecallMetrics {
     pub heads_searched: usize,
 }
 
+/// Build context with metrics tracking
 pub async fn build_context_with_metrics<M1, M2>(
     session_id: &str,
     user_text: &str,

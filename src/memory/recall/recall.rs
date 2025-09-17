@@ -1,13 +1,12 @@
-// src/memory/recall.rs
-// Context-building strategies for memory recall
-// Uses superhuman stepped decay for realistic but powerful memory
+// src/memory/recall/recall.rs
+// Simplified context building - no decay calculation needed
+// Just reads the current salience from database (already decayed by scheduler)
 
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::core::types::MemoryEntry;
-use crate::memory::features::decay::{calculate_decayed_salience, DecayConfig};
-use chrono::Utc;
+use tracing::info;
 
-/// The context returned for LLM prompting: recent + semantic memories
+/// The context returned for LLM prompting
 #[derive(Debug, Clone, Default)]
 pub struct RecallContext {
     pub recent: Vec<MemoryEntry>,   // Last N chronological messages (SQLite)
@@ -19,34 +18,30 @@ impl RecallContext {
         Self { recent, semantic }
     }
     
-    /// Apply stepped decay to all memories in context
-    pub fn apply_decay(&mut self, config: &DecayConfig) {
-        let now = Utc::now();
-        
-        // Apply decay to semantic memories (recent are too fresh to decay much)
-        for memory in &mut self.semantic {
-            let decayed = calculate_decayed_salience(memory, config, now);
-            memory.salience = Some(decayed);
-        }
-        
-        // Sort semantic by decayed salience
+    /// Get only high-salience memories (no calculation needed - DB is truth)
+    pub fn high_salience_memories(&self) -> Vec<&MemoryEntry> {
+        self.semantic.iter()
+            .filter(|m| m.salience.unwrap_or(0.0) >= 7.0)
+            .collect()
+    }
+    
+    /// Filter to memories above a salience threshold
+    pub fn filter_by_salience(&mut self, min_salience: f32) {
+        self.semantic.retain(|m| m.salience.unwrap_or(0.0) >= min_salience);
+    }
+    
+    /// Sort semantic memories by salience (highest first)
+    pub fn sort_by_salience(&mut self) {
         self.semantic.sort_by(|a, b| {
             b.salience.unwrap_or(0.0)
                 .partial_cmp(&a.salience.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     }
-    
-    /// Get only the most emotionally significant memories
-    pub fn high_salience_memories(&self) -> Vec<&MemoryEntry> {
-        self.semantic.iter()
-            .filter(|m| m.salience.unwrap_or(0.0) >= 7.0)
-            .collect()
-    }
 }
 
 /// Build prompt context for a new message
-/// Loads recent messages and semantically similar memories
+/// Simple version - just reads from stores, no decay calculation
 pub async fn build_context<M1, M2>(
     session_id: &str,
     user_embedding: Option<&[f32]>,
@@ -64,23 +59,30 @@ where
         .load_recent(session_id, recent_count)
         .await?;
     
-    // 2. Pull semantically similar memories from Qdrant (if embedding provided)
+    // 2. Pull semantically similar memories from Qdrant
     let semantic = if let Some(embedding) = user_embedding {
-        // Get extra memories to account for decay filtering
+        // Get extra to account for filtering
+        let search_count = (semantic_count as f32 * 1.5) as usize;
         qdrant_store
-            .semantic_search(session_id, embedding, semantic_count * 2)
+            .semantic_search(session_id, embedding, search_count)
             .await?
     } else {
         Vec::new()
     };
     
-    // 3. Create context and apply stepped decay
+    // 3. Create context - salience values are already current in DB
     let mut context = RecallContext::new(recent, semantic);
-    let decay_config = DecayConfig::default();
-    context.apply_decay(&decay_config);
     
-    // 4. Trim to requested count after decay
+    // 4. Sort by salience and filter weak memories
+    context.sort_by_salience();
+    context.filter_by_salience(3.0); // Keep memories with 30%+ strength
     context.semantic.truncate(semantic_count);
+    
+    info!(
+        "Built context: {} recent, {} semantic memories",
+        context.recent.len(),
+        context.semantic.len()
+    );
     
     Ok(context)
 }
