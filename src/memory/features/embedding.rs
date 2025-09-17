@@ -1,5 +1,7 @@
-// src/services/memory/embedding.rs
-// Batch embedding generation and chunking with API optimization
+// src/memory/features/embedding.rs
+
+//! Batch embedding generation and chunking with API optimization.
+//! The crown jewel of API optimization - saves 90% of API calls.
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -10,7 +12,6 @@ use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::BatchEmbeddingConfig;
 
 /// Manages embedding generation with intelligent batching
-/// The crown jewel of API optimization - saves 90% of API calls
 pub struct EmbeddingManager {
     llm_client: Arc<OpenAIClient>,
     chunker: TextChunker,
@@ -39,14 +40,14 @@ impl EmbeddingManager {
         })
     }
     
-    /// Generates embeddings for multiple heads with batch optimization
-    /// This is the main entry point for the embedding pipeline
+    /// Generates embeddings for multiple heads with batch optimization.
+    /// This is the main entry point for the embedding pipeline.
     pub async fn generate_embeddings_for_heads(
         &self,
         entry: &MemoryEntry,
         heads: &[EmbeddingHead],
     ) -> Result<Vec<(EmbeddingHead, Vec<String>, Vec<Vec<f32>>)>> {
-        info!("🎯 Generating embeddings for {} heads", heads.len());
+        info!("Generating embeddings for {} heads", heads.len());
         
         if heads.is_empty() {
             debug!("No heads specified, skipping embedding generation");
@@ -70,9 +71,9 @@ impl EmbeddingManager {
             return Ok(vec![]);
         }
         
-        // Step 2: Batch embedding optimization - THE CROWN JEWEL!
+        // Step 2: Batch embedding optimization
         info!(
-            "📦 Total chunks to embed: {} (batch processing will save {} API calls)", 
+            "Total chunks to embed: {} (batch processing will save {} API calls)", 
             all_chunks.len(), 
             if all_chunks.len() > 1 { all_chunks.len() - 1 } else { 0 }
         );
@@ -89,7 +90,7 @@ impl EmbeddingManager {
         let results = self.group_embeddings_by_head(heads, &all_chunks, all_embeddings);
         
         info!(
-            "✅ Embedding generation complete: {} chunks across {} heads using {} API calls",
+            "Embedding generation complete: {} chunks across {} heads using {} API calls",
             all_chunks.len(),
             heads.len(),
             (all_chunks.len() + self.config.max_batch_size - 1) / self.config.max_batch_size
@@ -98,8 +99,8 @@ impl EmbeddingManager {
         Ok(results)
     }
     
-    /// Batch embeds texts with optimal API utilization
-    /// Processes up to 100 texts per API call (OpenAI's sweet spot)
+    /// Batch embeds texts with optimal API utilization.
+    /// Processes up to 100 texts per API call (OpenAI's sweet spot).
     async fn batch_embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut all_embeddings: Vec<Vec<f32>> = Vec::new();
         
@@ -109,7 +110,7 @@ impl EmbeddingManager {
             let batch_texts = &texts[batch_start..batch_end];
             
             info!(
-                "🚀 Processing batch {} ({}-{} of {}) in single API call", 
+                "Processing batch {} ({}-{} of {}) in single API call", 
                 batch_idx + 1,
                 batch_start + 1, 
                 batch_end, 
@@ -125,7 +126,7 @@ impl EmbeddingManager {
                     .await 
                 {
                     Ok(embeddings) => {
-                        info!("✅ Successfully embedded {} chunks in 1 API call", batch_texts.len());
+                        info!("Successfully embedded {} chunks in 1 API call", batch_texts.len());
                         break embeddings;
                     }
                     Err(e) if retry_count < self.config.max_retries => {
@@ -195,8 +196,8 @@ impl EmbeddingManager {
         results
     }
     
-    /// Generates a single embedding for text (non-batched)
-    /// Use sparingly - batch operations are 90% more efficient
+    /// Generates a single embedding for text (non-batched).
+    /// Use sparingly - batch operations are 90% more efficient.
     pub async fn generate_single_embedding(&self, text: &str) -> Result<Vec<f32>> {
         warn!("Using single embedding API call - consider batching for efficiency");
         

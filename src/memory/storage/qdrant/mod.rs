@@ -1,11 +1,12 @@
-//! Qdrant-backed memory store (semantic/long-term memory).
-//! PHASE 1: Added multi-collection support for GPT-5 Robust Memory
+// src/memory/storage/qdrant/mod.rs
+
+//! Qdrant-backed memory store with multi-collection support for 4-head memory system.
+//! Provides vector storage for semantic, code, summary, and document embeddings.
 
 pub mod store;
 pub mod search;
 pub mod mapping;
-pub mod multi_store;  // PHASE 1: Multi-collection wrapper
+pub mod multi_store;
 
 // Re-export key types for convenience
-// PHASE 2: Correctly re-export the canonical EmbeddingHead to fix private import error
-
+pub use crate::llm::embeddings::EmbeddingHead;
