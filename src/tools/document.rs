@@ -4,30 +4,33 @@ use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::llm::responses::VectorStoreManager;
 use crate::llm::types::ChatResponse;
 use crate::memory::MemoryService;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use crate::llm::embeddings::EmbeddingHead;
+use crate::memory::core::types::MemoryEntry;
+use chrono::Utc;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DocumentDestination {
     PersonalMemory,
-    ProjectVectorStore,
+    ProjectDocuments,
     Both,
 }
 
 pub struct DocumentService {
     memory_service: Arc<MemoryService>,
-    vector_store_manager: Arc<VectorStoreManager>,
+    multi_store: Arc<QdrantMultiStore>,
 }
 
 impl DocumentService {
     pub fn new(
         memory_service: Arc<MemoryService>,
-        vector_store_manager: Arc<VectorStoreManager>,
+        multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
         Self {
             memory_service,
-            vector_store_manager,
+            multi_store,
         }
     }
 
@@ -43,24 +46,65 @@ impl DocumentService {
             DocumentDestination::PersonalMemory => {
                 self.process_for_personal_memory(content).await?;
             }
-            DocumentDestination::ProjectVectorStore => {
-                let store_key = project_id
-                    .expect("Project ID required for project vector store upload");
-                self.vector_store_manager
-                    .add_document(store_key, file_path.to_path_buf())
-                    .await?;
-                self.process_for_project_vector_store(content, project_id).await?;
+            DocumentDestination::ProjectDocuments => {
+                let project_id = project_id
+                    .ok_or_else(|| anyhow::anyhow!("Project ID required for project documents"))?;
+                self.store_in_qdrant(file_path, content, project_id).await?;
             }
             DocumentDestination::Both => {
-                let store_key = project_id
-                    .expect("Project ID required for vector store upload (Both)");
-                self.vector_store_manager
-                    .add_document(store_key, file_path.to_path_buf())
-                    .await?;
-                self.process_for_project_vector_store(content, project_id).await?;
+                let project_id = project_id
+                    .ok_or_else(|| anyhow::anyhow!("Project ID required for Both destination"))?;
+                self.store_in_qdrant(file_path, content, project_id).await?;
                 self.process_for_personal_memory(content).await?;
             }
         }
+
+        Ok(())
+    }
+
+    async fn store_in_qdrant(
+        &self,
+        file_path: &Path,
+        content: &str,
+        project_id: &str,
+    ) -> Result<()> {
+        // Create memory entry for document using tags for metadata
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        
+        let extension = file_path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        
+        let entry = MemoryEntry {
+            id: None,
+            session_id: format!("project-{}", project_id),
+            role: "document".to_string(),
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            embedding: None,
+            salience: Some(7.0),
+            memory_type: None,
+            tags: Some(vec![
+                "document".to_string(),
+                "imported".to_string(),
+                format!("file:{}", file_path.to_string_lossy()),
+                format!("name:{}", file_name),
+                format!("ext:{}", extension),
+                format!("project:{}", project_id),
+            ]),
+            summary: Some(format!("Document: {}", file_name)),
+            logprobs: None,
+            moderation_flag: None,
+            system_fingerprint: None,
+            head: None,
+        };
+
+        // Store in Documents collection
+        self.multi_store
+            .save(EmbeddingHead::Documents, &entry)
+            .await?;
 
         Ok(())
     }
@@ -83,6 +127,7 @@ impl DocumentService {
             .unwrap_or("document")
             .to_ascii_lowercase();
 
+        // Personal documents go to memory
         if file_name.contains("diary")
             || file_name.contains("personal")
             || file_name.contains("journal")
@@ -92,33 +137,34 @@ impl DocumentService {
             return Ok(DocumentDestination::PersonalMemory);
         }
 
+        // Technical documents go to Qdrant Documents
         let technical_exts = ["md", "pdf", "txt", "rs", "js", "py"];
         if technical_exts.contains(&extension.as_str()) {
             if project_id.is_none() {
                 return Err(anyhow::anyhow!(
-                    "Technical documents require a project ID for vector storage"
+                    "Technical documents require a project ID"
                 ));
             }
-            return Ok(DocumentDestination::ProjectVectorStore);
+            return Ok(DocumentDestination::ProjectDocuments);
         }
 
+        // Large reflective documents go to both
         if content.len() > 5000
             && (content.contains("insight") || content.contains("reflection"))
         {
             if project_id.is_none() {
                 return Err(anyhow::anyhow!(
-                    "Both destination requires a project ID for vector storage"
+                    "Both destination requires a project ID"
                 ));
             }
             return Ok(DocumentDestination::Both);
         }
 
+        // Default to project documents if project_id exists
         if project_id.is_some() {
-            Ok(DocumentDestination::ProjectVectorStore)
+            Ok(DocumentDestination::ProjectDocuments)
         } else {
-            Err(anyhow::anyhow!(
-                "Project ID required for project vector store upload"
-            ))
+            Ok(DocumentDestination::PersonalMemory)
         }
     }
 
@@ -138,37 +184,6 @@ impl DocumentService {
 
         self.memory_service
             .save_assistant_response("document-import", &doc_response)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn process_for_project_vector_store(
-        &self,
-        content: &str,
-        project_id: Option<&str>,
-    ) -> Result<()> {
-        let doc_response = ChatResponse {
-            output: content.to_string(),
-            persona: "system".to_string(),
-            mood: "neutral".to_string(),
-            salience: 7,
-            summary: "Imported project document".to_string(),
-            memory_type: "fact".to_string(),
-            tags: vec!["document".into(), "imported".into(), "project".into()],
-            intent: Some("project_document_import".to_string()),
-            monologue: None,
-            reasoning_summary: None,
-        };
-
-        let session_id = if let Some(pid) = project_id {
-            format!("document-import-{pid}")
-        } else {
-            "document-import".to_string()
-        };
-
-        self.memory_service
-            .save_assistant_response(&session_id, &doc_response)
             .await?;
 
         Ok(())

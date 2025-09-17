@@ -4,7 +4,7 @@ use crate::{
     git::{GitClient, GitStore},
     llm::{
         client::OpenAIClient,
-        responses::{ImageGenerationManager, ResponsesManager, ThreadManager, VectorStoreManager},
+        responses::{ImageGenerationManager, ResponsesManager},
     },
     memory::{
         storage::qdrant::multi_store::QdrantMultiStore,
@@ -42,6 +42,7 @@ pub struct AppState {
     pub image_generation_manager: Arc<ImageGenerationManager>,
     
     pub memory_service: Arc<MemoryService>,
+    pub multi_store: Arc<QdrantMultiStore>,
     pub file_search_service: Arc<FileSearchService>,
     
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
@@ -57,23 +58,21 @@ pub async fn create_app_state(
 ) -> anyhow::Result<AppState> {
     info!("Creating AppState with robust memory features");
     
-    let qdrant_multi_store = Arc::new(QdrantMultiStore::new(qdrant_url, &CONFIG.qdrant_collection).await?);
+    let multi_store = Arc::new(QdrantMultiStore::new(qdrant_url, &CONFIG.qdrant_collection).await?);
     
     let responses_manager = Arc::new(ResponsesManager::new(llm_client.clone()));
-    let vector_store_manager = Arc::new(VectorStoreManager::new(llm_client.clone()));
-    let _thread_manager = Arc::new(ThreadManager::new(
-        CONFIG.history_message_cap,
-        CONFIG.history_token_limit,
-    ));
     let image_generation_manager = Arc::new(ImageGenerationManager::new(llm_client.clone()));
     
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store.clone(),
-        qdrant_multi_store.clone(),
+        multi_store.clone(),
         llm_client.clone(),
     ));
     
-    let file_search_service = Arc::new(FileSearchService::new(vector_store_manager.clone(), git_client.clone()));
+    let file_search_service = Arc::new(FileSearchService::new(
+        multi_store.clone(),
+        llm_client.clone(),
+    ));
     
     info!("AppState initialized successfully");
     
@@ -86,6 +85,7 @@ pub async fn create_app_state(
         responses_manager,
         image_generation_manager,
         memory_service,
+        multi_store,
         file_search_service,
         upload_sessions: Arc::new(RwLock::new(HashMap::new())),
     })

@@ -1,177 +1,117 @@
-// src/memory/types.rs
+// src/memory/core/types.rs
+// Clean types matching the actual database schema
 
-use crate::llm::classification::Classification;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
-/// Primary record for persisted conversational/memory items.
-/// Phase 4 adds pinning, subject-aware tagging, and last-access tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
-    // Core identity & content
-    pub id: Option<i64>,                 // DB ID
-    pub session_id: String,              // Session this belongs to
-    pub role: String,                    // "user", "mira", etc.
-    pub content: String,                 // Message content
-    pub timestamp: DateTime<Utc>,        // When the message was created
-
-    // Vector / ranking
-    pub embedding: Option<Vec<f32>>,     // Embedding vector (if stored)
-    pub salience: Option<f32>,           // Salience score (optional)
-
-    // Metadata
-    pub tags: Option<Vec<MemoryTag>>,    // Tags for context/emotion
-    pub summary: Option<String>,         // Short summary, if any
-    pub memory_type: Option<MemoryType>, // Memory kind
-    pub logprobs: Option<serde_json::Value>,
-    pub moderation_flag: Option<bool>,
-    pub system_fingerprint: Option<String>,
-
-    // Robust memory (Phase 3)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub head: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_code: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lang: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Core fields from memory_entries table
+    pub id: Option<i64>,
+    pub session_id: String,
+    pub response_id: Option<String>,
+    pub parent_id: Option<i64>,
+    pub role: String,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+    pub tags: Option<Vec<String>>,
+    
+    // Fields from message_analysis table
+    pub mood: Option<String>,
+    pub intensity: Option<f32>,
+    pub salience: Option<f32>,
+    pub intent: Option<String>,
     pub topics: Option<Vec<String>>,
-
-    // Phase 4: Pinning, subject-aware decay, and recency
-    /// If true, entry is immune to decay and prioritized for recall.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pinned: Option<bool>,
-
-    /// Subject/semantic tag for decay weighting, e.g. "birthday", "anniversary", "project:mira", "general".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subject_tag: Option<String>,
-
-    /// Tracks last read/write access; decay uses this instead of `timestamp` when present.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_accessed: Option<DateTime<Utc>>,
+    pub summary: Option<String>,
+    pub relationship_impact: Option<String>,
+    pub contains_code: Option<bool>,
+    pub language: Option<String>,
+    pub programming_lang: Option<String>,
+    pub analyzed_at: Option<DateTime<Utc>>,
+    pub analysis_version: Option<String>,
+    pub routed_to_heads: Option<Vec<String>>,
+    pub last_recalled: Option<DateTime<Utc>>,
+    pub recall_count: Option<i32>,
+    
+    // Fields from gpt5_metadata table
+    pub model_version: Option<String>,
+    pub prompt_tokens: Option<i32>,
+    pub completion_tokens: Option<i32>,
+    pub reasoning_tokens: Option<i32>,
+    pub total_tokens: Option<i32>,
+    pub latency_ms: Option<i32>,
+    pub generation_time_ms: Option<i32>,
+    pub finish_reason: Option<String>,
+    pub tool_calls: Option<Vec<String>>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<i32>,
+    pub reasoning_effort: Option<String>,
+    pub verbosity: Option<String>,
+    
+    // Embedding info
+    pub embedding: Option<Vec<f32>>,
+    pub embedding_heads: Option<Vec<String>>,
+    pub qdrant_point_ids: Option<Vec<String>>,
 }
 
 impl MemoryEntry {
-    /// Creates a new, basic MemoryEntry from a user message.
-    pub fn from_user_message(session_id: String, content: String) -> Self {
+    pub fn user_message(session_id: String, content: String) -> Self {
         Self {
             id: None,
             session_id,
+            response_id: None,
+            parent_id: None,
             role: "user".to_string(),
             content,
             timestamp: Utc::now(),
-            embedding: None,
-            salience: Some(0.5), // Start with a reasonable default salience
-            tags: Some(Vec::new()),
-            summary: None,
-            memory_type: Some(MemoryType::Event),
-            logprobs: None,
-            moderation_flag: None,
-            system_fingerprint: None,
-            head: None,
-            is_code: None,
-            lang: None,
+            tags: None,
+            mood: None,
+            intensity: None,
+            salience: None,
+            intent: None,
             topics: None,
-
-            // Phase 4 defaults
-            pinned: Some(false),
-            subject_tag: None,
-            last_accessed: Some(Utc::now()),
-        }
-    }
-
-    /// Apply LLM-derived classification to enrich metadata.
-    pub fn with_classification(mut self, classification: Classification) -> Self {
-        self.salience = Some(classification.salience);
-        self.is_code = Some(classification.is_code);
-        self.lang = Some(classification.lang);
-        self.topics = Some(classification.topics);
-        self
-    }
-
-    /// Mark the entry as accessed "now" and optionally apply a small salience boost (clamped).
-    /// Call this when you surface the memory in context or update it.
-    pub fn touch(&mut self, boost: Option<f32>) {
-        self.last_accessed = Some(Utc::now());
-        if let Some(b) = boost {
-            let current = self.salience.unwrap_or(0.5);
-            // clamp boost 0.0..=0.5 and salience to 0.0..=1.0
-            let b = b.clamp(0.0, 0.5);
-            self.salience = Some((current + b).clamp(0.0, 1.0));
-        }
-    }
-
-    /// Convenience setters to align with Phase 4 features.
-    pub fn set_subject_tag<S: Into<String>>(&mut self, tag: S) {
-        self.subject_tag = Some(tag.into());
-    }
-
-    pub fn pin(&mut self) {
-        self.pinned = Some(true);
-    }
-
-    pub fn unpin(&mut self) {
-        self.pinned = Some(false);
-    }
-}
-
-// FIX: Manually implement the Default trait for MemoryEntry
-impl Default for MemoryEntry {
-    fn default() -> Self {
-        Self {
-            id: None,
-            session_id: String::new(),
-            role: String::new(),
-            content: String::new(),
-            timestamp: Utc::now(),
-            embedding: None,
-            salience: Some(0.0),
-            tags: Some(Vec::new()),
             summary: None,
-            memory_type: Some(MemoryType::Other),
-            logprobs: None,
-            moderation_flag: None,
-            system_fingerprint: None,
-            head: None,
-            is_code: None,
-            lang: None,
-            topics: None,
-            pinned: Some(false),
-            subject_tag: None,
-            last_accessed: Some(Utc::now()),
+            relationship_impact: None,
+            contains_code: None,
+            language: Some("en".to_string()),
+            programming_lang: None,
+            analyzed_at: None,
+            analysis_version: None,
+            routed_to_heads: None,
+            last_recalled: None,
+            recall_count: None,
+            model_version: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+            latency_ms: None,
+            generation_time_ms: None,
+            finish_reason: None,
+            tool_calls: None,
+            temperature: None,
+            max_tokens: None,
+            reasoning_effort: None,
+            verbosity: None,
+            embedding: None,
+            embedding_heads: None,
+            qdrant_point_ids: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum MemoryType {
-    Feeling,
-    Fact,
-    Joke,
-    Promise,
-    Event,
-    Summary,
-    #[serde(other)]
-    Other,
-}
-
-// Parse MemoryType from strings defensively (DB/text interop)
-impl FromStr for MemoryType {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.to_lowercase().as_str() {
-            "feeling" => MemoryType::Feeling,
-            "fact" => MemoryType::Fact,
-            "joke" => MemoryType::Joke,
-            "promise" => MemoryType::Promise,
-            "event" => MemoryType::Event,
-            "summary" => MemoryType::Summary,
-            _ => MemoryType::Other,
-        })
+    
+    pub fn assistant_message(session_id: String, content: String) -> Self {
+        let mut entry = Self::user_message(session_id, content);
+        entry.role = "assistant".to_string();
+        entry
+    }
+    
+    pub fn document(session_id: String, content: String, file_path: &str) -> Self {
+        let mut entry = Self::user_message(session_id, content);
+        entry.role = "document".to_string();
+        entry.tags = Some(vec![
+            "document".to_string(),
+            format!("file:{}", file_path),
+        ]);
+        entry
     }
 }
-
-pub type MemoryTag = String;

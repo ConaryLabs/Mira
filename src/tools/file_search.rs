@@ -1,18 +1,18 @@
 // src/tools/file_search.rs
-
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::info;
-use crate::llm::responses::VectorStoreManager;
-use crate::git::GitClient;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use crate::llm::client::OpenAIClient;
+use crate::llm::embeddings::EmbeddingHead;
 use crate::config::CONFIG;
 
 #[derive(Clone)]
 pub struct FileSearchService {
-    vector_store_manager: Arc<VectorStoreManager>,
-    git_client: GitClient,
+    multi_store: Arc<QdrantMultiStore>,
+    llm_client: Arc<OpenAIClient>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,11 +43,11 @@ pub struct FileSearchParams {
 }
 
 impl FileSearchService {
-    pub fn new(vector_store_manager: Arc<VectorStoreManager>, git_client: GitClient) -> Self {
-        info!("Initializing FileSearchService");
+    pub fn new(multi_store: Arc<QdrantMultiStore>, llm_client: Arc<OpenAIClient>) -> Self {
+        info!("Initializing Qdrant-based FileSearchService");
         Self {
-            vector_store_manager,
-            git_client,
+            multi_store,
+            llm_client,
         }
     }
     
@@ -60,23 +60,61 @@ impl FileSearchService {
         
         let max_files = params.max_files.unwrap_or(CONFIG.file_search_max_files);
         
-        let results = if let Ok(vector_results) = self.vector_store_manager
-            .search_documents(project_id, &params.query, max_files)
-            .await 
-        {
-            vector_results.into_iter()
-                .map(|result| FileSearchResult {
-                    file_path: result.file_id.unwrap_or_else(|| "unknown".to_string()),
-                    content_snippet: result.content.chars().take(300).collect(),
-                    relevance_score: result.score,
-                    language: None,
-                    file_size: result.content.len(),
+        // Generate embedding for the search query
+        let query_embedding = self.llm_client
+            .get_embedding(&params.query)
+            .await?;
+        
+        // Build session ID for scoped search
+        let session_id = project_id
+            .map(|pid| format!("project-{}", pid))
+            .unwrap_or_else(|| "global".to_string());
+        
+        // Search in Documents collection
+        let search_results = self.multi_store
+            .search(
+                EmbeddingHead::Documents,
+                &session_id,
+                &query_embedding,
+                max_files,
+            )
+            .await?;
+        
+        // Convert to FileSearchResult format
+        let results: Vec<FileSearchResult> = search_results
+            .into_iter()
+            .map(|entry| {
+                // Extract file path from tags
+                let file_path = entry.tags
+                    .as_ref()
+                    .and_then(|tags| {
+                        tags.iter()
+                            .find(|t| t.starts_with("file:"))
+                            .and_then(|t| t.strip_prefix("file:"))
+                    })
+                    .unwrap_or("unknown")
+                    .to_string();
+                
+                // Extract language from tags
+                let language = entry.tags
+                    .as_ref()
+                    .and_then(|tags| {
+                        tags.iter()
+                            .find(|t| t.starts_with("lang:"))
+                            .and_then(|t| t.strip_prefix("lang:"))
+                    })
+                    .map(|s| s.to_string());
+                
+                FileSearchResult {
+                    file_path,
+                    content_snippet: entry.content.chars().take(300).collect(),
+                    relevance_score: entry.salience.unwrap_or(0.0),
+                    language,
+                    file_size: entry.content.len(),
                     match_type: SearchMatchType::ContentMatch,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                }
+            })
+            .collect();
         
         Ok(json!({
             "query": params.query,

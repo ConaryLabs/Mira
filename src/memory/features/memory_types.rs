@@ -116,8 +116,8 @@ pub enum MemoryError {
     #[error("Database error: {0}")]
     Database(String),
     
-    #[error("Vector store error: {0}")]
-    VectorStore(String),
+    #[error("Qdrant error: {0}")]
+    Qdrant(String),
     
     #[error("LLM API error: {0}")]
     LlmApi(String),
