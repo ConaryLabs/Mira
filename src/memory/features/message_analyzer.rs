@@ -161,8 +161,10 @@ impl AnalysisService {
 
     /// Process unanalyzed messages in batches
     pub async fn process_pending_messages(&self, session_id: &str) -> Result<usize> {
-        // Query for unanalyzed messages
-        let pending = self.get_unanalyzed_messages(session_id, 10).await?;
+        // Query for unanalyzed messages using the new SQLite method
+        let pending = self.sqlite_store
+            .get_unanalyzed_messages(session_id, 10)
+            .await?;
         
         if pending.is_empty() {
             return Ok(0);
@@ -185,16 +187,6 @@ impl AnalysisService {
         }
 
         Ok(analyses.len())
-    }
-
-    async fn get_unanalyzed_messages(
-        &self,
-        _session_id: &str,
-        _limit: usize,
-    ) -> Result<Vec<crate::memory::core::types::MemoryEntry>> {
-        // Query SQLite for messages without analysis
-        // This would be a custom query - for now, returning empty
-        Ok(Vec::new())
     }
 
     async fn store_analysis(

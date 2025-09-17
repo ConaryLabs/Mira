@@ -1,9 +1,10 @@
-// src/services/memory/mod.rs
-// Public API and orchestration for the refactored memory service
+// src/memory/service.rs
 
-// Types are in core now
+//! Public API and orchestration for the memory service with message analysis.
+
 use crate::memory::features::classification;
 use crate::memory::features::embedding;
+use crate::memory::features::message_analyzer;
 use crate::memory::features::scoring;
 use crate::memory::features::session;
 use crate::memory::features::summarization;
@@ -34,11 +35,12 @@ pub use crate::memory::features::memory_types::{
 
 use classification::MessageClassifier;
 use embedding::EmbeddingManager;
+use message_analyzer::AnalysisService;
 use scoring::MemoryScorer;
 use session::SessionManager;
 use summarization::SummarizationEngine;
 
-/// Refactored Memory Service with modular architecture
+/// Memory Service with complete analysis pipeline
 pub struct MemoryService {
     // Core components
     llm_client: Arc<OpenAIClient>,
@@ -46,6 +48,7 @@ pub struct MemoryService {
     multi_store: Arc<QdrantMultiStore>,
     
     // Modular managers
+    analysis_service: Arc<AnalysisService>,
     classifier: Arc<MessageClassifier>,
     embedding_mgr: Arc<EmbeddingManager>,
     scorer: Arc<MemoryScorer>,
@@ -60,9 +63,13 @@ impl MemoryService {
         multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
-        info!("Initializing refactored MemoryService with modular architecture");
+        info!("Initializing MemoryService with complete analysis pipeline");
         
         // Initialize all modules
+        let analysis_service = Arc::new(AnalysisService::new(
+            llm_client.clone(),
+            sqlite_store.clone(),
+        ));
         let classifier = Arc::new(MessageClassifier::new(llm_client.clone()));
         let embedding_mgr = Arc::new(EmbeddingManager::new(llm_client.clone()).expect("Failed to create embedding manager"));
         let scorer = Arc::new(MemoryScorer::new());
@@ -75,6 +82,7 @@ impl MemoryService {
             llm_client,
             sqlite_store,
             multi_store,
+            analysis_service,
             classifier,
             embedding_mgr,
             scorer,
@@ -85,12 +93,12 @@ impl MemoryService {
     
     // ===== PRIMARY PUBLIC API =====
     
-    /// Saves a user message with classification and routing
+    /// Saves a user message with analysis, classification and routing
     pub async fn save_user_message(
         &self,
         session_id: &str,
         content: &str,
-        _project_id: Option<&str>,  // Keep for API compatibility but unused
+        _project_id: Option<&str>,
     ) -> Result<String> {
         info!("Saving user message for session: {}", session_id);
         
@@ -100,10 +108,12 @@ impl MemoryService {
         
         // Create memory entry
         let entry = MemoryEntry::from_user_message(session_id.to_string(), content.to_string());
-        // Note: project_id cannot be set as MemoryEntry doesn't have this field
         
-        // Save and process
+        // Save and process with analysis
         let entry_id = self.process_and_save_entry(entry, "user").await?;
+        
+        // Trigger async analysis for enrichment
+        self.trigger_analysis(session_id).await;
         
         // Check for rolling summaries
         self.check_rolling_summaries(session_id, message_count).await?;
@@ -111,7 +121,7 @@ impl MemoryService {
         Ok(entry_id)
     }
     
-    /// Saves an assistant response with classification and routing
+    /// Saves an assistant response with analysis, classification and routing
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
@@ -122,25 +132,38 @@ impl MemoryService {
         // Increment session counter
         let message_count = self.session_mgr.increment_counter(session_id).await;
         
-        // Create memory entry from ChatResponse using output field
+        // Create memory entry from ChatResponse
         let mut entry = MemoryEntry::from_user_message(
             session_id.to_string(), 
             response.output.clone()
         );
-        // Fix the role to be assistant
         entry.role = "assistant".to_string();
-        
-        // Add metadata from response - salience is usize, summary is String
         entry.salience = Some(response.salience as f32);
         entry.summary = Some(response.summary.clone());
         
-        // Save and process
+        // Save and process with analysis
         let entry_id = self.process_and_save_entry(entry, "assistant").await?;
+        
+        // Trigger async analysis
+        self.trigger_analysis(session_id).await;
         
         // Check for rolling summaries
         self.check_rolling_summaries(session_id, message_count).await?;
         
         Ok(entry_id)
+    }
+    
+    /// Triggers background analysis of unanalyzed messages
+    async fn trigger_analysis(&self, session_id: &str) {
+        let analysis_service = self.analysis_service.clone();
+        let session_id = session_id.to_string();
+        
+        // Spawn background task for analysis
+        tokio::spawn(async move {
+            if let Err(e) = analysis_service.process_pending_messages(&session_id).await {
+                debug!("Background analysis error: {}", e);
+            }
+        });
     }
     
     /// Builds parallel recall context with multi-head search
@@ -217,13 +240,13 @@ impl MemoryService {
     pub async fn get_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
         let recent = self.sqlite_store.load_recent(session_id, 100).await?;
         
-        // For now, return basic stats - full implementation would query Qdrant
+        // For now, return basic stats
         Ok(MemoryServiceStats {
             total_messages: self.session_mgr.get_message_count(session_id).await,
             recent_messages: recent.len(),
-            semantic_entries: 0, // Would query Qdrant
-            code_entries: 0,     // Would query Qdrant
-            summary_entries: 0,  // Would query Qdrant
+            semantic_entries: 0,
+            code_entries: 0,
+            summary_entries: 0,
         })
     }
     

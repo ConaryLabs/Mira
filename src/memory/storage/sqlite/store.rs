@@ -128,6 +128,199 @@ impl SqliteMemoryStore {
         
         Ok(entry)
     }
+
+    /// Gets messages that haven't been analyzed yet
+    pub async fn get_unanalyzed_messages(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
+                m.response_id, m.parent_id
+            FROM memory_entries m
+            LEFT JOIN message_analysis a ON m.id = a.message_id
+            WHERE m.session_id = ? 
+                AND a.message_id IS NULL
+            ORDER BY m.timestamp ASC
+            LIMIT ?
+            "#,
+        )
+        .bind(session_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        
+        let mut entries = Vec::new();
+        
+        for row in rows {
+            let id: i64 = row.get("id");
+            let session_id: String = row.get("session_id");
+            let role: String = row.get("role");
+            let content: String = row.get("content");
+            let timestamp: NaiveDateTime = row.get("timestamp");
+            let tags: Option<String> = row.get("tags");
+            
+            let tags_vec = tags
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+            
+            entries.push(MemoryEntry {
+                id: Some(id),
+                session_id,
+                role,
+                content,
+                timestamp: Utc.from_utc_datetime(&timestamp),
+                embedding: None,
+                salience: None,
+                tags: tags_vec,
+                summary: None,
+                memory_type: None,
+                logprobs: None,
+                moderation_flag: None,
+                system_fingerprint: None,
+                head: None,
+                is_code: None,
+                lang: None,
+                topics: None,
+                pinned: None,
+                subject_tag: None,
+                last_accessed: None,
+            });
+        }
+        
+        debug!("Found {} unanalyzed messages for session {}", entries.len(), session_id);
+        Ok(entries)
+    }
+    
+    /// Updates the embedding reference for a memory entry
+    pub async fn update_embedding_reference(
+        &self,
+        memory_id: i64,
+        qdrant_point_id: &str,
+        collection_name: &str,
+    ) -> Result<()> {
+        // Store in message_embeddings table
+        sqlx::query(
+            r#"
+            INSERT INTO message_embeddings (message_id, qdrant_point_id, collection_name, created_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(message_id, collection_name) DO UPDATE SET
+                qdrant_point_id = excluded.qdrant_point_id,
+                created_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(memory_id)
+        .bind(qdrant_point_id)
+        .bind(collection_name)
+        .execute(&self.pool)
+        .await?;
+        
+        debug!("Updated embedding reference for message {} -> {} in {}", 
+               memory_id, qdrant_point_id, collection_name);
+        Ok(())
+    }
+    
+    /// Gets messages for creating a summary (excludes existing summaries)
+    pub async fn get_messages_for_summary(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
+                a.salience, a.summary, a.topics
+            FROM memory_entries m
+            LEFT JOIN message_analysis a ON m.id = a.message_id
+            WHERE m.session_id = ?
+                AND (m.tags IS NULL OR m.tags NOT LIKE '%"summary"%')
+                AND m.role IN ('user', 'assistant')
+            ORDER BY m.timestamp DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(session_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        
+        let mut entries = Vec::new();
+        
+        for row in rows {
+            let id: i64 = row.get("id");
+            let session_id: String = row.get("session_id");
+            let role: String = row.get("role");
+            let content: String = row.get("content");
+            let timestamp: NaiveDateTime = row.get("timestamp");
+            let tags: Option<String> = row.get("tags");
+            let salience: Option<f32> = row.get("salience");
+            let summary: Option<String> = row.get("summary");
+            let topics: Option<String> = row.get("topics");
+            
+            let tags_vec = tags
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<Vec<MemoryTag>>(s).ok());
+            
+            let topics_vec = topics
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+            
+            entries.push(MemoryEntry {
+                id: Some(id),
+                session_id,
+                role,
+                content,
+                timestamp: Utc.from_utc_datetime(&timestamp),
+                embedding: None,
+                salience,
+                tags: tags_vec,
+                summary,
+                memory_type: None,
+                logprobs: None,
+                moderation_flag: None,
+                system_fingerprint: None,
+                head: None,
+                is_code: None,
+                lang: None,
+                topics: topics_vec,
+                pinned: None,
+                subject_tag: None,
+                last_accessed: None,
+            });
+        }
+        
+        // Reverse to get chronological order
+        entries.reverse();
+        
+        debug!("Loaded {} messages for summary from session {}", entries.len(), session_id);
+        Ok(entries)
+    }
+    
+    /// Gets the count of analyzed vs unanalyzed messages
+    pub async fn get_analysis_stats(&self, session_id: &str) -> Result<(usize, usize)> {
+        let row = sqlx::query(
+            r#"
+            SELECT 
+                COUNT(m.id) as total,
+                COUNT(a.message_id) as analyzed
+            FROM memory_entries m
+            LEFT JOIN message_analysis a ON m.id = a.message_id
+            WHERE m.session_id = ?
+            "#,
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await?;
+        
+        let total: i64 = row.get("total");
+        let analyzed: i64 = row.get("analyzed");
+        
+        Ok((total as usize, analyzed as usize))
+    }
     
     /// Get the conversation thread for a response_id
     pub async fn get_thread_by_response(&self, response_id: &str) -> Result<Vec<MemoryEntry>> {
