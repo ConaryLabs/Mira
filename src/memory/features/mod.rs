@@ -12,7 +12,6 @@ pub mod salience;
 pub mod scoring;
 pub mod session;
 pub mod summarization;
-pub mod summarizer;
 
 // Re-export commonly used types
 pub use message_analyzer::{MessageAnalyzer, MessageAnalysis, AnalysisService};

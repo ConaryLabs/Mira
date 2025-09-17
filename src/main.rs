@@ -1,14 +1,15 @@
 // src/main.rs
+
 use std::sync::Arc;
 use std::net::SocketAddr;
-use std::time::Duration;
 use axum::{
     routing::get,
     Router,
 };
-use tracing::{info, Level};
+use tracing::{info, error, Level};
 use tracing_subscriber::FmtSubscriber;
 use sqlx::sqlite::SqlitePoolOptions;
+
 use mira_backend::api::ws::ws_chat_handler;
 use mira_backend::config::CONFIG;
 
@@ -47,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         CONFIG.git_repos_dir.clone(),
         git_store.clone(),
     );
-
+    
     // Create AppState with all required arguments
     let app_state = Arc::new(
         mira_backend::state::create_app_state(
@@ -60,15 +61,15 @@ async fn main() -> anyhow::Result<()> {
         ).await?
     );
     
-    // 🔴 BUG FIX #1: SPAWN THE MEMORY DECAY SCHEDULER
-    // This was built but never actually started - like buying a dishwasher and never plugging it in
-    let decay_interval = Duration::from_secs(CONFIG.decay_interval_seconds.unwrap_or(3600)); // Default 1 hour
+    // Start decay scheduler as a background task
+    let decay_interval = std::time::Duration::from_secs(
+        CONFIG.decay_interval_seconds.unwrap_or(7200)
+    );
     let decay_handle = mira_backend::memory::features::decay_scheduler::spawn_decay_scheduler(
         app_state.clone(), 
         decay_interval
     );
-    info!("🫧 Memory decay scheduler spawned - running every {} seconds", decay_interval.as_secs());
-    info!("   Old memories will now fade appropriately instead of cluttering recall forever");
+    info!("Memory decay scheduler started - running every {} seconds", decay_interval.as_secs());
     
     // Create WebSocket-only router
     let app = Router::new()
@@ -89,15 +90,14 @@ async fn main() -> anyhow::Result<()> {
     );
     
     // Run server and decay scheduler concurrently
-    // If either fails, we want to know about it
     tokio::select! {
         result = server_future => {
             if let Err(e) = result {
-                tracing::error!("Server error: {}", e);
+                error!("Server error: {}", e);
             }
         }
         _ = decay_handle => {
-            tracing::warn!("Decay scheduler unexpectedly terminated");
+            error!("Decay scheduler unexpectedly terminated");
         }
     }
     

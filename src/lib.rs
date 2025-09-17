@@ -10,6 +10,7 @@ pub mod project;
 pub mod git;
 pub mod state;
 pub mod utils;
+pub mod tasks;
 
 // Export commonly used items
 pub use state::AppState;
