@@ -7,6 +7,7 @@ use crate::memory::features::message_pipeline;  // NEW - replaces analyzer + cla
 use crate::memory::features::recall_engine;
 use crate::memory::features::session;
 use crate::memory::features::summarization;
+use crate::memory::cache::recent::RecentCache;  // NEW
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -29,7 +30,7 @@ pub use crate::memory::features::memory_types::{
 };
 
 use embedding::EmbeddingManager;
-use message_pipeline::{MessagePipeline, UnifiedAnalysis};  // NEW
+use message_pipeline::MessagePipeline;  // FIXED - removed unused UnifiedAnalysis
 use recall_engine::{RecallEngine, RecallContext, RecallConfig, SearchMode};
 use session::SessionManager;
 use summarization::SummarizationEngine;
@@ -40,6 +41,7 @@ pub struct MemoryService {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
     multi_store: Arc<QdrantMultiStore>,
+    recent_cache: Option<Arc<RecentCache>>,  // NEW
     
     // Modular managers
     message_pipeline: Arc<MessagePipeline>,  // NEW - replaces analyzer + classifier
@@ -56,7 +58,23 @@ impl MemoryService {
         multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
+        Self::new_with_cache(sqlite_store, multi_store, llm_client, None)
+    }
+    
+    /// Creates a new memory service with optional cache support
+    pub fn new_with_cache(
+        sqlite_store: Arc<SqliteMemoryStore>,
+        multi_store: Arc<QdrantMultiStore>,
+        llm_client: Arc<OpenAIClient>,
+        recent_cache: Option<Arc<RecentCache>>,  // NEW parameter
+    ) -> Self {
         info!("Initializing MemoryService with unified message pipeline");
+        
+        if recent_cache.is_some() {
+            info!("Recent cache enabled for instant recall");
+        } else {
+            info!("Recent cache disabled - using direct SQLite queries");
+        }
         
         // Initialize unified message pipeline (replaces analyzer + classifier)
         let message_pipeline = Arc::new(MessagePipeline::new(
@@ -87,6 +105,7 @@ impl MemoryService {
             llm_client,
             sqlite_store,
             multi_store,
+            recent_cache,
             message_pipeline,
             embedding_mgr,
             recall_engine,
@@ -114,7 +133,15 @@ impl MemoryService {
         let entry = MemoryEntry::user_message(session_id.to_string(), content.to_string());
         
         // Process through unified pipeline
-        let entry_id = self.process_and_save_entry(entry, "user").await?;
+        let entry_id = self.process_and_save_entry(entry.clone(), "user").await?;
+        
+        // Update cache if enabled (NEW)
+        if let Some(cache) = &self.recent_cache {
+            let mut cached_entry = entry;
+            cached_entry.id = Some(entry_id.parse::<i64>().unwrap_or(0));
+            cache.add(session_id, cached_entry).await;
+            debug!("Updated recent cache for session {}", session_id);
+        }
         
         // Trigger async analysis for any remaining unprocessed messages
         self.trigger_background_processing(session_id).await;
@@ -147,7 +174,14 @@ impl MemoryService {
         entry.summary = Some(response.summary.clone());
         
         // Process through unified pipeline
-        let entry_id = self.process_and_save_entry(entry, "assistant").await?;
+        let entry_id = self.process_and_save_entry(entry.clone(), "assistant").await?;
+        
+        // Update cache if enabled (NEW)
+        if let Some(cache) = &self.recent_cache {
+            entry.id = Some(entry_id.parse::<i64>().unwrap_or(0));
+            cache.add(session_id, entry).await;
+            debug!("Updated recent cache for session {}", session_id);
+        }
         
         // Trigger async analysis
         self.trigger_background_processing(session_id).await;
@@ -198,22 +232,61 @@ impl MemoryService {
             ..Default::default()
         };
         
-        self.recall_engine
+        // Try cache first for recent memories (NEW)
+        let mut context = self.recall_engine
             .build_recall_context(session_id, query_text, Some(config))
-            .await
+            .await?;
+        
+        // Optimize with cache if available
+        if let Some(cache) = &self.recent_cache {
+            if let Some(cached_recent) = cache.get_recent(session_id, recent_count).await {
+                context.recent = cached_recent;  // FIXED - was recent_memories
+                debug!("Used cached recent memories for recall context");
+            }
+        }
+        
+        Ok(context)
     }
     
-    /// Gets recent context - DELEGATES TO ENGINE
+    /// Gets recent context - with cache support
     pub async fn get_recent_context(
         &self,
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
+        // Try cache first (NEW)
+        if let Some(cache) = &self.recent_cache {
+            if let Some(cached_entries) = cache.get_recent(session_id, limit).await {
+                debug!("Cache HIT: Retrieved {} recent entries for session {}", 
+                    cached_entries.len(), session_id);
+                return Ok(cached_entries);
+            }
+            debug!("Cache MISS: Falling back to SQLite for session {}", session_id);
+        }
+        
+        // Fallback to recall engine
         let results = self.recall_engine
             .search(session_id, SearchMode::Recent { limit })
             .await?;
         
-        Ok(results.into_iter().map(|s| s.entry).collect())
+        let entries: Vec<MemoryEntry> = results.into_iter().map(|s| s.entry).collect();
+        
+        // Populate cache for next time if we got results
+        if let Some(cache) = &self.recent_cache {
+            if !entries.is_empty() {
+                // Preload more entries for better cache hit rate
+                let preload_entries = self.sqlite_store
+                    .load_recent(session_id, limit * 2)
+                    .await
+                    .unwrap_or_else(|_| entries.clone());
+                
+                cache.preload(session_id, preload_entries).await;
+                debug!("Preloaded {} entries into cache for session {}", 
+                    entries.len(), session_id);
+            }
+        }
+        
+        Ok(entries)
     }
     
     /// Search for similar memories - DELEGATES TO ENGINE
@@ -235,7 +308,13 @@ impl MemoryService {
     
     /// Gets memory service statistics
     pub async fn get_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
-        let recent = self.sqlite_store.load_recent(session_id, 100).await?;
+        let recent = if let Some(cache) = &self.recent_cache {
+            // Try cache first for stats
+            cache.get_recent(session_id, 100).await
+                .unwrap_or_else(|| vec![])
+        } else {
+            self.sqlite_store.load_recent(session_id, 100).await?
+        };
         
         Ok(MemoryServiceStats {
             total_messages: self.session_mgr.get_message_count(session_id).await,
@@ -255,6 +334,37 @@ impl MemoryService {
         }
         
         Ok(cleaned)
+    }
+    
+    // ===== CACHE MANAGEMENT (NEW) =====
+    
+    /// Clear cache for a session
+    pub async fn invalidate_session_cache(&self, session_id: &str) {
+        if let Some(cache) = &self.recent_cache {
+            cache.invalidate(session_id).await;
+            info!("Invalidated cache for session {}", session_id);
+        }
+    }
+    
+    /// Get cache statistics
+    pub async fn get_cache_stats(&self) -> Option<crate::memory::cache::recent::CacheStats> {
+        if let Some(cache) = &self.recent_cache {
+            Some(cache.get_stats().await)
+        } else {
+            None
+        }
+    }
+    
+    /// Preload cache for a session
+    pub async fn preload_session_cache(&self, session_id: &str, message_count: usize) -> Result<()> {
+        if let Some(cache) = &self.recent_cache {
+            let entries = self.sqlite_store.load_recent(session_id, message_count).await?;
+            if !entries.is_empty() {
+                cache.preload(session_id, entries).await;
+                info!("Preloaded {} messages into cache for session {}", message_count, session_id);
+            }
+        }
+        Ok(())
     }
     
     // ===== INTERNAL PROCESSING =====

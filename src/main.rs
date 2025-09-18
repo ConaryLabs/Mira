@@ -24,11 +24,13 @@ async fn main() -> anyhow::Result<()> {
     info!("Model: {}", CONFIG.gpt5_model);
     info!("Tools: {}", if CONFIG.enable_chat_tools { "enabled" } else { "disabled" });
     
-    // Create database pool
+    // Create database pool with config-defined connection limit
     let pool = SqlitePoolOptions::new()
-        .max_connections(5)
+        .max_connections(CONFIG.sqlite_max_connections as u32)  // FIXED - use config value (100)
         .connect(&CONFIG.database_url)
         .await?;
+    
+    info!("SQLite pool created with {} max connections", CONFIG.sqlite_max_connections);
     
     // Initialize all required components for AppState
     let sqlite_store = Arc::new(
@@ -48,10 +50,11 @@ async fn main() -> anyhow::Result<()> {
         git_store.clone(),
     );
     
-    // Create AppState with all required arguments
+    // Create AppState with all required arguments including SQLite pool
     let app_state = Arc::new(
         mira_backend::state::create_app_state(
             sqlite_store,
+            pool.clone(),  // Pass the SQLite pool
             &CONFIG.qdrant_url,
             llm_client,
             project_store,

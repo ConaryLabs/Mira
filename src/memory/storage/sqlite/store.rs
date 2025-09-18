@@ -6,7 +6,7 @@ use crate::memory::core::traits::MemoryStore;
 use crate::memory::core::types::MemoryEntry;
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json;
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, info};
@@ -57,6 +57,32 @@ impl SqliteMemoryStore {
         // This would need to be added to the schema if needed
         debug!("Pin status update requested for memory {} (not implemented)", memory_id);
         Ok(())
+    }
+    
+    /// Get active sessions from the last N hours (NEW)
+    pub async fn get_active_sessions(&self, hours: i64) -> Result<Vec<String>> {
+        let since = Utc::now() - Duration::hours(hours);
+        let since_naive = since.naive_utc(); // Store in variable to avoid temporary
+        
+        // FIXED: Added explicit type annotation and avoided temporary value
+        let sessions: Vec<String> = sqlx::query!(
+            r#"
+            SELECT DISTINCT session_id
+            FROM memory_entries
+            WHERE timestamp > ?
+            ORDER BY timestamp DESC
+            LIMIT 100
+            "#,
+            since_naive
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| row.session_id)
+        .collect();
+        
+        debug!("Found {} active sessions from last {} hours", sessions.len(), hours);
+        Ok(sessions)
     }
     
     /// Get a memory entry with its analysis data

@@ -191,6 +191,13 @@ pub struct MiraConfig {
     // Embedding Model Configuration
     pub embed_model: String,
     pub embed_dimensions: usize,
+    
+    // Recent Cache Configuration (NEW)
+    pub enable_recent_cache: bool,
+    pub recent_cache_capacity: usize,
+    pub recent_cache_ttl_seconds: u64,
+    pub recent_cache_max_per_session: usize,
+    pub recent_cache_warmup: bool,
 }
 
 /// Helper function to read environment variables with defaults
@@ -303,8 +310,8 @@ impl MiraConfig {
             git_cache_dir: env_var_or("MIRA_GIT_CACHE_DIR", "/tmp/mira-git-cache".to_string()),
             git_max_file_size: env_var_or("MIRA_GIT_MAX_FILE_SIZE", 10485760),
 
-            // Import
-            import_sqlite: env_var_or("MIRA_IMPORT_SQLITE", "mira.sqlite".to_string()),
+            // Import - FIXED to use mira.db
+            import_sqlite: env_var_or("MIRA_IMPORT_SQLITE", "mira.db".to_string()),
             import_qdrant_url: env_var_or("MIRA_IMPORT_QDRANT_URL", "http://localhost:6333".to_string()),
             import_qdrant_collection: env_var_or("MIRA_IMPORT_QDRANT_COLLECTION", "mira_memories".to_string()),
             
@@ -358,7 +365,7 @@ impl MiraConfig {
             decay_floor: env_var_or("MIRA_DECAY_FLOOR", 2.0),
             decay_high_salience_threshold: env_var_or("MIRA_DECAY_HIGH_SALIENCE_THRESHOLD", 7.0),
             
-            // Recall & Context (NEW)
+            // Recall & Context
             recall_recent: env_var_or("MIRA_RECALL_RECENT", 10),
             recall_semantic: env_var_or("MIRA_RECALL_SEMANTIC", 20),
             recall_k_per_head: env_var_or("MIRA_RECALL_K_PER_HEAD", 10),
@@ -366,16 +373,16 @@ impl MiraConfig {
             context_window_size: env_var_or("MIRA_CONTEXT_WINDOW_SIZE", 10),
             recent_message_limit: env_var_or("MIRA_RECENT_MESSAGE_LIMIT", 50),
             
-            // Analysis & Batching (NEW)
+            // Analysis & Batching
             analysis_batch_size: env_var_or("MIRA_ANALYSIS_BATCH_SIZE", 10),
             analysis_max_wait_ms: env_var_or("MIRA_ANALYSIS_MAX_WAIT_MS", 500),
             batch_size: env_var_or("MIRA_BATCH_SIZE", 10),
             
-            // Fast Lane Processing (NEW)
+            // Fast Lane Processing
             fast_lane_enabled: env_var_or("MIRA_FAST_LANE_ENABLED", true),
             fast_lane_default_salience: env_var_or("MIRA_FAST_LANE_DEFAULT_SALIENCE", 8.0),
             
-            // Response Configuration (NEW)
+            // Response Configuration
             max_response_tokens: env_var_or("MIRA_MAX_RESPONSE_TOKENS", 32768),
             max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 10),
             
@@ -387,9 +394,16 @@ impl MiraConfig {
             enable_response_compression: env_var_or("MIRA_ENABLE_RESPONSE_COMPRESSION", true),
             enable_batch_operations: env_var_or("MIRA_ENABLE_BATCH_OPERATIONS", true),
             
-            // Embedding Model Configuration (NEW)
+            // Embedding Model Configuration
             embed_model: env_var_or("MIRA_EMBED_MODEL", "text-embedding-3-large".to_string()),
             embed_dimensions: env_var_or("MIRA_EMBED_DIMENSIONS", 3072),
+            
+            // Recent Cache Configuration (NEW)
+            enable_recent_cache: env_var_or("MIRA_ENABLE_RECENT_CACHE", true),
+            recent_cache_capacity: env_var_or("MIRA_RECENT_CACHE_CAPACITY", 100),
+            recent_cache_ttl_seconds: env_var_or("MIRA_RECENT_CACHE_TTL", 300),
+            recent_cache_max_per_session: env_var_or("MIRA_RECENT_CACHE_MAX_PER_SESSION", 50),
+            recent_cache_warmup: env_var_or("MIRA_RECENT_CACHE_WARMUP", true),
         }
     }
 
@@ -538,6 +552,22 @@ impl MiraConfig {
     pub fn get_embed_dimensions(&self) -> usize {
         self.embed_dimensions
     }
+    
+    /// Check if recent cache is enabled
+    pub fn is_recent_cache_enabled(&self) -> bool {
+        self.enable_recent_cache
+    }
+    
+    /// Get recent cache configuration
+    pub fn get_recent_cache_config(&self) -> RecentCacheConfig {
+        RecentCacheConfig {
+            enabled: self.enable_recent_cache,
+            capacity: self.recent_cache_capacity,
+            ttl_seconds: self.recent_cache_ttl_seconds,
+            max_per_session: self.recent_cache_max_per_session,
+            warmup: self.recent_cache_warmup,
+        }
+    }
 }
 
 /// Configuration structures for monitoring
@@ -550,6 +580,16 @@ pub struct RollingSummaryConfig {
     pub use_in_context: bool,
     pub max_age_hours: u32,
     pub min_gap: usize,
+}
+
+/// Recent cache configuration structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentCacheConfig {
+    pub enabled: bool,
+    pub capacity: usize,
+    pub ttl_seconds: u64,
+    pub max_per_session: usize,
+    pub warmup: bool,
 }
 
 impl Default for MiraConfig {
