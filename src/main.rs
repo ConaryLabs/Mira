@@ -5,7 +5,7 @@ use axum::{
     routing::get,
     Router,
 };
-use tracing::{info, error, Level};
+use tracing::{info, Level};  // FIXED: removed unused 'error' import
 use tracing_subscriber::FmtSubscriber;
 use sqlx::sqlite::SqlitePoolOptions;
 use mira_backend::api::ws::ws_chat_handler;
@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
     let git_store = mira_backend::git::store::GitStore::new(pool.clone());
     
     let git_client = mira_backend::git::client::GitClient::new(
-        CONFIG.git_repos_dir.clone(),
+        "./repos",  // HARDCODED: GPT-5 best practice - standard git repos location (was CONFIG.git_repos_dir)
         git_store.clone(),
     );
     

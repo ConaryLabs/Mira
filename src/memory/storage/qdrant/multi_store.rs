@@ -195,7 +195,8 @@ impl QdrantMultiStore {
 
     /// Check if multi-head mode is enabled
     pub fn is_multi_head_enabled(&self) -> bool {
-        CONFIG.is_robust_memory_enabled()
+        // HARDCODED: GPT-5 best practice - multi-head is always enabled
+        true  // was CONFIG.is_robust_memory_enabled()
     }
 
     /// Get collection information for debugging

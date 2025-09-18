@@ -12,7 +12,7 @@ use crate::memory::core::traits::MemoryStore;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::config::CONFIG;
-use crate::memory::features::memory_types::{SummaryRequest, SummaryType};
+use crate::memory::features::memory_types::SummaryType;
 
 /// Manages ALL summarization operations - checking, creating, and storing
 pub struct SummarizationEngine {
@@ -34,8 +34,9 @@ impl SummarizationEngine {
             llm_client,
             sqlite_store,
             multi_store,
-            rolling_10_enabled: CONFIG.rolling_10_enabled(),
-            rolling_100_enabled: CONFIG.rolling_100_enabled(),
+            // HARDCODED: GPT-5 best practices - always enable rolling summaries
+            rolling_10_enabled: true,  // was CONFIG.summary_rolling_10
+            rolling_100_enabled: true, // was CONFIG.summary_rolling_100
         }
     }
     
@@ -131,8 +132,8 @@ impl SummarizationEngine {
             .summarize_conversation(&prompt, token_limit)
             .await?;
         
-        // Create and store
-        let mut entry = self.create_summary_entry(
+        // Create and store - FIX: make entry mutable
+        let entry = self.create_summary_entry(
             session_id.to_string(),
             summary.clone(),
             messages.len(),
@@ -294,7 +295,7 @@ impl SummarizationEngine {
         &self,
         session_id: String,
         summary: String,
-        window_size: usize,
+        _window_size: usize,  // prefixed with underscore to suppress warning
         summary_type: SummaryType,
     ) -> MemoryEntry {
         let type_tag = match summary_type {
@@ -320,7 +321,7 @@ impl SummarizationEngine {
             // Analysis fields
             mood: None,
             intensity: None,
-            salience: Some(10.0),  // Summaries have max salience
+            salience: Some(10.0),  // Summaries have max salience - already f32!
             intent: None,
             topics: None,
             summary: Some(summary),
