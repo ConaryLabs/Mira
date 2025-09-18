@@ -124,7 +124,7 @@ async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) 
                 }
             };
             
-            memory.save_assistant_response(&session_id, &response).await
+            memory.save_assistant_response(&session_id, &response, params["project_id"].as_str()).await
                 .map_err(|e| ApiError::internal(e.to_string()))?;
             info!("Saved assistant response for session: {}", session_id);
         }
@@ -289,7 +289,7 @@ async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryServic
                     monologue: None,
                     reasoning_summary: None,
                 };
-                memory.save_assistant_response(&session_id, &response).await
+                memory.save_assistant_response(&session_id, &response, None).await
                     .map_err(|e| ApiError::internal(e.to_string()))
             }
             _ => Err(ApiError::bad_request(format!("Invalid role: {}", mem.role)))

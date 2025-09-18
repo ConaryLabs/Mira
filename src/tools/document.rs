@@ -44,7 +44,7 @@ impl DocumentService {
 
         match destination {
             DocumentDestination::PersonalMemory => {
-                self.process_for_personal_memory(content).await?;
+                self.process_for_personal_memory(content, project_id).await?;
             }
             DocumentDestination::ProjectDocuments => {
                 let project_id = project_id
@@ -55,7 +55,7 @@ impl DocumentService {
                 let project_id = project_id
                     .ok_or_else(|| anyhow::anyhow!("Project ID required for Both destination"))?;
                 self.store_in_qdrant(file_path, content, project_id).await?;
-                self.process_for_personal_memory(content).await?;
+                self.process_for_personal_memory(content, Some(project_id)).await?;
             }
         }
 
@@ -199,7 +199,7 @@ impl DocumentService {
         }
     }
 
-    async fn process_for_personal_memory(&self, content: &str) -> Result<()> {
+    async fn process_for_personal_memory(&self, content: &str, project_id: Option<&str>) -> Result<()> {
         let doc_response = ChatResponse {
             output: content.to_string(),
             persona: "system".to_string(),
@@ -213,8 +213,15 @@ impl DocumentService {
             reasoning_summary: None,
         };
 
+        // Use the project_id for the session, or fallback to "document-import"
+        let session_id = if let Some(pid) = project_id {
+            format!("project-{}", pid)
+        } else {
+            "document-import".to_string()
+        };
+
         self.memory_service
-            .save_assistant_response("document-import", &doc_response)
+            .save_assistant_response(&session_id, &doc_response, project_id)
             .await?;
 
         Ok(())

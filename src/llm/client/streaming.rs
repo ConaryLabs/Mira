@@ -401,7 +401,7 @@ async fn save_assistant_to_memory(
         reasoning_summary: None,
     };
     
-    app_state.memory_service.save_assistant_response(session_id, &response).await?;
+    app_state.memory_service.save_assistant_response(session_id, &response, project_id).await?;
     
     if let Some(proj_id) = project_id {
         debug!("Assistant response saved with project context: {}", proj_id);
