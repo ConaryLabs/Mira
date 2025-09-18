@@ -69,7 +69,6 @@ impl MemoryService {
         // Initialize MessagePipeline coordinator
         let message_pipeline = Arc::new(MessagePipeline::new(
             llm_client.clone(),
-            sqlite_store.clone(),
         ));
         let message_pipeline_coordinator = MessagePipelineCoordinator::new(message_pipeline);
         
