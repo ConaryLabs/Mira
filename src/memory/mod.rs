@@ -20,7 +20,6 @@ pub use self::core::{
 };
 
 pub use self::features::{
-    classification::*,
     decay::*,
     session::*,
     recall_engine::{RecallContext, RecallEngine, RecallConfig, SearchMode},

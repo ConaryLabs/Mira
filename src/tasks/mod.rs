@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
-use tracing::{debug, error, info};  // Added debug
+use tracing::{debug, error, info};
 use sqlx::Row;
 
 use crate::memory::features::decay;
-use crate::memory::features::message_analyzer::AnalysisService;
+use crate::memory::features::message_pipeline::MessagePipeline;  // CHANGED from message_analyzer
 use crate::state::AppState;
 
 pub mod config;
@@ -84,7 +84,8 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?}, batch: {})", interval, batch_size);
             
-            let analysis_service = AnalysisService::new(
+            // CHANGED: Use unified MessagePipeline instead of AnalysisService
+            let message_pipeline = MessagePipeline::new(
                 app_state.llm_client.clone(),
                 app_state.sqlite_store.clone(),
             );
@@ -102,7 +103,8 @@ impl TaskManager {
                         let mut total_processed = 0;
 
                         for session_id in sessions {
-                            match analysis_service.process_pending_messages(&session_id).await {
+                            // CHANGED: Use message_pipeline instead of analysis_service
+                            match message_pipeline.process_pending_messages(&session_id).await {
                                 Ok(count) => {
                                     if count > 0 {
                                         info!("Analyzed {} messages for session {}", count, session_id);

@@ -1,11 +1,10 @@
 // src/memory/service.rs
 
-//! Public API and orchestration for the memory service with message analysis.
+//! Public API and orchestration for the memory service with unified message pipeline.
 
-use crate::memory::features::classification;
 use crate::memory::features::embedding;
-use crate::memory::features::message_analyzer;
-use crate::memory::features::recall_engine;  // CHANGED from scoring
+use crate::memory::features::message_pipeline;  // NEW - replaces analyzer + classifier
+use crate::memory::features::recall_engine;
 use crate::memory::features::session;
 use crate::memory::features::summarization;
 
@@ -29,14 +28,13 @@ pub use crate::memory::features::memory_types::{
     RoutingStats,
 };
 
-use classification::MessageClassifier;
 use embedding::EmbeddingManager;
-use message_analyzer::AnalysisService;
-use recall_engine::{RecallEngine, RecallContext, RecallConfig, SearchMode};  // CHANGED
+use message_pipeline::{MessagePipeline, UnifiedAnalysis};  // NEW
+use recall_engine::{RecallEngine, RecallContext, RecallConfig, SearchMode};
 use session::SessionManager;
 use summarization::SummarizationEngine;
 
-/// Memory Service with complete analysis pipeline
+/// Memory Service with unified analysis pipeline
 pub struct MemoryService {
     // Core components
     llm_client: Arc<OpenAIClient>,
@@ -44,10 +42,9 @@ pub struct MemoryService {
     multi_store: Arc<QdrantMultiStore>,
     
     // Modular managers
-    analysis_service: Arc<AnalysisService>,
-    classifier: Arc<MessageClassifier>,
+    message_pipeline: Arc<MessagePipeline>,  // NEW - replaces analyzer + classifier
     embedding_mgr: Arc<EmbeddingManager>,
-    recall_engine: Arc<RecallEngine>,  // CHANGED from scorer
+    recall_engine: Arc<RecallEngine>,
     session_mgr: Arc<SessionManager>,
     pub summarization_engine: Arc<SummarizationEngine>,
 }
@@ -59,17 +56,17 @@ impl MemoryService {
         multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
     ) -> Self {
-        info!("Initializing MemoryService with complete analysis pipeline");
+        info!("Initializing MemoryService with unified message pipeline");
         
-        // Initialize all modules
-        let analysis_service = Arc::new(AnalysisService::new(
+        // Initialize unified message pipeline (replaces analyzer + classifier)
+        let message_pipeline = Arc::new(MessagePipeline::new(
             llm_client.clone(),
             sqlite_store.clone(),
         ));
-        let classifier = Arc::new(MessageClassifier::new(llm_client.clone()));
-        let embedding_mgr = Arc::new(EmbeddingManager::new(llm_client.clone()).expect("Failed to create embedding manager"));
         
-        // Initialize recall engine instead of scorer
+        let embedding_mgr = Arc::new(EmbeddingManager::new(llm_client.clone())
+            .expect("Failed to create embedding manager"));
+        
         let recall_engine = Arc::new(RecallEngine::new(
             llm_client.clone(),
             sqlite_store.clone(),
@@ -78,7 +75,6 @@ impl MemoryService {
         
         let session_mgr = Arc::new(SessionManager::new());
         
-        // Initialize summarization engine with all its dependencies
         let summarization_engine = Arc::new(SummarizationEngine::new(
             llm_client.clone(),
             sqlite_store.clone(),
@@ -91,10 +87,9 @@ impl MemoryService {
             llm_client,
             sqlite_store,
             multi_store,
-            analysis_service,
-            classifier,
+            message_pipeline,
             embedding_mgr,
-            recall_engine,  // CHANGED
+            recall_engine,
             session_mgr,
             summarization_engine,
         }
@@ -102,7 +97,7 @@ impl MemoryService {
     
     // ===== PRIMARY PUBLIC API =====
     
-    /// Saves a user message with analysis, classification and routing
+    /// Saves a user message with unified analysis and routing
     pub async fn save_user_message(
         &self,
         session_id: &str,
@@ -118,13 +113,13 @@ impl MemoryService {
         // Create memory entry
         let entry = MemoryEntry::user_message(session_id.to_string(), content.to_string());
         
-        // Save and process with analysis
+        // Process through unified pipeline
         let entry_id = self.process_and_save_entry(entry, "user").await?;
         
-        // Trigger async analysis for enrichment
-        self.trigger_analysis(session_id).await;
+        // Trigger async analysis for any remaining unprocessed messages
+        self.trigger_background_processing(session_id).await;
         
-        // Check for rolling summaries - delegate to engine
+        // Check for rolling summaries
         self.summarization_engine
             .check_and_process_summaries(session_id, message_count)
             .await?;
@@ -132,7 +127,7 @@ impl MemoryService {
         Ok(entry_id)
     }
     
-    /// Saves an assistant response with analysis, classification and routing
+    /// Saves an assistant response with unified analysis and routing
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
@@ -151,19 +146,21 @@ impl MemoryService {
         entry.salience = Some(response.salience as f32);
         entry.summary = Some(response.summary.clone());
         
-        // Save and process with analysis
+        // Process through unified pipeline
         let entry_id = self.process_and_save_entry(entry, "assistant").await?;
         
         // Trigger async analysis
-        self.trigger_analysis(session_id).await;
+        self.trigger_background_processing(session_id).await;
         
-        // Check for rolling summaries - delegate to engine
+        // Check for rolling summaries
         self.summarization_engine
             .check_and_process_summaries(session_id, message_count)
             .await?;
         
         Ok(entry_id)
     }
+    
+    // ... [All other public methods remain the same - delegating to engines] ...
     
     /// Creates a snapshot summary - DELEGATES TO ENGINE
     pub async fn create_snapshot_summary(
@@ -185,19 +182,6 @@ impl MemoryService {
         self.summarization_engine
             .create_rolling_summary(session_id, window_size)
             .await
-    }
-    
-    /// Triggers background analysis of unanalyzed messages
-    async fn trigger_analysis(&self, session_id: &str) {
-        let analysis_service = self.analysis_service.clone();
-        let session_id = session_id.to_string();
-        
-        // Spawn background task for analysis
-        tokio::spawn(async move {
-            if let Err(e) = analysis_service.process_pending_messages(&session_id).await {
-                debug!("Background analysis error: {}", e);
-            }
-        });
     }
     
     /// Builds parallel recall context - DELEGATES TO ENGINE
@@ -232,20 +216,6 @@ impl MemoryService {
         Ok(results.into_iter().map(|s| s.entry).collect())
     }
     
-    /// Gets memory service statistics
-    pub async fn get_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
-        let recent = self.sqlite_store.load_recent(session_id, 100).await?;
-        
-        // For now, return basic stats
-        Ok(MemoryServiceStats {
-            total_messages: self.session_mgr.get_message_count(session_id).await,
-            recent_messages: recent.len(),
-            semantic_entries: 0,
-            code_entries: 0,
-            summary_entries: 0,
-        })
-    }
-    
     /// Search for similar memories - DELEGATES TO ENGINE
     pub async fn search_similar(
         &self,
@@ -263,6 +233,19 @@ impl MemoryService {
         Ok(results.into_iter().map(|s| s.entry).collect())
     }
     
+    /// Gets memory service statistics
+    pub async fn get_stats(&self, session_id: &str) -> Result<MemoryServiceStats> {
+        let recent = self.sqlite_store.load_recent(session_id, 100).await?;
+        
+        Ok(MemoryServiceStats {
+            total_messages: self.session_mgr.get_message_count(session_id).await,
+            recent_messages: recent.len(),
+            semantic_entries: 0,
+            code_entries: 0,
+            summary_entries: 0,
+        })
+    }
+    
     /// Performs cleanup of old inactive sessions
     pub async fn cleanup_inactive_sessions(&self, max_age_hours: i64) -> Result<usize> {
         let cleaned = self.session_mgr.cleanup_inactive_sessions(max_age_hours).await;
@@ -276,47 +259,61 @@ impl MemoryService {
     
     // ===== INTERNAL PROCESSING =====
     
-    /// Processes and saves an entry with classification and routing
+    /// Processes and saves an entry with unified analysis and routing
     async fn process_and_save_entry(
         &self,
-        entry: MemoryEntry,
+        mut entry: MemoryEntry,
         role: &str,
     ) -> Result<String> {
-        // Classify the content
-        let classification = self.classifier.classify_message(&entry.content).await?;
+        // UNIFIED ANALYSIS - single LLM call for everything!
+        let analysis = self.message_pipeline
+            .analyze_message(&entry.content, role, None)
+            .await?;
         
-        // Update entry with classification results
-        let mut entry = entry;
-        entry.salience = Some(classification.salience);
-        entry.topics = Some(classification.topics.clone());
-        entry.contains_code = Some(classification.is_code);
-        entry.programming_lang = if classification.is_code {
-            Some(classification.lang.clone())
-        } else {
-            None
-        };
+        // Update entry with ALL analysis results
+        entry.salience = Some(analysis.salience);
+        entry.topics = Some(analysis.topics.clone());
+        entry.contains_code = Some(analysis.is_code);
+        entry.programming_lang = analysis.programming_lang.clone();
+        // Additional fields from unified analysis
+        entry.summary = entry.summary.or(analysis.summary.clone());
         
         // Save to SQLite
         let saved_entry = self.sqlite_store.save(&entry).await?;
         let entry_id = saved_entry.id.unwrap_or(0).to_string();
         
-        // Determine routing
-        let routing_decision = self.classifier
-            .make_routing_decision(&entry.content, role, saved_entry.salience)
-            .await?;
-        
-        if !routing_decision.should_embed {
+        // Check routing decision from analysis
+        if !analysis.routing.should_embed {
             debug!("Skipping embedding: {}", 
-                routing_decision.skip_reason.unwrap_or_default());
+                analysis.routing.skip_reason.unwrap_or_default());
             return Ok(entry_id);
         }
         
         // Generate embeddings and store in appropriate heads
-        self.generate_and_store_embeddings(&saved_entry, &routing_decision.heads).await?;
+        self.generate_and_store_embeddings(
+            &saved_entry, 
+            &analysis.routing.embedding_heads
+        ).await?;
         
-        info!("Processed entry {} -> {} heads", entry_id, routing_decision.heads.len());
+        info!("Processed entry {} -> {} heads", 
+            entry_id, 
+            analysis.routing.embedding_heads.len()
+        );
         
         Ok(entry_id)
+    }
+    
+    /// Triggers background processing of unanalyzed messages
+    async fn trigger_background_processing(&self, session_id: &str) {
+        let pipeline = self.message_pipeline.clone();
+        let session_id = session_id.to_string();
+        
+        // Spawn background task for processing pending messages
+        tokio::spawn(async move {
+            if let Err(e) = pipeline.process_pending_messages(&session_id).await {
+                debug!("Background processing error: {}", e);
+            }
+        });
     }
     
     /// Generates embeddings and stores in vector collections
@@ -336,8 +333,6 @@ impl MemoryService {
                 let mut chunk_entry = entry.clone();
                 chunk_entry.content = chunk_text.clone();
                 chunk_entry.embedding = Some(embedding.clone());
-                
-                // Update embedding_heads to track which collections this is stored in
                 chunk_entry.embedding_heads = Some(vec![head.as_str().to_string()]);
                 
                 self.multi_store.save(head, &chunk_entry).await?;

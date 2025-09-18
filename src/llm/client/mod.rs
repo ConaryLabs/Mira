@@ -9,7 +9,6 @@ use serde_json::{json, Value};
 use tracing::{debug, error, info, warn};
 
 use crate::api::error::ApiError;
-use crate::llm::classification::Classification;
 use crate::config::CONFIG;
 
 pub mod config;
@@ -185,58 +184,7 @@ impl OpenAIClient {
             })
     }
 
-    pub async fn classify_text(&self, text: &str) -> Result<Classification> {
-        info!("Classifying text with GPT-5 Responses API");
-        
-        let instructions = r#"You are an expert at analyzing text to extract structured metadata.
-Analyze the following message and return your response as a JSON object.
-
-The JSON response must include these fields:
-- is_code: boolean - True if the message is primarily code, false otherwise.
-- lang: string - If is_code is true, specify the programming language (e.g., "rust", "python"). Otherwise, use "natural".
-- topics: array of strings - A list of keywords or domains that describe the content (e.g., ["git", "error_handling"]).
-- salience: float - A score from 0.0 to 1.0 indicating the importance of the message for future context. 1.0 is most important.
-
-Be concise and accurate. Output your analysis as valid JSON only."#;
-
-        let request_body = json!({
-            "model": CONFIG.gpt5_model,
-            "input": [{
-                "role": "user", 
-                "content": [{
-                    "type": "input_text",
-                    "text": format!("Analyze this text and return a JSON classification:\n\n{}", text)
-                }]
-            }],
-            "instructions": instructions,
-            "text": {
-                "format": {
-                    "type": "json_object"
-                }
-            },
-            "reasoning": {
-                "effort": "minimal"
-            },
-            "max_output_tokens": CONFIG.get_json_max_tokens()
-        });
-
-        debug!("Classification request: model={}, max_tokens={}", 
-            CONFIG.gpt5_model, 
-            CONFIG.get_json_max_tokens()
-        );
-
-        let response = self.post_response_with_retry(request_body).await
-            .map_err(|e| ApiError::internal(format!("Classification request failed: {e}")))?;
-
-        let content = responses::extract_text_from_responses(&response)
-            .ok_or_else(|| ApiError::internal("No content in classification response"))?;
-
-        serde_json::from_str::<Classification>(&content)
-            .map_err(|e| {
-                error!("Failed to parse classification JSON: {}\nRaw content: {}", e, content);
-                ApiError::internal("LLM returned malformed classification JSON").into()
-            })
-    }
+    // REMOVED: classify_text method - classification now handled by MessagePipeline
 
     pub async fn post_response_with_retry(&self, body: Value) -> Result<Value> {
         let max_retries = CONFIG.api_max_retries;
