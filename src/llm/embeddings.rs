@@ -92,7 +92,7 @@ pub enum EmbeddingHead {
     Semantic,   // General conversation embeddings
     Code,       // Programming-specific embeddings
     Summary,    // Rolling summary embeddings
-    Documents,  // Project documents (PDFs, markdown, etc.) - NEW!
+    Documents,  // Project documents (PDFs, markdown, etc.)
 }
 
 impl EmbeddingHead {
@@ -153,7 +153,7 @@ impl FromStr for EmbeddingHead {
             "semantic" => Ok(EmbeddingHead::Semantic),
             "code" => Ok(EmbeddingHead::Code),
             "summary" => Ok(EmbeddingHead::Summary),
-            "documents" => Ok(EmbeddingHead::Documents),  // NEW!
+            "documents" => Ok(EmbeddingHead::Documents),
             _ => Err(anyhow::anyhow!("Unknown embedding head: {}", s)),
         }
     }
@@ -179,8 +179,8 @@ impl TextChunker {
             EmbeddingHead::Code => (CONFIG.embed_code_chunk, CONFIG.embed_code_overlap),
             EmbeddingHead::Summary => (CONFIG.embed_summary_chunk, CONFIG.embed_summary_overlap),
             EmbeddingHead::Documents => (
-                CONFIG.embed_document_chunk.unwrap_or(1000),
-                CONFIG.embed_document_overlap.unwrap_or(200)
+                CONFIG.embed_document_chunk,  // No longer Optional
+                CONFIG.embed_document_overlap  // No longer Optional
             ),
         };
 

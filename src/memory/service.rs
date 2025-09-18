@@ -3,11 +3,11 @@
 //! Public API and orchestration for the memory service with unified message pipeline.
 
 use crate::memory::features::embedding;
-use crate::memory::features::message_pipeline;  // NEW - replaces analyzer + classifier
+use crate::memory::features::message_pipeline;
 use crate::memory::features::recall_engine;
 use crate::memory::features::session;
 use crate::memory::features::summarization;
-use crate::memory::cache::recent::RecentCache;  // NEW
+use crate::memory::cache::recent::RecentCache;
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -30,7 +30,7 @@ pub use crate::memory::features::memory_types::{
 };
 
 use embedding::EmbeddingManager;
-use message_pipeline::MessagePipeline;  // FIXED - removed unused UnifiedAnalysis
+use message_pipeline::MessagePipeline;
 use recall_engine::{RecallEngine, RecallContext, RecallConfig, SearchMode};
 use session::SessionManager;
 use summarization::SummarizationEngine;
@@ -41,10 +41,10 @@ pub struct MemoryService {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
     multi_store: Arc<QdrantMultiStore>,
-    recent_cache: Option<Arc<RecentCache>>,  // NEW
+    recent_cache: Option<Arc<RecentCache>>,
     
     // Modular managers
-    message_pipeline: Arc<MessagePipeline>,  // NEW - replaces analyzer + classifier
+    message_pipeline: Arc<MessagePipeline>,
     embedding_mgr: Arc<EmbeddingManager>,
     recall_engine: Arc<RecallEngine>,
     session_mgr: Arc<SessionManager>,
@@ -66,7 +66,7 @@ impl MemoryService {
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
         llm_client: Arc<OpenAIClient>,
-        recent_cache: Option<Arc<RecentCache>>,  // NEW parameter
+        recent_cache: Option<Arc<RecentCache>>,
     ) -> Self {
         info!("Initializing MemoryService with unified message pipeline");
         
@@ -76,7 +76,7 @@ impl MemoryService {
             info!("Recent cache disabled - using direct SQLite queries");
         }
         
-        // Initialize unified message pipeline (replaces analyzer + classifier)
+        // Initialize unified message pipeline
         let message_pipeline = Arc::new(MessagePipeline::new(
             llm_client.clone(),
             sqlite_store.clone(),
@@ -132,10 +132,10 @@ impl MemoryService {
         // Create memory entry
         let entry = MemoryEntry::user_message(session_id.to_string(), content.to_string());
         
-        // Process through unified pipeline
+        // Process through unified pipeline with IMMEDIATE analysis
         let entry_id = self.process_and_save_entry(entry.clone(), "user").await?;
         
-        // Update cache if enabled (NEW)
+        // Update cache if enabled
         if let Some(cache) = &self.recent_cache {
             let mut cached_entry = entry;
             cached_entry.id = Some(entry_id.parse::<i64>().unwrap_or(0));
@@ -143,8 +143,7 @@ impl MemoryService {
             debug!("Updated recent cache for session {}", session_id);
         }
         
-        // Trigger async analysis for any remaining unprocessed messages
-        self.trigger_background_processing(session_id).await;
+        // REMOVED: trigger_background_processing - we already analyzed immediately!
         
         // Check for rolling summaries
         self.summarization_engine
@@ -154,7 +153,7 @@ impl MemoryService {
         Ok(entry_id)
     }
     
-    /// Saves an assistant response with unified analysis and routing
+    /// Saves an assistant response WITHOUT re-analysis - uses ChatResponse metadata
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
@@ -166,25 +165,26 @@ impl MemoryService {
         let message_count = self.session_mgr.increment_counter(session_id).await;
         
         // Create memory entry from ChatResponse
-        let mut entry = MemoryEntry::assistant_message(
+        let entry = MemoryEntry::assistant_message(
             session_id.to_string(), 
             response.output.clone()
         );
-        entry.salience = Some(response.salience as f32);
-        entry.summary = Some(response.summary.clone());
         
-        // Process through unified pipeline
-        let entry_id = self.process_and_save_entry(entry.clone(), "assistant").await?;
+        // Use specialized method that doesn't re-analyze
+        let entry_id = self.process_and_save_assistant_entry(entry.clone(), response).await?;
         
-        // Update cache if enabled (NEW)
+        // Update cache with the full metadata
         if let Some(cache) = &self.recent_cache {
-            entry.id = Some(entry_id.parse::<i64>().unwrap_or(0));
-            cache.add(session_id, entry).await;
+            let mut cached_entry = entry;
+            cached_entry.id = Some(entry_id.parse::<i64>().unwrap_or(0));
+            cached_entry.salience = Some(response.salience as f32);
+            cached_entry.summary = Some(response.summary.clone());
+            cached_entry.topics = Some(response.tags.clone());
+            cache.add(session_id, cached_entry).await;
             debug!("Updated recent cache for session {}", session_id);
         }
         
-        // Trigger async analysis
-        self.trigger_background_processing(session_id).await;
+        // REMOVED: trigger_background_processing - not needed!
         
         // Check for rolling summaries
         self.summarization_engine
@@ -194,7 +194,7 @@ impl MemoryService {
         Ok(entry_id)
     }
     
-    // ... [All other public methods remain the same - delegating to engines] ...
+    // ===== DELEGATION METHODS (unchanged) =====
     
     /// Creates a snapshot summary - DELEGATES TO ENGINE
     pub async fn create_snapshot_summary(
@@ -232,7 +232,6 @@ impl MemoryService {
             ..Default::default()
         };
         
-        // Try cache first for recent memories (NEW)
         let mut context = self.recall_engine
             .build_recall_context(session_id, query_text, Some(config))
             .await?;
@@ -240,7 +239,7 @@ impl MemoryService {
         // Optimize with cache if available
         if let Some(cache) = &self.recent_cache {
             if let Some(cached_recent) = cache.get_recent(session_id, recent_count).await {
-                context.recent = cached_recent;  // FIXED - was recent_memories
+                context.recent = cached_recent;
                 debug!("Used cached recent memories for recall context");
             }
         }
@@ -254,7 +253,7 @@ impl MemoryService {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        // Try cache first (NEW)
+        // Try cache first
         if let Some(cache) = &self.recent_cache {
             if let Some(cached_entries) = cache.get_recent(session_id, limit).await {
                 debug!("Cache HIT: Retrieved {} recent entries for session {}", 
@@ -336,7 +335,7 @@ impl MemoryService {
         Ok(cleaned)
     }
     
-    // ===== CACHE MANAGEMENT (NEW) =====
+    // ===== CACHE MANAGEMENT =====
     
     /// Clear cache for a session
     pub async fn invalidate_session_cache(&self, session_id: &str) {
@@ -369,7 +368,7 @@ impl MemoryService {
     
     // ===== INTERNAL PROCESSING =====
     
-    /// Processes and saves an entry with unified analysis and routing
+    /// Processes and saves USER entry with unified analysis and routing
     async fn process_and_save_entry(
         &self,
         mut entry: MemoryEntry,
@@ -385,7 +384,6 @@ impl MemoryService {
         entry.topics = Some(analysis.topics.clone());
         entry.contains_code = Some(analysis.is_code);
         entry.programming_lang = analysis.programming_lang.clone();
-        // Additional fields from unified analysis
         entry.summary = entry.summary.or(analysis.summary.clone());
         
         // Save to SQLite
@@ -413,18 +411,65 @@ impl MemoryService {
         Ok(entry_id)
     }
     
-    /// Triggers background processing of unanalyzed messages
-    async fn trigger_background_processing(&self, session_id: &str) {
-        let pipeline = self.message_pipeline.clone();
-        let session_id = session_id.to_string();
+    /// NEW: Process assistant response WITHOUT re-analysis
+    async fn process_and_save_assistant_entry(
+        &self,
+        mut entry: MemoryEntry,
+        response: &crate::llm::types::ChatResponse,
+    ) -> Result<String> {
+        info!("Saving assistant response WITHOUT re-analyzing");
         
-        // Spawn background task for processing pending messages
-        tokio::spawn(async move {
-            if let Err(e) = pipeline.process_pending_messages(&session_id).await {
-                debug!("Background processing error: {}", e);
-            }
-        });
+        // Use the analysis data we ALREADY HAVE from ChatResponse
+        entry.salience = Some(response.salience as f32);
+        entry.summary = Some(response.summary.clone());
+        entry.tags = Some(response.tags.clone());
+        
+        // Infer topics from tags (they're basically the same)
+        entry.topics = Some(response.tags.clone());
+        
+        // Set reasonable defaults for assistant responses
+        entry.contains_code = Some(response.output.contains("```"));
+        entry.programming_lang = if entry.contains_code.unwrap_or(false) {
+            // Could be smarter about detecting the actual language
+            Some("mixed".to_string())
+        } else {
+            None
+        };
+        
+        // Save to SQLite WITHOUT analysis
+        let saved_entry = self.sqlite_store.save(&entry).await?;
+        let entry_id = saved_entry.id.unwrap_or(0).to_string();
+        
+        // Use CONFIG for salience threshold
+        use crate::config::CONFIG;
+        let salience_threshold = CONFIG.salience_min_for_embed as f32;
+        
+        // Check if we should always embed assistant responses
+        let should_embed = CONFIG.always_embed_assistant || 
+                          entry.salience.unwrap_or(0.0) >= salience_threshold;
+        
+        if should_embed {
+            // Generate embeddings for semantic head (assistant responses usually go here)
+            let heads = vec![EmbeddingHead::Semantic];
+            self.generate_and_store_embeddings(&saved_entry, &heads).await?;
+            
+            info!("Assistant response {} embedded (salience: {}, threshold: {}, always_embed: {})", 
+                entry_id, 
+                entry.salience.unwrap_or(0.0),
+                salience_threshold,
+                CONFIG.always_embed_assistant
+            );
+        } else {
+            debug!("Skipping embedding for low-salience assistant response (salience: {} < {})", 
+                entry.salience.unwrap_or(0.0), 
+                salience_threshold
+            );
+        }
+        
+        Ok(entry_id)
     }
+    
+    // REMOVED: trigger_background_processing - it was useless!
     
     /// Generates embeddings and stores in vector collections
     async fn generate_and_store_embeddings(

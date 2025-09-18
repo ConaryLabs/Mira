@@ -7,7 +7,6 @@ use tracing::info;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
-use crate::config::CONFIG;
 
 #[derive(Clone)]
 pub struct FileSearchService {
@@ -58,7 +57,8 @@ impl FileSearchService {
     ) -> Result<Value> {
         info!("Searching files with query: '{}'", params.query);
         
-        let max_files = params.max_files.unwrap_or(CONFIG.file_search_max_files);
+        // Hardcode max_files default
+        let max_files = params.max_files.unwrap_or(50);
         
         // Generate embedding for the search query
         let query_embedding = self.llm_client
@@ -129,7 +129,7 @@ impl Default for FileSearchParams {
         Self {
             query: String::new(),
             file_extensions: None,
-            max_files: Some(CONFIG.file_search_max_files),
+            max_files: Some(50),  // Hardcoded default
             case_sensitive: Some(false),
             include_content: Some(true),
         }

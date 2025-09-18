@@ -8,7 +8,6 @@ use reqwest::{header, Client as ReqwestClient};
 use serde_json::{json, Value};
 use tracing::{debug, error, info, warn};
 
-use crate::api::error::ApiError;
 use crate::config::CONFIG;
 
 pub mod config;
@@ -79,7 +78,8 @@ impl OpenAIClient {
 
         let embedding_client = EmbeddingClient::new(config.clone());
         
-        let rate_limiter = Arc::new(RateLimiter::new(CONFIG.rate_limit_chat as u32)?);
+        // Hardcode a reasonable rate limit since we removed it from config
+        let rate_limiter = Arc::new(RateLimiter::new(200)?);
 
         Ok(Arc::new(Self {
             client,

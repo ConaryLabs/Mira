@@ -97,7 +97,7 @@ async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) 
                     output: content.to_string(),
                     persona: meta["persona"].as_str().unwrap_or("assistant").to_string(),
                     mood: meta["mood"].as_str().unwrap_or("neutral").to_string(),
-                    salience: meta["salience"].as_u64().unwrap_or(5) as i32,
+                    salience: meta["salience"].as_f64().unwrap_or(5.0) as f32,  // FIXED: changed to f32
                     summary: meta["summary"].as_str().unwrap_or(content).to_string(),
                     memory_type: meta["memory_type"].as_str().unwrap_or("other").to_string(),
                     tags: meta["tags"].as_array()
@@ -114,7 +114,7 @@ async fn save_memory(params: Value, memory: &Arc<crate::memory::MemoryService>) 
                     output: content.to_string(),
                     persona: "assistant".to_string(),
                     mood: "neutral".to_string(),
-                    salience: 5,
+                    salience: 5.0,  // FIXED: changed to f32
                     summary: content.to_string(),
                     memory_type: "other".to_string(),
                     tags: vec!["assistant".to_string()],
@@ -281,7 +281,7 @@ async fn import_memories(params: Value, memory: &Arc<crate::memory::MemoryServic
                     output: mem.content,
                     persona: "assistant".to_string(),
                     mood: "neutral".to_string(),
-                    salience: mem.salience.unwrap_or(5.0) as i32,
+                    salience: mem.salience.unwrap_or(5.0),  // FIXED: removed cast, already f32
                     summary: format!("Imported memory {}", idx + 1),
                     memory_type: mem.memory_type.unwrap_or_else(|| "other".to_string()),
                     tags: mem.tags.unwrap_or_default(),
@@ -333,7 +333,7 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> ApiResult<WsServerMess
     let mut status = json!({
         "qdrant_url": CONFIG.qdrant_url.clone(),
         "qdrant_configured": !CONFIG.qdrant_url.is_empty(),
-        "openai_key_configured": CONFIG.openai_api_key.is_some(),
+        "openai_key_configured": !CONFIG.openai_api_key.is_empty(),  // FIXED: String not Option<String>
         "embedding_heads": CONFIG.embed_heads.clone(),
         "collection_name": CONFIG.qdrant_collection.clone(),
     });

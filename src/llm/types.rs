@@ -6,7 +6,7 @@ pub struct ChatResponse {
     pub output: String,
     pub persona: String,
     pub mood: String,
-    pub salience: i32,
+    pub salience: f32,  // CHANGED from i32 to f32
     pub summary: String,
     pub memory_type: String,
     pub tags: Vec<String>,

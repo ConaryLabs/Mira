@@ -28,8 +28,8 @@ pub struct FileIntent {
 impl FileContextService {
     pub fn new(llm_client: Arc<OpenAIClient>, git_client: Arc<GitClient>) -> Self {
         debug!(
-            "FileContextService initialized with intent model: {}",
-            CONFIG.intent_model
+            "FileContextService initialized with model: {}",
+            CONFIG.gpt5_model  // Use the main model instead of intent_model
         );
 
         Self {
@@ -39,7 +39,7 @@ impl FileContextService {
     }
     
     pub async fn check_intent(&self, message: &str, metadata: &MessageMetadata) -> Result<FileIntent> {
-        let model = &CONFIG.intent_model;
+        let model = &CONFIG.gpt5_model;  // Use the main GPT-5 model
         let file_path = metadata.file_path.as_deref().unwrap_or("unknown");
         
         debug!(

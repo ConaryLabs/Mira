@@ -1,5 +1,5 @@
 // src/llm/client/streaming.rs
-// Consolidated streaming implementation for GPT-5 Responses API
+// Streaming implementation for GPT-5 Responses API only - no legacy bullshit
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -152,7 +152,6 @@ pub fn parse_sse_chunk(chunk_text: &str) -> Result<Option<Value>> {
 }
 
 /// Process GPT-5 response stream into ChatEvents
-/// This is the main streaming logic moved from unified_handler
 pub fn process_gpt5_stream(
     mut stream: impl Stream<Item = Result<Value>> + Send + Unpin + 'static,
     has_tools: bool,
@@ -161,6 +160,7 @@ pub fn process_gpt5_stream(
     project_id: Option<String>,
 ) -> impl Stream<Item = Result<ChatEvent>> + Send {
     let buffer = Arc::new(std::sync::Mutex::new(String::new()));
+    let metadata = Arc::new(std::sync::Mutex::new(StreamMetadata::default()));
     let tool_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
     let completion_sent = Arc::new(std::sync::Mutex::new(false));
     let chunk_count = Arc::new(std::sync::Mutex::new(0));
@@ -191,7 +191,7 @@ pub fn process_gpt5_stream(
                                 debug!("Processing event #{} type: {}", count, event_type);
                                 
                                 match event_type {
-                                    // GPT-5 text streaming event - this is what we care about!
+                                    // GPT-5 text streaming event
                                     "response.output_text.delta" => {
                                         if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
                                             info!("Got text delta: {} chars", delta.len());
@@ -204,12 +204,40 @@ pub fn process_gpt5_stream(
                                         }
                                     }
                                     
+                                    // GPT-5 metadata events - capture these!
+                                    "response.output_item.metadata" | "response.metadata" => {
+                                        // Extract metadata from the response
+                                        let mut meta = metadata.lock().unwrap();
+                                        
+                                        if let Some(mood_val) = chunk.get("mood").and_then(|m| m.as_str()) {
+                                            meta.mood = Some(mood_val.to_string());
+                                        }
+                                        if let Some(salience_val) = chunk.get("salience").and_then(|s| s.as_f64()) {
+                                            meta.salience = Some(salience_val as f32);
+                                        }
+                                        if let Some(persona_val) = chunk.get("persona").and_then(|p| p.as_str()) {
+                                            meta.persona = Some(persona_val.to_string());
+                                        }
+                                        if let Some(tags_val) = chunk.get("tags").and_then(|t| t.as_array()) {
+                                            meta.tags = Some(tags_val.iter()
+                                                .filter_map(|v| v.as_str().map(String::from))
+                                                .collect());
+                                        }
+                                        
+                                        debug!("Captured metadata: {:?}", *meta);
+                                    }
+                                    
                                     // GPT-5 text completion - marks end of text streaming
                                     "response.output_text.done" => {
-                                        // Stream is complete - get buffer content
+                                        // Stream is complete - get buffer content and metadata
                                         let final_text = {
                                             let buf = buffer.lock().unwrap();
                                             buf.clone()
+                                        };
+                                        
+                                        let final_metadata = {
+                                            let meta = metadata.lock().unwrap();
+                                            meta.clone()
                                         };
                                         
                                         info!("Text streaming complete - Final buffer: {} chars", final_text.len());
@@ -219,6 +247,7 @@ pub fn process_gpt5_stream(
                                                 &app_state,
                                                 &session_id,
                                                 &final_text,
+                                                final_metadata,
                                                 project_id.as_deref(),
                                             ).await {
                                                 warn!("Failed to save assistant response: {}", e);
@@ -243,7 +272,7 @@ pub fn process_gpt5_stream(
                                         debug!("Ignoring informational event: {}", event_type);
                                     }
                                     
-                                    // Tool events (if they come through)
+                                    // Tool events
                                     "tool_call" if has_tools => {
                                         {
                                             let mut calls = tool_calls.lock().unwrap();
@@ -274,18 +303,6 @@ pub fn process_gpt5_stream(
                                     // Rate limit or other metadata
                                     "rate_limit" | "ping" => {
                                         debug!("Metadata event: {}", event_type);
-                                    }
-                                    
-                                    // Legacy format fallback (shouldn't happen with GPT-5)
-                                    "text_delta" => {
-                                        warn!("Got legacy text_delta event - API mismatch?");
-                                        if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
-                                            {
-                                                let mut buf = buffer.lock().unwrap();
-                                                buf.push_str(delta);
-                                            }
-                                            let _ = tx.send(Ok(ChatEvent::Content { text: delta.to_string() }));
-                                        }
                                     }
                                     
                                     _ => {
@@ -342,16 +359,25 @@ pub fn process_gpt5_stream(
     tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
 }
 
-/// Save assistant response to memory
+/// Metadata captured from the stream
+#[derive(Debug, Clone, Default)]
+struct StreamMetadata {
+    mood: Option<String>,
+    salience: Option<f32>,
+    persona: Option<String>,
+    tags: Option<Vec<String>>,
+}
+
+/// Save assistant response to memory with actual metadata
 async fn save_assistant_to_memory(
     app_state: &Arc<AppState>,
     session_id: &str,
     content: &str,
+    metadata: StreamMetadata,
     project_id: Option<&str>,
 ) -> Result<()> {
-    // Create safe UTF-8 summary that won't panic
+    // Create safe UTF-8 summary
     let summary = if content.len() > 100 {
-        // Find the nearest valid UTF-8 boundary before position 100
         let mut end = 100;
         while !content.is_char_boundary(end) && end > 0 {
             end -= 1;
@@ -361,14 +387,15 @@ async fn save_assistant_to_memory(
         content.to_string()
     };
     
+    // Use actual metadata from stream, with sensible defaults only as fallback
     let response = crate::llm::types::ChatResponse {
         output: content.to_string(),
-        persona: "mira".to_string(),
-        mood: "helpful".to_string(),
-        salience: 5,
+        persona: metadata.persona.unwrap_or_else(|| "Default".to_string()),
+        mood: metadata.mood.unwrap_or_else(|| "neutral".to_string()),
+        salience: metadata.salience.unwrap_or(5.0),
         summary,
         memory_type: "Response".to_string(),
-        tags: vec!["chat".to_string()],
+        tags: metadata.tags.unwrap_or_else(|| vec!["assistant".to_string()]),
         intent: None,
         monologue: None,
         reasoning_summary: None,
@@ -383,64 +410,12 @@ async fn save_assistant_to_memory(
     Ok(())
 }
 
-/// Extract content from streaming chunk (legacy helper)
-pub fn extract_content_from_chunk(chunk: &Value) -> Option<String> {
-    // Try different paths for content extraction
-    
-    // 1) GPT-5 Responses API format: delta field
-    if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
-        if !delta.is_empty() {
-            return Some(delta.to_string());
-        }
-    }
-    
-    // 2) Standard delta format: choices[0].delta.content
-    if let Some(content) = chunk.pointer("/choices/0/delta/content").and_then(|c| c.as_str()) {
-        if !content.is_empty() {
-            debug!("Extracted delta content: {} chars", content.len());
-            return Some(content.to_string());
-        }
-    }
-    
-    // 3) Response API format: output[0].content[0].text
-    if let Some(content) = chunk.pointer("/output/0/content/0/text").and_then(|c| c.as_str()) {
-        if !content.is_empty() {
-            debug!("Extracted response API content: {} chars", content.len());
-            return Some(content.to_string());
-        }
-    }
-    
-    // 4) Direct content field
-    if let Some(content) = chunk.get("content").and_then(|c| c.as_str()) {
-        if !content.is_empty() {
-            debug!("Extracted direct content: {} chars", content.len());
-            return Some(content.to_string());
-        }
-    }
-    
-    // 5) Text field
-    if let Some(content) = chunk.get("text").and_then(|c| c.as_str()) {
-        if !content.is_empty() {
-            debug!("Extracted text content: {} chars", content.len());
-            return Some(content.to_string());
-        }
-    }
-    
-    None
-}
-
-/// Check if streaming chunk indicates completion
+/// Check if streaming chunk indicates completion (GPT-5 specific)
 pub fn is_completion_chunk(chunk: &Value) -> bool {
     // Check for GPT-5 response completion events
     if let Some(event_type) = chunk.get("type").and_then(|t| t.as_str()) {
         return event_type == "response.output_text.done" || 
-               event_type == "response.done" || 
-               event_type == "message_stop";
-    }
-    
-    // Check for finish reasons
-    if let Some(finish_reason) = chunk.pointer("/choices/0/finish_reason") {
-        return !finish_reason.is_null();
+               event_type == "response.done";
     }
     
     // Check for done field

@@ -1,10 +1,9 @@
 // src/config/mod.rs
-// Central configuration for Mira backend with GPT-5 robust memory system
+// Central configuration for Mira backend - no bullshit fallbacks edition
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::str::FromStr;
 
 lazy_static! {
     pub static ref CONFIG: MiraConfig = MiraConfig::from_env();
@@ -14,14 +13,13 @@ lazy_static! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
     // Core LLM Configuration
-    pub openai_api_key: Option<String>,
+    pub openai_api_key: String,
     pub openai_base_url: String,
     pub gpt5_model: String,
     pub verbosity: String,
     pub reasoning_effort: String,
     pub max_output_tokens: usize,
     pub debug_logging: bool,
-    pub intent_model: String,
 
     // Structured Output Configuration
     pub max_json_output_tokens: usize,
@@ -40,13 +38,6 @@ pub struct MiraConfig {
     pub history_message_cap: usize,
     pub history_token_limit: usize,
     pub max_retrieval_tokens: usize,
-    pub ws_history_cap: usize,
-    pub ws_vector_search_k: usize,
-    pub ws_heartbeat_interval: u64,
-    pub ws_connection_timeout: u64,
-    pub ws_receive_timeout: u64,
-    pub history_default_limit: usize,
-    pub history_max_limit: usize,
     pub context_recent_messages: usize,
     pub context_semantic_matches: usize,
 
@@ -55,14 +46,11 @@ pub struct MiraConfig {
     pub always_embed_assistant: bool,
     pub embed_min_chars: usize,
     pub dedup_sim_threshold: f32,
-    pub salience_min_for_embed: u8,
+    pub salience_min_for_embed: f32,  // FIXED: f32 type
     pub rollup_every: usize,
     
-    // Salience threshold - always 0.0 now but kept for compatibility
+    // Salience threshold
     pub min_salience_for_qdrant: f32,
-
-    // Legacy decay interval - kept for compatibility, not used
-    pub decay_interval_seconds: Option<u64>,
     
     // Summarization Configuration
     pub enable_summarization: bool,
@@ -82,45 +70,16 @@ pub struct MiraConfig {
     pub enable_file_search: bool,
     pub enable_image_generation: bool,
     pub web_search_max_results: usize,
-    pub web_search_timeout: u64,
-    pub code_interpreter_timeout: u64,
-    pub code_interpreter_max_output: usize,
-    pub file_search_max_files: usize,
-    pub file_search_chunk_size: usize,
-    pub image_generation_size: String,
-    pub image_generation_quality: String,
-    pub image_generation_style: String,
     pub tool_timeout_seconds: u64,
 
     // Qdrant Configuration
     pub qdrant_url: String,
     pub qdrant_collection: String,
     pub qdrant_embedding_dim: usize,
-    pub qdrant_test_url: String,
-    pub qdrant_test_collection: String,
 
-    // Git Configuration
-    pub git_repos_dir: String,
-    pub git_cache_dir: String,
-    pub git_max_file_size: usize,
-
-    // Import Configuration
-    pub import_sqlite: String,
-    pub import_qdrant_url: String,
-    pub import_qdrant_collection: String,
-
-    // Persona Configuration
-    pub persona: String,
-    pub persona_decay_timeout: u64,
-    pub session_stale_timeout: u64,
-
-    // Server Configuration (WebSocket Only)
+    // Server Configuration
     pub host: String,
     pub port: u16,
-    pub rate_limit_chat: usize,
-    pub rate_limit_ws: usize,
-    pub rate_limit_search: usize,
-    pub rate_limit_git: usize,
     pub max_concurrent_embeddings: usize,
 
     // Timeouts (in seconds)
@@ -130,27 +89,25 @@ pub struct MiraConfig {
 
     // Logging Configuration
     pub log_level: String,
-    pub log_format: String,
     pub trace_sql: bool,
 
     // Robust Memory Feature Configuration
     pub embed_heads: String,
     pub summary_rolling_10: bool,
     pub summary_rolling_100: bool,
-    pub summary_phase_snapshots: bool,
     pub use_rolling_summaries_in_context: bool,
     pub rolling_summary_max_age_hours: u32,
     pub rolling_summary_min_gap: usize,
 
-    // Chunking parameters for embedding heads
+    // Chunking parameters for embedding heads (including Documents)
     pub embed_semantic_chunk: usize,
     pub embed_semantic_overlap: usize,
     pub embed_code_chunk: usize,
     pub embed_code_overlap: usize,
     pub embed_summary_chunk: usize,
     pub embed_summary_overlap: usize,
-    pub embed_document_chunk: Option<usize>,
-    pub embed_document_overlap: Option<usize>,
+    pub embed_document_chunk: usize,
+    pub embed_document_overlap: usize,
 
     // Memory Decay Configuration
     pub decay_recent_half_life_days: f32,
@@ -163,8 +120,6 @@ pub struct MiraConfig {
     pub recall_recent: usize,
     pub recall_semantic: usize,
     pub recall_k_per_head: usize,
-    pub context_window_strategy: String,
-    pub context_window_size: usize,
     pub recent_message_limit: usize,
     
     // Analysis & Batching
@@ -172,238 +127,200 @@ pub struct MiraConfig {
     pub analysis_max_wait_ms: u64,
     pub batch_size: usize,
     
-    // Fast Lane Processing
-    pub fast_lane_enabled: bool,
-    pub fast_lane_default_salience: f32,
-    
     // Response Configuration
     pub max_response_tokens: usize,
-    pub max_response_size_mb: usize,
     
     // Robustness & Performance Features
     pub api_max_retries: usize,
     pub api_retry_delay_ms: u64,
     pub enable_request_cache: bool,
     pub cache_ttl_seconds: u64,
-    pub enable_response_compression: bool,
-    pub enable_batch_operations: bool,
     
     // Embedding Model Configuration
     pub embed_model: String,
     pub embed_dimensions: usize,
     
-    // Recent Cache Configuration (NEW)
+    // Recent Cache Configuration
     pub enable_recent_cache: bool,
     pub recent_cache_capacity: usize,
     pub recent_cache_ttl_seconds: u64,
     pub recent_cache_max_per_session: usize,
     pub recent_cache_warmup: bool,
+
+    // WebSocket Configuration
+    pub ws_heartbeat_interval: u64,
+    pub ws_connection_timeout: u64,
+    pub ws_receive_timeout: u64,
 }
 
-/// Helper function to read environment variables with defaults
-fn env_var_or<T>(key: &str, default: T) -> T
-where
-    T: FromStr,
-    <T as FromStr>::Err: std::fmt::Debug,
+/// Parse an environment variable or die trying
+fn require_env(key: &str) -> String {
+    env::var(key).unwrap_or_else(|_| panic!("{} must be set in .env", key))
+}
+
+/// Parse an environment variable as a specific type or die trying
+fn require_env_parsed<T: std::str::FromStr>(key: &str) -> T 
+where 
+    T::Err: std::fmt::Debug 
 {
-    match env::var(key) {
-        Ok(val) => val.parse().unwrap_or(default),
-        Err(_) => default,
-    }
+    env::var(key)
+        .unwrap_or_else(|_| panic!("{} must be set in .env", key))
+        .parse::<T>()
+        .unwrap_or_else(|e| panic!("{} must be a valid {}: {:?}", key, std::any::type_name::<T>(), e))
 }
 
 impl MiraConfig {
     pub fn from_env() -> Self {
-        dotenv::dotenv().ok();
+        // Load .env file or die
+        dotenv::dotenv().expect("Failed to load .env file - cannot proceed without configuration!");
+
+        // Validate embedding heads includes all 4
+        let embed_heads = require_env("MIRA_EMBED_HEADS");
+        if !embed_heads.contains("semantic") || 
+           !embed_heads.contains("code") || 
+           !embed_heads.contains("summary") || 
+           !embed_heads.contains("documents") {
+            panic!("MIRA_EMBED_HEADS must include all 4 heads: 'semantic,code,summary,documents' - got: '{}'", embed_heads);
+        }
 
         Self {
             // Core LLM Configuration
-            openai_api_key: env::var("OPENAI_API_KEY").ok(),
-            openai_base_url: env_var_or("OPENAI_BASE_URL", "https://api.openai.com".to_string()),
-            gpt5_model: env_var_or("GPT5_MODEL", "gpt-5".to_string()),
-            verbosity: env_var_or("GPT5_VERBOSITY", "low".to_string()),
-            reasoning_effort: env_var_or("GPT5_REASONING_EFFORT", "low".to_string()),
-            max_output_tokens: env_var_or("MIRA_MAX_OUTPUT_TOKENS", 128000),
-            debug_logging: env_var_or("MIRA_DEBUG_LOGGING", false),
-            intent_model: env_var_or("MIRA_INTENT_MODEL", "gpt-5".to_string()),
+            openai_api_key: require_env("OPENAI_API_KEY"),
+            openai_base_url: require_env("OPENAI_BASE_URL"),
+            gpt5_model: require_env("GPT5_MODEL"),
+            verbosity: require_env("GPT5_VERBOSITY"),
+            reasoning_effort: require_env("GPT5_REASONING_EFFORT"),
+            max_output_tokens: require_env_parsed("MIRA_MAX_OUTPUT_TOKENS"),
+            debug_logging: require_env_parsed("MIRA_DEBUG_LOGGING"),
 
             // Structured Output Configuration
-            max_json_output_tokens: env_var_or("MAX_JSON_OUTPUT_TOKENS", 4000),
-            enable_json_validation: env_var_or("ENABLE_JSON_VALIDATION", true),
-            max_json_repair_attempts: env_var_or("MAX_JSON_REPAIR_ATTEMPTS", 3),
+            max_json_output_tokens: require_env_parsed("MAX_JSON_OUTPUT_TOKENS"),
+            enable_json_validation: require_env_parsed("ENABLE_JSON_VALIDATION"),
+            max_json_repair_attempts: require_env_parsed("MAX_JSON_REPAIR_ATTEMPTS"),
             
             // Database & Storage
-            database_url: env_var_or("DATABASE_URL", "sqlite:./mira.db".to_string()),
-            sqlite_max_connections: env_var_or("MIRA_SQLITE_MAX_CONNECTIONS", 100),
+            database_url: require_env("DATABASE_URL"),
+            sqlite_max_connections: require_env_parsed("MIRA_SQLITE_MAX_CONNECTIONS"),
 
             // Session & User
-            session_id: env_var_or("MIRA_SESSION_ID", "peter-eternal".to_string()),
-            default_persona: env_var_or("MIRA_DEFAULT_PERSONA", "Default".to_string()),
+            session_id: require_env("MIRA_SESSION_ID"),
+            default_persona: require_env("MIRA_DEFAULT_PERSONA"),
 
             // Memory & History
-            history_message_cap: env_var_or("MIRA_HISTORY_MESSAGE_CAP", 100),
-            history_token_limit: env_var_or("MIRA_HISTORY_TOKEN_LIMIT", 131072),
-            max_retrieval_tokens: env_var_or("MIRA_MAX_RETRIEVAL_TOKENS", 32768),
-            ws_history_cap: env_var_or("MIRA_WS_HISTORY_CAP", 200),
-            ws_vector_search_k: env_var_or("MIRA_WS_VECTOR_SEARCH_K", 25),
-            ws_heartbeat_interval: env_var_or("MIRA_WS_HEARTBEAT_INTERVAL", 30),
-            ws_connection_timeout: env_var_or("MIRA_WS_CONNECTION_TIMEOUT", 600),
-            ws_receive_timeout: env_var_or("MIRA_WS_RECEIVE_TIMEOUT", 120),
-            history_default_limit: env_var_or("MIRA_HISTORY_DEFAULT_LIMIT", 50),
-            history_max_limit: env_var_or("MIRA_HISTORY_MAX_LIMIT", 200),
-            context_recent_messages: env_var_or("MIRA_CONTEXT_RECENT_MESSAGES", 50),
-            context_semantic_matches: env_var_or("MIRA_CONTEXT_SEMANTIC_MATCHES", 25),
+            history_message_cap: require_env_parsed("MIRA_HISTORY_MESSAGE_CAP"),
+            history_token_limit: require_env_parsed("MIRA_HISTORY_TOKEN_LIMIT"),
+            max_retrieval_tokens: require_env_parsed("MIRA_MAX_RETRIEVAL_TOKENS"),
+            context_recent_messages: require_env_parsed("MIRA_CONTEXT_RECENT_MESSAGES"),
+            context_semantic_matches: require_env_parsed("MIRA_CONTEXT_SEMANTIC_MATCHES"),
 
             // Memory Service
-            always_embed_user: env_var_or("MEM_ALWAYS_EMBED_USER", true),
-            always_embed_assistant: env_var_or("MEM_ALWAYS_EMBED_ASSISTANT", true),
-            embed_min_chars: env_var_or("MEM_EMBED_MIN_CHARS", 6),
-            dedup_sim_threshold: env_var_or("MEM_DEDUP_SIM_THRESHOLD", 0.97),
-            salience_min_for_embed: env_var_or("MEM_SALIENCE_MIN_FOR_EMBED", 1),
-            rollup_every: env_var_or("MEM_ROLLUP_EVERY", 100),
-            
-            // Always 0.0 now - we save everything
-            min_salience_for_qdrant: env_var_or("MIN_SALIENCE_FOR_QDRANT", 0.0),
-
-            // Legacy decay interval - not used with new task system
-            decay_interval_seconds: env::var("MIRA_DECAY_INTERVAL_SECONDS")
-                .ok()
-                .and_then(|s| s.parse::<u64>().ok()),
+            always_embed_user: require_env_parsed("MEM_ALWAYS_EMBED_USER"),
+            always_embed_assistant: require_env_parsed("MEM_ALWAYS_EMBED_ASSISTANT"),
+            embed_min_chars: require_env_parsed("MEM_EMBED_MIN_CHARS"),
+            dedup_sim_threshold: require_env_parsed("MEM_DEDUP_SIM_THRESHOLD"),
+            salience_min_for_embed: require_env_parsed("MEM_SALIENCE_MIN_FOR_EMBED"),
+            rollup_every: require_env_parsed("MEM_ROLLUP_EVERY"),
+            min_salience_for_qdrant: require_env_parsed("MIN_SALIENCE_FOR_QDRANT"),
 
             // Summarization
-            enable_summarization: env_var_or("MIRA_ENABLE_SUMMARIZATION", true),
-            summary_chunk_size: env_var_or("MIRA_SUMMARY_CHUNK_SIZE", 20),
-            summary_token_limit: env_var_or("MIRA_SUMMARY_TOKEN_LIMIT", 64000),
-            summary_output_tokens: env_var_or("MIRA_SUMMARY_OUTPUT_TOKENS", 4096),
-            summarize_after_messages: env_var_or("MIRA_SUMMARIZE_AFTER_MESSAGES", 20),
+            enable_summarization: require_env_parsed("MIRA_ENABLE_SUMMARIZATION"),
+            summary_chunk_size: require_env_parsed("MIRA_SUMMARY_CHUNK_SIZE"),
+            summary_token_limit: require_env_parsed("MIRA_SUMMARY_TOKEN_LIMIT"),
+            summary_output_tokens: require_env_parsed("MIRA_SUMMARY_OUTPUT_TOKENS"),
+            summarize_after_messages: require_env_parsed("MIRA_SUMMARIZE_AFTER_MESSAGES"),
 
             // Vector Search
-            max_vector_results: env_var_or("MIRA_MAX_VECTOR_RESULTS", 10),
-            enable_vector_search: env_var_or("MIRA_ENABLE_VECTOR_SEARCH", true),
+            max_vector_results: require_env_parsed("MIRA_MAX_VECTOR_RESULTS"),
+            enable_vector_search: require_env_parsed("MIRA_ENABLE_VECTOR_SEARCH"),
 
             // Tools
-            enable_chat_tools: env_var_or("MIRA_ENABLE_CHAT_TOOLS", true),
-            enable_web_search: env_var_or("MIRA_ENABLE_WEB_SEARCH", true),
-            enable_code_interpreter: env_var_or("MIRA_ENABLE_CODE_INTERPRETER", true),
-            enable_file_search: env_var_or("MIRA_ENABLE_FILE_SEARCH", true),
-            enable_image_generation: env_var_or("MIRA_ENABLE_IMAGE_GENERATION", true),
-            web_search_max_results: env_var_or("MIRA_WEB_SEARCH_MAX_RESULTS", 20),
-            web_search_timeout: env_var_or("MIRA_WEB_SEARCH_TIMEOUT", 60),
-            code_interpreter_timeout: env_var_or("MIRA_CODE_INTERPRETER_TIMEOUT", 120),
-            code_interpreter_max_output: env_var_or("MIRA_CODE_INTERPRETER_MAX_OUTPUT", 50000),
-            file_search_max_files: env_var_or("MIRA_FILE_SEARCH_MAX_FILES", 50),
-            file_search_chunk_size: env_var_or("MIRA_FILE_SEARCH_CHUNK_SIZE", 2000),
-            image_generation_size: env_var_or("MIRA_IMAGE_GENERATION_SIZE", "1024x1024".to_string()),
-            image_generation_quality: env_var_or("MIRA_IMAGE_GENERATION_QUALITY", "hd".to_string()),
-            image_generation_style: env_var_or("MIRA_IMAGE_GENERATION_STYLE", "vivid".to_string()),
-            tool_timeout_seconds: env_var_or("MIRA_TOOL_TIMEOUT_SECONDS", 60),
+            enable_chat_tools: require_env_parsed("MIRA_ENABLE_CHAT_TOOLS"),
+            enable_web_search: require_env_parsed("MIRA_ENABLE_WEB_SEARCH"),
+            enable_code_interpreter: require_env_parsed("MIRA_ENABLE_CODE_INTERPRETER"),
+            enable_file_search: require_env_parsed("MIRA_ENABLE_FILE_SEARCH"),
+            enable_image_generation: require_env_parsed("MIRA_ENABLE_IMAGE_GENERATION"),
+            web_search_max_results: require_env_parsed("MIRA_WEB_SEARCH_MAX_RESULTS"),
+            tool_timeout_seconds: require_env_parsed("MIRA_TOOL_TIMEOUT_SECONDS"),
 
             // Qdrant
-            qdrant_url: env_var_or("QDRANT_URL", "http://localhost:6333".to_string()),
-            qdrant_collection: env_var_or("QDRANT_COLLECTION", "mira-memories".to_string()),
-            qdrant_embedding_dim: env_var_or("QDRANT_EMBEDDING_DIM", 3072),
-            qdrant_test_url: env_var_or("QDRANT_TEST_URL", "http://localhost:6334".to_string()),
-            qdrant_test_collection: env_var_or("QDRANT_TEST_COLLECTION", "mira-test".to_string()),
-
-            // Git
-            git_repos_dir: env_var_or("GIT_REPOS_DIR", "./repos".to_string()),
-            git_cache_dir: env_var_or("MIRA_GIT_CACHE_DIR", "/tmp/mira-git-cache".to_string()),
-            git_max_file_size: env_var_or("MIRA_GIT_MAX_FILE_SIZE", 10485760),
-
-            // Import - FIXED to use mira.db
-            import_sqlite: env_var_or("MIRA_IMPORT_SQLITE", "mira.db".to_string()),
-            import_qdrant_url: env_var_or("MIRA_IMPORT_QDRANT_URL", "http://localhost:6333".to_string()),
-            import_qdrant_collection: env_var_or("MIRA_IMPORT_QDRANT_COLLECTION", "mira_memories".to_string()),
-            
-            // Persona
-            persona: env_var_or("MIRA_PERSONA", "Default".to_string()),
-            persona_decay_timeout: env_var_or("MIRA_PERSONA_DECAY_TIMEOUT", 60),
-            session_stale_timeout: env_var_or("MIRA_SESSION_STALE_TIMEOUT", 30),
+            qdrant_url: require_env("QDRANT_URL"),
+            qdrant_collection: require_env("QDRANT_COLLECTION"),
+            qdrant_embedding_dim: require_env_parsed("QDRANT_EMBEDDING_DIM"),
 
             // Server
-            host: env_var_or("MIRA_HOST", "0.0.0.0".to_string()),
-            port: env_var_or("MIRA_PORT", 3001),
-            rate_limit_chat: env_var_or("MIRA_RATE_LIMIT_CHAT", 200),
-            rate_limit_ws: env_var_or("MIRA_RATE_LIMIT_WS", 200),
-            rate_limit_search: env_var_or("MIRA_RATE_LIMIT_SEARCH", 60),
-            rate_limit_git: env_var_or("MIRA_RATE_LIMIT_GIT", 20),
-            max_concurrent_embeddings: env_var_or("MIRA_MAX_CONCURRENT_EMBEDDINGS", 25),
+            host: require_env("MIRA_HOST"),
+            port: require_env_parsed("MIRA_PORT"),
+            max_concurrent_embeddings: require_env_parsed("MIRA_MAX_CONCURRENT_EMBEDDINGS"),
 
             // Timeouts
-            openai_timeout: env_var_or("OPENAI_TIMEOUT", 600),
-            qdrant_timeout: env_var_or("QDRANT_TIMEOUT", 60),
-            database_timeout: env_var_or("DATABASE_TIMEOUT", 30),
+            openai_timeout: require_env_parsed("OPENAI_TIMEOUT"),
+            qdrant_timeout: require_env_parsed("QDRANT_TIMEOUT"),
+            database_timeout: require_env_parsed("DATABASE_TIMEOUT"),
 
             // Logging
-            log_level: env_var_or("MIRA_LOG_LEVEL", "info".to_string()),
-            log_format: env_var_or("MIRA_LOG_FORMAT", "pretty".to_string()),
-            trace_sql: env_var_or("MIRA_TRACE_SQL", false),
+            log_level: require_env("MIRA_LOG_LEVEL"),
+            trace_sql: require_env_parsed("MIRA_TRACE_SQL"),
 
-            // Robust Memory
-            embed_heads: env_var_or("MIRA_EMBED_HEADS", "semantic,code,summary,documents".to_string()),
-            summary_rolling_10: env_var_or("MIRA_SUMMARY_ROLLING_10", true),
-            summary_rolling_100: env_var_or("MIRA_SUMMARY_ROLLING_100", true),
-            summary_phase_snapshots: env_var_or("MIRA_SUMMARY_PHASE_SNAPSHOTS", false),
-            use_rolling_summaries_in_context: env_var_or("MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT", true),
-            rolling_summary_max_age_hours: env_var_or("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS", 168),
-            rolling_summary_min_gap: env_var_or("MIRA_ROLLING_SUMMARY_MIN_GAP", 3),
+            // Robust Memory - already validated above
+            embed_heads,
+            summary_rolling_10: require_env_parsed("MIRA_SUMMARY_ROLLING_10"),
+            summary_rolling_100: require_env_parsed("MIRA_SUMMARY_ROLLING_100"),
+            use_rolling_summaries_in_context: require_env_parsed("MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT"),
+            rolling_summary_max_age_hours: require_env_parsed("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS"),
+            rolling_summary_min_gap: require_env_parsed("MIRA_ROLLING_SUMMARY_MIN_GAP"),
 
-            // Chunking
-            embed_semantic_chunk: env_var_or("MIRA_EMBED_SEMANTIC_CHUNK", 500),
-            embed_semantic_overlap: env_var_or("MIRA_EMBED_SEMANTIC_OVERLAP", 100),
-            embed_code_chunk: env_var_or("MIRA_EMBED_CODE_CHUNK", 1000),
-            embed_code_overlap: env_var_or("MIRA_EMBED_CODE_OVERLAP", 200),
-            embed_summary_chunk: env_var_or("MIRA_EMBED_SUMMARY_CHUNK", 2000),
-            embed_summary_overlap: env_var_or("MIRA_EMBED_SUMMARY_OVERLAP", 0),
-            embed_document_chunk: Some(env_var_or("MIRA_EMBED_DOCUMENT_CHUNK", 1000)),
-            embed_document_overlap: Some(env_var_or("MIRA_EMBED_DOCUMENT_OVERLAP", 200)),
+            // Chunking (including Documents head)
+            embed_semantic_chunk: require_env_parsed("MIRA_EMBED_SEMANTIC_CHUNK"),
+            embed_semantic_overlap: require_env_parsed("MIRA_EMBED_SEMANTIC_OVERLAP"),
+            embed_code_chunk: require_env_parsed("MIRA_EMBED_CODE_CHUNK"),
+            embed_code_overlap: require_env_parsed("MIRA_EMBED_CODE_OVERLAP"),
+            embed_summary_chunk: require_env_parsed("MIRA_EMBED_SUMMARY_CHUNK"),
+            embed_summary_overlap: require_env_parsed("MIRA_EMBED_SUMMARY_OVERLAP"),
+            embed_document_chunk: require_env_parsed("MIRA_EMBED_DOCUMENT_CHUNK"),
+            embed_document_overlap: require_env_parsed("MIRA_EMBED_DOCUMENT_OVERLAP"),
 
             // Memory Decay
-            decay_recent_half_life_days: env_var_or("MIRA_DECAY_RECENT_HALF_LIFE_DAYS", 30.0),
-            decay_gentle_factor: env_var_or("MIRA_DECAY_GENTLE_FACTOR", 0.1),
-            decay_stronger_factor: env_var_or("MIRA_DECAY_STRONGER_FACTOR", 0.3),
-            decay_floor: env_var_or("MIRA_DECAY_FLOOR", 2.0),
-            decay_high_salience_threshold: env_var_or("MIRA_DECAY_HIGH_SALIENCE_THRESHOLD", 7.0),
+            decay_recent_half_life_days: require_env_parsed("MIRA_DECAY_RECENT_HALF_LIFE_DAYS"),
+            decay_gentle_factor: require_env_parsed("MIRA_DECAY_GENTLE_FACTOR"),
+            decay_stronger_factor: require_env_parsed("MIRA_DECAY_STRONGER_FACTOR"),
+            decay_floor: require_env_parsed("MIRA_DECAY_FLOOR"),
+            decay_high_salience_threshold: require_env_parsed("MIRA_DECAY_HIGH_SALIENCE_THRESHOLD"),
             
             // Recall & Context
-            recall_recent: env_var_or("MIRA_RECALL_RECENT", 10),
-            recall_semantic: env_var_or("MIRA_RECALL_SEMANTIC", 20),
-            recall_k_per_head: env_var_or("MIRA_RECALL_K_PER_HEAD", 10),
-            context_window_strategy: env_var_or("MIRA_CONTEXT_WINDOW_STRATEGY", "semantic".to_string()),
-            context_window_size: env_var_or("MIRA_CONTEXT_WINDOW_SIZE", 10),
-            recent_message_limit: env_var_or("MIRA_RECENT_MESSAGE_LIMIT", 50),
+            recall_recent: require_env_parsed("MIRA_RECALL_RECENT"),
+            recall_semantic: require_env_parsed("MIRA_RECALL_SEMANTIC"),
+            recall_k_per_head: require_env_parsed("MIRA_RECALL_K_PER_HEAD"),
+            recent_message_limit: require_env_parsed("MIRA_RECENT_MESSAGE_LIMIT"),
             
             // Analysis & Batching
-            analysis_batch_size: env_var_or("MIRA_ANALYSIS_BATCH_SIZE", 10),
-            analysis_max_wait_ms: env_var_or("MIRA_ANALYSIS_MAX_WAIT_MS", 500),
-            batch_size: env_var_or("MIRA_BATCH_SIZE", 10),
-            
-            // Fast Lane Processing
-            fast_lane_enabled: env_var_or("MIRA_FAST_LANE_ENABLED", true),
-            fast_lane_default_salience: env_var_or("MIRA_FAST_LANE_DEFAULT_SALIENCE", 8.0),
+            analysis_batch_size: require_env_parsed("MIRA_ANALYSIS_BATCH_SIZE"),
+            analysis_max_wait_ms: require_env_parsed("MIRA_ANALYSIS_MAX_WAIT_MS"),
+            batch_size: require_env_parsed("MIRA_BATCH_SIZE"),
             
             // Response Configuration
-            max_response_tokens: env_var_or("MIRA_MAX_RESPONSE_TOKENS", 32768),
-            max_response_size_mb: env_var_or("MIRA_MAX_RESPONSE_SIZE_MB", 10),
+            max_response_tokens: require_env_parsed("MIRA_MAX_RESPONSE_TOKENS"),
             
             // Robustness & Performance Features
-            api_max_retries: env_var_or("MIRA_API_MAX_RETRIES", 3),
-            api_retry_delay_ms: env_var_or("MIRA_API_RETRY_DELAY_MS", 1000),
-            enable_request_cache: env_var_or("MIRA_ENABLE_REQUEST_CACHE", true),
-            cache_ttl_seconds: env_var_or("MIRA_CACHE_TTL_SECONDS", 300),
-            enable_response_compression: env_var_or("MIRA_ENABLE_RESPONSE_COMPRESSION", true),
-            enable_batch_operations: env_var_or("MIRA_ENABLE_BATCH_OPERATIONS", true),
+            api_max_retries: require_env_parsed("MIRA_API_MAX_RETRIES"),
+            api_retry_delay_ms: require_env_parsed("MIRA_API_RETRY_DELAY_MS"),
+            enable_request_cache: require_env_parsed("MIRA_ENABLE_REQUEST_CACHE"),
+            cache_ttl_seconds: require_env_parsed("MIRA_CACHE_TTL_SECONDS"),
             
             // Embedding Model Configuration
-            embed_model: env_var_or("MIRA_EMBED_MODEL", "text-embedding-3-large".to_string()),
-            embed_dimensions: env_var_or("MIRA_EMBED_DIMENSIONS", 3072),
+            embed_model: require_env("MIRA_EMBED_MODEL"),
+            embed_dimensions: require_env_parsed("MIRA_EMBED_DIMENSIONS"),
             
-            // Recent Cache Configuration (NEW)
-            enable_recent_cache: env_var_or("MIRA_ENABLE_RECENT_CACHE", true),
-            recent_cache_capacity: env_var_or("MIRA_RECENT_CACHE_CAPACITY", 100),
-            recent_cache_ttl_seconds: env_var_or("MIRA_RECENT_CACHE_TTL", 300),
-            recent_cache_max_per_session: env_var_or("MIRA_RECENT_CACHE_MAX_PER_SESSION", 50),
-            recent_cache_warmup: env_var_or("MIRA_RECENT_CACHE_WARMUP", true),
+            // Recent Cache Configuration
+            enable_recent_cache: require_env_parsed("MIRA_ENABLE_RECENT_CACHE"),
+            recent_cache_capacity: require_env_parsed("MIRA_RECENT_CACHE_CAPACITY"),
+            recent_cache_ttl_seconds: require_env_parsed("MIRA_RECENT_CACHE_TTL"),
+            recent_cache_max_per_session: require_env_parsed("MIRA_RECENT_CACHE_MAX_PER_SESSION"),
+            recent_cache_warmup: require_env_parsed("MIRA_RECENT_CACHE_WARMUP"),
+
+            // WebSocket Configuration
+            ws_heartbeat_interval: require_env_parsed("MIRA_WS_HEARTBEAT_INTERVAL"),
+            ws_connection_timeout: require_env_parsed("MIRA_WS_CONNECTION_TIMEOUT"),
+            ws_receive_timeout: require_env_parsed("MIRA_WS_RECEIVE_TIMEOUT"),
         }
     }
 
@@ -436,34 +353,9 @@ impl MiraConfig {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// Check if robust memory features are enabled (always true now)
-    pub fn is_robust_memory_enabled(&self) -> bool {
-        true
-    }
-
     /// Check if rolling summaries are enabled
     pub fn rolling_summaries_enabled(&self) -> bool {
         self.summary_rolling_10 || self.summary_rolling_100
-    }
-
-    /// Check if 10-message rolling summaries are enabled
-    pub fn rolling_10_enabled(&self) -> bool {
-        self.summary_rolling_10
-    }
-
-    /// Check if 100-message rolling summaries are enabled
-    pub fn rolling_100_enabled(&self) -> bool {
-        self.summary_rolling_100
-    }
-
-    /// Check if snapshot summaries are enabled
-    pub fn snapshot_summaries_enabled(&self) -> bool {
-        self.summary_phase_snapshots
-    }
-
-    /// Check if rolling summaries should be used in context
-    pub fn should_use_rolling_summaries_in_context(&self) -> bool {
-        self.use_rolling_summaries_in_context
     }
 
     /// Get the list of enabled embedding heads
@@ -481,8 +373,8 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_chunk,
             "code" => self.embed_code_chunk,
             "summary" => self.embed_summary_chunk,
-            "documents" => self.embed_document_chunk.unwrap_or(1000),
-            _ => self.embed_semantic_chunk,
+            "documents" => self.embed_document_chunk,
+            _ => self.embed_semantic_chunk,  // fallback to semantic
         }
     }
 
@@ -492,8 +384,8 @@ impl MiraConfig {
             "semantic" => self.embed_semantic_overlap,
             "code" => self.embed_code_overlap,
             "summary" => self.embed_summary_overlap,
-            "documents" => self.embed_document_overlap.unwrap_or(200),
-            _ => self.embed_semantic_overlap,
+            "documents" => self.embed_document_overlap,
+            _ => self.embed_semantic_overlap,  // fallback to semantic
         }
     }
 
@@ -529,18 +421,12 @@ impl MiraConfig {
     pub fn get_rolling_summary_config(&self) -> RollingSummaryConfig {
         RollingSummaryConfig {
             enabled: self.rolling_summaries_enabled(),
-            rolling_10: self.rolling_10_enabled(),
-            rolling_100: self.rolling_100_enabled(),
-            snapshots: self.snapshot_summaries_enabled(),
-            use_in_context: self.should_use_rolling_summaries_in_context(),
+            rolling_10: self.summary_rolling_10,
+            rolling_100: self.summary_rolling_100,
+            use_in_context: self.use_rolling_summaries_in_context,
             max_age_hours: self.rolling_summary_max_age_hours,
             min_gap: self.rolling_summary_min_gap,
         }
-    }
-    
-    /// Check if fast lane processing is enabled
-    pub fn is_fast_lane_enabled(&self) -> bool {
-        self.fast_lane_enabled
     }
     
     /// Get embedding model name
@@ -576,7 +462,6 @@ pub struct RollingSummaryConfig {
     pub enabled: bool,
     pub rolling_10: bool,
     pub rolling_100: bool,
-    pub snapshots: bool,
     pub use_in_context: bool,
     pub max_age_hours: u32,
     pub min_gap: usize,

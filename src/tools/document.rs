@@ -97,7 +97,7 @@ impl DocumentService {
             // Analysis fields
             mood: None,
             intensity: None,
-            salience: Some(7.0),
+            salience: Some(7.0),  // FIXED: changed to f32
             intent: Some("document_import".to_string()),
             topics: None,
             summary: Some(format!("Document: {}", file_name)),
@@ -204,7 +204,7 @@ impl DocumentService {
             output: content.to_string(),
             persona: "system".to_string(),
             mood: "neutral".to_string(),
-            salience: 7,
+            salience: 7.0,  // FIXED: changed to f32
             summary: "Imported document".to_string(),
             memory_type: "fact".to_string(),
             tags: vec!["document".into(), "imported".into()],

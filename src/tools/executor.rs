@@ -185,10 +185,10 @@ impl ToolExecutorExt for ToolExecutor {
             args.clone()
         };
         
-        // Apply timeout based on tool type
+        // Apply timeout based on tool type - hardcode reasonable values
         let timeout_duration = match tool_type {
-            "code_interpreter" => Duration::from_secs(CONFIG.code_interpreter_timeout),
-            "web_search" => Duration::from_secs(CONFIG.web_search_timeout),
+            "code_interpreter" => Duration::from_secs(120),  // 2 minutes for code
+            "web_search" => Duration::from_secs(60),         // 1 minute for web search
             "file_search" => Duration::from_secs(CONFIG.tool_timeout_seconds),
             _ => Duration::from_secs(CONFIG.tool_timeout_seconds),
         };
@@ -272,10 +272,11 @@ async fn execute_file_search(
 ) -> Result<Value> {
     debug!("Executing file search: query='{}', project_id={:?}", query, project_id);
     
+    // Hardcode max_files since we removed it from config
     let params = crate::tools::file_search::FileSearchParams {
         query: query.to_string(),
         file_extensions: None,
-        max_files: Some(CONFIG.file_search_max_files),
+        max_files: Some(50),  // Hardcoded reasonable default
         case_sensitive: Some(false),
         include_content: Some(true),
     };
@@ -302,6 +303,8 @@ async fn execute_load_file_context(
     let mut files_content = Vec::new();
     let mut total_size = 0usize;
     
+    const MAX_FILES: usize = 50;  // Hardcoded reasonable limit
+    
     if let Some(paths) = file_paths {
         for path in paths {
             debug!("Would load file: {}", path);
@@ -311,7 +314,7 @@ async fn execute_load_file_context(
             .list_project_artifacts(project_id)
             .await?;
         
-        for artifact in artifacts.iter().take(CONFIG.file_search_max_files) {
+        for artifact in artifacts.iter().take(MAX_FILES) {
             if let Some(content) = &artifact.content {
                 total_size += content.len();
                 files_content.push(json!({
@@ -341,15 +344,15 @@ async fn execute_image_generation(
 ) -> Result<Value> {
     debug!("Executing image generation with prompt: {}", prompt);
     
-    // Build image options from parsed arguments
+    // Build image options from parsed arguments with hardcoded defaults
     let options = ImageOptions {
         n: parsed_args["n"].as_u64().map(|n| n as u8),
         size: parsed_args["size"].as_str().map(String::from)
-            .or_else(|| Some(CONFIG.image_generation_size.clone())),
+            .or_else(|| Some("1024x1024".to_string())),  // Hardcoded default
         quality: parsed_args["quality"].as_str().map(String::from)
-            .or_else(|| Some(CONFIG.image_generation_quality.clone())),
+            .or_else(|| Some("hd".to_string())),         // Hardcoded default
         style: parsed_args["style"].as_str().map(String::from)
-            .or_else(|| Some(CONFIG.image_generation_style.clone())),
+            .or_else(|| Some("vivid".to_string())),      // Hardcoded default
     };
     
     // Validate options
