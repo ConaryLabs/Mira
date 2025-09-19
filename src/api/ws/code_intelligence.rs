@@ -15,6 +15,7 @@ use crate::{
 #[derive(Debug, Deserialize)]
 struct SearchElementsRequest {
     pattern: String,
+    project_id: String,  // Now required for project-scoped search
     limit: Option<i32>,
 }
 
@@ -25,12 +26,14 @@ struct RepoStatsRequest {
 
 #[derive(Debug, Deserialize)]
 struct ComplexityHotspotsRequest {
+    project_id: String,  // Now required for project-scoped search
     limit: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ElementsByTypeRequest {
     element_type: String,
+    project_id: String,  // Now required for project-scoped search
     limit: Option<i32>,
 }
 
@@ -51,9 +54,9 @@ pub async fn handle_code_intelligence_command(
             let req: SearchElementsRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid search request: {}", e)))?;
             
-            info!("Searching code elements for pattern: {}", req.pattern);
+            info!("Searching code elements for pattern: {} in project: {}", req.pattern, req.project_id);
             let elements = app_state.code_intelligence
-                .search_elements(&req.pattern, req.limit)
+                .search_elements_for_project(&req.pattern, &req.project_id, req.limit)
                 .await
                 .map_err(|e| ApiError::internal(format!("Search failed: {}", e)))?;
             
@@ -76,6 +79,7 @@ pub async fn handle_code_intelligence_command(
                 data: json!({
                     "type": "code_search_results",
                     "pattern": req.pattern,
+                    "project_id": req.project_id,
                     "elements": elements_json,
                     "count": elements_json.len()
                 }),
@@ -113,9 +117,9 @@ pub async fn handle_code_intelligence_command(
             let req: ComplexityHotspotsRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid hotspots request: {}", e)))?;
             
-            info!("Getting complexity hotspots (limit: {:?})", req.limit);
+            info!("Getting complexity hotspots for project: {} (limit: {:?})", req.project_id, req.limit);
             let hotspots = app_state.code_intelligence
-                .get_complexity_hotspots(req.limit)
+                .get_complexity_hotspots_for_project(&req.project_id, req.limit)
                 .await
                 .map_err(|e| ApiError::internal(format!("Hotspots query failed: {}", e)))?;
             
@@ -133,6 +137,7 @@ pub async fn handle_code_intelligence_command(
             Ok(WsServerMessage::Data {
                 data: json!({
                     "type": "complexity_hotspots",
+                    "project_id": req.project_id,
                     "hotspots": hotspots_json,
                     "count": hotspots_json.len()
                 }),
@@ -144,9 +149,9 @@ pub async fn handle_code_intelligence_command(
             let req: ElementsByTypeRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid elements by type request: {}", e)))?;
             
-            info!("Getting {} elements (limit: {:?})", req.element_type, req.limit);
+            info!("Getting {} elements for project: {} (limit: {:?})", req.element_type, req.project_id, req.limit);
             let elements = app_state.code_intelligence
-                .get_elements_by_type(&req.element_type, req.limit)
+                .get_elements_by_type_for_project(&req.element_type, &req.project_id, req.limit)
                 .await
                 .map_err(|e| ApiError::internal(format!("Elements query failed: {}", e)))?;
             
@@ -166,6 +171,7 @@ pub async fn handle_code_intelligence_command(
                 data: json!({
                     "type": "elements_by_type",
                     "element_type": req.element_type,
+                    "project_id": req.project_id,
                     "elements": elements_json,
                     "count": elements_json.len()
                 }),

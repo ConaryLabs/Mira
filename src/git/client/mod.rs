@@ -157,27 +157,6 @@ impl GitClient {
         diff_parser.get_file_at_commit(attachment, commit_id, file_path)
     }
 
-    // Code intelligence operations
-    pub async fn search_code_elements(&self, pattern: &str, limit: Option<i32>) -> Result<Vec<String>> {
-        match &self.code_intelligence {
-            Some(code_intel) => {
-                let elements = code_intel.search_elements(pattern, limit).await?;
-                Ok(elements.into_iter().map(|e| format!("{}::{}", e.full_path, e.name)).collect())
-            }
-            None => Err(anyhow::anyhow!("Code intelligence not enabled")),
-        }
-    }
-
-    pub async fn get_repo_analysis_stats(&self, attachment_id: &str) -> Result<String> {
-        match &self.code_intelligence {
-            Some(code_intel) => {
-                let stats = code_intel.get_repo_stats(attachment_id).await?;
-                Ok(format!(
-                    "Repo Analysis: {}/{} files analyzed, {} elements, avg complexity {:.1}",
-                    stats.analyzed_files, stats.total_files, stats.total_elements, stats.avg_complexity
-                ))
-            }
-            None => Err(anyhow::anyhow!("Code intelligence not enabled")),
-        }
-    }
+    // REMOVED: These methods don't belong here - use the CodeIntelligenceService directly
+    // The GitClient should focus on git operations, not code intelligence queries
 }

@@ -102,6 +102,21 @@ impl CodeIntelligenceService {
         self.storage.get_elements_by_type_for_project(element_type, project_id, limit).await
     }
 
+    /// Search for code elements globally (across all projects) - used by WebSocket API
+    pub async fn search_elements(&self, pattern: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        self.storage.search_elements(pattern, limit.unwrap_or(20)).await
+    }
+
+    /// Get complexity hotspots globally (across all projects) - used by WebSocket API
+    pub async fn get_complexity_hotspots(&self, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        self.storage.get_complexity_hotspots(limit.unwrap_or(10)).await
+    }
+
+    /// Get elements by type globally (across all projects) - used by WebSocket API
+    pub async fn get_elements_by_type(&self, element_type: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        self.storage.get_elements_by_type(element_type, limit).await
+    }
+
     /// Get the storage service directly (for advanced operations)
     pub fn storage(&self) -> Arc<CodeIntelligenceStorage> {
         self.storage.clone()

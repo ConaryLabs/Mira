@@ -431,6 +431,128 @@ impl CodeIntelligenceStorage {
 
         Ok(elements)
     }
+
+    /// Search for elements by name pattern (global search - all projects)
+    pub async fn search_elements(&self, pattern: &str, limit: i32) -> Result<Vec<CodeElement>> {
+        let search_pattern = format!("%{}%", pattern);
+        let prefix_pattern = format!("{}%", pattern);
+        
+        let rows = sqlx::query!(
+            r#"
+            SELECT * FROM code_elements
+            WHERE name LIKE ? OR full_path LIKE ?
+            ORDER BY 
+                CASE WHEN name = ? THEN 0 
+                     WHEN name LIKE ? THEN 1 
+                     ELSE 2 END,
+                name
+            LIMIT ?
+            "#,
+            search_pattern,
+            search_pattern,
+            pattern,
+            prefix_pattern,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut elements = Vec::new();
+        for row in rows {
+            elements.push(CodeElement {
+                element_type: row.element_type,
+                name: row.name,
+                full_path: row.full_path,
+                visibility: row.visibility,
+                start_line: row.start_line as u32,
+                end_line: row.end_line as u32,
+                content: row.content,
+                signature_hash: row.signature_hash.unwrap_or_default(),
+                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                is_test: row.is_test.unwrap_or(false),
+                is_async: row.is_async.unwrap_or(false),
+                documentation: row.documentation,
+                metadata: row.metadata,
+            });
+        }
+
+        Ok(elements)
+    }
+
+    /// Get complexity hotspots (global - all projects)
+    pub async fn get_complexity_hotspots(&self, limit: i32) -> Result<Vec<CodeElement>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT * FROM code_elements
+            WHERE complexity_score > 5
+            ORDER BY complexity_score DESC, name
+            LIMIT ?
+            "#,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut elements = Vec::new();
+        for row in rows {
+            elements.push(CodeElement {
+                element_type: row.element_type,
+                name: row.name,
+                full_path: row.full_path,
+                visibility: row.visibility,
+                start_line: row.start_line as u32,
+                end_line: row.end_line as u32,
+                content: row.content,
+                signature_hash: row.signature_hash.unwrap_or_default(),
+                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                is_test: row.is_test.unwrap_or(false),
+                is_async: row.is_async.unwrap_or(false),
+                documentation: row.documentation,
+                metadata: row.metadata,
+            });
+        }
+
+        Ok(elements)
+    }
+
+    /// Get elements by type (global - all projects)
+    pub async fn get_elements_by_type(&self, element_type: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        let limit = limit.unwrap_or(20);
+        
+        let rows = sqlx::query!(
+            r#"
+            SELECT * FROM code_elements
+            WHERE element_type = ?
+            ORDER BY name
+            LIMIT ?
+            "#,
+            element_type,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut elements = Vec::new();
+        for row in rows {
+            elements.push(CodeElement {
+                element_type: row.element_type,
+                name: row.name,
+                full_path: row.full_path,
+                visibility: row.visibility,
+                start_line: row.start_line as u32,
+                end_line: row.end_line as u32,
+                content: row.content,
+                signature_hash: row.signature_hash.unwrap_or_default(),
+                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                is_test: row.is_test.unwrap_or(false),
+                is_async: row.is_async.unwrap_or(false),
+                documentation: row.documentation,
+                metadata: row.metadata,
+            });
+        }
+
+        Ok(elements)
+    }
 }
 
 /// Statistics for a repository's code analysis
