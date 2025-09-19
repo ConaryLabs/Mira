@@ -10,6 +10,7 @@ pub mod recall_engine;  // Consolidated recall/scoring/search
 pub mod salience;
 pub mod session;
 pub mod summarization;
+pub mod code_intelligence;
 
 // Re-export commonly used types
 pub use message_pipeline::{MessagePipeline, UnifiedAnalysis, RoutingDecision, PipelineConfig};
