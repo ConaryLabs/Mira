@@ -1,13 +1,6 @@
-// src/memory/storage/sqlite/mod.rs
-
-//! SQLite-backed memory store for message persistence and analysis.
-//! Provides the source of truth for all memory data with support for:
-//! - Message threading via parent/response relationships
-//! - AI-powered message analysis (mood, salience, topics)
-//! - Integration with multi-head Qdrant vector storage
-
 pub mod store;
-pub mod query;
+pub mod core;
+// pub mod code_intelligence;  // Future: AST and code analysis storage
+// pub mod projects;           // Future: Git and project-specific operations
 
-// Re-export the main store for convenience
 pub use store::SqliteMemoryStore;

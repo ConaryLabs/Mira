@@ -18,7 +18,7 @@ use anyhow::Result;
 use tracing::{info, debug, error};
 
 use crate::llm::client::OpenAIClient;
-use crate::memory::storage::sqlite::store::MessageAnalysis;
+use crate::memory::storage::sqlite::core::MessageAnalysis;
 
 use self::{
     analyzers::{
