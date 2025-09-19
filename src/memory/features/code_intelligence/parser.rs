@@ -1,12 +1,10 @@
 // src/memory/features/code_intelligence/parser.rs
-// Rust parser using syn crate for real AST analysis
-
 use anyhow::{Result, Context};
 use syn::{ItemFn, ItemStruct, ItemEnum, ItemUse, ItemMod, Visibility, visit::{self, Visit}};
 use crate::memory::features::code_intelligence::types::*;
 use sha2::{Sha256, Digest};
 
-/// Rust AST parser using syn crate
+#[derive(Clone)]
 pub struct RustParser {
     max_complexity: u32,
 }
@@ -33,14 +31,15 @@ impl LanguageParser for RustParser {
         let mut analyzer = RustAnalyzer::new(self.max_complexity);
         analyzer.visit_file(&syntax_tree);
 
-        // Fix the borrow issue by cloning all Vec fields
+        let doc_coverage = analyzer.calculate_doc_coverage();
+
         Ok(FileAnalysis {
-            elements: analyzer.elements.clone(), // Clone this too
-            dependencies: analyzer.dependencies.clone(), 
-            quality_issues: analyzer.quality_issues.clone(),
+            elements: analyzer.elements,
+            dependencies: analyzer.dependencies, 
+            quality_issues: analyzer.quality_issues,
             complexity_score: analyzer.total_complexity,
             test_count: analyzer.test_count,
-            doc_coverage: analyzer.calculate_doc_coverage(),
+            doc_coverage,
         })
     }
 
@@ -53,7 +52,6 @@ impl LanguageParser for RustParser {
     }
 }
 
-/// AST visitor that extracts elements during traversal
 struct RustAnalyzer {
     max_complexity: u32,
     elements: Vec<CodeElement>,
@@ -116,7 +114,7 @@ impl RustAnalyzer {
     }
 
     fn calculate_function_complexity(&self, block: &syn::Block) -> u32 {
-        let complexity = 1; // Base complexity
+        let complexity = 1;
         
         struct ComplexityVisitor {
             complexity: u32,
@@ -169,7 +167,6 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
             format!("{}::{}", self.current_module_path.join("::"), func.sig.ident)
         };
 
-        // Generate quality issue if complexity is too high
         if complexity > self.max_complexity {
             self.quality_issues.push(QualityIssue {
                 issue_type: "complexity".to_string(),
@@ -188,15 +185,15 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
             name: func.sig.ident.to_string(),
             full_path,
             visibility,
-            start_line: 0, // NOTE: Line numbers from spans require proc-macro2 features we don't need yet
-            end_line: 0,   // Will be enhanced in Phase 2 if needed
+            start_line: 0,
+            end_line: 0,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
             complexity_score: complexity,
             is_test,
             is_async,
             documentation,
-            metadata: None, // Will be enhanced with generics info in Phase 2
+            metadata: None,
         });
 
         visit::visit_item_fn(self, func);
@@ -222,7 +219,7 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
             end_line: 0,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
-            complexity_score: struct_item.fields.len() as u32, // Field count as complexity metric
+            complexity_score: struct_item.fields.len() as u32,
             is_test: false,
             is_async: false,
             documentation,
@@ -265,16 +262,13 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
     fn visit_item_use(&mut self, use_item: &'ast ItemUse) {
         let path = quote::quote!(#use_item.tree).to_string();
         
-        // Parse the use statement to extract import info
         let import_path = path.replace(" ", "");
         let symbols = if import_path.contains("{") && import_path.contains("}") {
-            // Handle: use std::collections::{HashMap, BTreeMap};
             let start = import_path.find('{').unwrap() + 1;
             let end = import_path.find('}').unwrap();
             let symbols_str = &import_path[start..end];
             symbols_str.split(',').map(|s| s.trim().to_string()).collect()
         } else {
-            // Handle: use std::collections::HashMap;
             vec![import_path.split("::").last().unwrap_or("").to_string()]
         };
 

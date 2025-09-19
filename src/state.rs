@@ -9,17 +9,18 @@ use crate::{
     memory::{
         storage::qdrant::multi_store::QdrantMultiStore,
         storage::sqlite::store::SqliteMemoryStore,
-        cache::recent::RecentCache,  // NEW
+        cache::recent::RecentCache,
+        features::code_intelligence::CodeIntelligenceService,
         MemoryService,
     },
     project::store::ProjectStore,
+    tools::file_search::FileSearchService,
 };
-use crate::tools::file_search::FileSearchService;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tracing::info;
-use sqlx::SqlitePool;  // NEW - needed for passing pool around
+use sqlx::SqlitePool;
 
 #[derive(Debug, Clone)]
 pub struct UploadSession {
@@ -35,7 +36,7 @@ pub struct UploadSession {
 #[derive(Clone)]
 pub struct AppState {
     pub sqlite_store: Arc<SqliteMemoryStore>,
-    pub sqlite_pool: SqlitePool,  // NEW - needed for some operations
+    pub sqlite_pool: SqlitePool,
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
@@ -46,79 +47,65 @@ pub struct AppState {
     
     pub memory_service: Arc<MemoryService>,
     pub multi_store: Arc<QdrantMultiStore>,
-    pub recent_cache: Option<Arc<RecentCache>>,  // NEW
+    pub recent_cache: Option<Arc<RecentCache>>,
     pub file_search_service: Arc<FileSearchService>,
+    
+    pub code_intelligence: Arc<CodeIntelligenceService>,
     
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
 }
 
 pub async fn create_app_state(
     sqlite_store: Arc<SqliteMemoryStore>,
-    sqlite_pool: SqlitePool,  // NEW parameter - need the pool
+    sqlite_pool: SqlitePool,
     qdrant_url: &str,
     llm_client: Arc<OpenAIClient>,
     project_store: Arc<ProjectStore>,
     git_store: GitStore,
-    git_client: GitClient,
 ) -> anyhow::Result<AppState> {
-    info!("Creating AppState with robust memory features including Recent Cache");
+    info!("Initializing AppState with code intelligence");
     
     let multi_store = Arc::new(QdrantMultiStore::new(qdrant_url, &CONFIG.qdrant_collection).await?);
-    
     let responses_manager = Arc::new(ResponsesManager::new(llm_client.clone()));
     let image_generation_manager = Arc::new(ImageGenerationManager::new(llm_client.clone()));
     
-    // Create recent cache if enabled (NEW)
+    let code_intelligence = Arc::new(CodeIntelligenceService::new(sqlite_pool.clone()));
+    let git_client = GitClient::with_code_intelligence(
+        "./repos",
+        git_store.clone(),
+        code_intelligence.as_ref().clone(),
+    );
+    
     let recent_cache = if CONFIG.is_recent_cache_enabled() {
         let cache_config = CONFIG.get_recent_cache_config();
-        info!(
-            "Initializing Recent Cache: capacity={}, ttl={}s, max_per_session={}", 
-            cache_config.capacity, 
-            cache_config.ttl_seconds,
-            cache_config.max_per_session
-        );
-        
         let cache = Arc::new(RecentCache::new(
             cache_config.capacity,
             cache_config.ttl_seconds,
         ));
         
-        // Warm up cache with active sessions if enabled
         if cache_config.warmup {
-            info!("Warming up cache with active sessions from last 24 hours...");
-            
             match sqlite_store.get_active_sessions(24).await {
                 Ok(active_sessions) if !active_sessions.is_empty() => {
-                    info!("Found {} active sessions to warm up", active_sessions.len());
                     if let Err(e) = cache.warmup_active_sessions(active_sessions, &sqlite_store).await {
                         tracing::warn!("Failed to warm up cache: {}", e);
-                    } else {
-                        let stats = cache.get_stats().await;
-                        info!("Cache warmup complete: {} sessions loaded", stats.total_entries);
                     }
                 }
-                Ok(_) => {
-                    info!("No active sessions found for cache warmup");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to get active sessions for warmup: {}", e);
-                }
+                Err(e) => tracing::warn!("Failed to get active sessions for warmup: {}", e),
+                _ => {}
             }
         }
         
         Some(cache)
     } else {
-        info!("Recent Cache is disabled via configuration");
         None
     };
     
-    // Create memory service with cache integration
     let memory_service = if let Some(cache) = &recent_cache {
         Arc::new(MemoryService::new_with_cache(
             sqlite_store.clone(),
             multi_store.clone(),
             llm_client.clone(),
-            Some(cache.clone()),  // Pass cache to memory service
+            Some(cache.clone()),
         ))
     } else {
         Arc::new(MemoryService::new(
@@ -133,12 +120,7 @@ pub async fn create_app_state(
         llm_client.clone(),
     ));
     
-    // Log final state
-    if recent_cache.is_some() {
-        info!("AppState initialized successfully WITH Recent Cache");
-    } else {
-        info!("AppState initialized successfully WITHOUT Recent Cache");
-    }
+    info!("AppState initialized successfully");
     
     Ok(AppState {
         sqlite_store,
@@ -153,6 +135,7 @@ pub async fn create_app_state(
         multi_store,
         recent_cache,
         file_search_service,
+        code_intelligence,
         upload_sessions: Arc::new(RwLock::new(HashMap::new())),
     })
 }

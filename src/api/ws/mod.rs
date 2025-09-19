@@ -1,7 +1,4 @@
 // src/api/ws/mod.rs
-// WebSocket API module that manages connection handling, message routing, and session state.
-// UPDATED: Added files module for Phase 6
-
 use std::sync::Arc;
 use axum::{
     extract::{ws::WebSocket, State},
@@ -12,22 +9,22 @@ use axum::{
 use futures_util::StreamExt;
 use tracing::info;
 
+use crate::state::AppState;
+
 // WebSocket submodules
 pub mod chat;
 pub mod message;
 pub mod memory;
 pub mod project;
-pub mod git;    // PHASE 5: Git operations handler
-pub mod files;  // PHASE 6: File transfer handler
+pub mod git;
+pub mod files;
 pub mod filesystem;
-// Re-export key components for external access
+pub mod code_intelligence;
+
+// Re-export key components
 pub use chat::ws_chat_handler;
-         // PHASE 5: Export git command handler
-     // PHASE 6: Export file transfer handler
 
-use crate::state::AppState;
-
-/// Creates the main WebSocket router with all endpoints
+/// Creates the main WebSocket router
 pub fn ws_router(app_state: Arc<AppState>) -> Router {
     Router::new()
         .route("/ws", get(ws_chat_handler))

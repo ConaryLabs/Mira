@@ -1,5 +1,5 @@
 // src/memory/features/code_intelligence/mod.rs
-// Main module for code intelligence - ties everything together
+// Main module for code intelligence
 
 pub mod types;
 pub mod parser;
@@ -10,12 +10,12 @@ pub use types::*;
 pub use parser::RustParser;
 pub use storage::{CodeIntelligenceStorage, RepoStats};
 
-// Convenience imports for external users
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
 /// Main code intelligence service that coordinates parsing and storage
+#[derive(Clone)]
 pub struct CodeIntelligenceService {
     storage: Arc<CodeIntelligenceStorage>,
     rust_parser: RustParser,
