@@ -34,6 +34,11 @@ struct ElementsByTypeRequest {
     limit: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DeleteRepositoryDataRequest {
+    project_id: String,
+}
+
 pub async fn handle_code_intelligence_command(
     method: &str,
     params: Value,
@@ -175,6 +180,34 @@ pub async fn handle_code_intelligence_command(
                 data: json!({
                     "type": "supported_languages",
                     "languages": languages
+                }),
+                request_id: None,
+            })
+        }
+
+        "code.delete_repository_data" => {
+            let req: DeleteRepositoryDataRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid delete request: {}", e)))?;
+            
+            info!("Deleting code intelligence data for project: {}", req.project_id);
+            
+            // Get all repository attachments for this project
+            let attachments = app_state.git_client.store.get_attachments_for_project(&req.project_id).await
+                .map_err(|e| ApiError::internal(format!("Failed to get attachments: {}", e)))?;
+            
+            let mut deleted_elements = 0;
+            for attachment in attachments {
+                let count = app_state.code_intelligence.storage()
+                    .delete_repository_data(&attachment.id).await
+                    .map_err(|e| ApiError::internal(format!("Delete failed: {}", e)))?;
+                deleted_elements += count;
+            }
+            
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "repository_data_deleted",
+                    "project_id": req.project_id,
+                    "deleted_elements": deleted_elements
                 }),
                 request_id: None,
             })

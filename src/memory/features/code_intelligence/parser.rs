@@ -1,6 +1,6 @@
 // src/memory/features/code_intelligence/parser.rs
 use anyhow::{Result, Context};
-use syn::{ItemFn, ItemStruct, ItemEnum, ItemUse, ItemMod, Visibility, visit::{self, Visit}};
+use syn::{ItemFn, ItemStruct, ItemEnum, ItemUse, ItemMod, Visibility, visit::{self, Visit}, spanned::Spanned};
 use crate::memory::features::code_intelligence::types::*;
 use sha2::{Sha256, Digest};
 
@@ -28,7 +28,7 @@ impl LanguageParser for RustParser {
         let syntax_tree = syn::parse_file(content)
             .with_context(|| format!("Failed to parse Rust file: {}", file_path))?;
 
-        let mut analyzer = RustAnalyzer::new(self.max_complexity);
+        let mut analyzer = RustAnalyzer::new(self.max_complexity, content, file_path);
         analyzer.visit_file(&syntax_tree);
 
         let doc_coverage = analyzer.calculate_doc_coverage();
@@ -52,7 +52,7 @@ impl LanguageParser for RustParser {
     }
 }
 
-struct RustAnalyzer {
+struct RustAnalyzer<'content> {
     max_complexity: u32,
     elements: Vec<CodeElement>,
     dependencies: Vec<ExternalDependency>,
@@ -60,10 +60,12 @@ struct RustAnalyzer {
     total_complexity: u32,
     test_count: u32,
     current_module_path: Vec<String>,
+    source_content: &'content str,
+    file_path: &'content str,
 }
 
-impl RustAnalyzer {
-    fn new(max_complexity: u32) -> Self {
+impl<'content> RustAnalyzer<'content> {
+    fn new(max_complexity: u32, source_content: &'content str, file_path: &'content str) -> Self {
         Self {
             max_complexity,
             elements: Vec::new(),
@@ -72,6 +74,8 @@ impl RustAnalyzer {
             total_complexity: 0,
             test_count: 0,
             current_module_path: Vec::new(),
+            source_content,
+            file_path,
         }
     }
 
@@ -113,6 +117,25 @@ impl RustAnalyzer {
         format!("{:x}", hasher.finalize())[..16].to_string()
     }
 
+    fn extract_line_numbers<T: Spanned>(&self, item: &T) -> (u32, u32) {
+        let span = item.span();
+        let start = span.start();
+        let end = span.end();
+        
+        (start.line as u32, end.line as u32)
+    }
+
+    fn build_full_path(&self, element_name: &str) -> String {
+        let module_path = if self.current_module_path.is_empty() {
+            element_name.to_string()
+        } else {
+            format!("{}::{}", self.current_module_path.join("::"), element_name)
+        };
+
+        let clean_file_path = self.file_path.replace("\\", "/");
+        format!("{}::{}", clean_file_path, module_path)
+    }
+
     fn calculate_function_complexity(&self, block: &syn::Block) -> u32 {
         let complexity = 1;
         
@@ -142,7 +165,7 @@ impl RustAnalyzer {
     }
 }
 
-impl<'ast> Visit<'ast> for RustAnalyzer {
+impl<'ast, 'content> Visit<'ast> for RustAnalyzer<'content> {
     fn visit_item_fn(&mut self, func: &'ast ItemFn) {
         let visibility = self.get_visibility_string(&func.vis);
         let documentation = self.extract_documentation(&func.attrs);
@@ -161,11 +184,8 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
         let is_async = func.sig.asyncness.is_some();
         let content = quote::quote!(#func).to_string();
         
-        let full_path = if self.current_module_path.is_empty() {
-            func.sig.ident.to_string()
-        } else {
-            format!("{}::{}", self.current_module_path.join("::"), func.sig.ident)
-        };
+        let full_path = self.build_full_path(&func.sig.ident.to_string());
+        let (start_line, end_line) = self.extract_line_numbers(func);
 
         if complexity > self.max_complexity {
             self.quality_issues.push(QualityIssue {
@@ -185,8 +205,8 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
             name: func.sig.ident.to_string(),
             full_path,
             visibility,
-            start_line: 0,
-            end_line: 0,
+            start_line,
+            end_line,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
             complexity_score: complexity,
@@ -204,19 +224,16 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
         let documentation = self.extract_documentation(&struct_item.attrs);
         let content = quote::quote!(#struct_item).to_string();
 
-        let full_path = if self.current_module_path.is_empty() {
-            struct_item.ident.to_string()
-        } else {
-            format!("{}::{}", self.current_module_path.join("::"), struct_item.ident)
-        };
+        let full_path = self.build_full_path(&struct_item.ident.to_string());
+        let (start_line, end_line) = self.extract_line_numbers(struct_item);
 
         self.elements.push(CodeElement {
             element_type: "struct".to_string(),
             name: struct_item.ident.to_string(),
             full_path,
             visibility,
-            start_line: 0,
-            end_line: 0,
+            start_line,
+            end_line,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
             complexity_score: struct_item.fields.len() as u32,
@@ -234,19 +251,16 @@ impl<'ast> Visit<'ast> for RustAnalyzer {
         let documentation = self.extract_documentation(&enum_item.attrs);
         let content = quote::quote!(#enum_item).to_string();
 
-        let full_path = if self.current_module_path.is_empty() {
-            enum_item.ident.to_string()
-        } else {
-            format!("{}::{}", self.current_module_path.join("::"), enum_item.ident)
-        };
+        let full_path = self.build_full_path(&enum_item.ident.to_string());
+        let (start_line, end_line) = self.extract_line_numbers(enum_item);
 
         self.elements.push(CodeElement {
             element_type: "enum".to_string(),
             name: enum_item.ident.to_string(),
             full_path,
             visibility,
-            start_line: 0,
-            end_line: 0,
+            start_line,
+            end_line,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
             complexity_score: enum_item.variants.len() as u32,

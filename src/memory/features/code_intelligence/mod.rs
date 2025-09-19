@@ -67,9 +67,9 @@ impl CodeIntelligenceService {
         }
     }
 
-    /// Search for code elements
-    pub async fn search_elements(&self, pattern: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
-        self.storage.search_elements(pattern, limit.unwrap_or(20)).await
+    /// Search for code elements in a specific project
+    pub async fn search_elements_for_project(&self, pattern: &str, project_id: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        self.storage.search_elements_for_project(pattern, project_id, limit.unwrap_or(20)).await
     }
 
     /// Get analysis for a specific file
@@ -92,14 +92,14 @@ impl CodeIntelligenceService {
         self.storage.get_repo_stats(attachment_id).await
     }
 
-    /// Get complexity hotspots
-    pub async fn get_complexity_hotspots(&self, limit: Option<i32>) -> Result<Vec<CodeElement>> {
-        self.storage.get_complexity_hotspots(limit.unwrap_or(10)).await
+    /// Get complexity hotspots for a specific project
+    pub async fn get_complexity_hotspots_for_project(&self, project_id: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        self.storage.get_complexity_hotspots_for_project(project_id, limit.unwrap_or(10)).await
     }
 
-    /// Get all functions, structs, enums, etc.
-    pub async fn get_elements_by_type(&self, element_type: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
-        self.storage.get_elements_by_type(element_type, limit).await
+    /// Get all functions, structs, enums, etc. for a specific project
+    pub async fn get_elements_by_type_for_project(&self, element_type: &str, project_id: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+        self.storage.get_elements_by_type_for_project(element_type, project_id, limit).await
     }
 
     /// Get the storage service directly (for advanced operations)

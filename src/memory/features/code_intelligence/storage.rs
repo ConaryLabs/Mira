@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use sqlx::SqlitePool;
+use tracing::info;
 use crate::memory::features::code_intelligence::types::*;
 
 /// Storage operations for code intelligence
@@ -134,6 +135,67 @@ impl CodeIntelligenceStorage {
         Ok(())
     }
 
+    /// Delete all code intelligence data for a repository
+    pub async fn delete_repository_data(&self, attachment_id: &str) -> Result<i32> {
+        let mut tx = self.pool.begin().await?;
+        
+        // Get file IDs for this attachment
+        let rows = sqlx::query!(
+            "SELECT id FROM repository_files WHERE attachment_id = ?",
+            attachment_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        
+        let file_ids: Vec<i64> = rows
+            .into_iter()
+            .filter_map(|row| row.id.map(|id| id as i64))
+            .collect();
+        
+        if file_ids.is_empty() {
+            tx.commit().await?;
+            return Ok(0);
+        }
+        
+        let file_ids_str = file_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+        
+        // Delete code quality issues
+        let delete_issues_query = format!(
+            "DELETE FROM code_quality_issues WHERE element_id IN (SELECT id FROM code_elements WHERE file_id IN ({}))",
+            file_ids_str
+        );
+        sqlx::query(&delete_issues_query).execute(&mut *tx).await?;
+        
+        // Delete external dependencies
+        let delete_deps_query = format!(
+            "DELETE FROM external_dependencies WHERE element_id IN (SELECT id FROM code_elements WHERE file_id IN ({}))",
+            file_ids_str
+        );
+        sqlx::query(&delete_deps_query).execute(&mut *tx).await?;
+        
+        // Delete code elements and count them
+        let delete_elements_query = format!("DELETE FROM code_elements WHERE file_id IN ({})", file_ids_str);
+        let result = sqlx::query(&delete_elements_query).execute(&mut *tx).await?;
+        let deleted_count = result.rows_affected() as i32;
+        
+        // Reset repository_files analysis status
+        sqlx::query!(
+            r#"
+            UPDATE repository_files 
+            SET ast_analyzed = FALSE, element_count = 0, complexity_score = 0, last_analyzed = NULL
+            WHERE attachment_id = ?
+            "#,
+            attachment_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        
+        tx.commit().await?;
+        info!("Deleted {} code elements for attachment {}", deleted_count, attachment_id);
+        
+        Ok(deleted_count)
+    }
+
     /// Get all elements for a file
     pub async fn get_file_elements(&self, file_id: i64) -> Result<Vec<CodeElement>> {
         let rows = sqlx::query!(
@@ -165,22 +227,25 @@ impl CodeIntelligenceStorage {
         Ok(elements)
     }
 
-    /// Search for elements by name pattern
-    pub async fn search_elements(&self, pattern: &str, limit: i32) -> Result<Vec<CodeElement>> {
+    /// Search for elements by name pattern (project-scoped)
+    pub async fn search_elements_for_project(&self, pattern: &str, project_id: &str, limit: i32) -> Result<Vec<CodeElement>> {
         let search_pattern = format!("%{}%", pattern);
         let prefix_pattern = format!("{}%", pattern);
         
         let rows = sqlx::query!(
             r#"
-            SELECT * FROM code_elements 
-            WHERE name LIKE ? OR full_path LIKE ?
+            SELECT ce.* FROM code_elements ce
+            JOIN repository_files rf ON ce.file_id = rf.id
+            JOIN git_repo_attachments gra ON rf.attachment_id = gra.id
+            WHERE gra.project_id = ? AND (ce.name LIKE ? OR ce.full_path LIKE ?)
             ORDER BY 
-                CASE WHEN name = ? THEN 0 
-                     WHEN name LIKE ? THEN 1 
+                CASE WHEN ce.name = ? THEN 0 
+                     WHEN ce.name LIKE ? THEN 1 
                      ELSE 2 END,
-                name
+                ce.name
             LIMIT ?
             "#,
+            project_id,
             search_pattern,
             search_pattern,
             pattern,
@@ -242,12 +307,20 @@ impl CodeIntelligenceStorage {
         Ok(issues)
     }
 
-    /// Get elements by type (functions, structs, etc.)
-    pub async fn get_elements_by_type(&self, element_type: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+    /// Get elements by type (functions, structs, etc.) - project-scoped
+    pub async fn get_elements_by_type_for_project(&self, element_type: &str, project_id: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
         let limit = limit.unwrap_or(100);
         
         let rows = sqlx::query!(
-            "SELECT * FROM code_elements WHERE element_type = ? ORDER BY name LIMIT ?",
+            r#"
+            SELECT ce.* FROM code_elements ce
+            JOIN repository_files rf ON ce.file_id = rf.id
+            JOIN git_repo_attachments gra ON rf.attachment_id = gra.id
+            WHERE gra.project_id = ? AND ce.element_type = ?
+            ORDER BY ce.name 
+            LIMIT ?
+            "#,
+            project_id,
             element_type,
             limit
         )
@@ -313,22 +386,25 @@ impl CodeIntelligenceStorage {
             total_files: stats.total_files as u32,
             analyzed_files: stats.analyzed_files.unwrap_or(0) as u32,
             total_elements: stats.total_elements.unwrap_or(0) as u32,
-            avg_complexity: stats.avg_complexity.unwrap_or(0) as f64, // Fixed: Changed 0.0 to 0
+            avg_complexity: stats.avg_complexity.unwrap_or(0) as f64,
             total_quality_issues: quality_stats.total_issues as u32,
             critical_issues: quality_stats.critical_issues.unwrap_or(0) as u32,
             high_issues: quality_stats.high_issues.unwrap_or(0) as u32,
         })
     }
 
-    /// Find the most complex functions across the codebase
-    pub async fn get_complexity_hotspots(&self, limit: i32) -> Result<Vec<CodeElement>> {
+    /// Find the most complex functions across a project - project-scoped
+    pub async fn get_complexity_hotspots_for_project(&self, project_id: &str, limit: i32) -> Result<Vec<CodeElement>> {
         let rows = sqlx::query!(
             r#"
-            SELECT * FROM code_elements 
-            WHERE element_type = 'function' AND complexity_score > 5
-            ORDER BY complexity_score DESC 
+            SELECT ce.* FROM code_elements ce
+            JOIN repository_files rf ON ce.file_id = rf.id
+            JOIN git_repo_attachments gra ON rf.attachment_id = gra.id
+            WHERE gra.project_id = ? AND ce.element_type = 'function' AND ce.complexity_score > 5
+            ORDER BY ce.complexity_score DESC 
             LIMIT ?
             "#,
+            project_id,
             limit
         )
         .fetch_all(&self.pool)
