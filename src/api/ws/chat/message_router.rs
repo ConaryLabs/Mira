@@ -11,7 +11,7 @@ use tracing::{debug, error, info};
 use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest, ChatEvent};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
-use crate::api::ws::{memory, project, git, files, filesystem};
+use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence};
 use crate::state::AppState;
 use crate::tools::executor::ToolExecutor;
 
@@ -69,6 +69,9 @@ impl MessageRouter {
             }
             WsClientMessage::FileTransfer { operation, data } => {
                 self.handle_file_transfer(operation, data, request_id).await
+            }
+            WsClientMessage::CodeIntelligenceCommand { method, params } => {
+                self.handle_code_intelligence_command(method, params, request_id).await
             }
         }
     }
@@ -399,6 +402,37 @@ impl MessageRouter {
                 self.connection.send_error(
                     &format!("File transfer failed: {}", e),
                     "FILE_TRANSFER_ERROR".to_string()
+                ).await?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Handle code intelligence commands
+    async fn handle_code_intelligence_command(
+        &self,
+        method: String,
+        params: serde_json::Value,
+        _request_id: Option<String>,
+    ) -> Result<(), anyhow::Error> {
+        info!("Code intelligence command: {}", method);
+        
+        let result = code_intelligence::handle_code_intelligence_command(
+            &method,
+            params,
+            self.app_state.clone(),
+        ).await;
+        
+        match result {
+            Ok(response) => {
+                self.connection.send_message(response).await?;
+            }
+            Err(e) => {
+                error!("Code intelligence command failed: {}", e);
+                self.connection.send_error(
+                    &format!("Code intelligence command failed: {}", e),
+                    "CODE_INTELLIGENCE_ERROR".to_string()
                 ).await?;
             }
         }

@@ -60,6 +60,10 @@ pub enum WsClientMessage {
         operation: String,
         data: serde_json::Value,
     },
+    CodeIntelligenceCommand {
+        method: String,
+        params: serde_json::Value,
+    },
 }
 
 /// Represents all possible messages sent from the server to the client (frontend).

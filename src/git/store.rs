@@ -1,7 +1,4 @@
 // src/git/store.rs
-// Complete GitStore implementation with get_attachment method added for Phase 5
-// FIXED: Handles timestamps as integers (Unix timestamps) as stored in SQLite
-// FIXED: Consistent handling of import_status as String (not Option<String>)
 
 use anyhow::{Result, Context};
 use sqlx::SqlitePool;
@@ -19,7 +16,6 @@ impl GitStore {
     }
 
     pub async fn create_attachment(&self, attachment: &GitRepoAttachment) -> Result<()> {
-        // Store status as string and timestamps as Unix timestamps (integers)
         let import_status = attachment.import_status.to_string();
         let last_imported_at = attachment.last_imported_at.map(|dt| dt.timestamp());
         let last_sync_at = attachment.last_sync_at.map(|dt| dt.timestamp());
@@ -60,12 +56,10 @@ impl GitStore {
         .context("Failed to fetch git repo attachments")?;
 
         Ok(rows.into_iter().map(|r| {
-            // Parse status from string (SQLite returns it as String, not Option<String>)
             let import_status = r.import_status
                 .parse::<GitImportStatus>()
                 .unwrap_or(GitImportStatus::Pending);
             
-            // Parse timestamps from Unix timestamps (stored as INTEGER)
             let last_imported_at = r.last_imported_at
                 .and_then(|ts| DateTime::from_timestamp(ts, 0))
                 .map(|dt| dt.with_timezone(&Utc));
@@ -86,7 +80,6 @@ impl GitStore {
         }).collect())
     }
 
-    /// Get a single attachment by ID - ADDED FOR PHASE 5
     pub async fn get_attachment(&self, attachment_id: &str) -> Result<Option<GitRepoAttachment>> {
         let r = sqlx::query!(
             r#"
@@ -102,12 +95,10 @@ impl GitStore {
         .context("Failed to fetch git repo attachment by id")?;
 
         Ok(r.map(|r| {
-            // Parse status from String (SQLite returns it as String, not Option<String>)
             let import_status = r.import_status
                 .parse::<GitImportStatus>()
                 .unwrap_or(GitImportStatus::Pending);
             
-            // Parse timestamps from Unix timestamps (stored as INTEGER)
             let last_imported_at = r.last_imported_at
                 .and_then(|ts| DateTime::from_timestamp(ts, 0))
                 .map(|dt| dt.with_timezone(&Utc));
@@ -128,11 +119,9 @@ impl GitStore {
         }))
     }
 
-    /// Alias for get_attachments_for_project to match the handler's expectation
     pub async fn list_project_attachments(&self, project_id: &str) -> Result<Vec<GitRepoAttachment>> {
         self.get_attachments_for_project(project_id).await
     }
-
 
     pub async fn update_import_status(&self, attachment_id: &str, status: GitImportStatus) -> Result<()> {
         let status_str = status.to_string();
@@ -202,4 +191,102 @@ impl GitStore {
 
         Ok(result.rows_affected() > 0)
     }
+
+    pub async fn insert_repository_file(
+        &self,
+        attachment_id: &str,
+        file_path: &str,
+        content_hash: &str,
+        language: Option<&str>,
+        line_count: i32,
+    ) -> Result<i64> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO repository_files
+                (attachment_id, file_path, content_hash, language, line_count, last_indexed)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            "#,
+            attachment_id,
+            file_path,
+            content_hash,
+            language,
+            line_count,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert repository file")?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    pub async fn get_repository_files(&self, attachment_id: &str) -> Result<Vec<RepositoryFile>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, attachment_id, file_path, content_hash, language, 
+                   last_indexed, line_count, function_count
+            FROM repository_files
+            WHERE attachment_id = ?
+            ORDER BY file_path
+            "#,
+            attachment_id
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to fetch repository files")?;
+
+        Ok(rows.into_iter().map(|r| RepositoryFile {
+            id: r.id.unwrap_or(0),
+            attachment_id: r.attachment_id,
+            file_path: r.file_path,
+            content_hash: r.content_hash,
+            language: r.language,
+            last_indexed: r.last_indexed.map(|dt| dt.to_string()).unwrap_or_default(),
+            line_count: r.line_count.map(|v| v as i32),
+            function_count: r.function_count.map(|v| v as i32),
+        }).collect())
+    }
+
+    pub async fn update_file_analysis(&self, file_id: i64, function_count: Option<i32>) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE repository_files
+            SET function_count = ?
+            WHERE id = ?
+            "#,
+            function_count,
+            file_id
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to update file analysis")?;
+
+        Ok(())
+    }
+
+    pub async fn delete_repository_files(&self, attachment_id: &str) -> Result<()> {
+        sqlx::query!(
+            r#"
+            DELETE FROM repository_files
+            WHERE attachment_id = ?
+            "#,
+            attachment_id
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to delete repository files")?;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RepositoryFile {
+    pub id: i64,
+    pub attachment_id: String,
+    pub file_path: String,
+    pub content_hash: String,
+    pub language: Option<String>,
+    pub last_indexed: String,
+    pub line_count: Option<i32>,
+    pub function_count: Option<i32>,
 }

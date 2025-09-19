@@ -1,6 +1,4 @@
 // src/git/client/operations.rs
-// Core git repository operations: attach, clone, import, sync
-// Enhanced with code intelligence integration for AST analysis
 
 use anyhow::Result;
 use chrono::Utc;
@@ -14,7 +12,6 @@ use crate::git::store::GitStore;
 use crate::api::error::{IntoApiError, ApiResult};
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
-/// Handles core Git repository operations with optional code intelligence
 #[derive(Clone)]
 pub struct GitOperations {
     git_dir: PathBuf,
@@ -23,7 +20,6 @@ pub struct GitOperations {
 }
 
 impl GitOperations {
-    /// Create new git operations handler
     pub fn new(git_dir: PathBuf, store: GitStore) -> Self {
         Self { 
             git_dir, 
@@ -32,7 +28,6 @@ impl GitOperations {
         }
     }
 
-    /// Create new git operations handler with code intelligence
     pub fn with_code_intelligence(
         git_dir: PathBuf, 
         store: GitStore, 
@@ -45,12 +40,7 @@ impl GitOperations {
         }
     }
 
-    /// Attach a repo: generate an ID, determine clone path, and persist the attachment
-    pub async fn attach_repo(
-        &self,
-        project_id: &str,
-        repo_url: &str,
-    ) -> Result<GitRepoAttachment> {
+    pub async fn attach_repo(&self, project_id: &str, repo_url: &str) -> Result<GitRepoAttachment> {
         use uuid::Uuid;
         
         let id = Uuid::new_v4().to_string();
@@ -73,7 +63,6 @@ impl GitOperations {
         Ok(attachment)
     }
 
-    /// Clone the attached repo to disk
     pub async fn clone_repo(&self, attachment: &GitRepoAttachment) -> Result<()> {
         info!("Cloning repository {} to {}", attachment.repo_url, attachment.local_path);
 
@@ -100,7 +89,6 @@ impl GitOperations {
         Ok(())
     }
 
-    /// Import files into your DB with optional code intelligence analysis
     pub async fn import_codebase(&self, attachment: &GitRepoAttachment) -> Result<()> {
         info!("Importing codebase for repository {}", attachment.id);
 
@@ -119,17 +107,31 @@ impl GitOperations {
         
         debug!("Found {} files to import", files.len());
 
-        // Code intelligence analysis if enabled
+        let mut inserted_files = Vec::new();
+        for file_path in &files {
+            match self.insert_file_record(file_path, &attachment.id).await {
+                Ok(file_id) => {
+                    inserted_files.push((file_id, file_path.clone()));
+                    debug!("Inserted file record: {} -> file_id {}", file_path.display(), file_id);
+                }
+                Err(e) => {
+                    warn!("Failed to insert file record for {}: {} (skipping)", file_path.display(), e);
+                }
+            }
+        }
+
+        info!("Inserted {} file records into repository_files", inserted_files.len());
+
         if let Some(ref code_intel) = self.code_intelligence {
             let mut analyzed_files = 0;
             let mut analysis_errors = 0;
 
-            for file_path in &files {
+            for (file_id, file_path) in &inserted_files {
                 if !is_rust_file(file_path) {
                     continue;
                 }
 
-                match self.analyze_file(code_intel, file_path, &attachment.id).await {
+                match self.analyze_file_with_id(code_intel, *file_id, file_path).await {
                     Ok(()) => {
                         analyzed_files += 1;
                         debug!("Successfully analyzed: {}", file_path.display());
@@ -161,17 +163,49 @@ impl GitOperations {
         Ok(())
     }
 
-    /// Analyze a single file with code intelligence
-    async fn analyze_file(
+    async fn insert_file_record(&self, file_path: &Path, attachment_id: &str) -> Result<i64> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let content = tokio::fs::read(file_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path.display(), e))?;
+        
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        let content_hash = format!("{:x}", hasher.finish());
+        
+        let content_str = String::from_utf8_lossy(&content);
+        let line_count = content_str.lines().count() as i32;
+        
+        let language = if is_rust_file(file_path) {
+            Some("rust".to_string())
+        } else {
+            None
+        };
+        
+        let repo_path = Path::new(&self.git_dir).join(attachment_id);
+        let relative_path = file_path.strip_prefix(&repo_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| file_path.to_string_lossy().to_string());
+        
+        self.store.insert_repository_file(
+            attachment_id,
+            &relative_path,
+            &content_hash,
+            language.as_deref(),
+            line_count,
+        ).await
+    }
+
+    async fn analyze_file_with_id(
         &self,
         code_intel: &CodeIntelligenceService,
+        file_id: i64,
         file_path: &Path,
-        attachment_id: &str,
     ) -> Result<()> {
         let content = tokio::fs::read_to_string(file_path).await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path.display(), e))?;
 
-        let file_id = calculate_file_id(file_path, attachment_id);
         let file_path_str = file_path.to_string_lossy();
         
         let result = code_intel.analyze_and_store_file(
@@ -192,7 +226,6 @@ impl GitOperations {
         Ok(())
     }
 
-    /// Sync: commit and push DB-side code changes back to GitHub
     pub async fn sync_changes(&self, attachment: &GitRepoAttachment, commit_message: &str) -> Result<()> {
         info!("Syncing changes for repository {}", attachment.id);
 
@@ -254,7 +287,6 @@ impl GitOperations {
         Ok(())
     }
 
-    /// Pull latest changes from remote
     pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
         let attachment = self.store.get_attachment(attachment_id).await
             .into_api_error("Failed to get attachment")?
@@ -290,7 +322,6 @@ impl GitOperations {
         Ok(())
     }
     
-    /// Reset to remote HEAD (destructive)
     pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
         let attachment = self.store.get_attachment(attachment_id).await
             .into_api_error("Failed to get attachment")?
@@ -324,7 +355,6 @@ impl GitOperations {
     }
 }
 
-/// Check if a file is a Rust source file
 fn is_rust_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -332,19 +362,6 @@ fn is_rust_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Calculate a unique file ID based on path and attachment
-fn calculate_file_id(file_path: &Path, attachment_id: &str) -> i64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    attachment_id.hash(&mut hasher);
-    file_path.to_string_lossy().hash(&mut hasher);
-    
-    (hasher.finish() as i64).abs()
-}
-
-/// Walk directory and collect files
 fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
     let mut files = Vec::new();
     
@@ -368,7 +385,6 @@ fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
     Ok(files)
 }
 
-/// Check if a file should be ignored during import
 fn should_ignore_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
     
