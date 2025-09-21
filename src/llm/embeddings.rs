@@ -1,5 +1,5 @@
 // src/llm/embeddings.rs
-// Embeddings functionality using text-embedding-3-large with multi-head support including Documents
+// Embeddings functionality using text-embedding-3-large with multi-head support
 
 use crate::config::CONFIG;
 use anyhow::Result;
@@ -8,7 +8,23 @@ use std::fmt;
 use std::str::FromStr;
 use tokenizers::Tokenizer;
 
-/// Embedding configuration for text-embedding-3-large
+#[derive(Debug, Clone)]
+pub struct ChunkConfig {
+    pub chunk_size: usize,
+    pub overlap: usize,
+}
+
+impl ChunkConfig {
+    pub fn for_head(head: &EmbeddingHead) -> Self {
+        match head {
+            EmbeddingHead::Semantic => Self { chunk_size: 500, overlap: 100 },
+            EmbeddingHead::Code => Self { chunk_size: 1000, overlap: 200 },
+            EmbeddingHead::Summary => Self { chunk_size: 2000, overlap: 0 },
+            EmbeddingHead::Documents => Self { chunk_size: 1000, overlap: 200 },
+        }
+    }
+}
+
 pub struct EmbeddingConfig {
     pub model: String,
     pub dimensions: usize,
@@ -23,7 +39,6 @@ impl Default for EmbeddingConfig {
     }
 }
 
-/// Response from the embeddings API
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingResponse {
     pub data: Vec<EmbeddingData>,
@@ -43,9 +58,7 @@ pub struct EmbeddingUsage {
     pub total_tokens: usize,
 }
 
-/// Helper functions for working with embeddings
 pub mod utils {
-    /// Calculate cosine similarity between two embeddings
     pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return 0.0;
@@ -62,7 +75,6 @@ pub mod utils {
         dot_product / (norm_a * norm_b)
     }
 
-    /// Normalize an embedding vector
     pub fn normalize_embedding(embedding: &mut [f32]) {
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 0.0 {
@@ -72,7 +84,6 @@ pub mod utils {
         }
     }
 
-    /// Calculate euclidean distance between two embeddings
     pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() {
             return f32::MAX;
@@ -86,17 +97,15 @@ pub mod utils {
     }
 }
 
-/// Represents the different embedding heads for multi-dimensional memory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmbeddingHead {
-    Semantic,   // General conversation embeddings
-    Code,       // Programming-specific embeddings
-    Summary,    // Rolling summary embeddings
-    Documents,  // Project documents (PDFs, markdown, etc.)
+    Semantic,
+    Code,
+    Summary,
+    Documents,
 }
 
 impl EmbeddingHead {
-    /// Returns the string representation of the embedding head
     pub fn as_str(&self) -> &'static str {
         match self {
             EmbeddingHead::Semantic => "semantic",
@@ -106,7 +115,6 @@ impl EmbeddingHead {
         }
     }
     
-    /// Get all available heads
     pub fn all() -> Vec<EmbeddingHead> {
         vec![
             EmbeddingHead::Semantic,
@@ -116,23 +124,18 @@ impl EmbeddingHead {
         ]
     }
     
-    /// Check if this head should be used for a given content type
     pub fn should_route(&self, content: &str, role: &str) -> bool {
         match self {
             EmbeddingHead::Semantic => {
-                // Always route normal conversation here
                 role == "user" || role == "assistant"
             },
             EmbeddingHead::Code => {
-                // Route if content contains code indicators
                 contains_code_indicators(content)
             },
             EmbeddingHead::Summary => {
-                // Only for system-generated summaries
                 role == "system" && content.contains("Summary:")
             },
             EmbeddingHead::Documents => {
-                // For uploaded documents
                 role == "document"
             },
         }
@@ -159,30 +162,21 @@ impl FromStr for EmbeddingHead {
     }
 }
 
-/// A utility for chunking text according to the strategy of a specific embedding head
 pub struct TextChunker {
     tokenizer: Tokenizer,
 }
 
 impl TextChunker {
-    /// Creates a new TextChunker by loading a tokenizer model
     pub fn new() -> Result<Self> {
         let tokenizer = Tokenizer::from_bytes(include_bytes!("../../tokenizer.json"))
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(Self { tokenizer })
     }
 
-    /// Chunks the given text based on the rules for the specified embedding head
     pub fn chunk_text(&self, text: &str, head: &EmbeddingHead) -> Result<Vec<String>> {
-        let (chunk_size, chunk_overlap) = match head {
-            EmbeddingHead::Semantic => (CONFIG.embed_semantic_chunk, CONFIG.embed_semantic_overlap),
-            EmbeddingHead::Code => (CONFIG.embed_code_chunk, CONFIG.embed_code_overlap),
-            EmbeddingHead::Summary => (CONFIG.embed_summary_chunk, CONFIG.embed_summary_overlap),
-            EmbeddingHead::Documents => (
-                CONFIG.embed_document_chunk,  // No longer Optional
-                CONFIG.embed_document_overlap  // No longer Optional
-            ),
-        };
+        let config = ChunkConfig::for_head(head);
+        let chunk_size = config.chunk_size;
+        let chunk_overlap = config.overlap;
 
         let encoding = self
             .tokenizer
@@ -221,28 +215,26 @@ impl TextChunker {
     }
 }
 
-/// Helper function to check if content contains code indicators
 fn contains_code_indicators(content: &str) -> bool {
-    // Common code patterns
     let code_patterns = [
-        "```",           // Markdown code blocks
-        "fn ",           // Rust functions
-        "def ",          // Python functions
-        "function ",     // JavaScript
-        "class ",        // Classes
-        "import ",       // Imports
-        "const ",        // Constants
-        "let ",          // Variables
-        "var ",          // Variables
-        "return ",       // Returns
-        "if (",          // Conditionals
-        "for (",         // Loops
-        "while (",       // Loops
-        "SELECT ",       // SQL
-        "CREATE TABLE",  // SQL
-        "pub struct",    // Rust
-        "async fn",      // Rust async
-        "#include",      // C/C++
+        "```",           
+        "fn ",           
+        "def ",          
+        "function ",     
+        "class ",        
+        "import ",       
+        "const ",        
+        "let ",          
+        "var ",          
+        "return ",       
+        "if (",          
+        "for (",         
+        "while (",       
+        "SELECT ",       
+        "CREATE TABLE",  
+        "pub struct",    
+        "async fn",      
+        "#include",      
     ];
     
     let lower_content = content.to_lowercase();

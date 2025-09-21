@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - no bullshit fallbacks edition
+// Central configuration for Mira backend - structured response edition
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -26,8 +26,7 @@ pub struct MiraConfig {
     pub enable_json_validation: bool,
     pub max_json_repair_attempts: usize,
     
-    // Structured Response Monitoring (NEW)
-    pub structured_response_timeout: u64,
+    // Response Monitoring
     pub token_warning_threshold: usize,
     pub input_token_warning: usize,
 
@@ -59,7 +58,6 @@ pub struct MiraConfig {
     
     // Summarization Configuration
     pub enable_summarization: bool,
-    pub summary_chunk_size: usize,
     pub summary_token_limit: usize,
     pub summary_output_tokens: usize,
     pub summarize_after_messages: usize,
@@ -104,16 +102,6 @@ pub struct MiraConfig {
     pub rolling_summary_max_age_hours: u32,
     pub rolling_summary_min_gap: usize,
 
-    // Chunking parameters for embedding heads (including Documents)
-    pub embed_semantic_chunk: usize,
-    pub embed_semantic_overlap: usize,
-    pub embed_code_chunk: usize,
-    pub embed_code_overlap: usize,
-    pub embed_summary_chunk: usize,
-    pub embed_summary_overlap: usize,
-    pub embed_document_chunk: usize,
-    pub embed_document_overlap: usize,
-
     // Memory Decay Configuration
     pub decay_recent_half_life_days: f32,
     pub decay_gentle_factor: f32,
@@ -126,11 +114,6 @@ pub struct MiraConfig {
     pub recall_semantic: usize,
     pub recall_k_per_head: usize,
     pub recent_message_limit: usize,
-    
-    // Analysis & Batching
-    pub analysis_batch_size: usize,
-    pub analysis_max_wait_ms: u64,
-    pub batch_size: usize,
     
     // Response Configuration
     pub max_response_tokens: usize,
@@ -151,11 +134,6 @@ pub struct MiraConfig {
     pub recent_cache_ttl_seconds: u64,
     pub recent_cache_max_per_session: usize,
     pub recent_cache_warmup: bool,
-
-    // WebSocket Configuration
-    pub ws_heartbeat_interval: u64,
-    pub ws_connection_timeout: u64,
-    pub ws_receive_timeout: u64,
 }
 
 /// Parse an environment variable or die trying
@@ -203,8 +181,7 @@ impl MiraConfig {
             enable_json_validation: require_env_parsed("ENABLE_JSON_VALIDATION"),
             max_json_repair_attempts: require_env_parsed("MAX_JSON_REPAIR_ATTEMPTS"),
             
-            // Structured Response Monitoring (NEW)
-            structured_response_timeout: require_env_parsed("STRUCTURED_RESPONSE_TIMEOUT"),
+            // Response Monitoring
             token_warning_threshold: require_env_parsed("TOKEN_WARNING_THRESHOLD"),
             input_token_warning: require_env_parsed("INPUT_TOKEN_WARNING"),
             
@@ -234,7 +211,6 @@ impl MiraConfig {
 
             // Summarization
             enable_summarization: require_env_parsed("MIRA_ENABLE_SUMMARIZATION"),
-            summary_chunk_size: require_env_parsed("MIRA_SUMMARY_CHUNK_SIZE"),
             summary_token_limit: require_env_parsed("MIRA_SUMMARY_TOKEN_LIMIT"),
             summary_output_tokens: require_env_parsed("MIRA_SUMMARY_OUTPUT_TOKENS"),
             summarize_after_messages: require_env_parsed("MIRA_SUMMARIZE_AFTER_MESSAGES"),
@@ -279,16 +255,6 @@ impl MiraConfig {
             rolling_summary_max_age_hours: require_env_parsed("MIRA_ROLLING_SUMMARY_MAX_AGE_HOURS"),
             rolling_summary_min_gap: require_env_parsed("MIRA_ROLLING_SUMMARY_MIN_GAP"),
 
-            // Chunking (including Documents head)
-            embed_semantic_chunk: require_env_parsed("MIRA_EMBED_SEMANTIC_CHUNK"),
-            embed_semantic_overlap: require_env_parsed("MIRA_EMBED_SEMANTIC_OVERLAP"),
-            embed_code_chunk: require_env_parsed("MIRA_EMBED_CODE_CHUNK"),
-            embed_code_overlap: require_env_parsed("MIRA_EMBED_CODE_OVERLAP"),
-            embed_summary_chunk: require_env_parsed("MIRA_EMBED_SUMMARY_CHUNK"),
-            embed_summary_overlap: require_env_parsed("MIRA_EMBED_SUMMARY_OVERLAP"),
-            embed_document_chunk: require_env_parsed("MIRA_EMBED_DOCUMENT_CHUNK"),
-            embed_document_overlap: require_env_parsed("MIRA_EMBED_DOCUMENT_OVERLAP"),
-
             // Memory Decay
             decay_recent_half_life_days: require_env_parsed("MIRA_DECAY_RECENT_HALF_LIFE_DAYS"),
             decay_gentle_factor: require_env_parsed("MIRA_DECAY_GENTLE_FACTOR"),
@@ -301,11 +267,6 @@ impl MiraConfig {
             recall_semantic: require_env_parsed("MIRA_RECALL_SEMANTIC"),
             recall_k_per_head: require_env_parsed("MIRA_RECALL_K_PER_HEAD"),
             recent_message_limit: require_env_parsed("MIRA_RECENT_MESSAGE_LIMIT"),
-            
-            // Analysis & Batching
-            analysis_batch_size: require_env_parsed("MIRA_ANALYSIS_BATCH_SIZE"),
-            analysis_max_wait_ms: require_env_parsed("MIRA_ANALYSIS_MAX_WAIT_MS"),
-            batch_size: require_env_parsed("MIRA_BATCH_SIZE"),
             
             // Response Configuration
             max_response_tokens: require_env_parsed("MIRA_MAX_RESPONSE_TOKENS"),
@@ -326,11 +287,6 @@ impl MiraConfig {
             recent_cache_ttl_seconds: require_env_parsed("MIRA_RECENT_CACHE_TTL"),
             recent_cache_max_per_session: require_env_parsed("MIRA_RECENT_CACHE_MAX_PER_SESSION"),
             recent_cache_warmup: require_env_parsed("MIRA_RECENT_CACHE_WARMUP"),
-
-            // WebSocket Configuration
-            ws_heartbeat_interval: require_env_parsed("MIRA_WS_HEARTBEAT_INTERVAL"),
-            ws_connection_timeout: require_env_parsed("MIRA_WS_CONNECTION_TIMEOUT"),
-            ws_receive_timeout: require_env_parsed("MIRA_WS_RECEIVE_TIMEOUT"),
         }
     }
 
@@ -375,28 +331,6 @@ impl MiraConfig {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect()
-    }
-
-    /// Get chunk size for a specific embedding head
-    pub fn get_chunk_size_for_head(&self, head: &str) -> usize {
-        match head {
-            "semantic" => self.embed_semantic_chunk,
-            "code" => self.embed_code_chunk,
-            "summary" => self.embed_summary_chunk,
-            "documents" => self.embed_document_chunk,
-            _ => self.embed_semantic_chunk,  // fallback to semantic
-        }
-    }
-
-    /// Get chunk overlap for a specific embedding head
-    pub fn get_chunk_overlap_for_head(&self, head: &str) -> usize {
-        match head {
-            "semantic" => self.embed_semantic_overlap,
-            "code" => self.embed_code_overlap,
-            "summary" => self.embed_summary_overlap,
-            "documents" => self.embed_document_overlap,
-            _ => self.embed_semantic_overlap,  // fallback to semantic
-        }
     }
 
     /// Get list of enabled tools
