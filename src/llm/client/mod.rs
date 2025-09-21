@@ -63,22 +63,14 @@ impl OpenAIClient {
         &self.embedding_client
     }
 
-    // This is being called by the summarization strategies - just do a simple completion
+    // FIXED: This is being called by the summarization strategies - use proper Responses API format
     pub async fn summarize_conversation(&self, prompt: &str, max_tokens: usize) -> Result<String> {
-        debug!("Summarization request for prompt length: {} tokens", prompt.len());
+        debug!("Summarization request for prompt length: {} characters", prompt.len());
         
-        // Build a simple completion request  
+        // FIXED: Use Responses API format - single input string, not array
         let request_body = serde_json::json!({
             "model": self.config.model,
-            "input": [{
-                "role": "user",
-                "content": [{
-                    "type": "input_text",
-                    "text": prompt
-                }]
-            }],
-            "max_output_tokens": max_tokens,
-            "stream": false,
+            "input": prompt,  // Simple string, not complex array
             "text": {
                 "verbosity": "medium"
             }
@@ -86,15 +78,21 @@ impl OpenAIClient {
         
         let response = self.post_response_with_retry(request_body).await?;
         
-        // Extract the text content from the response
-        let text = response
+        // FIXED: Extract text from GPT-5 Responses API format
+        let text = if let Some(output_text) = response.get("output_text").and_then(|v| v.as_str()) {
+            output_text.to_string()
+        } else if let Some(content) = response
             .get("output")
             .and_then(|output| output.as_array())
             .and_then(|arr| arr.first())
             .and_then(|item| item.get("text"))
             .and_then(|text| text.as_str())
-            .unwrap_or("Summary generation failed")
-            .to_string();
+        {
+            content.to_string()
+        } else {
+            warn!("Could not extract text from response, using fallback");
+            "Summary generation failed".to_string()
+        };
         
         Ok(text)
     }

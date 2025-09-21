@@ -1,4 +1,5 @@
 // src/llm/structured/processor.rs
+// FIXED: Using proper GPT-5 Responses API format
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -22,42 +23,39 @@ pub fn build_structured_request(
     system_prompt: String,
     context_messages: Vec<Value>,
 ) -> Result<Value> {
-    let mut input = vec![];
+    // FIXED: Combine everything into a single input string (Responses API format)
+    let mut full_input = system_prompt;
     
-    input.push(json!({
-        "role": "system",
-        "content": [{
-            "type": "input_text",
-            "text": system_prompt
-        }]
-    }));
-    
+    // Add context messages as plain text
     for msg in context_messages {
-        input.push(msg);
+        if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+            if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                full_input.push_str(&format!("\n\n{}: {}", role, content));
+            } else if let Some(content_array) = msg.get("content").and_then(|c| c.as_array()) {
+                // Handle nested content format from existing context
+                for content_item in content_array {
+                    if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
+                        full_input.push_str(&format!("\n\n{}: {}", role, text));
+                    }
+                }
+            }
+        }
     }
     
-    input.push(json!({
-        "role": "user",
-        "content": [{
-            "type": "input_text",
-            "text": user_message
-        }]
-    }));
+    // Add user message at the end
+    full_input.push_str(&format!("\n\nUser: {}", user_message));
     
+    // FIXED: Use Responses API format - single input string, not array
     Ok(json!({
         "model": CONFIG.gpt5_model,
-        "input": input,
-        "stream": false,
-        "max_output_tokens": CONFIG.max_json_output_tokens,
+        "input": full_input,  // Single string, not array
         "text": {
             "verbosity": CONFIG.verbosity,
             "format": {
                 "type": "json_schema",
-                "json_schema": {
-                    "name": "mira_structured_response",
-                    "strict": true,
-                    "schema": get_response_schema()
-                }
+                "name": "mira_structured_response",
+                "schema": get_response_schema(),  // FIXED: Direct schema, not nested
+                "strict": true
             }
         },
         "reasoning": {
@@ -108,42 +106,42 @@ fn get_response_schema() -> Value {
                         "description": "Response language"
                     },
                     "mood": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": "Optional mood indicator"
                     },
                     "intensity": {
-                        "type": "number",
+                        "type": ["number", "null"],
                         "minimum": 0.0,
                         "maximum": 1.0,
                         "description": "Optional intensity score"
                     },
                     "intent": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": "User intent classification"
                     },
                     "summary": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": "Brief summary of response"
                     },
                     "relationship_impact": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": "Impact on user relationship"
                     },
                     "programming_lang": {
-                        "type": "string",
-                        "enum": ["rust", "typescript", "javascript", "python", "go", "java"],
+                        "type": ["string", "null"],
+                        "enum": ["rust", "typescript", "javascript", "python", "go", "java", null],
                         "description": "Programming language if contains_code is true"
                     }
                 },
-                "required": ["salience", "topics", "contains_code", "routed_to_heads", "language"],
+                "required": ["salience", "topics", "contains_code", "routed_to_heads", "language", "mood", "intensity", "intent", "summary", "relationship_impact", "programming_lang"],
                 "additionalProperties": false
             },
             "reasoning": {
-                "type": "string",
+                "type": ["string", "null"],
                 "description": "Optional reasoning trace"
             }
         },
-        "required": ["output", "analysis"],
+        "required": ["output", "analysis", "reasoning"],
         "additionalProperties": false
     })
 }
@@ -173,18 +171,77 @@ pub fn extract_metadata(raw_response: &Value, latency_ms: i64) -> Result<GPT5Met
 }
 
 pub fn extract_structured_content(raw_response: &Value) -> Result<StructuredGPT5Response> {
-    let content = raw_response
-        .get("output")
-        .and_then(|output| output.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|item| item.get("text"))
-        .ok_or_else(|| anyhow!("Could not find structured content in response"))?;
+    // FIXED: GPT-5 Responses API returns array format
+    // The JSON is in output[1].content[0].text as a string
     
-    let structured: StructuredGPT5Response = if content.is_string() {
-        serde_json::from_str(content.as_str().unwrap())?
-    } else {
-        serde_json::from_value(content.clone())?
-    };
+    // Method 1: Handle GPT-5 Responses API array format
+    if let Some(output_array) = raw_response.get("output").and_then(|v| v.as_array()) {
+        // Look for the message with type "message"
+        for item in output_array {
+            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                    for content_item in content_array {
+                        if content_item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                            if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
+                                // Parse the JSON string
+                                if let Ok(structured) = serde_json::from_str::<StructuredGPT5Response>(text) {
+                                    return Ok(structured);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
-    Ok(structured)
+    // Method 2: Check if response has direct output field (fallback)
+    if let Some(output) = raw_response.get("output") {
+        // Try parsing output directly as JSON
+        if let Ok(structured) = serde_json::from_value::<StructuredGPT5Response>(output.clone()) {
+            return Ok(structured);
+        }
+        
+        // Try parsing output as string containing JSON
+        if let Some(output_str) = output.as_str() {
+            if let Ok(structured) = serde_json::from_str::<StructuredGPT5Response>(output_str) {
+                return Ok(structured);
+            }
+        }
+    }
+    
+    // Method 3: Check if response has text field 
+    if let Some(text_field) = raw_response.get("text") {
+        if let Some(text_str) = text_field.as_str() {
+            if let Ok(structured) = serde_json::from_str::<StructuredGPT5Response>(text_str) {
+                return Ok(structured);
+            }
+        }
+    }
+    
+    // Method 4: Check if response has output_text field
+    if let Some(output_text) = raw_response.get("output_text").and_then(|v| v.as_str()) {
+        if let Ok(structured) = serde_json::from_str::<StructuredGPT5Response>(output_text) {
+            return Ok(structured);
+        }
+    }
+    
+    // Method 5: Check if the entire response is the JSON structure
+    if let Ok(structured) = serde_json::from_value::<StructuredGPT5Response>(raw_response.clone()) {
+        return Ok(structured);
+    }
+    
+    // Debug: Let's see what's actually in the output field
+    if let Some(output) = raw_response.get("output") {
+        return Err(anyhow!(
+            "Could not parse output field. Output type: {}, Output content: {}",
+            if output.is_string() { "string" } else if output.is_object() { "object" } else if output.is_array() { "array" } else { "other" },
+            serde_json::to_string_pretty(output).unwrap_or_else(|_| "unparseable".to_string())
+        ));
+    }
+    
+    Err(anyhow!(
+        "Could not find structured content in response. Response keys: {:?}", 
+        raw_response.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    ))
 }

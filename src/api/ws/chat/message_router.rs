@@ -112,15 +112,21 @@ impl MessageRouter {
             "analysis": {
                 "salience": complete_response.structured.analysis.salience,
                 "topics": complete_response.structured.analysis.topics,
+                "contains_code": complete_response.structured.analysis.contains_code,
+                "routed_to_heads": complete_response.structured.analysis.routed_to_heads,
+                "language": complete_response.structured.analysis.language,
+                // Optional fields (can be null)
                 "mood": complete_response.structured.analysis.mood,
                 "intensity": complete_response.structured.analysis.intensity,
-                "contains_code": complete_response.structured.analysis.contains_code,
+                "intent": complete_response.structured.analysis.intent,
+                "summary": complete_response.structured.analysis.summary,
+                "relationship_impact": complete_response.structured.analysis.relationship_impact,
                 "programming_lang": complete_response.structured.analysis.programming_lang
             },
             "metadata": {
                 "response_id": complete_response.metadata.response_id,
                 "total_tokens": complete_response.metadata.total_tokens,
-                "latency_ms": complete_response.metadata.latency_ms
+                "latency_ms": complete_response.metadata.latency_ms as i64
             }
         });
 
