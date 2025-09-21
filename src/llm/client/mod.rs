@@ -12,12 +12,10 @@ use crate::config::CONFIG;
 
 pub mod config;
 pub mod responses;
-pub mod streaming;
 pub mod embedding;
 
 pub use config::ClientConfig;
 pub use responses::{ResponseOutput, extract_text_from_responses};
-pub use streaming::ResponseStream;
 pub use embedding::EmbeddingClient;
 
 use governor::{Quota, RateLimiter as GovRateLimiter, Jitter};
@@ -103,6 +101,72 @@ impl OpenAIClient {
 
     pub fn max_output_tokens(&self) -> usize {
         self.config.max_output_tokens()
+    }
+
+    // NEW: Structured response method for Phase 3
+    pub async fn get_structured_response(
+        &self,
+        user_message: &str,
+        system_prompt: String,
+        context_messages: Vec<Value>,
+        session_id: &str,
+    ) -> Result<crate::llm::structured::CompleteResponse> {
+        // Import processor functions
+        use crate::llm::structured::{
+            CompleteResponse, 
+            build_structured_request, 
+            extract_metadata, 
+            extract_structured_content,
+            validate_response,
+            estimate_input_tokens
+        };
+        use std::time::Instant;
+
+        info!("Requesting structured response for session: {}", session_id);
+        
+        // Check input token count for monitoring
+        let estimated_input_tokens = estimate_input_tokens(&system_prompt, &context_messages, user_message);
+        if estimated_input_tokens > 15000 {
+            info!("Large context: ~{} input tokens", estimated_input_tokens);
+        }
+        
+        // Start timing
+        let start = Instant::now();
+        
+        // Build request with strict JSON schema
+        let request_body = build_structured_request(
+            user_message,
+            system_prompt,
+            context_messages,
+        )?;
+        
+        // Make request - NO STREAMING! Single atomic response
+        debug!("Sending non-streaming request to GPT-5 with {} output token limit", 
+               CONFIG.max_json_output_tokens);
+        let raw_response = self.post_response_with_retry(request_body).await?;
+        
+        // Calculate latency
+        let latency_ms = start.elapsed().as_millis() as i64;
+        
+        // Extract all metadata from raw response
+        let metadata = extract_metadata(&raw_response, latency_ms)?;
+        
+        // Extract structured content
+        let structured = extract_structured_content(&raw_response)?;
+        
+        // Validate everything before we save it
+        validate_response(&structured)?;
+        
+        info!("Complete structured response received - salience: {}, topics: {}, tokens: {:?}",
+              structured.analysis.salience,
+              structured.analysis.topics.len(),
+              metadata.total_tokens);
+        
+        Ok(CompleteResponse {
+            structured,
+            metadata,
+            raw_response,
+        })
     }
 
     pub async fn generate_response(
@@ -254,11 +318,6 @@ impl OpenAIClient {
         self.post_response_with_retry(body).await
     }
 
-    pub async fn post_response_stream(&self, body: Value) -> Result<ResponseStream> {
-        self.rate_limiter.acquire().await?;
-        streaming::create_sse_stream(&self.client, &self.config, body).await
-    }
-
     pub fn request(&self, method: reqwest::Method, endpoint: &str) -> reqwest::RequestBuilder {
         let url = if endpoint.starts_with("/v1/") {
             format!("{}{}", self.config.base_url(), endpoint)
@@ -318,4 +377,16 @@ impl OpenAIClient {
     pub fn embedding_client(&self) -> &EmbeddingClient {
         &self.embedding_client
     }
+}
+
+// Helper function for token estimation - moved here from processor
+fn estimate_input_tokens(system_prompt: &str, context_messages: &[Value], user_message: &str) -> usize {
+    // Rough estimate: 1 token ≈ 4 characters
+    let system_tokens = system_prompt.len() / 4;
+    let context_tokens: usize = context_messages.iter()
+        .map(|m| m.to_string().len() / 4)
+        .sum();
+    let user_tokens = user_message.len() / 4;
+    
+    system_tokens + context_tokens + user_tokens
 }

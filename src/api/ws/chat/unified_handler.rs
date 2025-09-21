@@ -1,22 +1,40 @@
 // src/api/ws/chat/unified_handler.rs
+// Updated to use structured responses instead of streaming
 
 use std::sync::Arc;
 use anyhow::Result;
 use futures::Stream;
-use serde_json::{json, Value};
+use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::config::CONFIG;
 use crate::llm::responses::thread::ThreadManager;
+use crate::llm::structured::CompleteResponse; // NEW: Import structured response types
 use crate::memory::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
 use crate::tools::executor::ToolExecutor;
 
-// Re-export ChatEvent from streaming module
-pub use crate::llm::client::streaming::ChatEvent;
+#[derive(Debug, Clone)]
+pub enum ChatEvent {
+    Content { text: String },
+    ToolExecution { 
+        tool_name: String, 
+        status: String 
+    },
+    ToolResult {
+        tool_name: String,
+        result: serde_json::Value,
+    },
+    Complete {
+        // Complete doesn't need mood/salience/tags - those are internal metadata
+        // Frontend gets the full response content in Content events
+    },
+    Done,
+    Error { message: String },
+}
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -78,7 +96,7 @@ impl UnifiedChatHandler {
             tools.as_ref().map_or(0, |t| t.len())
         );
         
-        // Build system prompt
+        // Build system prompt - FORCE JSON STRUCTURE
         let persona = self.select_persona(&request.metadata);
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
@@ -86,17 +104,9 @@ impl UnifiedChatHandler {
             tools.as_deref(),
             request.metadata.as_ref(),
             request.project_id.as_deref(),
-            request.require_json,
+            true,  // CRITICAL: require_json for structured responses
         );
         debug!("System prompt built: {} chars", system_prompt.len());
-        
-        // Build request body for GPT-5
-        let request_body = self.build_gpt5_request(
-            request.content.clone(),
-            system_prompt,
-            tools,
-            request.session_id.clone(),
-        ).await?;
         
         // Save user message to memory
         if let Err(e) = self.app_state.memory_service.save_user_message(
@@ -107,25 +117,91 @@ impl UnifiedChatHandler {
             warn!("Failed to save user message to memory: {}", e);
         }
         
-        // Create the stream
-        info!("Creating response stream for session: {}", request.session_id);
-        let stream = self.app_state.llm_client
-            .post_response_stream(request_body)
+        // NEW: Get STRUCTURED response instead of streaming
+        info!("Getting structured response for session: {}", request.session_id);
+        let complete_response = self.app_state.llm_client
+            .get_structured_response(
+                &request.content,
+                system_prompt,
+                self.build_context_messages(&context).await?,
+                &request.session_id,
+            )
             .await?;
-        info!("Response stream created successfully");
         
-        // Process through the streaming module
-        info!("Processing stream events...");
-        let event_stream = crate::llm::client::streaming::process_gpt5_stream(
-            stream,
-            use_tools,
-            request.session_id,
-            self.app_state.clone(),
-            request.project_id,
-        );
+        // NEW: Save to database atomically (all 3 tables)
+        let message_id = self.app_state.sqlite_store
+            .save_structured_response(
+                &request.session_id,
+                &complete_response,
+                None,  // parent_id
+            )
+            .await?;
         
-        Ok(Box::pin(event_stream))
+        info!("Saved response with id={}, tokens={:?}", 
+              message_id, complete_response.metadata.total_tokens);
+        
+        // NEW: Create event stream from complete response
+        let events = self.create_event_stream(complete_response);
+        Ok(events)
     }
+    
+    // NEW: Convert complete response to event stream for compatibility
+    fn create_event_stream(
+        &self,
+        response: CompleteResponse,
+    ) -> impl Stream<Item = Result<ChatEvent>> {
+        // Convert complete response to stream of events
+        let mut events = vec![];
+        
+        // Send content
+        events.push(Ok(ChatEvent::Content {
+            text: response.structured.output.clone()
+        }));
+        
+        // Send metadata
+        events.push(Ok(ChatEvent::Complete {
+            mood: response.structured.analysis.mood.clone(),
+            salience: Some(response.structured.analysis.salience),
+            tags: Some(response.structured.analysis.topics.clone()),
+        }));
+        
+        // Send done
+        events.push(Ok(ChatEvent::Done));
+        
+        futures::stream::iter(events)
+    }
+    
+    
+    // Helper method to build context messages for GPT-5
+    async fn build_context_messages(&self, context: &RecallContext) -> Result<Vec<serde_json::Value>> {
+        let mut messages = Vec::new();
+        
+        // Add recent messages
+        for entry in &context.recent {
+            messages.push(json!({
+                "role": entry.role,
+                "content": [{
+                    "type": "input_text",
+                    "text": entry.content
+                }]
+            }));
+        }
+        
+        // Add semantic matches
+        for entry in &context.semantic {
+            messages.push(json!({
+                "role": entry.role,
+                "content": [{
+                    "type": "input_text",
+                    "text": entry.content
+                }]
+            }));
+        }
+        
+        Ok(messages)
+    }
+    
+    // EXISTING METHODS PRESERVED
     
     async fn build_context(&self, session_id: &str, content: &str) -> Result<RecallContext> {
         self.app_state.memory_service.parallel_recall_context(
@@ -140,89 +216,6 @@ impl UnifiedChatHandler {
         PersonaOverlay::Default
     }
     
-    async fn build_gpt5_request(
-        &self,
-        user_content: String,
-        system_prompt: String,
-        tools: Option<Vec<crate::llm::responses::types::Tool>>,
-        session_id: String,
-    ) -> Result<Value> {
-        // Build the input messages
-        let input = vec![
-            json!({
-                "role": "system",
-                "content": [{
-                    "type": "input_text",
-                    "text": system_prompt
-                }]
-            }),
-            json!({
-                "role": "user",
-                "content": [{
-                    "type": "input_text",
-                    "text": user_content
-                }]
-            })
-        ];
-        
-        // Build the request body
-        let mut request_body = json!({
-            "model": CONFIG.gpt5_model,
-            "input": input,
-            "stream": true,
-            "instructions": "Respond helpfully using available tools when appropriate.",
-            "max_output_tokens": CONFIG.max_output_tokens,
-            "text": {
-                "verbosity": CONFIG.verbosity,
-            	"format": {
-	            "type": "text"	
-	        }
-	    },
-            "reasoning": {
-                "effort": CONFIG.reasoning_effort
-            }
-        });
-        
-        // Format tools for GPT-5 if provided
-        if let Some(_tool_list) = tools {
-            let mut valid_tools = Vec::new();
-            
-            // Only add web_search if it's actually enabled
-            // GPT-5 wants just {"type": "web_search"} - no nested object
-            if CONFIG.enable_web_search {
-                valid_tools.push(json!({
-                    "type": "web_search"
-                }));
-                info!("Added web_search tool to request");
-            }
-            
-            // Add other built-in tools that don't require special setup
-            // Note: code_interpreter requires container management, so we skip it
-            
-            // Only set tools if we have at least one valid tool
-            if !valid_tools.is_empty() {
-                request_body["tools"] = json!(valid_tools);
-                request_body["tool_choice"] = json!("auto");
-                info!("Sending {} tools with request", valid_tools.len());
-            }
-        }
-        
-        // Add previous response ID for thread continuity
-        let previous_response_id = self.thread_manager
-            .get_previous_response_id(&session_id)
-            .await;
-        
-        if let Some(prev_id) = previous_response_id {
-            request_body["previous_response_id"] = json!(prev_id);
-            debug!("Using previous_response_id: {}", prev_id);
-        }
-        
-        Ok(request_body)
-    }
-}
-
-impl Clone for ToolExecutor {
-    fn clone(&self) -> Self {
-        Self::new()
-    }
+    // REMOVED: build_gpt5_request method (no longer needed with structured responses)
+    // REMOVED: streaming-related methods
 }

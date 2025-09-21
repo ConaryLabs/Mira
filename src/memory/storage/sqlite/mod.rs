@@ -1,6 +1,13 @@
+// src/memory/storage/sqlite/mod.rs
+
 pub mod store;
 pub mod core;
-// pub mod code_intelligence;  // Future: AST and code analysis storage
-// pub mod projects;           // Future: Git and project-specific operations
+pub mod structured_ops;  // NEW: Atomic structured response operations
 
 pub use store::SqliteMemoryStore;
+pub use structured_ops::{
+    save_structured_response, 
+    load_structured_response, 
+    get_structured_response_stats,
+    StructuredResponseStats
+};

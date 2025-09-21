@@ -1,5 +1,9 @@
+// src/memory/storage/sqlite/store.rs
+// Clean SqliteMemoryStore with structured response support
+
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::core::types::MemoryEntry;
+use crate::llm::structured::CompleteResponse;  // NEW: Import structured types
 use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -42,7 +46,32 @@ impl SqliteMemoryStore {
     }
 
     // =====================================
-    // PUBLIC API - DELEGATES TO MODULES
+    // NEW: STRUCTURED RESPONSE OPERATIONS
+    // =====================================
+
+    /// Save complete structured response atomically to all 3 tables
+    /// This is the new way to save assistant responses with full metadata
+    pub async fn save_structured_response(
+        &self,
+        session_id: &str,
+        response: &CompleteResponse,
+        parent_id: Option<i64>,
+    ) -> Result<i64> {
+        super::structured_ops::save_structured_response(&self.pool, session_id, response, parent_id).await
+    }
+
+    /// Load complete structured response by message ID
+    pub async fn load_structured_response(&self, message_id: i64) -> Result<Option<CompleteResponse>> {
+        super::structured_ops::load_structured_response(&self.pool, message_id).await
+    }
+
+    /// Get statistics about structured responses
+    pub async fn get_structured_response_stats(&self) -> Result<super::structured_ops::StructuredResponseStats> {
+        super::structured_ops::get_structured_response_stats(&self.pool).await
+    }
+
+    // =====================================
+    // EXISTING API - DELEGATES TO MODULES
     // =====================================
 
     /// Store message analysis data  

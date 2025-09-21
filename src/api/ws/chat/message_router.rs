@@ -1,15 +1,14 @@
 // src/api/ws/chat/message_router.rs
 // Routes incoming WebSocket messages to appropriate handlers.
-// Uses UnifiedChatHandler for all chat messages.
+// Updated for structured responses - no more streaming!
 
 use std::sync::Arc;
 use std::net::SocketAddr;
 
-use futures::StreamExt;
 use tracing::{debug, error, info};
 
 use super::connection::WebSocketConnection;
-use super::unified_handler::{UnifiedChatHandler, ChatRequest, ChatEvent};
+use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
 use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence};
 use crate::state::AppState;
@@ -76,17 +75,16 @@ impl MessageRouter {
         }
     }
 
-    /// Routes all chat messages through the unified handler
+    /// Routes all chat messages through the unified handler - NEW: Direct response handling
     async fn handle_chat_message(
         &self,
         content: String,
         project_id: Option<String>,
         metadata: Option<MessageMetadata>,
     ) -> Result<(), anyhow::Error> {
-        // Preserve exact logging from original
         info!("Chat message received: {} chars", content.len());
         
-        // Preserve processing flag behavior
+        // Set processing flag
         self.connection.set_processing(true).await;
 
         // Always use "peter-eternal" session
@@ -108,9 +106,12 @@ impl MessageRouter {
             require_json: false,
         };
         
-        // Process through unified handler
+        // NEW: Get complete response instead of stream
         let result = match self.unified_handler.handle_message(request).await {
-            Ok(stream) => self.stream_to_client(stream).await,
+            Ok(complete_response) => {
+                // Send the complete response as WebSocket events
+                self.send_complete_response_to_client(complete_response).await
+            }
             Err(e) => Err(e),
         };
 
@@ -128,84 +129,25 @@ impl MessageRouter {
         Ok(())
     }
     
-    /// Stream chat events to the WebSocket client
-    async fn stream_to_client(
+    /// NEW: Send complete response to client in expected WebSocket format
+    async fn send_complete_response_to_client(
         &self,
-        mut stream: impl futures::Stream<Item = Result<ChatEvent, anyhow::Error>> + Unpin,
+        complete_response: crate::llm::structured::CompleteResponse,
     ) -> Result<(), anyhow::Error> {
-        let mut has_tools = false;
-        let mut complete_sent = false;
+        // Send the response content as a stream chunk (for frontend compatibility)
+        self.connection.send_message(WsServerMessage::StreamChunk { 
+            text: complete_response.structured.output.clone() 
+        }).await?;
         
-        while let Some(event_result) = stream.next().await {
-            match event_result {
-                Ok(event) => {
-                    match event {
-                        ChatEvent::Content { text } => {
-                            // Stream text chunks
-                            self.connection.send_message(WsServerMessage::StreamChunk { text }).await?;
-                        }
-                        ChatEvent::ToolExecution { tool_name, status } => {
-                            // Mark that we're using tools
-                            has_tools = true;
-                            debug!("Tool execution: {} - {}", tool_name, status);
-                            
-                            // Could send status if desired
-                            let detail = format!("Executing tool: {}", tool_name);
-                            self.connection.send_status(&detail, Some(status)).await?;
-                        }
-                        ChatEvent::ToolResult { tool_name, result: _ } => {
-                            debug!("Tool {} returned result", tool_name);
-                            // Tool results are typically incorporated into the response
-                        }
-                        ChatEvent::Complete { mood, salience, tags } => {
-                            // Send complete message
-                            complete_sent = true;
-                            self.connection.send_message(WsServerMessage::Complete {
-                                mood,
-                                salience,
-                                tags,
-                            }).await?;
-                        }
-                        ChatEvent::Done => {
-                            // Send appropriate completion sequence
-                            if !complete_sent {
-                                // Send StreamEnd first
-                                self.connection.send_message(WsServerMessage::StreamEnd).await?;
-                                
-                                // Then Complete for simple path
-                                if !has_tools {
-                                    self.connection.send_message(WsServerMessage::Complete {
-                                        mood: Some("helpful".to_string()),
-                                        salience: None,
-                                        tags: None,
-                                    }).await?;
-                                }
-                            }
-                            
-                            // Send Done for tool path
-                            if has_tools {
-                                self.connection.send_message(WsServerMessage::Done).await?;
-                            }
-                            
-                            break;
-                        }
-                        ChatEvent::Error { message } => {
-                            error!("Stream error: {}", message);
-                            self.connection.send_error(&message, "STREAM_ERROR".to_string()).await?;
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Stream result error: {}", e);
-                    self.connection.send_error(
-                        &format!("Stream processing error: {}", e),
-                        "STREAM_RESULT_ERROR".to_string()
-                    ).await?;
-                    break;
-                }
-            }
-        }
+        // Send stream end
+        self.connection.send_message(WsServerMessage::StreamEnd).await?;
+        
+        // Send complete with metadata (for frontend compatibility)
+        self.connection.send_message(WsServerMessage::Complete {
+            mood: complete_response.structured.analysis.mood,
+            salience: Some(complete_response.structured.analysis.salience),
+            tags: Some(complete_response.structured.analysis.topics),
+        }).await?;
         
         Ok(())
     }
@@ -250,38 +192,22 @@ impl MessageRouter {
         &self,
         active: bool,
     ) -> Result<(), anyhow::Error> {
-        debug!("Typing indicator: active={}", active);
+        debug!("Typing indicator: {}", if active { "active" } else { "inactive" });
         Ok(())
     }
 
-    /// Handle project and artifact commands
+    /// Handle project commands
     async fn handle_project_command(
         &self,
         method: String,
         params: serde_json::Value,
-        _request_id: Option<String>,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("Project command: {}", method);
-        
-        let result = project::handle_project_command(
-            &method,
-            params,
-            self.app_state.clone(),
-        ).await;
-        
-        match result {
-            Ok(response) => {
-                self.connection.send_message(response).await?;
-            }
-            Err(e) => {
-                error!("Project command failed: {}", e);
-                self.connection.send_error(
-                    &format!("Project command failed: {}", e),
-                    "PROJECT_ERROR".to_string()
-                ).await?;
-            }
-        }
-        
+        let response = project::handle_project_command(&self.app_state, method, params).await?;
+        self.connection.send_message(WsServerMessage::Data { 
+            data: response, 
+            request_id 
+        }).await?;
         Ok(())
     }
 
@@ -290,29 +216,13 @@ impl MessageRouter {
         &self,
         method: String,
         params: serde_json::Value,
-        _request_id: Option<String>,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("Memory command: {}", method);
-        
-        let result = memory::handle_memory_command(
-            &method,
-            params,
-            self.app_state.clone(),
-        ).await;
-        
-        match result {
-            Ok(response) => {
-                self.connection.send_message(response).await?;
-            }
-            Err(e) => {
-                error!("Memory command failed: {}", e);
-                self.connection.send_error(
-                    &format!("Memory command failed: {}", e),
-                    "MEMORY_ERROR".to_string()
-                ).await?;
-            }
-        }
-        
+        let response = memory::handle_memory_command(&self.app_state, method, params).await?;
+        self.connection.send_message(WsServerMessage::Data { 
+            data: response, 
+            request_id 
+        }).await?;
         Ok(())
     }
 
@@ -321,29 +231,13 @@ impl MessageRouter {
         &self,
         method: String,
         params: serde_json::Value,
-        _request_id: Option<String>,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("Git command: {}", method);
-        
-        let result = git::handle_git_command(
-            &method,
-            params,
-            self.app_state.clone(),
-        ).await;
-        
-        match result {
-            Ok(response) => {
-                self.connection.send_message(response).await?;
-            }
-            Err(e) => {
-                error!("Git command failed: {}", e);
-                self.connection.send_error(
-                    &format!("Git command failed: {}", e),
-                    "GIT_ERROR".to_string()
-                ).await?;
-            }
-        }
-        
+        let response = git::handle_git_command(&self.app_state, method, params).await?;
+        self.connection.send_message(WsServerMessage::Data { 
+            data: response, 
+            request_id 
+        }).await?;
         Ok(())
     }
 
@@ -352,60 +246,28 @@ impl MessageRouter {
         &self,
         method: String,
         params: serde_json::Value,
-        _request_id: Option<String>,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("FileSystem command: {}", method);
-        
-        let result = filesystem::handle_filesystem_command(
-            &method,
-            params,
-            self.app_state.clone(),
-        ).await;
-        
-        match result {
-            Ok(response) => {
-                self.connection.send_message(response).await?;
-            }
-            Err(e) => {
-                error!("FileSystem command failed: {}", e);
-                self.connection.send_error(
-                    &format!("FileSystem command failed: {}", e),
-                    "FILESYSTEM_ERROR".to_string()
-                ).await?;
-            }
-        }
-        
+        let response = filesystem::handle_filesystem_command(&self.app_state, method, params).await?;
+        self.connection.send_message(WsServerMessage::Data { 
+            data: response, 
+            request_id 
+        }).await?;
         Ok(())
     }
 
-    /// Handle file transfer operations
+    /// Handle file transfer
     async fn handle_file_transfer(
         &self,
         operation: String,
         data: serde_json::Value,
-        _request_id: Option<String>,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("File transfer: {}", operation);
-        
-        let result = files::handle_file_transfer(
-            &operation,
-            data,
-            self.app_state.clone(),
-        ).await;
-        
-        match result {
-            Ok(response) => {
-                self.connection.send_message(response).await?;
-            }
-            Err(e) => {
-                error!("File transfer failed: {}", e);
-                self.connection.send_error(
-                    &format!("File transfer failed: {}", e),
-                    "FILE_TRANSFER_ERROR".to_string()
-                ).await?;
-            }
-        }
-        
+        let response = files::handle_file_transfer(&self.app_state, operation, data).await?;
+        self.connection.send_message(WsServerMessage::Data { 
+            data: response, 
+            request_id 
+        }).await?;
         Ok(())
     }
 
@@ -414,29 +276,13 @@ impl MessageRouter {
         &self,
         method: String,
         params: serde_json::Value,
-        _request_id: Option<String>,
+        request_id: Option<String>,
     ) -> Result<(), anyhow::Error> {
-        info!("Code intelligence command: {}", method);
-        
-        let result = code_intelligence::handle_code_intelligence_command(
-            &method,
-            params,
-            self.app_state.clone(),
-        ).await;
-        
-        match result {
-            Ok(response) => {
-                self.connection.send_message(response).await?;
-            }
-            Err(e) => {
-                error!("Code intelligence command failed: {}", e);
-                self.connection.send_error(
-                    &format!("Code intelligence command failed: {}", e),
-                    "CODE_INTELLIGENCE_ERROR".to_string()
-                ).await?;
-            }
-        }
-        
+        let response = code_intelligence::handle_code_intelligence_command(&self.app_state, method, params).await?;
+        self.connection.send_message(WsServerMessage::Data { 
+            data: response, 
+            request_id 
+        }).await?;
         Ok(())
     }
 }
