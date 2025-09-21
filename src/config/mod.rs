@@ -25,6 +25,11 @@ pub struct MiraConfig {
     pub max_json_output_tokens: usize,
     pub enable_json_validation: bool,
     pub max_json_repair_attempts: usize,
+    
+    // Structured Response Monitoring (NEW)
+    pub structured_response_timeout: u64,
+    pub token_warning_threshold: usize,
+    pub input_token_warning: usize,
 
     // Database & Storage Configuration
     pub database_url: String,
@@ -46,7 +51,7 @@ pub struct MiraConfig {
     pub always_embed_assistant: bool,
     pub embed_min_chars: usize,
     pub dedup_sim_threshold: f32,
-    pub salience_min_for_embed: f32,  // FIXED: f32 type
+    pub salience_min_for_embed: f32,
     pub rollup_every: usize,
     
     // Salience threshold
@@ -197,6 +202,11 @@ impl MiraConfig {
             max_json_output_tokens: require_env_parsed("MAX_JSON_OUTPUT_TOKENS"),
             enable_json_validation: require_env_parsed("ENABLE_JSON_VALIDATION"),
             max_json_repair_attempts: require_env_parsed("MAX_JSON_REPAIR_ATTEMPTS"),
+            
+            // Structured Response Monitoring (NEW)
+            structured_response_timeout: require_env_parsed("STRUCTURED_RESPONSE_TIMEOUT"),
+            token_warning_threshold: require_env_parsed("TOKEN_WARNING_THRESHOLD"),
+            input_token_warning: require_env_parsed("INPUT_TOKEN_WARNING"),
             
             // Database & Storage
             database_url: require_env("DATABASE_URL"),

@@ -44,11 +44,22 @@ impl WebSocketConnection {
         Self { sender, last_activity, is_processing, last_any_send }
     }
 
-    /// Sends a structured `WsServerMessage` to the client.
+    /// Sends a structured `WsServerMessage` to the client with immediate flushing.
+    /// CRITICAL: The flush() ensures messages are sent immediately, preventing
+    /// message loss when streaming rapidly.
     pub async fn send_message(&self, msg: WsServerMessage) -> Result<()> {
         let json_str = serde_json::to_string(&msg)?;
         debug!("Sending WS message: {}", json_str);
-        self.sender.lock().await.send(Message::Text(json_str)).await?;
+        
+        // Lock the sender and send + flush in one go to ensure atomic operation
+        let mut sender = self.sender.lock().await;
+        sender.send(Message::Text(json_str)).await?;
+        
+        // CRITICAL FIX: Force immediate transmission to prevent buffering/dropping
+        // Without this, rapid sends (like streaming) will buffer and lose messages
+        sender.flush().await?;
+        drop(sender); // Explicitly drop to release lock faster
+        
         *self.last_any_send.lock().await = Instant::now();
         Ok(())
     }
@@ -56,13 +67,19 @@ impl WebSocketConnection {
     /// Sends a status update message.
     pub async fn send_status(&self, message: &str, detail: Option<String>) -> Result<()> {
         info!("Sending status: {} - {:?}", message, detail);
-        self.send_message(WsServerMessage::Status { message: message.to_string(), detail }).await
+        self.send_message(WsServerMessage::Status { 
+            message: message.to_string(), 
+            detail 
+        }).await
     }
 
     /// Sends an error message.
     pub async fn send_error(&self, message: &str, code: String) -> Result<()> {
         error!("Sending error: {} (Code: {})", message, code);
-        self.send_message(WsServerMessage::Error { message: message.to_string(), code }).await
+        self.send_message(WsServerMessage::Error { 
+            message: message.to_string(), 
+            code 
+        }).await
     }
 
     /// Sends initial messages to the client upon connection.
@@ -74,32 +91,72 @@ impl WebSocketConnection {
             if CONFIG.enable_chat_tools { "enabled" } else { "disabled" }
         );
 
-        self.send_message(WsServerMessage::Status { message: welcome_msg, detail: None }).await?;
-        self.send_message(WsServerMessage::Status { message: config_msg, detail: None }).await?;
+        // Send all connection messages
+        self.send_message(WsServerMessage::Status { 
+            message: welcome_msg, 
+            detail: None 
+        }).await?;
+        
+        self.send_message(WsServerMessage::Status { 
+            message: config_msg, 
+            detail: None 
+        }).await?;
+        
         self.send_message(WsServerMessage::ConnectionReady).await?;
         
         info!("WebSocket connection ready messages sent.");
         Ok(())
     }
 
-    /// Sends a pong response to a client's ping.
+    /// Sends a pong response to a client's ping with proper flushing.
     pub async fn send_pong(&self, data: Vec<u8>) -> Result<()> {
         debug!("Received ping, sending pong.");
-        self.sender.lock().await.send(Message::Pong(data)).await?;
+        
+        // Pong also needs flushing for reliability
+        let mut sender = self.sender.lock().await;
+        sender.send(Message::Pong(data)).await?;
+        sender.flush().await?;
+        drop(sender);
+        
         *self.last_any_send.lock().await = Instant::now();
         Ok(())
     }
 
     // Accessors and state management methods
-    pub async fn update_activity(&self) { *self.last_activity.lock().await = Instant::now(); }
-    pub async fn get_last_activity(&self) -> Instant { *self.last_activity.lock().await }
-    pub async fn is_processing(&self) -> bool { *self.is_processing.lock().await }
-    pub async fn set_processing(&self, processing: bool) { *self.is_processing.lock().await = processing; }
-    pub async fn get_last_send(&self) -> Instant { *self.last_any_send.lock().await }
+    pub async fn update_activity(&self) { 
+        *self.last_activity.lock().await = Instant::now(); 
+    }
+    
+    pub async fn get_last_activity(&self) -> Instant { 
+        *self.last_activity.lock().await 
+    }
+    
+    pub async fn is_processing(&self) -> bool { 
+        *self.is_processing.lock().await 
+    }
+    
+    pub async fn set_processing(&self, processing: bool) { 
+        *self.is_processing.lock().await = processing; 
+    }
+    
+    pub async fn get_last_send(&self) -> Instant { 
+        *self.last_any_send.lock().await 
+    }
     
     // Getter methods for shared state, useful for creating related components.
-    pub fn get_sender(&self) -> Arc<Mutex<SplitSink<WebSocket, Message>>> { self.sender.clone() }
-    pub fn get_last_activity_ref(&self) -> Arc<Mutex<Instant>> { self.last_activity.clone() }
-    pub fn get_is_processing_ref(&self) -> Arc<Mutex<bool>> { self.is_processing.clone() }
-    pub fn get_last_send_ref(&self) -> Arc<Mutex<Instant>> { self.last_any_send.clone() }
+    pub fn get_sender(&self) -> Arc<Mutex<SplitSink<WebSocket, Message>>> { 
+        self.sender.clone() 
+    }
+    
+    pub fn get_last_activity_ref(&self) -> Arc<Mutex<Instant>> { 
+        self.last_activity.clone() 
+    }
+    
+    pub fn get_is_processing_ref(&self) -> Arc<Mutex<bool>> { 
+        self.is_processing.clone() 
+    }
+    
+    pub fn get_last_send_ref(&self) -> Arc<Mutex<Instant>> { 
+        self.last_any_send.clone() 
+    }
 }
