@@ -147,9 +147,20 @@ impl MessageRouter {
 
     async fn handle_memory_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = memory::handle_memory_command(&method, params, self.app_state.clone()).await?;
-        let data = self.extract_response_data(response);
         
-        self.connection.send_message(WsServerMessage::Response { data }).await?;
+        // FIXED: Don't use extract_response_data for memory commands - preserve the actual data
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                // For memory commands, send as Data type to preserve the actual memory data
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            _ => {
+                // Fallback for other response types
+                let data = self.extract_response_data(response);
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+        }
+        
         Ok(())
     }
 

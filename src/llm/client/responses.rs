@@ -28,6 +28,10 @@ impl ResponseOutput {
 }
 
 pub fn extract_text_from_responses(response: &Value) -> Option<String> {
+    // DEBUG: Log the actual response structure so we can see what's happening
+    error!("DEBUG: Full LLM response structure: {}", 
+           serde_json::to_string_pretty(response).unwrap_or_default());
+    
     // Primary path based on logs - /output/1/content/0/text
     if let Some(text) = response.pointer("/output/1/content/0/text").and_then(|t| t.as_str()) {
         debug!("Extracted text using primary path: /output/1/content/0/text");
@@ -76,6 +80,12 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
         return Some(text.to_string());
     }
     
+    // NEW: Try output[0].text directly
+    if let Some(text) = response.pointer("/output/0/text").and_then(|t| t.as_str()) {
+        debug!("Extracted text using: /output/0/text");
+        return Some(text.to_string());
+    }
+    
     // Fallback: output as a raw string
     if let Some(text) = response.get("output").and_then(|o| o.as_str()) {
         debug!("Extracted text using: output as string");
@@ -91,6 +101,12 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
     // Try iterating through output array
     if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
         for (i, item) in output_array.iter().enumerate() {
+            // NEW: Try direct text field
+            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                debug!("Extracted text using: output[{}].text", i);
+                return Some(text.to_string());
+            }
+            
             if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
                 for content_item in content_array {
                     if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
@@ -108,8 +124,7 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
         }
     }
 
-    error!("Failed to extract text from response. Response structure: {}", 
-           serde_json::to_string_pretty(response).unwrap_or_default());
+    error!("Failed to extract text from response. Tried all known extraction paths.");
     None
 }
 

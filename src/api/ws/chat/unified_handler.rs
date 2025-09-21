@@ -1,10 +1,8 @@
 // src/api/ws/chat/unified_handler.rs
-
 use std::sync::Arc;
 use anyhow::Result;
 use serde_json::Value;
 use tracing::{debug, info};
-
 use crate::api::ws::message::MessageMetadata;
 use crate::config::CONFIG;
 use crate::llm::structured::CompleteResponse;
@@ -37,6 +35,12 @@ impl UnifiedChatHandler {
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
         info!("Processing structured message for session: {}", request.session_id);
+        
+        // FIXED: Save user message BEFORE processing
+        self.app_state.memory_service
+            .save_user_message(&request.session_id, &request.content, request.project_id.as_deref())
+            .await?;
+        info!("Saved user message for session: {}", request.session_id);
         
         let context = self.build_context(&request.session_id, &request.content).await?;
         debug!("Context built: {} recent, {} semantic", 
