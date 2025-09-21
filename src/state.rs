@@ -84,7 +84,8 @@ pub async fn create_app_state(
         ));
         
         if cache_config.warmup {
-            match sqlite_store.get_active_sessions(24).await {
+            // FIXED: Get active sessions directly from the database instead of missing method
+            match get_active_sessions_from_db(&sqlite_pool).await {
                 Ok(active_sessions) if !active_sessions.is_empty() => {
                     if let Err(e) = cache.warmup_active_sessions(active_sessions, &sqlite_store).await {
                         tracing::warn!("Failed to warm up cache: {}", e);
@@ -138,4 +139,21 @@ pub async fn create_app_state(
         code_intelligence,
         upload_sessions: Arc::new(RwLock::new(HashMap::new())),
     })
+}
+
+// Helper function to get active sessions directly from the database
+async fn get_active_sessions_from_db(pool: &SqlitePool) -> anyhow::Result<Vec<String>> {
+    let sessions: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT DISTINCT session_id
+        FROM memory_entries
+        WHERE timestamp > datetime('now', '-24 hours')
+        ORDER BY timestamp DESC
+        LIMIT 100
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(sessions)
 }

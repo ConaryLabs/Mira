@@ -1,5 +1,5 @@
 // src/llm/responses/manager.rs
-// GPT-5 Responses API manager with proper nested parameter structure
+// GPT-5 Responses API manager with structured JSON responses
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -9,7 +9,7 @@ use tracing::{debug, info};
 use crate::llm::client::OpenAIClient;
 use crate::llm::responses::thread::ThreadManager;
 use crate::llm::responses::types::{
-    CodeInterpreterConfig, ContainerConfig, FunctionDefinition, Message, ResponsesResponse, Tool,
+    Message, ResponsesResponse, Tool,
 };
 
 /// High-level manager for the GPT-5 Responses API
@@ -140,6 +140,7 @@ impl ResponsesManager {
         let mut output_text = String::new();
         let mut function_calls = Vec::new();
 
+        // FIXED: Simple text extraction only, no .message field access
         for item in &response_data.output {
             match item.output_type.as_str() {
                 "text" => {
@@ -182,7 +183,7 @@ impl ResponsesManager {
         Ok(output_text)
     }
 
-    /// Create a streaming response
+    /// Create a streaming response - DEPRECATED: Removed streaming
     pub async fn create_streaming_response(
         &self,
         model: &str,
@@ -190,41 +191,17 @@ impl ResponsesManager {
         instructions: Option<String>,
         session_id: Option<&str>,
         parameters: Option<Value>,
-    ) -> Result<impl futures::Stream<Item = Result<Value>>> {
-        let previous_response_id =
-            if let (Some(session_id), Some(thread_mgr)) = (session_id, &self.thread_manager) {
-                thread_mgr.get_previous_response_id(session_id).await
-            } else {
-                None
-            };
-
-        let mut request_body = json!({
-            "model": model,
-            "input": input,
-            "stream": true,
-        });
-
-        if let Some(inst) = instructions {
-            request_body["instructions"] = json!(inst);
-        }
-
-        if let Some(prev_id) = previous_response_id {
-            request_body["previous_response_id"] = json!(prev_id);
-        }
-
-        // Merge parameters at top level
-        if let Some(params) = parameters {
-            if let Some(obj) = params.as_object() {
-                for (key, value) in obj {
-                    request_body[key] = value.clone();
-                }
-            }
-        }
-
-        self.client
-            .post_response_stream(request_body)
-            .await
-            .context("Failed to create streaming response")
+    ) -> Result<String> {
+        // Forward to the structured response method
+        self.create_response_with_context(
+            model,
+            input,
+            instructions,
+            session_id,
+            None, // response_format
+            parameters,
+            None, // tools
+        ).await
     }
 
     /// Build GPT-5 parameters with CORRECT nested structure for Sept 2025 API
@@ -257,55 +234,5 @@ impl ResponsesManager {
         }
 
         params
-    }
-
-    /// Build common tools
-    pub fn build_standard_tools(
-        enable_web_search: bool,
-        enable_code_interpreter: bool,
-    ) -> Vec<Tool> {
-        let mut tools = Vec::new();
-
-        if enable_web_search {
-            tools.push(Tool {
-                tool_type: "web_search".to_string(),
-                function: None,
-                web_search: Some(json!({})),
-                code_interpreter: None,
-            });
-        }
-
-        if enable_code_interpreter {
-            tools.push(Tool {
-                tool_type: "code_interpreter".to_string(),
-                function: None,
-                web_search: None,
-                code_interpreter: Some(CodeInterpreterConfig {
-                    container: ContainerConfig {
-                        container_type: "auto".to_string(),
-                    },
-                }),
-            });
-        }
-
-        tools
-    }
-
-    /// Build a custom function tool
-    pub fn build_function_tool(
-        name: &str,
-        description: &str,
-        parameters: Value,
-    ) -> Tool {
-        Tool {
-            tool_type: "function".to_string(),
-            function: Some(FunctionDefinition {
-                name: name.to_string(),
-                description: description.to_string(),
-                parameters,
-            }),
-            web_search: None,
-            code_interpreter: None,
-        }
     }
 }

@@ -11,6 +11,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use mira_backend::api::ws::ws_chat_handler;
 use mira_backend::config::CONFIG;
 use mira_backend::tasks::TaskManager;
+use mira_backend::llm::client::config::ClientConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -32,7 +33,8 @@ async fn main() -> anyhow::Result<()> {
         mira_backend::memory::storage::sqlite::store::SqliteMemoryStore::new(pool.clone())
     );
     
-    let llm_client = mira_backend::llm::client::OpenAIClient::new()?;
+    let client_config = ClientConfig::from_env()?;
+    let llm_client = Arc::new(mira_backend::llm::client::OpenAIClient::new(client_config)?);
     
     let project_store = Arc::new(
         mira_backend::project::store::ProjectStore::new(pool.clone())

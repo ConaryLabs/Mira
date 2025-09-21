@@ -78,7 +78,8 @@ Respond with JSON:
             .await
             .context("Failed to get intent analysis from LLM")?;
 
-        let intent: FileIntent = serde_json::from_str(&response.content)
+        // Fix: response is now a String directly, not a struct with .content field
+        let intent: FileIntent = serde_json::from_str(&response)
             .context("Failed to parse intent detection response")?;
 
         debug!(
