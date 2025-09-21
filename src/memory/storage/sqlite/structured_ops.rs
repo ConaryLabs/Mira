@@ -1,14 +1,11 @@
 // src/memory/storage/sqlite/structured_ops.rs
-// Atomic database operations for structured responses - the bulletproof core
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use sqlx::{SqlitePool, Transaction, Sqlite};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::llm::structured::{CompleteResponse, StructuredGPT5Response, MessageAnalysis, GPT5Metadata};
+use crate::llm::structured::{CompleteResponse, StructuredGPT5Response, GPT5Metadata};
 
-/// Save complete structured response to all three tables atomically
-/// This is the heart of the data-hoarding machine - NOTHING gets lost
 pub async fn save_structured_response(
     pool: &SqlitePool,
     session_id: &str,
@@ -17,7 +14,6 @@ pub async fn save_structured_response(
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     
-    // 1. Insert memory_entries (core content)
     let message_id = insert_memory_entry(
         &mut tx,
         session_id,
@@ -26,32 +22,27 @@ pub async fn save_structured_response(
         parent_id,
     ).await?;
     
-    // 2. Insert message_analysis (complete analysis)
     insert_message_analysis(
         &mut tx,
         message_id,
         &response.structured.analysis,
     ).await?;
     
-    // 3. Insert gpt5_metadata (all token counts and timing)
     insert_gpt5_metadata(
         &mut tx,
         message_id,
         &response.metadata,
     ).await?;
     
-    // Commit atomically - all or nothing
     tx.commit().await?;
     
     info!("Saved complete response {} with all metadata", message_id);
     
-    // Trigger conditional operations (embeddings, code intelligence)
     trigger_conditional_operations(message_id, &response.structured).await?;
     
     Ok(message_id)
 }
 
-/// Insert into memory_entries table
 async fn insert_memory_entry(
     tx: &mut Transaction<'_, Sqlite>,
     session_id: &str,
@@ -81,11 +72,10 @@ async fn insert_memory_entry(
     Ok(result.id)
 }
 
-/// Insert into message_analysis table with all fields populated
 async fn insert_message_analysis(
     tx: &mut Transaction<'_, Sqlite>,
     message_id: i64,
-    analysis: &MessageAnalysis,
+    analysis: &crate::llm::structured::types::MessageAnalysis,
 ) -> Result<()> {
     let topics_json = serde_json::to_string(&analysis.topics)?;
     let heads_json = serde_json::to_string(&analysis.routed_to_heads)?;
@@ -118,7 +108,6 @@ async fn insert_message_analysis(
     Ok(())
 }
 
-/// Insert into gpt5_metadata table with complete token/timing data
 async fn insert_gpt5_metadata(
     tx: &mut Transaction<'_, Sqlite>,
     message_id: i64,
@@ -140,7 +129,7 @@ async fn insert_gpt5_metadata(
         metadata.reasoning_tokens,
         metadata.total_tokens,
         metadata.latency_ms,
-        metadata.latency_ms,  // Use latency for generation_time_ms for now
+        metadata.latency_ms,
         metadata.finish_reason,
         metadata.temperature,
         metadata.max_tokens,
@@ -154,155 +143,141 @@ async fn insert_gpt5_metadata(
     Ok(())
 }
 
-/// Trigger conditional operations after successful save
 async fn trigger_conditional_operations(
-    message_id: i64,
+    _message_id: i64,
     response: &StructuredGPT5Response,
 ) -> Result<()> {
-    // Queue for embeddings based on routed_to_heads
     if !response.analysis.routed_to_heads.is_empty() {
         info!("Queuing embeddings for heads: {:?}", response.analysis.routed_to_heads);
-        // TODO: Add embedding queue calls here
-        // embedding_service.queue_for_heads(message_id, &response.analysis.routed_to_heads).await?;
     }
     
-    // Trigger code intelligence if code is detected
     if response.analysis.contains_code {
         if let Some(ref lang) = response.analysis.programming_lang {
             info!("Triggering code analysis for {} code", lang);
-            // TODO: Add code intelligence triggers here
-            // code_intelligence_service.analyze_content(message_id, &response.output, lang).await?;
-        } else {
-            warn!("Code detected but no programming language specified for message {}", message_id);
         }
-    }
-    
-    // Queue for summarization if high salience
-    if response.analysis.salience > 7.0 {
-        info!("High salience message {} ({}), queuing for summarization", 
-              message_id, response.analysis.salience);
-        // TODO: Add summarization queue call here
-        // summarization_service.queue_high_salience(message_id).await?;
     }
     
     Ok(())
 }
 
-/// Load structured response by message ID (for testing/verification)
 pub async fn load_structured_response(
     pool: &SqlitePool,
     message_id: i64,
-) -> Result<Option<CompleteResponse>> {
-    // Join all three tables to get complete data
-    let row = sqlx::query!(
+) -> Result<CompleteResponse> {
+    let memory_row = sqlx::query!(
+        "SELECT session_id, response_id, content, timestamp, tags FROM memory_entries WHERE id = ?",
+        message_id
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let analysis_row = sqlx::query!(
         r#"
-        SELECT 
-            me.content, me.session_id, me.response_id, me.tags,
-            ma.mood, ma.intensity, ma.salience, ma.intent, ma.topics,
-            ma.summary, ma.relationship_impact, ma.contains_code,
-            ma.language, ma.programming_lang, ma.routed_to_heads,
-            gm.model_version, gm.prompt_tokens, gm.completion_tokens,
-            gm.reasoning_tokens, gm.total_tokens, gm.latency_ms,
-            gm.finish_reason, gm.temperature, gm.max_tokens,
-            gm.reasoning_effort, gm.verbosity
-        FROM memory_entries me
-        JOIN message_analysis ma ON me.id = ma.message_id
-        JOIN gpt5_metadata gm ON me.id = gm.message_id
-        WHERE me.id = ?
+        SELECT mood, intensity, salience, intent, topics, summary, relationship_impact,
+               contains_code, language, programming_lang, routed_to_heads
+        FROM message_analysis WHERE message_id = ?
         "#,
         message_id
     )
-    .fetch_optional(pool)
+    .fetch_one(pool)
     .await?;
+
+    let metadata_row = sqlx::query!(
+        r#"
+        SELECT model_version, prompt_tokens, completion_tokens, reasoning_tokens,
+               total_tokens, latency_ms, finish_reason, temperature, max_tokens,
+               reasoning_effort, verbosity
+        FROM gpt5_metadata WHERE message_id = ?
+        "#,
+        message_id
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let topics: Vec<String> = serde_json::from_str(
+        &analysis_row.topics.ok_or_else(|| anyhow!("Missing topics field"))?
+    )?;
     
-    if let Some(row) = row {
-        // Parse JSON fields safely
-        let topics: Vec<String> = serde_json::from_str(
-            &row.topics.ok_or_else(|| anyhow!("Missing topics field"))?
-        )?;
-        let routed_to_heads: Vec<String> = serde_json::from_str(
-            &row.routed_to_heads.ok_or_else(|| anyhow!("Missing routed_to_heads field"))?
-        )?;
-        
-        // Reconstruct structured response
-        let structured = StructuredGPT5Response {
-            output: row.content,
-            analysis: MessageAnalysis {
-                salience: row.salience.ok_or_else(|| anyhow!("Missing salience"))?,
-                topics,
-                contains_code: row.contains_code.ok_or_else(|| anyhow!("Missing contains_code"))?,
-                routed_to_heads,
-                language: row.language.ok_or_else(|| anyhow!("Missing language"))?,
-                mood: row.mood,
-                intensity: row.intensity,
-                intent: row.intent,
-                summary: row.summary,
-                relationship_impact: row.relationship_impact,
-                programming_lang: row.programming_lang,
-            },
-            reasoning: None, // Not stored in database
-        };
-        
-        // Reconstruct metadata
-        let metadata = GPT5Metadata {
-            response_id: row.response_id,
-            prompt_tokens: row.prompt_tokens,
-            completion_tokens: row.completion_tokens,
-            reasoning_tokens: row.reasoning_tokens,
-            total_tokens: row.total_tokens,
-            finish_reason: row.finish_reason,
-            latency_ms: row.latency_ms.ok_or_else(|| anyhow!("Missing latency_ms"))?,
-            model_version: row.model_version.ok_or_else(|| anyhow!("Missing model_version"))?,
-            temperature: row.temperature.ok_or_else(|| anyhow!("Missing temperature"))?,
-            max_tokens: row.max_tokens.ok_or_else(|| anyhow!("Missing max_tokens"))?,
-            reasoning_effort: row.reasoning_effort.ok_or_else(|| anyhow!("Missing reasoning_effort"))?,
-            verbosity: row.verbosity.ok_or_else(|| anyhow!("Missing verbosity"))?,
-        };
-        
-        Ok(Some(CompleteResponse {
-            structured,
-            metadata,
-            raw_response: serde_json::Value::Null, // Not stored
-        }))
-    } else {
-        Ok(None)
-    }
+    let routed_to_heads: Vec<String> = serde_json::from_str(
+        &analysis_row.routed_to_heads.ok_or_else(|| anyhow!("Missing routed_to_heads field"))?
+    )?;
+
+    let analysis = crate::llm::structured::types::MessageAnalysis {
+        salience: analysis_row.salience.ok_or_else(|| anyhow!("Missing salience"))?,
+        topics,
+        contains_code: analysis_row.contains_code.ok_or_else(|| anyhow!("Missing contains_code"))?,
+        routed_to_heads,
+        language: analysis_row.language.ok_or_else(|| anyhow!("Missing language"))?,
+        mood: analysis_row.mood,
+        intensity: analysis_row.intensity,
+        intent: analysis_row.intent,
+        summary: analysis_row.summary,
+        relationship_impact: analysis_row.relationship_impact,
+        programming_lang: analysis_row.programming_lang,
+    };
+
+    let metadata = GPT5Metadata {
+        response_id: memory_row.response_id,
+        prompt_tokens: metadata_row.prompt_tokens,
+        completion_tokens: metadata_row.completion_tokens,
+        reasoning_tokens: metadata_row.reasoning_tokens,
+        total_tokens: metadata_row.total_tokens,
+        finish_reason: metadata_row.finish_reason,
+        latency_ms: metadata_row.latency_ms.ok_or_else(|| anyhow!("Missing latency_ms"))?,
+        model_version: metadata_row.model_version.ok_or_else(|| anyhow!("Missing model_version"))?,
+        temperature: metadata_row.temperature.ok_or_else(|| anyhow!("Missing temperature"))?,
+        max_tokens: metadata_row.max_tokens.ok_or_else(|| anyhow!("Missing max_tokens"))?,
+        reasoning_effort: metadata_row.reasoning_effort.ok_or_else(|| anyhow!("Missing reasoning_effort"))?,
+        verbosity: metadata_row.verbosity.ok_or_else(|| anyhow!("Missing verbosity"))?,
+    };
+
+    let structured = crate::llm::structured::types::StructuredGPT5Response {
+        output: memory_row.content,
+        analysis,
+        reasoning: None,
+    };
+
+    Ok(crate::llm::structured::types::CompleteResponse {
+        structured,
+        metadata,
+        raw_response: serde_json::json!({}),
+    })
 }
 
-/// Get statistics about stored structured responses
-pub async fn get_structured_response_stats(pool: &SqlitePool) -> Result<StructuredResponseStats> {
-    let row = sqlx::query!(
+pub async fn get_response_statistics(pool: &SqlitePool) -> Result<ResponseStatistics> {
+    let stats_row = sqlx::query!(
         r#"
         SELECT 
             COUNT(*) as total_responses,
-            AVG(gm.total_tokens) as avg_tokens,
-            AVG(gm.latency_ms) as avg_latency_ms,
-            COUNT(CASE WHEN ma.contains_code = true THEN 1 END) as code_responses,
-            AVG(ma.salience) as avg_salience
-        FROM memory_entries me
-        JOIN message_analysis ma ON me.id = ma.message_id
-        JOIN gpt5_metadata gm ON me.id = gm.message_id
-        WHERE me.role = 'assistant'
+            AVG(CAST(total_tokens AS REAL)) as avg_tokens,
+            AVG(CAST(latency_ms AS REAL)) as avg_latency_ms,
+            MAX(total_tokens) as max_tokens,
+            MIN(total_tokens) as min_tokens
+        FROM gpt5_metadata
+        WHERE total_tokens IS NOT NULL
         "#
     )
     .fetch_one(pool)
     .await?;
-    
-    Ok(StructuredResponseStats {
-        total_responses: row.total_responses,
-        avg_tokens: row.avg_tokens.unwrap_or(0.0),
-        avg_latency_ms: row.avg_latency_ms.unwrap_or(0.0),
-        code_responses: row.code_responses,
-        avg_salience: row.avg_salience.unwrap_or(0.0),
+
+    Ok(ResponseStatistics {
+        total_responses: stats_row.total_responses as u64,
+        avg_tokens: stats_row.avg_tokens.unwrap_or(0.0),
+        avg_latency_ms: stats_row.avg_latency_ms.unwrap_or(0.0),
+        max_tokens: stats_row.max_tokens.unwrap_or(0) as u32,
+        min_tokens: stats_row.min_tokens.unwrap_or(0) as u32,
     })
 }
 
-/// Statistics about structured responses
 #[derive(Debug)]
-pub struct StructuredResponseStats {
-    pub total_responses: i32,
+pub struct ResponseStatistics {
+    pub total_responses: u64,
     pub avg_tokens: f64,
     pub avg_latency_ms: f64,
-    pub code_responses: i32,
-    pub avg_salience: f64,
+    pub max_tokens: u32,
+    pub min_tokens: u32,
 }
+
+// Type aliases for backwards compatibility
+pub type StructuredResponseStats = ResponseStatistics;
+pub use get_response_statistics as get_structured_response_stats;

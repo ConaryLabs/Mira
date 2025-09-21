@@ -70,20 +70,10 @@ pub enum WsClientMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum WsServerMessage {
-    /// A part of a streaming text response.
-    #[serde(rename = "stream_chunk")]
-    StreamChunk { text: String },
-    
-    /// Signals the end of a streaming response.
-    #[serde(rename = "stream_end")]
-    StreamEnd,
-    
-    /// The final message in a response, containing all metadata.
-    #[serde(rename = "complete")]
-    Complete {
-        mood: Option<String>,
-        salience: Option<f32>,
-        tags: Option<Vec<String>>,
+    /// A general response with data
+    #[serde(rename = "response")]
+    Response {
+        data: serde_json::Value,
     },
     
     /// A general status update for the client UI.
@@ -107,10 +97,6 @@ pub enum WsServerMessage {
     /// A pong response to a client's ping for heartbeats.
     #[serde(rename = "pong")]
     Pong,
-    
-    /// Signals that a tool-enabled response is finished.
-    #[serde(rename = "done")]
-    Done,
     
     /// A message containing the result of an image generation tool.
     #[serde(rename = "image_generated")]

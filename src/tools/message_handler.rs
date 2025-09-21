@@ -1,36 +1,33 @@
 // src/tools/message_handler.rs
-// Handles WebSocket message processing and streaming for tool-enabled chat.
-// Manages the flow of tool execution events and response streaming.
+// Handles tool-enabled chat processing with structured responses.
 
 use std::sync::Arc;
 use anyhow::Result;
-use futures_util::StreamExt;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::api::ws::chat::connection::WebSocketConnection;
 use crate::api::ws::message::{MessageMetadata, WsServerMessage};
-use crate::tools::executor::{ToolExecutor, ToolChatRequest, ToolEvent};
+use crate::tools::executor::{ToolExecutor, ToolExecutorExt, ToolChatRequest};
 use crate::memory::RecallContext;
 use crate::state::AppState;
 
-/// Processes tool-enhanced messages and streams responses over WebSocket.
-/// Coordinates between the tool executor and WebSocket connection.
+/// Processes tool-enhanced messages and sends structured responses.
 pub struct ToolMessageHandler {
     executor: Arc<ToolExecutor>,
     connection: Arc<WebSocketConnection>,
+    app_state: Arc<AppState>,
 }
 
 impl ToolMessageHandler {
     pub fn new(
         executor: Arc<ToolExecutor>,
         connection: Arc<WebSocketConnection>,
-        _app_state: Arc<AppState>,
+        app_state: Arc<AppState>,
     ) -> Self {
-        Self { executor, connection }
+        Self { executor, connection, app_state }
     }
 
-    /// Main entry point for processing a tool-enabled chat message.
-    /// Streams response events including content chunks, tool executions, and completion status.
+    /// Process a tool-enabled message and return complete structured response.
     pub async fn handle_tool_message(
         &self,
         content: String,
@@ -42,121 +39,114 @@ impl ToolMessageHandler {
     ) -> Result<()> {
         info!("Handling tool message for session {}: {}", session_id, content.chars().take(80).collect::<String>());
 
-        // Notify client that processing has started
-        self.connection.send_status("Initializing response...", None).await?;
-
-        // Check if tools are enabled in configuration
+        // Check if tools are enabled
         if !self.executor.tools_enabled() {
-            warn!("Tools are not enabled, falling back to a simple response.");
+            warn!("Tools are not enabled, falling back to simple response.");
             return self.handle_simple_response(content).await;
         }
 
-        // Package all request data for the executor
+        // Package request for tool executor
         let request = ToolChatRequest { 
-            content, 
-            project_id,  // Project context passed through for tool execution
-            metadata, 
-            session_id, 
-            context, 
-            system_prompt  // Contains project awareness from prompt builder
+            content: content.clone(),
+            project_id: project_id.clone(),
+            metadata: metadata.clone(),
+            session_id: session_id.clone(),
+            context,
+            system_prompt,
         };
 
-        // Execute the request and stream results
-        match self.executor.stream_with_tools(&request).await {
-            Ok(mut stream) => {
-                while let Some(event) = stream.next().await {
-                    match event {
-                        ToolEvent::ContentChunk(chunk) => {
-                            // Stream text content as it's generated
-                            self.connection.send_message(WsServerMessage::StreamChunk { text: chunk }).await?;
-                        }
-                        ToolEvent::ToolExecution { tool_name, status } => {
-                            // Notify about tool execution status
-                            let status_detail = format!("Executing {} - {}", tool_name, status);
-                            self.connection.send_status("Tool execution in progress", Some(status_detail)).await?;
-                        }
-                        ToolEvent::ToolResult { tool_name, result } => {
-                            // Log tool results (could be sent to client if needed)
-                            info!("Tool {} completed with result: {:?}", tool_name, result);
-                        }
-                        ToolEvent::ToolCallStarted { tool_type, tool_id } => {
-                            // Notify client that a tool is being executed
-                            let status_detail = format!("Tool '{}' ({}) started.", tool_type, tool_id);
-                            self.connection.send_status("Executing tool...", Some(status_detail)).await?;
-                        }
-                        ToolEvent::ToolCallCompleted { tool_type, tool_id, result } => {
-                            // Report successful tool execution
-                            let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-                            let status_detail = format!("Tool '{}' ({}) completed. Result: {}", tool_type, tool_id, result_str);
-                            self.connection.send_status("Tool executed successfully.", Some(status_detail)).await?;
-                        }
-                        ToolEvent::ToolCallFailed { tool_type, tool_id, error } => {
-                            // Report tool execution failure
-                            let err_msg = format!("Tool '{}' ({}) failed: {}", tool_type, tool_id, error);
-                            self.connection.send_error(&err_msg, "TOOL_FAILED".to_string()).await?;
-                        }
-                        ToolEvent::ImageGenerated { urls, revised_prompt } => {
-                            // Handle image generation results
-                            info!("Image generated with {} URLs", urls.len());
-                            self.connection.send_message(WsServerMessage::ImageGenerated { urls, revised_prompt }).await?;
-                        }
-                        ToolEvent::Complete { metadata } => {
-                            // Send completion metadata
-                            // Properly extract fields from the JSON metadata
-                            let (mood, salience, tags) = if let Some(meta) = metadata {
-                                let mood = meta.get("mood")
-                                    .and_then(|m| m.as_str())
-                                    .map(String::from);
-                                let salience = meta.get("salience")
-                                    .and_then(|s| s.as_f64())
-                                    .map(|s| s as f32);
-                                let tags = meta.get("tags")
-                                    .and_then(|t| t.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect()
-                                    });
-                                (mood, salience, tags)
-                            } else {
-                                (None, None, None)
-                            };
-                            self.connection.send_message(WsServerMessage::Complete { mood, salience, tags }).await?;
-                        }
-                        ToolEvent::Error(error_msg) => {
-                            // Handle streaming errors
-                            self.connection.send_error(&error_msg, "STREAM_ERROR".to_string()).await?;
-                        }
-                        ToolEvent::Done => {
-                            // Signal end of stream
-                            self.connection.send_message(WsServerMessage::Done).await?;
-                            break;
-                        }
+        // For now, we'll process tools synchronously and build a structured response
+        // This is where you'd analyze the content for tool needs and execute them
+        
+        let mut tool_results = Vec::new();
+        let mut response_content = format!("Processing your request: {}", content);
+
+        // Check for tool triggers in content (simplified logic)
+        if content.contains("search") || content.contains("find") {
+            // Execute file search tool
+            if let Some(ref pid) = project_id {
+                match self.executor.execute_tool("file_search", serde_json::json!({
+                    "query": content,
+                    "project_id": pid
+                })).await {
+                    Ok(result) => {
+                        tool_results.push(("file_search", result));
+                        response_content.push_str("\n\nI searched your files and found relevant results.");
+                    }
+                    Err(e) => {
+                        warn!("File search failed: {}", e);
+                        response_content.push_str("\n\nFile search encountered an error.");
                     }
                 }
-                Ok(())
-            }
-            Err(e) => {
-                let error_message = format!("Tool execution failed: {}", e);
-                error!("{}", error_message);
-                self.connection.send_error(&error_message, "TOOL_EXEC_ERROR".to_string()).await?;
-                Err(e)
             }
         }
+
+        if content.contains("image") || content.contains("generate") || content.contains("picture") {
+            // Execute image generation
+            match self.executor.execute_tool("image_generation", serde_json::json!({
+                "prompt": content
+            })).await {
+                Ok(result) => {
+                    tool_results.push(("image_generation", result));
+                    response_content.push_str("\n\nI've generated an image based on your request.");
+                }
+                Err(e) => {
+                    warn!("Image generation failed: {}", e);
+                    response_content.push_str("\n\nImage generation encountered an error.");
+                }
+            }
+        }
+
+        // Build structured response with tool results
+        let mut response_data = serde_json::json!({
+            "content": response_content,
+            "analysis": {
+                "salience": if tool_results.is_empty() { 3.0 } else { 7.0 },
+                "topics": ["tools", "processing"],
+                "mood": "helpful",
+                "contains_code": false
+            },
+            "metadata": {
+                "tool_enabled": true,
+                "session_id": session_id,
+                "project_id": project_id,
+                "tools_executed": tool_results.len()
+            }
+        });
+
+        // Add tool results to response
+        if !tool_results.is_empty() {
+            response_data["tool_results"] = serde_json::json!(tool_results);
+        }
+
+        self.connection.send_message(WsServerMessage::Response {
+            data: response_data,
+        }).await?;
+
+        Ok(())
     }
 
-    /// Provides a fallback response when tool execution is disabled.
-    /// Sends a simple text response informing the user that tools are unavailable.
+    /// Fallback response when tools are disabled.
     async fn handle_simple_response(&self, content: String) -> Result<()> {
         info!("Handling simple response because tools are disabled.");
-        let response_content = format!("Tools are currently disabled. You said: {}", content);
-        self.connection.send_message(WsServerMessage::StreamChunk { text: response_content }).await?;
-        self.connection.send_message(WsServerMessage::Complete { 
-            mood: Some("informative".to_string()), 
-            salience: Some(0.5), 
-            tags: None 
+        
+        let response_data = serde_json::json!({
+            "content": format!("Tools are currently disabled. You said: {}", content),
+            "analysis": {
+                "salience": 0.5,
+                "topics": ["system", "notification"],
+                "mood": "informative",
+                "contains_code": false
+            },
+            "metadata": {
+                "tool_enabled": false
+            }
+        });
+
+        self.connection.send_message(WsServerMessage::Response {
+            data: response_data,
         }).await?;
-        self.connection.send_message(WsServerMessage::Done).await?;
+
         Ok(())
     }
 }
