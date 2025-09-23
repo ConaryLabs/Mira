@@ -19,7 +19,6 @@ pub struct ChatRequest {
     pub project_id: Option<String>,
     pub metadata: Option<MessageMetadata>,
     pub session_id: String,
-    pub require_json: bool,
 }
 
 pub struct UnifiedChatHandler {
