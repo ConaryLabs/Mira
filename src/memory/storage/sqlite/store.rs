@@ -39,6 +39,12 @@ impl SqliteMemoryStore {
         }
     }
 
+    /// Get access to the underlying SQLite pool for direct queries
+    /// Used by SummaryStorage to access rolling_summaries table
+    pub fn get_pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Database migrations (unchanged)
     pub async fn run_migrations(&self) -> Result<()> {
         info!("Migrations handled by SQLx CLI");

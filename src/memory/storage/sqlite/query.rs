@@ -12,7 +12,22 @@ pub const INSERT_MEMORY: &str = r#"
 "#;
 
 /// Loads the last N messages with analysis data for a session
+/// FIXED: Excludes system messages (summaries) from chat history
 pub const LOAD_RECENT: &str = r#"
+    SELECT 
+        m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
+        m.response_id, m.parent_id,
+        a.mood, a.intensity, a.salience, a.intent, a.topics, a.summary,
+        a.contains_code, a.programming_lang, a.last_recalled
+    FROM memory_entries m
+    LEFT JOIN message_analysis a ON m.id = a.message_id
+    WHERE m.session_id = ? AND m.role != 'system'
+    ORDER BY m.timestamp DESC
+    LIMIT ?
+"#;
+
+/// Load recent messages including system messages (for debugging/admin)
+pub const LOAD_RECENT_ALL: &str = r#"
     SELECT 
         m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
         m.response_id, m.parent_id,
@@ -22,6 +37,17 @@ pub const LOAD_RECENT: &str = r#"
     LEFT JOIN message_analysis a ON m.id = a.message_id
     WHERE m.session_id = ?
     ORDER BY m.timestamp DESC
+    LIMIT ?
+"#;
+
+/// Get summaries for context building
+pub const LOAD_SUMMARIES: &str = r#"
+    SELECT 
+        id, summary_type, summary_text, message_count, 
+        first_message_id, last_message_id, created_at, embedding_generated
+    FROM rolling_summaries 
+    WHERE session_id = ? 
+    ORDER BY created_at DESC 
     LIMIT ?
 "#;
 
@@ -76,19 +102,8 @@ pub const GET_THREAD: &str = r#"
         
         SELECT m.id, m.parent_id, m.session_id, m.role, m.content, m.timestamp, m.tags
         FROM memory_entries m
-        JOIN thread t ON m.id = t.parent_id
+        INNER JOIN thread t ON m.parent_id = t.id
     )
-    SELECT * FROM thread ORDER BY timestamp ASC
+    SELECT * FROM thread
+    ORDER BY timestamp ASC
 "#;
-
-/// Helper: Convert Vec<f32> embedding to bytes (for compatibility, though embeddings are in Qdrant now)
-pub fn embedding_f32_to_bytes(embedding: &[f32]) -> Vec<u8> {
-    embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
-/// Helper: Convert bytes back to Vec<f32> (for compatibility)
-pub fn embedding_bytes_to_f32(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect()
-}

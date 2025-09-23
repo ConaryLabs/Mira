@@ -54,11 +54,44 @@ pub struct SummaryRequest {
 }
 
 /// Types of summaries that can be generated
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum SummaryType {
     Rolling10,   // 10-message rolling summary
     Rolling100,  // 100-message mega summary
     Snapshot,    // On-demand snapshot summary
+}
+
+/// Record structure for summary retrieval from rolling_summaries table
+#[derive(Debug, Clone)]
+pub struct SummaryRecord {
+    pub id: i64,
+    pub summary_type: String,
+    pub summary_text: String,
+    pub message_count: usize,
+    pub created_at: i64,
+}
+
+impl SummaryRecord {
+    /// Convert to display-friendly format
+    pub fn to_display(&self) -> String {
+        let summary_type = match self.summary_type.as_str() {
+            "rolling_10" => "10-msg",
+            "rolling_100" => "100-msg",
+            "snapshot" => "Snapshot",
+            _ => &self.summary_type,
+        };
+        
+        format!("[{} Summary] {} messages: {}", 
+                summary_type, 
+                self.message_count, 
+                self.summary_text.chars().take(100).collect::<String>())
+    }
+    
+    /// Get age in hours
+    pub fn age_hours(&self) -> f64 {
+        let now = chrono::Utc::now().timestamp();
+        (now - self.created_at) as f64 / 3600.0
+    }
 }
 
 /// Parameters for memory recall operations
@@ -92,51 +125,9 @@ pub struct BatchEmbeddingConfig {
 impl Default for BatchEmbeddingConfig {
     fn default() -> Self {
         Self {
-            max_batch_size: 100,  // OpenAI optimal batch size
+            max_batch_size: 10,
             max_retries: 3,
             retry_delay_ms: 1000,
         }
-    }
-}
-
-/// Classification result with routing information
-#[derive(Debug, Clone)]
-pub struct ClassificationResult {
-    pub salience: f32,
-    pub is_code: bool,
-    pub lang: Option<String>,
-    pub topics: Vec<String>,
-    pub suggested_heads: Vec<EmbeddingHead>,
-}
-
-/// Memory operation error types
-#[derive(Debug, thiserror::Error)]
-pub enum MemoryError {
-    #[error("Database error: {0}")]
-    Database(String),
-    
-    #[error("Qdrant error: {0}")]
-    Qdrant(String),
-    
-    #[error("LLM API error: {0}")]
-    LlmApi(String),
-    
-    #[error("Classification error: {0}")]
-    Classification(String),
-    
-    #[error("Embedding error: {0}")]
-    Embedding(String),
-    
-    #[error("Session not found: {0}")]
-    SessionNotFound(String),
-    
-    #[error("Invalid configuration: {0}")]
-    Configuration(String),
-}
-
-/// Convert from anyhow::Error to MemoryError
-impl From<anyhow::Error> for MemoryError {
-    fn from(err: anyhow::Error) -> Self {
-        MemoryError::Database(err.to_string())
     }
 }

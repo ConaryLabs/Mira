@@ -1,17 +1,18 @@
+// src/memory/features/summarization/storage/summary_storage.rs
 use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use tracing::{info, warn};
+use sqlx::Row;
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
-use crate::memory::core::traits::MemoryStore;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
-use crate::memory::features::memory_types::SummaryType;
+use crate::memory::features::memory_types::{SummaryType, SummaryRecord};
 use crate::config::CONFIG;
 
-/// Handles all summary storage operations (SQLite + Qdrant)
+/// Handles all summary storage operations - FIXED to use rolling_summaries table
 pub struct SummaryStorage {
     llm_client: Arc<OpenAIClient>,
     sqlite_store: Arc<SqliteMemoryStore>,
@@ -31,7 +32,7 @@ impl SummaryStorage {
         }
     }
 
-    /// Stores summary in both SQLite and Qdrant
+    /// FIXED: Stores summary in correct rolling_summaries table + Qdrant
     pub async fn store_summary(
         &self,
         session_id: &str,
@@ -39,35 +40,45 @@ impl SummaryStorage {
         summary_type: SummaryType,
         message_count: usize,
     ) -> Result<()> {
-        // Create memory entry for the summary
-        let entry = self.create_summary_entry(
-            session_id.to_string(),
-            summary.to_string(),
+        // Get message range for this summary
+        let (first_message_id, last_message_id) = self.get_message_range(session_id, message_count).await?;
+        
+        // Store in dedicated rolling_summaries table (NOT memory_entries!)
+        let summary_id = self.store_in_rolling_summaries_table(
+            session_id,
+            summary,
             summary_type,
             message_count,
-        );
-
-        // Save to SQLite first
-        let saved = self.sqlite_store.save(&entry).await?;
-        let summary_id = saved.id.unwrap_or(0);
+            first_message_id,
+            last_message_id,
+        ).await?;
         
-        info!("Stored summary {} in SQLite", summary_id);
+        info!("Stored summary {} in rolling_summaries table", summary_id);
 
         // Generate embedding and store in Qdrant if configured
         if CONFIG.embed_heads.contains("summary") {
-            match self.llm_client.get_embedding(&saved.content).await {
+            match self.llm_client.get_embedding(summary).await {
                 Ok(embedding) => {
-                    let mut entry_with_embedding = saved;
-                    entry_with_embedding.embedding = Some(embedding);
+                    // Create a lightweight entry for Qdrant (not stored in memory_entries)
+                    let qdrant_entry = self.create_qdrant_entry(
+                        session_id,
+                        summary,
+                        summary_type,
+                        summary_id,
+                        embedding,
+                    );
                     
                     self.multi_store
-                        .save(EmbeddingHead::Summary, &entry_with_embedding)
+                        .save(EmbeddingHead::Summary, &qdrant_entry)
                         .await?;
                     
-                    info!("Stored summary {} in Qdrant Summary collection", summary_id);
+                    // Mark embedding as generated
+                    self.mark_embedding_generated(summary_id).await?;
+                    
+                    info!("Stored summary {} embedding in Qdrant Summary collection", summary_id);
                 }
                 Err(e) => {
-                    warn!("Failed to generate embedding for summary: {}", e);
+                    warn!("Failed to generate embedding for summary {}: {}", summary_id, e);
                     // Don't fail the whole operation if embedding fails
                 }
             }
@@ -76,12 +87,95 @@ impl SummaryStorage {
         Ok(())
     }
 
-    fn create_summary_entry(
+    /// Store summary in the correct rolling_summaries table
+    async fn store_in_rolling_summaries_table(
         &self,
-        session_id: String,
-        summary: String,
+        session_id: &str,
+        summary_text: &str,
         summary_type: SummaryType,
-        _message_count: usize,
+        message_count: usize,
+        first_message_id: Option<i64>,
+        last_message_id: Option<i64>,
+    ) -> Result<i64> {
+        let summary_type_str = match summary_type {
+            SummaryType::Rolling10 => "rolling_10",
+            SummaryType::Rolling100 => "rolling_100", 
+            SummaryType::Snapshot => "snapshot",
+        };
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO rolling_summaries (
+                session_id, summary_type, summary_text, message_count,
+                first_message_id, last_message_id, created_at, embedding_generated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+            "#
+        )
+        .bind(session_id)
+        .bind(summary_type_str)
+        .bind(summary_text)
+        .bind(message_count as i64)
+        .bind(first_message_id)
+        .bind(last_message_id)
+        .bind(Utc::now().timestamp())
+        .bind(false) // embedding_generated starts false
+        .fetch_one(self.sqlite_store.get_pool())
+        .await?;
+
+        let summary_id: i64 = row.get("id");
+        Ok(summary_id)
+    }
+
+    /// Get the message ID range this summary covers
+    async fn get_message_range(&self, session_id: &str, message_count: usize) -> Result<(Option<i64>, Option<i64>)> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id FROM memory_entries 
+            WHERE session_id = ? AND role != 'system'
+            ORDER BY timestamp DESC 
+            LIMIT ?
+            "#
+        )
+        .bind(session_id)
+        .bind(message_count as i64)
+        .fetch_all(self.sqlite_store.get_pool())
+        .await?;
+
+        if rows.is_empty() {
+            return Ok((None, None));
+        }
+
+        let last_message_id: i64 = rows[0].get("id");
+        let first_message_id: i64 = rows[rows.len() - 1].get("id");
+        
+        Ok((Some(first_message_id), Some(last_message_id)))
+    }
+
+    /// Mark embedding as generated in rolling_summaries table
+    async fn mark_embedding_generated(&self, summary_id: i64) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE rolling_summaries 
+            SET embedding_generated = TRUE 
+            WHERE id = ?
+            "#
+        )
+        .bind(summary_id)
+        .execute(self.sqlite_store.get_pool())
+        .await?;
+
+        Ok(())
+    }
+
+    /// Create lightweight entry for Qdrant storage (not saved to memory_entries)
+    fn create_qdrant_entry(
+        &self,
+        session_id: &str,
+        summary: &str,
+        summary_type: SummaryType,
+        summary_id: i64,
+        embedding: Vec<f32>,
     ) -> MemoryEntry {
         let type_tag = match summary_type {
             SummaryType::Rolling10 => "summary:rolling:10",
@@ -90,37 +184,37 @@ impl SummaryStorage {
         };
         
         MemoryEntry {
-            id: None,
-            session_id,
+            id: Some(summary_id), // Use rolling_summaries.id as reference
+            session_id: session_id.to_string(),
             response_id: None,
             parent_id: None,
-            role: "system".to_string(),
-            content: summary.clone(),
+            role: "summary".to_string(), // Special role for Qdrant
+            content: summary.to_string(),
             timestamp: Utc::now(),
             tags: Some(vec![
                 "summary".to_string(),
                 type_tag.to_string(),
-                "system".to_string(),
+                "rolling".to_string(),
             ]),
             
-            // Analysis fields
+            // Analysis fields optimized for summaries
             mood: None,
             intensity: None,
-            salience: Some(10.0),  // Summaries have max salience
-            intent: None,
+            salience: Some(10.0), // Max salience for summaries
+            intent: Some("summarize".to_string()),
             topics: None,
-            summary: Some(summary),
+            summary: Some(summary.to_string()),
             relationship_impact: None,
             contains_code: Some(false),
-            language: None,
+            language: Some("en".to_string()),
             programming_lang: None,
-            analyzed_at: None,
-            analysis_version: None,
-            routed_to_heads: None,
+            analyzed_at: Some(Utc::now()),
+            analysis_version: Some("summary_v1".to_string()),
+            routed_to_heads: Some(vec!["summary".to_string()]),
             last_recalled: Some(Utc::now()),
-            recall_count: None,
+            recall_count: Some(0),
             
-            // GPT5 metadata fields - all None for summaries
+            // GPT5 metadata - not applicable for summaries
             model_version: None,
             prompt_tokens: None,
             completion_tokens: None,
@@ -136,9 +230,68 @@ impl SummaryStorage {
             verbosity: None,
             
             // Embedding info
-            embedding: None,
+            embedding: Some(embedding),
             embedding_heads: Some(vec!["summary".to_string()]),
-            qdrant_point_ids: None,
+            qdrant_point_ids: None, // Will be set by multi_store
         }
+    }
+
+    /// Get summaries for a session (for context building)
+    pub async fn get_summaries_for_session(&self, session_id: &str, limit: usize) -> Result<Vec<SummaryRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, summary_type, summary_text, message_count, created_at 
+            FROM rolling_summaries 
+            WHERE session_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT ?
+            "#
+        )
+        .bind(session_id)
+        .bind(limit as i64)
+        .fetch_all(self.sqlite_store.get_pool())
+        .await?;
+
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(SummaryRecord {
+                id: row.get("id"),
+                summary_type: row.get("summary_type"),
+                summary_text: row.get("summary_text"),
+                message_count: row.get::<i64, _>("message_count") as usize,
+                created_at: row.get::<i64, _>("created_at"),
+            });
+        }
+
+        Ok(summaries)
+    }
+
+    /// Get latest summary of each type for context
+    pub async fn get_latest_summaries(&self, session_id: &str) -> Result<Vec<SummaryRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT ON (summary_type) 
+                id, summary_type, summary_text, message_count, created_at
+            FROM rolling_summaries 
+            WHERE session_id = ? 
+            ORDER BY summary_type, created_at DESC
+            "#
+        )
+        .bind(session_id)
+        .fetch_all(self.sqlite_store.get_pool())
+        .await?;
+
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(SummaryRecord {
+                id: row.get("id"),
+                summary_type: row.get("summary_type"),
+                summary_text: row.get("summary_text"),
+                message_count: row.get::<i64, _>("message_count") as usize,
+                created_at: row.get::<i64, _>("created_at"),
+            });
+        }
+
+        Ok(summaries)
     }
 }

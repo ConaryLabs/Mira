@@ -10,7 +10,6 @@ use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
 use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence};
-use crate::llm::structured::CompleteResponse;
 use crate::state::AppState;
 
 pub struct MessageRouter {
@@ -72,39 +71,34 @@ impl MessageRouter {
         project_id: Option<String>,
         metadata: Option<MessageMetadata>,
     ) -> Result<()> {
-        info!("Chat message received: {} chars", content.len());
-        
-        self.connection.set_processing(true).await;
+        info!("Processing chat message from {}", self.addr);
 
-        let session_id = "peter-eternal".to_string();
-        
         let request = ChatRequest {
+            session_id: "peter-eternal".to_string(),
             content,
             project_id,
             metadata,
-            session_id,
-        };
-        
-        let result = match self.unified_handler.handle_message(request).await {
-            Ok(complete_response) => {
-                self.send_complete_response_to_client(complete_response).await
-            }
-            Err(e) => {
-                error!("Error processing chat: {}", e);
-                self.connection.send_error(
-                    &format!("Failed to process message: {}", e),
-                    "PROCESSING_ERROR".to_string()
-                ).await
-            }
         };
 
-        self.connection.set_processing(false).await;
-        result
+        match self.unified_handler.handle_message(request).await {
+            Ok(complete_response) => {
+                self.send_complete_response_to_client(complete_response).await?;
+            }
+            Err(e) => {
+                error!("Error handling chat message: {}", e);
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "CHAT_ERROR".to_string(),
+                }).await?;
+            }
+        }
+
+        Ok(())
     }
-    
+
     async fn send_complete_response_to_client(
         &self,
-        complete_response: CompleteResponse,
+        complete_response: crate::llm::structured::CompleteResponse,
     ) -> Result<()> {
         let response_data = json!({
             "content": complete_response.structured.output,
@@ -114,31 +108,43 @@ impl MessageRouter {
                 "contains_code": complete_response.structured.analysis.contains_code,
                 "routed_to_heads": complete_response.structured.analysis.routed_to_heads,
                 "language": complete_response.structured.analysis.language,
-                // Optional fields (can be null)
+                // Optional fields
                 "mood": complete_response.structured.analysis.mood,
                 "intensity": complete_response.structured.analysis.intensity,
                 "intent": complete_response.structured.analysis.intent,
                 "summary": complete_response.structured.analysis.summary,
                 "relationship_impact": complete_response.structured.analysis.relationship_impact,
-                "programming_lang": complete_response.structured.analysis.programming_lang
+                "programming_lang": complete_response.structured.analysis.programming_lang,
             },
             "metadata": {
                 "response_id": complete_response.metadata.response_id,
                 "total_tokens": complete_response.metadata.total_tokens,
-                "latency_ms": complete_response.metadata.latency_ms
+                "latency_ms": complete_response.metadata.latency_ms,
             }
         });
 
-        self.connection.send_message(WsServerMessage::Response {
-            data: response_data,
+        self.connection.send_message(WsServerMessage::Response { 
+            data: response_data 
         }).await?;
 
         Ok(())
     }
 
+    // Helper function - forwards messages with request_id where supported
+    fn forward_with_id(&self, msg: WsServerMessage, request_id: Option<String>) -> WsServerMessage {
+        match msg {
+            WsServerMessage::Data { data, .. } => {
+                WsServerMessage::Data { data, request_id }
+            }
+            // These don't support request_id in current enum - pass through as-is
+            other => other
+        }
+    }
+
     async fn handle_project_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = project::handle_project_command(&method, params, self.app_state.clone()).await?;
         
+        // ENHANCED: Forward all message types properly, don't funnel through extract_response_data
         match response {
             WsServerMessage::Data { data, .. } => {
                 self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
@@ -146,9 +152,15 @@ impl MessageRouter {
             WsServerMessage::Status { message, detail } => {
                 self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
             }
-            _ => {
-                let data = self.extract_response_data(response);
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+            _ => {
+                // Handle other variants by forwarding as-is
+                self.connection.send_message(response).await?;
             }
         }
         
@@ -158,13 +170,25 @@ impl MessageRouter {
     async fn handle_memory_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = memory::handle_memory_command(&method, params, self.app_state.clone()).await?;
         
+        // CRITICAL FIX: Handle memory data properly + better logging
         match response {
             WsServerMessage::Data { data, .. } => {
+                let bytes = data.to_string().len();
+                info!(bytes, "Sending memory data");
                 self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
             }
-            _ => {
-                let data = self.extract_response_data(response);
+            WsServerMessage::Status { message, detail } => {
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+            _ => {
+                // Handle other variants by forwarding as-is
+                self.connection.send_message(response).await?;
             }
         }
         
@@ -181,9 +205,14 @@ impl MessageRouter {
             WsServerMessage::Status { message, detail } => {
                 self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
             }
-            _ => {
-                let data = self.extract_response_data(response);
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+            _ => {
+                self.connection.send_message(response).await?;
             }
         }
         
@@ -200,9 +229,14 @@ impl MessageRouter {
             WsServerMessage::Status { message, detail } => {
                 self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
             }
-            _ => {
-                let data = self.extract_response_data(response);
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+            _ => {
+                self.connection.send_message(response).await?;
             }
         }
         
@@ -219,9 +253,14 @@ impl MessageRouter {
             WsServerMessage::Status { message, detail } => {
                 self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
             }
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
             _ => {
-                let response_data = self.extract_response_data(response);
-                self.connection.send_message(WsServerMessage::Response { data: response_data }).await?;
+                self.connection.send_message(response).await?;
             }
         }
         
@@ -238,20 +277,17 @@ impl MessageRouter {
             WsServerMessage::Status { message, detail } => {
                 self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
             }
-            _ => {
-                let data = self.extract_response_data(response);
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+            _ => {
+                self.connection.send_message(response).await?;
             }
         }
         
         Ok(())
-    }
-    
-    fn extract_response_data(&self, response: WsServerMessage) -> Value {
-        match response {
-            WsServerMessage::Response { data } => data,
-            WsServerMessage::Error { message, .. } => json!({"error": message}),
-            _ => json!({"status": "success"}),
-        }
     }
 }
