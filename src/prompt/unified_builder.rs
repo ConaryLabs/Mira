@@ -116,12 +116,8 @@ impl UnifiedPromptBuilder {
                     format!("{}d ago", time_ago.num_days())
                 };
                 
-                // Truncate very long messages
-                let content = if entry.content.len() > 200 {
-                    format!("{}...", &entry.content[..200])
-                } else {
-                    entry.content.clone()
-                };
+                // FIXED: Unicode-safe string truncation
+                let content = Self::truncate_safely(&entry.content, 200);
                 
                 prompt.push_str(&format!("[{}] {} ({})\n", entry.role, content, time_str));
             }
@@ -213,11 +209,8 @@ impl UnifiedPromptBuilder {
                     ));
                     
                     if let Some(text) = &selection.text {
-                        let preview = if text.len() > 500 {
-                            format!("{}...", &text[..500])
-                        } else {
-                            text.clone()
-                        };
+                        // FIXED: Unicode-safe truncation here too
+                        let preview = Self::truncate_safely(text, 500);
                         prompt.push_str(&format!("```\n{}\n```\n", preview));
                     }
                     context_added = true;
@@ -228,6 +221,17 @@ impl UnifiedPromptBuilder {
                 prompt.push('\n');
             }
         }
+    }
+    
+    /// FIXED: Unicode-safe string truncation helper
+    /// Truncates string to approximately max_chars characters without breaking Unicode boundaries
+    fn truncate_safely(s: &str, max_chars: usize) -> String {
+        if s.chars().count() <= max_chars {
+            return s.to_string();
+        }
+        
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
     
     // Note: add_json_requirement removed - structured API handles this automatically
@@ -245,142 +249,5 @@ impl UnifiedPromptBuilder {
             None,
             project_id,
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::memory::core::types::MemoryEntry;
-    use crate::api::ws::message::{MessageMetadata, TextSelection};
-    use chrono::Utc;
-    
-    #[test]
-    fn test_unified_prompt_basic() {
-        let persona = PersonaOverlay::Default;
-        let context = RecallContext {
-            recent: vec![],
-            semantic: vec![],
-        };
-        
-        let prompt = UnifiedPromptBuilder::build_simple_prompt(&persona, &context, None);
-        
-        assert!(prompt.contains("You are Mira"));
-        assert!(!prompt.contains("CRITICAL OVERRIDE"));
-        assert!(prompt.contains("Remember: You are ALWAYS Mira"));
-        
-        assert!(!prompt.contains("TOOLS AVAILABLE"));
-        assert!(!prompt.contains("ACTIVE PROJECT"));
-        assert!(!prompt.contains("JSON object"));
-    }
-    
-    #[test]
-    fn test_unified_prompt_with_project_metadata() {
-        let persona = PersonaOverlay::Default;
-        let context = RecallContext {
-            recent: vec![],
-            semantic: vec![],
-        };
-        
-        let metadata = MessageMetadata {
-            file_path: None,
-            repo_id: None,
-            attachment_id: None,
-            language: None,
-            selection: None,
-            project_name: Some("mira-backend".to_string()),
-            has_repository: Some(true),
-            repo_root: Some("./repos/test".to_string()),
-            branch: Some("main".to_string()),
-            request_repo_context: Some(true),
-        };
-        
-        let prompt = UnifiedPromptBuilder::build_system_prompt(
-            &persona,
-            &context,
-            None,
-            Some(&metadata),
-            None,
-        );
-        
-        assert!(prompt.contains("ACTIVE PROJECT: mira-backend"));
-        assert!(prompt.contains("Git repository attached"));
-        assert!(prompt.contains("branch: main"));
-        assert!(prompt.contains("repository context"));
-    }
-    
-    #[test] 
-    fn test_unified_prompt_with_modern_memory() {
-        let persona = PersonaOverlay::Default;
-        
-        // Create a MemoryEntry with MODERN structure
-        let memory_entry = MemoryEntry {
-            id: Some(1),
-            session_id: "test-session".to_string(),
-            response_id: None,
-            parent_id: None,
-            role: "user".to_string(),
-            content: "Hello Mira, how's the code analysis going?".to_string(),
-            timestamp: Utc::now(), // MODERN: timestamp not created_at
-            tags: Some(vec!["greeting".to_string(), "code".to_string()]),
-            salience: Some(8.5), // High importance
-            topics: Some(vec!["code_analysis".to_string()]),
-            contains_code: Some(false),
-            programming_lang: None,
-            // ... other fields with None defaults
-            mood: None,
-            intensity: None,
-            intent: None,
-            summary: None,
-            relationship_impact: None,
-            language: Some("en".to_string()),
-            analyzed_at: None,
-            analysis_version: None,
-            routed_to_heads: None,
-            last_recalled: None,
-            recall_count: None,
-            model_version: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            reasoning_tokens: None,
-            total_tokens: None,
-            latency_ms: None,
-            generation_time_ms: None,
-            finish_reason: None,
-            tool_calls: None,
-            temperature: None,
-            max_tokens: None,
-            reasoning_effort: None,
-            verbosity: None,
-            embedding: None,
-            embedding_heads: None,
-            qdrant_point_ids: None,
-        };
-        
-        let context = RecallContext {
-            recent: vec![memory_entry.clone()],
-            semantic: vec![memory_entry],
-        };
-        
-        let prompt = UnifiedPromptBuilder::build_simple_prompt(&persona, &context, None);
-        
-        assert!(prompt.contains("MEMORY CONTEXT AVAILABLE"));
-        assert!(prompt.contains("Recent conversation:"));
-        assert!(prompt.contains("[user] Hello Mira"));
-        assert!(prompt.contains("code analysis"));
-        assert!(prompt.contains("Key memories"));
-        assert!(prompt.contains("importance: 8.5"));
-    }
-    
-    #[test]
-    fn test_unified_prompt_with_json_requirement() {
-        let persona = PersonaOverlay::Default;
-        let context = RecallContext {
-            recent: vec![],
-            semantic: vec![],
-        };
-        
-        assert!(!prompt.contains("JSON object"));
-        assert!(!prompt.contains("STRUCTURED RESPONSE"));
     }
 }

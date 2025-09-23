@@ -128,11 +128,30 @@ pub async fn handle_project_command(
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to list projects: {}", e)))?;
             
-            // Convert to JSON (artifact count can be added client-side or in a separate call)
-            let project_list: Vec<Value> = projects.iter().map(project_to_json).collect();
+            // 🚀 NEW: Enrich projects with git attachment information
+            let mut enriched_projects = Vec::new();
+            for project in projects {
+                let attachments = app_state.git_client.store
+                    .list_project_attachments(&project.id)
+                    .await
+                    .unwrap_or_default();
+                
+                let mut project_json = project_to_json(&project);
+                project_json["has_repository"] = json!(!attachments.is_empty());
+                
+                if let Some(attachment) = attachments.first() {
+                    project_json["repository_url"] = json!(attachment.repo_url);
+                    project_json["import_status"] = json!(attachment.import_status);
+                    project_json["last_sync_at"] = json!(attachment.last_sync_at);
+                }
+                
+                enriched_projects.push(project_json);
+            }
+            
+            debug!("Enriched {} projects with repository information", enriched_projects.len());
             
             Ok(WsServerMessage::Data {
-                data: json!({ "type": "project_list", "projects": project_list }),
+                data: json!({ "type": "project_list", "projects": enriched_projects }),
                 request_id: None,
             })
         }
