@@ -28,17 +28,33 @@ impl ResponseOutput {
 }
 
 pub fn extract_text_from_responses(response: &Value) -> Option<String> {
-    // DEBUG: Log the actual response structure so we can see what's happening
-    error!("DEBUG: Full LLM response structure: {}", 
-           serde_json::to_string_pretty(response).unwrap_or_default());
+    // PRIMARY PATH: GPT-5 September 2025 format
+    // output[1].content[0].text (where output[0] is reasoning, output[1] is message)
+    if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
+        // Look for the message entry (usually output[1])
+        for item in output_array {
+            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                    if let Some(first_content) = content_array.first() {
+                        if let Some(text) = first_content.get("text").and_then(|t| t.as_str()) {
+                            debug!("Extracted text using: output[message].content[0].text");
+                            return Some(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
     
-    // Primary path based on logs - /output/1/content/0/text
+    // FALLBACK: Try the old paths for backwards compatibility
+    
+    // Try /output/1/content/0/text directly (based on logs)
     if let Some(text) = response.pointer("/output/1/content/0/text").and_then(|t| t.as_str()) {
-        debug!("Extracted text using primary path: /output/1/content/0/text");
+        debug!("Extracted text using: /output/1/content/0/text");
         return Some(text.to_string());
     }
     
-    // Newer shape: output.message.content[0].text.value
+    // output.message.content[0].text.value
     if let Some(text) = response.pointer("/output/message/content/0/text/value").and_then(|t| t.as_str()) {
         debug!("Extracted text using: /output/message/content/0/text/value");
         return Some(text.to_string());
@@ -80,7 +96,7 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
         return Some(text.to_string());
     }
     
-    // NEW: Try output[0].text directly
+    // Try output[0].text directly
     if let Some(text) = response.pointer("/output/0/text").and_then(|t| t.as_str()) {
         debug!("Extracted text using: /output/0/text");
         return Some(text.to_string());
@@ -98,10 +114,10 @@ pub fn extract_text_from_responses(response: &Value) -> Option<String> {
         return Some(text.to_string());
     }
     
-    // Try iterating through output array
+    // Try iterating through output array (legacy path)
     if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
         for (i, item) in output_array.iter().enumerate() {
-            // NEW: Try direct text field
+            // Try direct text field
             if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
                 debug!("Extracted text using: output[{}].text", i);
                 return Some(text.to_string());

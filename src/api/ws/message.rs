@@ -6,11 +6,19 @@ use serde::{Deserialize, Serialize};
 /// Contains metadata about the user's context, such as the file being viewed.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MessageMetadata {
+    // File and selection context
     pub file_path: Option<String>,
     pub repo_id: Option<String>,
     pub attachment_id: Option<String>,
     pub language: Option<String>,
     pub selection: Option<TextSelection>,
+    
+    // Project context fields sent by frontend
+    pub project_name: Option<String>,
+    pub has_repository: Option<bool>,
+    pub repo_root: Option<String>,
+    pub branch: Option<String>,
+    pub request_repo_context: Option<bool>,
 }
 
 /// Represents a user's text selection in a file.
@@ -76,29 +84,29 @@ pub enum WsServerMessage {
         data: serde_json::Value,
     },
     
-    /// A general status update for the client UI.
+    /// A general status update for the client UI
     #[serde(rename = "status")]
     Status { 
         message: String,
         detail: Option<String>,
     },
     
-    /// An error message.
+    /// An error message
     #[serde(rename = "error")]
     Error { 
         message: String, 
         code: String,
     },
     
-    /// Signals that the server is connected and ready.
+    /// Signals that the server is connected and ready
     #[serde(rename = "connection_ready")]
     ConnectionReady,
     
-    /// A pong response to a client's ping for heartbeats.
+    /// A pong response to a client's ping for heartbeats
     #[serde(rename = "pong")]
     Pong,
     
-    /// A message containing the result of an image generation tool.
+    /// A message containing the result of an image generation tool
     #[serde(rename = "image_generated")]
     ImageGenerated {
         urls: Vec<String>,
@@ -111,5 +119,14 @@ pub enum WsServerMessage {
         data: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
+    },
+    
+    /// Streaming chat response chunk
+    #[serde(rename = "chat_chunk")]
+    ChatChunk {
+        content: String,
+        done: bool,
+        total_tokens: Option<i32>,
+        analysis: Option<serde_json::Value>,
     },
 }

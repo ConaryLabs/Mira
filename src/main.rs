@@ -29,6 +29,15 @@ async fn main() -> anyhow::Result<()> {
         .connect(&CONFIG.database_url)
         .await?;
     
+    // Set critical PRAGMAs for production
+    sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
+    sqlx::query("PRAGMA journal_mode = WAL").execute(&pool).await?;
+    sqlx::query("PRAGMA synchronous = NORMAL").execute(&pool).await?;
+    info!("Database PRAGMAs configured for production");
+    
+    // Skip migrations since they were already run with sqlx migrate run
+    info!("Using existing database schema");
+    
     let sqlite_store = Arc::new(
         mira_backend::memory::storage::sqlite::store::SqliteMemoryStore::new(pool.clone())
     );

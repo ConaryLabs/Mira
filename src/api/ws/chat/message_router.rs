@@ -139,9 +139,24 @@ impl MessageRouter {
 
     async fn handle_project_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = project::handle_project_command(&method, params, self.app_state.clone()).await?;
-        let data = self.extract_response_data(response);
         
-        self.connection.send_message(WsServerMessage::Response { data }).await?;
+        // FIXED: Don't use extract_response_data for project commands - preserve the actual data
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                // For project commands, send as Data type to preserve the actual project data
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            WsServerMessage::Status { message, detail } => {
+                // For delete operations and similar
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            _ => {
+                // Fallback for other response types
+                let data = self.extract_response_data(response);
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+        }
+        
         Ok(())
     }
 
@@ -166,33 +181,93 @@ impl MessageRouter {
 
     async fn handle_git_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = git::handle_git_command(&method, params, self.app_state.clone()).await?;
-        let data = self.extract_response_data(response);
         
-        self.connection.send_message(WsServerMessage::Response { data }).await?;
+        // FIXED: Don't use extract_response_data for git commands - preserve the actual data
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                // For git commands, send as Data type to preserve git data (file trees, content, etc.)
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            WsServerMessage::Status { message, detail } => {
+                // For status operations like push, pull, reset
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            _ => {
+                // Fallback for other response types
+                let data = self.extract_response_data(response);
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+        }
+        
         Ok(())
     }
 
     async fn handle_filesystem_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = filesystem::handle_filesystem_command(&method, params, self.app_state.clone()).await?;
-        let data = self.extract_response_data(response);
         
-        self.connection.send_message(WsServerMessage::Response { data }).await?;
+        // FIXED: Don't use extract_response_data for filesystem commands - preserve the actual data
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                // For filesystem commands, send as Data type to preserve file data
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            WsServerMessage::Status { message, detail } => {
+                // For filesystem status operations
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            _ => {
+                // Fallback for other response types
+                let data = self.extract_response_data(response);
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+        }
+        
         Ok(())
     }
 
     async fn handle_file_transfer(&self, operation: String, data: Value, request_id: Option<String>) -> Result<()> {
         let response = files::handle_file_transfer(&operation, data, self.app_state.clone()).await?;
-        let response_data = self.extract_response_data(response);
         
-        self.connection.send_message(WsServerMessage::Response { data: response_data }).await?;
+        // FIXED: Don't use extract_response_data for file transfers - preserve the actual data
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                // For file transfers, send as Data type to preserve upload/download data
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            WsServerMessage::Status { message, detail } => {
+                // For file transfer status operations
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            _ => {
+                // Fallback for other response types
+                let response_data = self.extract_response_data(response);
+                self.connection.send_message(WsServerMessage::Response { data: response_data }).await?;
+            }
+        }
+        
         Ok(())
     }
 
     async fn handle_code_intelligence_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = code_intelligence::handle_code_intelligence_command(&method, params, self.app_state.clone()).await?;
-        let data = self.extract_response_data(response);
         
-        self.connection.send_message(WsServerMessage::Response { data }).await?;
+        // FIXED: Don't use extract_response_data for code intelligence - preserve the actual data
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                // For code intelligence, send as Data type to preserve search results, stats, etc.
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            WsServerMessage::Status { message, detail } => {
+                // For code intelligence status operations
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            _ => {
+                // Fallback for other response types
+                let data = self.extract_response_data(response);
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+        }
+        
         Ok(())
     }
     

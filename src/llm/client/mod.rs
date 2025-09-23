@@ -63,14 +63,13 @@ impl OpenAIClient {
         &self.embedding_client
     }
 
-    // FIXED: This is being called by the summarization strategies - use proper Responses API format
+    // FIXED: Use the same extraction logic as extract_text_from_responses
     pub async fn summarize_conversation(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         debug!("Summarization request for prompt length: {} characters", prompt.len());
         
-        // FIXED: Use Responses API format - single input string, not array
         let request_body = serde_json::json!({
             "model": self.config.model,
-            "input": prompt,  // Simple string, not complex array
+            "input": prompt,
             "text": {
                 "verbosity": "medium"
             }
@@ -78,23 +77,14 @@ impl OpenAIClient {
         
         let response = self.post_response_with_retry(request_body).await?;
         
-        // FIXED: Extract text from GPT-5 Responses API format
-        let text = if let Some(output_text) = response.get("output_text").and_then(|v| v.as_str()) {
-            output_text.to_string()
-        } else if let Some(content) = response
-            .get("output")
-            .and_then(|output| output.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|item| item.get("text"))
-            .and_then(|text| text.as_str())
-        {
-            content.to_string()
-        } else {
-            warn!("Could not extract text from response, using fallback");
-            "Summary generation failed".to_string()
-        };
+        // Use the same extraction logic as extract_text_from_responses
+        if let Some(text) = responses::extract_text_from_responses(&response) {
+            return Ok(text);
+        }
         
-        Ok(text)
+        // Fallback
+        warn!("Could not extract text from response, using fallback");
+        Ok("Summary generation failed".to_string())
     }
 
     // This is probably used by the tools - simple completion as well
@@ -194,6 +184,8 @@ impl OpenAIClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
+            error!("OpenAI API error ({} {}): {}", 
+                status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text);
             return Err(anyhow::anyhow!("OpenAI API error ({} {}): {}", 
                 status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text));
         }
