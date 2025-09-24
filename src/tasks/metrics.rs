@@ -48,17 +48,48 @@ impl TaskMetrics {
         let processed = self.processed.read();
         let errors = self.errors.read();
         
+        let mut has_activity = false;
+        
         for (task, count) in processed.iter() {
-            let processed = count.load(Ordering::Relaxed);
+            let processed_count = count.load(Ordering::Relaxed);
             let error_count = errors
                 .get(task)
                 .map(|c| c.load(Ordering::Relaxed))
                 .unwrap_or(0);
             
-            info!(
-                "Task '{}': processed={}, errors={}", 
-                task, processed, error_count
-            );
+            // Only log tasks that have actually done work since last report
+            if processed_count > 0 || error_count > 0 {
+                info!(
+                    "Task '{}': processed={}, errors={}", 
+                    task, processed_count, error_count
+                );
+                has_activity = true;
+            }
         }
+        
+        if !has_activity {
+            info!("All background tasks idle - no activity in past hour");
+        }
+        
+        // Reset counters after reporting to show incremental progress
+        self.reset_counters();
+    }
+    
+    /// Reset all counters after reporting to show incremental progress
+    fn reset_counters(&self) {
+        let processed = self.processed.read();
+        let errors = self.errors.read();
+        
+        for (_, count) in processed.iter() {
+            count.store(0, Ordering::Relaxed);
+        }
+        
+        for (_, count) in errors.iter() {
+            count.store(0, Ordering::Relaxed);
+        }
+        
+        // Clear duration history to prevent memory growth
+        let mut durations = self.durations.write();
+        durations.clear();
     }
 }

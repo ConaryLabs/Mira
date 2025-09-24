@@ -255,7 +255,7 @@ impl TaskManager {
     /// Spawns the metrics reporter task
     fn spawn_metrics_reporter(&self) -> JoinHandle<()> {
         let metrics = self.metrics.clone();
-        let interval = Duration::from_secs(60);
+        let interval = Duration::from_secs(3600); // Changed from 60 to 3600 (1 hour)
 
         tokio::spawn(async move {
             let mut interval_timer = time::interval(interval);
