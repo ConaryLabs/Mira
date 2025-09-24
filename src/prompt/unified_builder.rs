@@ -3,13 +3,13 @@
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::llm::responses::types::Tool;
+use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::persona::PersonaOverlay;
 use chrono::Utc;
 
 pub struct UnifiedPromptBuilder;
 
 impl UnifiedPromptBuilder {
-    /// Build system prompt with full context awareness and project integration
     pub fn build_system_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -19,32 +19,141 @@ impl UnifiedPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
         
-        // Start with base persona
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
         
-        // Persona already defines personality - no override needed
-        
-        // NEW: Add project context FIRST (most important context)
         Self::add_project_context(&mut prompt, metadata, project_id);
-        
-        // Add conversation history and memories
         Self::add_memory_context(&mut prompt, context);
-        
-        // Add available tools
         Self::add_tool_context(&mut prompt, tools);
-        
-        // Add file/selection context from metadata
         Self::add_file_context(&mut prompt, metadata);
         
-        // Note: JSON requirement removed - handled by structured API schema
+        if Self::is_code_related(metadata) {
+            Self::add_code_best_practices(&mut prompt);
+        }
         
         prompt
     }
     
-    // Note: Uncensored override removed - handled by persona system
+    pub fn build_code_fix_prompt(
+        persona: &PersonaOverlay,
+        context: &RecallContext,
+        error_context: &ErrorContext,
+        file_content: &str,
+        metadata: Option<&MessageMetadata>,
+        project_id: Option<&str>,
+    ) -> String {
+        let mut prompt = String::new();
+        
+        prompt.push_str(persona.prompt());
+        prompt.push_str("\n\n");
+        
+        Self::add_project_context(&mut prompt, metadata, project_id);
+        Self::add_memory_context(&mut prompt, context);
+        Self::add_code_fix_requirements(&mut prompt, error_context, file_content);
+        
+        prompt
+    }
     
-    /// NEW: Extract and include project context from metadata (fixes the original bug!)
+    fn add_code_fix_requirements(prompt: &mut String, error_context: &ErrorContext, file_content: &str) {
+        let line_count = file_content.lines().count();
+        
+        prompt.push_str("\n\n");
+        prompt.push_str("==== CRITICAL CODE FIX REQUIREMENTS ====\n\n");
+        
+        prompt.push_str("You are fixing an error in a file. The system will REPLACE THE ENTIRE FILE with your output.\n");
+        prompt.push_str("This is not a code review or partial fix - you must provide COMPLETE files.\n\n");
+        
+        prompt.push_str("REQUIREMENTS:\n");
+        prompt.push_str(&format!("1. The original file has {} lines. Your fixed file should have a similar line count.\n", line_count));
+        prompt.push_str("2. Provide EVERY line from line 1 to the last line.\n");
+        prompt.push_str("3. Include ALL imports at the top of the file.\n");
+        prompt.push_str("4. Include ALL functions, classes, methods, and types.\n");
+        prompt.push_str("5. Include ALL constants, variables, and exports.\n");
+        prompt.push_str("6. Include ALL closing braces, brackets, and parentheses.\n\n");
+        
+        prompt.push_str("FORBIDDEN PATTERNS - NEVER USE:\n");
+        prompt.push_str("- '...' (ellipsis to indicate skipped code)\n");
+        prompt.push_str("- '// rest unchanged' or similar comments\n");
+        prompt.push_str("- '// previous code' or '// existing code'\n");
+        prompt.push_str("- Partial functions or truncated code blocks\n");
+        prompt.push_str("- ANY form of abbreviation or code skipping\n\n");
+        
+        prompt.push_str("ERROR DETAILS:\n");
+        prompt.push_str(&format!("- Error Type: {}\n", error_context.error_type));
+        prompt.push_str(&format!("- File: {}\n", error_context.file_path));
+        if let Some(line) = error_context.line_number {
+            prompt.push_str(&format!("- Error Line: {}\n", line));
+        }
+        if let Some(lang) = &error_context.language {
+            prompt.push_str(&format!("- Language: {}\n", lang));
+        }
+        prompt.push_str("\n");
+        
+        prompt.push_str("ERROR MESSAGE:\n");
+        prompt.push_str("```\n");
+        prompt.push_str(&error_context.error_message);
+        prompt.push_str("\n```\n\n");
+        
+        prompt.push_str("COMPLETE ORIGINAL FILE CONTENT:\n");
+        prompt.push_str("```");
+        if let Some(lang) = &error_context.language {
+            prompt.push_str(lang);
+        }
+        prompt.push_str("\n");
+        prompt.push_str(file_content);
+        prompt.push_str("\n```\n\n");
+        
+        prompt.push_str("VALIDATION:\n");
+        prompt.push_str("- Count the lines in your response before submitting.\n");
+        prompt.push_str(&format!("- Your fixed file should have approximately {} lines.\n", line_count));
+        prompt.push_str("- If your output is significantly shorter, you have omitted code.\n");
+        prompt.push_str("- The system will reject responses with ellipsis or incomplete code.\n\n");
+        
+        prompt.push_str("MULTI-FILE FIXES:\n");
+        prompt.push_str("If fixing this error requires changes to other files:\n");
+        prompt.push_str("1. Include ALL affected files as COMPLETE files.\n");
+        prompt.push_str("2. Mark the primary file (with the error) as change_type: 'primary'.\n");
+        prompt.push_str("3. Mark import updates as change_type: 'import'.\n");
+        prompt.push_str("4. Mark type definition updates as change_type: 'type'.\n");
+        prompt.push_str("5. Mark other cascading changes as change_type: 'cascade'.\n\n");
+        
+        prompt.push_str("Remember: Users cannot merge partial code. Provide complete, working files.\n");
+        prompt.push_str("=========================================\n\n");
+    }
+    
+    pub fn is_code_related(metadata: Option<&MessageMetadata>) -> bool {
+        if let Some(meta) = metadata {
+            if meta.file_path.is_some() || meta.file_content.is_some() {
+                return true;
+            }
+            
+            if let Some(lang) = &meta.language {
+                let code_languages = ["rust", "typescript", "javascript", "python", "go", "java", "cpp", "c"];
+                if code_languages.contains(&lang.to_lowercase().as_str()) {
+                    return true;
+                }
+            }
+            
+            if meta.repo_id.is_some() || meta.has_repository == Some(true) {
+                return true;
+            }
+        }
+        false
+    }
+    
+    fn add_code_best_practices(prompt: &mut String) {
+        prompt.push_str("\n\n");
+        prompt.push_str("==== CODE GENERATION GUIDELINES ====\n");
+        prompt.push_str("When providing code:\n");
+        prompt.push_str("- Always provide complete, runnable code\n");
+        prompt.push_str("- Include necessary imports and dependencies\n");
+        prompt.push_str("- Add helpful comments for complex logic\n");
+        prompt.push_str("- Follow language-specific best practices and idioms\n");
+        prompt.push_str("- Consider error handling and edge cases\n");
+        prompt.push_str("- If modifying existing code, provide the complete updated version\n");
+        prompt.push_str("=====================================\n\n");
+    }
+    
     fn add_project_context(prompt: &mut String, metadata: Option<&MessageMetadata>, project_id: Option<&str>) {
         if let Some(meta) = metadata {
             if let Some(project_name) = &meta.project_name {
@@ -84,7 +193,6 @@ impl UnifiedPromptBuilder {
         }
     }
     
-    /// Add memory context using MODERN RecallContext structure
     fn add_memory_context(prompt: &mut String, context: &RecallContext) {
         if context.recent.is_empty() && context.semantic.is_empty() {
             return;
@@ -94,11 +202,9 @@ impl UnifiedPromptBuilder {
         prompt.push_str("You have access to our conversation history and memories. ");
         prompt.push_str("Use them naturally when relevant, but don't force references.\n\n");
         
-        // Recent conversation (most important for continuity)
         if !context.recent.is_empty() {
             prompt.push_str("Recent conversation:\n");
             
-            // Take up to 10 most recent, in chronological order (oldest first for context)
             let recent_slice = if context.recent.len() > 10 {
                 &context.recent[context.recent.len() - 10..]
             } else {
@@ -106,7 +212,6 @@ impl UnifiedPromptBuilder {
             };
             
             for entry in recent_slice {
-                // Use proper timestamp field and modern content access
                 let time_ago = Utc::now().signed_duration_since(entry.timestamp);
                 let time_str = if time_ago.num_minutes() < 60 {
                     format!("{}m ago", time_ago.num_minutes())
@@ -116,7 +221,6 @@ impl UnifiedPromptBuilder {
                     format!("{}d ago", time_ago.num_days())
                 };
                 
-                // FIXED: Unicode-safe string truncation
                 let content = Self::truncate_safely(&entry.content, 200);
                 
                 prompt.push_str(&format!("[{}] {} ({})\n", entry.role, content, time_str));
@@ -124,9 +228,7 @@ impl UnifiedPromptBuilder {
             prompt.push('\n');
         }
         
-        // Semantic memories (high-value memories for context)
         if !context.semantic.is_empty() {
-            // Filter for high-salience memories only
             let important_memories: Vec<_> = context.semantic.iter()
                 .filter(|m| m.salience.unwrap_or(0.0) >= 7.0)
                 .take(3)
@@ -138,7 +240,6 @@ impl UnifiedPromptBuilder {
                     let content = if let Some(summary) = &memory.summary {
                         summary.clone()
                     } else {
-                        // Fallback to first sentence of content
                         memory.content.split('.').next().unwrap_or(&memory.content).to_string()
                     };
                     
@@ -150,7 +251,6 @@ impl UnifiedPromptBuilder {
         }
     }
     
-    /// Add tool context with modern tool definitions
     fn add_tool_context(prompt: &mut String, tools: Option<&[Tool]>) {
         if let Some(tool_list) = tools {
             if tool_list.is_empty() {
@@ -168,54 +268,38 @@ impl UnifiedPromptBuilder {
                         "image_generation" => "- Image Generation: Create images from text descriptions".to_string(),
                         "file_search" => "- File Search: Search through uploaded documents".to_string(),
                         "web_search" => "- Web Search: Search the internet for information".to_string(),
-                        _ => format!("- {} tool", tool.tool_type),
+                        _ => format!("- {}: Available tool", tool.tool_type),
                     }
                 };
-                prompt.push_str(&description);
-                prompt.push('\n');
+                prompt.push_str(&format!("{}\n", description));
             }
             
-            prompt.push_str("Use tools naturally when they help, but stay in character as Mira. ");
-            prompt.push_str("Never switch to assistant mode.\n\n");
+            prompt.push_str("Use tools as appropriate. You should integrate tool results naturally into the conversation.\n");
+            prompt.push('\n');
         }
     }
     
-    /// Add file/selection context from metadata - ENHANCED with file content support
     fn add_file_context(prompt: &mut String, metadata: Option<&MessageMetadata>) {
         if let Some(meta) = metadata {
             let mut context_added = false;
             
-            // File path and basic info
-            if let Some(file_path) = &meta.file_path {
-                prompt.push_str(&format!("[VIEWING FILE: {}]", file_path));
-                context_added = true;
+            if let Some(path) = &meta.file_path {
+                prompt.push_str(&format!("[VIEWING FILE: {}]\n", path));
                 
-                if let Some(language) = &meta.language {
-                    prompt.push_str(&format!(" ({})", language));
+                if let Some(lang) = &meta.language {
+                    prompt.push_str(&format!("Language: {}\n", lang));
                 }
-                prompt.push('\n');
-            }
-            
-            // CRITICAL FIX: Add actual file content when available
-            if let Some(file_content) = &meta.file_content {
-                if !file_content.trim().is_empty() {
-                    prompt.push_str("The user is currently viewing this file content in their artifact viewer:\n");
+                
+                if let Some(content) = &meta.file_content {
+                    let preview = Self::truncate_safely(content, 1000);
+                    prompt.push_str("Current file content (truncated if large):\n");
                     prompt.push_str("```\n");
-                    
-                    // Limit file content to reasonable size for context (10KB max)
-                    let content_preview = if file_content.len() > 10000 {
-                        format!("{}...\n[Content truncated - showing first 10KB of {}KB total]", 
-                               &file_content[..10000], file_content.len() / 1000)
-                    } else {
-                        file_content.clone()
-                    };
-                    
-                    prompt.push_str(&content_preview);
+                    prompt.push_str(&preview);
                     prompt.push_str("\n```\n");
-                    prompt.push_str("You can now see and reference this file content directly. ");
-                    prompt.push_str("The user expects you to be aware of what's in this file.\n");
-                    context_added = true;
                 }
+                
+                prompt.push_str("The user expects you to be aware of what's in this file.\n");
+                context_added = true;
             }
             
             if let Some(repo_id) = &meta.repo_id {
@@ -232,7 +316,6 @@ impl UnifiedPromptBuilder {
                     ));
                     
                     if let Some(text) = &selection.text {
-                        // FIXED: Unicode-safe truncation here too
                         let preview = Self::truncate_safely(text, 500);
                         prompt.push_str(&format!("```\n{}\n```\n", preview));
                     }
@@ -246,8 +329,6 @@ impl UnifiedPromptBuilder {
         }
     }
     
-    /// FIXED: Unicode-safe string truncation helper
-    /// Truncates string to approximately max_chars characters without breaking Unicode boundaries
     fn truncate_safely(s: &str, max_chars: usize) -> String {
         if s.chars().count() <= max_chars {
             return s.to_string();
@@ -257,9 +338,6 @@ impl UnifiedPromptBuilder {
         format!("{}...", truncated)
     }
     
-    // Note: add_json_requirement removed - structured API handles this automatically
-    
-    /// Simple prompt builder for basic use cases
     pub fn build_simple_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,

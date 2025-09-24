@@ -1,6 +1,4 @@
 // src/api/ws/git.rs
-// WebSocket handler for Git operations - REFACTORED: 506 → 180 lines!
-// All attachment lookup bullshit has been moved to ProjectOps trait
 
 use std::sync::Arc;
 use serde::Deserialize;
@@ -13,12 +11,10 @@ use crate::{
         ws::message::WsServerMessage,
     },
     state::AppState,
-    git::client::ProjectOps, // The magic sauce!
+    git::client::ProjectOps,
 };
 
-// ============================================================================
-// REQUEST TYPES - Minimal, no bullshit
-// ============================================================================
+// Request types
 
 #[derive(Debug, Deserialize)]
 struct AttachRepoRequest {
@@ -52,6 +48,12 @@ struct UpdateFileRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct RestoreFileRequest {
+    project_id: String,
+    file_path: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct SwitchBranchRequest {
     project_id: String,
     branch_name: String,
@@ -77,9 +79,7 @@ struct FileAtCommitRequest {
     commit_sha: String,
 }
 
-// ============================================================================
-// MAIN ROUTER - Each operation is now 5-10 lines instead of 25-30!
-// ============================================================================
+// Main command router
 
 pub async fn handle_git_command(
     method: &str,
@@ -89,7 +89,7 @@ pub async fn handle_git_command(
     debug!("Processing git command: {}", method);
     
     let result = match method {
-        // Repository management - NO MORE ATTACHMENT LOOKUPS!
+        // Repository management
         "git.attach" => {
             let req: AttachRepoRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid attach request: {}", e)))?;
@@ -172,7 +172,49 @@ pub async fn handle_git_command(
             })
         }
         
-        // File operations - CLEAN AF!
+        // Restore file from git (for undo functionality)
+        "git.restore" => {
+            let req: RestoreFileRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid restore request: {}", e)))?;
+            
+            info!("Restoring file {} in project {}", req.file_path, req.project_id);
+            
+            // Get project attachment to find repo path
+            let attachment = app_state.git_client
+                .get_attachment(&req.project_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?;
+            
+            // Use git2 to restore the file
+            let repo_path = attachment.local_path.clone();
+            let file_path = req.file_path.clone();
+            
+            tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+                use git2::{Repository, CheckoutBuilder};
+                
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| ApiError::internal(format!("Failed to open repo: {}", e)))?;
+                
+                // Create checkout builder for single file
+                let mut checkout = CheckoutBuilder::new();
+                checkout.path(&file_path);
+                checkout.force();
+                
+                // Checkout HEAD version of the file
+                repo.checkout_head(Some(&mut checkout))
+                    .map_err(|e| ApiError::internal(format!("Failed to restore file: {}", e)))?;
+                
+                Ok(())
+            }).await
+                .map_err(|e| ApiError::internal(format!("Task failed: {}", e)))??;
+            
+            Ok(WsServerMessage::Status {
+                message: format!("Restored {} from git", req.file_path),
+                detail: None,
+            })
+        }
+        
+        // File operations
         "git.tree" => {
             let req: GitProjectRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid tree request: {}", e)))?;
