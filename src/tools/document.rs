@@ -68,7 +68,6 @@ impl DocumentService {
         content: &str,
         project_id: &str,
     ) -> Result<()> {
-        // Create memory entry for document using tags for metadata
         let file_name = file_path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
@@ -93,11 +92,10 @@ impl DocumentService {
                 format!("ext:{}", extension),
                 format!("project:{}", project_id),
             ]),
-            
-            // Analysis fields
             mood: None,
             intensity: None,
-            salience: Some(7.0),  // FIXED: changed to f32
+            salience: Some(7.0),
+            original_salience: None,
             intent: Some("document_import".to_string()),
             topics: None,
             summary: Some(format!("Document: {}", file_name)),
@@ -110,8 +108,6 @@ impl DocumentService {
             routed_to_heads: None,
             last_recalled: None,
             recall_count: None,
-            
-            // GPT5 metadata fields
             model_version: None,
             prompt_tokens: None,
             completion_tokens: None,
@@ -125,14 +121,11 @@ impl DocumentService {
             max_tokens: None,
             reasoning_effort: None,
             verbosity: None,
-            
-            // Embedding info
             embedding: None,
             embedding_heads: Some(vec!["documents".to_string()]),
             qdrant_point_ids: None,
         };
 
-        // Store in Documents collection
         self.multi_store
             .save(EmbeddingHead::Documents, &entry)
             .await?;
@@ -158,7 +151,6 @@ impl DocumentService {
             .unwrap_or("document")
             .to_ascii_lowercase();
 
-        // Personal documents go to memory
         if file_name.contains("diary")
             || file_name.contains("personal")
             || file_name.contains("journal")
@@ -168,7 +160,6 @@ impl DocumentService {
             return Ok(DocumentDestination::PersonalMemory);
         }
 
-        // Technical documents go to Qdrant Documents
         let technical_exts = ["md", "pdf", "txt", "rs", "js", "py"];
         if technical_exts.contains(&extension.as_str()) {
             if project_id.is_none() {
@@ -179,7 +170,6 @@ impl DocumentService {
             return Ok(DocumentDestination::ProjectDocuments);
         }
 
-        // Large reflective documents go to both
         if content.len() > 5000
             && (content.contains("insight") || content.contains("reflection"))
         {
@@ -191,7 +181,6 @@ impl DocumentService {
             return Ok(DocumentDestination::Both);
         }
 
-        // Default to project documents if project_id exists
         if project_id.is_some() {
             Ok(DocumentDestination::ProjectDocuments)
         } else {
@@ -204,7 +193,7 @@ impl DocumentService {
             output: content.to_string(),
             persona: "system".to_string(),
             mood: "neutral".to_string(),
-            salience: 7.0,  // FIXED: changed to f32
+            salience: 7.0,
             summary: "Imported document".to_string(),
             memory_type: "fact".to_string(),
             tags: vec!["document".into(), "imported".into()],
@@ -213,7 +202,6 @@ impl DocumentService {
             reasoning_summary: None,
         };
 
-        // Use the project_id for the session, or fallback to "document-import"
         let session_id = if let Some(pid) = project_id {
             format!("project-{}", pid)
         } else {

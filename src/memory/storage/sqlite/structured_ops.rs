@@ -83,14 +83,15 @@ async fn insert_message_analysis(
     sqlx::query!(
         r#"
         INSERT INTO message_analysis (
-            message_id, mood, intensity, salience, intent, topics, summary,
+            message_id, mood, intensity, salience, original_salience, intent, topics, summary,
             relationship_impact, contains_code, language, programming_lang,
             analyzed_at, analysis_version, routed_to_heads, recall_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'structured_v1', ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'structured_v1', ?, 0)
         "#,
         message_id,
         analysis.mood,
         analysis.intensity,
+        analysis.salience,
         analysis.salience,
         analysis.intent,
         topics_json,
@@ -104,7 +105,7 @@ async fn insert_message_analysis(
     .execute(&mut **tx)
     .await?;
     
-    debug!("Inserted message_analysis for message_id={}", message_id);
+    debug!("Inserted message_analysis for message {} with original_salience={:?}", message_id, analysis.salience);
     Ok(())
 }
 
@@ -139,7 +140,7 @@ async fn insert_gpt5_metadata(
     .execute(&mut **tx)
     .await?;
     
-    debug!("Inserted gpt5_metadata for message_id={}", message_id);
+    debug!("Inserted gpt5_metadata for message {}", message_id);
     Ok(())
 }
 
@@ -160,17 +161,15 @@ async fn trigger_conditional_operations(
     Ok(())
 }
 
-// FIXED: Return Option<CompleteResponse> to match expected signature
 pub async fn load_structured_response(
     pool: &SqlitePool,
     message_id: i64,
 ) -> Result<Option<CompleteResponse>> {
-    // Try to fetch the data, return None if not found
     let memory_row = match sqlx::query!(
         "SELECT session_id, response_id, content, timestamp, tags FROM memory_entries WHERE id = ?",
         message_id
     )
-    .fetch_optional(pool)  // Use fetch_optional instead of fetch_one
+    .fetch_optional(pool)
     .await? {
         Some(row) => row,
         None => return Ok(None),
@@ -213,17 +212,16 @@ pub async fn load_structured_response(
         &analysis_row.routed_to_heads.ok_or_else(|| anyhow!("Missing routed_to_heads field"))?
     )?;
 
-    // Build the response from the database rows
     let structured = StructuredGPT5Response {
         output: memory_row.content,
         analysis: crate::llm::structured::types::MessageAnalysis {
-            salience: analysis_row.salience.unwrap_or(5.0) as f64,  // Convert to f64
+            salience: analysis_row.salience.unwrap_or(5.0) as f64,
             topics,
             contains_code: analysis_row.contains_code.unwrap_or(false),
             routed_to_heads,
             language: analysis_row.language.unwrap_or_else(|| "en".to_string()),
             mood: analysis_row.mood,
-            intensity: analysis_row.intensity.map(|v| v as f64),  // Convert to f64
+            intensity: analysis_row.intensity.map(|v| v as f64),
             intent: analysis_row.intent,
             summary: analysis_row.summary,
             relationship_impact: analysis_row.relationship_impact,
@@ -234,15 +232,15 @@ pub async fn load_structured_response(
 
     let metadata = GPT5Metadata {
         response_id: memory_row.response_id,
-        prompt_tokens: metadata_row.prompt_tokens.map(|v| v as i64),  // Convert to i64
+        prompt_tokens: metadata_row.prompt_tokens.map(|v| v as i64),
         completion_tokens: metadata_row.completion_tokens.map(|v| v as i64),
         reasoning_tokens: metadata_row.reasoning_tokens.map(|v| v as i64),
         total_tokens: metadata_row.total_tokens.map(|v| v as i64),
-        latency_ms: metadata_row.latency_ms.unwrap_or(0) as i64,  // Convert to i64
+        latency_ms: metadata_row.latency_ms.unwrap_or(0) as i64,
         finish_reason: metadata_row.finish_reason,
-        model_version: metadata_row.model_version.unwrap_or_else(|| "gpt-5".to_string()),  // Provide default
-        temperature: metadata_row.temperature.unwrap_or(0.0),  // Already f64
-        max_tokens: metadata_row.max_tokens.unwrap_or(4096) as i64,  // Convert to i64
+        model_version: metadata_row.model_version.unwrap_or_else(|| "gpt-5".to_string()),
+        temperature: metadata_row.temperature.unwrap_or(0.0),
+        max_tokens: metadata_row.max_tokens.unwrap_or(4096) as i64,
         reasoning_effort: metadata_row.reasoning_effort.unwrap_or_else(|| "medium".to_string()),
         verbosity: metadata_row.verbosity.unwrap_or_else(|| "medium".to_string()),
     };
@@ -293,6 +291,5 @@ pub struct ResponseStatistics {
     pub min_tokens: u32,
 }
 
-// Type aliases for backwards compatibility
 pub type StructuredResponseStats = ResponseStatistics;
 pub use get_response_statistics as get_structured_response_stats;

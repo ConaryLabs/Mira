@@ -1,7 +1,5 @@
 // src/memory/storage/qdrant/mapping.rs
 
-//! Maps between MemoryEntry structs and Qdrant payload JSON for point upserts/search.
-
 use crate::memory::core::types::MemoryEntry;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -23,6 +21,7 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
         "mood": entry.mood,
         "intensity": entry.intensity,
         "salience": entry.salience,
+        "original_salience": entry.original_salience,
         "intent": entry.intent,
         "topics": entry.topics,
         "summary": entry.summary,
@@ -51,14 +50,13 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
         "reasoning_effort": entry.reasoning_effort,
         "verbosity": entry.verbosity,
         
-        // Embedding metadata (for tracking)
+        // Embedding metadata
         "embedding_heads": entry.embedding_heads,
         "qdrant_point_ids": entry.qdrant_point_ids,
     })
 }
 
-/// Converts Qdrant payload JSON + vector to a MemoryEntry.
-/// (Vector is required—Qdrant always returns it.)
+/// Converts Qdrant payload JSON + vector to a MemoryEntry
 pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>) -> MemoryEntry {
     let timestamp = payload
         .get("timestamp")
@@ -77,7 +75,6 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
         .and_then(DateTime::from_timestamp_millis);
 
     MemoryEntry {
-        // Core fields
         id,
         session_id: payload
             .get("session_id")
@@ -107,8 +104,6 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
                 .filter_map(|tag| tag.as_str().map(|s| s.to_string()))
                 .collect()
         }),
-        
-        // Analysis fields
         mood: payload
             .get("mood")
             .and_then(|v| v.as_str())
@@ -119,6 +114,10 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
             .map(|f| f as f32),
         salience: payload
             .get("salience")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32),
+        original_salience: payload
+            .get("original_salience")
             .and_then(|v| v.as_f64())
             .map(|f| f as f32),
         intent: payload
@@ -168,8 +167,6 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
             .get("recall_count")
             .and_then(|v| v.as_i64())
             .map(|i| i as i32),
-        
-        // GPT5 metadata fields
         model_version: payload
             .get("model_version")
             .and_then(|v| v.as_str())
@@ -226,8 +223,6 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
             .get("verbosity")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        
-        // Embedding info
         embedding: Some(vector.to_vec()),
         embedding_heads: payload
             .get("embedding_heads")

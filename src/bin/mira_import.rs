@@ -23,7 +23,7 @@ struct Cli {
     input: PathBuf,
     
     /// SQLite DB path
-    #[arg(long, default_value = "mira.db")]  // FIXED: Changed from mira.sqlite to mira.db
+    #[arg(long, default_value = "mira.db")]
     sqlite: String,
     
     /// Enable debug logging
@@ -31,7 +31,6 @@ struct Cli {
     debug: bool,
 }
 
-// Minimal schema just for parsing the export
 #[derive(Debug, Deserialize)]
 struct ChatExport(Vec<ChatThread>);
 
@@ -68,7 +67,6 @@ struct Content {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
-    // Setup logging
     if cli.debug {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
@@ -77,16 +75,13 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt().init();
     }
     
-    // Load the export file
     let file = File::open(&cli.input)?;
     let reader = BufReader::new(file);
     let export: ChatExport = serde_json::from_reader(reader)?;
     
-    // Connect to SQLite
     let pool = SqlitePool::connect(&cli.sqlite).await?;
     let store = SqliteMemoryStore::new(pool);
     
-    // Process each conversation
     for thread in export.0 {
         let session_id = thread.conversation_id
             .or(thread.title)
@@ -94,7 +89,6 @@ async fn main() -> Result<()> {
         
         println!("Importing conversation: {}", session_id);
         
-        // Extract and sort messages by time
         let mut messages: Vec<_> = thread.mapping.values()
             .filter_map(|node| node.message.as_ref())
             .filter(|msg| msg.author.role != "system")
@@ -102,7 +96,6 @@ async fn main() -> Result<()> {
         
         messages.sort_by_key(|m| m.create_time.unwrap_or(0.0) as i64);
         
-        // Save each message
         for message in messages {
             let content = message.content.parts.iter()
                 .filter_map(|p| p.as_str())
@@ -118,7 +111,6 @@ async fn main() -> Result<()> {
             }).unwrap_or(Utc::now());
             
             let entry = MemoryEntry {
-                // Core fields
                 id: None,
                 session_id: session_id.clone(),
                 response_id: None,
@@ -127,11 +119,10 @@ async fn main() -> Result<()> {
                 content,
                 timestamp,
                 tags: Some(vec!["imported".to_string(), "chatgpt".to_string()]),
-                
-                // Analysis fields
                 mood: None,
                 intensity: None,
                 salience: Some(5.0),
+                original_salience: None,
                 intent: None,
                 topics: None,
                 summary: None,
@@ -144,8 +135,6 @@ async fn main() -> Result<()> {
                 routed_to_heads: None,
                 last_recalled: Some(Utc::now()),
                 recall_count: None,
-                
-                // GPT5 metadata fields
                 model_version: None,
                 prompt_tokens: None,
                 completion_tokens: None,
@@ -159,8 +148,6 @@ async fn main() -> Result<()> {
                 max_tokens: None,
                 reasoning_effort: None,
                 verbosity: None,
-                
-                // Embedding info
                 embedding: None,
                 embedding_heads: None,
                 qdrant_point_ids: None,

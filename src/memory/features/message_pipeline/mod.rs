@@ -1,14 +1,6 @@
 // src/memory/features/message_pipeline/mod.rs
 
 //! Message Pipeline - Unified analysis and routing for all message types
-//! 
-//! This module replaces the monolithic message_pipeline.rs with a clean modular architecture:
-//! - `analyzers/` - Chat and code analysis logic
-//! - `routing/` - Memory embedding routing decisions  
-//! 
-//! The pipeline coordinates analysis and routing to provide a single entry point
-//! for processing user messages, maintaining backward compatibility while enabling
-//! future code intelligence features.
 
 pub mod analyzers;
 pub mod routing;
@@ -21,27 +13,18 @@ use crate::llm::client::OpenAIClient;
 use crate::memory::storage::sqlite::core::MessageAnalysis;
 
 use self::{
-    analyzers::{
-        unified::UnifiedAnalyzer,
-    },
-    routing::{
-        memory_routing::MemoryRouter,
-    },
+    analyzers::unified::UnifiedAnalyzer,
+    routing::memory_routing::MemoryRouter,
 };
 
-// ===== MAIN MESSAGE PIPELINE =====
-
 /// Main MessagePipeline - coordinates analysis and routing
-/// 
-/// This replaces the old monolithic MessagePipeline with a clean modular design.
-/// Maintains the same external interface for backward compatibility.
 pub struct MessagePipeline {
     analyzer: UnifiedAnalyzer,
     router: MemoryRouter,
 }
 
 impl MessagePipeline {
-    /// Create new message pipeline with clean single-parameter interface
+    /// Create new message pipeline
     pub fn new(llm_client: Arc<OpenAIClient>) -> Self {
         let analyzer = UnifiedAnalyzer::new(llm_client);
         let router = MemoryRouter::new(RoutingConfig::default());
@@ -61,10 +44,7 @@ impl MessagePipeline {
         Self { analyzer, router }
     }
     
-    /// Main analysis entry point - maintains backward compatibility
-    /// 
-    /// This method signature matches the old MessagePipeline::analyze_message
-    /// to ensure seamless migration from the monolithic implementation.
+    /// Main analysis entry point
     pub async fn analyze_message(
         &self,
         content: &str,
@@ -73,7 +53,6 @@ impl MessagePipeline {
     ) -> Result<MessagePipelineResult> {
         info!("Processing message through unified pipeline: role={}", role);
         
-        // Step 1: Run unified analysis
         let analysis_result = self.analyzer
             .analyze_message(content, role, context)
             .await
@@ -85,7 +64,6 @@ impl MessagePipeline {
         debug!("Analysis complete: salience={}, is_code={}", 
                analysis_result.salience, analysis_result.is_code);
         
-        // Step 2: Determine routing strategy
         let routing_strategy = self.router
             .determine_routing(&analysis_result)
             .await
@@ -94,7 +72,6 @@ impl MessagePipeline {
                 e
             })?;
         
-        // Step 3: Validate routing makes sense
         self.router
             .validate_routing(&routing_strategy)
             .map_err(|e| {
@@ -105,7 +82,6 @@ impl MessagePipeline {
         debug!("Routing complete: primary={:?}, secondary={:?}", 
                routing_strategy.primary_head, routing_strategy.secondary_heads);
         
-        // Convert to result format expected by callers
         let pipeline_result = MessagePipelineResult {
             analysis: analysis_result.clone(),
             routing: routing_strategy.clone(),
@@ -130,19 +106,14 @@ impl MessagePipeline {
         Ok(result.analysis)
     }
     
-    /// Process pending messages in batch (maintains backward compatibility)
+    /// Process pending messages in batch
     pub async fn process_pending_messages(&self, _session_id: &str) -> Result<usize> {
         // TODO: Implement batch processing once storage layer is integrated
-        // For now, return 0 to maintain compatibility
         Ok(0)
     }
     
     /// Quick content classification without full analysis
-    /// 
-    /// Useful for routing decisions that don't require full LLM analysis
-    /// TODO: Enhance with proper parsing when code intelligence is implemented  
     pub fn classify_content(&self, content: &str) -> ContentClassification {
-        // TEMPORARY: Use simple heuristics for quick classification
         let is_code = content.contains("```") || 
                       content.contains("fn ") ||
                       content.contains("impl ") ||
@@ -170,8 +141,6 @@ impl MessagePipeline {
     }
 }
 
-// ===== PIPELINE RESULT TYPES =====
-
 /// Complete result from message pipeline processing
 #[derive(Debug, Clone)]
 pub struct MessagePipelineResult {
@@ -182,12 +151,11 @@ pub struct MessagePipelineResult {
 }
 
 impl MessagePipelineResult {
-    /// Convert to the MessageAnalysis format expected by storage layer
-    /// 
-    /// This maintains compatibility with the existing storage interface
+    /// Convert to MessageAnalysis format expected by storage layer
     pub fn to_storage_analysis(&self) -> MessageAnalysis {
         MessageAnalysis {
             salience: Some(self.analysis.salience),
+            original_salience: None,
             topics: Some(self.analysis.topics.clone()),
             mood: self.analysis.mood.clone(),
             intensity: self.analysis.intensity,
@@ -234,21 +202,9 @@ pub enum ContentComplexity {
     High,   // > 1000 chars
 }
 
-// Re-export key types for backward compatibility
+// Re-export key types
 pub use analyzers::unified::{UnifiedAnalysisResult, AnalyzerConfig, RoutingDecision};
 pub use routing::memory_routing::{RoutingStrategy, RoutingConfig};
 
-// Clean aliases
 pub type UnifiedAnalysis = UnifiedAnalysisResult;
 pub type PipelineConfig = AnalyzerConfig;
-
-// ===== BACKWARD COMPATIBILITY =====
-
-/// Legacy MessageAnalysis result for backward compatibility
-pub type LegacyMessageAnalysis = MessageAnalysis;
-
-impl From<MessagePipelineResult> for MessageAnalysis {
-    fn from(result: MessagePipelineResult) -> Self {
-        result.to_storage_analysis()
-    }
-}

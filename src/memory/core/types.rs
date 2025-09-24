@@ -1,5 +1,4 @@
 // src/memory/core/types.rs
-// Clean types matching the actual database schema
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -20,6 +19,7 @@ pub struct MemoryEntry {
     pub mood: Option<String>,
     pub intensity: Option<f32>,
     pub salience: Option<f32>,
+    pub original_salience: Option<f32>,
     pub intent: Option<String>,
     pub topics: Option<Vec<String>>,
     pub summary: Option<String>,
@@ -68,6 +68,7 @@ impl MemoryEntry {
             mood: None,
             intensity: None,
             salience: None,
+            original_salience: None,
             intent: None,
             topics: None,
             summary: None,
@@ -113,5 +114,21 @@ impl MemoryEntry {
             format!("file:{}", file_path),
         ]);
         entry
+    }
+
+    /// Check if this entry has high salience for memory storage
+    pub fn is_high_salience(&self, threshold: f32) -> bool {
+        self.salience.map_or(false, |s| s >= threshold)
+    }
+
+    /// Get the age of this memory entry
+    pub fn age_hours(&self) -> i64 {
+        (Utc::now() - self.timestamp).num_hours()
+    }
+
+    /// Check if this entry contains code
+    pub fn has_code(&self) -> bool {
+        self.contains_code.unwrap_or(false) || 
+        self.programming_lang.is_some()
     }
 }

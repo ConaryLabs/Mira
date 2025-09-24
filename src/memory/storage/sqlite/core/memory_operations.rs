@@ -1,3 +1,5 @@
+// src/memory/storage/sqlite/core/memory_operations.rs
+
 use crate::memory::core::types::MemoryEntry;
 use anyhow::Result;
 use chrono::{TimeZone, NaiveDateTime, Utc};
@@ -72,7 +74,7 @@ impl MemoryOperations {
         Ok(saved_entry)
     }
 
-    /// Core MemoryStore::load_recent implementation (simple, no joins)
+    /// Core MemoryStore::load_recent implementation
     pub async fn load_recent_memories(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
         let rows = sqlx::query(
             r#"
@@ -111,13 +113,12 @@ impl MemoryOperations {
                 parent_id,
                 role,
                 content,
-                timestamp: Utc.from_utc_datetime(&timestamp),  // FIXED: Proper syntax
+                timestamp: Utc.from_utc_datetime(&timestamp),
                 tags: tags_vec,
-                
-                // Default values for optional fields - will be populated by analysis operations if needed
                 mood: None,
                 intensity: None,
                 salience: None,
+                original_salience: None,
                 intent: None,
                 topics: None,
                 summary: None,

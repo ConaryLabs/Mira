@@ -1,3 +1,5 @@
+// src/memory/storage/sqlite/core/analysis_operations.rs
+
 use crate::memory::core::types::MemoryEntry;
 use anyhow::Result;
 use chrono::TimeZone;
@@ -12,6 +14,7 @@ pub struct MessageAnalysis {
     pub mood: Option<String>,
     pub intensity: Option<f32>,
     pub salience: Option<f32>,
+    pub original_salience: Option<f32>,
     pub intent: Option<String>,
     pub topics: Option<Vec<String>>,
     pub summary: Option<String>,
@@ -43,17 +46,21 @@ impl AnalysisOperations {
             .as_ref()
             .map(|heads| serde_json::to_string(heads).unwrap_or("[]".to_string()));
 
+        // Use salience as original_salience when first storing
+        let original_salience = analysis.original_salience.or(analysis.salience);
+
         sqlx::query(
             r#"
             INSERT INTO message_analysis (
-                message_id, mood, intensity, salience, intent, topics, 
+                message_id, mood, intensity, salience, original_salience, intent, topics, 
                 summary, relationship_impact, contains_code, language, 
                 programming_lang, analysis_version, routed_to_heads, analyzed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(message_id) DO UPDATE SET
                 mood = excluded.mood,
                 intensity = excluded.intensity,
                 salience = excluded.salience,
+                original_salience = COALESCE(message_analysis.original_salience, excluded.original_salience),
                 intent = excluded.intent,
                 topics = excluded.topics,
                 summary = excluded.summary,
@@ -70,6 +77,7 @@ impl AnalysisOperations {
         .bind(&analysis.mood)
         .bind(analysis.intensity)
         .bind(analysis.salience)
+        .bind(original_salience)
         .bind(&analysis.intent)
         .bind(topics_json)
         .bind(&analysis.summary)
@@ -82,18 +90,18 @@ impl AnalysisOperations {
         .execute(&self.pool)
         .await?;
 
-        debug!("Stored analysis for message {}", message_id);
+        debug!("Stored analysis for message {} with original_salience={:?}", message_id, original_salience);
         Ok(())
     }
 
-    /// Load memories with analysis data (the complex JOIN query)
+    /// Load memories with analysis data
     pub async fn load_memories_with_analysis(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
         let rows = sqlx::query(
             r#"
             SELECT 
                 m.id, m.session_id, m.role, m.content, m.timestamp, m.tags,
                 m.response_id, m.parent_id,
-                a.mood, a.intensity, a.salience, a.intent, a.topics, a.summary,
+                a.mood, a.intensity, a.salience, a.original_salience, a.intent, a.topics, a.summary,
                 a.relationship_impact, a.contains_code, a.language, a.programming_lang,
                 a.analysis_version, a.routed_to_heads, a.analyzed_at,
                 a.last_recalled, a.recall_count
@@ -121,10 +129,10 @@ impl AnalysisOperations {
             let response_id: Option<String> = row.get("response_id");
             let parent_id: Option<i64> = row.get("parent_id");
 
-            // Analysis fields
             let mood: Option<String> = row.get("mood");
             let intensity: Option<f32> = row.get("intensity");
             let salience: Option<f32> = row.get("salience");
+            let original_salience: Option<f32> = row.get("original_salience");
             let intent: Option<String> = row.get("intent");
             let topics_json: Option<String> = row.get("topics");
             let summary: Option<String> = row.get("summary");
@@ -159,11 +167,10 @@ impl AnalysisOperations {
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
                 tags: tags_vec,
-                
-                // Analysis fields
                 mood,
                 intensity,
                 salience,
+                original_salience,
                 intent,
                 topics: topics_vec,
                 summary,
@@ -176,8 +183,6 @@ impl AnalysisOperations {
                 routed_to_heads: routed_to_heads_vec,
                 last_recalled: last_recalled.map(|dt| TimeZone::from_utc_datetime(&Utc, &dt)),
                 recall_count: recall_count.map(|c| c as i32),
-                
-                // Default values for fields not in database
                 model_version: None,
                 prompt_tokens: None,
                 completion_tokens: None,
@@ -203,7 +208,7 @@ impl AnalysisOperations {
         Ok(entries)
     }
 
-    /// Update recall metadata (last_recalled, recall_count)
+    /// Update recall metadata
     pub async fn update_recall_metadata(&self, message_id: i64) -> Result<()> {
         sqlx::query(
             r#"
@@ -218,6 +223,24 @@ impl AnalysisOperations {
         .await?;
 
         debug!("Updated recall metadata for message {}", message_id);
+        Ok(())
+    }
+
+    /// Update only the salience (used by decay system)
+    pub async fn update_salience(&self, message_id: i64, new_salience: f32) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE message_analysis 
+            SET salience = ?
+            WHERE message_id = ?
+            "#,
+        )
+        .bind(new_salience)
+        .bind(message_id)
+        .execute(&self.pool)
+        .await?;
+
+        debug!("Updated salience for message {} to {}", message_id, new_salience);
         Ok(())
     }
 }

@@ -1,11 +1,9 @@
 // src/memory/storage/qdrant/search.rs
 
-//! Qdrant search and filter helpers for semantic recall.
-
 use crate::memory::core::types::MemoryEntry;
 use chrono::{DateTime, Utc};
 
-/// Builds the JSON filter block for a session (and, optionally, tags/salience).
+/// Builds the JSON filter block for a session
 pub fn build_session_filter(session_id: &str) -> serde_json::Value {
     serde_json::json!({
         "must": [{
@@ -15,7 +13,7 @@ pub fn build_session_filter(session_id: &str) -> serde_json::Value {
     })
 }
 
-/// Optionally, build an advanced filter.
+/// Build an advanced filter with optional tags and salience
 pub fn build_advanced_filter(
     session_id: &str,
     tags: Option<&[String]>,
@@ -49,11 +47,10 @@ fn millis_to_datetime(ms: i64) -> DateTime<Utc> {
         .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap())
 }
 
-/// Parses a single Qdrant point/payload result into a MemoryEntry.
-/// Used after semantic search. Assumes field names match your schema.
+/// Parses a single Qdrant point/payload result into a MemoryEntry
 pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<MemoryEntry> {
     let payload = point.get("payload")?;
-    let vector = point.get("vector"); // optional
+    let vector = point.get("vector");
 
     let timestamp = payload
         .get("timestamp")
@@ -72,7 +69,6 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
         .map(millis_to_datetime);
 
     Some(MemoryEntry {
-        // Core fields
         id: payload.get("id").and_then(|id| id.as_i64()),
         session_id: payload.get("session_id")?.as_str()?.to_string(),
         response_id: payload
@@ -91,8 +87,6 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
                     .filter_map(|tag| tag.as_str().map(|s| s.to_string()))
                     .collect()
             }),
-        
-        // Analysis fields
         mood: payload
             .get("mood")
             .and_then(|v| v.as_str())
@@ -103,6 +97,10 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
             .map(|f| f as f32),
         salience: payload
             .get("salience")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32),
+        original_salience: payload
+            .get("original_salience")
             .and_then(|v| v.as_f64())
             .map(|f| f as f32),
         intent: payload
@@ -152,8 +150,6 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
             .get("recall_count")
             .and_then(|v| v.as_i64())
             .map(|i| i as i32),
-        
-        // GPT5 metadata fields
         model_version: payload
             .get("model_version")
             .and_then(|v| v.as_str())
@@ -210,8 +206,6 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
             .get("verbosity")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        
-        // Embedding info
         embedding: vector.and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
