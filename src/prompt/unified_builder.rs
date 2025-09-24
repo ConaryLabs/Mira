@@ -180,19 +180,42 @@ impl UnifiedPromptBuilder {
         }
     }
     
-    /// Add file/selection context from metadata
+    /// Add file/selection context from metadata - ENHANCED with file content support
     fn add_file_context(prompt: &mut String, metadata: Option<&MessageMetadata>) {
         if let Some(meta) = metadata {
             let mut context_added = false;
             
+            // File path and basic info
             if let Some(file_path) = &meta.file_path {
-                prompt.push_str(&format!("[FILE CONTEXT: {}]", file_path));
+                prompt.push_str(&format!("[VIEWING FILE: {}]", file_path));
                 context_added = true;
                 
                 if let Some(language) = &meta.language {
                     prompt.push_str(&format!(" ({})", language));
                 }
                 prompt.push('\n');
+            }
+            
+            // CRITICAL FIX: Add actual file content when available
+            if let Some(file_content) = &meta.file_content {
+                if !file_content.trim().is_empty() {
+                    prompt.push_str("The user is currently viewing this file content in their artifact viewer:\n");
+                    prompt.push_str("```\n");
+                    
+                    // Limit file content to reasonable size for context (10KB max)
+                    let content_preview = if file_content.len() > 10000 {
+                        format!("{}...\n[Content truncated - showing first 10KB of {}KB total]", 
+                               &file_content[..10000], file_content.len() / 1000)
+                    } else {
+                        file_content.clone()
+                    };
+                    
+                    prompt.push_str(&content_preview);
+                    prompt.push_str("\n```\n");
+                    prompt.push_str("You can now see and reference this file content directly. ");
+                    prompt.push_str("The user expects you to be aware of what's in this file.\n");
+                    context_added = true;
+                }
             }
             
             if let Some(repo_id) = &meta.repo_id {

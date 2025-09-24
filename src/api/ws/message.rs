@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct MessageMetadata {
     // File and selection context
     pub file_path: Option<String>,
+    pub file_content: Option<String>,  // ADDED: Critical field for actual file content
     pub repo_id: Option<String>,
     pub attachment_id: Option<String>,
     pub language: Option<String>,
@@ -119,14 +120,5 @@ pub enum WsServerMessage {
         data: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
-    },
-    
-    /// Streaming chat response chunk
-    #[serde(rename = "chat_chunk")]
-    ChatChunk {
-        content: String,
-        done: bool,
-        total_tokens: Option<i32>,
-        analysis: Option<serde_json::Value>,
     },
 }
