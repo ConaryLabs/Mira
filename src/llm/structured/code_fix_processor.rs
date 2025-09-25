@@ -82,8 +82,10 @@ pub fn build_code_fix_request(
     system_prompt: String,
     context_messages: Vec<Value>,
 ) -> Result<Value> {
-    // FIXED: Properly format the string with placeholders
-    let enhanced_prompt = format!(
+    use crate::CONFIG;
+    
+    // Build full input string (GPT-5 Responses API format)
+    let mut full_input = format!(
         "{}\n\nCRITICAL CODE FIX REQUIREMENTS:\n\
         1. Provide COMPLETE files from line 1 to last line\n\
         2. NEVER use '...' or '// rest unchanged'\n\
@@ -92,20 +94,52 @@ pub fn build_code_fix_request(
         \n\
         Error: {}\n\
         File: {}\n\
+        Original file has {} lines.\n\
         \n\
         Complete file content:\n\
-        ```\n\
+```\n\
         {}\n\
-        ```",
-        system_prompt, error_message, file_path, file_content
+```",
+        system_prompt, error_message, file_path, 
+        file_content.lines().count(),
+        file_content
     );
+    
+    // Add context messages
+    for msg in context_messages {
+        if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+            if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                full_input.push_str(&format!("\n\n{}: {}", role, content));
+            }
+        }
+    }
+    
+    full_input.push_str(&format!("\n\nUser: Fix this error: {}", error_message));
     
     let response_schema = json!({
         "type": "object",
         "properties": {
             "output": {"type": "string"},
-            "analysis": {"$ref": "#/definitions/MessageAnalysis"},
-            "reasoning": {"type": "string"},
+            "analysis": {
+                "type": "object",
+                "properties": {
+                    "salience": {"type": "number", "minimum": 0.0, "maximum": 10.0},
+                    "topics": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    "contains_code": {"type": "boolean"},
+                    "routed_to_heads": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    "language": {"type": "string", "default": "en"},
+                    "mood": {"type": ["string", "null"]},
+                    "intensity": {"type": ["number", "null"]},
+                    "intent": {"type": ["string", "null"]},
+                    "summary": {"type": ["string", "null"]},
+                    "relationship_impact": {"type": ["string", "null"]},
+                    "programming_lang": {"type": ["string", "null"]}
+                },
+                "required": ["salience", "topics", "contains_code", "routed_to_heads", "language", 
+                           "mood", "intensity", "intent", "summary", "relationship_impact", "programming_lang"],
+                "additionalProperties": false
+            },
+            "reasoning": {"type": ["string", "null"]},
             "fix_type": {
                 "type": "string",
                 "enum": ["compiler_error", "runtime_error", "type_error", "import_error", "syntax_error"]
@@ -127,23 +161,26 @@ pub fn build_code_fix_request(
             },
             "confidence": {"type": "number"}
         },
-        "required": ["output", "analysis", "fix_type", "files", "confidence"]
+        "required": ["output", "analysis", "reasoning", "fix_type", "files", "confidence"],
+        "additionalProperties": false
     });
     
-    let mut messages = vec![
-        json!({"role": "system", "content": enhanced_prompt})
-    ];
-    messages.extend(context_messages);
-    messages.push(json!({"role": "user", "content": error_message}));
-    
+    // GPT-5 Responses API format
     Ok(json!({
-        "messages": messages,
-        "model": "gpt-5",
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": response_schema
+        "model": CONFIG.gpt5_model,
+        "input": full_input,
+        "text": {
+            "verbosity": CONFIG.verbosity,
+            "format": {
+                "type": "json_schema",
+                "name": "code_fix_response",
+                "schema": response_schema,
+                "strict": true
+            }
         },
-        "stream": false
+        "reasoning": {
+            "effort": CONFIG.reasoning_effort
+        }
     }))
 }
 
@@ -152,22 +189,43 @@ pub fn build_code_fix_request(
 // ============================================================================
 
 pub fn extract_code_fix_response(raw_response: &Value) -> Result<CodeFixResponse> {
-    // Extract the content from the response
-    let content = raw_response["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No content in response"))?;
+    // Handle GPT-5 Responses API array format
+    if let Some(output_array) = raw_response.get("output").and_then(|v| v.as_array()) {
+        for item in output_array {
+            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                    for content_item in content_array {
+                        if content_item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                            if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
+                                let response = serde_json::from_str::<CodeFixResponse>(text)?;
+                                response.validate()
+                                    .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
+                                return Ok(response);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
-    // Parse the JSON content
-    let parsed: Value = serde_json::from_str(content)?;
+    // Fallback: try direct text field
+    if let Some(text_field) = raw_response.get("text").and_then(|v| v.as_str()) {
+        let response = serde_json::from_str::<CodeFixResponse>(text_field)?;
+        response.validate()
+            .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
+        return Ok(response);
+    }
     
-    // Convert to CodeFixResponse
-    let response = serde_json::from_value::<CodeFixResponse>(parsed)?;
+    // Fallback: try output field as string
+    if let Some(output) = raw_response.get("output").and_then(|v| v.as_str()) {
+        let response = serde_json::from_str::<CodeFixResponse>(output)?;
+        response.validate()
+            .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
+        return Ok(response);
+    }
     
-    // Validate the response - FIXED: Convert String error to anyhow::Error
-    response.validate()
-        .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
-    
-    Ok(response)
+    Err(anyhow::anyhow!("Could not extract code fix response from GPT-5 output"))
 }
 
 // ============================================================================
@@ -231,6 +289,18 @@ impl CodeFixResponse {
     }
     
     pub fn into_complete_response(self, metadata: super::types::GPT5Metadata, raw: Value) -> CompleteResponse {
+        // Convert files to artifacts for frontend
+        let artifacts = Some(self.files.iter().map(|f| json!({
+            "path": f.path.clone(),
+            "content": f.content.clone(),
+            "change_type": match f.change_type {
+                ChangeType::Primary => "primary",
+                ChangeType::Import => "import",
+                ChangeType::Type => "type",
+                ChangeType::Cascade => "cascade",
+            },
+        })).collect());
+        
         CompleteResponse {
             structured: StructuredGPT5Response {
                 output: self.output.clone(),
@@ -240,17 +310,12 @@ impl CodeFixResponse {
                 validation_status: Some(
                     self.validate()
                         .map(|_| "valid".to_string())
-                        .unwrap_or_else(|_| "invalid".to_string())
+                        .unwrap_or_else(|e| format!("invalid: {}", e))
                 ),
             },
             metadata,
             raw_response: raw,
-            // Include artifacts for the frontend
-            artifacts: Some(self.files.into_iter().map(|f| json!({
-                "path": f.path,
-                "content": f.content,
-                "change_type": f.change_type,
-            })).collect()),
+            artifacts,
         }
     }
 }
