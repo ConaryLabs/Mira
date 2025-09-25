@@ -9,7 +9,7 @@ use tracing::info;
 use crate::api::error::ApiError;
 use crate::api::ws::message::WsServerMessage;
 use crate::state::AppState;
-use crate::git::client::project_ops::ProjectOps;  // FIXED: Added trait import
+use crate::git::client::project_ops::ProjectOps;
 
 #[derive(Debug, Deserialize)]
 struct GitAttachRequest {
@@ -53,7 +53,7 @@ pub async fn handle_git_operation(
             info!("Attaching repo {} to project {}", req.repo_url, req.project_id);
             
             let attachment = app_state.git_client
-                .attach_repo(&req.project_id, &req.repo_url)  // FIXED: attach_repo not attach_repository
+                .attach_repo(&req.project_id, &req.repo_url)
                 .await?;
             
             Ok(WsServerMessage::Data {
@@ -135,14 +135,15 @@ pub async fn handle_git_operation(
             
             info!("Restoring file {} in project {}", req.file_path, req.project_id);
             
-            // Get project attachment to find repo path
-            let attachment = app_state.git_client.store
-                .get_attachment(&req.project_id)
+            // Get attachments for project, not attachment by project_id
+            let attachments = app_state.git_client.store
+                .list_project_attachments(&req.project_id)
                 .await
-                .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?;
+                .map_err(|e| ApiError::internal(format!("Failed to list attachments: {}", e)))?;
             
-            // FIXED: Handle the Option
-            let attachment = attachment.ok_or_else(|| ApiError::not_found("Attachment not found"))?;
+            let attachment = attachments
+                .first()
+                .ok_or_else(|| ApiError::not_found("No repository attached to this project"))?;
             
             // Use git2 to restore the file
             let repo_path = attachment.local_path.clone();
@@ -193,17 +194,20 @@ pub async fn handle_git_operation(
             let req: FileContentRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid file request: {}", e)))?;
             
-            // FIXED: Get attachment first, then use it with get_file_content
-            let attachment = app_state.git_client.store
-                .get_attachment(&req.project_id)
+            // Get attachments for the project first
+            let attachments = app_state.git_client.store
+                .list_project_attachments(&req.project_id)
                 .await
-                .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?
-                .ok_or_else(|| ApiError::not_found("Project attachment not found"))?;
+                .map_err(|e| ApiError::internal(format!("Failed to list attachments: {}", e)))?;
+            
+            let attachment = attachments
+                .first()
+                .ok_or_else(|| ApiError::not_found("No repository attached to this project"))?;
             
             let content = app_state.git_client.get_file_content(
                 &attachment,
                 &req.file_path
-            )?;  // FIXED: Not async, no .await needed
+            )?;
             
             Ok(WsServerMessage::Data {
                 data: json!({
@@ -215,6 +219,6 @@ pub async fn handle_git_operation(
             })
         }
         
-        _ => Err(ApiError::not_found(format!("Unknown git method: {}", method)).into())  // FIXED: not_found instead of method_not_found
+        _ => Err(ApiError::not_found(format!("Unknown git method: {}", method)).into())
     }
 }
