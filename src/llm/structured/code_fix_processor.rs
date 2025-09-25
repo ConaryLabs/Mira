@@ -1,263 +1,194 @@
 // src/llm/structured/code_fix_processor.rs
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::{info, warn};
-
-// ============================================================================
-// TYPES - Code fix specific structures
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeFixResponse {
-    pub output: String,           // User-facing explanation
-    pub analysis: MessageAnalysis, // Reuse existing analysis
-    pub reasoning: Option<String>,
-    pub fix_type: FixType,
-    pub files: Vec<FileUpdate>,
-    pub confidence: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileUpdate {
-    pub path: String,
-    pub content: String,         // COMPLETE file content
-    pub change_type: ChangeType,
-    pub original_content: Option<String>, // For undo
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FixType {
-    CompilerError,
-    RuntimeError,
-    TypeError,
-    ImportError,
-    SyntaxError,
-    LogicError,
-    Other,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChangeType {
-    Primary,  // The file with the error
-    Import,   // Files that need import updates
-    Type,     // Type definition files
-    Cascade,  // Other affected files
-}
-
-// Reuse the existing MessageAnalysis from types.rs
-use super::types::{MessageAnalysis, CompleteResponse};
-use super::processor::extract_metadata;
+use regex::Regex;
+use super::types::{CodeFixResponse, ChangeType, CompleteResponse, StructuredGPT5Response};
 
 // ============================================================================
 // ERROR DETECTION
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ErrorContext {
     pub error_type: String,
     pub file_path: String,
-    pub line_number: Option<usize>,
     pub error_message: String,
-    pub language: Option<String>,
-    pub original_line_count: usize,  // For validation
+    pub line_number: Option<usize>,
+    pub original_line_count: usize,
 }
 
 pub fn detect_error_context(content: &str) -> Option<ErrorContext> {
-    // Rust compiler errors
-    if let Some(captures) = regex::Regex::new(
-        r"error\[E\d+\].*?\n\s*--> ([^:]+):(\d+):(\d+)"
-    ).ok()?.captures(content) {
-        return Some(ErrorContext {
-            error_type: "rust_compiler".to_string(),
-            file_path: captures.get(1)?.as_str().to_string(),
-            line_number: captures.get(2)?.as_str().parse().ok(),
-            error_message: content.to_string(),
-            language: Some("rust".to_string()),
-            original_line_count: 0, // Will be filled when file is loaded
-        });
-    }
+    let patterns = vec![
+        (r"error\[E(\d+)\]:\s*(.*)", "rust_compiler"),
+        (r"TS(\d+):\s*(.*)", "typescript"),
+        (r"TypeError:\s*(.*)", "javascript_type"),
+        (r"thread '.*' panicked", "rust_panic"),
+    ];
     
-    // TypeScript/JavaScript errors
-    if let Some(captures) = regex::Regex::new(
-        r"(TS|JS)\d+:.*?\n\s*(?:-->)?\s*([^:]+):(\d+):(\d+)"
-    ).ok()?.captures(content) {
-        return Some(ErrorContext {
-            error_type: "typescript".to_string(),
-            file_path: captures.get(2)?.as_str().to_string(),
-            line_number: captures.get(3)?.as_str().parse().ok(),
-            error_message: content.to_string(),
-            language: Some("typescript".to_string()),
-            original_line_count: 0,
-        });
-    }
-    
-    // Python tracebacks
-    if content.contains("Traceback (most recent call last)") {
-        if let Some(captures) = regex::Regex::new(
-            r#"File "([^"]+)", line (\d+)"#
-        ).ok()?.captures(content) {
-            return Some(ErrorContext {
-                error_type: "python_runtime".to_string(),
-                file_path: captures.get(1)?.as_str().to_string(),
-                line_number: captures.get(2)?.as_str().parse().ok(),
-                error_message: content.to_string(),
-                language: Some("python".to_string()),
-                original_line_count: 0,
-            });
+    for (pattern_str, error_type) in patterns {
+        if let Ok(regex) = Regex::new(pattern_str) {
+            if regex.is_match(content) {
+                if let Some(file_path) = extract_file_path(content) {
+                    return Some(ErrorContext {
+                        error_type: error_type.to_string(),
+                        file_path,
+                        error_message: content.to_string(),
+                        line_number: extract_line_number(content),
+                        original_line_count: 0, // Will be filled when file is loaded
+                    });
+                }
+            }
         }
     }
-    
-    // Go compiler errors
-    if let Some(captures) = regex::Regex::new(
-        r"([^:]+\.go):(\d+):(\d+): (.+)"
-    ).ok()?.captures(content) {
-        return Some(ErrorContext {
-            error_type: "go_compiler".to_string(),
-            file_path: captures.get(1)?.as_str().to_string(),
-            line_number: captures.get(2)?.as_str().parse().ok(),
-            error_message: content.to_string(),
-            language: Some("go".to_string()),
-            original_line_count: 0,
-        });
-    }
-    
-    // Generic error pattern
-    if let Some(captures) = regex::Regex::new(
-        r"(?i)error.*?(?:in|at)\s+([^\s:]+(?:\.\w+)?):?(\d+)?"
-    ).ok()?.captures(content) {
-        return Some(ErrorContext {
-            error_type: "generic".to_string(),
-            file_path: captures.get(1)?.as_str().to_string(),
-            line_number: captures.get(2).and_then(|m| m.as_str().parse().ok()),
-            error_message: content.to_string(),
-            language: None,
-            original_line_count: 0,
-        });
-    }
-    
     None
 }
 
+fn extract_file_path(error_msg: &str) -> Option<String> {
+    let patterns = vec![
+        r"(?:-->|at|in)\s+([^\s:]+(?:\.rs|\.ts|\.tsx|\.js|\.jsx))(?::|$)",
+        r"([^\s]+(?:\.rs|\.ts|\.tsx|\.js|\.jsx)):\d+:\d+",
+    ];
+    
+    for pattern_str in patterns {
+        if let Ok(regex) = Regex::new(pattern_str) {
+            if let Some(captures) = regex.captures(error_msg) {
+                if let Some(path) = captures.get(1) {
+                    return Some(path.as_str().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_line_number(error_msg: &str) -> Option<usize> {
+    Regex::new(r":(\d+):\d+").ok()?
+        .captures(error_msg)?
+        .get(1)?
+        .as_str()
+        .parse()
+        .ok()
+}
+
 // ============================================================================
-// REQUEST BUILDING (just the schema, prompts go in unified_builder.rs)
+// REQUEST BUILDING
 // ============================================================================
 
-pub fn get_code_fix_schema() -> Value {
-    json!({
+pub fn build_code_fix_request(
+    error_message: &str,
+    file_path: &str,
+    file_content: &str,
+    system_prompt: String,
+    context_messages: Vec<Value>,
+) -> Result<Value> {
+    // FIXED: Properly format the string with placeholders
+    let enhanced_prompt = format!(
+        "{}\n\nCRITICAL CODE FIX REQUIREMENTS:\n\
+        1. Provide COMPLETE files from line 1 to last line\n\
+        2. NEVER use '...' or '// rest unchanged'\n\
+        3. Include ALL imports, functions, code\n\
+        4. System will REPLACE ENTIRE FILES\n\
+        \n\
+        Error: {}\n\
+        File: {}\n\
+        \n\
+        Complete file content:\n\
+        ```\n\
+        {}\n\
+        ```",
+        system_prompt, error_message, file_path, file_content
+    );
+    
+    let response_schema = json!({
         "type": "object",
         "properties": {
-            "output": {
-                "type": "string",
-                "description": "Clear explanation of what was fixed and why"
-            },
-            "analysis": {
-                "type": "object",
-                "properties": {
-                    "salience": {"type": "number", "minimum": 0, "maximum": 10},
-                    "topics": {
-                        "type": "array",
-                        "items": {"type": "string"}
-                    },
-                    "mood": {"type": ["string", "null"]},
-                    "intent": {"type": ["string", "null"]}
-                },
-                "required": ["salience", "topics"]
-            },
-            "reasoning": {
-                "type": ["string", "null"],
-                "description": "Step-by-step reasoning about the fix"
-            },
+            "output": {"type": "string"},
+            "analysis": {"$ref": "#/definitions/MessageAnalysis"},
+            "reasoning": {"type": "string"},
             "fix_type": {
                 "type": "string",
-                "enum": ["compiler_error", "runtime_error", "type_error", "import_error", "syntax_error", "logic_error", "other"]
+                "enum": ["compiler_error", "runtime_error", "type_error", "import_error", "syntax_error"]
             },
             "files": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "File path relative to project root"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "COMPLETE file content from first line to last line, no abbreviations"
-                        },
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
                         "change_type": {
                             "type": "string",
-                            "enum": ["primary", "import", "type", "cascade"],
-                            "description": "Type of change in this file"
+                            "enum": ["primary", "import", "type", "cascade"]
                         }
                     },
                     "required": ["path", "content", "change_type"]
-                },
-                "minItems": 1,
-                "description": "Complete files to replace existing ones"
+                }
             },
-            "confidence": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 1,
-                "description": "Confidence in the fix (0-1)"
-            }
+            "confidence": {"type": "number"}
         },
-        "required": ["output", "analysis", "fix_type", "files", "confidence"],
-        "additionalProperties": false
-    })
+        "required": ["output", "analysis", "fix_type", "files", "confidence"]
+    });
+    
+    let mut messages = vec![
+        json!({"role": "system", "content": enhanced_prompt})
+    ];
+    messages.extend(context_messages);
+    messages.push(json!({"role": "user", "content": error_message}));
+    
+    Ok(json!({
+        "messages": messages,
+        "model": "gpt-5",
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": response_schema
+        },
+        "stream": false
+    }))
 }
 
 // ============================================================================
-// RESPONSE VALIDATION
+// RESPONSE EXTRACTION
+// ============================================================================
+
+pub fn extract_code_fix_response(raw_response: &Value) -> Result<CodeFixResponse> {
+    // Extract the content from the response
+    let content = raw_response["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No content in response"))?;
+    
+    // Parse the JSON content
+    let parsed: Value = serde_json::from_str(content)?;
+    
+    // Convert to CodeFixResponse
+    let response = serde_json::from_value::<CodeFixResponse>(parsed)?;
+    
+    // Validate the response - FIXED: Convert String error to anyhow::Error
+    response.validate()
+        .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
+    
+    Ok(response)
+}
+
+// ============================================================================
+// VALIDATION & CONVERSION
 // ============================================================================
 
 impl CodeFixResponse {
     pub fn validate(&self) -> Result<(), String> {
-        // Check each file for completeness
+        // Check for forbidden patterns
         for file in &self.files {
-            // Check for ellipsis patterns
-            if file.content.contains("...") && !file.content.contains("...") {
-                // Allow "..." in strings but not as code ellipsis
-                let without_strings = remove_string_literals(&file.content);
-                if without_strings.contains("...") {
-                    return Err(format!("File {} contains code ellipsis (...)", file.path));
-                }
+            if file.content.contains("...") {
+                return Err(format!("File {} contains ellipsis", file.path));
             }
-            
-            // Check for common incomplete patterns
-            let incomplete_patterns = [
-                "// rest",
-                "// unchanged",
-                "// existing",
-                "// previous",
-                "/* ... */",
-                "// ...",
-                "# rest",
-                "# unchanged",
-                "// omitted",
-                "# omitted",
-            ];
-            
-            for pattern in &incomplete_patterns {
-                if file.content.to_lowercase().contains(pattern) {
-                    return Err(format!("File {} contains incomplete pattern: {}", file.path, pattern));
-                }
-            }
-            
-            // Validate minimum content length
-            let line_count = file.content.lines().count();
-            if line_count < 3 {
-                warn!("File {} seems too short ({} lines)", file.path, line_count);
+            if file.content.contains("// rest") || file.content.contains("// unchanged") {
+                return Err(format!("File {} contains snippets", file.path));
             }
         }
         
-        // Validate confidence
-        if self.confidence < 0.3 {
-            warn!("Low confidence fix: {}", self.confidence);
+        // Check confidence
+        if self.confidence < 0.5 {
+            tracing::warn!("Low confidence fix: {}", self.confidence);
         }
         
         // Validate at least one primary file
@@ -301,12 +232,16 @@ impl CodeFixResponse {
     
     pub fn into_complete_response(self, metadata: super::types::GPT5Metadata, raw: Value) -> CompleteResponse {
         CompleteResponse {
-            structured: super::types::StructuredGPT5Response {
+            structured: StructuredGPT5Response {
                 output: self.output.clone(),
                 analysis: self.analysis.clone(),
                 reasoning: self.reasoning.clone(),
                 schema_name: Some("code_fix_response".to_string()),
-                validation_status: self.validate().map(|_| "valid").unwrap_or("invalid").to_string(),
+                validation_status: Some(
+                    self.validate()
+                        .map(|_| "valid".to_string())
+                        .unwrap_or_else(|_| "invalid".to_string())
+                ),
             },
             metadata,
             raw_response: raw,
@@ -318,98 +253,4 @@ impl CodeFixResponse {
             })).collect()),
         }
     }
-}
-
-// ============================================================================
-// EXTRACTION
-// ============================================================================
-
-pub fn extract_code_fix_response(raw_response: &Value) -> Result<CodeFixResponse> {
-    // Extract the content from the response
-    let content = raw_response["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No content in response"))?;
-    
-    // Parse JSON
-    let parsed: CodeFixResponse = serde_json::from_str(content)?;
-    
-    // Validate
-    parsed.validate()
-        .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
-    
-    // Log file stats
-    for file in &parsed.files {
-        let line_count = file.content.lines().count();
-        let byte_count = file.content.len();
-        info!("File {} has {} lines, {} bytes, type: {:?}", 
-              file.path, line_count, byte_count, file.change_type);
-    }
-    
-    Ok(parsed)
-}
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-
-/// Load complete file content from project
-pub async fn load_complete_file(
-    project_path: &str,
-    file_path: &str,
-) -> Result<(String, usize)> {
-    use tokio::fs;
-    use std::path::Path;
-    
-    let full_path = Path::new(project_path).join(file_path);
-    
-    let content = fs::read_to_string(&full_path).await
-        .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", full_path.display(), e))?;
-    
-    let line_count = content.lines().count();
-    
-    info!("Loaded {} ({} lines, {} bytes)", 
-          file_path, 
-          line_count, 
-          content.len());
-    
-    Ok((content, line_count))
-}
-
-/// Remove string literals for better pattern detection
-fn remove_string_literals(code: &str) -> String {
-    // Simple approach: replace string content with spaces
-    // This prevents false positives from "..." in strings
-    let mut result = String::new();
-    let mut in_string = false;
-    let mut escape_next = false;
-    let mut string_char = ' ';
-    
-    for ch in code.chars() {
-        if escape_next {
-            result.push(' ');
-            escape_next = false;
-            continue;
-        }
-        
-        if ch == '\\' && in_string {
-            escape_next = true;
-            result.push(' ');
-            continue;
-        }
-        
-        if !in_string && (ch == '"' || ch == '\'') {
-            in_string = true;
-            string_char = ch;
-            result.push(' ');
-        } else if in_string && ch == string_char {
-            in_string = false;
-            result.push(' ');
-        } else if in_string {
-            result.push(' ');
-        } else {
-            result.push(ch);
-        }
-    }
-    
-    result
 }

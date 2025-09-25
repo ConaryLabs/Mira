@@ -1,17 +1,20 @@
 // src/api/ws/chat/unified_handler.rs
 
 use std::sync::Arc;
+use std::path::Path;
 use anyhow::Result;
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, code_fix_processor};
+use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
+use crate::project::store::ProjectStore;  // Add explicit import to see available methods
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -38,8 +41,17 @@ impl UnifiedChatHandler {
         
         // Check for error patterns first
         if let Some(mut error_context) = code_fix_processor::detect_error_context(&request.content) {
-            if let Some(project_id) = &request.project_id {
+            if let Some(_project_id) = &request.project_id {
                 info!("Detected {} error in file: {}", error_context.error_type, error_context.file_path);
+                
+                // Load file and update line count
+                if let Ok(content) = self.load_complete_file(
+                    &error_context.file_path,
+                    request.project_id.as_deref()
+                ).await {
+                    error_context.original_line_count = content.lines().count();
+                }
+                
                 return self.handle_error_fix(request, error_context).await;
             } else {
                 warn!("Error detected but no project context available");
@@ -79,16 +91,13 @@ impl UnifiedChatHandler {
             )
             .await?;
         
-        // Save complete response with all metadata
-        let message_id = save_structured_response(
+        // Save to database with user message link
+        let _message_id = save_structured_response(
             &self.app_state.sqlite_pool,
             &request.session_id,
             &complete_response,
             Some(user_message_id),
         ).await?;
-        
-        info!("Saved structured response {} with tokens: {:?}", 
-              message_id, complete_response.metadata.total_tokens);
         
         Ok(complete_response)
     }
@@ -96,39 +105,21 @@ impl UnifiedChatHandler {
     async fn handle_error_fix(
         &self,
         request: ChatRequest,
-        mut error_context: code_fix_processor::ErrorContext,
+        error_context: ErrorContext,
     ) -> Result<CompleteResponse> {
-        let project_id = request.project_id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No project ID for error fix"))?;
+        info!("Handling error fix for {} in {}", error_context.error_type, error_context.file_path);
         
-        // Get project to find the path
-        let project = self.app_state.project_service
-            .get(project_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get project: {}", e))?;
-        
-        // Load the complete file and get line count
-        let (file_content, line_count) = code_fix_processor::load_complete_file(
-            &project.path,
-            &error_context.file_path
+        // Load complete file
+        let file_content = self.load_complete_file(
+            &error_context.file_path,
+            request.project_id.as_deref()
         ).await?;
         
-        // Update error context with line count
-        error_context.original_line_count = line_count;
-        
-        info!("Loaded {} with {} lines for error fix", 
-              error_context.file_path, line_count);
-        
-        // Save user message
-        let user_message_id = self.save_user_message(&request).await?;
-        
-        // Build context for memory recall
+        // Build context and persona
         let context = self.build_context(&request.session_id, &request.content).await?;
-        
-        // Select persona
         let persona = self.select_persona(&request.metadata);
         
-        // Build specialized code fix prompt
+        // Use UnifiedPromptBuilder for code fix prompts (no duplication!)
         let system_prompt = UnifiedPromptBuilder::build_code_fix_prompt(
             &persona,
             &context,
@@ -138,111 +129,98 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // Build the request with code fix schema
-        let request_body = json!({
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request.content}
-            ],
-            "model": "gpt-5",
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "code_fix_response",
-                    "schema": code_fix_processor::get_code_fix_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0.3,
-            "max_tokens": 16384,
-            "stream": false
-        });
+        // Build code fix request
+        let request_body = code_fix_processor::build_code_fix_request(
+            &error_context.error_message,
+            &error_context.file_path,
+            &file_content,
+            system_prompt,
+            vec![],
+        )?;
         
-        // Get response from LLM
-        let start = std::time::Instant::now();
+        // Get response
         let raw_response = self.app_state.llm_client
             .post_response_with_retry(request_body)
             .await?;
-        let duration = start.elapsed();
         
-        info!("Got code fix response in {:?}", duration);
-        
-        // Extract and validate the response
+        // Extract and validate
         let code_fix = code_fix_processor::extract_code_fix_response(&raw_response)?;
         
-        // Validate line counts
+        // Check line count warnings
         let warnings = code_fix.validate_line_counts(&error_context);
         for warning in &warnings {
             warn!("{}", warning);
         }
         
-        // Extract metadata
-        let metadata = code_fix_processor::extract_metadata(&raw_response, 0)?;
+        // Extract metadata using the processor module directly
+        let metadata = crate::llm::structured::processor::extract_metadata(&raw_response, 0)?;
         
-        // Convert to CompleteResponse with artifacts
+        // Convert to CompleteResponse
         let complete_response = code_fix.into_complete_response(metadata, raw_response);
         
-        // Save the response
-        let message_id = save_structured_response(
+        // Save to database
+        let user_message_id = self.save_user_message(&request).await?;
+        let _message_id = save_structured_response(
             &self.app_state.sqlite_pool,
             &request.session_id,
             &complete_response,
             Some(user_message_id),
         ).await?;
         
-        info!("Saved code fix response {} with {} file(s)", 
-              message_id, 
-              complete_response.artifacts.as_ref().map(|a| a.len()).unwrap_or(0));
-        
         Ok(complete_response)
     }
     
+    async fn load_complete_file(&self, file_path: &str, project_id: Option<&str>) -> Result<String> {
+        if let Some(proj_id) = project_id {
+            // Get the project to ensure it exists
+            if let Some(_project) = self.app_state.project_store.get_project(proj_id).await? {
+                // Get the git attachment which has the actual path
+                if let Some(attachment) = self.app_state.git_client.store
+                    .get_attachment(proj_id)
+                    .await? {
+                    let full_path = Path::new(&attachment.local_path).join(file_path);
+                    if let Ok(content) = tokio::fs::read_to_string(&full_path).await {
+                        return Ok(content);
+                    }
+                }
+            }
+        }
+        
+        tokio::fs::read_to_string(file_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to load file: {}", e))
+    }
+    
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
+        // Return i64 instead of String - SQLite message IDs are integers
         self.app_state.memory_service
             .save_user_message(&request.session_id, &request.content, request.project_id.as_deref())
             .await
+            .map(|id| id.parse::<i64>().unwrap_or_default())
     }
     
-    async fn build_context(&self, session_id: &str, user_message: &str) -> Result<RecallContext> {
-        let recall_service = &self.app_state.memory_service.recall_engine;
-        
-        let context = recall_service.build_context(
-            session_id,
-            user_message,
-        ).await?;
-        
-        Ok(context)
-    }
-    
-    fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
-        PersonaOverlay::Default
+    async fn build_context(&self, session_id: &str, content: &str) -> Result<RecallContext> {
+        // Use parallel_recall_context with proper parameters
+        self.app_state.memory_service
+            .parallel_recall_context(session_id, content, 5, 5)
+            .await
     }
     
     async fn build_context_messages(&self, context: &RecallContext) -> Result<Vec<Value>> {
         let mut messages = Vec::new();
         
-        // Add recent conversation messages
+        // Add recent messages
         for memory in &context.recent {
             messages.push(json!({
-                "role": memory.role,
-                "content": [{
-                    "type": "input_text",
-                    "text": memory.content
-                }]
-            }));
-        }
-        
-        // Add semantic memories
-        for memory in &context.semantic {
-            messages.push(json!({
-                "role": memory.role,
-                "content": [{
-                    "type": "input_text",
-                    "text": memory.content
-                }]
+                "role": if memory.role == "user" { "user" } else { "assistant" },
+                "content": memory.content
             }));
         }
         
         Ok(messages)
+    }
+    
+    fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
+        // Use the Default variant
+        PersonaOverlay::Default
     }
 }

@@ -64,7 +64,7 @@ impl OpenAIClient {
     }
 
     // FIXED: Use the same extraction logic as extract_text_from_responses
-    pub async fn summarize_conversation(&self, prompt: &str, max_tokens: usize) -> Result<String> {
+    pub async fn summarize_conversation(&self, prompt: &str, _max_tokens: usize) -> Result<String> {
         debug!("Summarization request for prompt length: {} characters", prompt.len());
         
         let request_body = serde_json::json!({
@@ -130,6 +130,7 @@ impl OpenAIClient {
             structured,
             metadata,
             raw_response,
+            artifacts: None,  // FIXED: Added missing artifacts field
         })
     }
 

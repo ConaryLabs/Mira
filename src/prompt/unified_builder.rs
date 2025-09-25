@@ -84,9 +84,25 @@ impl UnifiedPromptBuilder {
         if let Some(line) = error_context.line_number {
             prompt.push_str(&format!("- Error Line: {}\n", line));
         }
-        if let Some(lang) = &error_context.language {
-            prompt.push_str(&format!("- Language: {}\n", lang));
-        }
+        
+        // FIXED: Derive language from file extension instead of using non-existent field
+        let language = error_context.file_path
+            .rsplit('.')
+            .next()
+            .map(|ext| match ext {
+                "rs" => "rust",
+                "ts" | "tsx" => "typescript",
+                "js" | "jsx" => "javascript",
+                "py" => "python",
+                "go" => "go",
+                "java" => "java",
+                "cpp" | "cc" => "cpp",
+                "c" => "c",
+                _ => "text"
+            })
+            .unwrap_or("text");
+        
+        prompt.push_str(&format!("- Language: {}\n", language));
         prompt.push_str("\n");
         
         prompt.push_str("ERROR MESSAGE:\n");
@@ -96,9 +112,7 @@ impl UnifiedPromptBuilder {
         
         prompt.push_str("COMPLETE ORIGINAL FILE CONTENT:\n");
         prompt.push_str("```");
-        if let Some(lang) = &error_context.language {
-            prompt.push_str(lang);
-        }
+        prompt.push_str(language);
         prompt.push_str("\n");
         prompt.push_str(file_content);
         prompt.push_str("\n```\n\n");

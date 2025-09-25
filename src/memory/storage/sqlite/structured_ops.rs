@@ -228,6 +228,8 @@ pub async fn load_structured_response(
             programming_lang: analysis_row.programming_lang,
         },
         reasoning: None,
+        schema_name: Some("retrieved".to_string()),  // FIXED: Added missing field
+        validation_status: Some("valid".to_string()),  // FIXED: Added missing field
     };
 
     let metadata = GPT5Metadata {
@@ -254,6 +256,7 @@ pub async fn load_structured_response(
         structured,
         metadata,
         raw_response,
+        artifacts: None,  // FIXED: Added missing field
     }))
 }
 

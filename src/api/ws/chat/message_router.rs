@@ -120,7 +120,9 @@ impl MessageRouter {
                 "response_id": complete_response.metadata.response_id,
                 "total_tokens": complete_response.metadata.total_tokens,
                 "latency_ms": complete_response.metadata.latency_ms,
-            }
+            },
+            // FIXED: Include artifacts if present (for code fixes)
+            "artifacts": complete_response.artifacts,
         });
 
         self.connection.send_message(WsServerMessage::Response { 
@@ -196,7 +198,7 @@ impl MessageRouter {
     }
 
     async fn handle_git_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = git::handle_git_command(&method, params, self.app_state.clone()).await?;
+        let response = git::handle_git_operation(&method, params, self.app_state.clone()).await?;  // FIXED: handle_git_operation not handle_git_command
         
         match response {
             WsServerMessage::Data { data, .. } => {

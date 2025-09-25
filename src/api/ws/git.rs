@@ -1,23 +1,18 @@
 // src/api/ws/git.rs
 
-use std::sync::Arc;
+use anyhow::Result;
 use serde::Deserialize;
-use serde_json::{Value, json};
-use tracing::{debug, error, info};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tracing::info;
 
-use crate::{
-    api::{
-        error::{ApiError, ApiResult},
-        ws::message::WsServerMessage,
-    },
-    state::AppState,
-    git::client::ProjectOps,
-};
-
-// Request types
+use crate::api::error::ApiError;
+use crate::api::ws::message::WsServerMessage;
+use crate::state::AppState;
+use crate::git::client::project_ops::ProjectOps;  // FIXED: Added trait import
 
 #[derive(Debug, Deserialize)]
-struct AttachRepoRequest {
+struct GitAttachRequest {
     project_id: String,
     repo_url: String,
 }
@@ -40,65 +35,26 @@ struct FileContentRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct UpdateFileRequest {
-    project_id: String,
-    file_path: String,
-    content: String,
-    commit_message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct RestoreFileRequest {
     project_id: String,
     file_path: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct SwitchBranchRequest {
-    project_id: String,
-    branch_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommitsRequest {
-    project_id: String,
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DiffRequest {
-    project_id: String,
-    from_commit: Option<String>,
-    to_commit: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileAtCommitRequest {
-    project_id: String,
-    file_path: String,
-    commit_sha: String,
-}
-
-// Main command router
-
-pub async fn handle_git_command(
+pub async fn handle_git_operation(
     method: &str,
     params: Value,
     app_state: Arc<AppState>,
-) -> ApiResult<WsServerMessage> {
-    debug!("Processing git command: {}", method);
-    
-    let result = match method {
-        // Repository management
+) -> Result<WsServerMessage> {
+    match method {
         "git.attach" => {
-            let req: AttachRepoRequest = serde_json::from_value(params)
+            let req: GitAttachRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid attach request: {}", e)))?;
             
-            info!("Attaching repository {} to project {}", req.repo_url, req.project_id);
+            info!("Attaching repo {} to project {}", req.repo_url, req.project_id);
+            
             let attachment = app_state.git_client
-                .attach_repo(&req.project_id, &req.repo_url)
-                .await
-                .map_err(|e| ApiError::internal(format!("Failed to attach: {}", e)))?;
+                .attach_repo(&req.project_id, &req.repo_url)  // FIXED: attach_repo not attach_repository
+                .await?;
             
             Ok(WsServerMessage::Data {
                 data: json!({
@@ -180,17 +136,20 @@ pub async fn handle_git_command(
             info!("Restoring file {} in project {}", req.file_path, req.project_id);
             
             // Get project attachment to find repo path
-            let attachment = app_state.git_client
+            let attachment = app_state.git_client.store
                 .get_attachment(&req.project_id)
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?;
+            
+            // FIXED: Handle the Option
+            let attachment = attachment.ok_or_else(|| ApiError::not_found("Attachment not found"))?;
             
             // Use git2 to restore the file
             let repo_path = attachment.local_path.clone();
             let file_path = req.file_path.clone();
             
             tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-                use git2::{Repository, CheckoutBuilder};
+                use git2::{Repository, build::CheckoutBuilder};
                 
                 let repo = Repository::open(&repo_path)
                     .map_err(|e| ApiError::internal(format!("Failed to open repo: {}", e)))?;
@@ -234,9 +193,17 @@ pub async fn handle_git_command(
             let req: FileContentRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid file request: {}", e)))?;
             
-            let content = app_state.git_client
-                .get_project_file(&req.project_id, &req.file_path)
-                .await?;
+            // FIXED: Get attachment first, then use it with get_file_content
+            let attachment = app_state.git_client.store
+                .get_attachment(&req.project_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to get attachment: {}", e)))?
+                .ok_or_else(|| ApiError::not_found("Project attachment not found"))?;
+            
+            let content = app_state.git_client.get_file_content(
+                &attachment,
+                &req.file_path
+            )?;  // FIXED: Not async, no .await needed
             
             Ok(WsServerMessage::Data {
                 data: json!({
@@ -248,120 +215,6 @@ pub async fn handle_git_command(
             })
         }
         
-        "git.update_file" => {
-            let req: UpdateFileRequest = serde_json::from_value(params)
-                .map_err(|e| ApiError::bad_request(format!("Invalid update request: {}", e)))?;
-            
-            let message = req.commit_message
-                .unwrap_or_else(|| format!("Update {}", req.file_path));
-            
-            app_state.git_client
-                .update_project_file(&req.project_id, &req.file_path, &req.content, &message)
-                .await?;
-            
-            Ok(WsServerMessage::Status {
-                message: format!("Updated {}", req.file_path),
-                detail: None,
-            })
-        }
-        
-        // Branch operations
-        "git.branches" => {
-            let req: GitProjectRequest = serde_json::from_value(params)
-                .map_err(|e| ApiError::bad_request(format!("Invalid branches request: {}", e)))?;
-            
-            let (branches, current) = app_state.git_client
-                .get_project_branches(&req.project_id)
-                .await?;
-            
-            Ok(WsServerMessage::Data {
-                data: json!({
-                    "type": "branch_list",
-                    "branches": branches,
-                    "current": current
-                }),
-                request_id: None,
-            })
-        }
-        
-        "git.switch_branch" => {
-            let req: SwitchBranchRequest = serde_json::from_value(params)
-                .map_err(|e| ApiError::bad_request(format!("Invalid switch request: {}", e)))?;
-            
-            app_state.git_client
-                .switch_project_branch(&req.project_id, &req.branch_name)
-                .await?;
-            
-            Ok(WsServerMessage::Status {
-                message: format!("Switched to branch: {}", req.branch_name),
-                detail: None,
-            })
-        }
-        
-        // History operations
-        "git.commits" => {
-            let req: CommitsRequest = serde_json::from_value(params)
-                .map_err(|e| ApiError::bad_request(format!("Invalid commits request: {}", e)))?;
-            
-            let commits = app_state.git_client
-                .get_project_commits(&req.project_id, req.limit.unwrap_or(50))
-                .await?;
-            
-            Ok(WsServerMessage::Data {
-                data: json!({
-                    "type": "commit_history",
-                    "commits": commits
-                }),
-                request_id: None,
-            })
-        }
-        
-        "git.diff" => {
-            let req: DiffRequest = serde_json::from_value(params)
-                .map_err(|e| ApiError::bad_request(format!("Invalid diff request: {}", e)))?;
-            
-            let diff = app_state.git_client
-                .get_project_diff(&req.project_id, req.from_commit.as_deref(), req.to_commit.as_deref())
-                .await?;
-            
-            Ok(WsServerMessage::Data {
-                data: json!({
-                    "type": "diff",
-                    "diff": diff
-                }),
-                request_id: None,
-            })
-        }
-        
-        "git.file_at_commit" => {
-            let req: FileAtCommitRequest = serde_json::from_value(params)
-                .map_err(|e| ApiError::bad_request(format!("Invalid file at commit request: {}", e)))?;
-            
-            let content = app_state.git_client
-                .get_project_file_at_commit(&req.project_id, &req.file_path, &req.commit_sha)
-                .await?;
-            
-            Ok(WsServerMessage::Data {
-                data: json!({
-                    "type": "file_at_commit",
-                    "path": req.file_path,
-                    "commit": req.commit_sha,
-                    "content": content
-                }),
-                request_id: None,
-            })
-        }
-        
-        _ => {
-            error!("Unknown git method: {}", method);
-            return Err(ApiError::bad_request(format!("Unknown git method: {}", method)));
-        }
-    };
-    
-    match &result {
-        Ok(_) => info!("Git command {} completed successfully", method),
-        Err(e) => error!("Git command {} failed: {:?}", method, e),
+        _ => Err(ApiError::not_found(format!("Unknown git method: {}", method)).into())  // FIXED: not_found instead of method_not_found
     }
-    
-    result
 }
