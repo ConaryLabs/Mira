@@ -169,14 +169,16 @@ impl OpenAIClient {
         }
     }
 
+    // UPDATED FOR CLAUDE: Changed endpoint and headers
     async fn post_response_internal(&self, body: Value) -> Result<Value> {
-        let url = format!("{}/v1/responses", &self.config.base_url());
+        let url = format!("{}/v1/messages", &self.config.base_url());
         debug!("Making request to: {}", url);
         
         let response = self
             .client
             .post(url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
+            .header("x-api-key", self.config.api_key())         // Claude uses x-api-key
+            .header("anthropic-version", "2023-06-01")          // Required by Claude
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -185,9 +187,9 @@ impl OpenAIClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            error!("OpenAI API error ({} {}): {}", 
+            error!("Claude API error ({} {}): {}", 
                 status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text);
-            return Err(anyhow::anyhow!("OpenAI API error ({} {}): {}", 
+            return Err(anyhow::anyhow!("Claude API error ({} {}): {}", 
                 status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text));
         }
 
@@ -210,7 +212,8 @@ impl OpenAIClient {
         
         self.client
             .request(method, url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
+            .header("x-api-key", self.config.api_key())         // Claude uses x-api-key
+            .header("anthropic-version", "2023-06-01")          // Required by Claude
             .header(header::CONTENT_TYPE, "application/json")
     }
 
@@ -225,6 +228,7 @@ impl OpenAIClient {
         
         self.client
             .request(reqwest::Method::POST, url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
+            .header("x-api-key", self.config.api_key())         // Claude uses x-api-key
+            .header("anthropic-version", "2023-06-01")          // Required by Claude
     }
 }

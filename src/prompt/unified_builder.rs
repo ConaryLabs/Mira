@@ -79,13 +79,9 @@ impl UnifiedPromptBuilder {
         prompt.push_str("- ANY form of abbreviation or code skipping\n\n");
         
         prompt.push_str("ERROR DETAILS:\n");
-        prompt.push_str(&format!("- Error Type: {}\n", error_context.error_type));
         prompt.push_str(&format!("- File: {}\n", error_context.file_path));
-        if let Some(line) = error_context.line_number {
-            prompt.push_str(&format!("- Error Line: {}\n", line));
-        }
         
-        // FIXED: Derive language from file extension instead of using non-existent field
+        // Derive language from file extension
         let language = error_context.file_path
             .rsplit('.')
             .next()

@@ -5,8 +5,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::types::*;
-
-pub mod claude_processor;
+use super::claude_processor;  // Import from sibling module
 
 // Delegate all request building to Claude processor
 pub fn build_structured_request(

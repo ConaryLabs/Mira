@@ -41,6 +41,84 @@ pub struct ErrorContext {
     pub original_line_count: usize,
 }
 
+/// Detects if a message contains a compiler/runtime error
+/// Returns ErrorContext if an error is detected
+pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
+    // Rust compiler errors: error[E0308]: ...
+    if let Some(captures) = regex::Regex::new(r"error\[E\d+\]:")
+        .ok()?
+        .captures(message) 
+    {
+        // Extract file path from "--> src/path/file.rs:line:col"
+        if let Some(path_match) = regex::Regex::new(r"-->\s+([^\s:]+)")
+            .ok()?
+            .captures(message)
+        {
+            let file_path = path_match.get(1)?.as_str().to_string();
+            return Some(ErrorContext {
+                error_message: message.to_string(),
+                file_path,
+                original_line_count: 0, // Will be set by handler
+            });
+        }
+    }
+    
+    // TypeScript/JavaScript errors: path/file.ts(line,col): error TS...
+    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.(?:ts|tsx|js|jsx))\(\d+,\d+\):\s+error")
+        .ok()?
+        .captures(message)
+    {
+        let file_path = captures.get(1)?.as_str().to_string();
+        return Some(ErrorContext {
+            error_message: message.to_string(),
+            file_path,
+            original_line_count: 0,
+        });
+    }
+    
+    // Python errors: File "path/file.py", line X
+    if let Some(captures) = regex::Regex::new(r#"File\s+"([^"]+\.py)",\s+line\s+\d+"#)
+        .ok()?
+        .captures(message)
+    {
+        let file_path = captures.get(1)?.as_str().to_string();
+        return Some(ErrorContext {
+            error_message: message.to_string(),
+            file_path,
+            original_line_count: 0,
+        });
+    }
+    
+    // Generic: Check for common error patterns with file references
+    if message.contains("error") || message.contains("Error") {
+        // Look for file paths
+        if let Some(captures) = regex::Regex::new(r"([a-zA-Z0-9_\-./]+\.[a-z]+):?\d*")
+            .ok()?
+            .captures(message)
+        {
+            let file_path = captures.get(1)?.as_str().to_string();
+            // Only if it looks like a source file
+            if file_path.ends_with(".rs") 
+                || file_path.ends_with(".ts") 
+                || file_path.ends_with(".tsx")
+                || file_path.ends_with(".js")
+                || file_path.ends_with(".jsx")
+                || file_path.ends_with(".py")
+                || file_path.ends_with(".go")
+                || file_path.ends_with(".java")
+            {
+                return Some(ErrorContext {
+                    error_message: message.to_string(),
+                    file_path,
+                    original_line_count: 0,
+                });
+            }
+        }
+    }
+    
+    None
+}
+
 pub fn build_code_fix_request(
     error_message: &str,
     file_path: &str,

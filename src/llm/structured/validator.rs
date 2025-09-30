@@ -1,9 +1,9 @@
 // src/llm/structured/validator.rs
 
 use anyhow::{anyhow, Result};
-use super::types::StructuredGPT5Response;
+use super::types::StructuredLLMResponse;
 
-pub fn validate_response(response: &StructuredGPT5Response) -> Result<()> {
+pub fn validate_response(response: &StructuredLLMResponse) -> Result<()> {
     if response.output.trim().is_empty() {
         return Err(anyhow!("output cannot be empty (memory_entries.content NOT NULL)"));
     }
@@ -46,6 +46,7 @@ pub fn validate_response(response: &StructuredGPT5Response) -> Result<()> {
     
     if let Some(ref lang) = response.analysis.programming_lang {
         const VALID_LANGS: &[&str] = &["rust", "typescript", "javascript", "python", "go", "java"];
+        // FIXED: Explicitly specify the type for as_str()
         if !VALID_LANGS.contains(&lang.as_str()) {
             return Err(anyhow!("programming_lang '{}' not in language_configs", lang));
         }

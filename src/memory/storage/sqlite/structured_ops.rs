@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use sqlx::{SqlitePool, Transaction, Sqlite};
 use tracing::{debug, info};
 
-use crate::llm::structured::{CompleteResponse, StructuredGPT5Response, GPT5Metadata};
+use crate::llm::structured::{CompleteResponse, StructuredLLMResponse, LLMMetadata};
 
 pub async fn save_structured_response(
     pool: &SqlitePool,
@@ -28,7 +28,7 @@ pub async fn save_structured_response(
         &response.structured.analysis,
     ).await?;
     
-    insert_gpt5_metadata(
+    insert_llm_metadata(
         &mut tx,
         message_id,
         &response.metadata,
@@ -46,7 +46,7 @@ pub async fn save_structured_response(
 async fn insert_memory_entry(
     tx: &mut Transaction<'_, Sqlite>,
     session_id: &str,
-    response: &StructuredGPT5Response,
+    response: &StructuredLLMResponse,
     response_id: Option<&str>,
     parent_id: Option<i64>,
 ) -> Result<i64> {
@@ -109,44 +109,41 @@ async fn insert_message_analysis(
     Ok(())
 }
 
-async fn insert_gpt5_metadata(
+async fn insert_llm_metadata(
     tx: &mut Transaction<'_, Sqlite>,
     message_id: i64,
-    metadata: &GPT5Metadata,
+    metadata: &LLMMetadata,
 ) -> Result<()> {
     sqlx::query!(
         r#"
-        INSERT INTO gpt5_metadata (
-            message_id, model_version, prompt_tokens, completion_tokens,
-            reasoning_tokens, total_tokens, latency_ms, generation_time_ms,
-            finish_reason, tool_calls, temperature, max_tokens,
-            reasoning_effort, verbosity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+        INSERT INTO llm_metadata (
+            message_id, model_version, input_tokens, output_tokens,
+            thinking_tokens, total_tokens, latency_ms, generation_time_ms,
+            finish_reason, tool_calls, temperature, max_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         "#,
         message_id,
         metadata.model_version,
         metadata.prompt_tokens,
         metadata.completion_tokens,
-        metadata.reasoning_tokens,
+        metadata.thinking_tokens,
         metadata.total_tokens,
         metadata.latency_ms,
         metadata.latency_ms,
         metadata.finish_reason,
         metadata.temperature,
-        metadata.max_tokens,
-        metadata.reasoning_effort,
-        metadata.verbosity
+        metadata.max_tokens
     )
     .execute(&mut **tx)
     .await?;
     
-    debug!("Inserted gpt5_metadata for message {}", message_id);
+    debug!("Inserted llm_metadata for message {}", message_id);
     Ok(())
 }
 
 async fn trigger_conditional_operations(
     _message_id: i64,
-    response: &StructuredGPT5Response,
+    response: &StructuredLLMResponse,
 ) -> Result<()> {
     if !response.analysis.routed_to_heads.is_empty() {
         info!("Queuing embeddings for heads: {:?}", response.analysis.routed_to_heads);
@@ -191,10 +188,9 @@ pub async fn load_structured_response(
 
     let metadata_row = match sqlx::query!(
         r#"
-        SELECT model_version, prompt_tokens, completion_tokens, reasoning_tokens,
-               total_tokens, latency_ms, finish_reason, temperature, max_tokens,
-               reasoning_effort, verbosity
-        FROM gpt5_metadata WHERE message_id = ?
+        SELECT model_version, input_tokens, output_tokens, thinking_tokens,
+               total_tokens, latency_ms, finish_reason, temperature, max_tokens
+        FROM llm_metadata WHERE message_id = ?
         "#,
         message_id
     )
@@ -212,7 +208,7 @@ pub async fn load_structured_response(
         &analysis_row.routed_to_heads.ok_or_else(|| anyhow!("Missing routed_to_heads field"))?
     )?;
 
-    let structured = StructuredGPT5Response {
+    let structured = StructuredLLMResponse {
         output: memory_row.content,
         analysis: crate::llm::structured::types::MessageAnalysis {
             salience: analysis_row.salience.unwrap_or(5.0) as f64,
@@ -228,23 +224,21 @@ pub async fn load_structured_response(
             programming_lang: analysis_row.programming_lang,
         },
         reasoning: None,
-        schema_name: Some("retrieved".to_string()),  // FIXED: Added missing field
-        validation_status: Some("valid".to_string()),  // FIXED: Added missing field
+        schema_name: Some("retrieved".to_string()),
+        validation_status: Some("valid".to_string()),
     };
 
-    let metadata = GPT5Metadata {
+    let metadata = LLMMetadata {
         response_id: memory_row.response_id,
-        prompt_tokens: metadata_row.prompt_tokens.map(|v| v as i64),
-        completion_tokens: metadata_row.completion_tokens.map(|v| v as i64),
-        reasoning_tokens: metadata_row.reasoning_tokens.map(|v| v as i64),
+        prompt_tokens: metadata_row.input_tokens.map(|v| v as i64),
+        completion_tokens: metadata_row.output_tokens.map(|v| v as i64),
+        thinking_tokens: metadata_row.thinking_tokens.map(|v| v as i64),
         total_tokens: metadata_row.total_tokens.map(|v| v as i64),
         latency_ms: metadata_row.latency_ms.unwrap_or(0) as i64,
         finish_reason: metadata_row.finish_reason,
-        model_version: metadata_row.model_version.unwrap_or_else(|| "gpt-5".to_string()),
+        model_version: metadata_row.model_version,
         temperature: metadata_row.temperature.unwrap_or(0.0),
         max_tokens: metadata_row.max_tokens.unwrap_or(4096) as i64,
-        reasoning_effort: metadata_row.reasoning_effort.unwrap_or_else(|| "medium".to_string()),
-        verbosity: metadata_row.verbosity.unwrap_or_else(|| "medium".to_string()),
     };
 
     let raw_response = serde_json::json!({
@@ -256,7 +250,7 @@ pub async fn load_structured_response(
         structured,
         metadata,
         raw_response,
-        artifacts: None,  // FIXED: Added missing field
+        artifacts: None,
     }))
 }
 
@@ -269,7 +263,7 @@ pub async fn get_response_statistics(pool: &SqlitePool) -> Result<ResponseStatis
             AVG(CAST(latency_ms AS REAL)) as avg_latency_ms,
             MAX(total_tokens) as max_tokens,
             MIN(total_tokens) as min_tokens
-        FROM gpt5_metadata
+        FROM llm_metadata
         WHERE total_tokens IS NOT NULL
         "#
     )

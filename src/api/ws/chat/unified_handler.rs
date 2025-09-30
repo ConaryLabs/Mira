@@ -42,7 +42,7 @@ impl UnifiedChatHandler {
         // Check for error patterns first
         if let Some(mut error_context) = code_fix_processor::detect_error_context(&request.content) {
             if let Some(_project_id) = &request.project_id {
-                info!("Detected {} error in file: {}", error_context.error_type, error_context.file_path);
+                info!("Detected error in file: {}", error_context.file_path);
                 
                 // Load file and update line count
                 if let Ok(content) = self.load_complete_file(
@@ -107,7 +107,7 @@ impl UnifiedChatHandler {
         request: ChatRequest,
         error_context: ErrorContext,
     ) -> Result<CompleteResponse> {
-        info!("Handling error fix for {} in {}", error_context.error_type, error_context.file_path);
+        info!("Handling error fix in {}", error_context.file_path);
         
         // Load complete file
         let file_content = self.load_complete_file(
