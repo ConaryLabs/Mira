@@ -333,7 +333,7 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> ApiResult<WsServerMess
     let mut status = json!({
         "qdrant_url": CONFIG.qdrant_url.clone(),
         "qdrant_configured": !CONFIG.qdrant_url.is_empty(),
-        "openai_key_configured": !CONFIG.openai_api_key.is_empty(),  // FIXED: String not Option<String>
+        "openai_key_configured": !CONFIG.openai_embedding_api_key.is_empty(),  // FIXED: use embedding key
         "embedding_heads": CONFIG.embed_heads.clone(),
         "collection_name": CONFIG.qdrant_collection.clone(),
     });

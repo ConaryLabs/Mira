@@ -1,5 +1,5 @@
 // src/llm/client/config.rs
-// Configuration management for OpenAI client using centralized CONFIG
+// Configuration management for Claude client using centralized CONFIG
 
 use anyhow::Result;
 use tracing::debug;
@@ -10,32 +10,25 @@ pub struct ClientConfig {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
-    pub verbosity: String,
-    pub reasoning_effort: String,
     pub max_output_tokens: usize,
 }
 
 impl ClientConfig {
-    /// Create configuration from centralized CONFIG and environment variables
+    /// Create configuration from centralized CONFIG
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY must be set"))?;
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY must be set"))?;
         
-        // Use CONFIG base URL, fallback to env var, then default
-        let base_url = CONFIG.openai_base_url.clone();
-
         debug!(
-            "Initialized LLM client config: model={}, verbosity={}, reasoning={}, max_tokens={}",
-            CONFIG.gpt5_model, CONFIG.verbosity, CONFIG.reasoning_effort, CONFIG.max_output_tokens
+            "Initialized Claude client: model={}, max_tokens={}",
+            CONFIG.anthropic_model, CONFIG.anthropic_max_tokens
         );
 
         Ok(Self {
             api_key,
-            base_url,
-            model: CONFIG.gpt5_model.clone(),
-            verbosity: CONFIG.verbosity.clone(),
-            reasoning_effort: CONFIG.reasoning_effort.clone(),
-            max_output_tokens: CONFIG.max_output_tokens,
+            base_url: CONFIG.anthropic_base_url.clone(),
+            model: CONFIG.anthropic_model.clone(),
+            max_output_tokens: CONFIG.anthropic_max_tokens,
         })
     }
 
@@ -44,16 +37,12 @@ impl ClientConfig {
         api_key: String,
         base_url: String,
         model: String,
-        verbosity: String,
-        reasoning_effort: String,
         max_output_tokens: usize,
     ) -> Self {
         Self {
             api_key,
             base_url,
             model,
-            verbosity,
-            reasoning_effort,
             max_output_tokens,
         }
     }
@@ -73,16 +62,6 @@ impl ClientConfig {
         &self.model
     }
 
-    /// Get verbosity setting
-    pub fn verbosity(&self) -> &str {
-        &self.verbosity
-    }
-
-    /// Get reasoning effort setting
-    pub fn reasoning_effort(&self) -> &str {
-        &self.reasoning_effort
-    }
-
     /// Get maximum output tokens
     pub fn max_output_tokens(&self) -> usize {
         self.max_output_tokens
@@ -98,30 +77,19 @@ impl ClientConfig {
             return Err(anyhow::anyhow!("Base URL cannot be empty"));
         }
 
-        // Validate verbosity levels
-        match self.verbosity.as_str() {
-            "low" | "medium" | "high" => {},
-            _ => return Err(anyhow::anyhow!("Invalid verbosity level. Must be 'low', 'medium', or 'high'")),
-        }
-
-        // Validate reasoning effort levels
-        match self.reasoning_effort.as_str() {
-            "low" | "medium" | "high" => {},
-            _ => return Err(anyhow::anyhow!("Invalid reasoning effort level. Must be 'low', 'medium', or 'high'")),
-        }
-
-        // Validate max tokens range (GPT-5 supports up to 200K)
+        // Validate max tokens range (Claude supports up to 200K)
         if self.max_output_tokens == 0 || self.max_output_tokens > 200000 {
-            return Err(anyhow::anyhow!("Max output tokens must be between 1 and 200000"));
+            return Err(anyhow::anyhow!("max_output_tokens must be between 1 and 200000"));
         }
 
         Ok(())
     }
 
-    /// Get default headers for HTTP requests
+    /// Get default headers for Claude API requests
     pub fn default_headers(&self) -> Vec<(String, String)> {
         vec![
-            ("authorization".to_string(), format!("Bearer {}", self.api_key)),
+            ("x-api-key".to_string(), self.api_key.clone()),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
             ("accept".to_string(), "application/json".to_string()),
         ]
@@ -132,11 +100,9 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             api_key: "".to_string(),
-            base_url: CONFIG.openai_base_url.clone(),
-            model: CONFIG.gpt5_model.clone(),
-            verbosity: CONFIG.verbosity.clone(),
-            reasoning_effort: CONFIG.reasoning_effort.clone(),
-            max_output_tokens: CONFIG.max_output_tokens,
+            base_url: CONFIG.anthropic_base_url.clone(),
+            model: CONFIG.anthropic_model.clone(),
+            max_output_tokens: CONFIG.anthropic_max_tokens,
         }
     }
 }
@@ -144,8 +110,6 @@ impl Default for ClientConfig {
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
     pub model: String,
-    pub verbosity: String,
-    pub reasoning_effort: String,
     pub max_output_tokens: usize,
 }
 
@@ -153,35 +117,27 @@ impl ModelConfig {
     /// Create from centralized CONFIG
     pub fn from_config() -> Self {
         Self {
-            model: CONFIG.gpt5_model.clone(),
-            verbosity: CONFIG.verbosity.clone(),
-            reasoning_effort: CONFIG.reasoning_effort.clone(),
-            max_output_tokens: CONFIG.max_output_tokens,
+            model: CONFIG.anthropic_model.clone(),
+            max_output_tokens: CONFIG.anthropic_max_tokens,
         }
     }
 
     /// Check if model supports streaming
     pub fn supports_streaming(&self) -> bool {
-        self.model.starts_with("gpt-")
+        self.model.starts_with("claude-")
     }
 
-    /// Get recommended timeout based on reasoning effort
+    /// Get recommended timeout based on thinking budget
     pub fn recommended_timeout_secs(&self) -> u64 {
-        match self.reasoning_effort.as_str() {
-            "low" => 60,
-            "medium" => 120,
-            "high" => CONFIG.openai_timeout,  // Use config timeout for high effort
-            _ => 120,
-        }
+        // Claude with extended thinking can take longer
+        CONFIG.openai_timeout  // Reuse the timeout config
     }
 
     /// Convert to JSON for API requests
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "model": self.model,
-            "verbosity": self.verbosity,
-            "reasoning_effort": self.reasoning_effort,
-            "max_output_tokens": self.max_output_tokens
+            "max_tokens": self.max_output_tokens
         })
     }
 }

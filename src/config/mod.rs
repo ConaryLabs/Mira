@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - structured response edition
+// Central configuration for Mira backend - Claude Sonnet 4.5 edition
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -12,13 +12,35 @@ lazy_static! {
 /// Main configuration structure for Mira
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
-    // Core LLM Configuration
-    pub openai_api_key: String,
-    pub openai_base_url: String,
-    pub gpt5_model: String,
-    pub verbosity: String,
-    pub reasoning_effort: String,
-    pub max_output_tokens: usize,
+    // ===== CLAUDE CONFIGURATION =====
+    pub anthropic_api_key: String,
+    pub anthropic_base_url: String,
+    pub anthropic_model: String,
+    pub anthropic_max_tokens: usize,
+    
+    // Extended thinking budgets
+    pub thinking_budget_simple: usize,
+    pub thinking_budget_default: usize,
+    pub thinking_budget_complex: usize,
+    pub thinking_budget_ultra: usize,
+    
+    // Context management
+    pub context_window_size: usize,
+    pub context_clear_threshold: usize,
+    pub context_keep_recent: usize,
+    pub context_clear_minimum: usize,
+    
+    // Temperature by task type
+    pub temperature_deterministic: f32,
+    pub temperature_balanced: f32,
+    pub temperature_creative: f32,
+    
+    // ===== OPENAI FOR EMBEDDINGS ONLY =====
+    pub openai_embedding_api_key: String,
+    pub openai_embedding_model: String,
+    
+    // ===== KEEP ALL OTHER FIELDS UNCHANGED =====
+    pub max_output_tokens: usize,  // Maps to anthropic_max_tokens
     pub debug_logging: bool,
 
     // Structured Output Configuration
@@ -167,13 +189,35 @@ impl MiraConfig {
         }
 
         Self {
-            // Core LLM Configuration
-            openai_api_key: require_env("OPENAI_API_KEY"),
-            openai_base_url: require_env("OPENAI_BASE_URL"),
-            gpt5_model: require_env("GPT5_MODEL"),
-            verbosity: require_env("GPT5_VERBOSITY"),
-            reasoning_effort: require_env("GPT5_REASONING_EFFORT"),
-            max_output_tokens: require_env_parsed("MIRA_MAX_OUTPUT_TOKENS"),
+            // Claude configuration
+            anthropic_api_key: require_env("ANTHROPIC_API_KEY"),
+            anthropic_base_url: require_env("ANTHROPIC_BASE_URL"),
+            anthropic_model: require_env("ANTHROPIC_MODEL"),
+            anthropic_max_tokens: require_env_parsed("ANTHROPIC_MAX_TOKENS"),
+            
+            // Thinking budgets
+            thinking_budget_simple: require_env_parsed("THINKING_BUDGET_SIMPLE"),
+            thinking_budget_default: require_env_parsed("THINKING_BUDGET_DEFAULT"),
+            thinking_budget_complex: require_env_parsed("THINKING_BUDGET_COMPLEX"),
+            thinking_budget_ultra: require_env_parsed("THINKING_BUDGET_ULTRA"),
+            
+            // Context management
+            context_window_size: require_env_parsed("CONTEXT_WINDOW_SIZE"),
+            context_clear_threshold: require_env_parsed("CONTEXT_CLEAR_THRESHOLD"),
+            context_keep_recent: require_env_parsed("CONTEXT_KEEP_RECENT"),
+            context_clear_minimum: require_env_parsed("CONTEXT_CLEAR_MINIMUM"),
+            
+            // Temperature
+            temperature_deterministic: require_env_parsed("TEMPERATURE_DETERMINISTIC"),
+            temperature_balanced: require_env_parsed("TEMPERATURE_BALANCED"),
+            temperature_creative: require_env_parsed("TEMPERATURE_CREATIVE"),
+            
+            // OpenAI for embeddings only
+            openai_embedding_api_key: require_env("OPENAI_EMBEDDING_API_KEY"),
+            openai_embedding_model: require_env("OPENAI_EMBEDDING_MODEL"),
+            
+            // Map to Claude value for backward compat
+            max_output_tokens: require_env_parsed("ANTHROPIC_MAX_TOKENS"),
             debug_logging: require_env_parsed("MIRA_DEBUG_LOGGING"),
 
             // Structured Output Configuration
@@ -287,25 +331,6 @@ impl MiraConfig {
             recent_cache_ttl_seconds: require_env_parsed("MIRA_RECENT_CACHE_TTL"),
             recent_cache_max_per_session: require_env_parsed("MIRA_RECENT_CACHE_MAX_PER_SESSION"),
             recent_cache_warmup: require_env_parsed("MIRA_RECENT_CACHE_WARMUP"),
-        }
-    }
-
-    /// Get verbosity setting for a specific operation type
-    pub fn get_verbosity_for(&self, operation: &str) -> &str {
-        match operation {
-            "classification" | "metadata" => "minimal",
-            "summary" => "low",
-            _ => &self.verbosity,
-        }
-    }
-
-    /// Get reasoning effort for a specific operation type
-    pub fn get_reasoning_effort_for(&self, operation: &str) -> &str {
-        match operation {
-            "classification" | "metadata" => "minimal",
-            "summary" => "low",
-            "complex" => "high",
-            _ => &self.reasoning_effort,
         }
     }
 
