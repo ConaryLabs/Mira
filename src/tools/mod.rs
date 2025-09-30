@@ -8,7 +8,7 @@ pub mod message_handler;
 pub mod definitions;
 pub mod file_context;
 pub mod file_search;
-pub mod document;
+// Document module removed - functionality moved to memory/features/document_processing
 
 // Re-export commonly used items
 pub use executor::ToolExecutor;
