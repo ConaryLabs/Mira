@@ -63,36 +63,70 @@ impl OpenAIClient {
         &self.embedding_client
     }
 
-    // FIXED: Use the same extraction logic as extract_text_from_responses
+    // FIXED: Now uses Claude Messages API format
     pub async fn summarize_conversation(&self, prompt: &str, _max_tokens: usize) -> Result<String> {
         debug!("Summarization request for prompt length: {} characters", prompt.len());
         
+        // Build Claude Messages API request
         let request_body = serde_json::json!({
             "model": self.config.model,
-            "input": prompt,
-            "text": {
-                "verbosity": "medium"
-            }
+            "max_tokens": self.config.max_output_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
         });
         
         let response = self.post_response_with_retry(request_body).await?;
         
-        // Use the same extraction logic as extract_text_from_responses
-        if let Some(text) = responses::extract_text_from_responses(&response) {
-            return Ok(text);
+        // Extract text from Claude response
+        if let Some(content) = response["content"].as_array() {
+            for block in content {
+                if block["type"] == "text" {
+                    if let Some(text) = block["text"].as_str() {
+                        return Ok(text.to_string());
+                    }
+                }
+            }
         }
         
-        // Fallback
-        warn!("Could not extract text from response, using fallback");
-        Ok("Summary generation failed".to_string())
+        warn!("Could not extract text from Claude response");
+        Err(anyhow::anyhow!("No text content in Claude response"))
     }
 
-    // This is probably used by the tools - simple completion as well
+    // FIXED: Now uses Claude Messages API format
     pub async fn generate_response(&self, prompt: &str, _context: Option<&str>, _json: bool) -> Result<String> {
         debug!("Generation request for prompt length: {}", prompt.len());
         
-        // Use summarize_conversation for now since it's essentially the same
-        self.summarize_conversation(prompt, 2000).await
+        // Build Claude Messages API request
+        let request_body = serde_json::json!({
+            "model": self.config.model,
+            "max_tokens": self.config.max_output_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        });
+        
+        let response = self.post_response_with_retry(request_body).await?;
+        
+        // Extract text from Claude response
+        if let Some(content) = response["content"].as_array() {
+            for block in content {
+                if block["type"] == "text" {
+                    if let Some(text) = block["text"].as_str() {
+                        return Ok(text.to_string());
+                    }
+                }
+            }
+        }
+        
+        warn!("Could not extract text from Claude response");
+        Err(anyhow::anyhow!("No text content in Claude response"))
     }
 
     pub async fn get_structured_response(
@@ -112,6 +146,9 @@ impl OpenAIClient {
             context_messages,
         )?;
         
+        // DEBUG: Log what we're sending
+        debug!("🔍 Claude request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        
         let raw_response = self.post_response_with_retry(request_body).await?;
         
         let latency_ms = start.elapsed().as_millis() as i64;
@@ -130,7 +167,7 @@ impl OpenAIClient {
             structured,
             metadata,
             raw_response,
-            artifacts: None,  // FIXED: Added missing artifacts field
+            artifacts: None,
         })
     }
 
@@ -172,13 +209,17 @@ impl OpenAIClient {
     // UPDATED FOR CLAUDE: Changed endpoint and headers
     async fn post_response_internal(&self, body: Value) -> Result<Value> {
         let url = format!("{}/v1/messages", &self.config.base_url());
-        debug!("Making request to: {}", url);
+        
+        // TEMPORARY DEBUG: Log the full request
+        error!("🔍 FULL CLAUDE REQUEST:");
+        error!("   URL: {}", url);
+        error!("   Body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
         
         let response = self
             .client
             .post(url)
-            .header("x-api-key", self.config.api_key())         // Claude uses x-api-key
-            .header("anthropic-version", "2023-06-01")          // Required by Claude
+            .header("x-api-key", self.config.api_key())
+            .header("anthropic-version", "2023-06-01")
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -187,13 +228,17 @@ impl OpenAIClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            error!("Claude API error ({} {}): {}", 
+            error!("🔥 Claude API error ({} {}): {}", 
                 status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text);
             return Err(anyhow::anyhow!("Claude API error ({} {}): {}", 
                 status.as_u16(), status.canonical_reason().unwrap_or("Unknown"), error_text));
         }
 
         let response_data: Value = response.json().await?;
+        
+        // DEBUG: Log the response
+        debug!("✅ Claude response received: {}", serde_json::to_string_pretty(&response_data).unwrap_or_default());
+        
         Ok(response_data)
     }
 
@@ -212,8 +257,8 @@ impl OpenAIClient {
         
         self.client
             .request(method, url)
-            .header("x-api-key", self.config.api_key())         // Claude uses x-api-key
-            .header("anthropic-version", "2023-06-01")          // Required by Claude
+            .header("x-api-key", self.config.api_key())
+            .header("anthropic-version", "2023-06-01")
             .header(header::CONTENT_TYPE, "application/json")
     }
 
@@ -228,7 +273,7 @@ impl OpenAIClient {
         
         self.client
             .request(reqwest::Method::POST, url)
-            .header("x-api-key", self.config.api_key())         // Claude uses x-api-key
-            .header("anthropic-version", "2023-06-01")          // Required by Claude
+            .header("x-api-key", self.config.api_key())
+            .header("anthropic-version", "2023-06-01")
     }
 }

@@ -1,11 +1,12 @@
 // src/llm/structured/claude_processor.rs
-// Claude Messages API processor with extended thinking support
+// Claude Messages API processor with extended thinking support and tool calling
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use tracing::{debug, info};
 use crate::config::CONFIG;
 use super::types::{LLMMetadata, StructuredLLMResponse};
+use super::tool_schema::{get_response_tool_schema, get_code_fix_tool_schema};
 
 /// Build Claude Messages API request with extended thinking
 pub fn build_claude_request(
@@ -38,6 +39,78 @@ pub fn build_claude_request(
             "type": "enabled",
             "budget_tokens": thinking_budget
         }
+    }))
+}
+
+/// Build request with forced tool choice for structured output
+pub fn build_claude_request_with_tool(
+    user_message: &str,
+    system_prompt: String,
+    context_messages: Vec<Value>,
+) -> Result<Value> {
+    let (thinking_budget, temperature) = analyze_message_complexity(user_message);
+    
+    debug!(
+        "Claude tool request: thinking={}, temp={}",
+        thinking_budget, temperature
+    );
+
+    let mut messages = context_messages;
+    messages.push(json!({
+        "role": "user",
+        "content": user_message
+    }));
+
+    Ok(json!({
+        "model": CONFIG.anthropic_model,
+        "max_tokens": CONFIG.anthropic_max_tokens,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": messages,
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": thinking_budget
+        },
+        "tools": [get_response_tool_schema()],
+        "tool_choice": {
+            "type": "tool",
+            "name": "respond_to_user"
+        }
+    }))
+}
+
+/// Build request with custom function tools available
+pub fn build_claude_request_with_custom_tools(
+    user_message: &str,
+    system_prompt: String,
+    context_messages: Vec<Value>,
+    tool_schemas: Vec<Value>,
+) -> Result<Value> {
+    let (thinking_budget, temperature) = analyze_message_complexity(user_message);
+    
+    debug!(
+        "Claude with {} custom tools: thinking={}, temp={}",
+        tool_schemas.len(), thinking_budget, temperature
+    );
+
+    let mut messages = context_messages;
+    messages.push(json!({
+        "role": "user",
+        "content": user_message
+    }));
+
+    Ok(json!({
+        "model": CONFIG.anthropic_model,
+        "max_tokens": CONFIG.anthropic_max_tokens,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": messages,
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": thinking_budget
+        },
+        "tools": tool_schemas,
+        // No tool_choice - Claude decides when to use tools
     }))
 }
 
@@ -105,8 +178,62 @@ pub fn extract_claude_content(raw_response: &Value) -> Result<StructuredLLMRespo
     Ok(structured)
 }
 
+/// Extract from tool_use content block
+pub fn extract_claude_content_from_tool(raw_response: &Value) -> Result<StructuredLLMResponse> {
+    let content = raw_response["content"].as_array()
+        .ok_or_else(|| anyhow!("Missing content array"))?;
+    
+    // Log thinking if present
+    for (i, block) in content.iter().enumerate() {
+        if block["type"] == "thinking" {
+            if let Some(thought) = block["thinking"].as_str() {
+                info!("  Thought {}: {}", i + 1, thought);
+            }
+        }
+    }
+    
+    // Find our tool call
+    let tool_block = content.iter()
+        .find(|block| {
+            block["type"] == "tool_use" && 
+            block["name"] == "respond_to_user"
+        })
+        .ok_or_else(|| anyhow!("No respond_to_user tool call"))?;
+    
+    let tool_input = &tool_block["input"];
+    
+    let structured: StructuredLLMResponse = serde_json::from_value(tool_input.clone())
+        .map_err(|e| anyhow!("Failed to parse tool input: {}", e))?;
+    
+    Ok(structured)
+}
+
+/// Extract custom tool calls from response
+pub fn extract_tool_calls(raw_response: &Value) -> Result<Vec<Value>> {
+    let content = raw_response["content"].as_array()
+        .ok_or_else(|| anyhow!("Missing content array"))?;
+    
+    let mut tool_calls = Vec::new();
+    
+    for block in content.iter() {
+        if block["type"] == "tool_use" {
+            tool_calls.push(block.clone());
+        }
+    }
+    
+    Ok(tool_calls)
+}
+
+/// Check if response contains tool calls
+pub fn has_tool_calls(raw_response: &Value) -> bool {
+    if let Some(content) = raw_response["content"].as_array() {
+        return content.iter().any(|block| block["type"] == "tool_use");
+    }
+    false
+}
+
 /// Analyze message complexity to determine thinking budget and temperature
-fn analyze_message_complexity(message: &str) -> (usize, f32) {
+pub fn analyze_message_complexity(message: &str) -> (usize, f32) {
     let message_lower = message.to_lowercase();
     
     // Ultra-complex: architecture, refactoring, migration

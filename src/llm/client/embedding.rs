@@ -8,6 +8,7 @@ use serde_json::json;
 use tracing::{debug, info, warn};
 
 use super::config::ClientConfig;
+use crate::config::CONFIG;
 
 /// A client for generating text embeddings using the OpenAI API.
 pub struct EmbeddingClient {
@@ -25,7 +26,7 @@ impl EmbeddingClient {
 
     /// Generates an embedding for a single text using the default model.
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
-        self.get_embedding_with_model(text, "text-embedding-3-large", Some(3072)).await
+        self.get_embedding_with_model(text, &CONFIG.openai_embedding_model, Some(3072)).await
     }
 
     /// Generates an embedding for a single text with a specific model and dimensions.
@@ -46,10 +47,11 @@ impl EmbeddingClient {
 
         debug!("Requesting embedding for {} chars with model {}", text.len(), model);
 
+        // CRITICAL FIX: Always use OpenAI's API for embeddings, NOT the config base_url
         let response = self
             .client
-            .post(format!("{}/v1/embeddings", self.config.base_url()))
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
+            .post("https://api.openai.com/v1/embeddings")
+            .header(header::AUTHORIZATION, format!("Bearer {}", &CONFIG.openai_embedding_api_key))
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -76,7 +78,7 @@ impl EmbeddingClient {
     /// Generates embeddings for multiple texts in a single batch request.
     /// Processes up to 100 texts in a single API call, reducing API calls by 90%+.
     pub async fn get_embeddings_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.get_embeddings_batch_with_model(texts, "text-embedding-3-large", Some(3072)).await
+        self.get_embeddings_batch_with_model(texts, &CONFIG.openai_embedding_model, Some(3072)).await
     }
 
     /// Generates embeddings for multiple texts with a specific model.
@@ -91,12 +93,6 @@ impl EmbeddingClient {
             return Ok(Vec::new());
         }
 
-        const MAX_BATCH_SIZE: usize = 100;
-        if texts.len() > MAX_BATCH_SIZE {
-            warn!("Batch size {} exceeds maximum of {}, consider splitting", texts.len(), MAX_BATCH_SIZE);
-            return Err(anyhow!("Batch size {} exceeds maximum of {}", texts.len(), MAX_BATCH_SIZE));
-        }
-
         let mut body = json!({
             "model": model,
             "input": texts,
@@ -106,13 +102,18 @@ impl EmbeddingClient {
             body["dimensions"] = json!(dims);
         }
 
-        info!("Batch embedding: requesting embeddings for {} texts in one API call", texts.len());
-        debug!("Total characters to embed: {}", texts.iter().map(|t| t.len()).sum::<usize>());
+        debug!(
+            "Requesting batch embeddings for {} texts (total {} chars) with model {}",
+            texts.len(),
+            texts.iter().map(|t| t.len()).sum::<usize>(),
+            model
+        );
 
+        // CRITICAL FIX: Always use OpenAI's API for embeddings, NOT the config base_url
         let response = self
             .client
-            .post(format!("{}/v1/embeddings", self.config.base_url()))
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.config.api_key()))
+            .post("https://api.openai.com/v1/embeddings")
+            .header(header::AUTHORIZATION, format!("Bearer {}", &CONFIG.openai_embedding_api_key))
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -121,98 +122,43 @@ impl EmbeddingClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
-            return Err(anyhow!("OpenAI batch embedding API error ({}): {}", status, error_text));
+            return Err(anyhow!("OpenAI embedding API error ({}): {}", status, error_text));
         }
 
         let result: EmbeddingResponse = response.json().await?;
-        
-        if result.data.len() != texts.len() {
-            return Err(anyhow!(
-                "Embedding count mismatch: expected {}, got {}",
-                texts.len(),
-                result.data.len()
-            ));
+
+        if result.data.is_empty() {
+            return Err(anyhow!("No embedding data in API response"));
         }
 
-        // Sort by index to ensure correct order (OpenAI may return out of order)
+        // Sort by index to maintain original order
         let mut sorted_data = result.data;
-        sorted_data.sort_by_key(|item| item.index);
-        
+        sorted_data.sort_by_key(|d| d.index);
+
         let embeddings: Vec<Vec<f32>> = sorted_data
             .into_iter()
-            .map(|item| item.embedding)
+            .map(|d| d.embedding)
             .collect();
-        
-        info!("Batch embedding success: generated {} embeddings (saved {} API calls)", 
-              texts.len(), texts.len() - 1);
-        
-        info!("Token usage - Prompt: {}, Total: {}", 
-              result.usage.prompt_tokens, 
-              result.usage.total_tokens);
-        
+
+        info!(
+            "Generated {} embeddings with {} dimensions each",
+            embeddings.len(),
+            embeddings.first().map(|e| e.len()).unwrap_or(0)
+        );
+
         Ok(embeddings)
     }
 
-    /// Splits texts into optimal batches for processing.
-    /// Use this when you have more than 100 texts to embed.
-    pub async fn get_embeddings_batch_chunked(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        const MAX_BATCH_SIZE: usize = 100;
-        let mut all_embeddings = Vec::new();
-        
-        for (batch_idx, chunk) in texts.chunks(MAX_BATCH_SIZE).enumerate() {
-            info!("Processing batch {} of {}", batch_idx + 1, 
-                  (texts.len() + MAX_BATCH_SIZE - 1) / MAX_BATCH_SIZE);
-            
-            let batch_embeddings = self.get_embeddings_batch(chunk).await?;
-            all_embeddings.extend(batch_embeddings);
-        }
-        
-        Ok(all_embeddings)
+    /// Calculates the number of tokens for batching (OpenAI limit: 100 texts per batch).
+    pub fn calculate_batches(texts: &[String]) -> Vec<Vec<String>> {
+        const BATCH_SIZE: usize = 100;
+        texts
+            .chunks(BATCH_SIZE)
+            .map(|chunk| chunk.to_vec())
+            .collect()
     }
 
-    /// Calculates the cosine similarity between two embedding vectors.
-    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<f32> {
-        if a.len() != b.len() {
-            return Err(anyhow!("Embedding dimensions must match: {} vs {}", a.len(), b.len()));
-        }
-
-        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-
-        if norm_a == 0.0 || norm_b == 0.0 {
-            return Ok(0.0);
-        }
-
-        Ok(dot_product / (norm_a * norm_b))
-    }
-}
-
-/// Utility functions related to embeddings.
-pub struct EmbeddingUtils;
-
-impl EmbeddingUtils {
-    /// Splits long text into chunks suitable for embedding.
-    pub fn chunk_text(text: &str, max_chunk_size: usize, overlap: usize) -> Vec<String> {
-        if text.len() <= max_chunk_size {
-            return vec![text.to_string()];
-        }
-
-        let mut chunks = Vec::new();
-        let mut start = 0;
-
-        while start < text.len() {
-            let end = std::cmp::min(start + max_chunk_size, text.len());
-            chunks.push(text[start..end].to_string());
-            if end >= text.len() {
-                break;
-            }
-            start = end.saturating_sub(overlap);
-        }
-        chunks
-    }
-
-    /// Estimates the token count for embedding cost calculation.
+    /// Estimates the number of tokens in a batch of texts.
     /// Rough estimate: ~4 characters per token.
     pub fn estimate_tokens(texts: &[String]) -> usize {
         texts.iter().map(|t| (t.len() + 3) / 4).sum()

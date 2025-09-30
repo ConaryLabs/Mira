@@ -1,12 +1,15 @@
 // src/llm/structured/code_fix_processor.rs
-// Code fix request/response handling using Claude
+// Code fix request/response handling using Claude with tool calling
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::config::CONFIG;
 use super::types::{CompleteResponse, LLMMetadata, StructuredLLMResponse, MessageAnalysis};
+use super::tool_schema::get_code_fix_tool_schema;
+use super::claude_processor::analyze_message_complexity;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeFixFile {
@@ -126,7 +129,7 @@ pub fn build_code_fix_request(
     system_prompt: String,
     context_messages: Vec<Value>,
 ) -> Result<Value> {
-    // Build comprehensive user message with JSON schema
+    // Build user message with error context
     let user_message = format!(
         "CRITICAL CODE FIX REQUIREMENTS:\n\
         1. Provide COMPLETE files from line 1 to last line\n\
@@ -138,62 +141,56 @@ pub fn build_code_fix_request(
         Original file has {} lines.\n\
         \n\
         Complete file content:\n\
-```\n{}\n```\n\
-        \n\
-        Respond with JSON matching this EXACT schema:\n\
-        {{\n\
-          \"output\": \"explanation of the fix\",\n\
-          \"analysis\": {{\n\
-            \"salience\": 8.0,\n\
-            \"topics\": [\"error_fix\", \"compiler_error\"],\n\
-            \"contains_code\": true,\n\
-            \"routed_to_heads\": [\"code\"],\n\
-            \"language\": \"en\",\n\
-            \"mood\": null,\n\
-            \"intensity\": null,\n\
-            \"intent\": \"fix_code\",\n\
-            \"summary\": \"Fixed compiler error\",\n\
-            \"relationship_impact\": null,\n\
-            \"programming_lang\": \"rust\"\n\
-          }},\n\
-          \"reasoning\": \"your detailed reasoning\",\n\
-          \"fix_type\": \"compiler_error\",\n\
-          \"files\": [\n\
-            {{\n\
-              \"path\": \"{}\",\n\
-              \"content\": \"COMPLETE FILE CONTENT HERE\",\n\
-              \"change_type\": \"primary\"\n\
-            }}\n\
-          ],\n\
-          \"confidence\": 0.95\n\
-        }}",
-        error_message, file_path, 
+```\n{}\n```",
+        error_message, 
+        file_path,
         file_content.lines().count(),
-        file_content,
-        file_path
+        file_content
     );
     
-    // Use Claude request builder
-    super::claude_processor::build_claude_request(
-        &user_message,
-        system_prompt,
-        context_messages,
-    )
+    let (_thinking_budget, temperature) = analyze_message_complexity(&user_message);
+    
+    let mut messages = context_messages;
+    messages.push(json!({
+        "role": "user",
+        "content": user_message
+    }));
+
+    Ok(json!({
+        "model": CONFIG.anthropic_model,
+        "max_tokens": CONFIG.anthropic_max_tokens,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": messages,
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": CONFIG.thinking_budget_complex
+        },
+        "tools": [get_code_fix_tool_schema()],
+        "tool_choice": {
+            "type": "tool",
+            "name": "provide_code_fix"
+        }
+    }))
 }
 
 pub fn extract_code_fix_response(raw_response: &Value) -> Result<CodeFixResponse> {
     let content = raw_response["content"].as_array()
         .ok_or_else(|| anyhow!("Missing content array in Claude response"))?;
     
-    // Find text content block
-    let text_content = content.iter()
-        .find(|block| block["type"] == "text")
-        .and_then(|block| block["text"].as_str())
-        .ok_or_else(|| anyhow!("No text content in Claude response"))?;
+    // Find tool call
+    let tool_block = content.iter()
+        .find(|block| {
+            block["type"] == "tool_use" && 
+            block["name"] == "provide_code_fix"
+        })
+        .ok_or_else(|| anyhow!("No provide_code_fix tool call"))?;
     
-    // Parse JSON from text content
-    let response: CodeFixResponse = serde_json::from_str(text_content)
-        .map_err(|e| anyhow!("Failed to parse code fix response as JSON: {}", e))?;
+    let tool_input = &tool_block["input"];
+    
+    // Parse the tool input as CodeFixResponse
+    let response: CodeFixResponse = serde_json::from_value(tool_input.clone())
+        .map_err(|e| anyhow!("Failed to parse code fix response: {}", e))?;
     
     // Validate the response
     response.validate()
