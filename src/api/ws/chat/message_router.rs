@@ -5,11 +5,12 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
+use tokio::sync::mpsc;
 
 use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
-use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence};
+use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence, documents};
 use crate::state::AppState;
 
 pub struct MessageRouter {
@@ -57,6 +58,9 @@ impl MessageRouter {
             }
             WsClientMessage::CodeIntelligenceCommand { method, params } => {
                 self.handle_code_intelligence_command(method, params, request_id).await
+            }
+            WsClientMessage::DocumentCommand { method, params } => {  // NEW: Document handler
+                self.handle_document_command(method, params, request_id).await
             }
             _ => {
                 debug!("Ignoring message type");
@@ -272,6 +276,46 @@ impl MessageRouter {
     async fn handle_code_intelligence_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = code_intelligence::handle_code_intelligence_command(&method, params, self.app_state.clone()).await?;
         
+        match response {
+            WsServerMessage::Data { data, .. } => {
+                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
+            }
+            WsServerMessage::Status { message, detail } => {
+                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
+            }
+            WsServerMessage::Error { message, code } => {
+                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
+            }
+            WsServerMessage::Response { data } => {
+                self.connection.send_message(WsServerMessage::Response { data }).await?;
+            }
+            _ => {
+                self.connection.send_message(response).await?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    // NEW: Document command handler
+    async fn handle_document_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
+        // Create a channel for progress updates
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        
+        // Spawn a task to forward progress updates
+        let connection = self.connection.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                let _ = connection.send_message(msg).await;
+            }
+        });
+        
+        // Create document handler and process command
+        let handler = documents::DocumentHandler::new(self.app_state.clone());
+        let command = documents::DocumentCommand { method, params };
+        let response = handler.handle_command(command, Some(tx)).await?;
+        
+        // Forward the response
         match response {
             WsServerMessage::Data { data, .. } => {
                 self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;

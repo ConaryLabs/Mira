@@ -73,6 +73,10 @@ pub enum WsClientMessage {
         method: String,
         params: serde_json::Value,
     },
+    DocumentCommand {  // NEW: Document processing commands
+        method: String,
+        params: serde_json::Value,
+    },
 }
 
 /// Represents all possible messages sent from the server to the client (frontend).

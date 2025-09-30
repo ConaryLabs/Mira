@@ -11,6 +11,7 @@ pub mod salience;
 pub mod session;
 pub mod summarization;
 pub mod code_intelligence;
+pub mod document_processing;  // NEW - document processing for PDF/DOCX/TXT files
 
 // Re-export commonly used types
 pub use message_pipeline::{MessagePipeline, UnifiedAnalysis, RoutingDecision, PipelineConfig};
@@ -18,3 +19,10 @@ pub use recall_engine::{RecallEngine, RecallContext, RecallConfig, SearchMode, S
 pub use summarization::SummarizationEngine;
 pub use memory_types::SummaryType;  // Import directly from memory_types, not through summarization
 pub use session::SessionManager;
+pub use document_processing::{
+    DocumentProcessor, 
+    ProcessedDocument, 
+    DocumentChunk, 
+    DocumentMetadata,
+    ProcessingStatus
+};

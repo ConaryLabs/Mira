@@ -85,7 +85,7 @@ impl DocumentProcessor {
     /// Create a new document processor with database connections
     pub fn new(
         sqlite_pool: sqlx::SqlitePool, 
-        qdrant_client: qdrant_client::client::QdrantClient
+        qdrant_client: qdrant_client::Qdrant
     ) -> Self {
         Self {
             parser: DocumentParser::new(),
