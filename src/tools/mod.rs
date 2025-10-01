@@ -1,18 +1,15 @@
 // src/tools/mod.rs
-// Tools module - extracted from WebSocket handlers
-// Contains all tool-related business logic
+// Tools module - simplified for Claude tool calling
+// Tool schemas are in src/llm/structured/tool_schema.rs
 
 pub mod executor;
 pub mod prompt_builder;
-pub mod message_handler;
-pub mod definitions;
 pub mod file_context;
 pub mod file_search;
-// Document module removed - functionality moved to memory/features/document_processing
+// document removed - in memory/features/
+// definitions removed - using Claude tool schemas
+// message_handler removed - using unified_handler
 
-// Re-export commonly used items
-pub use executor::ToolExecutor;
-pub use executor::ToolExecutorExt;
+// Re-export
+pub use executor::{ToolExecutor, ToolEvent};
 pub use prompt_builder::ToolPromptBuilder;
-pub use message_handler::ToolMessageHandler;
-pub use definitions::get_enabled_tools;
