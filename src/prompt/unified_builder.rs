@@ -31,9 +31,6 @@ impl UnifiedPromptBuilder {
             Self::add_code_best_practices(&mut prompt);
         }
         
-        // CRITICAL: Add JSON format requirement at the end
-        Self::add_json_format_requirement(&mut prompt);
-        
         prompt
     }
     
@@ -132,50 +129,6 @@ impl UnifiedPromptBuilder {
         
         prompt.push_str("Remember: Users cannot merge partial code. Provide complete, working files.\n");
         prompt.push_str("=========================================\n\n");
-    }
-    
-    fn add_json_format_requirement(prompt: &mut String) {
-        prompt.push_str("\n\n");
-        prompt.push_str("====================================\n");
-        prompt.push_str("CRITICAL: RESPONSE FORMAT\n");
-        prompt.push_str("====================================\n\n");
-        prompt.push_str("IMPORTANT: You have extended thinking enabled. Use the thinking block for your internal reasoning,\n");
-        prompt.push_str("but you MUST STILL provide your actual response in the text content block as JSON.\n\n");
-        prompt.push_str("Your response MUST be valid JSON matching this EXACT schema:\n\n");
-        prompt.push_str("```json\n");
-        prompt.push_str("{\n");
-        prompt.push_str("  \"output\": \"your actual response to the user - this is what they see\",\n");
-        prompt.push_str("  \"analysis\": {\n");
-        prompt.push_str("    \"salience\": 0.75,\n");
-        prompt.push_str("    \"topics\": [\"topic1\", \"topic2\"],\n");
-        prompt.push_str("    \"contains_code\": false,\n");
-        prompt.push_str("    \"routed_to_heads\": [\"semantic\"],\n");
-        prompt.push_str("    \"language\": \"en\",\n");
-        prompt.push_str("    \"mood\": \"neutral\",\n");
-        prompt.push_str("    \"intensity\": 0.5,\n");
-        prompt.push_str("    \"intent\": \"inform\",\n");
-        prompt.push_str("    \"summary\": \"brief summary\",\n");
-        prompt.push_str("    \"relationship_impact\": null,\n");
-        prompt.push_str("    \"programming_lang\": null\n");
-        prompt.push_str("  },\n");
-        prompt.push_str("  \"reasoning\": \"optional: brief note about your reasoning\"\n");
-        prompt.push_str("}\n");
-        prompt.push_str("```\n\n");
-        prompt.push_str("CRITICAL REQUIREMENTS:\n");
-        prompt.push_str("1. DO NOT leave the text content block empty - you MUST output the JSON\n");
-        prompt.push_str("2. The thinking block is for YOUR internal reasoning - the user never sees it\n");
-        prompt.push_str("3. The text content (the JSON above) is what the user sees - it MUST be present\n");
-        prompt.push_str("4. Response must be ONLY the JSON object - no markdown, no ```json``` wrapping\n");
-        prompt.push_str("5. The 'output' field is your actual message to the user\n");
-        prompt.push_str("6. All required fields must be present (use null for optional ones)\n");
-        prompt.push_str("7. salience: 0.3-0.5 for casual chat, 0.6-0.8 for important info, 0.9-1.0 for critical (range 0.0-1.0)\n");
-        prompt.push_str("8. intensity: 0.0-1.0 scale where 0.0 is low and 1.0 is high (if applicable)\n");
-        prompt.push_str("9. routed_to_heads: Must include at least one of ['semantic', 'code', 'summary', 'documents']. Use 'semantic' for general conversation, 'code' when programming is discussed\n\n");
-        prompt.push_str("THINKING vs OUTPUT:\n");
-        prompt.push_str("- Use the thinking block to analyze what they mean, plan your response, etc.\n");
-        prompt.push_str("- Then OUTPUT the JSON with your actual response in the 'output' field\n");
-        prompt.push_str("- Don't just think - you must also respond!\n");
-        prompt.push_str("====================================\n\n");
     }
     
     pub fn is_code_related(metadata: Option<&MessageMetadata>) -> bool {

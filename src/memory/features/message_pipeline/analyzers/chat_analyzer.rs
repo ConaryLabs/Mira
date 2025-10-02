@@ -1,9 +1,9 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 
-//! Chat message analyzer - extracts current MessagePipeline analysis logic
+//! Chat message analyzer - extracts sentiment, intent, and topics from conversational content
 //! 
-//! This preserves all existing functionality from the monolithic MessagePipeline
-//! while making it extensible for future code intelligence features.
+//! Uses LLM-based analysis with structured JSON responses for chat message classification.
+//! This is separate from code analysis which uses AST parsing via CodeIntelligenceService.
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -14,18 +14,18 @@ use crate::llm::client::OpenAIClient;
 
 // ===== CHAT ANALYSIS RESULT =====
 
-/// Result from chat-specific analysis (preserves existing MessagePipeline output format)
+/// Result from chat-specific analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatAnalysisResult {
-    // Core classification (from current MessageAnalyzer + MessageClassifier)
+    // Core classification
     pub salience: f32,
     pub topics: Vec<String>,
     
-    // Sentiment and mood analysis (from current MessageAnalyzer)
+    // Sentiment and mood analysis
     pub mood: Option<String>,
     pub intensity: Option<f32>,
     
-    // Intent and meaning (from current MessageAnalyzer)
+    // Intent and meaning
     pub intent: Option<String>,
     pub summary: Option<String>, 
     pub relationship_impact: Option<String>,
@@ -48,7 +48,7 @@ impl ChatAnalyzer {
         Self { llm_client }
     }
     
-    /// Analyze chat message content (preserves existing MessagePipeline::analyze_message logic)
+    /// Analyze chat message content
     pub async fn analyze(
         &self,
         content: &str,
@@ -57,10 +57,8 @@ impl ChatAnalyzer {
     ) -> Result<ChatAnalysisResult> {
         debug!("Analyzing {} message: {} chars", role, content.len());
         
-        // Use existing unified prompt that combines MessageAnalyzer + MessageClassifier logic
-        let prompt = self.build_unified_prompt(content, role, context);
+        let prompt = self.build_analysis_prompt(content, role, context);
         
-        // Single LLM call for efficiency (preserves current approach)  
         let response = self.llm_client
             .summarize_conversation(&prompt, 500)
             .await
@@ -69,11 +67,10 @@ impl ChatAnalyzer {
                 e
             })?;
         
-        // Parse response using existing logic
-        self.parse_unified_response(&response, content).await
+        self.parse_analysis_response(&response, content).await
     }
     
-    /// Batch analyze multiple chat messages (preserves existing batch processing)
+    /// Batch analyze multiple chat messages
     pub async fn analyze_batch(
         &self,
         messages: &[(String, String)], // (content, role) pairs
@@ -92,10 +89,10 @@ impl ChatAnalyzer {
         self.parse_batch_response(&response, messages).await
     }
     
-    // ===== PROMPT BUILDING (preserves existing MessagePipeline logic) =====
+    // ===== PROMPT BUILDING =====
     
-    /// Build unified analysis prompt (combines MessageAnalyzer + MessageClassifier)
-    fn build_unified_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
+    /// Build analysis prompt for single message
+    fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
         let context_section = context
             .map(|ctx| format!("**Context:** {}\n\n", ctx))
             .unwrap_or_default();
@@ -105,7 +102,7 @@ impl ChatAnalyzer {
 Role: {role}  
 Content: "{content}"
 
-**Analyze this message and provide:**
+Analyze this message and provide:
 
 1. **Salience** (0.0-1.0): How important is this for memory storage?
 2. **Topics** (list): Main topics/themes discussed  
@@ -115,20 +112,20 @@ Content: "{content}"
 6. **Summary** (1-2 sentences): Key content summary
 7. **Relationship Impact** (optional): How this affects user-assistant relationship
 
-**Response format:**
+Respond with valid JSON:
 ```json
 {{
-  "salience": <number 0.0-1.0>,
-  "topics": [<topic1>, <topic2>, ...],
-  "mood": "<mood or null>",
-  "intensity": <number 0.0-1.0 or null>,
-  "intent": "<intent or null>", 
-  "summary": "<summary or null>",
-  "relationship_impact": "<impact or null>"
+  "salience": 0.75,
+  "topics": ["topic1", "topic2"],
+  "mood": "neutral",
+  "intensity": 0.5,
+  "intent": "inform",
+  "summary": "brief summary",
+  "relationship_impact": null
 }}
 ```
 
-Focus on practical, actionable analysis. Rate salience based on:
+Rate salience based on:
 - Information value for future conversations  
 - Technical complexity or importance
 - User goals and problem-solving needs
@@ -146,24 +143,23 @@ Focus on practical, actionable analysis. Rate salience based on:
             .join("\n");
         
         format!(
-            r#"**Batch analyze these {} messages:**
+            r#"Batch analyze these {} messages:
 
 {}
 
-**For each message, provide analysis in this format:**
+For each message, provide analysis as JSON array:
 ```json
 [
   {{
     "message_index": 1,
-    "salience": <number 0.0-1.0>,
-    "topics": [<topics>],
-    "mood": "<mood or null>",
-    "intensity": <number 0.0-1.0 or null>,
-    "intent": "<intent or null>",
-    "summary": "<summary or null>",
-    "relationship_impact": "<impact or null>"
-  }},
-  // ... continue for all messages
+    "salience": 0.75,
+    "topics": ["topic1"],
+    "mood": "neutral",
+    "intensity": 0.5,
+    "intent": "inform",
+    "summary": "brief summary",
+    "relationship_impact": null
+  }}
 ]
 ```
 
@@ -173,19 +169,17 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
         )
     }
     
-    // ===== RESPONSE PARSING (preserves existing MessagePipeline logic) =====
+    // ===== RESPONSE PARSING =====
     
-    /// Parse unified analysis response from LLM
-    async fn parse_unified_response(
+    /// Parse analysis response from LLM
+    async fn parse_analysis_response(
         &self,
         response: &str,
         original_content: &str,
     ) -> Result<ChatAnalysisResult> {
         
-        // Try to extract JSON from response (handles wrapped JSON)
         let json_str = self.extract_json_from_response(response)?;
         
-        // Parse the JSON response
         #[derive(Deserialize)]
         struct LLMResponse {
             salience: f32,
@@ -200,10 +194,8 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
         let parsed: LLMResponse = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
         
-        // FIXED: Validate and clamp to 0.0-1.0 range (was 0.0-10.0)
-        let salience = parsed.salience.max(0.0).min(1.0);
+        let salience = parsed.salience.clamp(0.0, 1.0);
         
-        // Clean up topics (remove empty strings, deduplicate)
         let topics: Vec<String> = parsed.topics
             .into_iter()
             .filter(|t| !t.trim().is_empty())
@@ -216,7 +208,7 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
             salience,
             topics,
             mood: parsed.mood.filter(|s| !s.trim().is_empty()),
-            intensity: parsed.intensity.map(|i| i.max(0.0).min(1.0)), // FIXED: was min(10.0)
+            intensity: parsed.intensity.map(|i| i.clamp(0.0, 1.0)),
             intent: parsed.intent.filter(|s| !s.trim().is_empty()),
             summary: parsed.summary.filter(|s| !s.trim().is_empty()),
             relationship_impact: parsed.relationship_impact.filter(|s| !s.trim().is_empty()),
@@ -249,15 +241,12 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
         let parsed: Vec<BatchLLMResponse> = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse batch LLM response: {}", e))?;
         
-        // Convert to ChatAnalysisResult, preserving order
         let mut results = Vec::with_capacity(original_messages.len());
         
         for (i, (content, _role)) in original_messages.iter().enumerate() {
-            // Find matching analysis by message_index (1-based)
             if let Some(analysis) = parsed.iter().find(|a| a.message_index == i + 1) {
                 
-                // FIXED: Clamp to 0.0-1.0 range (was 0.0-10.0)
-                let salience = analysis.salience.max(0.0).min(1.0);
+                let salience = analysis.salience.clamp(0.0, 1.0);
                 let topics: Vec<String> = analysis.topics
                     .iter()
                     .filter(|t| !t.trim().is_empty())
@@ -270,7 +259,7 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
                     salience,
                     topics,
                     mood: analysis.mood.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
-                    intensity: analysis.intensity.map(|i| i.max(0.0).min(1.0)), // FIXED: was min(10.0)
+                    intensity: analysis.intensity.map(|i| i.clamp(0.0, 1.0)),
                     intent: analysis.intent.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
                     summary: analysis.summary.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
                     relationship_impact: analysis.relationship_impact.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
@@ -280,7 +269,7 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
             } else {
                 // Fallback for missing analysis
                 results.push(ChatAnalysisResult {
-                    salience: 0.1, // FIXED: was 1.0
+                    salience: 0.1,
                     topics: vec!["general".to_string()],
                     mood: None,
                     intensity: None,
@@ -300,7 +289,7 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
         // Look for JSON block markers
         if let Some(start) = response.find("```json") {
-            let json_start = start + 7; // Skip "```json"
+            let json_start = start + 7;
             if let Some(end) = response[json_start..].find("```") {
                 return Ok(response[json_start..json_start + end].trim().to_string());
             }
@@ -323,7 +312,6 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
             }
         }
         
-        // Fallback: return the whole response and let JSON parsing fail gracefully
         Err(anyhow::anyhow!("Could not extract JSON from LLM response"))
     }
 }
