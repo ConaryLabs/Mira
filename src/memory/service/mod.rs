@@ -98,8 +98,16 @@ impl MemoryService {
         }
     }
     
-    /// Clean public API - saves a user message with analysis
-    pub async fn save_user_message(&self, session_id: &str, content: &str, project_id: Option<&str>) -> Result<String> {
+    /// Save a user message with analysis and return the entry ID
+    /// 
+    /// Returns the SQLite message ID (i64) directly - no unnecessary String conversion.
+    /// This ID can be used to link responses or retrieve the message later.
+    pub async fn save_user_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        project_id: Option<&str>
+    ) -> Result<i64> {
         // 1. Create memory entry - project scoping handled via session_id
         let effective_session_id = if let Some(pid) = project_id {
             format!("project-{}-{}", pid, session_id)
@@ -118,11 +126,19 @@ impl MemoryService {
         // 4. Store analysis via core service
         self.core.store_analysis(entry_id, &analysis).await?;
         
-        Ok(entry_id.to_string())
+        Ok(entry_id)
     }
 
-    /// Save assistant response with project_id
-    pub async fn save_assistant_response(&self, session_id: &str, response: &crate::llm::types::ChatResponse, project_id: Option<&str>) -> Result<String> {
+    /// Save an assistant response with analysis and return the entry ID
+    /// 
+    /// Returns the SQLite message ID (i64) directly - no unnecessary String conversion.
+    /// This ID can be used to create conversation threads or retrieve the response later.
+    pub async fn save_assistant_response(
+        &self,
+        session_id: &str,
+        response: &crate::llm::types::ChatResponse,
+        project_id: Option<&str>
+    ) -> Result<i64> {
         // 1. Create memory entry from ChatResponse content with project_id
         let effective_session_id = if let Some(pid) = project_id {
             format!("project-{}-{}", pid, session_id)
@@ -141,7 +157,7 @@ impl MemoryService {
         // 4. Store analysis via core service
         self.core.store_analysis(entry_id, &analysis).await?;
         
-        Ok(entry_id.to_string())
+        Ok(entry_id)
     }
 
     /// Get context for recall
@@ -150,8 +166,19 @@ impl MemoryService {
     }
 
     /// Parallel recall context building
-    pub async fn parallel_recall_context(&self, session_id: &str, query: &str, recent_count: usize, semantic_count: usize) -> Result<RecallContext> {
-        self.recall_engine.parallel_recall_context(session_id, query, recent_count, semantic_count).await
+    pub async fn parallel_recall_context(
+        &self,
+        session_id: &str,
+        query: &str,
+        recent_count: usize,
+        semantic_count: usize
+    ) -> Result<RecallContext> {
+        self.recall_engine.parallel_recall_context(
+            session_id,
+            query,
+            recent_count,
+            semantic_count
+        ).await
     }
 
     /// Get recent context
@@ -160,22 +187,39 @@ impl MemoryService {
     }
 
     /// Search for similar memories
-    pub async fn search_similar(&self, session_id: &str, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+    pub async fn search_similar(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize
+    ) -> Result<Vec<MemoryEntry>> {
         self.recall_engine.search_similar(session_id, query, limit).await
     }
 
     /// Create summary
-    pub async fn create_summary(&self, session_id: &str, summary_type: SummaryType) -> Result<String> {
+    pub async fn create_summary(
+        &self,
+        session_id: &str,
+        summary_type: SummaryType
+    ) -> Result<String> {
         self.summarization_engine.create_summary(session_id, summary_type).await
     }
 
     /// Create rolling summary
-    pub async fn create_rolling_summary(&self, session_id: &str, window_size: usize) -> Result<String> {
+    pub async fn create_rolling_summary(
+        &self,
+        session_id: &str,
+        window_size: usize
+    ) -> Result<String> {
         self.summarization_engine.create_rolling_summary(session_id, window_size).await
     }
 
     /// Create snapshot summary
-    pub async fn create_snapshot_summary(&self, session_id: &str, context: Option<&str>) -> Result<String> {
+    pub async fn create_snapshot_summary(
+        &self,
+        session_id: &str,
+        context: Option<&str>
+    ) -> Result<String> {
         self.summarization_engine.create_snapshot_summary(session_id, context).await
     }
 

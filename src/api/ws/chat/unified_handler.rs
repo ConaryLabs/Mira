@@ -14,7 +14,6 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
-use crate::project::store::ProjectStore;  // Add explicit import to see available methods
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -170,32 +169,57 @@ impl UnifiedChatHandler {
         Ok(complete_response)
     }
     
-    async fn load_complete_file(&self, file_path: &str, project_id: Option<&str>) -> Result<String> {
+    /// Load complete file contents, preferring project-scoped paths
+    /// 
+    /// Attempts to load from project context first (via git attachment local path),
+    /// falling back to direct filesystem read if project context is unavailable.
+    async fn load_complete_file(
+        &self,
+        file_path: &str,
+        project_id: Option<&str>
+    ) -> Result<String> {
+        // Try project-scoped read first
         if let Some(proj_id) = project_id {
-            // Get the project to ensure it exists
-            if let Some(_project) = self.app_state.project_store.get_project(proj_id).await? {
-                // Get the git attachment which has the actual path
+            if let Some(project) = self.app_state.project_store.get_project(proj_id).await? {
+                debug!("Loading file from project context: {}", project.name);
+                
                 if let Some(attachment) = self.app_state.git_client.store
                     .get_attachment(proj_id)
-                    .await? {
+                    .await? 
+                {
                     let full_path = Path::new(&attachment.local_path).join(file_path);
-                    if let Ok(content) = tokio::fs::read_to_string(&full_path).await {
-                        return Ok(content);
+                    
+                    match tokio::fs::read_to_string(&full_path).await {
+                        Ok(content) => {
+                            debug!("Loaded {} bytes from project file: {}", content.len(), file_path);
+                            return Ok(content);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to read project file {}: {}. Trying direct path fallback.", 
+                                full_path.display(), 
+                                e
+                            );
+                        }
                     }
                 }
             }
         }
         
+        // Fallback: try direct path (useful for non-project files or development)
         tokio::fs::read_to_string(file_path).await
-            .map_err(|e| anyhow::anyhow!("Failed to load file: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to load file '{}': {}", file_path, e))
     }
     
+    /// Save user message and return the message ID
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
-        // Return i64 instead of String - SQLite message IDs are integers
         self.app_state.memory_service
-            .save_user_message(&request.session_id, &request.content, request.project_id.as_deref())
+            .save_user_message(
+                &request.session_id,
+                &request.content,
+                request.project_id.as_deref()
+            )
             .await
-            .map(|id| id.parse::<i64>().unwrap_or_default())
     }
     
     async fn build_context(&self, session_id: &str, content: &str) -> Result<RecallContext> {
@@ -219,8 +243,14 @@ impl UnifiedChatHandler {
         Ok(messages)
     }
     
+    /// Select persona based on metadata
+    /// 
+    /// Currently always returns Default as persona switching is not implemented.
+    /// Infrastructure exists for switching based on metadata (see PersonaOverlay enum),
+    /// but the actual switching logic hasn't been built yet.
     fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
-        // Use the Default variant
+        // TODO: Implement persona switching based on metadata when feature is ready
+        // Possible triggers: explicit user request, conversation context, mood detection
         PersonaOverlay::Default
     }
 }

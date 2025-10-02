@@ -5,22 +5,21 @@ use anyhow::{anyhow, Result};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use super::config::ClientConfig;
 use crate::config::CONFIG;
 
 /// A client for generating text embeddings using the OpenAI API.
 pub struct EmbeddingClient {
     client: Client,
-    config: ClientConfig,
 }
 
 impl EmbeddingClient {
-    pub fn new(config: ClientConfig) -> Self {
+    pub fn new(_config: super::config::ClientConfig) -> Self {
+        // Note: config parameter is unused - we always hardcode to OpenAI's API
+        // Kept for API compatibility with existing callers
         Self {
             client: Client::new(),
-            config,
         }
     }
 
@@ -47,7 +46,7 @@ impl EmbeddingClient {
 
         debug!("Requesting embedding for {} chars with model {}", text.len(), model);
 
-        // CRITICAL FIX: Always use OpenAI's API for embeddings, NOT the config base_url
+        // Always use OpenAI's API for embeddings
         let response = self
             .client
             .post("https://api.openai.com/v1/embeddings")
@@ -109,7 +108,7 @@ impl EmbeddingClient {
             model
         );
 
-        // CRITICAL FIX: Always use OpenAI's API for embeddings, NOT the config base_url
+        // Always use OpenAI's API for embeddings
         let response = self
             .client
             .post("https://api.openai.com/v1/embeddings")
@@ -149,7 +148,7 @@ impl EmbeddingClient {
         Ok(embeddings)
     }
 
-    /// Calculates the number of tokens for batching (OpenAI limit: 100 texts per batch).
+    /// Calculates the number of batches needed for texts (OpenAI limit: 100 texts per batch).
     pub fn calculate_batches(texts: &[String]) -> Vec<Vec<String>> {
         const BATCH_SIZE: usize = 100;
         texts
@@ -176,20 +175,12 @@ impl EmbeddingClient {
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
     data: Vec<EmbeddingData>,
-    model: String,
-    usage: EmbeddingUsage,
 }
 
 #[derive(Debug, Deserialize)]
 struct EmbeddingData {
     embedding: Vec<f32>,
     index: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingUsage {
-    prompt_tokens: u32,
-    total_tokens: u32,
 }
 
 /// Contains information about a supported embedding model.

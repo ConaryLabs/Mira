@@ -1,7 +1,6 @@
 // src/llm/embeddings.rs
 // Embeddings functionality using text-embedding-3-large with multi-head support
 
-use crate::config::CONFIG;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt;

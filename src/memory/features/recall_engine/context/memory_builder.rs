@@ -1,31 +1,26 @@
 // src/memory/features/recall_engine/context/memory_builder.rs
-
 //! Memory context builder - assembles recall context from search results.
 //! 
 //! Single responsibility: build RecallContext using hybrid search results.
 
 use anyhow::Result;
 use tracing::info;
-
 use crate::memory::core::types::MemoryEntry;
 use super::super::{RecallContext, RecallConfig};
 use super::super::search::HybridSearch;
-use super::super::scoring::CompositeScorer;
 
 #[derive(Clone)]
 pub struct MemoryContextBuilder {
     hybrid_search: HybridSearch,
-    scorer: CompositeScorer,
 }
 
 impl MemoryContextBuilder {
-    pub fn new(hybrid_search: HybridSearch, scorer: CompositeScorer) -> Self {
+    pub fn new(hybrid_search: HybridSearch) -> Self {
         Self {
             hybrid_search,
-            scorer,
         }
     }
-
+    
     /// Build recall context - same logic as original build_recall_context
     pub async fn build_context(
         &self,

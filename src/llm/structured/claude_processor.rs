@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::{debug, info, error};
 use crate::config::CONFIG;
 use super::types::{LLMMetadata, StructuredLLMResponse};
-use super::tool_schema::{get_response_tool_schema, get_code_fix_tool_schema};
+use super::tool_schema::get_response_tool_schema;
 
 /// Build Claude Messages API request with extended thinking
 pub fn build_claude_request(

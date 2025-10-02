@@ -1,5 +1,4 @@
 // src/memory/features/recall_engine/search/hybrid_search.rs
-
 //! Hybrid search - combines recent and semantic search strategies.
 //! 
 //! Single responsibility: orchestrate parallel recent + semantic search with deduplication.
@@ -7,8 +6,6 @@
 use anyhow::Result;
 use tracing::debug;
 use chrono::Utc;
-
-use crate::memory::core::types::MemoryEntry;
 use super::{RecentSearch, SemanticSearch};
 use super::super::{ScoredMemory, RecallConfig};
 use super::super::scoring::CompositeScorer;
@@ -28,7 +25,7 @@ impl HybridSearch {
             scorer: CompositeScorer::new(),
         }
     }
-
+    
     /// Hybrid search combining recent and semantic - same logic as original, cleaner implementation
     pub async fn search(
         &self,

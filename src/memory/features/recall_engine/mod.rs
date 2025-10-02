@@ -108,12 +108,6 @@ pub struct RecallEngine {
     
     // Context building - clean separation from search logic
     context_builder: MemoryContextBuilder,
-    
-    // Scoring - dedicated algorithms
-    scorer: CompositeScorer,
-    
-    // Default configuration
-    default_config: RecallConfig,
 }
 
 impl RecallEngine {
@@ -135,13 +129,9 @@ impl RecallEngine {
             multi_store.clone(),
         );
         
-        // Build focused scorer
-        let scorer = CompositeScorer::new();
-        
         // Build context builder
         let context_builder = MemoryContextBuilder::new(
             hybrid_search.clone(),
-            scorer.clone(),
         );
         
         Self {
@@ -150,8 +140,6 @@ impl RecallEngine {
             hybrid_search,
             multihead_search,
             context_builder,
-            scorer,
-            default_config: RecallConfig::default(),
         }
     }
 

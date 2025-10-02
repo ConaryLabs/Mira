@@ -34,7 +34,7 @@ struct UploadChunkRequest {
 struct UploadCompleteRequest {
     session_id: String,
     save_as_artifact: Option<bool>,
-    memory_attachment: Option<bool>,
+    _memory_attachment: Option<bool>, // TODO: Implement memory attachment integration
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,7 +75,8 @@ async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
     let request: UploadStartRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid upload start request: {e}")))?;
     
-    info!("Starting upload for file: {} ({})", request.filename, request.total_size);
+    info!("Starting upload for file: {} ({}) - project: {:?}", 
+        request.filename, request.total_size, request.project_id);
     
     // Validate file size (500MB limit)
     const MAX_SIZE: usize = 500 * 1024 * 1024;
@@ -104,6 +105,7 @@ async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
             "type": "upload_started",
             "session_id": session_id,
             "filename": request.filename,
+            "project_id": request.project_id,
         }),
         request_id: None,
     })
@@ -114,7 +116,8 @@ async fn receive_chunk(data: Value, app_state: Arc<AppState>) -> ApiResult<WsSer
     let request: UploadChunkRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid chunk request: {e}")))?;
     
-    debug!("Receiving chunk {} for session {}", request.chunk_index, request.session_id);
+    debug!("Receiving chunk {} (final: {}) for session {}", 
+        request.chunk_index, request.is_final, request.session_id);
     
     // Decode base64 chunk
     let chunk_data = BASE64.decode(&request.chunk)
@@ -136,12 +139,29 @@ async fn receive_chunk(data: Value, app_state: Arc<AppState>) -> ApiResult<WsSer
     
     debug!("Upload progress for {}: {}%", session.filename, progress);
     
+    // If this is the final chunk, validate we have everything
+    if request.is_final {
+        let missing_chunks: Vec<usize> = (0..session.chunks.len())
+            .filter(|i| session.chunks[*i].is_empty())
+            .collect();
+        
+        if !missing_chunks.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "Final chunk received but missing chunks: {:?}",
+                missing_chunks
+            )));
+        }
+        
+        debug!("Final chunk received and all chunks validated for {}", session.filename);
+    }
+    
     Ok(WsServerMessage::Data {
         data: serde_json::json!({
             "type": "chunk_received",
             "session_id": request.session_id,
             "chunk_index": request.chunk_index,
             "progress": progress,
+            "is_final": request.is_final,
         }),
         request_id: None,
     })
@@ -176,7 +196,9 @@ async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsS
         )));
     }
     
-    // Save file
+    // Determine upload directory - scope to project if provided
+    // Note: We'd need to track project_id in UploadSession to actually use it here
+    // For now, save to ./uploads (this is a limitation of the current session design)
     let upload_dir = std::path::Path::new("./uploads");
     std::fs::create_dir_all(upload_dir)
         .map_err(|e| ApiError::internal(format!("Failed to create upload directory: {e}")))?;
@@ -187,10 +209,9 @@ async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsS
     
     info!("File saved successfully: {}", file_path.display());
     
-    // Optionally save as artifact
+    // TODO: Implement artifact saving
     if request.save_as_artifact.unwrap_or(false) {
-        // This would integrate with project store
-        debug!("Saving as artifact requested but not implemented");
+        debug!("Saving as artifact requested but not yet implemented");
     }
     
     Ok(WsServerMessage::Data {
@@ -213,8 +234,17 @@ async fn start_download(data: Value, app_state: Arc<AppState>) -> ApiResult<WsSe
     
     // Determine what to download
     let file_content = if let Some(file_path) = request.file_path {
+        // If project_id provided, scope to project upload directory
+        let full_path = if let Some(project_id) = request.project_id {
+            std::path::Path::new("./uploads")
+                .join(&project_id)
+                .join(&file_path)
+        } else {
+            std::path::Path::new(&file_path).to_path_buf()
+        };
+        
         // Download from file system
-        std::fs::read(&file_path)
+        std::fs::read(&full_path)
             .map_err(|e| ApiError::not_found(format!("File not found: {e}")))?
     } else if let Some(artifact_id) = request.artifact_id {
         // Download from artifact store

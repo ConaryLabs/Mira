@@ -48,7 +48,7 @@ pub struct ErrorContext {
 /// Returns ErrorContext if an error is detected
 pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
     // Rust compiler errors: error[E0308]: ...
-    if let Some(captures) = regex::Regex::new(r"error\[E\d+\]:")
+    if let Some(_captures) = regex::Regex::new(r"error\[E\d+\]:")
         .ok()?
         .captures(message) 
     {

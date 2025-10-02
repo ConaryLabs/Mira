@@ -28,7 +28,7 @@ impl LanguageParser for RustParser {
         let syntax_tree = syn::parse_file(content)
             .with_context(|| format!("Failed to parse Rust file: {}", file_path))?;
 
-        let mut analyzer = RustAnalyzer::new(self.max_complexity, content, file_path);
+        let mut analyzer = RustAnalyzer::new(self.max_complexity, file_path);
         analyzer.visit_file(&syntax_tree);
 
         let doc_coverage = analyzer.calculate_doc_coverage();
@@ -60,12 +60,11 @@ struct RustAnalyzer<'content> {
     total_complexity: u32,
     test_count: u32,
     current_module_path: Vec<String>,
-    source_content: &'content str,
     file_path: &'content str,
 }
 
 impl<'content> RustAnalyzer<'content> {
-    fn new(max_complexity: u32, source_content: &'content str, file_path: &'content str) -> Self {
+    fn new(max_complexity: u32, file_path: &'content str) -> Self {
         Self {
             max_complexity,
             elements: Vec::new(),
@@ -74,7 +73,6 @@ impl<'content> RustAnalyzer<'content> {
             total_complexity: 0,
             test_count: 0,
             current_module_path: Vec::new(),
-            source_content,
             file_path,
         }
     }

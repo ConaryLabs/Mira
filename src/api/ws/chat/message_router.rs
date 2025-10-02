@@ -59,7 +59,7 @@ impl MessageRouter {
             WsClientMessage::CodeIntelligenceCommand { method, params } => {
                 self.handle_code_intelligence_command(method, params, request_id).await
             }
-            WsClientMessage::DocumentCommand { method, params } => {  // NEW: Document handler
+            WsClientMessage::DocumentCommand { method, params } => {
                 self.handle_document_command(method, params, request_id).await
             }
             _ => {
@@ -125,7 +125,6 @@ impl MessageRouter {
                 "total_tokens": complete_response.metadata.total_tokens,
                 "latency_ms": complete_response.metadata.latency_ms,
             },
-            // FIXED: Include artifacts if present (for code fixes)
             "artifacts": complete_response.artifacts,
         });
 
@@ -136,21 +135,9 @@ impl MessageRouter {
         Ok(())
     }
 
-    // Helper function - forwards messages with request_id where supported
-    fn forward_with_id(&self, msg: WsServerMessage, request_id: Option<String>) -> WsServerMessage {
-        match msg {
-            WsServerMessage::Data { data, .. } => {
-                WsServerMessage::Data { data, request_id }
-            }
-            // These don't support request_id in current enum - pass through as-is
-            other => other
-        }
-    }
-
     async fn handle_project_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = project::handle_project_command(&method, params, self.app_state.clone()).await?;
         
-        // ENHANCED: Forward all message types properly, don't funnel through extract_response_data
         match response {
             WsServerMessage::Data { data, .. } => {
                 self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
@@ -165,7 +152,6 @@ impl MessageRouter {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
             }
             _ => {
-                // Handle other variants by forwarding as-is
                 self.connection.send_message(response).await?;
             }
         }
@@ -176,7 +162,6 @@ impl MessageRouter {
     async fn handle_memory_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         let response = memory::handle_memory_command(&method, params, self.app_state.clone()).await?;
         
-        // CRITICAL FIX: Handle memory data properly + better logging
         match response {
             WsServerMessage::Data { data, .. } => {
                 let bytes = data.to_string().len();
@@ -193,7 +178,6 @@ impl MessageRouter {
                 self.connection.send_message(WsServerMessage::Response { data }).await?;
             }
             _ => {
-                // Handle other variants by forwarding as-is
                 self.connection.send_message(response).await?;
             }
         }
@@ -202,7 +186,7 @@ impl MessageRouter {
     }
 
     async fn handle_git_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = git::handle_git_operation(&method, params, self.app_state.clone()).await?;  // FIXED: handle_git_operation not handle_git_command
+        let response = git::handle_git_operation(&method, params, self.app_state.clone()).await?;
         
         match response {
             WsServerMessage::Data { data, .. } => {
@@ -297,7 +281,6 @@ impl MessageRouter {
         Ok(())
     }
 
-    // NEW: Document command handler
     async fn handle_document_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
         // Create a channel for progress updates
         let (tx, mut rx) = mpsc::unbounded_channel();
