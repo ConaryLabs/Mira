@@ -83,7 +83,7 @@ impl MemoryRouter {
             
             // Language-specific routing
             if self.config.enable_language_routing {
-                if let Some(ref lang) = analysis.programming_lang {
+                if let Some(lang) = &analysis.programming_lang {
                     match lang.as_str() {
                         "rust" => {
                             heads.insert(EmbeddingHead::Code);
@@ -133,7 +133,7 @@ impl MemoryRouter {
         }
         
         // Intent-based routing
-        if let Some(ref intent) = analysis.intent {
+        if let Some(intent) = &analysis.intent {
             match intent.to_lowercase().as_str() {
                 "question" | "help" | "documentation" => {
                     heads.insert(EmbeddingHead::Documents);
@@ -150,8 +150,13 @@ impl MemoryRouter {
         // Respect max heads limit
         let mut heads_vec: Vec<EmbeddingHead> = heads.into_iter().collect();
         
-        // Sort for deterministic ordering (remove sort since EmbeddingHead doesn't implement Ord)
-        // heads_vec.sort(); 
+        // Sort for deterministic ordering
+        heads_vec.sort_by_key(|head| match head {
+            EmbeddingHead::Code => 1,
+            EmbeddingHead::Documents => 2,
+            EmbeddingHead::Summary => 3,
+            EmbeddingHead::Semantic => 10,
+        });
         
         if heads_vec.len() > self.config.max_embedding_heads {
             let original_count = heads_vec.len();

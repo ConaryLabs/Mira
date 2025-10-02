@@ -1,17 +1,14 @@
 // src/memory/features/message_pipeline/analyzers/mod.rs
 
-//! Analysis modules for different content types
+//! Message analysis components
 //! 
-//! This module contains specialized analyzers for:
-//! - `chat_analyzer` - Handles conversational content analysis  
-//! - `code_analyzer` - Handles code content analysis (future)
-//! - `unified` - Coordinates all analyzers and provides single interface
+//! - ChatAnalyzer: Handles sentiment, intent, topics for conversational content
+//! - UnifiedAnalyzer: Coordinates analysis and routing decisions
+//! 
+//! Note: Detailed code analysis with AST parsing is handled by CodeIntelligenceService
 
-pub mod chat_analyzer;
-pub mod code_analyzer; 
-pub mod unified;
+mod chat_analyzer;
+pub mod unified;  // Must be public for internal routing modules
 
-// Re-export main types for easier imports
-pub use unified::{UnifiedAnalyzer, UnifiedAnalysisResult, AnalyzerConfig};
 pub use chat_analyzer::{ChatAnalyzer, ChatAnalysisResult};
-pub use code_analyzer::{CodeAnalyzer, CodeAnalysisResult};
+pub use unified::{UnifiedAnalyzer, UnifiedAnalysisResult, RoutingDecision, AnalyzerConfig};
