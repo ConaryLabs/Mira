@@ -2,7 +2,7 @@
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::RecallContext;
-use crate::llm::responses::types::Tool;
+use crate::tools::types::Tool;
 use crate::persona::default::DEFAULT_PERSONA_PROMPT;
 
 pub struct PromptTemplates;

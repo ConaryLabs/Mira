@@ -4,7 +4,7 @@ use crate::{
     git::{GitClient, GitStore},
     llm::{
         client::OpenAIClient,
-        responses::{ImageGenerationManager, ResponsesManager},
+        responses::ImageGenerationManager,
     },
     memory::{
         storage::qdrant::multi_store::QdrantMultiStore,
@@ -42,7 +42,6 @@ pub struct AppState {
     pub git_client: GitClient,
     
     pub llm_client: Arc<OpenAIClient>,
-    pub responses_manager: Arc<ResponsesManager>,
     pub image_generation_manager: Arc<ImageGenerationManager>,
     
     pub memory_service: Arc<MemoryService>,
@@ -66,7 +65,6 @@ pub async fn create_app_state(
     info!("Initializing AppState with code intelligence");
     
     let multi_store = Arc::new(QdrantMultiStore::new(qdrant_url, &CONFIG.qdrant_collection).await?);
-    let responses_manager = Arc::new(ResponsesManager::new(llm_client.clone()));
     let image_generation_manager = Arc::new(ImageGenerationManager::new(llm_client.clone()));
     
     let code_intelligence = Arc::new(CodeIntelligenceService::new(sqlite_pool.clone()));
@@ -130,7 +128,6 @@ pub async fn create_app_state(
         git_store,
         git_client,
         llm_client,
-        responses_manager,
         image_generation_manager,
         memory_service,
         multi_store,

@@ -28,7 +28,7 @@ impl ResponseOutput {
 }
 
 pub fn extract_text_from_responses(response: &Value) -> Option<String> {
-    // PRIMARY PATH: GPT-5 September 2025 format
+    // PRIMARY PATH: Legacy response format parsing
     // output[1].content[0].text (where output[0] is reasoning, output[1] is message)
     if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
         // Look for the message entry (usually output[1])

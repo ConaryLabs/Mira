@@ -1,5 +1,5 @@
 //! Handles LLM-driven salience scoring for memories.
-//! Salience is extracted by GPT-5 (1–10); this module can normalize, update, or reprocess as needed.
+//! Salience is extracted by LLM (0.0-1.0 scale); this module can normalize, update, or reprocess as needed.
 
 use crate::memory::core::types::MemoryEntry;
 

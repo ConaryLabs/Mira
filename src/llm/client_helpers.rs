@@ -1,9 +1,9 @@
 // src/llm/client_helpers.rs
-// Helper functions for extracting text from GPT-5 responses
+// Helper functions for extracting text from API responses
 
 use serde_json::Value;
 
-/// Extract text from GPT-5 responses JSON
+/// Extract text from response JSON
 pub fn extract_text_from_responses(resp_json: &Value) -> Option<String> {
     // Try unified output format first
     if let Some(output) = resp_json.get("output").and_then(|o| o.as_array()) {

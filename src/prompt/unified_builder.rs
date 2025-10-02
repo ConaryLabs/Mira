@@ -2,7 +2,7 @@
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
-use crate::llm::responses::types::Tool;
+use crate::tools::types::Tool;
 use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::persona::PersonaOverlay;
 use chrono::Utc;

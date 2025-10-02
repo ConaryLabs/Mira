@@ -1,5 +1,5 @@
 // src/llm/schema.rs
-// Types and function schemas for GPT-5 Functions API
+// Types and function schemas for tool calling
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -22,7 +22,7 @@ impl EvaluateMemoryRequest {
     }
 }
 
-/// Structured response from the GPT-5 function call for memory evaluation
+/// Structured response from function call for memory evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluateMemoryResponse {
     pub salience: u8,

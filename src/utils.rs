@@ -200,14 +200,14 @@ where
 }
 
 // ============================================================================
-// Token counting utilities (simplified for GPT-5)
+// Token counting utilities (LLM-agnostic)
 // ============================================================================
 
-/// Estimate token count for GPT-5 (rough approximation)
-/// GPT-5 uses a similar tokenization to GPT-4, roughly 1 token per 4 characters
+/// Estimate token count for LLMs (rough approximation)
+/// Claude uses similar tokenization, roughly 1 token per 4 characters
 pub fn count_tokens(text: &str) -> Result<usize> {
-    // Simple approximation for GPT-5 in 2025
-    // More accurate than old tokenizers that don't support GPT-5
+    // Simple approximation based on char count
+    // Rough approximation - ~4 chars per token
     Ok((text.len() + 3) / 4)
 }
 

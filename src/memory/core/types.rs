@@ -33,7 +33,7 @@ pub struct MemoryEntry {
     pub last_recalled: Option<DateTime<Utc>>,
     pub recall_count: Option<i32>,
     
-    // Fields from gpt5_metadata table
+    // Fields from llm_metadata table
     pub model_version: Option<String>,
     pub prompt_tokens: Option<i32>,
     pub completion_tokens: Option<i32>,
@@ -45,8 +45,6 @@ pub struct MemoryEntry {
     pub tool_calls: Option<Vec<String>>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<i32>,
-    pub reasoning_effort: Option<String>,
-    pub verbosity: Option<String>,
     
     // Embedding info
     pub embedding: Option<Vec<f32>>,
@@ -92,8 +90,6 @@ impl MemoryEntry {
             tool_calls: None,
             temperature: None,
             max_tokens: None,
-            reasoning_effort: None,
-            verbosity: None,
             embedding: None,
             embedding_heads: None,
             qdrant_point_ids: None,

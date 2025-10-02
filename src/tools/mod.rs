@@ -3,6 +3,7 @@
 // Tool schemas are in src/llm/structured/tool_schema.rs
 
 pub mod executor;
+pub mod types;
 pub mod prompt_builder;
 pub mod file_context;
 pub mod file_search;
@@ -12,4 +13,5 @@ pub mod file_search;
 
 // Re-export
 pub use executor::{ToolExecutor, ToolEvent};
+pub use types::Tool;
 pub use prompt_builder::ToolPromptBuilder;

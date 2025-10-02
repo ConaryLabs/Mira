@@ -198,14 +198,6 @@ pub fn parse_memory_entry_from_qdrant(point: &serde_json::Value) -> Option<Memor
             .get("max_tokens")
             .and_then(|v| v.as_i64())
             .map(|i| i as i32),
-        reasoning_effort: payload
-            .get("reasoning_effort")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        verbosity: payload
-            .get("verbosity")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
         embedding: vector.and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()

@@ -1,5 +1,5 @@
 // src/llm/structured/types.rs
-// Clean LLM types - no GPT-5 specific naming
+// Clean LLM types - model-agnostic
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

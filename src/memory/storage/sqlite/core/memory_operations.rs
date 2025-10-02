@@ -142,8 +142,6 @@ impl MemoryOperations {
                 tool_calls: None,
                 temperature: None,
                 max_tokens: None,
-                reasoning_effort: None,
-                verbosity: None,
                 embedding: None,
                 embedding_heads: None,
                 qdrant_point_ids: None,

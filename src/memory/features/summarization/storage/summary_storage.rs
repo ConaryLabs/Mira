@@ -218,8 +218,6 @@ impl SummaryStorage {
             tool_calls: None,
             temperature: None,
             max_tokens: None,
-            reasoning_effort: None,
-            verbosity: None,
             embedding: Some(embedding),
             embedding_heads: Some(vec!["summary".to_string()]),
             qdrant_point_ids: None,

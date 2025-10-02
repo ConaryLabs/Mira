@@ -35,7 +35,7 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
         "last_recalled": entry.last_recalled.map(|t| t.timestamp_millis()),
         "recall_count": entry.recall_count,
         
-        // GPT5 metadata fields
+        // LLM metadata fields
         "model_version": entry.model_version,
         "prompt_tokens": entry.prompt_tokens,
         "completion_tokens": entry.completion_tokens,
@@ -47,8 +47,6 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
         "tool_calls": entry.tool_calls,
         "temperature": entry.temperature,
         "max_tokens": entry.max_tokens,
-        "reasoning_effort": entry.reasoning_effort,
-        "verbosity": entry.verbosity,
         
         // Embedding metadata
         "embedding_heads": entry.embedding_heads,
@@ -215,14 +213,6 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
             .get("max_tokens")
             .and_then(|v| v.as_i64())
             .map(|i| i as i32),
-        reasoning_effort: payload
-            .get("reasoning_effort")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        verbosity: payload
-            .get("verbosity")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
         embedding: Some(vector.to_vec()),
         embedding_heads: payload
             .get("embedding_heads")
