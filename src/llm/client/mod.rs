@@ -151,6 +151,9 @@ impl OpenAIClient {
         
         let raw_response = self.post_response_with_retry(request_body).await?;
         
+        // DEBUG LOGGING - Remove after verification
+        error!("📥 Claude raw response: {}", serde_json::to_string_pretty(&raw_response).unwrap_or_default());
+        
         let latency_ms = start.elapsed().as_millis() as i64;
         
         let metadata = crate::llm::structured::processor::extract_metadata(&raw_response, latency_ms)?;
@@ -210,11 +213,6 @@ impl OpenAIClient {
     async fn post_response_internal(&self, body: Value) -> Result<Value> {
         let url = format!("{}/v1/messages", &self.config.base_url());
         
-        // TEMPORARY DEBUG: Log the full request
-        error!("🔍 FULL CLAUDE REQUEST:");
-        error!("   URL: {}", url);
-        error!("   Body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
-        
         let response = self
             .client
             .post(url)
@@ -236,7 +234,7 @@ impl OpenAIClient {
 
         let response_data: Value = response.json().await?;
         
-        // DEBUG: Log the response
+        // DEBUG: Log the response (kept at debug level, main logging is in get_structured_response)
         debug!("✅ Claude response received: {}", serde_json::to_string_pretty(&response_data).unwrap_or_default());
         
         Ok(response_data)

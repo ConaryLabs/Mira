@@ -107,10 +107,10 @@ Content: "{content}"
 
 **Analyze this message and provide:**
 
-1. **Salience** (0.0-10.0): How important is this for memory storage?
+1. **Salience** (0.0-1.0): How important is this for memory storage?
 2. **Topics** (list): Main topics/themes discussed  
 3. **Mood** (optional): Overall emotional tone
-4. **Intensity** (0.0-10.0): Emotional intensity level
+4. **Intensity** (0.0-1.0): Emotional intensity level
 5. **Intent** (optional): What the user is trying to accomplish
 6. **Summary** (1-2 sentences): Key content summary
 7. **Relationship Impact** (optional): How this affects user-assistant relationship
@@ -118,10 +118,10 @@ Content: "{content}"
 **Response format:**
 ```json
 {{
-  "salience": <number>,
+  "salience": <number 0.0-1.0>,
   "topics": [<topic1>, <topic2>, ...],
   "mood": "<mood or null>",
-  "intensity": <number or null>,
+  "intensity": <number 0.0-1.0 or null>,
   "intent": "<intent or null>", 
   "summary": "<summary or null>",
   "relationship_impact": "<impact or null>"
@@ -155,10 +155,10 @@ Focus on practical, actionable analysis. Rate salience based on:
 [
   {{
     "message_index": 1,
-    "salience": <number>,
+    "salience": <number 0.0-1.0>,
     "topics": [<topics>],
     "mood": "<mood or null>",
-    "intensity": <number or null>,
+    "intensity": <number 0.0-1.0 or null>,
     "intent": "<intent or null>",
     "summary": "<summary or null>",
     "relationship_impact": "<impact or null>"
@@ -167,7 +167,7 @@ Focus on practical, actionable analysis. Rate salience based on:
 ]
 ```
 
-Rate salience (0.0-10.0) based on future conversation value, technical importance, and user goals."#,
+Rate salience (0.0-1.0) based on future conversation value, technical importance, and user goals."#,
             messages.len(),
             message_list
         )
@@ -200,8 +200,8 @@ Rate salience (0.0-10.0) based on future conversation value, technical importanc
         let parsed: LLMResponse = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
         
-        // Validate and clamp salience
-        let salience = parsed.salience.max(0.0).min(10.0);
+        // FIXED: Validate and clamp to 0.0-1.0 range (was 0.0-10.0)
+        let salience = parsed.salience.max(0.0).min(1.0);
         
         // Clean up topics (remove empty strings, deduplicate)
         let topics: Vec<String> = parsed.topics
@@ -216,7 +216,7 @@ Rate salience (0.0-10.0) based on future conversation value, technical importanc
             salience,
             topics,
             mood: parsed.mood.filter(|s| !s.trim().is_empty()),
-            intensity: parsed.intensity.map(|i| i.max(0.0).min(10.0)),
+            intensity: parsed.intensity.map(|i| i.max(0.0).min(1.0)), // FIXED: was min(10.0)
             intent: parsed.intent.filter(|s| !s.trim().is_empty()),
             summary: parsed.summary.filter(|s| !s.trim().is_empty()),
             relationship_impact: parsed.relationship_impact.filter(|s| !s.trim().is_empty()),
@@ -256,7 +256,8 @@ Rate salience (0.0-10.0) based on future conversation value, technical importanc
             // Find matching analysis by message_index (1-based)
             if let Some(analysis) = parsed.iter().find(|a| a.message_index == i + 1) {
                 
-                let salience = analysis.salience.max(0.0).min(10.0);
+                // FIXED: Clamp to 0.0-1.0 range (was 0.0-10.0)
+                let salience = analysis.salience.max(0.0).min(1.0);
                 let topics: Vec<String> = analysis.topics
                     .iter()
                     .filter(|t| !t.trim().is_empty())
@@ -269,7 +270,7 @@ Rate salience (0.0-10.0) based on future conversation value, technical importanc
                     salience,
                     topics,
                     mood: analysis.mood.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
-                    intensity: analysis.intensity.map(|i| i.max(0.0).min(10.0)),
+                    intensity: analysis.intensity.map(|i| i.max(0.0).min(1.0)), // FIXED: was min(10.0)
                     intent: analysis.intent.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
                     summary: analysis.summary.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
                     relationship_impact: analysis.relationship_impact.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
@@ -279,7 +280,7 @@ Rate salience (0.0-10.0) based on future conversation value, technical importanc
             } else {
                 // Fallback for missing analysis
                 results.push(ChatAnalysisResult {
-                    salience: 1.0,
+                    salience: 0.1, // FIXED: was 1.0
                     topics: vec!["general".to_string()],
                     mood: None,
                     intensity: None,

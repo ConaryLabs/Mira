@@ -20,7 +20,7 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                     "properties": {
                         "salience": {
                             "type": "number",
-                            "description": "Importance score 0-10. How important is this to remember long-term?"
+                            "description": "Importance score 0.0-1.0. How important is this to remember long-term? 0.0=trivial, 1.0=critical"
                         },
                         "topics": {
                             "type": "array",
@@ -46,7 +46,7 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                         },
                         "intensity": {
                             "type": "number",
-                            "description": "Optional intensity score 0-10"
+                            "description": "Optional intensity score 0.0-1.0 (0.0=low, 1.0=high)"
                         },
                         "intent": {
                             "type": "string",
@@ -88,7 +88,10 @@ pub fn get_code_fix_tool_schema() -> serde_json::Value {
                 "analysis": {
                     "type": "object",
                     "properties": {
-                        "salience": { "type": "number" },
+                        "salience": { 
+                            "type": "number",
+                            "description": "Importance score 0.0-1.0"
+                        },
                         "topics": { "type": "array", "items": { "type": "string" } },
                         "contains_code": { "type": "boolean" },
                         "routed_to_heads": { 
@@ -133,7 +136,7 @@ pub fn get_code_fix_tool_schema() -> serde_json::Value {
                 },
                 "confidence": {
                     "type": "number",
-                    "description": "Confidence score 0-1"
+                    "description": "Confidence score 0.0-1.0"
                 }
             },
             "required": ["output", "analysis", "fix_type", "files", "confidence"]

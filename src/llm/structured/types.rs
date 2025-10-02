@@ -1,6 +1,5 @@
 // src/llm/structured/types.rs
 // Clean LLM types - no GPT-5 specific naming
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,6 +29,24 @@ pub struct MessageAnalysis {
     pub summary: Option<String>,
     pub relationship_impact: Option<String>,
     pub programming_lang: Option<String>,
+}
+
+impl MessageAnalysis {
+    /// Normalize salience and intensity to 0.0-1.0 range
+    /// Claude sometimes returns 0-10 scale despite tool schema specifying 0-1
+    pub fn normalize(&mut self) {
+        // Normalize salience if > 1.0 (assume 0-10 scale)
+        if self.salience > 1.0 {
+            self.salience = self.salience / 10.0;
+        }
+        
+        // Normalize intensity if > 1.0 (assume 0-10 scale)
+        if let Some(intensity) = self.intensity {
+            if intensity > 1.0 {
+                self.intensity = Some(intensity / 10.0);
+            }
+        }
+    }
 }
 
 fn default_language() -> String {

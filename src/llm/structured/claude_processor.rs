@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use tracing::{debug, info};
+use tracing::{debug, info, error};
 use crate::config::CONFIG;
 use super::types::{LLMMetadata, StructuredLLMResponse};
 use super::tool_schema::{get_response_tool_schema, get_code_fix_tool_schema};
@@ -43,16 +43,17 @@ pub fn build_claude_request(
 }
 
 /// Build request with forced tool choice for structured output
+/// NOTE: Thinking is disabled because Claude doesn't allow it with forced tool use
 pub fn build_claude_request_with_tool(
     user_message: &str,
     system_prompt: String,
     context_messages: Vec<Value>,
 ) -> Result<Value> {
-    let (thinking_budget, temperature) = analyze_message_complexity(user_message);
+    let (_thinking_budget, temperature) = analyze_message_complexity(user_message);
     
     debug!(
-        "Claude tool request: thinking={}, temp={}",
-        thinking_budget, temperature
+        "Claude tool request: temp={} (thinking disabled due to forced tool use)",
+        temperature
     );
 
     let mut messages = context_messages;
@@ -61,22 +62,31 @@ pub fn build_claude_request_with_tool(
         "content": user_message
     }));
 
-    Ok(json!({
+    let request = json!({
         "model": CONFIG.anthropic_model,
         "max_tokens": CONFIG.anthropic_max_tokens,
         "temperature": temperature,
         "system": system_prompt,
         "messages": messages,
-        "thinking": {
-            "type": "enabled",
-            "budget_tokens": thinking_budget
-        },
+        // NO THINKING BLOCK - Claude API doesn't allow thinking with forced tool use
         "tools": [get_response_tool_schema()],
         "tool_choice": {
             "type": "tool",
             "name": "respond_to_user"
         }
-    }))
+    });
+    
+    // DEBUG LOGGING - Remove after verification
+    error!("🔧 TOOL-BASED REQUEST BUILD:");
+    error!("   Model: {}", CONFIG.anthropic_model);
+    error!("   Temperature: {}", temperature);
+    error!("   Thinking: DISABLED (forced tool use)");
+    error!("   Tools present: {}", request["tools"].is_array());
+    if let Some(tool_choice) = request["tool_choice"].as_object() {
+        error!("   Tool choice name: {:?}", tool_choice.get("name"));
+    }
+    
+    Ok(request)
 }
 
 /// Build request with custom function tools available
@@ -110,7 +120,7 @@ pub fn build_claude_request_with_custom_tools(
             "budget_tokens": thinking_budget
         },
         "tools": tool_schemas,
-        // No tool_choice - Claude decides when to use tools
+        // No tool_choice - Claude decides when to use tools (allows thinking)
     }))
 }
 
@@ -180,10 +190,28 @@ pub fn extract_claude_content(raw_response: &Value) -> Result<StructuredLLMRespo
 
 /// Extract from tool_use content block
 pub fn extract_claude_content_from_tool(raw_response: &Value) -> Result<StructuredLLMResponse> {
+    // DEBUG LOGGING - Remove after verification
+    error!("🔍 RESPONSE EXTRACTION:");
+    error!("   Raw response keys: {:?}", raw_response.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    
+    if let Some(content) = raw_response["content"].as_array() {
+        error!("   Content array length: {}", content.len());
+        for (i, block) in content.iter().enumerate() {
+            let block_type = block["type"].as_str().unwrap_or("unknown");
+            error!("   Block {}: type={}", i, block_type);
+            if block_type == "tool_use" {
+                error!("      Tool name: {:?}", block["name"]);
+            }
+        }
+    } else {
+        error!("   ❌ NO CONTENT ARRAY - this is the problem!");
+        error!("   Full response: {}", serde_json::to_string_pretty(&raw_response).unwrap_or_default());
+    }
+    
     let content = raw_response["content"].as_array()
         .ok_or_else(|| anyhow!("Missing content array"))?;
     
-    // Log thinking if present
+    // Log thinking if present (won't be present with forced tool use, but kept for custom tools)
     for (i, block) in content.iter().enumerate() {
         if block["type"] == "thinking" {
             if let Some(thought) = block["thinking"].as_str() {

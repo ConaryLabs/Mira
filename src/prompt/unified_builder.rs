@@ -146,13 +146,13 @@ impl UnifiedPromptBuilder {
         prompt.push_str("{\n");
         prompt.push_str("  \"output\": \"your actual response to the user - this is what they see\",\n");
         prompt.push_str("  \"analysis\": {\n");
-        prompt.push_str("    \"salience\": 7.5,\n");
+        prompt.push_str("    \"salience\": 0.75,\n");
         prompt.push_str("    \"topics\": [\"topic1\", \"topic2\"],\n");
         prompt.push_str("    \"contains_code\": false,\n");
-        prompt.push_str("    \"routed_to_heads\": [\"general\"],\n");
+        prompt.push_str("    \"routed_to_heads\": [\"semantic\"],\n");
         prompt.push_str("    \"language\": \"en\",\n");
         prompt.push_str("    \"mood\": \"neutral\",\n");
-        prompt.push_str("    \"intensity\": 5.0,\n");
+        prompt.push_str("    \"intensity\": 0.5,\n");
         prompt.push_str("    \"intent\": \"inform\",\n");
         prompt.push_str("    \"summary\": \"brief summary\",\n");
         prompt.push_str("    \"relationship_impact\": null,\n");
@@ -168,8 +168,9 @@ impl UnifiedPromptBuilder {
         prompt.push_str("4. Response must be ONLY the JSON object - no markdown, no ```json``` wrapping\n");
         prompt.push_str("5. The 'output' field is your actual message to the user\n");
         prompt.push_str("6. All required fields must be present (use null for optional ones)\n");
-        prompt.push_str("7. salience: 3-5 for casual chat, 6-8 for important info, 9-10 for critical\n");
-        prompt.push_str("8. routed_to_heads: 'code' for programming, 'technical' for tech, 'emotional' for feelings, 'planning' for tasks, 'general' for everything else\n\n");
+        prompt.push_str("7. salience: 0.3-0.5 for casual chat, 0.6-0.8 for important info, 0.9-1.0 for critical (range 0.0-1.0)\n");
+        prompt.push_str("8. intensity: 0.0-1.0 scale where 0.0 is low and 1.0 is high (if applicable)\n");
+        prompt.push_str("9. routed_to_heads: Must include at least one of ['semantic', 'code', 'summary', 'documents']. Use 'semantic' for general conversation, 'code' when programming is discussed\n\n");
         prompt.push_str("THINKING vs OUTPUT:\n");
         prompt.push_str("- Use the thinking block to analyze what they mean, plan your response, etc.\n");
         prompt.push_str("- Then OUTPUT the JSON with your actual response in the 'output' field\n");
@@ -286,7 +287,7 @@ impl UnifiedPromptBuilder {
         
         if !context.semantic.is_empty() {
             let important_memories: Vec<_> = context.semantic.iter()
-                .filter(|m| m.salience.unwrap_or(0.0) >= 7.0)
+                .filter(|m| m.salience.unwrap_or(0.0) >= 0.7)
                 .take(3)
                 .collect();
             

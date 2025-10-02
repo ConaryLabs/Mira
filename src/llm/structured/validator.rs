@@ -1,5 +1,4 @@
 // src/llm/structured/validator.rs
-
 use anyhow::{anyhow, Result};
 use super::types::StructuredLLMResponse;
 
@@ -8,9 +7,10 @@ pub fn validate_response(response: &StructuredLLMResponse) -> Result<()> {
         return Err(anyhow!("output cannot be empty (memory_entries.content NOT NULL)"));
     }
     
-    if response.analysis.salience < 0.0 || response.analysis.salience > 10.0 {
+    // FIXED: Salience should be 0.0-1.0, not 0-10
+    if response.analysis.salience < 0.0 || response.analysis.salience > 1.0 {
         return Err(anyhow!(
-            "salience {} violates CHECK(salience >= 0 AND salience <= 10)",
+            "salience {} violates CHECK(salience >= 0 AND salience <= 1)",
             response.analysis.salience
         ));
     }
