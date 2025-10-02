@@ -35,7 +35,6 @@ impl Default for ChunkingStrategy {
 /// Document chunker that splits text into manageable pieces
 pub struct DocumentChunker {
     strategy: ChunkingStrategy,
-    sentence_regex: Regex,
     paragraph_regex: Regex,
 }
 
@@ -49,8 +48,6 @@ impl DocumentChunker {
     pub fn with_strategy(strategy: ChunkingStrategy) -> Self {
         Self {
             strategy,
-            // Regex for sentence boundaries
-            sentence_regex: Regex::new(r"[.!?]+\s+").unwrap(),
             // Regex for paragraph boundaries (multiple newlines)
             paragraph_regex: Regex::new(r"\n\s*\n").unwrap(),
         }

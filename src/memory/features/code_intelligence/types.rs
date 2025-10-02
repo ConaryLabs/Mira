@@ -3,6 +3,7 @@
 
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
+use std::future::Future;
 
 /// A single code element extracted from source
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,7 +57,8 @@ pub struct FileAnalysis {
 /// Language parser trait - extensible for multiple languages
 pub trait LanguageParser: Send + Sync {
     /// Parse a file and return analysis
-    async fn parse_file(&self, content: &str, file_path: &str) -> Result<FileAnalysis>;
+    /// Returns a Send future to ensure thread-safety in async contexts
+    fn parse_file(&self, content: &str, file_path: &str) -> impl Future<Output = Result<FileAnalysis>> + Send;
     
     /// Check if this parser can handle the content
     fn can_parse(&self, content: &str, file_path: Option<&str>) -> bool;

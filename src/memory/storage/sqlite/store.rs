@@ -3,7 +3,7 @@
 
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::core::types::MemoryEntry;
-use crate::llm::structured::CompleteResponse;  // NEW: Import structured types
+use crate::llm::structured::CompleteResponse;
 use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::SqlitePool;
@@ -12,7 +12,6 @@ use tracing::info;
 use super::core::{
     MemoryOperations,
     AnalysisOperations, 
-    SessionOperations,
     EmbeddingOperations,
     MessageAnalysis,
 };
@@ -24,7 +23,6 @@ pub struct SqliteMemoryStore {
     // Operation modules - each handles specific concerns
     memory_ops: MemoryOperations,
     analysis_ops: AnalysisOperations,
-    session_ops: SessionOperations,
     embedding_ops: EmbeddingOperations,
 }
 
@@ -33,7 +31,6 @@ impl SqliteMemoryStore {
         Self {
             memory_ops: MemoryOperations::new(pool.clone()),
             analysis_ops: AnalysisOperations::new(pool.clone()),
-            session_ops: SessionOperations::new(pool.clone()),
             embedding_ops: EmbeddingOperations::new(pool.clone()),
             pool,
         }

@@ -28,7 +28,6 @@ mod context;
 
 // Re-export the implementations
 use search::{RecentSearch, SemanticSearch, HybridSearch, MultiHeadSearch};
-use scoring::CompositeScorer;
 use context::MemoryContextBuilder;
 
 // Public types are defined below, no need for re-export
