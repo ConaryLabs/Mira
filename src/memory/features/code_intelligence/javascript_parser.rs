@@ -1,7 +1,7 @@
 // src/memory/features/code_intelligence/javascript_parser.rs
 use anyhow::Result;
 use swc_common::{sync::Lrc, FileName, SourceMap, Span, Spanned};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, EsConfig};
+use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
 use swc_ecma_ast::{Expr, Pat, FnDecl, ClassDecl, VarDecl, ImportDecl};
 use swc_ecma_visit::{Visit, VisitWith};
 use crate::memory::features::code_intelligence::types::*;
@@ -30,17 +30,8 @@ impl LanguageParser for JavaScriptParser {
             content.to_string()
         );
         
-        let syntax = Syntax::Es(EsConfig {
-            jsx: file_path.ends_with(".jsx"),
-            decorators: true,
-            decorators_before_export: true,
-            export_default_from: true,
-            import_attributes: true,
-            allow_super_outside_method: false,
-            allow_return_outside_function: false,
-            auto_accessors: false,
-            explicit_resource_management: false,
-        });
+        // Use default ES config for now - works for .js, .jsx, and .mjs files
+        let syntax = Syntax::Es(Default::default());
         
         let lexer = Lexer::new(
             syntax,
@@ -117,11 +108,16 @@ impl<'a> JavaScriptAnalyzer<'a> {
     }
 
     fn get_full_path(&self, name: &str) -> String {
-        if self.current_path.is_empty() {
+        // Build module path from current nesting
+        let module_path = if self.current_path.is_empty() {
             name.to_string()
         } else {
             format!("{}.{}", self.current_path.join("."), name)
-        }
+        };
+
+        // Clean file path and combine with module path
+        let clean_file_path = self.file_path.replace("\\", "/");
+        format!("{}::{}", clean_file_path, module_path)
     }
 
     fn extract_text(&self, span: Span) -> String {
@@ -193,8 +189,8 @@ impl<'a> JavaScriptAnalyzer<'a> {
                 severity: "medium".to_string(),
                 title: "High cyclomatic complexity".to_string(),
                 description: format!(
-                    "Function '{}' has complexity {} (threshold: {})",
-                    element.name, element.complexity_score, self.max_complexity
+                    "{}: Function '{}' has complexity {} (threshold: {})",
+                    self.file_path, element.name, element.complexity_score, self.max_complexity
                 ),
                 suggested_fix: Some("Consider breaking this function into smaller parts".to_string()),
                 fix_confidence: 0.7,
@@ -208,7 +204,10 @@ impl<'a> JavaScriptAnalyzer<'a> {
                 issue_type: "documentation".to_string(),
                 severity: "low".to_string(),
                 title: "Missing documentation".to_string(),
-                description: format!("Exported {} '{}' lacks documentation", element.element_type, element.name),
+                description: format!(
+                    "{}: Exported {} '{}' lacks documentation",
+                    self.file_path, element.element_type, element.name
+                ),
                 suggested_fix: Some("Add JSDoc comment describing the function/class".to_string()),
                 fix_confidence: 0.9,
                 is_auto_fixable: false,

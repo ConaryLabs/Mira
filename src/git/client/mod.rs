@@ -5,7 +5,7 @@ use std::fs;
 
 use crate::git::types::GitRepoAttachment;
 use crate::git::store::GitStore;
-use crate::api::error::ApiResult;
+use crate::api::error::{ApiResult, ApiError};
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
 pub mod operations;
@@ -90,7 +90,17 @@ impl GitClient {
 
     pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
         let ops = self.create_operations();
-        ops.pull_changes(attachment_id).await
+        
+        // Fetch the attachment from store first
+        let attachment = self.store
+            .get_attachment(attachment_id)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get git attachment: {}", e)))?
+            .ok_or_else(|| ApiError::not_found(format!("Git attachment not found: {}", attachment_id)))?;
+        
+        ops.pull_changes(&attachment)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to pull changes: {}", e)))
     }
     
     pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {

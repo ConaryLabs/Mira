@@ -1,7 +1,7 @@
 // src/memory/features/code_intelligence/typescript_parser.rs
 use anyhow::Result;
 use swc_common::{sync::Lrc, FileName, SourceMap, Span};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
+use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
 use swc_ecma_ast::{FnDecl, ClassDecl, ImportDecl};
 use swc_ecma_visit::{Visit, VisitWith};
 use crate::memory::features::code_intelligence::types::*;
@@ -30,13 +30,8 @@ impl LanguageParser for TypeScriptParser {
             content.to_string()
         );
         
-        let syntax = Syntax::Typescript(TsConfig {
-            tsx: file_path.ends_with(".tsx"),
-            decorators: true,
-            dts: file_path.ends_with(".d.ts"),
-            no_early_errors: true,
-            disallow_ambiguous_jsx_like: false,
-        });
+        // Use default TypeScript config for now - works for .ts, .tsx, and .d.ts files
+        let syntax = Syntax::Typescript(Default::default());
         
         let lexer = Lexer::new(
             syntax,
@@ -113,11 +108,16 @@ impl<'a> TypeScriptAnalyzer<'a> {
     }
 
     fn get_full_path(&self, name: &str) -> String {
-        if self.current_path.is_empty() {
+        // Build module path from current nesting
+        let module_path = if self.current_path.is_empty() {
             name.to_string()
         } else {
             format!("{}.{}", self.current_path.join("."), name)
-        }
+        };
+
+        // Clean file path and combine with module path
+        let clean_file_path = self.file_path.replace("\\", "/");
+        format!("{}::{}", clean_file_path, module_path)
     }
 
     fn extract_text(&self, span: Span) -> String {
@@ -189,8 +189,8 @@ impl<'a> TypeScriptAnalyzer<'a> {
                 severity: "medium".to_string(),
                 title: "High cyclomatic complexity".to_string(),
                 description: format!(
-                    "Function '{}' has complexity {} (threshold: {})",
-                    element.name, element.complexity_score, self.max_complexity
+                    "{}: Function '{}' has complexity {} (threshold: {})",
+                    self.file_path, element.name, element.complexity_score, self.max_complexity
                 ),
                 suggested_fix: Some("Consider breaking this function into smaller parts".to_string()),
                 fix_confidence: 0.7,
@@ -204,7 +204,10 @@ impl<'a> TypeScriptAnalyzer<'a> {
                 issue_type: "documentation".to_string(),
                 severity: "low".to_string(),
                 title: "Missing documentation".to_string(),
-                description: format!("Public {} '{}' lacks documentation", element.element_type, element.name),
+                description: format!(
+                    "{}: Public {} '{}' lacks documentation",
+                    self.file_path, element.element_type, element.name
+                ),
                 suggested_fix: Some("Add JSDoc comment describing the function/class".to_string()),
                 fix_confidence: 0.9,
                 is_auto_fixable: false,
