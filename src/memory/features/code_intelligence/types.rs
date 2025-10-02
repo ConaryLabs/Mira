@@ -1,5 +1,4 @@
 // src/memory/features/code_intelligence/types.rs
-// Core type definitions for code intelligence system
 
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
@@ -52,6 +51,25 @@ pub struct FileAnalysis {
     pub complexity_score: u32,
     pub test_count: u32,
     pub doc_coverage: f64,
+}
+
+/// Result of analyzing a file
+#[derive(Debug)]
+pub struct FileAnalysisResult {
+    pub file_id: i64,
+    pub language: String,
+    pub elements_count: usize,
+    pub complexity_score: u32,
+    pub quality_issues_count: usize,
+    pub test_coverage: f64,
+    pub doc_coverage: f64,
+}
+
+/// Complete context for a file
+#[derive(Debug)]
+pub struct FileContext {
+    pub elements: Vec<CodeElement>,
+    pub quality_issues: Vec<QualityIssue>,
 }
 
 /// Language parser trait - extensible for multiple languages

@@ -1,13 +1,16 @@
 // src/memory/features/code_intelligence/mod.rs
-// Main module for code intelligence
 
 pub mod types;
 pub mod parser;
 pub mod storage;
+pub mod typescript_parser;
+pub mod javascript_parser;
 
 // Re-export key types and implementations for easy use
 pub use types::*;
 pub use parser::RustParser;
+pub use typescript_parser::TypeScriptParser;
+pub use javascript_parser::JavaScriptParser;
 pub use storage::{CodeIntelligenceStorage, RepoStats};
 
 use anyhow::Result;
@@ -19,6 +22,8 @@ use std::sync::Arc;
 pub struct CodeIntelligenceService {
     storage: Arc<CodeIntelligenceStorage>,
     rust_parser: RustParser,
+    typescript_parser: TypeScriptParser,
+    javascript_parser: JavaScriptParser,
 }
 
 impl CodeIntelligenceService {
@@ -27,6 +32,8 @@ impl CodeIntelligenceService {
         Self {
             storage: Arc::new(CodeIntelligenceStorage::new(pool)),
             rust_parser: RustParser::new(),
+            typescript_parser: TypeScriptParser::new(),
+            javascript_parser: JavaScriptParser::new(),
         }
     }
 
@@ -38,33 +45,48 @@ impl CodeIntelligenceService {
         file_path: &str,
         language: &str,
     ) -> Result<FileAnalysisResult> {
-        match language {
+        let analysis = match language {
             "rust" => {
                 if self.rust_parser.can_parse(content, Some(file_path)) {
-                    let analysis = self.rust_parser.parse_file(content, file_path).await?;
-                    self.storage.store_file_analysis(file_id, language, &analysis).await?;
-                    
-                    Ok(FileAnalysisResult {
-                        file_id,
-                        language: language.to_string(),
-                        elements_count: analysis.elements.len(),
-                        complexity_score: analysis.complexity_score,
-                        quality_issues_count: analysis.quality_issues.len(),
-                        test_coverage: if analysis.test_count > 0 { 
-                            analysis.test_count as f64 / analysis.elements.len() as f64 
-                        } else { 
-                            0.0 
-                        },
-                        doc_coverage: analysis.doc_coverage,
-                    })
+                    self.rust_parser.parse_file(content, file_path).await?
                 } else {
-                    Err(anyhow::anyhow!("Cannot parse {} file: {}", language, file_path))
+                    return Err(anyhow::anyhow!("Cannot parse Rust file: {}", file_path));
+                }
+            }
+            "typescript" => {
+                if self.typescript_parser.can_parse(content, Some(file_path)) {
+                    self.typescript_parser.parse_file(content, file_path).await?
+                } else {
+                    return Err(anyhow::anyhow!("Cannot parse TypeScript file: {}", file_path));
+                }
+            }
+            "javascript" => {
+                if self.javascript_parser.can_parse(content, Some(file_path)) {
+                    self.javascript_parser.parse_file(content, file_path).await?
+                } else {
+                    return Err(anyhow::anyhow!("Cannot parse JavaScript file: {}", file_path));
                 }
             }
             _ => {
-                Err(anyhow::anyhow!("Unsupported language: {}", language))
+                return Err(anyhow::anyhow!("Unsupported language: {}", language));
             }
-        }
+        };
+        
+        self.storage.store_file_analysis(file_id, language, &analysis).await?;
+        
+        Ok(FileAnalysisResult {
+            file_id,
+            language: language.to_string(),
+            elements_count: analysis.elements.len(),
+            complexity_score: analysis.complexity_score,
+            quality_issues_count: analysis.quality_issues.len(),
+            test_coverage: if analysis.test_count > 0 { 
+                analysis.test_count as f64 / analysis.elements.len() as f64 
+            } else { 
+                0.0 
+            },
+            doc_coverage: analysis.doc_coverage,
+        })
     }
 
     /// Search for code elements in a specific project
@@ -124,30 +146,11 @@ impl CodeIntelligenceService {
 
     /// Check if a language is supported
     pub fn supports_language(&self, language: &str) -> bool {
-        matches!(language, "rust")
+        matches!(language, "rust" | "typescript" | "javascript")
     }
 
     /// Get list of supported languages
     pub fn supported_languages(&self) -> Vec<&'static str> {
-        vec!["rust"]
+        vec!["rust", "typescript", "javascript"]
     }
-}
-
-/// Result of analyzing a file
-#[derive(Debug)]
-pub struct FileAnalysisResult {
-    pub file_id: i64,
-    pub language: String,
-    pub elements_count: usize,
-    pub complexity_score: u32,
-    pub quality_issues_count: usize,
-    pub test_coverage: f64,
-    pub doc_coverage: f64,
-}
-
-/// Complete context for a file
-#[derive(Debug)]
-pub struct FileContext {
-    pub elements: Vec<CodeElement>,
-    pub quality_issues: Vec<QualityIssue>,
 }

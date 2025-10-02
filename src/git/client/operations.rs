@@ -127,7 +127,8 @@ impl GitOperations {
             let mut analysis_errors = 0;
 
             for (file_id, file_path) in &inserted_files {
-                if !is_rust_file(file_path) {
+                // Check if file is analyzable (Rust, TypeScript, or JavaScript)
+                if !is_rust_file(file_path) && !is_typescript_file(file_path) && !is_javascript_file(file_path) {
                     continue;
                 }
 
@@ -177,8 +178,13 @@ impl GitOperations {
         let content_str = String::from_utf8_lossy(&content);
         let line_count = content_str.lines().count() as i32;
         
+        // Detect language based on file extension
         let language = if is_rust_file(file_path) {
             Some("rust".to_string())
+        } else if is_typescript_file(file_path) {
+            Some("typescript".to_string())
+        } else if is_javascript_file(file_path) {
+            Some("javascript".to_string())
         } else {
             None
         };
@@ -208,16 +214,29 @@ impl GitOperations {
 
         let file_path_str = file_path.to_string_lossy();
         
+        // Determine language from file extension
+        let language = if is_rust_file(file_path) {
+            "rust"
+        } else if is_typescript_file(file_path) {
+            "typescript"
+        } else if is_javascript_file(file_path) {
+            "javascript"
+        } else {
+            return Ok(()); // Skip unsupported file types
+        };
+        
         let result = code_intel.analyze_and_store_file(
             file_id,
             &content,
             &file_path_str,
-            "rust",
+            language,
         ).await?;
 
         debug!(
-            "Analyzed {}: {} elements, complexity {}, {} quality issues",
-            file_path_str,
+            "Analyzed {} file {} (id: {}): {} elements, complexity: {}, {} quality issues",
+            language,
+            file_path.display(),
+            file_id,
             result.elements_count,
             result.complexity_score,
             result.quality_issues_count
@@ -228,105 +247,142 @@ impl GitOperations {
 
     pub async fn sync_changes(&self, attachment: &GitRepoAttachment, commit_message: &str) -> Result<()> {
         info!("Syncing changes for repository {}", attachment.id);
+        
+        // First pull
+        self.pull_changes(attachment).await?;
+        
+        // Then commit and push
+        self.commit_and_push(attachment, commit_message).await?;
+        
+        info!("Successfully synced changes for repository {}", attachment.id);
+        Ok(())
+    }
+
+    pub async fn pull_changes(&self, attachment: &GitRepoAttachment) -> Result<()> {
+        info!("Pulling latest changes for repository {}", attachment.id);
 
         let local_path = attachment.local_path.clone();
-        let commit_msg = commit_message.to_string();
         
         tokio::task::spawn_blocking(move || {
-            let repo = Repository::open(&local_path)
-                .into_api_error("Could not open local repo for syncing")?;
-
-            let mut index = repo.index()
-                .into_api_error("Failed to get repository index")?;
+            let repo = Repository::open(&local_path)?;
+            let mut remote = repo.find_remote("origin")?;
+            remote.fetch(&["main"], None, None)?;
             
-            index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-                .into_api_error("Failed to stage changes")?;
+            let fetch_head = repo.find_reference("FETCH_HEAD")?;
+            let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
             
-            index.write()
-                .into_api_error("Failed to write index")?;
-
-            let oid = index.write_tree()
-                .into_api_error("Failed to write tree")?;
+            let analysis = repo.merge_analysis(&[&fetch_commit])?;
             
-            let signature = repo.signature()
-                .into_api_error("Failed to get git signature")?;
-            
-            let parent_commit = repo.head()
-                .and_then(|h| h.peel_to_commit())
-                .into_api_error("Failed to get parent commit")?;
-            
-            let tree = repo.find_tree(oid)
-                .into_api_error("Failed to find tree")?;
-
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                &commit_msg,
-                &tree,
-                &[&parent_commit],
-            )
-            .into_api_error("Failed to create commit")?;
-
-            let mut remote = repo.find_remote("origin")
-                .into_api_error("Failed to find origin remote")?;
-            
-            remote.push(&["refs/heads/main:refs/heads/main"], None)
-                .into_api_error("Failed to push to remote")?;
+            if analysis.0.is_fast_forward() {
+                let refname = "refs/heads/main";
+                let mut reference = repo.find_reference(refname)?;
+                reference.set_target(fetch_commit.id(), "Fast-Forward")?;
+                repo.set_head(refname)?;
+                repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+            }
             
             Ok::<(), anyhow::Error>(())
         })
         .await
-        .into_api_error("Failed to spawn blocking task")??;
+        .into_api_error("Failed to spawn blocking task")?
+        .into_api_error("Failed to pull changes")?;
 
         self.store.update_last_sync(&attachment.id, Utc::now())
             .await
             .into_api_error("Failed to update last sync time")?;
 
-        info!("Successfully synced changes for repository {}", attachment.id);
+        info!("Successfully pulled changes for repository {}", attachment.id);
+        Ok(())
+    }
+    
+    pub async fn pull_changes_by_id(&self, attachment_id: &str) -> ApiResult<()> {
+        let attachment = self.store.get_attachment(attachment_id).await
+            .into_api_error("Failed to get attachment")?
+            .ok_or_else(|| anyhow::anyhow!("Attachment not found"))
+            .into_api_error("Attachment not found")?;
+            
+        self.pull_changes(&attachment).await
+            .into_api_error("Failed to pull changes")
+    }
+
+    pub async fn commit_and_push(&self, attachment: &GitRepoAttachment, message: &str) -> Result<()> {
+        info!("Committing and pushing changes for repository {}", attachment.id);
+
+        let local_path = attachment.local_path.clone();
+        let commit_message = message.to_string();
+        
+        tokio::task::spawn_blocking(move || {
+            let repo = Repository::open(&local_path)?;
+            let mut index = repo.index()?;
+            index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
+            index.write()?;
+            
+            let oid = index.write_tree()?;
+            let signature = repo.signature()?;
+            let tree = repo.find_tree(oid)?;
+            let parent_commit = repo.head()?.peel_to_commit()?;
+            
+            repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                &commit_message,
+                &tree,
+                &[&parent_commit],
+            )?;
+            
+            let mut remote = repo.find_remote("origin")?;
+            remote.push(&["refs/heads/main:refs/heads/main"], None)?;
+            
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .into_api_error("Failed to spawn blocking task")?
+        .into_api_error("Failed to commit and push")?;
+
+        info!("Successfully committed and pushed changes for repository {}", attachment.id);
         Ok(())
     }
 
-    pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
+    pub async fn restore_file(&self, attachment_id: &str, file_path: &str) -> Result<()> {
+        info!("Restoring file {} in repository {}", file_path, attachment_id);
+
         let attachment = self.store.get_attachment(attachment_id).await
             .into_api_error("Failed to get attachment")?
-            .ok_or_else(|| anyhow::anyhow!("Git attachment not found"))
-            .into_api_error("Git attachment not found")?;
-            
-        info!("Pulling changes for repository {}", attachment.id);
-        
+            .ok_or_else(|| anyhow::anyhow!("Attachment not found"))?;
+
         let local_path = attachment.local_path.clone();
-        
-        let result = tokio::task::spawn_blocking(move || -> Result<()> {
+        let file_path_owned = file_path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<()> {
             let repo = Repository::open(&local_path)?;
+            let head = repo.head()?;
+            let tree = head.peel_to_tree()?;
             
-            let mut remote = repo.find_remote("origin")?;
-            remote.fetch(&["main"], None, None)?;
+            let entry = tree.get_path(Path::new(&file_path_owned))?;
+            let blob = repo.find_blob(entry.id())?;
             
-            let fetch_head = repo.find_reference("FETCH_HEAD")?;
-            let fetch_commit = fetch_head.peel_to_commit()?;
+            let full_file_path = Path::new(&local_path).join(&file_path_owned);
+            if let Some(parent) = full_file_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             
-            let mut branch = repo.find_branch("main", git2::BranchType::Local)?;
-            branch.get_mut().set_target(fetch_commit.id(), "Fast-forward pull")?;
-            
-            repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+            fs::write(&full_file_path, blob.content())?;
             
             Ok(())
         })
         .await
-        .into_api_error("Failed to spawn blocking task")?;
-        
-        result.into_api_error("Failed to pull changes")?;
-        
-        info!("Successfully pulled changes for repository {}", attachment_id);
+        .into_api_error("Failed to spawn blocking task")?
+        .into_api_error("Failed to restore file")?;
+
+        info!("Successfully restored file {} in repository {}", file_path, attachment_id);
         Ok(())
     }
-    
-    pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
+
+    pub async fn hard_reset(&self, attachment_id: &str) -> Result<()> {
         let attachment = self.store.get_attachment(attachment_id).await
             .into_api_error("Failed to get attachment")?
-            .ok_or_else(|| anyhow::anyhow!("Git attachment not found"))
-            .into_api_error("Git attachment not found")?;
+            .ok_or_else(|| anyhow::anyhow!("Attachment not found"))?;
             
         warn!("Resetting repository {} to origin/main", attachment.id);
         
@@ -353,12 +409,31 @@ impl GitOperations {
         warn!("Hard reset repository {} to origin/main complete", attachment_id);
         Ok(())
     }
+
+    pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
+        self.hard_reset(attachment_id).await
+            .into_api_error("Failed to reset to remote")
+    }
 }
 
 fn is_rust_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("rs"))
+        .unwrap_or(false)
+}
+
+fn is_typescript_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e == "ts" || e == "tsx")
+        .unwrap_or(false)
+}
+
+fn is_javascript_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e == "js" || e == "jsx" || e == "mjs")
         .unwrap_or(false)
 }
 
