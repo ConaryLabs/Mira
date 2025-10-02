@@ -73,7 +73,7 @@ pub enum WsClientMessage {
         method: String,
         params: serde_json::Value,
     },
-    DocumentCommand {  // NEW: Document processing commands
+    DocumentCommand {
         method: String,
         params: serde_json::Value,
     },

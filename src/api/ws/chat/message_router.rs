@@ -293,8 +293,9 @@ impl MessageRouter {
             }
         });
         
-        // Create document handler and process command
+        // Create document handler with AppState
         let handler = documents::DocumentHandler::new(self.app_state.clone());
+        
         let command = documents::DocumentCommand { method, params };
         let response = handler.handle_command(command, Some(tx)).await?;
         
