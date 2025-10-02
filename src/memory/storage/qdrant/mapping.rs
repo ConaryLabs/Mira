@@ -55,6 +55,8 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
 }
 
 /// Converts Qdrant payload JSON + vector to a MemoryEntry
+/// Note: All string allocations here are necessary - Qdrant returns borrowed JSON
+/// that doesn't live long enough, so we must own the strings.
 pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>) -> MemoryEntry {
     let timestamp = payload
         .get("timestamp")
