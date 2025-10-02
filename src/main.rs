@@ -1,4 +1,5 @@
 // src/main.rs
+
 use std::sync::Arc;
 use std::net::SocketAddr;
 use axum::{
@@ -8,10 +9,11 @@ use axum::{
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use sqlx::sqlite::SqlitePoolOptions;
+
 use mira_backend::api::ws::ws_chat_handler;
 use mira_backend::config::CONFIG;
+use mira_backend::state::AppState;
 use mira_backend::tasks::TaskManager;
-use mira_backend::llm::client::config::ClientConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,33 +40,14 @@ async fn main() -> anyhow::Result<()> {
     // Skip migrations since they were already run with sqlx migrate run
     info!("Using existing database schema");
     
-    let sqlite_store = Arc::new(
-        mira_backend::memory::storage::sqlite::store::SqliteMemoryStore::new(pool.clone())
-    );
+    // Initialize application state with all components
+    let app_state = Arc::new(AppState::new(pool.clone()).await?);
     
-    let client_config = ClientConfig::from_env()?;
-    let llm_client = Arc::new(mira_backend::llm::client::OpenAIClient::new(client_config)?);
-    
-    let project_store = Arc::new(
-        mira_backend::project::store::ProjectStore::new(pool.clone())
-    );
-    
-    let git_store = mira_backend::git::store::GitStore::new(pool.clone());
-    
-    let app_state = Arc::new(
-        mira_backend::state::create_app_state(
-            sqlite_store,
-            pool.clone(),
-            &CONFIG.qdrant_url,
-            llm_client,
-            project_store,
-            git_store,
-        ).await?
-    );
-    
+    // Start background task manager
     let mut task_manager = TaskManager::new(app_state.clone());
     task_manager.start().await;
     
+    // Build router with WebSocket endpoint
     let app = Router::new()
         .route("/ws", get(ws_chat_handler))
         .with_state(app_state);

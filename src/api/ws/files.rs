@@ -9,7 +9,6 @@ use serde_json::Value;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use uuid::Uuid;
 use tracing::{debug, error, info};
-use chrono::Utc;
 
 use crate::state::{AppState, UploadSession};
 use crate::api::ws::message::WsServerMessage;
@@ -93,7 +92,6 @@ async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
         chunks: Vec::new(),
         total_size: request.total_size,
         received_size: 0,
-        created_at: Utc::now(),
     };
     
     // Store session in AppState
