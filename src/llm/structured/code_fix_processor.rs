@@ -1,5 +1,6 @@
 // src/llm/structured/code_fix_processor.rs
 // Code fix request/response handling using Claude with tool calling
+// FIXED: Removed overly aggressive generic error detection
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -47,7 +48,8 @@ pub struct ErrorContext {
 /// Detects if a message contains a compiler/runtime error
 /// Returns ErrorContext if an error is detected
 pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
-    // Rust compiler errors: error[E0308]: ...
+    // Rust compiler errors: error[E0308]: ... --> src/path/file.rs:line:col
+    // Must have both the error code AND the arrow pointer
     if let Some(_captures) = regex::Regex::new(r"error\[E\d+\]:")
         .ok()?
         .captures(message) 
@@ -67,7 +69,8 @@ pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
     }
     
     // TypeScript/JavaScript errors: path/file.ts(line,col): error TS...
-    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.(?:ts|tsx|js|jsx))\(\d+,\d+\):\s+error")
+    // Must have the specific format with line numbers and "error TS"
+    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.(?:ts|tsx|js|jsx))\(\d+,\d+\):\s+error\s+TS\d+")
         .ok()?
         .captures(message)
     {
@@ -80,6 +83,7 @@ pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
     }
     
     // Python errors: File "path/file.py", line X
+    // Must have the specific format with "File" and "line"
     if let Some(captures) = regex::Regex::new(r#"File\s+"([^"]+\.py)",\s+line\s+\d+"#)
         .ok()?
         .captures(message)
@@ -92,32 +96,41 @@ pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
         });
     }
     
-    // Generic: Check for common error patterns with file references
-    if message.contains("error") || message.contains("Error") {
-        // Look for file paths
-        if let Some(captures) = regex::Regex::new(r"([a-zA-Z0-9_\-./]+\.[a-z]+):?\d*")
-            .ok()?
-            .captures(message)
-        {
-            let file_path = captures.get(1)?.as_str().to_string();
-            // Only if it looks like a source file
-            if file_path.ends_with(".rs") 
-                || file_path.ends_with(".ts") 
-                || file_path.ends_with(".tsx")
-                || file_path.ends_with(".js")
-                || file_path.ends_with(".jsx")
-                || file_path.ends_with(".py")
-                || file_path.ends_with(".go")
-                || file_path.ends_with(".java")
-            {
-                return Some(ErrorContext {
-                    error_message: message.to_string(),
-                    file_path,
-                    original_line_count: 0,
-                });
-            }
+    // ESLint errors: path/file.js:line:col - error message (rule-name)
+    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.(?:js|jsx|ts|tsx)):(\d+):(\d+)\s+-\s+(.+)")
+        .ok()?
+        .captures(message)
+    {
+        let file_path = captures.get(1)?.as_str().to_string();
+        return Some(ErrorContext {
+            error_message: message.to_string(),
+            file_path,
+            original_line_count: 0,
+        });
+    }
+    
+    // Go compiler errors: path/file.go:line:col: error message
+    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.go):(\d+):(\d+):\s+(.+)")
+        .ok()?
+        .captures(message)
+    {
+        let file_path = captures.get(1)?.as_str().to_string();
+        // Verify it actually says "error" or similar
+        let error_text = captures.get(4)?.as_str();
+        if error_text.to_lowercase().contains("error") || 
+           error_text.to_lowercase().contains("undefined") ||
+           error_text.to_lowercase().contains("cannot") {
+            return Some(ErrorContext {
+                error_message: message.to_string(),
+                file_path,
+                original_line_count: 0,
+            });
         }
     }
+    
+    // REMOVED: Generic fallback that was causing false positives
+    // DO NOT add back a generic "contains error + contains filepath" check
+    // It must be a specific compiler error format to trigger
     
     None
 }
