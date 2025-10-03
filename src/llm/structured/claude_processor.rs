@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use tracing::{debug, info, error};
+use tracing::{debug, info};
 use crate::config::CONFIG;
 use super::types::{LLMMetadata, StructuredLLMResponse};
 use super::tool_schema::get_response_tool_schema;

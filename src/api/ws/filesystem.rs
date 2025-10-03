@@ -49,6 +49,7 @@ pub async fn handle_filesystem_command(
     
     let result = match method {
         "file.save" => save_file(params).await,
+        "files.write" => save_file(params).await,
         "file.read" => read_file(params).await,
         "file.list" => list_files(params).await,
         "file.delete" => delete_file(params).await,

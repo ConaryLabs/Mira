@@ -122,6 +122,14 @@ pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
     None
 }
 
+/// Build code fix request with forced tool choice (no thinking)
+/// 
+/// Code fixes require deterministic output, which means:
+/// - Low/medium temperature (not forced to 1.0)
+/// - Forced tool choice for guaranteed structured artifacts
+/// - No thinking (incompatible with forced tool + would require temp 1.0)
+/// 
+/// Trade-off: Less deep reasoning, but more consistent and reliable fixes.
 pub fn build_code_fix_request(
     error_message: &str,
     file_path: &str,
@@ -156,16 +164,14 @@ pub fn build_code_fix_request(
         "content": user_message
     }));
 
+    // Forced tool choice for guaranteed artifacts (disables thinking)
     Ok(json!({
         "model": CONFIG.anthropic_model,
         "max_tokens": CONFIG.anthropic_max_tokens,
         "temperature": temperature,
         "system": system_prompt,
         "messages": messages,
-        "thinking": {
-            "type": "enabled",
-            "budget_tokens": CONFIG.thinking_budget_complex
-        },
+        // NO thinking - incompatible with forced tool choice
         "tools": [get_code_fix_tool_schema()],
         "tool_choice": {
             "type": "tool",
