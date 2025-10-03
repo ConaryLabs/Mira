@@ -102,28 +102,25 @@ impl MemoryService {
     /// 
     /// Returns the SQLite message ID (i64) directly - no unnecessary String conversion.
     /// This ID can be used to link responses or retrieve the message later.
+    /// 
+    /// FIXED: Removed project prefix logic - session is continuous regardless of project.
+    /// project_id is metadata only, doesn't affect session_id.
     pub async fn save_user_message(
         &self,
         session_id: &str,
         content: &str,
-        project_id: Option<&str>
+        _project_id: Option<&str>  // Kept for future metadata use
     ) -> Result<i64> {
-        // 1. Create memory entry - project scoping handled via session_id
-        let effective_session_id = if let Some(pid) = project_id {
-            format!("project-{}-{}", pid, session_id)
-        } else {
-            session_id.to_string()
-        };
+        // Create memory entry with unchanged session_id (peter-eternal stays peter-eternal)
+        let entry = MemoryEntry::user_message(session_id.to_string(), content.to_string());
         
-        let entry = MemoryEntry::user_message(effective_session_id, content.to_string());
-        
-        // 2. Save via core service
+        // Save via core service
         let entry_id = self.core.save_entry(&entry).await?;
         
-        // 3. Analyze via MessagePipeline coordinator  
+        // Analyze via MessagePipeline coordinator  
         let analysis = self.message_pipeline.analyze_message(&entry, "user").await?;
         
-        // 4. Store analysis via core service
+        // Store analysis via core service
         self.core.store_analysis(entry_id, &analysis).await?;
         
         Ok(entry_id)
@@ -133,28 +130,25 @@ impl MemoryService {
     /// 
     /// Returns the SQLite message ID (i64) directly - no unnecessary String conversion.
     /// This ID can be used to create conversation threads or retrieve the response later.
+    /// 
+    /// FIXED: Removed project prefix logic - session is continuous regardless of project.
+    /// project_id is metadata only, doesn't affect session_id.
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
         response: &crate::llm::types::ChatResponse,
-        project_id: Option<&str>
+        _project_id: Option<&str>  // Kept for future metadata use
     ) -> Result<i64> {
-        // 1. Create memory entry from ChatResponse content with project_id
-        let effective_session_id = if let Some(pid) = project_id {
-            format!("project-{}-{}", pid, session_id)
-        } else {
-            session_id.to_string()
-        };
+        // Create memory entry with unchanged session_id (peter-eternal stays peter-eternal)
+        let entry = MemoryEntry::assistant_message(session_id.to_string(), response.output.clone());
         
-        let entry = MemoryEntry::assistant_message(effective_session_id, response.output.clone());
-        
-        // 2. Save via core service
+        // Save via core service
         let entry_id = self.core.save_entry(&entry).await?;
         
-        // 3. Analyze via MessagePipeline coordinator  
+        // Analyze via MessagePipeline coordinator  
         let analysis = self.message_pipeline.analyze_message(&entry, "assistant").await?;
         
-        // 4. Store analysis via core service
+        // Store analysis via core service
         self.core.store_analysis(entry_id, &analysis).await?;
         
         Ok(entry_id)
