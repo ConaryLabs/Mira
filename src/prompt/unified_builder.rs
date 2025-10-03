@@ -7,6 +7,28 @@ use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::persona::PersonaOverlay;
 use chrono::Utc;
 
+// Code intelligence types for context formatting
+#[derive(Debug, Clone)]
+pub struct CodeElement {
+    pub element_type: String,
+    pub name: String,
+    pub start_line: i32,
+    pub end_line: i32,
+    pub complexity: Option<i32>,
+    pub is_async: Option<bool>,
+    pub is_public: Option<bool>,
+    pub documentation: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QualityIssue {
+    pub severity: String,
+    pub category: String,
+    pub description: String,
+    pub element_name: Option<String>,
+    pub suggestion: Option<String>,
+}
+
 pub struct UnifiedPromptBuilder;
 
 impl UnifiedPromptBuilder {
@@ -41,6 +63,8 @@ impl UnifiedPromptBuilder {
         file_content: &str,
         metadata: Option<&MessageMetadata>,
         project_id: Option<&str>,
+        code_elements: Option<Vec<CodeElement>>,
+        quality_issues: Option<Vec<QualityIssue>>,
     ) -> String {
         let mut prompt = String::new();
         
@@ -49,12 +73,24 @@ impl UnifiedPromptBuilder {
         
         Self::add_project_context(&mut prompt, metadata, project_id);
         Self::add_memory_context(&mut prompt, context);
-        Self::add_code_fix_requirements(&mut prompt, error_context, file_content);
+        Self::add_code_fix_requirements(
+            &mut prompt, 
+            error_context, 
+            file_content,
+            code_elements,
+            quality_issues,
+        );
         
         prompt
     }
     
-    fn add_code_fix_requirements(prompt: &mut String, error_context: &ErrorContext, file_content: &str) {
+    fn add_code_fix_requirements(
+        prompt: &mut String, 
+        error_context: &ErrorContext, 
+        file_content: &str,
+        code_elements: Option<Vec<CodeElement>>,
+        quality_issues: Option<Vec<QualityIssue>>,
+    ) {
         let line_count = file_content.lines().count();
         
         prompt.push_str("\n\n");
@@ -106,6 +142,9 @@ impl UnifiedPromptBuilder {
         prompt.push_str(&error_context.error_message);
         prompt.push_str("\n```\n\n");
         
+        // Add code intelligence context if available
+        Self::add_code_intelligence_context(prompt, &code_elements, &quality_issues);
+        
         prompt.push_str("COMPLETE ORIGINAL FILE CONTENT:\n");
         prompt.push_str("```");
         prompt.push_str(language);
@@ -129,6 +168,99 @@ impl UnifiedPromptBuilder {
         
         prompt.push_str("Remember: Users cannot merge partial code. Provide complete, working files.\n");
         prompt.push_str("=========================================\n\n");
+    }
+    
+    fn add_code_intelligence_context(
+        prompt: &mut String,
+        code_elements: &Option<Vec<CodeElement>>,
+        quality_issues: &Option<Vec<QualityIssue>>,
+    ) {
+        let has_elements = code_elements.as_ref().map_or(false, |e| !e.is_empty());
+        let has_issues = quality_issues.as_ref().map_or(false, |i| !i.is_empty());
+        
+        if !has_elements && !has_issues {
+            return;
+        }
+        
+        prompt.push_str("==== CODE STRUCTURE ANALYSIS ====\n\n");
+        
+        // Format code elements
+        if let Some(elements) = code_elements {
+            if !elements.is_empty() {
+                prompt.push_str("Code Elements Found:\n");
+                
+                for element in elements {
+                    // Basic element info
+                    prompt.push_str(&format!(
+                        "  - {} `{}` (lines {}-{})",
+                        element.element_type,
+                        element.name,
+                        element.start_line,
+                        element.end_line
+                    ));
+                    
+                    // Add complexity if available
+                    if let Some(complexity) = element.complexity {
+                        prompt.push_str(&format!(" [complexity: {}]", complexity));
+                    }
+                    
+                    // Add async/public flags
+                    let mut flags = Vec::new();
+                    if element.is_async == Some(true) {
+                        flags.push("async");
+                    }
+                    if element.is_public == Some(true) {
+                        flags.push("pub");
+                    }
+                    if !flags.is_empty() {
+                        prompt.push_str(&format!(" [{}]", flags.join(", ")));
+                    }
+                    
+                    prompt.push('\n');
+                    
+                    // Add documentation if available
+                    if let Some(doc) = &element.documentation {
+                        let doc_preview = if doc.len() > 80 {
+                            format!("{}...", &doc[..77])
+                        } else {
+                            doc.clone()
+                        };
+                        prompt.push_str(&format!("    Doc: {}\n", doc_preview));
+                    }
+                }
+                
+                prompt.push('\n');
+            }
+        }
+        
+        // Format quality issues
+        if let Some(issues) = quality_issues {
+            if !issues.is_empty() {
+                prompt.push_str("Detected Quality Issues:\n");
+                
+                for issue in issues {
+                    prompt.push_str(&format!(
+                        "  - [{}] {}: {}\n",
+                        issue.severity.to_uppercase(),
+                        issue.category,
+                        issue.description
+                    ));
+                    
+                    if let Some(element) = &issue.element_name {
+                        prompt.push_str(&format!("    In: {}\n", element));
+                    }
+                    
+                    if let Some(suggestion) = &issue.suggestion {
+                        prompt.push_str(&format!("    Suggested: {}\n", suggestion));
+                    }
+                }
+                
+                prompt.push('\n');
+            }
+        }
+        
+        prompt.push_str("Use this structural understanding when generating your fix.\n");
+        prompt.push_str("====================================\n\n");
     }
     
     pub fn is_code_related(metadata: Option<&MessageMetadata>) -> bool {

@@ -11,8 +11,9 @@ use crate::llm::structured::{CompleteResponse, code_fix_processor, claude_proces
 use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
+use crate::memory::features::code_intelligence::types::FileContext;
 use crate::persona::PersonaOverlay;
-use crate::prompt::unified_builder::UnifiedPromptBuilder;
+use crate::prompt::unified_builder::{UnifiedPromptBuilder, CodeElement, QualityIssue};
 use crate::state::AppState;
 use crate::config::CONFIG;
 
@@ -52,7 +53,6 @@ impl UnifiedChatHandler {
                     error_context.original_line_count = content.lines().count();
                 }
                 
-                // Use two-phase approach with thinking
                 return self.handle_error_fix_with_thinking(request, error_context).await;
             } else {
                 warn!("Error detected but no project context available");
@@ -79,7 +79,7 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // Build context messages for LLM (with prompt caching)
+        // Build context messages for LLM
         let context_messages = self.build_context_messages(&context).await?;
         
         // Get structured response from LLM
@@ -92,7 +92,7 @@ impl UnifiedChatHandler {
             )
             .await?;
         
-        // Save to database with user message link
+        // Save to database
         let _message_id = save_structured_response(
             &self.app_state.sqlite_pool,
             &request.session_id,
@@ -103,9 +103,7 @@ impl UnifiedChatHandler {
         Ok(complete_response)
     }
     
-    /// Handle error fix with TWO-PHASE approach:
-    /// Phase 1: Deep analysis with thinking (uses tiered budget based on complexity)
-    /// Phase 2: Structured fix with forced tool (no thinking, guaranteed structured output)
+    /// Two-phase error fix: analyze with thinking → generate structured fix
     async fn handle_error_fix_with_thinking(
         &self,
         request: ChatRequest,
@@ -122,46 +120,36 @@ impl UnifiedChatHandler {
         let file_lines = file_content.lines().count();
         info!("Loaded file with {} lines", file_lines);
         
+        // Get code intelligence context
+        let code_intel = self.get_code_intelligence_for_file(
+            &error_context.file_path,
+            request.project_id.as_deref()
+        ).await?;
+        
+        if code_intel.is_some() {
+            info!("Retrieved code intelligence analysis for {}", error_context.file_path);
+        }
+        
         // Build context and persona
         let context = self.build_context(&request.session_id, &request.content).await?;
         let persona = self.select_persona(&request.metadata);
         
-        // ============================================================
-        // PHASE 1: DEEP ANALYSIS WITH THINKING
-        // ============================================================
+        // PHASE 1: Deep analysis with thinking
+        info!("Phase 1 - Analyzing error with extended thinking");
         
-        // Use existing complexity analyzer to determine thinking budget
-        // Note: We only use the thinking_budget, not the temperature
-        // because thinking REQUIRES temperature=1.0 (Claude API requirement)
-        let (thinking_budget, _) = claude_processor::analyze_message_complexity(&request.content);
-        
-        info!(
-            "Phase 1 - Analysis with thinking: budget={}, temp=1.0 (required)",
-            thinking_budget
-        );
-        
-        // Build analysis prompt
         let analysis_prompt = format!(
-            "You are analyzing a code error to understand it deeply before fixing.\n\n\
-            Error Message:\n{}\n\n\
-            File: {}\n\
-            Lines: {}\n\n\
-            File Content:\n```\n{}\n```\n\n\
-            Think through:\n\
-            1. What is the root cause of this error?\n\
-            2. What parts of the code are affected?\n\
-            3. What are potential side effects of different fixes?\n\
-            4. Are there edge cases to consider?\n\
-            5. What is the cleanest solution?\n\n\
-            Provide your analysis and recommended approach.",
+            "Analyze this error and plan how to fix it:\n\n\
+             Error: {}\n\
+             File: {}\n\
+             Lines: {}\n\n\
+             What's the root cause and what changes are needed?",
             error_context.error_message,
             error_context.file_path,
-            file_lines,
-            file_content
+            file_lines
         );
         
-        // Build Phase 1 request with thinking enabled
-        // CRITICAL: Temperature MUST be 1.0 when thinking is enabled
+        let (thinking_budget, _) = claude_processor::analyze_message_complexity(&request.content);
+        
         let analysis_request = json!({
             "model": CONFIG.anthropic_model,
             "max_tokens": 4000,
@@ -185,28 +173,32 @@ impl UnifiedChatHandler {
             ]
         });
         
-        // Get analysis response
         let analysis_response = self.app_state.llm_client
             .post_response_with_retry(analysis_request)
             .await?;
         
-        // Extract thinking and analysis text
         let thinking_content = self.extract_thinking_blocks(&analysis_response);
         let analysis_text = self.extract_text_content(&analysis_response);
         
         info!(
-            "Phase 1 complete - thinking blocks: {}, analysis length: {}",
+            "Phase 1 complete - thinking: {} chars, analysis: {} chars",
             thinking_content.len(),
             analysis_text.len()
         );
         
-        // ============================================================
-        // PHASE 2: STRUCTURED FIX WITH FORCED TOOL
-        // ============================================================
+        // PHASE 2: Structured fix with code intelligence
+        info!("Phase 2 - Generating structured fix");
         
-        info!("Phase 2 - Generating structured fix with tool");
+        // Convert FileContext to prompt builder types
+        let (code_elements, quality_issues) = if let Some(intel) = code_intel {
+            (
+                Some(Self::convert_to_code_elements(&intel)),
+                Some(Self::convert_to_quality_issues(&intel)),
+            )
+        } else {
+            (None, None)
+        };
         
-        // Build system prompt for fix phase
         let fix_system_prompt = UnifiedPromptBuilder::build_code_fix_prompt(
             &persona,
             &context,
@@ -214,9 +206,11 @@ impl UnifiedChatHandler {
             &file_content,
             request.metadata.as_ref(),
             request.project_id.as_deref(),
+            code_elements,
+            quality_issues,
         );
         
-        // Include analysis as context message
+        // Include analysis as context
         let context_messages = vec![
             json!({
                 "role": "user",
@@ -231,7 +225,6 @@ impl UnifiedChatHandler {
             })
         ];
         
-        // Build code fix request with forced tool (no thinking)
         let fix_request = code_fix_processor::build_code_fix_request(
             &error_context.error_message,
             &error_context.file_path,
@@ -240,7 +233,6 @@ impl UnifiedChatHandler {
             context_messages,
         )?;
         
-        // Get fix response
         let fix_response = self.app_state.llm_client
             .post_response_with_retry(fix_request)
             .await?;
@@ -248,7 +240,6 @@ impl UnifiedChatHandler {
         // Extract and validate code fix
         let code_fix = code_fix_processor::extract_code_fix_response(&fix_response)?;
         
-        // Validate line counts
         let warnings = code_fix.validate_line_counts(&ErrorContext {
             error_message: error_context.error_message.clone(),
             file_path: error_context.file_path.clone(),
@@ -265,10 +256,8 @@ impl UnifiedChatHandler {
             code_fix.confidence
         );
         
-        // Extract metadata from Phase 2 (the actual fix)
+        // Extract metadata and build complete response
         let metadata = crate::llm::structured::processor::extract_metadata(&fix_response, 0)?;
-        
-        // Convert to CompleteResponse with enhanced output
         let mut complete_response = code_fix.into_complete_response(metadata, fix_response);
         
         // Enhance output with thinking summary if substantial
@@ -295,79 +284,123 @@ impl UnifiedChatHandler {
             Some(user_message_id),
         ).await?;
         
+        info!("Error fix complete and saved for session: {}", request.session_id);
         Ok(complete_response)
     }
     
-    /// Extract thinking blocks from Claude response
-    fn extract_thinking_blocks(&self, response: &Value) -> String {
-        let mut thinking_parts = Vec::new();
+    /// Get code intelligence context for a file
+    async fn get_code_intelligence_for_file(
+        &self,
+        file_path: &str,
+        project_id: Option<&str>,
+    ) -> Result<Option<FileContext>> {
+        let project_id = match project_id {
+            Some(id) => id,
+            None => return Ok(None),
+        };
         
-        if let Some(content) = response["content"].as_array() {
-            for block in content {
-                if block["type"] == "thinking" {
-                    if let Some(thought) = block["thinking"].as_str() {
-                        thinking_parts.push(thought.to_string());
-                    }
-                }
-            }
-        }
+        // Get git attachment for this project
+        let attachment = sqlx::query!(
+            r#"SELECT id FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
+            project_id
+        )
+        .fetch_optional(&self.app_state.sqlite_pool)
+        .await?;
         
-        thinking_parts.join("\n\n")
+        let attachment = match attachment {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+        
+        // Get file_id from repository_files
+        let file_record = sqlx::query!(
+            r#"SELECT id FROM repository_files WHERE attachment_id = ? AND file_path = ? LIMIT 1"#,
+            attachment.id,
+            file_path
+        )
+        .fetch_optional(&self.app_state.sqlite_pool)
+        .await?;
+        
+        let Some(f) = file_record else {
+            debug!("File {} not in repository_files, skipping code intelligence", file_path);
+            return Ok(None);
+        };
+        
+        let Some(file_id) = f.id else {
+            debug!("File record has null id");
+            return Ok(None);
+        };
+        
+        // Get analysis from code intelligence service
+        self.app_state.code_intelligence
+            .get_file_analysis(file_id)
+            .await
     }
     
-    /// Extract text content from Claude response
-    fn extract_text_content(&self, response: &Value) -> String {
-        if let Some(content) = response["content"].as_array() {
-            for block in content {
-                if block["type"] == "text" {
-                    if let Some(text) = block["text"].as_str() {
-                        return text.to_string();
-                    }
-                }
+    /// Convert FileContext to CodeElement vector for prompt builder
+    fn convert_to_code_elements(file_context: &FileContext) -> Vec<CodeElement> {
+        file_context.elements.iter().map(|elem| {
+            CodeElement {
+                element_type: elem.element_type.clone(),
+                name: elem.name.clone(),
+                start_line: elem.start_line as i32,
+                end_line: elem.end_line as i32,
+                complexity: Some(elem.complexity_score as i32),
+                is_async: Some(elem.is_async),
+                is_public: Some(elem.visibility == "public"),
+                documentation: elem.documentation.clone(),
             }
-        }
-        
-        String::new()
+        }).collect()
     }
     
-    /// Load complete file contents, preferring project-scoped paths
-    /// 
-    /// Attempts to load from project context first (via git attachment local path),
-    /// falling back to direct filesystem read if project context is unavailable.
+    /// Convert FileContext to QualityIssue vector for prompt builder
+    fn convert_to_quality_issues(file_context: &FileContext) -> Vec<QualityIssue> {
+        file_context.quality_issues.iter().map(|issue| {
+            QualityIssue {
+                severity: issue.severity.clone(),
+                category: issue.issue_type.clone(),
+                description: issue.description.clone(),
+                element_name: Some(issue.title.clone()),
+                suggestion: issue.suggested_fix.clone(),
+            }
+        }).collect()
+    }
+    
+    /// Load complete file from project repository
     async fn load_complete_file(
         &self,
         file_path: &str,
-        project_id: Option<&str>
+        project_id: Option<&str>,
     ) -> Result<String> {
-        // Try project-scoped read first
+        // Try to load from project context first
         if let Some(proj_id) = project_id {
-            if let Some(project) = self.app_state.project_store.get_project(proj_id).await? {
-                debug!("Loading file from project context: {}", project.name);
+            if let Ok(Some(attachment)) = sqlx::query!(
+                r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
+                proj_id
+            )
+            .fetch_optional(&self.app_state.sqlite_pool)
+            .await
+            {
+                let local_path = attachment.local_path;
+                let full_path = Path::new(&local_path).join(file_path);
                 
-                if let Some(attachment) = self.app_state.git_client.store
-                    .get_attachment(proj_id)
-                    .await? 
-                {
-                    let full_path = Path::new(&attachment.local_path).join(file_path);
-                    
-                    match tokio::fs::read_to_string(&full_path).await {
-                        Ok(content) => {
-                            debug!("Loaded {} bytes from project file: {}", content.len(), file_path);
-                            return Ok(content);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to read project file {}: {}. Trying direct path fallback.", 
-                                full_path.display(), 
-                                e
-                            );
-                        }
+                match tokio::fs::read_to_string(&full_path).await {
+                    Ok(content) => {
+                        debug!("Loaded {} bytes from project file: {}", content.len(), file_path);
+                        return Ok(content);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to read project file {}: {}. Trying direct path fallback.", 
+                            full_path.display(), 
+                            e
+                        );
                     }
                 }
             }
         }
         
-        // Fallback: try direct path (useful for non-project files or development)
+        // Fallback: try direct path
         tokio::fs::read_to_string(file_path).await
             .map_err(|e| anyhow::anyhow!("Failed to load file '{}': {}", file_path, e))
     }
@@ -384,21 +417,14 @@ impl UnifiedChatHandler {
     }
     
     async fn build_context(&self, session_id: &str, content: &str) -> Result<RecallContext> {
-        // Use parallel_recall_context with proper parameters
         self.app_state.memory_service
             .parallel_recall_context(session_id, content, 5, 5)
             .await
     }
     
-    /// Build context messages in simple format (no caching)
-    /// 
-    /// Context caching disabled because conversation history changes with each
-    /// request (sliding window), resulting in cache misses while still paying
-    /// the 25% write premium. Only system prompt + tools are cached (1h TTL).
     async fn build_context_messages(&self, context: &RecallContext) -> Result<Vec<Value>> {
         let mut messages = Vec::new();
         
-        // Add recent messages in simple format (no cache_control)
         for memory in &context.recent {
             messages.push(json!({
                 "role": if memory.role == "user" { "user" } else { "assistant" },
@@ -409,14 +435,40 @@ impl UnifiedChatHandler {
         Ok(messages)
     }
     
-    /// Select persona based on metadata
-    /// 
-    /// Currently always returns Default as persona switching is not implemented.
-    /// Infrastructure exists for switching based on metadata (see PersonaOverlay enum),
-    /// but the actual switching logic hasn't been built yet.
     fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
-        // TODO: Implement persona switching based on metadata when feature is ready
-        // Possible triggers: explicit user request, conversation context, mood detection
         PersonaOverlay::Default
+    }
+    
+    fn extract_thinking_blocks(&self, response: &Value) -> String {
+        let mut thinking = String::new();
+        
+        if let Some(content) = response["content"].as_array() {
+            for block in content {
+                if block["type"] == "thinking" {
+                    if let Some(text) = block["thinking"].as_str() {
+                        if !thinking.is_empty() {
+                            thinking.push_str("\n\n");
+                        }
+                        thinking.push_str(text);
+                    }
+                }
+            }
+        }
+        
+        thinking
+    }
+    
+    fn extract_text_content(&self, response: &Value) -> String {
+        if let Some(content) = response["content"].as_array() {
+            for block in content {
+                if block["type"] == "text" {
+                    if let Some(text) = block["text"].as_str() {
+                        return text.to_string();
+                    }
+                }
+            }
+        }
+        
+        String::new()
     }
 }
