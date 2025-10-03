@@ -56,9 +56,9 @@ impl AppState {
             git_store.clone(),
         );
         
-        // Initialize LLM client with proper config
+        // FIXED: Use Claude API key for chat, not OpenAI embedding key
         let client_config = ClientConfig {
-            api_key: CONFIG.openai_embedding_api_key.clone(),
+            api_key: CONFIG.anthropic_api_key.clone(),  // <-- FIXED: Was openai_embedding_api_key
             base_url: CONFIG.anthropic_base_url.clone(),
             model: CONFIG.anthropic_model.clone(),
             max_output_tokens: CONFIG.anthropic_max_tokens,

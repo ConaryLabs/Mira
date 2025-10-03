@@ -16,8 +16,11 @@ pub struct ClientConfig {
 impl ClientConfig {
     /// Create configuration from centralized CONFIG
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY must be set"))?;
+        // FIXED: Use CONFIG instead of std::env::var to ensure consistency
+        let api_key = CONFIG.anthropic_api_key.clone();
+        
+        eprintln!("🔧 DEBUG ClientConfig: Using API key from CONFIG: {}...", 
+            &api_key[..std::cmp::min(25, api_key.len())]);
         
         debug!(
             "Initialized Claude client: model={}, max_tokens={}",
@@ -99,7 +102,7 @@ impl ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            api_key: "".to_string(),
+            api_key: CONFIG.anthropic_api_key.clone(),
             base_url: CONFIG.anthropic_base_url.clone(),
             model: CONFIG.anthropic_model.clone(),
             max_output_tokens: CONFIG.anthropic_max_tokens,

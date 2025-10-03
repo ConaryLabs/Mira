@@ -188,9 +188,15 @@ impl MiraConfig {
             panic!("MIRA_EMBED_HEADS must include all 4 heads: 'semantic,code,summary,documents' - got: '{}'", embed_heads);
         }
 
+        // Load and debug print the API key
+        let anthropic_api_key = require_env("ANTHROPIC_API_KEY");
+        eprintln!("🔑 DEBUG: Loaded ANTHROPIC_API_KEY from .env: {}...", 
+            &anthropic_api_key[..std::cmp::min(25, anthropic_api_key.len())]);
+        eprintln!("🔑 DEBUG: Key length: {} characters", anthropic_api_key.len());
+
         Self {
             // Claude configuration
-            anthropic_api_key: require_env("ANTHROPIC_API_KEY"),
+            anthropic_api_key,
             anthropic_base_url: require_env("ANTHROPIC_BASE_URL"),
             anthropic_model: require_env("ANTHROPIC_MODEL"),
             anthropic_max_tokens: require_env_parsed("ANTHROPIC_MAX_TOKENS"),
