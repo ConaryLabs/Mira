@@ -77,7 +77,7 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // Build context messages for LLM
+        // Build context messages for LLM (with prompt caching)
         let context_messages = self.build_context_messages(&context).await?;
         
         // Get structured response from LLM
@@ -229,10 +229,15 @@ impl UnifiedChatHandler {
             .await
     }
     
+    /// Build context messages in simple format (no caching)
+    /// 
+    /// Context caching disabled because conversation history changes with each
+    /// request (sliding window), resulting in cache misses while still paying
+    /// the 25% write premium. Only system prompt + tools are cached (1h TTL).
     async fn build_context_messages(&self, context: &RecallContext) -> Result<Vec<Value>> {
         let mut messages = Vec::new();
         
-        // Add recent messages
+        // Add recent messages in simple format (no cache_control)
         for memory in &context.recent {
             messages.push(json!({
                 "role": if memory.role == "user" { "user" } else { "assistant" },

@@ -209,7 +209,7 @@ impl OpenAIClient {
         }
     }
 
-    // UPDATED FOR CLAUDE: Changed endpoint and headers
+    // UPDATED FOR CLAUDE WITH PROMPT CACHING + CONTEXT MANAGEMENT
     async fn post_response_internal(&self, body: Value) -> Result<Value> {
         let url = format!("{}/v1/messages", &self.config.base_url());
         
@@ -218,6 +218,7 @@ impl OpenAIClient {
             .post(url)
             .header("x-api-key", self.config.api_key())
             .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "prompt-caching-2024-07-31,context-management-2025-06-27")  // NEW: Enable caching + context management
             .header(header::CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
