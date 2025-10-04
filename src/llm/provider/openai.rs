@@ -116,6 +116,7 @@ impl LlmProvider for OpenAiProvider {
         messages: Vec<ChatMessage>,
         system: String,
         tools: Vec<Value>,
+        tool_choice: Option<Value>,  // NEW: Accept for API consistency
     ) -> Result<Value> {
         // Convert to GPT-5 input format
         let mut full_input = system.clone();
@@ -136,6 +137,11 @@ impl LlmProvider for OpenAiProvider {
             "max_output_tokens": self.max_tokens,
             "tools": tools,
         });
+        
+        if tool_choice.is_some() {
+            debug!("GPT-5 tool_choice requested but not yet implemented");
+            // TODO: Add tool_choice support if GPT-5 API supports it
+        }
         
         debug!("GPT-5 tool request: {} tools", tools.len());
         

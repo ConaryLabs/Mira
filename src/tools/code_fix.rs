@@ -148,12 +148,13 @@ impl CodeFixHandler {
             .ok_or_else(|| anyhow::anyhow!("Missing tools in fix request"))?
             .clone();
 
-        // UPDATED: Use provider with tools
+        // UPDATED: Use provider with tools (no forced tool - let it use code_fix naturally)
         let fix_response = self.llm
             .chat_with_tools(
                 fix_messages,
                 fix_request["system"].as_str().unwrap_or("").to_string(),
                 tools,
+                None,  // No tool_choice - let Claude decide when to use code_fix tool
             )
             .await?;
 

@@ -124,6 +124,7 @@ impl LlmProvider for ClaudeProvider {
         messages: Vec<ChatMessage>,
         system: String,
         tools: Vec<Value>,
+        tool_choice: Option<Value>,  // NEW: Optional forced tool selection
     ) -> Result<Value> {
         // Convert to Claude Messages API format
         let mut api_messages = Vec::new();
@@ -134,7 +135,7 @@ impl LlmProvider for ClaudeProvider {
             }));
         }
         
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": system,
@@ -142,7 +143,25 @@ impl LlmProvider for ClaudeProvider {
             "tools": tools,
         });
         
-        debug!("Claude tool request: {} tools", tools.len());
+        // CRITICAL: Add thinking ONLY if tool_choice is NOT set
+        // Claude API doesn't allow thinking with forced tool use
+        if tool_choice.is_none() {
+            body["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": 10000  // Default budget for tool use
+            });
+        }
+        
+        // Add tool_choice if provided (forces specific tool, disables thinking)
+        if let Some(choice) = tool_choice {
+            body["tool_choice"] = choice;
+        }
+        
+        debug!(
+            "Claude tool request: {} tools, forced={}", 
+            tools.len(), 
+            body.get("tool_choice").is_some()
+        );
         
         let response = self.client
             .post("https://api.anthropic.com/v1/messages")

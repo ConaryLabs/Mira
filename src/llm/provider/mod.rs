@@ -1,6 +1,5 @@
 // src/llm/provider/mod.rs
 // LLM Provider trait and type definitions for multi-provider support
-
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -59,6 +58,7 @@ pub trait LlmProvider: Send + Sync {
         _messages: Vec<ChatMessage>,
         _system: String,
         _tools: Vec<Value>,
+        _tool_choice: Option<Value>,  // NEW: Optional forced tool selection
     ) -> Result<Value> {
         // Default: not supported
         Err(anyhow::anyhow!("{} does not support tool calling", self.name()))

@@ -86,7 +86,6 @@ impl UnifiedChatHandler {
         let context = self.build_context(&request.session_id, &request.content).await?;
         let persona = self.select_persona(&request.metadata);
 
-        // UPDATED: Use llm instead of llm_client
         let handler = CodeFixHandler::new(
             self.app_state.llm.clone(),
             self.app_state.code_intelligence.clone(),
@@ -123,6 +122,24 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
+        let mut context_messages = self.build_context_messages(&context).await?;
+        context_messages.push(json!({
+            "role": "user",
+            "content": request.content
+        }));
+        
+        // FIXED: Different approach based on project context
+        if request.project_id.is_none() {
+            // No project: Force respond_to_user ONLY (fast, no thinking, no other tools)
+            return self.handle_simple_chat(
+                user_message_id,
+                context_messages,
+                system_prompt,
+                &request,
+            ).await;
+        }
+        
+        // Has project: All tools available, thinking enabled
         let tools = vec![
             get_response_tool_schema(),
             get_read_file_tool_schema(),
@@ -130,19 +147,11 @@ impl UnifiedChatHandler {
             get_list_files_tool_schema(),
         ];
         
-        let (_thinking_budget, _temperature) = claude_processor::analyze_message_complexity(&request.content);
-        
-        let mut context_messages = self.build_context_messages(&context).await?;
-        context_messages.push(json!({
-            "role": "user",
-            "content": request.content
-        }));
-        
         // Tool execution loop (max 10 iterations)
         for iteration in 0..10 {
             info!("Tool loop iteration {}", iteration);
             
-            // UPDATED: Convert to provider format
+            // Convert to provider format
             let provider_messages: Vec<ChatMessage> = context_messages
                 .iter()
                 .filter_map(|m| {
@@ -158,12 +167,13 @@ impl UnifiedChatHandler {
                 })
                 .collect();
             
-            // UPDATED: Call provider with tools
+            // Call provider with tools (NO forced tool - let Claude decide, thinking enabled)
             let raw_response = self.app_state.llm
                 .chat_with_tools(
                     provider_messages,
                     system_prompt.clone(),
                     tools.clone(),
+                    None,  // No tool_choice - natural tool use with thinking
                 )
                 .await?;
             
@@ -257,6 +267,66 @@ impl UnifiedChatHandler {
         }
         
         Err(anyhow!("Tool loop exceeded max iterations"))
+    }
+    
+    /// Handle simple chat without project (forced respond_to_user only)
+    async fn handle_simple_chat(
+        &self,
+        user_message_id: i64,
+        context_messages: Vec<Value>,
+        system_prompt: String,
+        request: &ChatRequest,
+    ) -> Result<CompleteResponse> {
+        info!("Simple chat mode: forcing respond_to_user tool");
+        
+        let tools = vec![get_response_tool_schema()];
+        
+        let provider_messages: Vec<ChatMessage> = context_messages
+            .iter()
+            .filter_map(|m| {
+                Some(ChatMessage {
+                    role: m["role"].as_str()?.to_string(),
+                    content: if let Some(text) = m["content"].as_str() {
+                        text.to_string()
+                    } else {
+                        serde_json::to_string(&m["content"]).ok()?
+                    },
+                })
+            })
+            .collect();
+        
+        // Force respond_to_user tool (no thinking allowed with forced tools)
+        let tool_choice = Some(json!({
+            "type": "tool",
+            "name": "respond_to_user"
+        }));
+        
+        let raw_response = self.app_state.llm.chat_with_tools(
+            provider_messages,
+            system_prompt,
+            tools,
+            tool_choice,  // Force respond_to_user
+        ).await?;
+        
+        // Extract structured response
+        let structured = claude_processor::extract_claude_content_from_tool(&raw_response)?;
+        let metadata = claude_processor::extract_claude_metadata(&raw_response, 0)?;
+        
+        let complete_response = CompleteResponse {
+            structured,
+            metadata,
+            raw_response,
+            artifacts: None,
+        };
+        
+        save_structured_response(
+            &self.app_state.sqlite_pool,
+            &request.session_id,
+            &complete_response,
+            Some(user_message_id),
+        ).await?;
+        
+        Ok(complete_response)
     }
     
     /// Execute tool via ToolExecutor (delegated to src/tools/executor.rs)

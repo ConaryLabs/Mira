@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::Instant;
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub struct DeepSeekProvider {
     client: Client,
@@ -124,9 +124,14 @@ impl LlmProvider for DeepSeekProvider {
         messages: Vec<ChatMessage>,
         system: String,
         tools: Vec<Value>,
+        tool_choice: Option<Value>,  // NEW: Accept for API consistency
     ) -> Result<Value> {
         if self.model == "deepseek-reasoner" {
             return Err(anyhow!("DeepSeek R1 does not support tool calling"));
+        }
+        
+        if tool_choice.is_some() {
+            warn!("DeepSeek does not support forced tool_choice, ignoring");
         }
         
         // Convert to OpenAI-compatible format
