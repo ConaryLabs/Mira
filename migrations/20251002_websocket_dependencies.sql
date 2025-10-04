@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS websocket_calls (
     project_id TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
-    FOREIGN KEY (frontend_file_id) REFERENCES code_elements(id) ON DELETE CASCADE,
+    FOREIGN KEY (frontend_file_id) REFERENCES repository_files(id) ON DELETE CASCADE,
     FOREIGN KEY (handler_id) REFERENCES websocket_handlers(id) ON DELETE SET NULL
 );
 
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS websocket_handlers (
     project_id TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
-    FOREIGN KEY (backend_file_id) REFERENCES code_elements(id) ON DELETE CASCADE
+    FOREIGN KEY (backend_file_id) REFERENCES repository_files(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_ws_handlers_backend ON websocket_handlers(backend_file_id);
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS websocket_responses (
     project_id TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
-    FOREIGN KEY (backend_file_id) REFERENCES code_elements(id) ON DELETE CASCADE
+    FOREIGN KEY (backend_file_id) REFERENCES repository_files(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_ws_responses_backend ON websocket_responses(backend_file_id);
