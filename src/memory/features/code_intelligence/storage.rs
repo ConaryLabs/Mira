@@ -25,9 +25,9 @@ impl CodeIntelligenceStorage {
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        // Create bindings to avoid temporary value issues
-        let element_count = analysis.elements.len() as i32;
-        let complexity_score = analysis.complexity_score as i32;
+        // No more casting - use i64 directly (SQLite's native INTEGER)
+        let element_count = analysis.elements.len() as i64;
+        let complexity_score = analysis.complexity_score;
 
         // Update repository_files with analysis metadata
         sqlx::query!(
@@ -47,9 +47,10 @@ impl CodeIntelligenceStorage {
 
         // Store code elements
         for element in &analysis.elements {
-            let start_line = element.start_line as i32;
-            let end_line = element.end_line as i32;
-            let element_complexity = element.complexity_score as i32;
+            // No casting - all i64 now
+            let start_line = element.start_line;
+            let end_line = element.end_line;
+            let element_complexity = element.complexity_score;
 
             let element_id = sqlx::query!(
                 r#"
@@ -136,7 +137,7 @@ impl CodeIntelligenceStorage {
     }
 
     /// Delete all code intelligence data for a repository
-    pub async fn delete_repository_data(&self, attachment_id: &str) -> Result<i32> {
+    pub async fn delete_repository_data(&self, attachment_id: &str) -> Result<i64> {
         let mut tx = self.pool.begin().await?;
         
         // Get file IDs for this attachment
@@ -149,7 +150,7 @@ impl CodeIntelligenceStorage {
         
         let file_ids: Vec<i64> = rows
             .into_iter()
-            .filter_map(|row| row.id.map(|id| id as i64))
+            .filter_map(|row| row.id)
             .collect();
         
         if file_ids.is_empty() {
@@ -176,7 +177,7 @@ impl CodeIntelligenceStorage {
         // Delete code elements and count them
         let delete_elements_query = format!("DELETE FROM code_elements WHERE file_id IN ({})", file_ids_str);
         let result = sqlx::query(&delete_elements_query).execute(&mut *tx).await?;
-        let deleted_count = result.rows_affected() as i32;
+        let deleted_count = result.rows_affected() as i64;
         
         // Reset repository_files analysis status
         sqlx::query!(
@@ -212,11 +213,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0), // Option<i64> -> i64
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -262,11 +263,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0),
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -334,11 +335,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0),
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -383,13 +384,13 @@ impl CodeIntelligenceStorage {
         .await?;
 
         Ok(RepoStats {
-            total_files: stats.total_files as u32,
-            analyzed_files: stats.analyzed_files.unwrap_or(0) as u32,
-            total_elements: stats.total_elements.unwrap_or(0) as u32,
-            avg_complexity: stats.avg_complexity.unwrap_or(0) as f64,
-            total_quality_issues: quality_stats.total_issues as u32,
-            critical_issues: quality_stats.critical_issues.unwrap_or(0) as u32,
-            high_issues: quality_stats.high_issues.unwrap_or(0) as u32,
+            total_files: stats.total_files as i64,               // COUNT() returns i32, cast to i64
+            analyzed_files: stats.analyzed_files.unwrap_or(0) as i64,
+            total_elements: stats.total_elements.unwrap_or(0) as i64,
+            avg_complexity: stats.avg_complexity.unwrap_or(0) as f64,  // AVG() returns i64 in sqlx, cast to f64
+            total_quality_issues: quality_stats.total_issues as i64,
+            critical_issues: quality_stats.critical_issues.unwrap_or(0) as i64,
+            high_issues: quality_stats.high_issues.unwrap_or(0) as i64,
         })
     }
 
@@ -417,11 +418,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0),
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -464,11 +465,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0),
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -500,11 +501,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0),
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -539,11 +540,11 @@ impl CodeIntelligenceStorage {
                 name: row.name,
                 full_path: row.full_path,
                 visibility: row.visibility,
-                start_line: row.start_line as u32,
-                end_line: row.end_line as u32,
+                start_line: row.start_line,           // i64 -> i64 (no cast!)
+                end_line: row.end_line,               // i64 -> i64 (no cast!)
                 content: row.content,
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0) as u32,
+                complexity_score: row.complexity_score.unwrap_or(0),
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -558,11 +559,11 @@ impl CodeIntelligenceStorage {
 /// Statistics for a repository's code analysis
 #[derive(Debug)]
 pub struct RepoStats {
-    pub total_files: u32,
-    pub analyzed_files: u32,
-    pub total_elements: u32,
+    pub total_files: i64,          // Changed from u32 - matches SQLite INTEGER
+    pub analyzed_files: i64,       // Changed from u32 - matches SQLite INTEGER
+    pub total_elements: i64,       // Changed from u32 - matches SQLite INTEGER
     pub avg_complexity: f64,
-    pub total_quality_issues: u32,
-    pub critical_issues: u32,
-    pub high_issues: u32,
+    pub total_quality_issues: i64, // Changed from u32 - matches SQLite INTEGER
+    pub critical_issues: i64,      // Changed from u32 - matches SQLite INTEGER
+    pub high_issues: i64,          // Changed from u32 - matches SQLite INTEGER
 }

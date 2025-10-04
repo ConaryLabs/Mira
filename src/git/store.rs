@@ -198,7 +198,7 @@ impl GitStore {
         file_path: &str,
         content_hash: &str,
         language: Option<&str>,
-        line_count: i32,
+        line_count: i64,  // Changed from i32 - matches SQLite INTEGER
     ) -> Result<i64> {
         let result = sqlx::query!(
             r#"
@@ -241,12 +241,12 @@ impl GitStore {
             content_hash: r.content_hash,
             language: r.language,
             last_indexed: r.last_indexed.map(|dt| dt.to_string()).unwrap_or_default(),
-            line_count: r.line_count.map(|v| v as i32),
-            function_count: r.function_count.map(|v| v as i32),
+            line_count: r.line_count,        // i64 -> i64 (no cast!)
+            function_count: r.function_count, // i64 -> i64 (no cast!)
         }).collect())
     }
 
-    pub async fn update_file_analysis(&self, file_id: i64, function_count: Option<i32>) -> Result<()> {
+    pub async fn update_file_analysis(&self, file_id: i64, function_count: Option<i64>) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE repository_files
@@ -287,6 +287,6 @@ pub struct RepositoryFile {
     pub content_hash: String,
     pub language: Option<String>,
     pub last_indexed: String,
-    pub line_count: Option<i32>,
-    pub function_count: Option<i32>,
+    pub line_count: Option<i64>,      // Changed from Option<i32>
+    pub function_count: Option<i64>,  // Changed from Option<i32>
 }

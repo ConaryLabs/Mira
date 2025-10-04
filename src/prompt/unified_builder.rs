@@ -12,9 +12,9 @@ use chrono::Utc;
 pub struct CodeElement {
     pub element_type: String,
     pub name: String,
-    pub start_line: i32,
-    pub end_line: i32,
-    pub complexity: Option<i32>,
+    pub start_line: i64,      // Changed from i32 - matches SQLite INTEGER
+    pub end_line: i64,        // Changed from i32 - matches SQLite INTEGER
+    pub complexity: Option<i64>, // Changed from i32 - matches SQLite INTEGER
     pub is_async: Option<bool>,
     pub is_public: Option<bool>,
     pub documentation: Option<String>,

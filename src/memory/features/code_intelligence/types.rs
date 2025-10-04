@@ -1,5 +1,4 @@
 // src/memory/features/code_intelligence/types.rs
-
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::future::Future;
@@ -11,11 +10,11 @@ pub struct CodeElement {
     pub name: String,
     pub full_path: String,       // 'module::path::element_name'
     pub visibility: String,      // 'public', 'private', 'protected'
-    pub start_line: u32,
-    pub end_line: u32,
+    pub start_line: i64,         // Changed from u32 - matches SQLite INTEGER
+    pub end_line: i64,           // Changed from u32 - matches SQLite INTEGER
     pub content: String,         // Full source code
     pub signature_hash: String,  // For change detection
-    pub complexity_score: u32,
+    pub complexity_score: i64,   // Changed from u32 - matches SQLite INTEGER
     pub is_test: bool,
     pub is_async: bool,
     pub documentation: Option<String>,
@@ -48,8 +47,8 @@ pub struct FileAnalysis {
     pub elements: Vec<CodeElement>,
     pub dependencies: Vec<ExternalDependency>,
     pub quality_issues: Vec<QualityIssue>,
-    pub complexity_score: u32,
-    pub test_count: u32,
+    pub complexity_score: i64,   // Changed from u32 - matches SQLite INTEGER
+    pub test_count: i64,         // Changed from u32 - matches SQLite INTEGER
     pub doc_coverage: f64,
 }
 
@@ -59,7 +58,7 @@ pub struct FileAnalysisResult {
     pub file_id: i64,
     pub language: String,
     pub elements_count: usize,
-    pub complexity_score: u32,
+    pub complexity_score: i64,   // Changed from u32 - matches SQLite INTEGER
     pub quality_issues_count: usize,
     pub test_coverage: f64,
     pub doc_coverage: f64,

@@ -141,7 +141,7 @@ impl CodeFixHandler {
         file_path: &str,
         project_id: &str,
     ) -> Result<Option<FileIntelligence>> {
-        // Fetch code elements - prefix ambiguous columns with table alias
+        // Fetch code elements - using i64 directly (SQLite's native INTEGER)
         let elements = sqlx::query!(
             r#"
             SELECT ce.element_type, ce.name, ce.start_line, ce.end_line, ce.visibility, ce.is_async, ce.documentation, ce.complexity_score
@@ -166,10 +166,10 @@ impl CodeFixHandler {
             .map(|row| CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                start_line: row.start_line as i32, // Cast i64 to i32
-                end_line: row.end_line as i32,     // Cast i64 to i32
-                complexity: row.complexity_score.map(|v| v as i32), // Cast Option<i64> to Option<i32>
-                is_async: row.is_async,  // Already Option<bool>
+                start_line: row.start_line,        // i64 -> i64 (no cast!)
+                end_line: row.end_line,            // i64 -> i64 (no cast!)
+                complexity: row.complexity_score,  // Option<i64> -> Option<i64> (no cast!)
+                is_async: row.is_async,
                 is_public: Some(row.visibility == "public"),
                 documentation: row.documentation,
             })

@@ -9,7 +9,7 @@ use sha2::{Sha256, Digest};
 
 #[derive(Clone)]
 pub struct JavaScriptParser {
-    max_complexity: u32,
+    max_complexity: i64,  // Changed from u32 - matches CodeElement
 }
 
 impl JavaScriptParser {
@@ -17,7 +17,7 @@ impl JavaScriptParser {
         Self { max_complexity: 15 }
     }
 
-    pub fn with_max_complexity(max_complexity: u32) -> Self {
+    pub fn with_max_complexity(max_complexity: i64) -> Self {
         Self { max_complexity }
     }
 }
@@ -71,19 +71,19 @@ impl LanguageParser for JavaScriptParser {
 }
 
 struct JavaScriptAnalyzer<'a> {
-    max_complexity: u32,
+    max_complexity: i64,        // Changed from u32
     elements: Vec<CodeElement>,
     dependencies: Vec<ExternalDependency>,
     quality_issues: Vec<QualityIssue>,
-    total_complexity: u32,
-    test_count: u32,
+    total_complexity: i64,      // Changed from u32
+    test_count: i64,            // Changed from u32
     content: &'a str,
     file_path: &'a str,
     current_path: Vec<String>,
 }
 
 impl<'a> JavaScriptAnalyzer<'a> {
-    fn new(max_complexity: u32, content: &'a str, file_path: &'a str) -> Self {
+    fn new(max_complexity: i64, content: &'a str, file_path: &'a str) -> Self {
         Self {
             max_complexity,
             elements: Vec::new(),
@@ -130,20 +130,20 @@ impl<'a> JavaScriptAnalyzer<'a> {
         }
     }
 
-    fn get_line_number(&self, span: Span) -> u32 {
+    fn get_line_number(&self, span: Span) -> i64 {  // Changed return type from u32
         let pos = span.lo.0 as usize;
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as u32 + 1
+            .count() as i64 + 1  // Cast to i64 instead of u32
     }
 
-    fn get_end_line_number(&self, span: Span) -> u32 {
+    fn get_end_line_number(&self, span: Span) -> i64 {  // Changed return type from u32
         let pos = span.hi.0 as usize;
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as u32 + 1
+            .count() as i64 + 1  // Cast to i64 instead of u32
     }
 
     fn create_signature_hash(&self, content: &str) -> String {
@@ -152,12 +152,12 @@ impl<'a> JavaScriptAnalyzer<'a> {
         format!("{:x}", hasher.finalize())
     }
 
-    fn calculate_cyclomatic_complexity(&self, content: &str) -> u32 {
-        let mut complexity = 1u32;
+    fn calculate_cyclomatic_complexity(&self, content: &str) -> i64 {  // Changed return type from u32
+        let mut complexity = 1i64;
         
         // Count decision points
         for keyword in ["if", "else if", "for", "while", "case", "catch", "&&", "||", "?"] {
-            complexity += content.matches(keyword).count() as u32;
+            complexity += content.matches(keyword).count() as i64;  // Cast to i64 instead of u32
         }
         
         complexity

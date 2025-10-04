@@ -31,20 +31,20 @@ pub struct MemoryEntry {
     pub analysis_version: Option<String>,
     pub routed_to_heads: Option<Vec<String>>,
     pub last_recalled: Option<DateTime<Utc>>,
-    pub recall_count: Option<i32>,
+    pub recall_count: Option<i64>,      // Changed from Option<i32> - matches SQLite INTEGER
     
     // Fields from llm_metadata table
     pub model_version: Option<String>,
-    pub prompt_tokens: Option<i32>,
-    pub completion_tokens: Option<i32>,
-    pub reasoning_tokens: Option<i32>,
-    pub total_tokens: Option<i32>,
-    pub latency_ms: Option<i32>,
-    pub generation_time_ms: Option<i32>,
+    pub prompt_tokens: Option<i64>,     // Changed from Option<i32> - matches SQLite INTEGER
+    pub completion_tokens: Option<i64>, // Changed from Option<i32> - matches SQLite INTEGER
+    pub reasoning_tokens: Option<i64>,  // Changed from Option<i32> - matches SQLite INTEGER
+    pub total_tokens: Option<i64>,      // Changed from Option<i32> - matches SQLite INTEGER
+    pub latency_ms: Option<i64>,        // Changed from Option<i32> - matches SQLite INTEGER
+    pub generation_time_ms: Option<i64>,// Changed from Option<i32> - matches SQLite INTEGER
     pub finish_reason: Option<String>,
     pub tool_calls: Option<Vec<String>>,
     pub temperature: Option<f32>,
-    pub max_tokens: Option<i32>,
+    pub max_tokens: Option<i64>,        // Changed from Option<i32> - matches SQLite INTEGER
     
     // Embedding info
     pub embedding: Option<Vec<f32>>,

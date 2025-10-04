@@ -182,7 +182,7 @@ impl AnalysisOperations {
                 analysis_version,
                 routed_to_heads: routed_to_heads_vec,
                 last_recalled: last_recalled.map(|dt| TimeZone::from_utc_datetime(&Utc, &dt)),
-                recall_count: recall_count.map(|c| c as i32),
+                recall_count,  // No cast - i64 -> i64 direct assignment
                 model_version: None,
                 prompt_tokens: None,
                 completion_tokens: None,

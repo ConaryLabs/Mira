@@ -176,7 +176,7 @@ impl GitOperations {
         let content_hash = format!("{:x}", hasher.finish());
         
         let content_str = String::from_utf8_lossy(&content);
-        let line_count = content_str.lines().count() as i32;
+        let line_count = content_str.lines().count() as i64;  // Changed from as i32 to match insert_repository_file signature
         
         // Detect language based on file extension
         let language = if is_rust_file(file_path) {

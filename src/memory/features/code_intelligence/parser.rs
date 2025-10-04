@@ -6,7 +6,7 @@ use sha2::{Sha256, Digest};
 
 #[derive(Clone)]
 pub struct RustParser {
-    max_complexity: u32,
+    max_complexity: i64,  // Changed from u32 - matches CodeElement
 }
 
 impl RustParser {
@@ -16,7 +16,7 @@ impl RustParser {
         }
     }
 
-    pub fn with_max_complexity(max_complexity: u32) -> Self {
+    pub fn with_max_complexity(max_complexity: i64) -> Self {
         Self {
             max_complexity,
         }
@@ -53,18 +53,18 @@ impl LanguageParser for RustParser {
 }
 
 struct RustAnalyzer<'content> {
-    max_complexity: u32,
+    max_complexity: i64,        // Changed from u32
     elements: Vec<CodeElement>,
     dependencies: Vec<ExternalDependency>,
     quality_issues: Vec<QualityIssue>,
-    total_complexity: u32,
-    test_count: u32,
+    total_complexity: i64,      // Changed from u32
+    test_count: i64,            // Changed from u32
     current_module_path: Vec<String>,
     file_path: &'content str,
 }
 
 impl<'content> RustAnalyzer<'content> {
-    fn new(max_complexity: u32, file_path: &'content str) -> Self {
+    fn new(max_complexity: i64, file_path: &'content str) -> Self {
         Self {
             max_complexity,
             elements: Vec::new(),
@@ -115,12 +115,12 @@ impl<'content> RustAnalyzer<'content> {
         format!("{:x}", hasher.finalize())[..16].to_string()
     }
 
-    fn extract_line_numbers<T: Spanned>(&self, item: &T) -> (u32, u32) {
+    fn extract_line_numbers<T: Spanned>(&self, item: &T) -> (i64, i64) {  // Changed return type from (u32, u32)
         let span = item.span();
         let start = span.start();
         let end = span.end();
         
-        (start.line as u32, end.line as u32)
+        (start.line as i64, end.line as i64)  // Cast to i64 instead of u32
     }
 
     fn build_full_path(&self, element_name: &str) -> String {
@@ -134,11 +134,11 @@ impl<'content> RustAnalyzer<'content> {
         format!("{}::{}", clean_file_path, module_path)
     }
 
-    fn calculate_function_complexity(&self, block: &syn::Block) -> u32 {
+    fn calculate_function_complexity(&self, block: &syn::Block) -> i64 {  // Changed return type from u32
         let complexity = 1;
         
         struct ComplexityVisitor {
-            complexity: u32,
+            complexity: i64,  // Changed from u32
         }
         
         impl<'ast> Visit<'ast> for ComplexityVisitor {
@@ -234,7 +234,7 @@ impl<'ast, 'content> Visit<'ast> for RustAnalyzer<'content> {
             end_line,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
-            complexity_score: struct_item.fields.len() as u32,
+            complexity_score: struct_item.fields.len() as i64,  // Changed from as u32
             is_test: false,
             is_async: false,
             documentation,
@@ -261,7 +261,7 @@ impl<'ast, 'content> Visit<'ast> for RustAnalyzer<'content> {
             end_line,
             content: content.clone(),
             signature_hash: self.create_signature_hash(&content),
-            complexity_score: enum_item.variants.len() as u32,
+            complexity_score: enum_item.variants.len() as i64,  // Changed from as u32
             is_test: false,
             is_async: false,
             documentation,
