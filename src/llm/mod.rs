@@ -5,6 +5,7 @@ pub mod client;
 pub mod embeddings;
 pub mod intent;
 pub mod moderation;
+pub mod provider;  // NEW: Multi-provider support
 pub mod responses;
 pub mod schema;
 pub mod structured;

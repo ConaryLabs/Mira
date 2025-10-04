@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - Claude Sonnet 4.5 edition
+// Central configuration for Mira backend - Multi-Provider LLM Support
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,9 @@ lazy_static! {
 /// Main configuration structure for Mira
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
+    // ===== MULTI-PROVIDER CONFIGURATION =====
+    pub llm_provider: String,  // "claude" | "gpt5" | "deepseek"
+    
     // ===== CLAUDE CONFIGURATION =====
     pub anthropic_api_key: String,
     pub anthropic_base_url: String,
@@ -35,9 +38,19 @@ pub struct MiraConfig {
     pub temperature_balanced: f32,
     pub temperature_creative: f32,
     
-    // ===== OPENAI FOR EMBEDDINGS ONLY =====
-    pub openai_embedding_api_key: String,
+    // ===== OPENAI CONFIGURATION =====
+    pub openai_api_key: Option<String>,  // For chat, embeddings, images (primary)
+    pub openai_embedding_api_key: Option<String>,  // Backward compat fallback
     pub openai_embedding_model: String,
+    pub openai_chat_model: String,  // For GPT-5 chat
+    pub openai_max_tokens: usize,  // For GPT-5 chat
+    pub openai_reasoning_effort: String,  // For GPT-5
+    pub openai_verbosity: String,  // For GPT-5
+    
+    // ===== DEEPSEEK CONFIGURATION =====
+    pub deepseek_api_key: Option<String>,
+    pub deepseek_model: String,
+    pub deepseek_max_tokens: usize,
     
     // ===== KEEP ALL OTHER FIELDS UNCHANGED =====
     pub max_output_tokens: usize,  // Maps to anthropic_max_tokens
@@ -188,13 +201,52 @@ impl MiraConfig {
             panic!("MIRA_EMBED_HEADS must include all 4 heads: 'semantic,code,summary,documents' - got: '{}'", embed_heads);
         }
 
-        // Load and debug print the API key
+        // Load LLM provider selection
+        let llm_provider = env::var("LLM_PROVIDER")
+            .unwrap_or_else(|_| "claude".to_string());
+
+        // Load Claude API key
         let anthropic_api_key = require_env("ANTHROPIC_API_KEY");
         eprintln!("🔑 DEBUG: Loaded ANTHROPIC_API_KEY from .env: {}...", 
             &anthropic_api_key[..std::cmp::min(25, anthropic_api_key.len())]);
         eprintln!("🔑 DEBUG: Key length: {} characters", anthropic_api_key.len());
 
+        // Load OpenAI keys (try OPENAI_API_KEY first, fallback to OPENAI_EMBEDDING_API_KEY)
+        let openai_api_key = env::var("OPENAI_API_KEY").ok();
+        let openai_embedding_api_key = env::var("OPENAI_EMBEDDING_API_KEY").ok();
+        
+        // Ensure at least one OpenAI key is set
+        if openai_api_key.is_none() && openai_embedding_api_key.is_none() {
+            panic!("Either OPENAI_API_KEY or OPENAI_EMBEDDING_API_KEY must be set");
+        }
+
+        // GPT-5 configuration
+        let openai_chat_model = env::var("OPENAI_CHAT_MODEL")
+            .unwrap_or_else(|_| "gpt-5".to_string());
+        let openai_max_tokens = env::var("OPENAI_MAX_TOKENS")
+            .unwrap_or_else(|_| "128000".to_string())
+            .parse()
+            .unwrap_or(128000);
+        let openai_reasoning_effort = env::var("OPENAI_REASONING_EFFORT")
+            .unwrap_or_else(|_| "medium".to_string());
+        let openai_verbosity = env::var("OPENAI_VERBOSITY")
+            .unwrap_or_else(|_| "medium".to_string());
+
+        // DeepSeek configuration (optional)
+        let deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
+        let deepseek_model = env::var("DEEPSEEK_MODEL")
+            .unwrap_or_else(|_| "deepseek-chat".to_string());
+        let deepseek_max_tokens = env::var("DEEPSEEK_MAX_TOKENS")
+            .unwrap_or_else(|_| "64000".to_string())
+            .parse()
+            .unwrap_or(64000);
+
+        eprintln!("🤖 LLM Provider: {}", llm_provider);
+
         Self {
+            // Provider selection
+            llm_provider,
+            
             // Claude configuration
             anthropic_api_key,
             anthropic_base_url: require_env("ANTHROPIC_BASE_URL"),
@@ -218,9 +270,19 @@ impl MiraConfig {
             temperature_balanced: require_env_parsed("TEMPERATURE_BALANCED"),
             temperature_creative: require_env_parsed("TEMPERATURE_CREATIVE"),
             
-            // OpenAI for embeddings only
-            openai_embedding_api_key: require_env("OPENAI_EMBEDDING_API_KEY"),
+            // OpenAI configuration
+            openai_api_key,
+            openai_embedding_api_key,
             openai_embedding_model: require_env("OPENAI_EMBEDDING_MODEL"),
+            openai_chat_model,
+            openai_max_tokens,
+            openai_reasoning_effort,
+            openai_verbosity,
+            
+            // DeepSeek configuration
+            deepseek_api_key,
+            deepseek_model,
+            deepseek_max_tokens,
             
             // Map to Claude value for backward compat
             max_output_tokens: require_env_parsed("ANTHROPIC_MAX_TOKENS"),
@@ -338,6 +400,12 @@ impl MiraConfig {
             recent_cache_max_per_session: require_env_parsed("MIRA_RECENT_CACHE_MAX_PER_SESSION"),
             recent_cache_warmup: require_env_parsed("MIRA_RECENT_CACHE_WARMUP"),
         }
+    }
+
+    /// Get the effective OpenAI API key (try OPENAI_API_KEY first, fallback to OPENAI_EMBEDDING_API_KEY)
+    pub fn get_openai_key(&self) -> Option<String> {
+        self.openai_api_key.clone()
+            .or_else(|| self.openai_embedding_api_key.clone())
     }
 
     /// Get max tokens for JSON operations

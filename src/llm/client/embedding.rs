@@ -1,204 +1,125 @@
 // src/llm/client/embedding.rs
-// Handles text embedding generation using OpenAI's embedding models.
-
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use reqwest::{header, Client};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tracing::{debug, info};
+use serde_json::{json, Value};
+use std::time::Duration;
+use tracing::{debug, warn};
 
 use crate::config::CONFIG;
+use super::config::ClientConfig;
 
-/// A client for generating text embeddings using the OpenAI API.
 pub struct EmbeddingClient {
     client: Client,
+    config: ClientConfig,
 }
 
 impl EmbeddingClient {
-    pub fn new(_config: super::config::ClientConfig) -> Self {
-        // Note: config parameter is unused - we always hardcode to OpenAI's API
-        // Kept for API compatibility with existing callers
-        Self {
-            client: Client::new(),
-        }
+    pub fn new(config: ClientConfig) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self { client, config }
     }
 
-    /// Generates an embedding for a single text using the default model.
     pub async fn get_embedding(&self, text: &str) -> Result<Vec<f32>> {
-        self.get_embedding_with_model(text, &CONFIG.openai_embedding_model, Some(3072)).await
-    }
+        if text.is_empty() {
+            return Err(anyhow::anyhow!("Cannot embed empty text"));
+        }
 
-    /// Generates an embedding for a single text with a specific model and dimensions.
-    pub async fn get_embedding_with_model(
-        &self,
-        text: &str,
-        model: &str,
-        dimensions: Option<u32>,
-    ) -> Result<Vec<f32>> {
-        let mut body = json!({
-            "model": model,
+        debug!("Generating embedding for text of length {}", text.len());
+
+        let request_body = json!({
             "input": text,
+            "model": self.config.model,
+            "encoding_format": "float"
         });
 
-        if let Some(dims) = dimensions {
-            body["dimensions"] = json!(dims);
-        }
-
-        debug!("Requesting embedding for {} chars with model {}", text.len(), model);
-
-        // Always use OpenAI's API for embeddings
         let response = self
             .client
-            .post("https://api.openai.com/v1/embeddings")
-            .header(header::AUTHORIZATION, format!("Bearer {}", &CONFIG.openai_embedding_api_key))
+            .post(&format!("{}/v1/embeddings", self.config.base_url))
             .header(header::CONTENT_TYPE, "application/json")
-            .json(&body)
+            .header(header::AUTHORIZATION, format!("Bearer {}", 
+                CONFIG.get_openai_key().expect("OPENAI_API_KEY required for embeddings")))
+            .json(&request_body)
             .send()
             .await?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
-            return Err(anyhow!("OpenAI embedding API error ({}): {}", status, error_text));
+            let error_text = response.text().await?;
+            warn!("Embedding request failed: {} - {}", status, error_text);
+            return Err(anyhow::anyhow!("Embedding request failed: {}", status));
         }
 
-        let result: EmbeddingResponse = response.json().await?;
-        
-        if result.data.is_empty() {
-            return Err(anyhow!("No embedding data in API response"));
+        let response_json: Value = response.json().await?;
+
+        let embedding = response_json["data"][0]["embedding"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("No embedding in response"))?
+            .iter()
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
+            .collect::<Vec<f32>>();
+
+        if embedding.is_empty() {
+            return Err(anyhow::anyhow!("Empty embedding returned"));
         }
 
-        let embedding = result.data[0].embedding.clone();
-        
-        info!("Generated embedding with {} dimensions", embedding.len());
+        debug!("Generated embedding with {} dimensions", embedding.len());
         Ok(embedding)
     }
 
-    /// Generates embeddings for multiple texts in a single batch request.
-    /// Processes up to 100 texts in a single API call, reducing API calls by 90%+.
-    pub async fn get_embeddings_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.get_embeddings_batch_with_model(texts, &CONFIG.openai_embedding_model, Some(3072)).await
-    }
-
-    /// Generates embeddings for multiple texts with a specific model.
-    /// Maintains exact order of embeddings matching input texts.
-    pub async fn get_embeddings_batch_with_model(
-        &self,
-        texts: &[String],
-        model: &str,
-        dimensions: Option<u32>,
-    ) -> Result<Vec<Vec<f32>>> {
+    pub async fn get_batch_embeddings(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut body = json!({
-            "model": model,
+        debug!("Generating batch embeddings for {} texts", texts.len());
+
+        let request_body = json!({
             "input": texts,
+            "model": self.config.model,
+            "encoding_format": "float"
         });
 
-        if let Some(dims) = dimensions {
-            body["dimensions"] = json!(dims);
-        }
-
-        debug!(
-            "Requesting batch embeddings for {} texts (total {} chars) with model {}",
-            texts.len(),
-            texts.iter().map(|t| t.len()).sum::<usize>(),
-            model
-        );
-
-        // Always use OpenAI's API for embeddings
         let response = self
             .client
-            .post("https://api.openai.com/v1/embeddings")
-            .header(header::AUTHORIZATION, format!("Bearer {}", &CONFIG.openai_embedding_api_key))
+            .post(&format!("{}/v1/embeddings", self.config.base_url))
             .header(header::CONTENT_TYPE, "application/json")
-            .json(&body)
+            .header(header::AUTHORIZATION, format!("Bearer {}", 
+                CONFIG.get_openai_key().expect("OPENAI_API_KEY required for embeddings")))
+            .json(&request_body)
             .send()
             .await?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "<no body>".into());
-            return Err(anyhow!("OpenAI embedding API error ({}): {}", status, error_text));
+            let error_text = response.text().await?;
+            warn!("Batch embedding request failed: {} - {}", status, error_text);
+            return Err(anyhow::anyhow!("Batch embedding request failed: {}", status));
         }
 
-        let result: EmbeddingResponse = response.json().await?;
+        let response_json: Value = response.json().await?;
 
-        if result.data.is_empty() {
-            return Err(anyhow!("No embedding data in API response"));
-        }
+        let data_array = response_json["data"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("No data array in response"))?;
 
-        // Sort by index to maintain original order
-        let mut sorted_data = result.data;
-        sorted_data.sort_by_key(|d| d.index);
+        let embeddings = data_array
+            .iter()
+            .filter_map(|item| {
+                item["embedding"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect::<Vec<f32>>()
+                    })
+            })
+            .collect::<Vec<Vec<f32>>>();
 
-        let embeddings: Vec<Vec<f32>> = sorted_data
-            .into_iter()
-            .map(|d| d.embedding)
-            .collect();
-
-        info!(
-            "Generated {} embeddings with {} dimensions each",
-            embeddings.len(),
-            embeddings.first().map(|e| e.len()).unwrap_or(0)
-        );
-
+        debug!("Generated {} batch embeddings", embeddings.len());
         Ok(embeddings)
-    }
-
-    /// Calculates the number of batches needed for texts (OpenAI limit: 100 texts per batch).
-    pub fn calculate_batches(texts: &[String]) -> Vec<Vec<String>> {
-        const BATCH_SIZE: usize = 100;
-        texts
-            .chunks(BATCH_SIZE)
-            .map(|chunk| chunk.to_vec())
-            .collect()
-    }
-
-    /// Estimates the number of tokens in a batch of texts.
-    /// Rough estimate: ~4 characters per token.
-    pub fn estimate_tokens(texts: &[String]) -> usize {
-        texts.iter().map(|t| (t.len() + 3) / 4).sum()
-    }
-
-    /// Calculates estimated cost for embeddings.
-    /// Based on text-embedding-3-large pricing: $0.00013 per 1K tokens.
-    pub fn estimate_cost(texts: &[String]) -> f64 {
-        let tokens = Self::estimate_tokens(texts);
-        (tokens as f64 / 1000.0) * 0.00013
-    }
-}
-
-// Internal structs for deserializing the OpenAI API response.
-#[derive(Debug, Deserialize)]
-struct EmbeddingResponse {
-    data: Vec<EmbeddingData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
-    index: usize,
-}
-
-/// Contains information about a supported embedding model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmbeddingModel {
-    pub name: String,
-    pub dimensions: u32,
-    pub max_input_tokens: u32,
-    pub description: String,
-}
-
-impl Default for EmbeddingModel {
-    fn default() -> Self {
-        Self {
-            name: "text-embedding-3-large".to_string(),
-            dimensions: 3072,
-            max_input_tokens: 8191,
-            description: "Latest and most capable embedding model".to_string(),
-        }
     }
 }

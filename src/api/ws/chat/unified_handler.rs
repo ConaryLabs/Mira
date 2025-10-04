@@ -11,13 +11,13 @@ use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, code_fix_processor, claude_processor};
 use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::llm::structured::tool_schema::*;
+use crate::llm::provider::ChatMessage;  // NEW: Import provider types
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::core::types::MemoryEntry;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
-use crate::config::CONFIG;
 use crate::tools::{CodeFixHandler, file_ops};
 
 #[derive(Debug, Clone)]
@@ -86,9 +86,9 @@ impl UnifiedChatHandler {
         let context = self.build_context(&request.session_id, &request.content).await?;
         let persona = self.select_persona(&request.metadata);
 
-        // Create handler and delegate
+        // UPDATED: Use llm instead of llm_client
         let handler = CodeFixHandler::new(
-            self.app_state.llm_client.clone(),
+            self.app_state.llm.clone(),
             self.app_state.code_intelligence.clone(),
             self.app_state.sqlite_pool.clone(),
         );
@@ -130,7 +130,7 @@ impl UnifiedChatHandler {
             get_list_files_tool_schema(),
         ];
         
-        let (thinking_budget, temperature) = claude_processor::analyze_message_complexity(&request.content);
+        let (_thinking_budget, _temperature) = claude_processor::analyze_message_complexity(&request.content);
         
         let mut context_messages = self.build_context_messages(&context).await?;
         context_messages.push(json!({
@@ -142,22 +142,32 @@ impl UnifiedChatHandler {
         for iteration in 0..10 {
             info!("Tool loop iteration {}", iteration);
             
-            let api_request = json!({
-                "model": CONFIG.anthropic_model,
-                "max_tokens": CONFIG.anthropic_max_tokens,
-                "temperature": temperature,
-                "thinking": {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget
-                },
-                "system": system_prompt,
-                "messages": context_messages.clone(),
-                "tools": tools,
-            });
+            // UPDATED: Convert to provider format
+            let provider_messages: Vec<ChatMessage> = context_messages
+                .iter()
+                .filter_map(|m| {
+                    Some(ChatMessage {
+                        role: m["role"].as_str()?.to_string(),
+                        content: if let Some(text) = m["content"].as_str() {
+                            text.to_string()
+                        } else {
+                            // Handle array content (tool results)
+                            serde_json::to_string(&m["content"]).ok()?
+                        },
+                    })
+                })
+                .collect();
             
-            let raw_response = self.app_state.llm_client.post_response_with_retry(api_request).await?;
+            // UPDATED: Call provider with tools
+            let raw_response = self.app_state.llm
+                .chat_with_tools(
+                    provider_messages,
+                    system_prompt.clone(),
+                    tools.clone(),
+                )
+                .await?;
             
-            // Check stop_reason
+            // Response is already in Claude format from conversion layer
             let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
             
             if stop_reason == "end_turn" {
@@ -303,7 +313,7 @@ impl UnifiedChatHandler {
         
         let recent_entries = recent.into_iter().map(|row| {
             MemoryEntry {
-                id: row.id, // Both are Option<i64>, direct assign
+                id: row.id,
                 session_id: session_id.to_string(),
                 response_id: None,
                 parent_id: None,

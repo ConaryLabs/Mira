@@ -86,7 +86,7 @@ impl TaskManager {
             
             // CHANGED: Use unified MessagePipeline instead of AnalysisService
             let message_pipeline = MessagePipeline::new(
-                app_state.llm_client.clone(),
+                app_state.embedding_client.clone(),
             );
 
             let mut interval_timer = time::interval(interval);

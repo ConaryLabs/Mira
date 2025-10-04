@@ -3,10 +3,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use sqlx::SqlitePool;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use tracing::info;
 
 use crate::config::CONFIG;
 use crate::llm::client::{OpenAIClient, config::ClientConfig};
+use crate::llm::provider::{
+    LlmProvider,
+    claude::ClaudeProvider,
+    openai::OpenAiProvider,
+    deepseek::DeepSeekProvider,
+};
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::memory::service::MemoryService;
@@ -34,7 +41,8 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub llm_client: Arc<OpenAIClient>,
+    pub llm: Arc<dyn LlmProvider>,  // CHANGED: Multi-provider LLM
+    pub embedding_client: Arc<OpenAIClient>,  // KEEP: OpenAI for embeddings only
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
@@ -56,29 +64,74 @@ impl AppState {
         let git_client = GitClient::with_code_intelligence(
             std::path::PathBuf::from("./repos"),
             git_store.clone(),
-            (*code_intelligence).clone(),  // Clone the service, not the Arc
+            (*code_intelligence).clone(),
         );
         
-        // FIXED: Use Claude API key for chat, not OpenAI embedding key
-        let client_config = ClientConfig {
-            api_key: CONFIG.anthropic_api_key.clone(),
-            base_url: CONFIG.anthropic_base_url.clone(),
-            model: CONFIG.anthropic_model.clone(),
-            max_output_tokens: CONFIG.anthropic_max_tokens,
+        // Get OpenAI key for embeddings (try both env vars)
+        let openai_key = CONFIG.get_openai_key()
+            .ok_or_else(|| anyhow!("OPENAI_API_KEY or OPENAI_EMBEDDING_API_KEY required for embeddings"))?;
+        
+        // Initialize LLM provider based on config
+        let llm: Arc<dyn LlmProvider> = match CONFIG.llm_provider.as_str() {
+            "claude" => {
+                info!("🤖 Initializing Claude provider: {}", CONFIG.anthropic_model);
+                Arc::new(ClaudeProvider::new(
+                    CONFIG.anthropic_api_key.clone(),
+                    CONFIG.anthropic_model.clone(),
+                    CONFIG.anthropic_max_tokens,
+                ))
+            },
+            
+            "gpt5" => {
+                info!("🤖 Initializing GPT-5 provider: {}", CONFIG.openai_chat_model);
+                Arc::new(OpenAiProvider::new(
+                    openai_key.clone(),
+                    CONFIG.openai_chat_model.clone(),
+                    CONFIG.openai_max_tokens,
+                    CONFIG.openai_reasoning_effort.clone(),
+                    CONFIG.openai_verbosity.clone(),
+                ))
+            },
+            
+            "deepseek" => {
+                let deepseek_key = CONFIG.deepseek_api_key.clone()
+                    .ok_or_else(|| anyhow!("DEEPSEEK_API_KEY required when LLM_PROVIDER=deepseek"))?;
+                info!("🤖 Initializing DeepSeek provider: {}", CONFIG.deepseek_model);
+                Arc::new(DeepSeekProvider::new(
+                    deepseek_key,
+                    CONFIG.deepseek_model.clone(),
+                    CONFIG.deepseek_max_tokens,
+                ))
+            },
+            
+            unknown => {
+                return Err(anyhow!(
+                    "Unknown LLM_PROVIDER: '{}'. Valid options: claude, gpt5, deepseek",
+                    unknown
+                ));
+            }
         };
-        let llm_client = Arc::new(OpenAIClient::new(client_config)?);
+        
+        // Keep OpenAI client for embeddings only
+        let embedding_config = ClientConfig {
+            api_key: openai_key,
+            base_url: "https://api.openai.com".to_string(),
+            model: CONFIG.openai_embedding_model.clone(),
+            max_output_tokens: 8192,  // Not used for embeddings, but required
+        };
+        let embedding_client = Arc::new(OpenAIClient::new(embedding_config)?);
         
         // Initialize Qdrant multi-store
         let multi_store = Arc::new(QdrantMultiStore::new(
             &CONFIG.qdrant_url,
-            "mira", // collection base name
+            "mira",
         ).await?);
         
-        // Initialize memory service with all components
+        // Initialize memory service with provider and embedding client
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            llm_client.clone(),
+            embedding_client.clone(),  // OpenAI for embeddings
         ));
         
         Ok(Self {
@@ -87,7 +140,8 @@ impl AppState {
             project_store,
             git_store,
             git_client,
-            llm_client,
+            llm,  // Multi-provider LLM
+            embedding_client,  // OpenAI embeddings
             memory_service,
             code_intelligence,
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),

@@ -5,29 +5,28 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::{LlmProvider, ChatMessage};
 use crate::llm::structured::{CompleteResponse, code_fix_processor, claude_processor};
 use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::{UnifiedPromptBuilder, CodeElement, QualityIssue};
-use crate::config::CONFIG;
 
 pub struct CodeFixHandler {
-    llm_client: Arc<OpenAIClient>,
+    llm: Arc<dyn LlmProvider>,
     code_intelligence: Arc<CodeIntelligenceService>,
     sqlite_pool: SqlitePool,
 }
 
 impl CodeFixHandler {
     pub fn new(
-        llm_client: Arc<OpenAIClient>,
+        llm: Arc<dyn LlmProvider>,
         code_intelligence: Arc<CodeIntelligenceService>,
         sqlite_pool: SqlitePool,
     ) -> Self {
         Self {
-            llm_client,
+            llm,
             code_intelligence,
             sqlite_pool,
         }
@@ -71,34 +70,40 @@ impl CodeFixHandler {
 
         let (thinking_budget, _) = claude_processor::analyze_message_complexity(&error_context.error_message);
 
-        let analysis_request = json!({
-            "model": CONFIG.anthropic_model,
-            "max_tokens": 4000,
-            "temperature": 1.0,
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": thinking_budget
-            },
-            "system": UnifiedPromptBuilder::build_system_prompt(
-                persona,
-                context,
-                None,
-                metadata,
-                Some(project_id),
-            ),
-            "messages": [
-                json!({
-                    "role": "user",
-                    "content": analysis_prompt
-                })
-            ]
+        let system_prompt = UnifiedPromptBuilder::build_system_prompt(
+            persona,
+            context,
+            None,
+            metadata,
+            Some(project_id),
+        );
+
+        // UPDATED: Use provider trait for analysis
+        let analysis_messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: analysis_prompt,
+        }];
+
+        let analysis_response = self.llm
+            .chat(analysis_messages, system_prompt.clone(), Some(thinking_budget as u32))
+            .await?;
+
+        // Convert provider response to Claude format for compatibility
+        let _analysis_response_json = json!({
+            "content": [{
+                "type": "text",
+                "text": analysis_response.content
+            }],
+            "thinking": analysis_response.thinking,
+            "usage": {
+                "input_tokens": analysis_response.metadata.input_tokens,
+                "output_tokens": analysis_response.metadata.output_tokens,
+            }
         });
 
-        let analysis_response = self.llm_client.post_response_with_retry(analysis_request).await?;
-
         // Extract thinking content
-        let thinking = self.extract_thinking(&analysis_response);
-        let analysis_text = self.extract_text_content(&analysis_response);
+        let thinking = analysis_response.thinking.unwrap_or_default();
+        let analysis_text = analysis_response.content;
 
         info!("Phase 1 complete - {} chars of thinking, {} chars analysis", 
             thinking.len(), analysis_text.len());
@@ -106,7 +111,7 @@ impl CodeFixHandler {
         // PHASE 2: Generate structured fix using code_fix tool
         info!("Phase 2 - Generating complete file fix");
 
-        let system_prompt = UnifiedPromptBuilder::build_code_fix_prompt(
+        let fix_system_prompt = UnifiedPromptBuilder::build_code_fix_prompt(
             persona,
             context,
             error_context,
@@ -121,13 +126,38 @@ impl CodeFixHandler {
             &error_context.error_message,
             &error_context.file_path,
             file_content,
-            system_prompt,
+            fix_system_prompt,
             vec![], // No context messages for code fix
         )?;
 
-        let fix_response = self.llm_client.post_response_with_retry(fix_request).await?;
+        // UPDATED: Extract and convert to provider format
+        let fix_messages: Vec<ChatMessage> = fix_request["messages"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Missing messages in fix request"))?
+            .iter()
+            .filter_map(|m| {
+                Some(ChatMessage {
+                    role: m["role"].as_str()?.to_string(),
+                    content: m["content"].as_str()?.to_string(),
+                })
+            })
+            .collect();
 
-        // Extract structured code fix
+        let tools = fix_request["tools"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Missing tools in fix request"))?
+            .clone();
+
+        // UPDATED: Use provider with tools
+        let fix_response = self.llm
+            .chat_with_tools(
+                fix_messages,
+                fix_request["system"].as_str().unwrap_or("").to_string(),
+                tools,
+            )
+            .await?;
+
+        // Extract structured code fix (response is already in Claude format)
         let code_fix = code_fix_processor::extract_code_fix_response(&fix_response)?;
 
         info!("Code fix generated: {} files", code_fix.files.len());
@@ -166,16 +196,16 @@ impl CodeFixHandler {
             .map(|row| CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                start_line: row.start_line,        // i64 -> i64 (no cast!)
-                end_line: row.end_line,            // i64 -> i64 (no cast!)
-                complexity: row.complexity_score,  // Option<i64> -> Option<i64> (no cast!)
+                start_line: row.start_line,
+                end_line: row.end_line,
+                complexity: row.complexity_score,
                 is_async: row.is_async,
                 is_public: Some(row.visibility == "public"),
                 documentation: row.documentation,
             })
             .collect();
 
-        // Fetch quality issues - using actual schema columns
+        // Fetch quality issues
         let issues = sqlx::query!(
             r#"
             SELECT cqi.severity, cqi.title, cqi.description, cqi.suggested_fix, ce.name as element_name
@@ -195,9 +225,9 @@ impl CodeFixHandler {
             .into_iter()
             .map(|row| QualityIssue {
                 severity: row.severity,
-                category: row.title, // Using title as category
+                category: row.title,
                 description: row.description,
-                element_name: Some(row.element_name), // Wrap in Some()
+                element_name: Some(row.element_name),
                 suggestion: row.suggested_fix,
             })
             .collect();
@@ -214,7 +244,7 @@ impl CodeFixHandler {
         _thinking: String,
         raw_response: &Value,
     ) -> Result<CompleteResponse> {
-        // Build artifacts as JSON values (not project::Artifact struct)
+        // Build artifacts as JSON values
         let artifacts = Some(code_fix.files.iter().map(|file| {
             json!({
                 "path": file.path.clone(),

@@ -122,7 +122,7 @@ impl EmbeddingManager {
             let batch_embeddings = loop {
                 match self.llm_client
                     .embedding_client()
-                    .get_embeddings_batch(batch_texts)
+                    .get_batch_embeddings(batch_texts.to_vec())
                     .await 
                 {
                     Ok(embeddings) => {
@@ -203,7 +203,7 @@ impl EmbeddingManager {
         
         let embeddings = self.llm_client
             .embedding_client()
-            .get_embeddings_batch(&[text.to_string()])
+            .get_batch_embeddings(vec![text.to_string()])
             .await?;
         
         embeddings.into_iter()
