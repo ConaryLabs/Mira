@@ -170,13 +170,13 @@ pub fn get_code_search_tool_schema() -> serde_json::Value {
 pub fn get_read_file_tool_schema() -> serde_json::Value {
     json!({
         "name": "read_file",
-        "description": "Read the complete contents of a file from the project",
+        "description": "Read the complete contents of a FILE (not a directory). For directories, use list_files instead.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Relative path to the file within the project"
+                    "description": "Relative path to the FILE within the project (e.g., 'src/main.rs', not 'src')"
                 }
             },
             "required": ["path"]
