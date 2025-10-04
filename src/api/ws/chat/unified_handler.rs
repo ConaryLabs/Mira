@@ -2,13 +2,15 @@
 
 use std::sync::Arc;
 use std::path::Path;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, code_fix_processor, claude_processor};
 use crate::llm::structured::code_fix_processor::ErrorContext;
+use crate::llm::structured::types::{StructuredLLMResponse, LLMMetadata};
+use crate::llm::structured::tool_schema::*;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::features::code_intelligence::types::FileContext;
@@ -59,18 +61,22 @@ impl UnifiedChatHandler {
             }
         }
         
-        // Save user message before processing
+        // Use tool execution loop for regular chat
+        self.handle_chat_with_tools(request).await
+    }
+    
+    /// Process chat with tool execution loop
+    async fn handle_chat_with_tools(
+        &self,
+        request: ChatRequest,
+    ) -> Result<CompleteResponse> {
+        // Save user message first
         let user_message_id = self.save_user_message(&request).await?;
         
-        // Build recall context
+        // Build initial context
         let context = self.build_context(&request.session_id, &request.content).await?;
-        debug!("Context built: {} recent, {} semantic", 
-            context.recent.len(), 
-            context.semantic.len()
-        );
-        
-        // Build system prompt with project context
         let persona = self.select_persona(&request.metadata);
+        
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
             &context,
@@ -79,28 +85,258 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // Build context messages for LLM
-        let context_messages = self.build_context_messages(&context).await?;
+        // Define available tools
+        let tools = vec![
+            get_response_tool_schema(),
+            get_read_file_tool_schema(),
+            get_code_search_tool_schema(),
+            get_list_files_tool_schema(),
+        ];
         
-        // Get structured response from LLM
-        let complete_response = self.app_state.llm_client
-            .get_structured_response(
+        let mut context_messages = self.build_context_messages(&context).await?;
+        
+        // Tool execution loop - 20 iterations allows complex research without spiraling
+        let max_iterations = 20;
+        let mut iteration = 0;
+        
+        loop {
+            iteration += 1;
+            
+            if iteration > max_iterations {
+                warn!("Max tool iterations ({}) reached, forcing final response with gathered context", max_iterations);
+                
+                // Force a final response with everything learned so far
+                let final_request = claude_processor::build_claude_request_with_tool(
+                    &request.content,
+                    system_prompt.clone(),
+                    context_messages.clone(),
+                )?;
+                
+                let final_response = self.app_state.llm_client
+                    .post_response_with_retry(final_request)
+                    .await?;
+                
+                let structured = claude_processor::extract_claude_content_from_tool(&final_response)?;
+                let metadata = claude_processor::extract_claude_metadata(&final_response, 0)?;
+                
+                let complete_response = CompleteResponse {
+                    structured,
+                    metadata,
+                    raw_response: final_response,
+                    artifacts: None,
+                };
+                
+                save_structured_response(
+                    &self.app_state.sqlite_pool,
+                    &request.session_id,
+                    &complete_response,
+                    Some(user_message_id),
+                ).await?;
+                
+                return Ok(complete_response);
+            }
+            
+            // Build request with custom tools
+            let llm_request = claude_processor::build_claude_request_with_custom_tools(
                 &request.content,
-                system_prompt,
-                context_messages,
-                &request.session_id,
-            )
+                system_prompt.clone(),
+                context_messages.clone(),
+                tools.clone(),
+            )?;
+            
+            // Get Claude's response
+            let raw_response = self.app_state.llm_client
+                .post_response_with_retry(llm_request)
+                .await?;
+            
+            // Check if response has tool calls
+            if !claude_processor::has_tool_calls(&raw_response) {
+                // No tools - extract final response
+                let structured = claude_processor::extract_claude_content_from_tool(&raw_response)?;
+                let metadata = claude_processor::extract_claude_metadata(&raw_response, 0)?;
+                
+                let complete_response = CompleteResponse {
+                    structured,
+                    metadata,
+                    raw_response,
+                    artifacts: None,
+                };
+                
+                // Save to database
+                save_structured_response(
+                    &self.app_state.sqlite_pool,
+                    &request.session_id,
+                    &complete_response,
+                    Some(user_message_id),
+                ).await?;
+                
+                return Ok(complete_response);
+            }
+            
+            // Extract tool calls
+            let tool_calls = claude_processor::extract_tool_calls(&raw_response)?;
+            
+            info!("Processing {} tool call(s)", tool_calls.len());
+            
+            // Execute each tool
+            let mut tool_results = Vec::new();
+            
+            for tool_call in &tool_calls {
+                let tool_name = tool_call["name"].as_str().unwrap_or("unknown");
+                let tool_input = &tool_call["input"];
+                
+                info!("Executing tool: {}", tool_name);
+                
+                let result = match tool_name {
+                    "read_file" => {
+                        self.execute_read_file(tool_input, &request).await?
+                    }
+                    "search_code" => {
+                        self.execute_search_code(tool_input, &request).await?
+                    }
+                    "list_files" => {
+                        self.execute_list_files(tool_input, &request).await?
+                    }
+                    "respond_to_user" => {
+                        // Final response tool - extract and return
+                        let structured: StructuredLLMResponse = serde_json::from_value(tool_input.clone())?;
+                        let metadata = claude_processor::extract_claude_metadata(&raw_response, 0)?;
+                        
+                        let complete_response = CompleteResponse {
+                            structured,
+                            metadata,
+                            raw_response,
+                            artifacts: None,
+                        };
+                        
+                        // Save to database
+                        save_structured_response(
+                            &self.app_state.sqlite_pool,
+                            &request.session_id,
+                            &complete_response,
+                            Some(user_message_id),
+                        ).await?;
+                        
+                        return Ok(complete_response);
+                    }
+                    _ => {
+                        json!({ "error": format!("Unknown tool: {}", tool_name) })
+                    }
+                };
+                
+                tool_results.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_call["id"],
+                    "content": result.to_string()
+                }));
+            }
+            
+            // Add assistant message with tool calls
+            context_messages.push(json!({
+                "role": "assistant",
+                "content": raw_response["content"]
+            }));
+            
+            // Add tool results as user messages
+            for result in tool_results {
+                context_messages.push(json!({
+                    "role": "user",
+                    "content": vec![result]
+                }));
+            }
+        }
+    }
+    
+    /// Execute read_file tool
+    async fn execute_read_file(
+        &self,
+        input: &Value,
+        request: &ChatRequest,
+    ) -> Result<Value> {
+        let path = input["path"].as_str()
+            .ok_or_else(|| anyhow!("Missing 'path' in read_file input"))?;
+        
+        info!("Reading file: {}", path);
+        
+        // Use existing load_complete_file method
+        let content = self.load_complete_file(path, request.project_id.as_deref()).await?;
+        
+        Ok(json!({
+            "path": path,
+            "content": content,
+            "lines": content.lines().count()
+        }))
+    }
+    
+    /// Execute search_code tool
+    async fn execute_search_code(
+        &self,
+        input: &Value,
+        _request: &ChatRequest,
+    ) -> Result<Value> {
+        let query = input["query"].as_str()
+            .ok_or_else(|| anyhow!("Missing 'query' in search_code input"))?;
+        
+        let _element_type = input["element_type"].as_str();
+        
+        info!("Searching code: {}", query);
+        
+        // Search using code intelligence service (takes pattern and limit only)
+        let results = self.app_state.code_intelligence
+            .search_elements(query, Some(20))
             .await?;
         
-        // Save to database
-        let _message_id = save_structured_response(
-            &self.app_state.sqlite_pool,
-            &request.session_id,
-            &complete_response,
-            Some(user_message_id),
-        ).await?;
+        Ok(json!({
+            "query": query,
+            "results": results,
+            "count": results.len()
+        }))
+    }
+    
+    /// Execute list_files tool
+    async fn execute_list_files(
+        &self,
+        input: &Value,
+        request: &ChatRequest,
+    ) -> Result<Value> {
+        let path = input["path"].as_str().unwrap_or("");
         
-        Ok(complete_response)
+        info!("Listing files in: {}", if path.is_empty() { "root" } else { path });
+        
+        // Get git attachment for project
+        let project_id = request.project_id.as_deref()
+            .ok_or_else(|| anyhow!("No project context for list_files"))?;
+        
+        let attachment = sqlx::query!(
+            r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
+            project_id
+        )
+        .fetch_optional(&self.app_state.sqlite_pool)
+        .await?
+        .ok_or_else(|| anyhow!("No git repository attached to project"))?;
+        
+        let base_path = Path::new(&attachment.local_path).join(path);
+        
+        // Read directory
+        let mut entries = Vec::new();
+        let mut dir = tokio::fs::read_dir(&base_path).await?;
+        
+        while let Some(entry) = dir.next_entry().await? {
+            let metadata = entry.metadata().await?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            
+            entries.push(json!({
+                "name": name,
+                "is_file": metadata.is_file(),
+                "is_dir": metadata.is_dir(),
+                "size": metadata.len()
+            }));
+        }
+        
+        Ok(json!({
+            "path": path,
+            "entries": entries
+        }))
     }
     
     /// Two-phase error fix: analyze with thinking → generate structured fix

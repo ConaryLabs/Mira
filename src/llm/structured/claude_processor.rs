@@ -112,11 +112,11 @@ pub fn build_claude_request_with_custom_tools(
     context_messages: Vec<Value>,
     tool_schemas: Vec<Value>,
 ) -> Result<Value> {
-    let (thinking_budget, temperature) = analyze_message_complexity(user_message);
+    let (thinking_budget, _temperature) = analyze_message_complexity(user_message);
     
     debug!(
-        "Claude with {} custom tools: thinking={}, temp={}",
-        tool_schemas.len(), thinking_budget, temperature
+        "Claude with {} custom tools: thinking={}, temp=1.0 (required for thinking)",
+        tool_schemas.len(), thinking_budget
     );
 
     let mut messages = context_messages;
@@ -128,7 +128,7 @@ pub fn build_claude_request_with_custom_tools(
     Ok(json!({
         "model": CONFIG.anthropic_model,
         "max_tokens": CONFIG.anthropic_max_tokens,
-        "temperature": temperature,
+        "temperature": 1.0,  // MUST be 1.0 when thinking is enabled
         "system": system_prompt,
         "messages": messages,
         "thinking": {

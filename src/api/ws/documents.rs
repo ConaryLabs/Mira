@@ -27,7 +27,7 @@ pub struct UploadParams {
     pub project_id: String,
     pub file_name: String,
     pub content: String,  // Base64 encoded file content
-    pub file_type: String,
+    pub file_type: Option<String>,  // Optional - will be derived from file_name if not provided
 }
 
 /// Document search parameters
@@ -69,6 +69,23 @@ pub struct ProgressUpdate {
     pub file_name: String,
     pub progress: f32,
     pub status: String,
+}
+
+/// Detect file type from filename extension
+fn detect_file_type(file_name: &str) -> String {
+    let extension = file_name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    
+    match extension.as_str() {
+        "pdf" => "pdf",
+        "docx" | "doc" => "docx",
+        "txt" => "txt",
+        "md" | "markdown" => "markdown",
+        _ => "unknown",
+    }.to_string()
 }
 
 /// Document handler for WebSocket commands
@@ -141,6 +158,11 @@ impl DocumentHandler {
         // Decode base64 content
         let file_content = general_purpose::STANDARD.decode(&params.content)
             .map_err(|e| ApiError::bad_request(format!("Invalid base64 content: {}", e)))?;
+        
+        // Derive file_type from filename if not provided
+        let file_type = params.file_type
+            .clone()
+            .unwrap_or_else(|| detect_file_type(&params.file_name));
         
         // Create temporary file
         let temp_dir = std::env::temp_dir();

@@ -132,7 +132,8 @@ impl DocumentStorage {
         .execute(&mut *tx)
         .await?;
         
-        // 2. Store document chunks in SQLite (without page_number as it doesn't exist)
+        // 2. Store document chunks in SQLite
+        // FIXED: Removed 'id' column (auto-increment INTEGER), added qdrant_point_id
         for (idx, chunk) in document.chunks.iter().enumerate() {
             let chunk_index = idx as i64;
             let char_start = chunk.char_start as i64;
@@ -141,13 +142,13 @@ impl DocumentStorage {
             sqlx::query!(
                 r#"
                 INSERT INTO document_chunks (
-                    id, document_id, chunk_index, content,
+                    document_id, chunk_index, qdrant_point_id, content,
                     char_start, char_end
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 "#,
-                chunk.id,
                 document.id,
                 chunk_index,
+                chunk.id,  // Use chunk.id as qdrant_point_id
                 chunk.content,
                 char_start,
                 char_end
@@ -333,9 +334,10 @@ impl DocumentStorage {
     pub async fn get_document_chunks(&self, document_id: &str) -> Result<Vec<super::DocumentChunk>> {
         #[derive(sqlx::FromRow)]
         struct ChunkRow {
-            id: String,
+            id: i64,  // Changed to i64 to match INTEGER PRIMARY KEY
             document_id: String,
             chunk_index: i64,
+            qdrant_point_id: String,
             content: String,
             char_start: i64,
             char_end: i64,
@@ -347,6 +349,7 @@ impl DocumentStorage {
                 id,
                 document_id,
                 chunk_index,
+                qdrant_point_id,
                 content,
                 char_start,
                 char_end
@@ -361,7 +364,7 @@ impl DocumentStorage {
         
         let chunks = rows.into_iter().map(|row| {
             super::DocumentChunk {
-                id: row.id,
+                id: row.qdrant_point_id,  // Use qdrant_point_id as the chunk ID
                 document_id: row.document_id,
                 content: row.content,
                 chunk_index: row.chunk_index as usize,
