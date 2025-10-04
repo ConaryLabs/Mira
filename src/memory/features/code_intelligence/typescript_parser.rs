@@ -1,15 +1,15 @@
 // src/memory/features/code_intelligence/typescript_parser.rs
 use anyhow::Result;
 use swc_common::{sync::Lrc, FileName, SourceMap, Span};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
-use swc_ecma_ast::{FnDecl, ClassDecl, ImportDecl};
+use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
+use swc_ecma_ast::{FnDecl, ClassDecl, ImportDecl, CallExpr, ObjectLit};
 use swc_ecma_visit::{Visit, VisitWith};
 use crate::memory::features::code_intelligence::types::*;
 use sha2::{Sha256, Digest};
 
 #[derive(Clone)]
 pub struct TypeScriptParser {
-    max_complexity: i64,  // Changed from u32 - matches CodeElement
+    max_complexity: i64,
 }
 
 impl TypeScriptParser {
@@ -30,8 +30,15 @@ impl LanguageParser for TypeScriptParser {
             content.to_string()
         );
         
-        // Use default TypeScript config for now - works for .ts, .tsx, and .d.ts files
-        let syntax = Syntax::Typescript(Default::default());
+        // Enable JSX for .tsx files, disable for .ts and .d.ts
+        let is_tsx = file_path.ends_with(".tsx");
+        let syntax = Syntax::Typescript(TsSyntax {
+            tsx: is_tsx,
+            decorators: false,
+            dts: file_path.ends_with(".d.ts"),
+            no_early_errors: true,
+            disallow_ambiguous_jsx_like: false,
+        });
         
         let lexer = Lexer::new(
             syntax,
@@ -56,6 +63,7 @@ impl LanguageParser for TypeScriptParser {
             complexity_score: analyzer.total_complexity,
             test_count: analyzer.test_count,
             doc_coverage,
+            websocket_calls: analyzer.websocket_calls,
         })
     }
     
@@ -71,15 +79,17 @@ impl LanguageParser for TypeScriptParser {
 }
 
 struct TypeScriptAnalyzer<'a> {
-    max_complexity: i64,        // Changed from u32
+    max_complexity: i64,
     elements: Vec<CodeElement>,
     dependencies: Vec<ExternalDependency>,
     quality_issues: Vec<QualityIssue>,
-    total_complexity: i64,      // Changed from u32
-    test_count: i64,            // Changed from u32
+    total_complexity: i64,
+    test_count: i64,
     content: &'a str,
     file_path: &'a str,
     current_path: Vec<String>,
+    websocket_calls: Vec<WebSocketCall>,
+    current_function: Option<String>,
 }
 
 impl<'a> TypeScriptAnalyzer<'a> {
@@ -94,6 +104,8 @@ impl<'a> TypeScriptAnalyzer<'a> {
             content,
             file_path,
             current_path: Vec::new(),
+            websocket_calls: Vec::new(),
+            current_function: None,
         }
     }
 
@@ -108,14 +120,12 @@ impl<'a> TypeScriptAnalyzer<'a> {
     }
 
     fn get_full_path(&self, name: &str) -> String {
-        // Build module path from current nesting
         let module_path = if self.current_path.is_empty() {
             name.to_string()
         } else {
             format!("{}.{}", self.current_path.join("."), name)
         };
 
-        // Clean file path and combine with module path
         let clean_file_path = self.file_path.replace("\\", "/");
         format!("{}::{}", clean_file_path, module_path)
     }
@@ -130,20 +140,20 @@ impl<'a> TypeScriptAnalyzer<'a> {
         }
     }
 
-    fn get_line_number(&self, span: Span) -> i64 {  // Changed return type from u32
+    fn get_line_number(&self, span: Span) -> i64 {
         let pos = span.lo.0 as usize;
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as i64 + 1  // Cast to i64 instead of u32
+            .count() as i64 + 1
     }
 
-    fn get_end_line_number(&self, span: Span) -> i64 {  // Changed return type from u32
+    fn get_end_line_number(&self, span: Span) -> i64 {
         let pos = span.hi.0 as usize;
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as i64 + 1  // Cast to i64 instead of u32
+            .count() as i64 + 1
     }
 
     fn create_signature_hash(&self, content: &str) -> String {
@@ -152,24 +162,21 @@ impl<'a> TypeScriptAnalyzer<'a> {
         format!("{:x}", hasher.finalize())
     }
 
-    fn calculate_cyclomatic_complexity(&self, content: &str) -> i64 {  // Changed return type from u32
+    fn calculate_cyclomatic_complexity(&self, content: &str) -> i64 {
         let mut complexity = 1i64;
         
-        // Count decision points
         for keyword in ["if", "else if", "for", "while", "case", "catch", "&&", "||", "?"] {
-            complexity += content.matches(keyword).count() as i64;  // Cast to i64 instead of u32
+            complexity += content.matches(keyword).count() as i64;
         }
         
         complexity
     }
 
     fn is_react_component(&self, name: &str) -> bool {
-        // React components start with uppercase
         name.chars().next().map_or(false, |c| c.is_uppercase())
     }
 
     fn is_react_hook(&self, name: &str) -> bool {
-        // React hooks start with "use"
         name.starts_with("use") && name.len() > 3
     }
 
@@ -182,7 +189,6 @@ impl<'a> TypeScriptAnalyzer<'a> {
     }
 
     fn detect_quality_issues(&mut self, element: &CodeElement) {
-        // High complexity warning
         if element.complexity_score > self.max_complexity {
             self.quality_issues.push(QualityIssue {
                 issue_type: "complexity".to_string(),
@@ -198,7 +204,6 @@ impl<'a> TypeScriptAnalyzer<'a> {
             });
         }
 
-        // Missing documentation for public elements
         if element.visibility == "public" && element.documentation.is_none() {
             self.quality_issues.push(QualityIssue {
                 issue_type: "documentation".to_string(),
@@ -225,7 +230,6 @@ impl<'a> TypeScriptAnalyzer<'a> {
         let mut docs = Vec::new();
         let mut found_jsdoc = false;
 
-        // Look backwards for JSDoc comments
         for i in (0..start_line.saturating_sub(1) as usize).rev() {
             let line = lines.get(i)?;
             let trimmed = line.trim();
@@ -252,11 +256,52 @@ impl<'a> TypeScriptAnalyzer<'a> {
 
         None
     }
+
+    fn extract_object_field(&self, obj: &ObjectLit, field: &str) -> Option<String> {
+        use swc_ecma_ast::{PropOrSpread, Prop, PropName, Expr, Lit};
+        
+        for prop in &obj.props {
+            if let PropOrSpread::Prop(prop) = prop {
+                if let Prop::KeyValue(kv) = &**prop {
+                    if let PropName::Ident(ident) = &kv.key {
+                        if ident.sym.to_string() == field {
+                            if let Expr::Lit(Lit::Str(s)) = &*kv.value {
+                                return Some(s.value.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn extract_websocket_call(&mut self, call: &CallExpr) {
+        use swc_ecma_ast::Expr;
+        
+        if let Some(arg) = call.args.first() {
+            if let Expr::Object(obj) = &*arg.expr {
+                let message_type = self.extract_object_field(obj, "type");
+                let method = self.extract_object_field(obj, "method");
+                
+                if let Some(msg_type) = message_type {
+                    self.websocket_calls.push(WebSocketCall {
+                        message_type: msg_type,
+                        method,
+                        line_number: self.get_line_number(call.span) as usize,
+                        element: self.current_function.clone().unwrap_or_else(|| "global".to_string()),
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Visit for TypeScriptAnalyzer<'a> {
     fn visit_fn_decl(&mut self, node: &FnDecl) {
         let name = node.ident.sym.to_string();
+        self.current_function = Some(name.clone());
+        
         let full_path = self.get_full_path(&name);
         let content = self.extract_text(node.function.span);
         let complexity = self.calculate_cyclomatic_complexity(&content);
@@ -296,10 +341,10 @@ impl<'a> Visit for TypeScriptAnalyzer<'a> {
         self.detect_quality_issues(&element);
         self.elements.push(element);
 
-        // Visit children
         self.current_path.push(name);
         node.function.visit_children_with(self);
         self.current_path.pop();
+        self.current_function = None;
     }
 
     fn visit_class_decl(&mut self, node: &ClassDecl) {
@@ -332,7 +377,6 @@ impl<'a> Visit for TypeScriptAnalyzer<'a> {
 
         self.elements.push(element);
 
-        // Visit children
         self.current_path.push(name);
         node.class.visit_children_with(self);
         self.current_path.pop();
@@ -369,5 +413,20 @@ impl<'a> Visit for TypeScriptAnalyzer<'a> {
             imported_symbols,
             dependency_type: dependency_type.to_string(),
         });
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        use swc_ecma_ast::{Callee, Expr};
+        
+        // Detect send() calls for WebSocket messages
+        if let Callee::Expr(expr) = &call.callee {
+            if let Expr::Ident(ident) = &**expr {
+                if ident.sym == "send" {
+                    self.extract_websocket_call(call);
+                }
+            }
+        }
+        
+        call.visit_children_with(self);
     }
 }

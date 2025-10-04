@@ -2,14 +2,14 @@
 use anyhow::Result;
 use swc_common::{sync::Lrc, FileName, SourceMap, Span, Spanned};
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
-use swc_ecma_ast::{Expr, Pat, FnDecl, ClassDecl, VarDecl, ImportDecl};
+use swc_ecma_ast::{Expr, Pat, FnDecl, ClassDecl, VarDecl, ImportDecl, CallExpr, ObjectLit};
 use swc_ecma_visit::{Visit, VisitWith};
 use crate::memory::features::code_intelligence::types::*;
 use sha2::{Sha256, Digest};
 
 #[derive(Clone)]
 pub struct JavaScriptParser {
-    max_complexity: i64,  // Changed from u32 - matches CodeElement
+    max_complexity: i64,
 }
 
 impl JavaScriptParser {
@@ -30,7 +30,7 @@ impl LanguageParser for JavaScriptParser {
             content.to_string()
         );
         
-        // Use default ES config for now - works for .js, .jsx, and .mjs files
+        // ES syntax - JSX works by default for .jsx files
         let syntax = Syntax::Es(Default::default());
         
         let lexer = Lexer::new(
@@ -56,6 +56,7 @@ impl LanguageParser for JavaScriptParser {
             complexity_score: analyzer.total_complexity,
             test_count: analyzer.test_count,
             doc_coverage,
+            websocket_calls: analyzer.websocket_calls,
         })
     }
     
@@ -71,15 +72,17 @@ impl LanguageParser for JavaScriptParser {
 }
 
 struct JavaScriptAnalyzer<'a> {
-    max_complexity: i64,        // Changed from u32
+    max_complexity: i64,
     elements: Vec<CodeElement>,
     dependencies: Vec<ExternalDependency>,
     quality_issues: Vec<QualityIssue>,
-    total_complexity: i64,      // Changed from u32
-    test_count: i64,            // Changed from u32
+    total_complexity: i64,
+    test_count: i64,
     content: &'a str,
     file_path: &'a str,
     current_path: Vec<String>,
+    websocket_calls: Vec<WebSocketCall>,
+    current_function: Option<String>,
 }
 
 impl<'a> JavaScriptAnalyzer<'a> {
@@ -94,6 +97,8 @@ impl<'a> JavaScriptAnalyzer<'a> {
             content,
             file_path,
             current_path: Vec::new(),
+            websocket_calls: Vec::new(),
+            current_function: None,
         }
     }
 
@@ -108,14 +113,12 @@ impl<'a> JavaScriptAnalyzer<'a> {
     }
 
     fn get_full_path(&self, name: &str) -> String {
-        // Build module path from current nesting
         let module_path = if self.current_path.is_empty() {
             name.to_string()
         } else {
             format!("{}.{}", self.current_path.join("."), name)
         };
 
-        // Clean file path and combine with module path
         let clean_file_path = self.file_path.replace("\\", "/");
         format!("{}::{}", clean_file_path, module_path)
     }
@@ -130,20 +133,20 @@ impl<'a> JavaScriptAnalyzer<'a> {
         }
     }
 
-    fn get_line_number(&self, span: Span) -> i64 {  // Changed return type from u32
+    fn get_line_number(&self, span: Span) -> i64 {
         let pos = span.lo.0 as usize;
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as i64 + 1  // Cast to i64 instead of u32
+            .count() as i64 + 1
     }
 
-    fn get_end_line_number(&self, span: Span) -> i64 {  // Changed return type from u32
+    fn get_end_line_number(&self, span: Span) -> i64 {
         let pos = span.hi.0 as usize;
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as i64 + 1  // Cast to i64 instead of u32
+            .count() as i64 + 1
     }
 
     fn create_signature_hash(&self, content: &str) -> String {
@@ -152,24 +155,21 @@ impl<'a> JavaScriptAnalyzer<'a> {
         format!("{:x}", hasher.finalize())
     }
 
-    fn calculate_cyclomatic_complexity(&self, content: &str) -> i64 {  // Changed return type from u32
+    fn calculate_cyclomatic_complexity(&self, content: &str) -> i64 {
         let mut complexity = 1i64;
         
-        // Count decision points
         for keyword in ["if", "else if", "for", "while", "case", "catch", "&&", "||", "?"] {
-            complexity += content.matches(keyword).count() as i64;  // Cast to i64 instead of u32
+            complexity += content.matches(keyword).count() as i64;
         }
         
         complexity
     }
 
     fn is_react_component(&self, name: &str) -> bool {
-        // React components start with uppercase
         name.chars().next().map_or(false, |c| c.is_uppercase())
     }
 
     fn is_react_hook(&self, name: &str) -> bool {
-        // React hooks start with "use"
         name.starts_with("use") && name.len() > 3
     }
 
@@ -182,7 +182,6 @@ impl<'a> JavaScriptAnalyzer<'a> {
     }
 
     fn detect_quality_issues(&mut self, element: &CodeElement) {
-        // High complexity warning
         if element.complexity_score > self.max_complexity {
             self.quality_issues.push(QualityIssue {
                 issue_type: "complexity".to_string(),
@@ -198,7 +197,6 @@ impl<'a> JavaScriptAnalyzer<'a> {
             });
         }
 
-        // Missing documentation for exported elements
         if element.documentation.is_none() && element.visibility == "public" {
             self.quality_issues.push(QualityIssue {
                 issue_type: "documentation".to_string(),
@@ -225,7 +223,6 @@ impl<'a> JavaScriptAnalyzer<'a> {
         let mut docs = Vec::new();
         let mut found_jsdoc = false;
 
-        // Look backwards for JSDoc comments
         for i in (0..start_line.saturating_sub(1) as usize).rev() {
             let line = lines.get(i)?;
             let trimmed = line.trim();
@@ -252,11 +249,52 @@ impl<'a> JavaScriptAnalyzer<'a> {
 
         None
     }
+
+    fn extract_object_field(&self, obj: &ObjectLit, field: &str) -> Option<String> {
+        use swc_ecma_ast::{PropOrSpread, Prop, PropName, Expr, Lit};
+        
+        for prop in &obj.props {
+            if let PropOrSpread::Prop(prop) = prop {
+                if let Prop::KeyValue(kv) = &**prop {
+                    if let PropName::Ident(ident) = &kv.key {
+                        if ident.sym.to_string() == field {
+                            if let Expr::Lit(Lit::Str(s)) = &*kv.value {
+                                return Some(s.value.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn extract_websocket_call(&mut self, call: &CallExpr) {
+        use swc_ecma_ast::Expr;
+        
+        if let Some(arg) = call.args.first() {
+            if let Expr::Object(obj) = &*arg.expr {
+                let message_type = self.extract_object_field(obj, "type");
+                let method = self.extract_object_field(obj, "method");
+                
+                if let Some(msg_type) = message_type {
+                    self.websocket_calls.push(WebSocketCall {
+                        message_type: msg_type,
+                        method,
+                        line_number: self.get_line_number(call.span) as usize,
+                        element: self.current_function.clone().unwrap_or_else(|| "global".to_string()),
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Visit for JavaScriptAnalyzer<'a> {
     fn visit_fn_decl(&mut self, node: &FnDecl) {
         let name = node.ident.sym.to_string();
+        self.current_function = Some(name.clone());
+        
         let full_path = self.get_full_path(&name);
         let content = self.extract_text(node.function.span);
         let complexity = self.calculate_cyclomatic_complexity(&content);
@@ -296,10 +334,10 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
         self.detect_quality_issues(&element);
         self.elements.push(element);
 
-        // Visit children
         self.current_path.push(name);
         node.function.visit_children_with(self);
         self.current_path.pop();
+        self.current_function = None;
     }
 
     fn visit_class_decl(&mut self, node: &ClassDecl) {
@@ -331,7 +369,6 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
 
         self.elements.push(element);
 
-        // Visit children
         self.current_path.push(name);
         node.class.visit_children_with(self);
         self.current_path.pop();
@@ -370,13 +407,11 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
         });
     }
 
-    // Handle const/let/var function expressions and arrow functions
     fn visit_var_decl(&mut self, node: &VarDecl) {
         for decl in &node.decls {
             if let Pat::Ident(ident) = &decl.name {
                 let name = ident.sym.to_string();
                 
-                // Check if this is a function expression or arrow function
                 if let Some(init) = &decl.init {
                     let is_function = match &**init {
                         Expr::Fn(_) | Expr::Arrow(_) => true,
@@ -384,6 +419,8 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
                     };
 
                     if is_function {
+                        self.current_function = Some(name.clone());
+                        
                         let content = self.extract_text(init.span());
                         let complexity = self.calculate_cyclomatic_complexity(&content);
                         let is_test = self.is_test_function(&name);
@@ -425,9 +462,26 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
                         self.total_complexity += complexity;
                         self.detect_quality_issues(&element);
                         self.elements.push(element);
+                        
+                        self.current_function = None;
                     }
                 }
             }
         }
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        use swc_ecma_ast::{Callee, Expr};
+        
+        // Detect send() calls for WebSocket messages
+        if let Callee::Expr(expr) = &call.callee {
+            if let Expr::Ident(ident) = &**expr {
+                if ident.sym == "send" {
+                    self.extract_websocket_call(call);
+                }
+            }
+        }
+        
+        call.visit_children_with(self);
     }
 }

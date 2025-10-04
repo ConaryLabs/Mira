@@ -77,6 +77,7 @@ pub struct FileAnalysis {
     pub complexity_score: i64,   // Changed from u32 - matches SQLite INTEGER
     pub test_count: i64,         // Changed from u32 - matches SQLite INTEGER
     pub doc_coverage: f64,
+    pub websocket_calls: Vec<WebSocketCall>,  // NEW: WebSocket calls detected during parsing
 }
 
 /// Result of analyzing a file
