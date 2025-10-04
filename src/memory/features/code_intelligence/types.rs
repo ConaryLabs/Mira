@@ -41,6 +41,32 @@ pub struct ExternalDependency {
     pub dependency_type: String,  // 'crate', 'npm_package', 'local_import'
 }
 
+/// WebSocket call from frontend (TypeScript/JavaScript)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketCall {
+    pub message_type: String,     // "git_command", "project_command"
+    pub method: Option<String>,   // "git.import", "project.create"
+    pub line_number: usize,
+}
+
+/// WebSocket handler in backend (Rust)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketHandler {
+    pub message_type: String,     // "GitCommand", "ProjectCommand"
+    pub method: Option<String>,   // "git.import", "project.create"
+    pub handler_function: String,
+    pub line_number: usize,
+}
+
+/// WebSocket response from backend (Rust)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketResponse {
+    pub response_type: String,    // "Response", "Data", "Status", "Error"
+    pub data_type: Option<String>, // "git_status", "file_tree"
+    pub sending_function: String,
+    pub line_number: usize,
+}
+
 /// Complete analysis result for a file
 #[derive(Debug, Clone)]
 pub struct FileAnalysis {
