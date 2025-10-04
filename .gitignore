@@ -150,3 +150,5 @@ embeddings_cache/
 *.embedding
 checkpoint/
 checkpoints/
+mira.db
+data/

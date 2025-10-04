@@ -1,5 +1,4 @@
 // src/state.rs
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -49,16 +48,20 @@ impl AppState {
         // Initialize project store
         let project_store = Arc::new(ProjectStore::new(pool.clone()));
         
-        // Initialize git store and client
+        // Initialize code intelligence service FIRST (needed for git client)
+        let code_intelligence = Arc::new(CodeIntelligenceService::new(pool.clone()));
+        
+        // Initialize git store and client WITH code intelligence
         let git_store = GitStore::new(pool.clone());
-        let git_client = GitClient::new(
+        let git_client = GitClient::with_code_intelligence(
             std::path::PathBuf::from("./repos"),
             git_store.clone(),
+            (*code_intelligence).clone(),  // Clone the service, not the Arc
         );
         
         // FIXED: Use Claude API key for chat, not OpenAI embedding key
         let client_config = ClientConfig {
-            api_key: CONFIG.anthropic_api_key.clone(),  // <-- FIXED: Was openai_embedding_api_key
+            api_key: CONFIG.anthropic_api_key.clone(),
             base_url: CONFIG.anthropic_base_url.clone(),
             model: CONFIG.anthropic_model.clone(),
             max_output_tokens: CONFIG.anthropic_max_tokens,
@@ -77,9 +80,6 @@ impl AppState {
             multi_store.clone(),
             llm_client.clone(),
         ));
-        
-        // Initialize code intelligence service
-        let code_intelligence = Arc::new(CodeIntelligenceService::new(pool.clone()));
         
         Ok(Self {
             sqlite_store,

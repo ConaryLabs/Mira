@@ -132,7 +132,13 @@ impl GitOperations {
                     continue;
                 }
 
-                match self.analyze_file_with_id(code_intel, *file_id, file_path).await {
+                // Use project-aware analysis to enable WebSocket detection
+                match self.analyze_file_with_project(
+                    code_intel, 
+                    *file_id, 
+                    file_path,
+                    &attachment.project_id  // Pass project_id for WebSocket analysis
+                ).await {
                     Ok(()) => {
                         analyzed_files += 1;
                         debug!("Successfully analyzed: {}", file_path.display());
@@ -176,7 +182,7 @@ impl GitOperations {
         let content_hash = format!("{:x}", hasher.finish());
         
         let content_str = String::from_utf8_lossy(&content);
-        let line_count = content_str.lines().count() as i64;  // Changed from as i32 to match insert_repository_file signature
+        let line_count = content_str.lines().count() as i64;
         
         // Detect language based on file extension
         let language = if is_rust_file(file_path) {
@@ -203,11 +209,12 @@ impl GitOperations {
         ).await
     }
 
-    async fn analyze_file_with_id(
+    async fn analyze_file_with_project(
         &self,
         code_intel: &CodeIntelligenceService,
         file_id: i64,
         file_path: &Path,
+        project_id: &str,  // NEW: project_id for WebSocket analysis
     ) -> Result<()> {
         let content = tokio::fs::read_to_string(file_path).await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path.display(), e))?;
@@ -225,11 +232,13 @@ impl GitOperations {
             return Ok(()); // Skip unsupported file types
         };
         
-        let result = code_intel.analyze_and_store_file(
+        // Use project-aware analysis to enable WebSocket detection
+        let result = code_intel.analyze_and_store_with_project(
             file_id,
             &content,
             &file_path_str,
             language,
+            project_id,  // Enables WebSocket call/handler detection
         ).await?;
 
         debug!(
@@ -463,15 +472,29 @@ fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
 fn should_ignore_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
     
-    if path_str.contains("/.git/") || path_str.starts_with(".git/") {
-        return true;
+    // Common directories to ignore
+    let ignored_dirs = [
+        "/.git/", "/node_modules/", "/target/", "/dist/", "/build/", 
+        "/.next/", "/.nuxt/", "/out/", "/coverage/", "/.cache/",
+        "/vendor/", "/venv/", "/.venv/", "/env/", "/.pytest_cache/",
+        "/__pycache__/", "/.idea/", "/.vscode/", "/.DS_Store",
+        "/tmp/", "/temp/", "/logs/", "/.turbo/", "/pkg/",
+    ];
+    
+    for dir in &ignored_dirs {
+        if path_str.contains(dir) || path_str.starts_with(&dir[1..]) {
+            return true;
+        }
     }
 
+    // Binary and media files
     if let Some(extension) = path.extension() {
         let ext = extension.to_string_lossy().to_lowercase();
         matches!(ext.as_str(),
             "exe" | "dll" | "so" | "dylib" | "bin" | "jar" | "zip" | "tar" | "gz" | 
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "pdf" | "mp3" | "mp4" | "avi"
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "pdf" | "mp3" | "mp4" | "avi" |
+            "woff" | "woff2" | "ttf" | "eot" | "svg" | "webp" | // fonts/images
+            "lock" | "sum" // lock files
         )
     } else {
         false

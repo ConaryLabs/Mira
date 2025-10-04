@@ -47,6 +47,7 @@ pub struct WebSocketCall {
     pub message_type: String,     // "git_command", "project_command"
     pub method: Option<String>,   // "git.import", "project.create"
     pub line_number: usize,
+    pub element: String,          // Function/component making the call
 }
 
 /// WebSocket handler in backend (Rust)
