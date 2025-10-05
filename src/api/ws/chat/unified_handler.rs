@@ -1,5 +1,5 @@
 // src/api/ws/chat/unified_handler.rs
-// Slim routing layer - all tool logic delegated to src/tools/*
+// UPDATED: Uses LLM-based error detection via UnifiedAnalyzer - no regex
 
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
@@ -11,9 +11,10 @@ use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, code_fix_processor, claude_processor};
 use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::llm::structured::tool_schema::*;
-use crate::llm::provider::ChatMessage;  // NEW: Import provider types
+use crate::llm::provider::ChatMessage;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
+use crate::memory::features::message_pipeline::analyzers::{UnifiedAnalyzer, UnifiedAnalysisResult};
 use crate::memory::core::types::MemoryEntry;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
@@ -30,11 +31,17 @@ pub struct ChatRequest {
 
 pub struct UnifiedChatHandler {
     app_state: Arc<AppState>,
+    unified_analyzer: UnifiedAnalyzer,
 }
 
 impl UnifiedChatHandler {
     pub fn new(app_state: Arc<AppState>) -> Self {
-        Self { app_state }
+        let unified_analyzer = UnifiedAnalyzer::new(app_state.llm.clone());
+        
+        Self { 
+            app_state,
+            unified_analyzer,
+        }
     }
     
     pub async fn handle_message(
@@ -43,10 +50,27 @@ impl UnifiedChatHandler {
     ) -> Result<CompleteResponse> {
         info!("Processing message for session: {}", request.session_id);
         
-        // Check for error patterns first
-        if let Some(mut error_context) = code_fix_processor::detect_error_context(&request.content) {
+        // Step 1: LLM analysis (determines errors, code, sentiment, etc.)
+        let analysis = self.unified_analyzer
+            .analyze_message(&request.content, "user", None)
+            .await?;
+        
+        info!("LLM analysis complete - contains_error: {}, is_code: {}", 
+            analysis.contains_error, analysis.is_code);
+        
+        // Step 2: Check if LLM detected an error
+        if analysis.contains_error {
             if let Some(project_id) = &request.project_id {
-                info!("Detected error in file: {}", error_context.file_path);
+                info!("LLM detected error type: {:?}, file: {:?}, severity: {:?}",
+                    analysis.error_type, analysis.error_file, analysis.error_severity);
+                
+                let mut error_context = ErrorContext {
+                    error_message: request.content.clone(),
+                    file_path: analysis.error_file.clone().unwrap_or_else(|| "unknown".to_string()),
+                    error_type: analysis.error_type.clone().unwrap_or_else(|| "unknown".to_string()),
+                    error_severity: analysis.error_severity.clone().unwrap_or_else(|| "warning".to_string()),
+                    original_line_count: 0,
+                };
                 
                 // Load file and update line count
                 if let Ok(content) = file_ops::load_complete_file(
@@ -59,12 +83,12 @@ impl UnifiedChatHandler {
                 
                 return self.handle_error_fix_with_handler(request, error_context).await;
             } else {
-                warn!("Error detected but no project context available");
+                warn!("LLM detected error but no project context available");
             }
         }
         
-        // Use tool execution loop for regular chat
-        self.handle_chat_with_tools(request).await
+        // Step 3: Normal chat flow (with potential code context from analysis)
+        self.handle_chat_with_tools(request, analysis).await
     }
     
     /// Delegate error fixing to CodeFixHandler
@@ -73,7 +97,7 @@ impl UnifiedChatHandler {
         request: ChatRequest,
         error_context: ErrorContext,
     ) -> Result<CompleteResponse> {
-        info!("Delegating to CodeFixHandler");
+        info!("Delegating to CodeFixHandler for {} error", error_context.error_type);
 
         // Load complete file
         let file_content = file_ops::load_complete_file(
@@ -102,10 +126,11 @@ impl UnifiedChatHandler {
         ).await
     }
     
-    /// Process chat with tool execution loop
+    /// Process chat with tool execution loop (now with analysis context)
     async fn handle_chat_with_tools(
         &self,
         request: ChatRequest,
+        analysis: UnifiedAnalysisResult,
     ) -> Result<CompleteResponse> {
         // Save user message first
         let user_message_id = self.save_user_message(&request).await?;
@@ -128,9 +153,8 @@ impl UnifiedChatHandler {
             "content": request.content
         }));
         
-        // FIXED: Different approach based on project context
+        // No project: Force respond_to_user ONLY
         if request.project_id.is_none() {
-            // No project: Force respond_to_user ONLY (fast, no thinking, no other tools)
             return self.handle_simple_chat(
                 user_message_id,
                 context_messages,
@@ -160,14 +184,13 @@ impl UnifiedChatHandler {
                         content: if let Some(text) = m["content"].as_str() {
                             text.to_string()
                         } else {
-                            // Handle array content (tool results)
                             serde_json::to_string(&m["content"]).ok()?
                         },
                     })
                 })
                 .collect();
             
-            // Call provider with tools (NO forced tool - let Claude decide, thinking enabled)
+            // Call provider with tools
             let raw_response = self.app_state.llm
                 .chat_with_tools(
                     provider_messages,
@@ -177,7 +200,6 @@ impl UnifiedChatHandler {
                 )
                 .await?;
             
-            // Response is already in Claude format from conversion layer
             let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
             
             if stop_reason == "end_turn" {
@@ -295,7 +317,7 @@ impl UnifiedChatHandler {
             })
             .collect();
         
-        // Force respond_to_user tool (no thinking allowed with forced tools)
+        // Force respond_to_user tool
         let tool_choice = Some(json!({
             "type": "tool",
             "name": "respond_to_user"
@@ -305,7 +327,7 @@ impl UnifiedChatHandler {
             provider_messages,
             system_prompt,
             tools,
-            tool_choice,  // Force respond_to_user
+            tool_choice,
         ).await?;
         
         // Extract structured response
@@ -329,7 +351,7 @@ impl UnifiedChatHandler {
         Ok(complete_response)
     }
     
-    /// Execute tool via ToolExecutor (delegated to src/tools/executor.rs)
+    /// Execute tool via ToolExecutor
     async fn execute_tool(
         &self,
         tool_name: &str,
@@ -367,7 +389,6 @@ impl UnifiedChatHandler {
         session_id: &str,
         _user_message: &str,
     ) -> Result<RecallContext> {
-        // Fetch recent messages from database
         let recent = sqlx::query!(
             r#"
             SELECT id, role, content, timestamp

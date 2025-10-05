@@ -1,6 +1,6 @@
 // src/llm/structured/code_fix_processor.rs
 // Code fix request/response handling using Claude with tool calling
-// FIXED: Removed overly aggressive generic error detection
+// UPDATED: Uses LLM error detection from ChatAnalysisResult - no regex
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,9 @@ use crate::config::CONFIG;
 use super::types::{CompleteResponse, LLMMetadata, StructuredLLMResponse, MessageAnalysis};
 use super::tool_schema::get_code_fix_tool_schema;
 use super::claude_processor::analyze_message_complexity;
+
+// Import ChatAnalysisResult for LLM-based error detection
+use crate::memory::features::message_pipeline::analyzers::ChatAnalysisResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeFixFile {
@@ -42,98 +45,34 @@ pub struct CodeFixResponse {
 pub struct ErrorContext {
     pub error_message: String,
     pub file_path: String,
+    pub error_type: String,
+    pub error_severity: String,
     pub original_line_count: usize,
 }
 
-/// Detects if a message contains a compiler/runtime error
-/// Returns ErrorContext if an error is detected
-pub fn detect_error_context(message: &str) -> Option<ErrorContext> {
-    // Rust compiler errors: error[E0308]: ... --> src/path/file.rs:line:col
-    // Must have both the error code AND the arrow pointer
-    if let Some(_captures) = regex::Regex::new(r"error\[E\d+\]:")
-        .ok()?
-        .captures(message) 
-    {
-        // Extract file path from "--> src/path/file.rs:line:col"
-        if let Some(path_match) = regex::Regex::new(r"-->\s+([^\s:]+)")
-            .ok()?
-            .captures(message)
-        {
-            let file_path = path_match.get(1)?.as_str().to_string();
-            return Some(ErrorContext {
-                error_message: message.to_string(),
-                file_path,
-                original_line_count: 0, // Will be set by handler
-            });
-        }
+/// Extract error context from LLM analysis result
+/// Replaces regex-based detection with intelligent LLM analysis
+pub fn extract_error_context(analysis: &ChatAnalysisResult) -> Option<ErrorContext> {
+    // LLM already determined if this contains an actual error
+    if !analysis.contains_error.unwrap_or(false) {
+        return None;
     }
     
-    // TypeScript/JavaScript errors: path/file.ts(line,col): error TS...
-    // Must have the specific format with line numbers and "error TS"
-    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.(?:ts|tsx|js|jsx))\(\d+,\d+\):\s+error\s+TS\d+")
-        .ok()?
-        .captures(message)
-    {
-        let file_path = captures.get(1)?.as_str().to_string();
-        return Some(ErrorContext {
-            error_message: message.to_string(),
-            file_path,
-            original_line_count: 0,
-        });
-    }
+    // Must have error type to proceed
+    let error_type = analysis.error_type.as_ref()?;
     
-    // Python errors: File "path/file.py", line X
-    // Must have the specific format with "File" and "line"
-    if let Some(captures) = regex::Regex::new(r#"File\s+"([^"]+\.py)",\s+line\s+\d+"#)
-        .ok()?
-        .captures(message)
-    {
-        let file_path = captures.get(1)?.as_str().to_string();
-        return Some(ErrorContext {
-            error_message: message.to_string(),
-            file_path,
-            original_line_count: 0,
-        });
-    }
-    
-    // ESLint errors: path/file.js:line:col - error message (rule-name)
-    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.(?:js|jsx|ts|tsx)):(\d+):(\d+)\s+-\s+(.+)")
-        .ok()?
-        .captures(message)
-    {
-        let file_path = captures.get(1)?.as_str().to_string();
-        return Some(ErrorContext {
-            error_message: message.to_string(),
-            file_path,
-            original_line_count: 0,
-        });
-    }
-    
-    // Go compiler errors: path/file.go:line:col: error message
-    if let Some(captures) = regex::Regex::new(r"([^\s:]+\.go):(\d+):(\d+):\s+(.+)")
-        .ok()?
-        .captures(message)
-    {
-        let file_path = captures.get(1)?.as_str().to_string();
-        // Verify it actually says "error" or similar
-        let error_text = captures.get(4)?.as_str();
-        if error_text.to_lowercase().contains("error") || 
-           error_text.to_lowercase().contains("undefined") ||
-           error_text.to_lowercase().contains("cannot") {
-            return Some(ErrorContext {
-                error_message: message.to_string(),
-                file_path,
-                original_line_count: 0,
-            });
-        }
-    }
-    
-    // REMOVED: Generic fallback that was causing false positives
-    // DO NOT add back a generic "contains error + contains filepath" check
-    // It must be a specific compiler error format to trigger
-    
-    None
+    Some(ErrorContext {
+        error_message: analysis.content.clone(),
+        file_path: analysis.error_file.clone().unwrap_or_else(|| "unknown".to_string()),
+        error_type: error_type.clone(),
+        error_severity: analysis.error_severity.clone().unwrap_or_else(|| "warning".to_string()),
+        original_line_count: 0, // Will be set by handler after loading file
+    })
 }
+
+// ============================================================================
+// Code Fix Request Building
+// ============================================================================
 
 /// Build code fix request with forced tool choice (no thinking)
 /// 

@@ -1,18 +1,20 @@
+// src/memory/features/summarization/strategies/rolling_summary.rs
+
 use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, debug};
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::{LlmProvider, ChatMessage};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::SummaryType;
 
 /// Handles all rolling summary operations (10-message and 100-message windows)
 pub struct RollingSummaryStrategy {
-    llm_client: Arc<OpenAIClient>,
+    llm_provider: Arc<dyn LlmProvider>,
 }
 
 impl RollingSummaryStrategy {
-    pub fn new(llm_client: Arc<OpenAIClient>) -> Self {
-        Self { llm_client }
+    pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
+        Self { llm_provider }
     }
 
     /// Creates rolling summary for specified window size
@@ -28,15 +30,24 @@ impl RollingSummaryStrategy {
 
         let content = self.build_content(messages)?;
         let prompt = self.build_prompt(&content, window_size);
-        let token_limit = self.get_token_limit(window_size);
 
         info!("Creating {}-message rolling summary for session {}", window_size, session_id);
         
-        let summary = self.llm_client
-            .summarize_conversation(&prompt, token_limit)
+        // Use provider.chat() instead of summarize_conversation()
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt,
+        }];
+        
+        let response = self.llm_provider
+            .chat(
+                messages,
+                "You are a conversation summarizer. Create concise, accurate summaries.".to_string(),
+                None, // No thinking for summaries
+            )
             .await?;
 
-        Ok(summary)
+        Ok(response.content)
     }
 
     /// Determines if rolling summary should be created based on message count
@@ -92,14 +103,6 @@ impl RollingSummaryStrategy {
                 "Summarize the last {} messages, preserving important details:\n\n{}",
                 window_size, content
             ),
-        }
-    }
-
-    fn get_token_limit(&self, window_size: usize) -> usize {
-        match window_size {
-            100 => 800,
-            10 => 500,
-            _ => 600,
         }
     }
 }

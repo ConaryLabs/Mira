@@ -14,6 +14,7 @@ use anyhow::Result;
 use tracing::{debug, info};
 
 use crate::llm::client::OpenAIClient;
+use crate::llm::provider::LlmProvider;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::{
     core::types::MemoryEntry,
@@ -111,20 +112,22 @@ pub struct RecallEngine {
 
 impl RecallEngine {
     /// Creates a new recall engine with clean modular architecture
+    /// Takes both LlmProvider (for future chat features) and OpenAIClient (for embeddings)
     pub fn new(
-        llm_client: Arc<OpenAIClient>,
+        _llm_provider: Arc<dyn LlmProvider>,
+        embedding_client: Arc<OpenAIClient>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
         // Build focused search strategies
         let recent_search = RecentSearch::new(sqlite_store.clone());
-        let semantic_search = SemanticSearch::new(llm_client.clone(), multi_store.clone());
+        let semantic_search = SemanticSearch::new(embedding_client.clone(), multi_store.clone());
         let hybrid_search = HybridSearch::new(
             recent_search.clone(),
             semantic_search.clone(),
         );
         let multihead_search = MultiHeadSearch::new(
-            llm_client.clone(),
+            embedding_client.clone(),
             multi_store.clone(),
         );
         

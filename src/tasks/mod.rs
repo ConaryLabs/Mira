@@ -11,7 +11,7 @@ use tracing::{debug, error, info};
 use sqlx::Row;
 
 use crate::memory::features::decay;
-use crate::memory::features::message_pipeline::MessagePipeline;  // CHANGED from message_analyzer
+use crate::memory::features::message_pipeline::MessagePipeline;
 use crate::state::AppState;
 
 pub mod config;
@@ -84,9 +84,9 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?}, batch: {})", interval, batch_size);
             
-            // CHANGED: Use unified MessagePipeline instead of AnalysisService
+            // Use unified MessagePipeline with LlmProvider
             let message_pipeline = MessagePipeline::new(
-                app_state.embedding_client.clone(),
+                app_state.llm.clone(),  // FIXED: Use llm (Arc<dyn LlmProvider>) instead of embedding_client
             );
 
             let mut interval_timer = time::interval(interval);
@@ -102,7 +102,6 @@ impl TaskManager {
                         let mut total_processed = 0;
 
                         for session_id in sessions {
-                            // CHANGED: Use message_pipeline instead of analysis_service
                             match message_pipeline.process_pending_messages(&session_id).await {
                                 Ok(count) => {
                                     if count > 0 {
@@ -255,7 +254,7 @@ impl TaskManager {
     /// Spawns the metrics reporter task
     fn spawn_metrics_reporter(&self) -> JoinHandle<()> {
         let metrics = self.metrics.clone();
-        let interval = Duration::from_secs(3600); // Changed from 60 to 3600 (1 hour)
+        let interval = Duration::from_secs(3600); // 1 hour
 
         tokio::spawn(async move {
             let mut interval_timer = time::interval(interval);

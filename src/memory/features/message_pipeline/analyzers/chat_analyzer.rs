@@ -10,7 +10,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, error};
 
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::{LlmProvider, ChatMessage};
 
 // ===== CHAT ANALYSIS RESULT =====
 
@@ -50,12 +50,12 @@ pub struct ChatAnalysisResult {
 // ===== CHAT ANALYZER =====
 
 pub struct ChatAnalyzer {
-    llm_client: Arc<OpenAIClient>,
+    llm_provider: Arc<dyn LlmProvider>,
 }
 
 impl ChatAnalyzer {
-    pub fn new(llm_client: Arc<OpenAIClient>) -> Self {
-        Self { llm_client }
+    pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
+        Self { llm_provider }
     }
     
     /// Analyze chat message content
@@ -69,15 +69,25 @@ impl ChatAnalyzer {
         
         let prompt = self.build_analysis_prompt(content, role, context);
         
-        let response = self.llm_client
-            .summarize_conversation(&prompt, 500)
+        // Use provider.chat() instead of summarize_conversation()
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt,
+        }];
+        
+        let provider_response = self.llm_provider
+            .chat(
+                messages,
+                "You are a message analyzer. Return JSON only.".to_string(),
+                None, // No thinking needed for analysis
+            )
             .await
             .map_err(|e| {
                 error!("LLM analysis failed: {}", e);
                 e
             })?;
         
-        self.parse_analysis_response(&response, content).await
+        self.parse_analysis_response(&provider_response.content, content).await
     }
     
     /// Batch analyze multiple chat messages
@@ -92,11 +102,21 @@ impl ChatAnalyzer {
         info!("Batch analyzing {} messages", messages.len());
         
         let prompt = self.build_batch_prompt(messages);
-        let response = self.llm_client
-            .summarize_conversation(&prompt, 2000)
+        
+        let llm_messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt,
+        }];
+        
+        let provider_response = self.llm_provider
+            .chat(
+                llm_messages,
+                "You are a message analyzer. Return JSON only.".to_string(),
+                None,
+            )
             .await?;
         
-        self.parse_batch_response(&response, messages).await
+        self.parse_batch_response(&provider_response.content, messages).await
     }
     
     // ===== PROMPT BUILDING =====

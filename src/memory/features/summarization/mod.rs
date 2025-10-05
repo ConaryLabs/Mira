@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::info;
 use crate::llm::client::OpenAIClient;
+use crate::llm::provider::LlmProvider;
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -30,15 +31,17 @@ pub struct SummarizationEngine {
 
 impl SummarizationEngine {
     /// Creates new summarization engine with all strategy modules
+    /// Takes both LlmProvider (for summary generation) and OpenAIClient (for embeddings)
     pub fn new(
-        llm_client: Arc<OpenAIClient>,
+        llm_provider: Arc<dyn LlmProvider>,
+        embedding_client: Arc<OpenAIClient>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
         Self {
-            rolling_strategy: RollingSummaryStrategy::new(llm_client.clone()),
-            snapshot_strategy: SnapshotSummaryStrategy::new(llm_client.clone()),
-            storage: SummaryStorage::new(llm_client, sqlite_store.clone(), multi_store),
+            rolling_strategy: RollingSummaryStrategy::new(llm_provider.clone()),
+            snapshot_strategy: SnapshotSummaryStrategy::new(llm_provider.clone()),
+            storage: SummaryStorage::new(embedding_client, sqlite_store.clone(), multi_store),
             triggers: BackgroundTriggers::new(),
             sqlite_store,
         }

@@ -1,21 +1,21 @@
 // src/memory/features/message_pipeline/analyzers/unified.rs
 
 //! Unified analyzer that coordinates message analysis
-//! Code detection is now handled by LLM via tool schema - no regex heuristics
+//! Code and error detection handled by LLM - no regex heuristics
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::LlmProvider;
 use crate::llm::embeddings::EmbeddingHead;
 
 use super::chat_analyzer::ChatAnalyzer;
 
 // ===== UNIFIED ANALYSIS RESULT =====
 
-/// Complete analysis result combining chat analysis and code detection
+/// Complete analysis result combining chat analysis, code detection, and error detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedAnalysisResult {
     // Core classification
@@ -23,6 +23,12 @@ pub struct UnifiedAnalysisResult {
     pub topics: Vec<String>,
     pub is_code: bool,
     pub programming_lang: Option<String>,
+    
+    // Error detection (LLM-determined)
+    pub contains_error: bool,
+    pub error_type: Option<String>,
+    pub error_file: Option<String>,
+    pub error_severity: Option<String>,
     
     // Chat analysis
     pub mood: Option<String>,
@@ -69,8 +75,8 @@ impl Default for AnalyzerConfig {
 }
 
 impl UnifiedAnalyzer {
-    pub fn new(llm_client: Arc<OpenAIClient>) -> Self {
-        let chat_analyzer = ChatAnalyzer::new(llm_client);
+    pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
+        let chat_analyzer = ChatAnalyzer::new(llm_provider);
         
         Self {
             chat_analyzer,
@@ -78,13 +84,13 @@ impl UnifiedAnalyzer {
         }
     }
     
-    pub fn with_config(llm_client: Arc<OpenAIClient>, config: AnalyzerConfig) -> Self {
-        let mut analyzer = Self::new(llm_client);
+    pub fn with_config(llm_provider: Arc<dyn LlmProvider>, config: AnalyzerConfig) -> Self {
+        let mut analyzer = Self::new(llm_provider);
         analyzer.config = config;
         analyzer
     }
     
-    /// Main analysis entry point - LLM handles all code detection
+    /// Main analysis entry point - LLM handles all detection
     pub async fn analyze_message(
         &self, 
         content: &str, 
@@ -94,7 +100,7 @@ impl UnifiedAnalyzer {
         
         debug!("Starting unified analysis for {} message", role);
         
-        // Run chat analysis - LLM detects code via tool schema
+        // Run chat analysis - LLM detects code, errors, sentiment, everything
         let chat_result = self.chat_analyzer.analyze(content, role, context).await?;
         
         // Build unified result from LLM response
@@ -102,7 +108,7 @@ impl UnifiedAnalyzer {
     }
     
     /// Build unified result from chat analysis
-    /// No heuristics - trust the LLM's code detection
+    /// No heuristics - trust the LLM's detection
     async fn build_unified_result(
         &self,
         chat_result: super::chat_analyzer::ChatAnalysisResult,
@@ -110,12 +116,20 @@ impl UnifiedAnalyzer {
         
         // Extract code detection from LLM response
         let mut is_code = chat_result.contains_code.unwrap_or(false);
-        let mut programming_lang = chat_result.programming_lang.clone();
+        let programming_lang = chat_result.programming_lang.clone();
         
         // Safety check: if code detected but no language, treat as non-code
         if is_code && programming_lang.is_none() {
             warn!("LLM detected code but didn't specify language - treating as non-code to avoid DB constraint");
             is_code = false;
+        }
+        
+        // Extract error detection from LLM response
+        let contains_error = chat_result.contains_error.unwrap_or(false);
+        
+        if contains_error {
+            info!("LLM detected error - type: {:?}, file: {:?}, severity: {:?}",
+                chat_result.error_type, chat_result.error_file, chat_result.error_severity);
         }
         
         // Build routing decision
@@ -127,6 +141,12 @@ impl UnifiedAnalyzer {
             topics: chat_result.topics,
             is_code,
             programming_lang,
+            
+            // Error detection
+            contains_error,
+            error_type: chat_result.error_type,
+            error_file: chat_result.error_file,
+            error_severity: chat_result.error_severity,
             
             // Chat analysis
             mood: chat_result.mood,

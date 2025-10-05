@@ -41,8 +41,8 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub llm: Arc<dyn LlmProvider>,  // CHANGED: Multi-provider LLM
-    pub embedding_client: Arc<OpenAIClient>,  // KEEP: OpenAI for embeddings only
+    pub llm: Arc<dyn LlmProvider>,  // Multi-provider LLM for chat/analysis
+    pub embedding_client: Arc<OpenAIClient>,  // OpenAI for embeddings only
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
@@ -127,11 +127,12 @@ impl AppState {
             "mira",
         ).await?);
         
-        // Initialize memory service with provider and embedding client
+        // Initialize memory service with both LLM provider and embedding client
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            embedding_client.clone(),  // OpenAI for embeddings
+            llm.clone(),                // For chat/analysis
+            embedding_client.clone(),   // For embeddings
         ));
         
         Ok(Self {

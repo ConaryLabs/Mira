@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, debug, error};
 
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::LlmProvider;
 use crate::memory::storage::sqlite::core::MessageAnalysis;
 
 use self::{
@@ -25,8 +25,8 @@ pub struct MessagePipeline {
 
 impl MessagePipeline {
     /// Create new message pipeline
-    pub fn new(llm_client: Arc<OpenAIClient>) -> Self {
-        let analyzer = UnifiedAnalyzer::new(llm_client);
+    pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
+        let analyzer = UnifiedAnalyzer::new(llm_provider);
         let router = MemoryRouter::new(RoutingConfig::default());
         
         Self { analyzer, router }
@@ -34,11 +34,11 @@ impl MessagePipeline {
     
     /// Create message pipeline with custom configuration
     pub fn with_config(
-        llm_client: Arc<OpenAIClient>,
+        llm_provider: Arc<dyn LlmProvider>,
         analyzer_config: AnalyzerConfig,
         routing_config: RoutingConfig,
     ) -> Self {
-        let analyzer = UnifiedAnalyzer::with_config(llm_client, analyzer_config);
+        let analyzer = UnifiedAnalyzer::with_config(llm_provider, analyzer_config);
         let router = MemoryRouter::new(routing_config);
         
         Self { analyzer, router }

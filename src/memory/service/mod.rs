@@ -4,6 +4,7 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::llm::client::OpenAIClient;
+use crate::llm::provider::LlmProvider;
 use crate::memory::{
     storage::sqlite::store::SqliteMemoryStore,
     storage::qdrant::multi_store::QdrantMultiStore,
@@ -46,15 +47,17 @@ impl MemoryService {
     pub fn new(
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
-        llm_client: Arc<OpenAIClient>,
+        llm_provider: Arc<dyn LlmProvider>,
+        embedding_client: Arc<OpenAIClient>,
     ) -> Self {
-        Self::new_with_cache(sqlite_store, multi_store, llm_client, None)
+        Self::new_with_cache(sqlite_store, multi_store, llm_provider, embedding_client, None)
     }
     
     pub fn new_with_cache(
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
-        llm_client: Arc<OpenAIClient>,
+        llm_provider: Arc<dyn LlmProvider>,
+        embedding_client: Arc<OpenAIClient>,
         recent_cache: Option<Arc<RecentCache>>,
     ) -> Self {
         info!("Initializing MemoryService with clean modular architecture");
@@ -68,21 +71,23 @@ impl MemoryService {
         
         // Initialize MessagePipeline coordinator
         let message_pipeline = Arc::new(MessagePipeline::new(
-            llm_client.clone(),
+            llm_provider.clone(),
         ));
         let message_pipeline_coordinator = MessagePipelineCoordinator::new(message_pipeline);
         
-        // Initialize RecallEngine coordinator
+        // Initialize RecallEngine coordinator (needs both LLM and embeddings)
         let recall_engine = Arc::new(RecallEngine::new(
-            llm_client.clone(),
+            llm_provider.clone(),      // For future chat-based features
+            embedding_client.clone(),  // For embeddings in search
             sqlite_store.clone(),
             multi_store.clone(),
         ));
         let recall_engine_coordinator = RecallEngineCoordinator::new(recall_engine);
         
-        // Initialize SummarizationEngine coordinator
+        // Initialize SummarizationEngine coordinator (needs both LLM and embeddings)
         let summarization_engine = Arc::new(SummarizationEngine::new(
-            llm_client.clone(),
+            llm_provider.clone(),      // For summary generation via chat
+            embedding_client.clone(),  // For summary embeddings
             sqlite_store.clone(),
             multi_store.clone(),
         ));
