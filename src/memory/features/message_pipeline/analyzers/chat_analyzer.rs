@@ -1,9 +1,9 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 
-//! Chat message analyzer - extracts sentiment, intent, and topics from conversational content
+//! Chat message analyzer - extracts sentiment, intent, topics, and code detection from content
 //! 
-//! Uses LLM-based analysis with structured JSON responses for chat message classification.
-//! This is separate from code analysis which uses AST parsing via CodeIntelligenceService.
+//! Uses LLM-based analysis with structured JSON responses for complete message classification.
+//! Code detection is handled by LLM - no regex heuristics.
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -20,6 +20,10 @@ pub struct ChatAnalysisResult {
     // Core classification
     pub salience: f32,
     pub topics: Vec<String>,
+    
+    // Code detection (LLM-determined)
+    pub contains_code: Option<bool>,
+    pub programming_lang: Option<String>,
     
     // Sentiment and mood analysis
     pub mood: Option<String>,
@@ -91,7 +95,7 @@ impl ChatAnalyzer {
     
     // ===== PROMPT BUILDING =====
     
-    /// Build analysis prompt for single message
+    /// Build analysis prompt for single message - LLM detects code
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
         let context_section = context
             .map(|ctx| format!("**Context:** {}\n\n", ctx))
@@ -106,17 +110,21 @@ Analyze this message and provide:
 
 1. **Salience** (0.0-1.0): How important is this for memory storage?
 2. **Topics** (list): Main topics/themes discussed  
-3. **Mood** (optional): Overall emotional tone
-4. **Intensity** (0.0-1.0): Emotional intensity level
-5. **Intent** (optional): What the user is trying to accomplish
-6. **Summary** (1-2 sentences): Key content summary
-7. **Relationship Impact** (optional): How this affects user-assistant relationship
+3. **Contains Code** (boolean): Does this message contain actual code (code blocks, snippets, or code discussions)? NOT just technical terminology.
+4. **Programming Language** (string or null): If contains_code=true, specify ONE of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'. If contains_code=false or language unknown, set to null.
+5. **Mood** (optional): Overall emotional tone
+6. **Intensity** (0.0-1.0): Emotional intensity level
+7. **Intent** (optional): What the user is trying to accomplish
+8. **Summary** (1-2 sentences): Key content summary
+9. **Relationship Impact** (optional): How this affects user-assistant relationship
 
 Respond with valid JSON:
 ```json
 {{
   "salience": 0.75,
   "topics": ["topic1", "topic2"],
+  "contains_code": false,
+  "programming_lang": null,
   "mood": "neutral",
   "intensity": 0.5,
   "intent": "inform",
@@ -129,7 +137,12 @@ Rate salience based on:
 - Information value for future conversations  
 - Technical complexity or importance
 - User goals and problem-solving needs
-- Relationship development moments"#
+- Relationship development moments
+
+Code detection guidelines:
+- Technical discussions about code concepts = contains_code: false
+- Actual code blocks, snippets, or syntax = contains_code: true
+- If unsure about language, set programming_lang to null (code will be treated as non-code)"#
         )
     }
     
@@ -154,6 +167,8 @@ For each message, provide analysis as JSON array:
     "message_index": 1,
     "salience": 0.75,
     "topics": ["topic1"],
+    "contains_code": false,
+    "programming_lang": null,
     "mood": "neutral",
     "intensity": 0.5,
     "intent": "inform",
@@ -163,7 +178,9 @@ For each message, provide analysis as JSON array:
 ]
 ```
 
-Rate salience (0.0-1.0) based on future conversation value, technical importance, and user goals."#,
+Rate salience (0.0-1.0) based on future conversation value, technical importance, and user goals.
+For contains_code: only true if actual code present, not just technical discussion.
+For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python', 'go', 'java' or null."#,
             messages.len(),
             message_list
         )
@@ -184,6 +201,8 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
         struct LLMResponse {
             salience: f32,
             topics: Vec<String>,
+            contains_code: Option<bool>,
+            programming_lang: Option<String>,
             mood: Option<String>,
             intensity: Option<f32>,
             intent: Option<String>,
@@ -204,9 +223,20 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
             .into_iter()
             .collect();
         
+        // Validate programming_lang if provided
+        let programming_lang = parsed.programming_lang
+            .filter(|lang| {
+                matches!(
+                    lang.to_lowercase().as_str(),
+                    "rust" | "typescript" | "javascript" | "python" | "go" | "java"
+                )
+            });
+        
         Ok(ChatAnalysisResult {
             salience,
             topics,
+            contains_code: parsed.contains_code,
+            programming_lang,
             mood: parsed.mood.filter(|s| !s.trim().is_empty()),
             intensity: parsed.intensity.map(|i| i.clamp(0.0, 1.0)),
             intent: parsed.intent.filter(|s| !s.trim().is_empty()),
@@ -231,6 +261,8 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
             message_index: usize,
             salience: f32,
             topics: Vec<String>,
+            contains_code: Option<bool>,
+            programming_lang: Option<String>,
             mood: Option<String>,
             intensity: Option<f32>,
             intent: Option<String>,
@@ -255,9 +287,21 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
                     .into_iter()
                     .collect();
                 
+                // Validate programming_lang
+                let programming_lang = analysis.programming_lang.as_ref()
+                    .filter(|lang| {
+                        matches!(
+                            lang.to_lowercase().as_str(),
+                            "rust" | "typescript" | "javascript" | "python" | "go" | "java"
+                        )
+                    })
+                    .cloned();
+                
                 results.push(ChatAnalysisResult {
                     salience,
                     topics,
+                    contains_code: analysis.contains_code,
+                    programming_lang,
                     mood: analysis.mood.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
                     intensity: analysis.intensity.map(|i| i.clamp(0.0, 1.0)),
                     intent: analysis.intent.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
@@ -271,6 +315,8 @@ Rate salience (0.0-1.0) based on future conversation value, technical importance
                 results.push(ChatAnalysisResult {
                     salience: 0.1,
                     topics: vec!["general".to_string()],
+                    contains_code: Some(false),
+                    programming_lang: None,
                     mood: None,
                     intensity: None,
                     intent: None,

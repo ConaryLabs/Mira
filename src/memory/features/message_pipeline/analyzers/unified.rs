@@ -1,15 +1,12 @@
 // src/memory/features/message_pipeline/analyzers/unified.rs
 
 //! Unified analyzer that coordinates message analysis
-//! This is the main entry point for all message analysis
-//!
-//! Code detection is handled here for routing purposes.
-//! Detailed code analysis with AST parsing is handled by CodeIntelligenceService.
+//! Code detection is now handled by LLM via tool schema - no regex heuristics
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::llm::client::OpenAIClient;
 use crate::llm::embeddings::EmbeddingHead;
@@ -87,7 +84,7 @@ impl UnifiedAnalyzer {
         analyzer
     }
     
-    /// Main analysis entry point - coordinates all analysis types
+    /// Main analysis entry point - LLM handles all code detection
     pub async fn analyze_message(
         &self, 
         content: &str, 
@@ -97,54 +94,29 @@ impl UnifiedAnalyzer {
         
         debug!("Starting unified analysis for {} message", role);
         
-        // Quick code detection for routing purposes
-        let is_code = self.detect_code_content(content);
-        if is_code {
-            info!("Detected code content");
-        }
-        
-        // Run chat analysis
+        // Run chat analysis - LLM detects code via tool schema
         let chat_result = self.chat_analyzer.analyze(content, role, context).await?;
         
-        // Build unified result
-        self.build_unified_result(chat_result, is_code).await
+        // Build unified result from LLM response
+        self.build_unified_result(chat_result).await
     }
     
-    /// Quick heuristic code detection for routing decisions
-    /// Note: This is sufficient for routing. Detailed code analysis with AST parsing
-    /// is handled separately by CodeIntelligenceService when needed.
-    fn detect_code_content(&self, content: &str) -> bool {
-        let code_indicators = [
-            "```", "fn ", "pub fn", "impl ", "struct ", "enum ",
-            "const ", "let ", "mut ", "async fn", "await",
-            "use ", "mod ", "#[", "//", "/*", "*/",
-            "function", "const ", "let ", "var ", "=>",
-            "import ", "export ", "interface ", "type ",
-            "class ", "extends", "implements"
-        ];
-        
-        let content_lower = content.to_lowercase();
-        let code_count = code_indicators.iter()
-            .filter(|&&indicator| content_lower.contains(indicator))
-            .count();
-            
-        // If we find multiple code indicators, likely code content
-        code_count >= 2
-    }
-    
-    /// Build unified result from chat analysis and code detection
+    /// Build unified result from chat analysis
+    /// No heuristics - trust the LLM's code detection
     async fn build_unified_result(
         &self,
         chat_result: super::chat_analyzer::ChatAnalysisResult,
-        is_code: bool,
     ) -> Result<UnifiedAnalysisResult> {
         
-        // Determine programming language if code detected
-        let programming_lang = if is_code {
-            self.detect_programming_language(&chat_result.content)
-        } else {
-            None
-        };
+        // Extract code detection from LLM response
+        let mut is_code = chat_result.contains_code.unwrap_or(false);
+        let mut programming_lang = chat_result.programming_lang.clone();
+        
+        // Safety check: if code detected but no language, treat as non-code
+        if is_code && programming_lang.is_none() {
+            warn!("LLM detected code but didn't specify language - treating as non-code to avoid DB constraint");
+            is_code = false;
+        }
         
         // Build routing decision
         let routing = self.build_routing_decision(&chat_result, is_code, &programming_lang).await?;
@@ -229,22 +201,5 @@ impl UnifiedAnalyzer {
             embedding_heads: heads,
             skip_reason: None,
         })
-    }
-    
-    /// Simple programming language detection for routing purposes
-    /// Note: This basic detection is sufficient for routing decisions.
-    /// Detailed language analysis happens via CodeIntelligenceService with proper AST parsing.
-    fn detect_programming_language(&self, content: &str) -> Option<String> {
-        if content.contains("fn ") || content.contains("impl ") || content.contains("struct ") {
-            Some("rust".to_string())
-        } else if content.contains("interface ") || content.contains("type ") {
-            Some("typescript".to_string())
-        } else if content.contains("function ") || content.contains("const ") || content.contains("=>") {
-            Some("javascript".to_string())
-        } else if content.contains("def ") || content.contains("class ") {
-            Some("python".to_string())
-        } else {
-            None
-        }
     }
 }
