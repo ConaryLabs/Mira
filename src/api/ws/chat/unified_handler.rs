@@ -9,6 +9,7 @@ use tracing::info;
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, claude_processor};
 use crate::llm::structured::tool_schema::*;
+use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
 use crate::llm::provider::ChatMessage;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
@@ -102,8 +103,56 @@ impl UnifiedChatHandler {
             let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
             
             if stop_reason == "end_turn" {
-                // No more tools, extract response
-                let structured = claude_processor::extract_claude_content_from_tool(&raw_response)?;
+                // FIXED: Claude finished thinking but didn't call respond_to_user
+                // This happens when it processes internally but doesn't generate output
+                // Try to extract tool call first, fall back to error message if none exists
+                
+                let structured = if claude_processor::has_tool_calls(&raw_response) {
+                    // Normal case: has respond_to_user tool call
+                    claude_processor::extract_claude_content_from_tool(&raw_response)?
+                } else {
+                    // Edge case: Claude thought but didn't respond
+                    // Extract thinking content if available, otherwise provide fallback
+                    let thinking_summary = if let Some(content) = raw_response["content"].as_array() {
+                        content.iter()
+                            .filter(|block| block["type"] == "thinking")
+                            .filter_map(|block| block["thinking"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    } else {
+                        String::new()
+                    };
+                    
+                    let fallback_message = if !thinking_summary.is_empty() {
+                        format!("I processed your message but didn't generate a response. My thoughts were:\n\n{}", thinking_summary)
+                    } else {
+                        "I processed your message but didn't generate a response. Please try rephrasing your request.".to_string()
+                    };
+                    
+                    info!("Claude end_turn without tool call - using fallback response");
+                    
+                    // Create minimal structured response for fallback
+                    StructuredLLMResponse {
+                        output: fallback_message,
+                        analysis: MessageAnalysis {
+                            salience: 0.3,
+                            topics: vec!["system".to_string()],
+                            contains_code: false,
+                            programming_lang: None,
+                            routed_to_heads: vec!["semantic".to_string()],
+                            language: "en".to_string(),
+                            mood: None,
+                            intensity: None,
+                            intent: Some("system_fallback".to_string()),
+                            summary: Some("Claude thinking without output".to_string()),
+                            relationship_impact: None,
+                        },
+                        reasoning: None,
+                        schema_name: None,
+                        validation_status: None,
+                    }
+                };
+                
                 let metadata = claude_processor::extract_claude_metadata(&raw_response, 0)?;
                 
                 let complete_response = CompleteResponse {

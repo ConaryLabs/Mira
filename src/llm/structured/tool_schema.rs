@@ -4,10 +4,11 @@
 use serde_json::json;
 
 /// Tool schema for structured chat responses
+/// FIXED: Crystal clear that this tool is MANDATORY for all responses
 pub fn get_response_tool_schema() -> serde_json::Value {
     json!({
         "name": "respond_to_user",
-        "description": "Respond to the user with structured analysis. Use this tool to provide your response.",
+        "description": "MANDATORY: Use this tool for EVERY response to the user. This is your ONLY way to communicate with them. Other tools (read_file, search_code, list_files) are for gathering information BEFORE calling this tool. After using other tools to gather context, you MUST call this tool to respond. Every user message requires a response via this tool.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -20,12 +21,12 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                     "properties": {
                         "salience": {
                             "type": "number",
-                            "description": "Importance score 0.0-1.0. How important is this to remember long-term? 0.0=trivial, 1.0=critical"
+                            "description": "Importance score 0.0-1.0. How important is this to remember long-term? 0.0=trivial, 0.5=normal, 1.0=critical. Default to 0.5 if unsure."
                         },
                         "topics": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "List of topics discussed"
+                            "description": "List of topics discussed. Use ['general'] if no specific topics."
                         },
                         "contains_code": {
                             "type": "boolean",
@@ -54,11 +55,11 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                         "routed_to_heads": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Which memory heads should process this (valid: 'semantic', 'code', 'summary', 'documents'). Use 'code' if contains_code=true or contains_error=true."
+                            "description": "Which memory heads should process this (valid: 'semantic', 'code', 'summary', 'documents'). Use 'code' if contains_code=true or contains_error=true. Use ['semantic'] as default."
                         },
                         "language": {
                             "type": "string",
-                            "description": "Natural language code (e.g., 'en', 'es', 'fr')"
+                            "description": "Natural language code (e.g., 'en', 'es', 'fr'). Default to 'en'."
                         },
                         "mood": {
                             "type": "string",
