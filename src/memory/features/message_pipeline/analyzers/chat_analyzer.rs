@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info, error};
+use tracing::{debug, info, error, warn};
 
 use crate::llm::provider::{LlmProvider, ChatMessage};
 
@@ -422,22 +422,82 @@ Guidelines:
     }
     
     /// Extract JSON from LLM response (handles markdown code blocks)
+    /// FIXED: Robust handling of variable backtick counts and malformed responses
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
-        // Try to find JSON in code blocks first
-        if let Some(start) = response.find("```json") {
-            if let Some(end) = response[start..].find("```") {
-                let json_content = &response[start + 7..start + end];
-                return Ok(json_content.trim().to_string());
+        // Strategy 1: Find JSON in markdown code blocks with any number of backticks
+        // Look for opening backticks followed by "json"
+        if let Some(opening_pos) = response.find("```") {
+            // Count how many backticks (could be ```, ````, etc.)
+            let backtick_count = response[opening_pos..]
+                .chars()
+                .take_while(|&c| c == '`')
+                .count();
+            
+            // Check if "json" follows the backticks (with optional whitespace)
+            let after_backticks = &response[opening_pos + backtick_count..];
+            if after_backticks.trim_start().starts_with("json") {
+                // Find where JSON actually starts (after "json" and any whitespace/newlines)
+                let json_keyword_end = after_backticks.find("json")
+                    .map(|i| i + 4) // "json" is 4 chars
+                    .unwrap_or(0);
+                
+                let json_start = opening_pos + backtick_count + json_keyword_end;
+                
+                // Find closing backticks (same count) AFTER the JSON content
+                let search_start = json_start;
+                let closing_marker = "`".repeat(backtick_count);
+                
+                if let Some(relative_end) = response[search_start..].find(&closing_marker) {
+                    let json_end = search_start + relative_end;
+                    
+                    // Ensure indices are valid
+                    if json_start < json_end && json_end <= response.len() {
+                        let json_content = &response[json_start..json_end];
+                        let trimmed = json_content.trim();
+                        
+                        if !trimmed.is_empty() {
+                            debug!("Extracted JSON from {} backtick code block", backtick_count);
+                            return Ok(trimmed.to_string());
+                        }
+                    } else {
+                        warn!("Invalid JSON indices: start={}, end={}, len={}", 
+                              json_start, json_end, response.len());
+                    }
+                }
             }
         }
         
-        // Try raw JSON block
+        // Strategy 2: Look for raw JSON object (fallback)
         if let Some(start) = response.find('{') {
             if let Some(end) = response.rfind('}') {
-                return Ok(response[start..=end].to_string());
+                if start <= end {
+                    let json_candidate = &response[start..=end];
+                    // Quick validation: try to parse it
+                    if serde_json::from_str::<Value>(json_candidate).is_ok() {
+                        debug!("Extracted raw JSON object");
+                        return Ok(json_candidate.to_string());
+                    }
+                }
             }
         }
         
-        Err(anyhow::anyhow!("No JSON found in LLM response"))
+        // Strategy 3: Look for JSON array (for batch responses)
+        if let Some(start) = response.find('[') {
+            if let Some(end) = response.rfind(']') {
+                if start <= end {
+                    let json_candidate = &response[start..=end];
+                    if serde_json::from_str::<Value>(json_candidate).is_ok() {
+                        debug!("Extracted raw JSON array");
+                        return Ok(json_candidate.to_string());
+                    }
+                }
+            }
+        }
+        
+        // If all strategies fail, log the response for debugging
+        error!("Failed to extract JSON from response. First 200 chars: {}", 
+               &response[..response.len().min(200)]);
+        
+        Err(anyhow::anyhow!("No valid JSON found in LLM response"))
     }
 }

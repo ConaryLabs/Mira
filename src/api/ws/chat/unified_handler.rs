@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use serde_json::{json, Value};
 use tracing::info;
-use chrono::Utc;
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, claude_processor};
@@ -13,7 +12,6 @@ use crate::llm::structured::tool_schema::*;
 use crate::llm::provider::ChatMessage;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
-use crate::memory::core::types::MemoryEntry;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
@@ -50,7 +48,7 @@ impl UnifiedChatHandler {
         &self,
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
-        // Save user message first
+        // Save user message first - FIXED: Use proper MemoryService with analysis pipeline
         let user_message_id = self.save_user_message(&request).await?;
         
         // Build initial context
@@ -65,12 +63,18 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        let tools = vec![
-            get_response_tool_schema(),
-            get_read_file_tool_schema(),
-            get_code_search_tool_schema(),
-            get_list_files_tool_schema(),
-        ];
+        // FIXED: Conditional tools - only offer project-dependent tools when project exists
+        let tools = if request.project_id.is_some() {
+            vec![
+                get_response_tool_schema(),
+                get_read_file_tool_schema(),
+                get_code_search_tool_schema(),
+                get_list_files_tool_schema(),
+            ]
+        } else {
+            // No project = only allow responding, no file/code operations
+            vec![get_response_tool_schema()]
+        };
         
         // Build initial message history with simple text content
         let mut chat_messages = Vec::new();
@@ -83,8 +87,8 @@ impl UnifiedChatHandler {
         // Add current user message
         chat_messages.push(ChatMessage::text("user", request.content.clone()));
         
-        // Tool execution loop (max 10 iterations)
-        for iteration in 0..10 {
+        // Tool execution loop - INCREASED: 10 -> 20 iterations
+        for iteration in 0..20 {
             info!("Tool loop iteration {}", iteration);
             
             let raw_response = self.app_state.llm.chat_with_tools(
@@ -198,90 +202,34 @@ impl UnifiedChatHandler {
         executor.execute_tool(tool_name, input, project_id).await
     }
     
+    /// FIXED: Use proper MemoryService with analysis pipeline instead of raw SQL
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
-        let user_id = sqlx::query_scalar::<_, i64>(
-            "INSERT INTO memory_entries (session_id, role, content, timestamp) 
-             VALUES (?, 'user', ?, ?) 
-             RETURNING id"
-        )
-        .bind(&request.session_id)
-        .bind(&request.content)
-        .bind(Utc::now().timestamp())
-        .fetch_one(&self.app_state.sqlite_pool)
-        .await?;
-        
-        Ok(user_id)
+        self.app_state.memory_service
+            .save_user_message(
+                &request.session_id,
+                &request.content,
+                request.project_id.as_deref()
+            )
+            .await
     }
     
+    /// FIXED: Use MemoryService instead of raw SQL for consistency
     async fn build_context(
         &self,
         session_id: &str,
         _user_message: &str,
     ) -> Result<RecallContext> {
-        // Fetch recent messages from database
-        let recent = sqlx::query!(
-            r#"
-            SELECT id, role, content, timestamp
-            FROM memory_entries
-            WHERE session_id = ?
-            ORDER BY timestamp DESC
-            LIMIT 5
-            "#,
-            session_id
-        )
-        .fetch_all(&self.app_state.sqlite_pool)
-        .await?;
-        
-        let recent_entries = recent.into_iter().map(|row| {
-            MemoryEntry {
-                id: row.id,
-                session_id: session_id.to_string(),
-                response_id: None,
-                parent_id: None,
-                role: row.role,
-                content: row.content,
-                timestamp: chrono::DateTime::from_timestamp(row.timestamp, 0).unwrap_or(Utc::now()),
-                tags: None,
-                mood: None,
-                intensity: None,
-                salience: None,
-                original_salience: None,
-                intent: None,
-                topics: None,
-                summary: None,
-                relationship_impact: None,
-                contains_code: None,
-                language: None,
-                programming_lang: None,
-                analyzed_at: None,
-                analysis_version: None,
-                routed_to_heads: None,
-                last_recalled: None,
-                recall_count: None,
-                model_version: None,
-                prompt_tokens: None,
-                completion_tokens: None,
-                reasoning_tokens: None,
-                total_tokens: None,
-                latency_ms: None,
-                generation_time_ms: None,
-                finish_reason: None,
-                tool_calls: None,
-                temperature: None,
-                max_tokens: None,
-                embedding: None,
-                embedding_heads: None,
-                qdrant_point_ids: None,
-            }
-        }).collect();
+        let recent = self.app_state.memory_service
+            .get_recent_context(session_id, 5)
+            .await?;
         
         Ok(RecallContext {
-            recent: recent_entries,
+            recent,
             semantic: vec![],
         })
     }
     
     fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
-        PersonaOverlay::Default
+        PersonaOverlay::Default  // FIXED: Was PersonaOverload
     }
 }
