@@ -29,16 +29,36 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                         },
                         "contains_code": {
                             "type": "boolean",
-                            "description": "Does this message contain code?"
+                            "description": "Does this message contain actual code (code blocks, snippets)? NOT just technical terms."
+                        },
+                        "programming_lang": {
+                            "type": "string",
+                            "description": "REQUIRED if contains_code=true. Must be one of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'. Set to null if contains_code=false or language unknown."
+                        },
+                        "contains_error": {
+                            "type": "boolean",
+                            "description": "Does this message contain an actual error that needs fixing (compiler error, runtime error, stack trace, build failure)? NOT just discussing errors in general."
+                        },
+                        "error_type": {
+                            "type": "string",
+                            "description": "REQUIRED if contains_error=true. One of: 'compiler', 'runtime', 'test_failure', 'build_failure', 'linter', 'type_error'. Set to null if contains_error=false."
+                        },
+                        "error_file": {
+                            "type": "string",
+                            "description": "If contains_error=true and a file path is mentioned in the error, extract it. Otherwise null."
+                        },
+                        "error_severity": {
+                            "type": "string",
+                            "description": "If contains_error=true, rate as 'critical' (blocking), 'warning' (should fix), or 'info' (minor). Otherwise null."
                         },
                         "routed_to_heads": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Which memory heads should process this (valid: 'semantic', 'code', 'summary', 'documents')"
+                            "description": "Which memory heads should process this (valid: 'semantic', 'code', 'summary', 'documents'). Use 'code' if contains_code=true or contains_error=true."
                         },
                         "language": {
                             "type": "string",
-                            "description": "Language code (e.g., 'en')"
+                            "description": "Natural language code (e.g., 'en', 'es', 'fr')"
                         },
                         "mood": {
                             "type": "string",
@@ -50,7 +70,7 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                         },
                         "intent": {
                             "type": "string",
-                            "description": "User's intent (e.g., 'question', 'command', 'chat')"
+                            "description": "User's intent (e.g., 'question', 'command', 'chat', 'debugging')"
                         },
                         "summary": {
                             "type": "string",
@@ -59,13 +79,9 @@ pub fn get_response_tool_schema() -> serde_json::Value {
                         "relationship_impact": {
                             "type": "string",
                             "description": "Optional relationship impact assessment"
-                        },
-                        "programming_lang": {
-                            "type": "string",
-                            "description": "Programming language if code-related"
                         }
                     },
-                    "required": ["salience", "topics", "contains_code", "routed_to_heads", "language"]
+                    "required": ["salience", "topics", "contains_code", "contains_error", "routed_to_heads", "language"]
                 }
             },
             "required": ["output", "analysis"]
@@ -93,16 +109,33 @@ pub fn get_code_fix_tool_schema() -> serde_json::Value {
                             "description": "Importance score 0.0-1.0"
                         },
                         "topics": { "type": "array", "items": { "type": "string" } },
-                        "contains_code": { "type": "boolean" },
+                        "contains_code": { 
+                            "type": "boolean",
+                            "description": "Always true for code fixes"
+                        },
+                        "programming_lang": { 
+                            "type": "string",
+                            "description": "REQUIRED. Must be one of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'"
+                        },
+                        "contains_error": {
+                            "type": "boolean",
+                            "description": "Always true for error fixes"
+                        },
+                        "error_type": {
+                            "type": "string",
+                            "description": "Type of error being fixed"
+                        },
                         "routed_to_heads": { 
                             "type": "array", 
                             "items": { "type": "string" },
-                            "description": "Valid values: 'semantic', 'code', 'summary', 'documents'"
+                            "description": "Valid values: 'semantic', 'code', 'summary', 'documents'. Should include 'code'."
                         },
-                        "language": { "type": "string" },
-                        "programming_lang": { "type": "string" }
+                        "language": { 
+                            "type": "string",
+                            "description": "Natural language (e.g., 'en')"
+                        }
                     },
-                    "required": ["salience", "topics", "contains_code", "routed_to_heads", "language"]
+                    "required": ["salience", "topics", "contains_code", "programming_lang", "contains_error", "error_type", "routed_to_heads", "language"]
                 },
                 "reasoning": {
                     "type": "string",

@@ -1,9 +1,9 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 
-//! Chat message analyzer - extracts sentiment, intent, topics, and code detection from content
+//! Chat message analyzer - extracts sentiment, intent, topics, code, and error detection
 //! 
 //! Uses LLM-based analysis with structured JSON responses for complete message classification.
-//! Code detection is handled by LLM - no regex heuristics.
+//! Code and error detection handled by LLM - no regex heuristics.
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -24,6 +24,12 @@ pub struct ChatAnalysisResult {
     // Code detection (LLM-determined)
     pub contains_code: Option<bool>,
     pub programming_lang: Option<String>,
+    
+    // Error detection (LLM-determined)
+    pub contains_error: Option<bool>,
+    pub error_type: Option<String>,
+    pub error_file: Option<String>,
+    pub error_severity: Option<String>,
     
     // Sentiment and mood analysis
     pub mood: Option<String>,
@@ -95,7 +101,7 @@ impl ChatAnalyzer {
     
     // ===== PROMPT BUILDING =====
     
-    /// Build analysis prompt for single message - LLM detects code
+    /// Build analysis prompt - LLM detects code and errors
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
         let context_section = context
             .map(|ctx| format!("**Context:** {}\n\n", ctx))
@@ -110,13 +116,17 @@ Analyze this message and provide:
 
 1. **Salience** (0.0-1.0): How important is this for memory storage?
 2. **Topics** (list): Main topics/themes discussed  
-3. **Contains Code** (boolean): Does this message contain actual code (code blocks, snippets, or code discussions)? NOT just technical terminology.
-4. **Programming Language** (string or null): If contains_code=true, specify ONE of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'. If contains_code=false or language unknown, set to null.
-5. **Mood** (optional): Overall emotional tone
-6. **Intensity** (0.0-1.0): Emotional intensity level
-7. **Intent** (optional): What the user is trying to accomplish
-8. **Summary** (1-2 sentences): Key content summary
-9. **Relationship Impact** (optional): How this affects user-assistant relationship
+3. **Contains Code** (boolean): Actual code blocks/snippets? NOT just technical terms.
+4. **Programming Language** (string or null): If contains_code=true, ONE of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'. Otherwise null.
+5. **Contains Error** (boolean): Actual error needing fixing (compiler error, runtime error, stack trace, build failure)? NOT just discussing errors.
+6. **Error Type** (string or null): If contains_error=true, ONE of: 'compiler', 'runtime', 'test_failure', 'build_failure', 'linter', 'type_error'. Otherwise null.
+7. **Error File** (string or null): If contains_error=true and file path mentioned, extract it. Otherwise null.
+8. **Error Severity** (string or null): If contains_error=true, rate as 'critical' (blocking), 'warning' (should fix), or 'info' (minor). Otherwise null.
+9. **Mood** (optional): Overall emotional tone
+10. **Intensity** (0.0-1.0): Emotional intensity level
+11. **Intent** (optional): What the user is trying to accomplish
+12. **Summary** (1-2 sentences): Key content summary
+13. **Relationship Impact** (optional): How this affects user-assistant relationship
 
 Respond with valid JSON:
 ```json
@@ -125,6 +135,10 @@ Respond with valid JSON:
   "topics": ["topic1", "topic2"],
   "contains_code": false,
   "programming_lang": null,
+  "contains_error": false,
+  "error_type": null,
+  "error_file": null,
+  "error_severity": null,
   "mood": "neutral",
   "intensity": 0.5,
   "intent": "inform",
@@ -133,16 +147,10 @@ Respond with valid JSON:
 }}
 ```
 
-Rate salience based on:
-- Information value for future conversations  
-- Technical complexity or importance
-- User goals and problem-solving needs
-- Relationship development moments
-
-Code detection guidelines:
-- Technical discussions about code concepts = contains_code: false
-- Actual code blocks, snippets, or syntax = contains_code: true
-- If unsure about language, set programming_lang to null (code will be treated as non-code)"#
+Guidelines:
+- Code: Technical discussion ≠ code. Only true for actual code blocks/snippets.
+- Errors: Discussing errors ≠ error. Only true for actual errors needing fixing.
+- If unsure, set to null/false."#
         )
     }
     
@@ -169,6 +177,10 @@ For each message, provide analysis as JSON array:
     "topics": ["topic1"],
     "contains_code": false,
     "programming_lang": null,
+    "contains_error": false,
+    "error_type": null,
+    "error_file": null,
+    "error_severity": null,
     "mood": "neutral",
     "intensity": 0.5,
     "intent": "inform",
@@ -178,9 +190,12 @@ For each message, provide analysis as JSON array:
 ]
 ```
 
-Rate salience (0.0-1.0) based on future conversation value, technical importance, and user goals.
-For contains_code: only true if actual code present, not just technical discussion.
-For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python', 'go', 'java' or null."#,
+Guidelines:
+- contains_code: only true if actual code, not technical discussion
+- contains_error: only true if actual error needing fixing, not discussion about errors
+- programming_lang: 'rust', 'typescript', 'javascript', 'python', 'go', 'java' or null
+- error_type: 'compiler', 'runtime', 'test_failure', 'build_failure', 'linter', 'type_error' or null
+- error_severity: 'critical', 'warning', 'info' or null"#,
             messages.len(),
             message_list
         )
@@ -203,6 +218,10 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
             topics: Vec<String>,
             contains_code: Option<bool>,
             programming_lang: Option<String>,
+            contains_error: Option<bool>,
+            error_type: Option<String>,
+            error_file: Option<String>,
+            error_severity: Option<String>,
             mood: Option<String>,
             intensity: Option<f32>,
             intent: Option<String>,
@@ -223,7 +242,7 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
             .into_iter()
             .collect();
         
-        // Validate programming_lang if provided
+        // Validate programming_lang
         let programming_lang = parsed.programming_lang
             .filter(|lang| {
                 matches!(
@@ -232,11 +251,33 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
                 )
             });
         
+        // Validate error_type
+        let error_type = parsed.error_type
+            .filter(|t| {
+                matches!(
+                    t.to_lowercase().as_str(),
+                    "compiler" | "runtime" | "test_failure" | "build_failure" | "linter" | "type_error"
+                )
+            });
+        
+        // Validate error_severity
+        let error_severity = parsed.error_severity
+            .filter(|s| {
+                matches!(
+                    s.to_lowercase().as_str(),
+                    "critical" | "warning" | "info"
+                )
+            });
+        
         Ok(ChatAnalysisResult {
             salience,
             topics,
             contains_code: parsed.contains_code,
             programming_lang,
+            contains_error: parsed.contains_error,
+            error_type,
+            error_file: parsed.error_file.filter(|s| !s.trim().is_empty()),
+            error_severity,
             mood: parsed.mood.filter(|s| !s.trim().is_empty()),
             intensity: parsed.intensity.map(|i| i.clamp(0.0, 1.0)),
             intent: parsed.intent.filter(|s| !s.trim().is_empty()),
@@ -263,6 +304,10 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
             topics: Vec<String>,
             contains_code: Option<bool>,
             programming_lang: Option<String>,
+            contains_error: Option<bool>,
+            error_type: Option<String>,
+            error_file: Option<String>,
+            error_severity: Option<String>,
             mood: Option<String>,
             intensity: Option<f32>,
             intent: Option<String>,
@@ -287,7 +332,7 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
                     .into_iter()
                     .collect();
                 
-                // Validate programming_lang
+                // Validate fields
                 let programming_lang = analysis.programming_lang.as_ref()
                     .filter(|lang| {
                         matches!(
@@ -297,11 +342,33 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
                     })
                     .cloned();
                 
+                let error_type = analysis.error_type.as_ref()
+                    .filter(|t| {
+                        matches!(
+                            t.to_lowercase().as_str(),
+                            "compiler" | "runtime" | "test_failure" | "build_failure" | "linter" | "type_error"
+                        )
+                    })
+                    .cloned();
+                
+                let error_severity = analysis.error_severity.as_ref()
+                    .filter(|s| {
+                        matches!(
+                            s.to_lowercase().as_str(),
+                            "critical" | "warning" | "info"
+                        )
+                    })
+                    .cloned();
+                
                 results.push(ChatAnalysisResult {
                     salience,
                     topics,
                     contains_code: analysis.contains_code,
                     programming_lang,
+                    contains_error: analysis.contains_error,
+                    error_type,
+                    error_file: analysis.error_file.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
+                    error_severity,
                     mood: analysis.mood.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
                     intensity: analysis.intensity.map(|i| i.clamp(0.0, 1.0)),
                     intent: analysis.intent.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
@@ -317,6 +384,10 @@ For programming_lang: must be one of 'rust', 'typescript', 'javascript', 'python
                     topics: vec!["general".to_string()],
                     contains_code: Some(false),
                     programming_lang: None,
+                    contains_error: Some(false),
+                    error_type: None,
+                    error_file: None,
+                    error_severity: None,
                     mood: None,
                     intensity: None,
                     intent: None,
