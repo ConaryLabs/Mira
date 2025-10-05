@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use anyhow::Result;
+use serde_json::Value;
 use tracing::{info, debug};
 use crate::llm::provider::{LlmProvider, ChatMessage};
 use crate::memory::core::types::MemoryEntry;
@@ -33,10 +34,10 @@ impl RollingSummaryStrategy {
 
         info!("Creating {}-message rolling summary for session {}", window_size, session_id);
         
-        // Use provider.chat() instead of summarize_conversation()
+        // Use provider.chat() with Value::String for content
         let messages = vec![ChatMessage {
             role: "user".to_string(),
-            content: prompt,
+            content: Value::String(prompt),
         }];
         
         let response = self.llm_provider

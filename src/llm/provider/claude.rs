@@ -44,9 +44,15 @@ impl LlmProvider for ClaudeProvider {
         // Convert to Claude Messages API format
         let mut api_messages = Vec::new();
         for msg in messages {
+            // Handle both string and array content
+            let content = match &msg.content {
+                Value::String(s) => Value::String(s.clone()),
+                other => other.clone(),
+            };
+            
             api_messages.push(json!({
                 "role": msg.role,
-                "content": msg.content
+                "content": content
             }));
         }
         
@@ -124,14 +130,20 @@ impl LlmProvider for ClaudeProvider {
         messages: Vec<ChatMessage>,
         system: String,
         tools: Vec<Value>,
-        tool_choice: Option<Value>,  // NEW: Optional forced tool selection
+        tool_choice: Option<Value>,
     ) -> Result<Value> {
         // Convert to Claude Messages API format
         let mut api_messages = Vec::new();
         for msg in messages {
+            // Handle both string and array content
+            let content = match &msg.content {
+                Value::String(s) => Value::String(s.clone()),
+                other => other.clone(),
+            };
+            
             api_messages.push(json!({
                 "role": msg.role,
-                "content": msg.content
+                "content": content
             }));
         }
         

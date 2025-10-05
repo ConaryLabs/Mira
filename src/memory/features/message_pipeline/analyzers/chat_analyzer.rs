@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tracing::{debug, info, error};
 
 use crate::llm::provider::{LlmProvider, ChatMessage};
@@ -69,10 +70,10 @@ impl ChatAnalyzer {
         
         let prompt = self.build_analysis_prompt(content, role, context);
         
-        // Use provider.chat() instead of summarize_conversation()
+        // Use provider.chat() with Value::String for content
         let messages = vec![ChatMessage {
             role: "user".to_string(),
-            content: prompt,
+            content: Value::String(prompt),
         }];
         
         let provider_response = self.llm_provider
@@ -105,7 +106,7 @@ impl ChatAnalyzer {
         
         let llm_messages = vec![ChatMessage {
             role: "user".to_string(),
-            content: prompt,
+            content: Value::String(prompt),
         }];
         
         let provider_response = self.llm_provider
@@ -252,42 +253,42 @@ Guidelines:
         let parsed: LLMResponse = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
         
+        // Validate and clamp values
         let salience = parsed.salience.clamp(0.0, 1.0);
+        let topics = if parsed.topics.is_empty() {
+            vec!["general".to_string()]
+        } else {
+            parsed.topics
+        };
         
-        let topics: Vec<String> = parsed.topics
-            .into_iter()
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| t.trim().to_lowercase())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        
-        // Validate programming_lang
-        let programming_lang = parsed.programming_lang
+        // Validate programming language (only if code detected)
+        let programming_lang = parsed.programming_lang.as_ref()
             .filter(|lang| {
                 matches!(
                     lang.to_lowercase().as_str(),
                     "rust" | "typescript" | "javascript" | "python" | "go" | "java"
                 )
-            });
+            })
+            .cloned();
         
-        // Validate error_type
-        let error_type = parsed.error_type
+        // Validate error type
+        let error_type = parsed.error_type.as_ref()
             .filter(|t| {
                 matches!(
                     t.to_lowercase().as_str(),
                     "compiler" | "runtime" | "test_failure" | "build_failure" | "linter" | "type_error"
                 )
-            });
+            })
+            .cloned();
         
-        // Validate error_severity
-        let error_severity = parsed.error_severity
+        let error_severity = parsed.error_severity.as_ref()
             .filter(|s| {
                 matches!(
                     s.to_lowercase().as_str(),
                     "critical" | "warning" | "info"
                 )
-            });
+            })
+            .cloned();
         
         Ok(ChatAnalysisResult {
             salience,
@@ -296,19 +297,19 @@ Guidelines:
             programming_lang,
             contains_error: parsed.contains_error,
             error_type,
-            error_file: parsed.error_file.filter(|s| !s.trim().is_empty()),
+            error_file: parsed.error_file.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             error_severity,
-            mood: parsed.mood.filter(|s| !s.trim().is_empty()),
+            mood: parsed.mood.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             intensity: parsed.intensity.map(|i| i.clamp(0.0, 1.0)),
-            intent: parsed.intent.filter(|s| !s.trim().is_empty()),
-            summary: parsed.summary.filter(|s| !s.trim().is_empty()),
-            relationship_impact: parsed.relationship_impact.filter(|s| !s.trim().is_empty()),
+            intent: parsed.intent.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
+            summary: parsed.summary.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
+            relationship_impact: parsed.relationship_impact.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             content: original_content.to_string(),
             processed_at: chrono::Utc::now(),
         })
     }
     
-    /// Parse batch response from LLM
+    /// Parse batch analysis response
     async fn parse_batch_response(
         &self,
         response: &str,
@@ -318,7 +319,7 @@ Guidelines:
         let json_str = self.extract_json_from_response(response)?;
         
         #[derive(Deserialize)]
-        struct BatchLLMResponse {
+        struct BatchAnalysis {
             message_index: usize,
             salience: f32,
             topics: Vec<String>,
@@ -335,24 +336,20 @@ Guidelines:
             relationship_impact: Option<String>,
         }
         
-        let parsed: Vec<BatchLLMResponse> = serde_json::from_str(&json_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse batch LLM response: {}", e))?;
+        let analyses: Vec<BatchAnalysis> = serde_json::from_str(&json_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse batch response: {}", e))?;
         
-        let mut results = Vec::with_capacity(original_messages.len());
+        let mut results = Vec::new();
         
-        for (i, (content, _role)) in original_messages.iter().enumerate() {
-            if let Some(analysis) = parsed.iter().find(|a| a.message_index == i + 1) {
-                
+        for analysis in analyses {
+            if let Some((content, _)) = original_messages.get(analysis.message_index.saturating_sub(1)) {
                 let salience = analysis.salience.clamp(0.0, 1.0);
-                let topics: Vec<String> = analysis.topics
-                    .iter()
-                    .filter(|t| !t.trim().is_empty())
-                    .map(|t| t.trim().to_lowercase())
-                    .collect::<std::collections::HashSet<_>>()
-                    .into_iter()
-                    .collect();
+                let topics = if analysis.topics.is_empty() {
+                    vec!["general".to_string()]
+                } else {
+                    analysis.topics
+                };
                 
-                // Validate fields
                 let programming_lang = analysis.programming_lang.as_ref()
                     .filter(|lang| {
                         matches!(
@@ -402,9 +399,9 @@ Guidelines:
                 results.push(ChatAnalysisResult {
                     salience: 0.1,
                     topics: vec!["general".to_string()],
-                    contains_code: Some(false),
+                    contains_code: None,
                     programming_lang: None,
-                    contains_error: Some(false),
+                    contains_error: None,
                     error_type: None,
                     error_file: None,
                     error_severity: None,
@@ -413,7 +410,9 @@ Guidelines:
                     intent: None,
                     summary: None,
                     relationship_impact: None,
-                    content: content.clone(),
+                    content: original_messages.get(analysis.message_index.saturating_sub(1))
+                        .map(|(c, _)| c.clone())
+                        .unwrap_or_default(),
                     processed_at: chrono::Utc::now(),
                 });
             }
@@ -422,33 +421,23 @@ Guidelines:
         Ok(results)
     }
     
-    /// Extract JSON from LLM response (handles various formatting)
+    /// Extract JSON from LLM response (handles markdown code blocks)
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
-        // Look for JSON block markers
+        // Try to find JSON in code blocks first
         if let Some(start) = response.find("```json") {
-            let json_start = start + 7;
-            if let Some(end) = response[json_start..].find("```") {
-                return Ok(response[json_start..json_start + end].trim().to_string());
+            if let Some(end) = response[start..].find("```") {
+                let json_content = &response[start + 7..start + end];
+                return Ok(json_content.trim().to_string());
             }
         }
         
-        // Look for direct JSON (starts with { or [)
+        // Try raw JSON block
         if let Some(start) = response.find('{') {
             if let Some(end) = response.rfind('}') {
-                if end > start {
-                    return Ok(response[start..=end].to_string());
-                }
+                return Ok(response[start..=end].to_string());
             }
         }
         
-        if let Some(start) = response.find('[') {
-            if let Some(end) = response.rfind(']') {
-                if end > start {
-                    return Ok(response[start..=end].to_string());
-                }
-            }
-        }
-        
-        Err(anyhow::anyhow!("Could not extract JSON from LLM response"))
+        Err(anyhow::anyhow!("No JSON found in LLM response"))
     }
 }

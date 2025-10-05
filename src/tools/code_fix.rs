@@ -78,28 +78,15 @@ impl CodeFixHandler {
             Some(project_id),
         );
 
-        // UPDATED: Use provider trait for analysis
+        // Use Value::String for content
         let analysis_messages = vec![ChatMessage {
             role: "user".to_string(),
-            content: analysis_prompt,
+            content: Value::String(analysis_prompt),
         }];
 
         let analysis_response = self.llm
             .chat(analysis_messages, system_prompt.clone(), Some(thinking_budget as u32))
             .await?;
-
-        // Convert provider response to Claude format for compatibility
-        let _analysis_response_json = json!({
-            "content": [{
-                "type": "text",
-                "text": analysis_response.content
-            }],
-            "thinking": analysis_response.thinking,
-            "usage": {
-                "input_tokens": analysis_response.metadata.input_tokens,
-                "output_tokens": analysis_response.metadata.output_tokens,
-            }
-        });
 
         // Extract thinking content
         let thinking = analysis_response.thinking.unwrap_or_default();
@@ -130,7 +117,7 @@ impl CodeFixHandler {
             vec![], // No context messages for code fix
         )?;
 
-        // UPDATED: Extract and convert to provider format
+        // Extract and convert to provider format with Value::String
         let fix_messages: Vec<ChatMessage> = fix_request["messages"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Missing messages in fix request"))?
@@ -138,7 +125,7 @@ impl CodeFixHandler {
             .filter_map(|m| {
                 Some(ChatMessage {
                     role: m["role"].as_str()?.to_string(),
-                    content: m["content"].as_str()?.to_string(),
+                    content: Value::String(m["content"].as_str()?.to_string()),
                 })
             })
             .collect();
@@ -148,7 +135,7 @@ impl CodeFixHandler {
             .ok_or_else(|| anyhow::anyhow!("Missing tools in fix request"))?
             .clone();
 
-        // UPDATED: Use provider with tools (no forced tool - let it use code_fix naturally)
+        // Use provider with tools
         let fix_response = self.llm
             .chat_with_tools(
                 fix_messages,
@@ -158,24 +145,27 @@ impl CodeFixHandler {
             )
             .await?;
 
-        // Extract structured code fix (response is already in Claude format)
+        // Extract structured code fix
         let code_fix = code_fix_processor::extract_code_fix_response(&fix_response)?;
 
         info!("Code fix generated: {} files", code_fix.files.len());
 
-        // Build complete response with artifacts
-        self.build_complete_response(code_fix, thinking, &fix_response).await
+        // Convert to CompleteResponse using the built-in method
+        let metadata = claude_processor::extract_claude_metadata(&fix_response, 0)?;
+        Ok(code_fix.into_complete_response(metadata, fix_response))
     }
 
+    /// Get code intelligence for specific file
     async fn get_code_intelligence_for_file(
         &self,
         file_path: &str,
         project_id: &str,
     ) -> Result<Option<FileIntelligence>> {
-        // Fetch code elements - using i64 directly (SQLite's native INTEGER)
+        // Query code elements - JOIN through repository_files and git_repo_attachments
         let elements = sqlx::query!(
             r#"
-            SELECT ce.element_type, ce.name, ce.start_line, ce.end_line, ce.visibility, ce.is_async, ce.documentation, ce.complexity_score
+            SELECT ce.element_type, ce.name, ce.start_line, ce.end_line, ce.visibility, 
+                   ce.is_async, ce.documentation, ce.complexity_score
             FROM code_elements ce
             JOIN repository_files rf ON ce.file_id = rf.id
             JOIN git_repo_attachments gra ON rf.attachment_id = gra.id
@@ -192,6 +182,7 @@ impl CodeFixHandler {
             return Ok(None);
         }
 
+        // Map database fields to prompt struct fields
         let code_elements: Vec<CodeElement> = elements
             .into_iter()
             .map(|row| CodeElement {
@@ -201,12 +192,12 @@ impl CodeFixHandler {
                 end_line: row.end_line,
                 complexity: row.complexity_score,
                 is_async: row.is_async,
-                is_public: Some(row.visibility == "public"),
+                is_public: Some(row.visibility == "public"), // Map visibility to is_public
                 documentation: row.documentation,
             })
             .collect();
 
-        // Fetch quality issues
+        // Query quality issues - JOIN through code_elements, repository_files, git_repo_attachments
         let issues = sqlx::query!(
             r#"
             SELECT cqi.severity, cqi.title, cqi.description, cqi.suggested_fix, ce.name as element_name
@@ -222,14 +213,15 @@ impl CodeFixHandler {
         .fetch_all(&self.sqlite_pool)
         .await?;
 
+        // Map database fields to prompt struct fields
         let quality_issues: Vec<QualityIssue> = issues
             .into_iter()
             .map(|row| QualityIssue {
                 severity: row.severity,
-                category: row.title,
+                category: row.title,              // Map title to category
                 description: row.description,
                 element_name: Some(row.element_name),
-                suggestion: row.suggested_fix,
+                suggestion: row.suggested_fix,    // Map suggested_fix to suggestion
             })
             .collect();
 
@@ -237,70 +229,6 @@ impl CodeFixHandler {
             elements: code_elements,
             issues: quality_issues,
         }))
-    }
-
-    async fn build_complete_response(
-        &self,
-        code_fix: crate::llm::structured::code_fix_processor::CodeFixResponse,
-        _thinking: String,
-        raw_response: &Value,
-    ) -> Result<CompleteResponse> {
-        // Build artifacts as JSON values
-        let artifacts = Some(code_fix.files.iter().map(|file| {
-            json!({
-                "path": file.path.clone(),
-                "content": file.content.clone(),
-                "change_type": match file.change_type {
-                    crate::llm::structured::code_fix_processor::ChangeType::Primary => "primary",
-                    crate::llm::structured::code_fix_processor::ChangeType::Import => "import",
-                    crate::llm::structured::code_fix_processor::ChangeType::Type => "type",
-                    crate::llm::structured::code_fix_processor::ChangeType::Cascade => "cascade",
-                },
-            })
-        }).collect());
-
-        let metadata = claude_processor::extract_claude_metadata(raw_response, 0)?;
-        let structured = claude_processor::extract_claude_content_from_tool(raw_response)?;
-
-        Ok(CompleteResponse {
-            structured,
-            metadata,
-            raw_response: raw_response.clone(),
-            artifacts,
-        })
-    }
-
-    fn extract_thinking(&self, response: &Value) -> String {
-        let mut thinking = String::new();
-
-        if let Some(content) = response["content"].as_array() {
-            for block in content {
-                if block["type"] == "thinking" {
-                    if let Some(text) = block["thinking"].as_str() {
-                        if !thinking.is_empty() {
-                            thinking.push_str("\n\n");
-                        }
-                        thinking.push_str(text);
-                    }
-                }
-            }
-        }
-
-        thinking
-    }
-
-    fn extract_text_content(&self, response: &Value) -> String {
-        if let Some(content) = response["content"].as_array() {
-            for block in content {
-                if block["type"] == "text" {
-                    if let Some(text) = block["text"].as_str() {
-                        return text.to_string();
-                    }
-                }
-            }
-        }
-
-        String::new()
     }
 }
 

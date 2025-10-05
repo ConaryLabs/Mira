@@ -23,7 +23,11 @@ pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<ChatMe
             .ok_or_else(|| anyhow!("Missing content in message"))?
             .to_string();
         
-        messages.push(ChatMessage { role, content });
+        // FIXED: Use Value::String for content
+        messages.push(ChatMessage { 
+            role, 
+            content: Value::String(content) 
+        });
     }
     
     Ok(messages)
@@ -76,119 +80,11 @@ pub fn gpt5_tool_response_to_claude(response: &Value) -> Result<Value> {
                     item["arguments"].as_str().unwrap_or("{}")
                 ).unwrap_or(json!({}))
             }));
-        } else if item["type"] == "message" {
-            // Regular text message
-            if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
-                for c in content {
-                    if c["type"] == "text" {
-                        claude_content.push(json!({
-                            "type": "text",
-                            "text": c["text"]
-                        }));
-                    }
-                }
-            }
         }
     }
-    
-    // Extract usage
-    let usage = response.get("usage");
     
     Ok(json!({
         "content": claude_content,
-        "stop_reason": response["finish_reason"].as_str().unwrap_or("end_turn"),
-        "usage": {
-            "input_tokens": usage.and_then(|u| u["prompt_tokens"].as_i64()).unwrap_or(0),
-            "output_tokens": usage.and_then(|u| u["completion_tokens"].as_i64()).unwrap_or(0),
-        }
+        "stop_reason": "tool_use"
     }))
-}
-
-/// Convert DeepSeek tool response to Claude format
-pub fn deepseek_tool_response_to_claude(response: &Value) -> Result<Value> {
-    // DeepSeek uses OpenAI format:
-    // { "choices": [{ "message": { "tool_calls": [...] } }] }
-    
-    let message = response["choices"][0]["message"]
-        .as_object()
-        .ok_or_else(|| anyhow!("No message in DeepSeek response"))?;
-    
-    let mut claude_content = Vec::new();
-    
-    // Add text content if present
-    if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
-        claude_content.push(json!({
-            "type": "text",
-            "text": text
-        }));
-    }
-    
-    // Add tool calls if present
-    if let Some(tool_calls) = message.get("tool_calls").and_then(|t| t.as_array()) {
-        for call in tool_calls {
-            claude_content.push(json!({
-                "type": "tool_use",
-                "id": call["id"],
-                "name": call["function"]["name"],
-                "input": serde_json::from_str::<Value>(
-                    call["function"]["arguments"].as_str().unwrap_or("{}")
-                ).unwrap_or(json!({}))
-            }));
-        }
-    }
-    
-    // Extract usage
-    let usage = response.get("usage");
-    
-    Ok(json!({
-        "content": claude_content,
-        "stop_reason": response["choices"][0]["finish_reason"].as_str().unwrap_or("end_turn"),
-        "usage": {
-            "input_tokens": usage.and_then(|u| u["prompt_tokens"].as_i64()).unwrap_or(0),
-            "output_tokens": usage.and_then(|u| u["completion_tokens"].as_i64()).unwrap_or(0),
-        }
-    }))
-}
-
-/// Convert tool results to provider-specific format
-pub fn tool_results_to_provider_messages(
-    tool_results: Vec<Value>,
-    provider: &str,
-) -> Vec<Value> {
-    match provider {
-        "claude" => {
-            // Claude uses tool_result format
-            tool_results
-                .into_iter()
-                .map(|r| json!({
-                    "type": "tool_result",
-                    "tool_use_id": r["tool_use_id"],
-                    "content": r["content"]
-                }))
-                .collect()
-        }
-        "gpt5" => {
-            // GPT-5 uses function_call_output format
-            tool_results
-                .into_iter()
-                .map(|r| json!({
-                    "type": "function_call_output",
-                    "call_id": r["tool_use_id"],
-                    "output": r["content"].as_str().unwrap_or("")
-                }))
-                .collect()
-        }
-        "deepseek" => {
-            // DeepSeek uses OpenAI tool message format
-            tool_results
-                .into_iter()
-                .map(|r| json!({
-                    "role": "tool",
-                    "tool_call_id": r["tool_use_id"],
-                    "content": r["content"]
-                }))
-                .collect()
-        }
-        _ => tool_results,
-    }
 }

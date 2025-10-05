@@ -10,13 +10,13 @@ use chrono::Utc;
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, claude_processor};
 use crate::llm::structured::tool_schema::*;
+use crate::llm::provider::ChatMessage;
 use crate::memory::storage::sqlite::structured_ops::save_structured_response;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::core::types::MemoryEntry;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
-use crate::config::CONFIG;
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -72,32 +72,27 @@ impl UnifiedChatHandler {
             get_list_files_tool_schema(),
         ];
         
-        let (thinking_budget, temperature) = claude_processor::analyze_message_complexity(&request.content);
-        
-        let mut context_messages = self.build_context_messages(&context).await?;
-        context_messages.push(json!({
-            "role": "user",
-            "content": request.content
-        }));
+        // Build initial message history with simple text content
+        let mut chat_messages = Vec::new();
+        for entry in context.recent.iter().rev() {
+            chat_messages.push(ChatMessage::text(
+                if entry.role == "user" { "user" } else { "assistant" },
+                entry.content.clone(),
+            ));
+        }
+        // Add current user message
+        chat_messages.push(ChatMessage::text("user", request.content.clone()));
         
         // Tool execution loop (max 10 iterations)
         for iteration in 0..10 {
             info!("Tool loop iteration {}", iteration);
             
-            let api_request = json!({
-                "model": CONFIG.anthropic_model,
-                "max_tokens": CONFIG.anthropic_max_tokens,
-                "temperature": temperature,
-                "thinking": {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget
-                },
-                "system": system_prompt,
-                "messages": context_messages.clone(),
-                "tools": tools,
-            });
-            
-            let raw_response = self.app_state.llm_client.post_response_with_retry(api_request).await?;
+            let raw_response = self.app_state.llm.chat_with_tools(
+                chat_messages.clone(),
+                system_prompt.clone(),
+                tools.clone(),
+                None,  // No forced tool choice
+            ).await?;
             
             // Check stop_reason
             let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
@@ -172,19 +167,13 @@ impl UnifiedChatHandler {
                     }
                 }
                 
-                // Add assistant message with tool calls
-                context_messages.push(json!({
-                    "role": "assistant",
-                    "content": raw_response["content"]
-                }));
-                
-                // Add tool results as user messages
-                for result in tool_results {
-                    context_messages.push(json!({
-                        "role": "user",
-                        "content": vec![result]
-                    }));
+                // Add assistant message with tool calls (preserve content blocks)
+                if let Some(content) = raw_response["content"].clone().as_array() {
+                    chat_messages.push(ChatMessage::blocks("assistant", Value::Array(content.clone())));
                 }
+                
+                // Add user message with tool results
+                chat_messages.push(ChatMessage::blocks("user", Value::Array(tool_results)));
             }
         }
         
@@ -245,7 +234,7 @@ impl UnifiedChatHandler {
         
         let recent_entries = recent.into_iter().map(|row| {
             MemoryEntry {
-                id: row.id, // Both are Option<i64>, direct assign
+                id: row.id,
                 session_id: session_id.to_string(),
                 response_id: None,
                 parent_id: None,
@@ -290,19 +279,6 @@ impl UnifiedChatHandler {
             recent: recent_entries,
             semantic: vec![],
         })
-    }
-    
-    async fn build_context_messages(&self, context: &RecallContext) -> Result<Vec<Value>> {
-        let mut messages = Vec::new();
-        
-        for entry in context.recent.iter().rev() {
-            messages.push(json!({
-                "role": if entry.role == "user" { "user" } else { "assistant" },
-                "content": entry.content
-            }));
-        }
-        
-        Ok(messages)
     }
     
     fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
