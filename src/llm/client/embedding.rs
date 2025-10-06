@@ -38,7 +38,7 @@ impl EmbeddingClient {
 
         let response = self
             .client
-            .post(&format!("{}/v1/embeddings", self.config.base_url))
+            .post("https://api.openai.com/v1/embeddings")
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::AUTHORIZATION, format!("Bearer {}", 
                 CONFIG.get_openai_key().expect("OPENAI_API_KEY required for embeddings")))
@@ -85,7 +85,7 @@ impl EmbeddingClient {
 
         let response = self
             .client
-            .post(&format!("{}/v1/embeddings", self.config.base_url))
+            .post("https://api.openai.com/v1/embeddings")
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::AUTHORIZATION, format!("Bearer {}", 
                 CONFIG.get_openai_key().expect("OPENAI_API_KEY required for embeddings")))

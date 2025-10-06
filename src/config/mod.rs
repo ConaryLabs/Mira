@@ -39,8 +39,7 @@ pub struct MiraConfig {
     pub temperature_creative: f32,
     
     // ===== OPENAI CONFIGURATION =====
-    pub openai_api_key: Option<String>,  // For chat, embeddings, images (primary)
-    pub openai_embedding_api_key: Option<String>,  // Backward compat fallback
+    pub openai_api_key: String,  // For chat, embeddings, images (unified)
     pub openai_embedding_model: String,
     pub openai_chat_model: String,  // For GPT-5 chat
     pub openai_max_tokens: usize,  // For GPT-5 chat
@@ -211,14 +210,8 @@ impl MiraConfig {
             &anthropic_api_key[..std::cmp::min(25, anthropic_api_key.len())]);
         eprintln!("🔑 DEBUG: Key length: {} characters", anthropic_api_key.len());
 
-        // Load OpenAI keys (try OPENAI_API_KEY first, fallback to OPENAI_EMBEDDING_API_KEY)
-        let openai_api_key = env::var("OPENAI_API_KEY").ok();
-        let openai_embedding_api_key = env::var("OPENAI_EMBEDDING_API_KEY").ok();
-        
-        // Ensure at least one OpenAI key is set
-        if openai_api_key.is_none() && openai_embedding_api_key.is_none() {
-            panic!("Either OPENAI_API_KEY or OPENAI_EMBEDDING_API_KEY must be set");
-        }
+        // Load OpenAI key (unified)
+        let openai_api_key = require_env("OPENAI_API_KEY");
 
         // GPT-5 configuration
         let openai_chat_model = env::var("OPENAI_CHAT_MODEL")
@@ -272,7 +265,6 @@ impl MiraConfig {
             
             // OpenAI configuration
             openai_api_key,
-            openai_embedding_api_key,
             openai_embedding_model: require_env("OPENAI_EMBEDDING_MODEL"),
             openai_chat_model,
             openai_max_tokens,
@@ -402,10 +394,9 @@ impl MiraConfig {
         }
     }
 
-    /// Get the effective OpenAI API key (try OPENAI_API_KEY first, fallback to OPENAI_EMBEDDING_API_KEY)
+    /// Get the OpenAI API key (unified for all OpenAI services)
     pub fn get_openai_key(&self) -> Option<String> {
-        self.openai_api_key.clone()
-            .or_else(|| self.openai_embedding_api_key.clone())
+        Some(self.openai_api_key.clone())
     }
 
     /// Get max tokens for JSON operations

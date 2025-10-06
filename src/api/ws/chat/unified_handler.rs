@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, claude_processor};
@@ -235,13 +235,41 @@ impl UnifiedChatHandler {
                     }
                 }
                 
-                // Add assistant message with tool calls (preserve content blocks)
+                // CRITICAL FIX: Only add messages if they have content
+                // This prevents the "all messages must have non-empty content" error
+                
+                // Add assistant message with tool calls (only if content exists)
                 if let Some(content) = raw_response["content"].clone().as_array() {
-                    chat_messages.push(ChatMessage::blocks("assistant", Value::Array(content.clone())));
+                    if !content.is_empty() {
+                        // Verify content blocks are valid
+                        let has_valid_content = content.iter().any(|block| {
+                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                !text.trim().is_empty()
+                            } else if block.get("type") == Some(&json!("tool_use")) {
+                                true
+                            } else if block.get("type") == Some(&json!("thinking")) {
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                        
+                        if has_valid_content {
+                            chat_messages.push(ChatMessage::blocks("assistant", Value::Array(content.clone())));
+                        } else {
+                            warn!("Skipping assistant message with empty content blocks");
+                        }
+                    }
                 }
                 
-                // Add user message with tool results
-                chat_messages.push(ChatMessage::blocks("user", Value::Array(tool_results)));
+                // Add user message with tool results (only if results exist)
+                if !tool_results.is_empty() {
+                    chat_messages.push(ChatMessage::blocks("user", Value::Array(tool_results)));
+                } else {
+                    // CRITICAL: No tool results means tool loop failed - break instead of continuing
+                    warn!("No tool results after tool_use - breaking tool loop to prevent infinite iterations");
+                    break;
+                }
             }
         }
         
