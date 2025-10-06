@@ -146,6 +146,10 @@ impl UnifiedChatHandler {
                             intent: Some("system_fallback".to_string()),
                             summary: Some("Claude thinking without output".to_string()),
                             relationship_impact: None,
+                            contains_error: false,
+                            error_type: None,
+                            error_severity: None,
+                            error_file: None,
                         },
                         reasoning: None,
                         schema_name: None,
@@ -209,8 +213,19 @@ impl UnifiedChatHandler {
                             return Ok(complete_response);
                         }
                         
-                        // Execute tool via ToolExecutor
-                        let result = self.execute_tool(tool_name, tool_input, &request).await?;
+                        // FIXED: Execute tool and catch errors instead of propagating
+                        let result = match self.execute_tool(tool_name, tool_input, &request).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                // Return error as tool result so LLM can handle it
+                                info!("Tool execution error (returned to LLM): {}", e);
+                                json!({
+                                    "error": e.to_string(),
+                                    "status": "failed",
+                                    "hint": "This operation failed. Try a different approach."
+                                })
+                            }
+                        };
                         
                         tool_results.push(json!({
                             "type": "tool_result",

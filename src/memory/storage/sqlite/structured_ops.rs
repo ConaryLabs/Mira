@@ -222,6 +222,10 @@ pub async fn load_structured_response(
             summary: analysis_row.summary,
             relationship_impact: analysis_row.relationship_impact,
             programming_lang: analysis_row.programming_lang,
+            contains_error: false,  // Not stored in DB for old messages
+            error_type: None,
+            error_severity: None,
+            error_file: None,
         },
         reasoning: None,
         schema_name: Some("retrieved".to_string()),

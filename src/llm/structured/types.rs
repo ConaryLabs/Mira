@@ -29,6 +29,12 @@ pub struct MessageAnalysis {
     pub summary: Option<String>,
     pub relationship_impact: Option<String>,
     pub programming_lang: Option<String>,
+    // Error tracking fields
+    #[serde(default)]
+    pub contains_error: bool,
+    pub error_type: Option<String>,
+    pub error_severity: Option<String>,
+    pub error_file: Option<String>,
 }
 
 impl MessageAnalysis {
