@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::path::Path;
-use tracing::info;
+use tracing::{info, debug};
 
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
@@ -72,20 +72,25 @@ impl ToolExecutor {
 
         info!("Listing files in: {}", if path.is_empty() { "root" } else { path });
         
-        // Get git attachment for project
-        let attachment = sqlx::query!(
-            r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
-            project_id
-        )
-        .fetch_optional(&self.sqlite_pool)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("No git repository attached to project"))?;
+        // Try project repo first
+        if let Some(entries) = self.try_list_project_repo(path, project_id).await? {
+            return Ok(json!({
+                "path": path,
+                "entries": entries
+            }));
+        }
 
-        let base_path = Path::new(&attachment.local_path).join(path);
-        
-        // Read directory
+        // Fallback: List from backend working directory
+        debug!("Listing from backend working directory");
+        let backend_path = Path::new(path);
+        let dir_path = if path.is_empty() || path == "." {
+            std::env::current_dir()?
+        } else {
+            backend_path.to_path_buf()
+        };
+
         let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(&base_path).await?;
+        let mut dir = tokio::fs::read_dir(&dir_path).await?;
         
         while let Some(entry) = dir.next_entry().await? {
             let metadata = entry.metadata().await?;
@@ -101,7 +106,51 @@ impl ToolExecutor {
 
         Ok(json!({
             "path": path,
-            "entries": entries
+            "entries": entries,
+            "source": "backend_directory"
         }))
+    }
+
+    /// Try to list files from project's git repository
+    async fn try_list_project_repo(&self, path: &str, project_id: &str) -> Result<Option<Vec<Value>>> {
+        // Get git attachment for project
+        let attachment = match sqlx::query!(
+            r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
+            project_id
+        )
+        .fetch_optional(&self.sqlite_pool)
+        .await? {
+            Some(att) => att,
+            None => {
+                debug!("No git attachment for project {}, will list backend directory", project_id);
+                return Ok(None);
+            }
+        };
+
+        let base_path = Path::new(&attachment.local_path).join(path);
+        
+        // Try to read directory
+        let mut dir = match tokio::fs::read_dir(&base_path).await {
+            Ok(d) => d,
+            Err(e) => {
+                debug!("Failed to list project repo directory {}: {}", base_path.display(), e);
+                return Ok(None);  // Trigger fallback
+            }
+        };
+        
+        let mut entries = Vec::new();
+        while let Some(entry) = dir.next_entry().await? {
+            let metadata = entry.metadata().await?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            
+            entries.push(json!({
+                "name": name,
+                "is_file": metadata.is_file(),
+                "is_dir": metadata.is_dir(),
+                "size": metadata.len()
+            }));
+        }
+
+        Ok(Some(entries))
     }
 }
