@@ -1,5 +1,6 @@
 // src/api/ws/chat/unified_handler.rs
-// Slim routing layer - all tool logic delegated to src/tools/*
+// Unified chat handler with tool execution loop
+// Delegates all tool logic to src/tools/* for clean separation
 
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
@@ -40,19 +41,20 @@ impl UnifiedChatHandler {
     ) -> Result<CompleteResponse> {
         info!("Processing message for session: {}", request.session_id);
         
-        // Go straight to tool execution loop - let the LLM decide what to do
+        // Route to tool execution loop - LLM decides what tools to use
         self.handle_chat_with_tools(request).await
     }
     
-    /// Process chat with tool execution loop
+    /// Main chat processing with tool execution loop
+    /// Allows Claude to use tools iteratively until it responds with respond_to_user
     async fn handle_chat_with_tools(
         &self,
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
-        // Save user message first - FIXED: Use proper MemoryService with analysis pipeline
+        // Save user message and run through analysis pipeline
         let user_message_id = self.save_user_message(&request).await?;
         
-        // Build initial context
+        // Build context (recent messages + semantic search)
         let context = self.build_context(&request.session_id, &request.content).await?;
         let persona = self.select_persona(&request.metadata);
         
@@ -64,7 +66,7 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // FIXED: Conditional tools - only offer project-dependent tools when project exists
+        // Conditional tools: only offer project-dependent tools when project exists
         let tools = if request.project_id.is_some() {
             vec![
                 get_response_tool_schema(),
@@ -77,7 +79,7 @@ impl UnifiedChatHandler {
             vec![get_response_tool_schema()]
         };
         
-        // Build initial message history with simple text content
+        // Build initial message history from context
         let mut chat_messages = Vec::new();
         for entry in context.recent.iter().rev() {
             chat_messages.push(ChatMessage::text(
@@ -88,7 +90,7 @@ impl UnifiedChatHandler {
         // Add current user message
         chat_messages.push(ChatMessage::text("user", request.content.clone()));
         
-        // Tool execution loop - INCREASED: 10 -> 20 iterations
+        // Tool execution loop - allow up to 20 iterations
         for iteration in 0..20 {
             info!("Tool loop iteration {}", iteration);
             
@@ -96,23 +98,22 @@ impl UnifiedChatHandler {
                 chat_messages.clone(),
                 system_prompt.clone(),
                 tools.clone(),
-                None,  // No forced tool choice
+                None,  // No forced tool choice - Claude decides
             ).await?;
             
-            // Check stop_reason
+            // Check stop reason
             let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
             
             if stop_reason == "end_turn" {
-                // FIXED: Claude finished thinking but didn't call respond_to_user
-                // This happens when it processes internally but doesn't generate output
-                // Try to extract tool call first, fall back to error message if none exists
+                // Claude finished without calling a tool
+                // Try to extract respond_to_user if present, otherwise provide fallback
                 
                 let structured = if claude_processor::has_tool_calls(&raw_response) {
                     // Normal case: has respond_to_user tool call
                     claude_processor::extract_claude_content_from_tool(&raw_response)?
                 } else {
                     // Edge case: Claude thought but didn't respond
-                    // Extract thinking content if available, otherwise provide fallback
+                    // Extract thinking content if available
                     let thinking_summary = if let Some(content) = raw_response["content"].as_array() {
                         content.iter()
                             .filter(|block| block["type"] == "thinking")
@@ -213,11 +214,11 @@ impl UnifiedChatHandler {
                             return Ok(complete_response);
                         }
                         
-                        // FIXED: Execute tool and catch errors instead of propagating
+                        // Execute tool and catch errors to return to LLM
+                        // This allows Claude to see errors and try alternative approaches
                         let result = match self.execute_tool(tool_name, tool_input, &request).await {
                             Ok(r) => r,
                             Err(e) => {
-                                // Return error as tool result so LLM can handle it
                                 info!("Tool execution error (returned to LLM): {}", e);
                                 json!({
                                     "error": e.to_string(),
@@ -235,10 +236,8 @@ impl UnifiedChatHandler {
                     }
                 }
                 
-                // CRITICAL FIX: Only add messages if they have content
-                // This prevents the "all messages must have non-empty content" error
-                
                 // Add assistant message with tool calls (only if content exists)
+                // This prevents "all messages must have non-empty content" error
                 if let Some(content) = raw_response["content"].clone().as_array() {
                     if !content.is_empty() {
                         // Verify content blocks are valid
@@ -266,7 +265,7 @@ impl UnifiedChatHandler {
                 if !tool_results.is_empty() {
                     chat_messages.push(ChatMessage::blocks("user", Value::Array(tool_results)));
                 } else {
-                    // CRITICAL: No tool results means tool loop failed - break instead of continuing
+                    // No tool results means tool loop failed - break to prevent infinite loop
                     warn!("No tool results after tool_use - breaking tool loop to prevent infinite iterations");
                     break;
                 }
@@ -276,7 +275,8 @@ impl UnifiedChatHandler {
         Err(anyhow!("Tool loop exceeded max iterations"))
     }
     
-    /// Execute tool via ToolExecutor (delegated to src/tools/executor.rs)
+    /// Execute tool via ToolExecutor
+    /// All tool logic is delegated to src/tools/executor.rs
     async fn execute_tool(
         &self,
         tool_name: &str,
@@ -294,7 +294,8 @@ impl UnifiedChatHandler {
         executor.execute_tool(tool_name, input, project_id).await
     }
     
-    /// FIXED: Use proper MemoryService with analysis pipeline instead of raw SQL
+    /// Save user message through MemoryService
+    /// Runs through analysis pipeline (sentiment, topics, salience, etc.)
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
         self.app_state.memory_service
             .save_user_message(
@@ -305,23 +306,32 @@ impl UnifiedChatHandler {
             .await
     }
     
-    /// FIXED: Use MemoryService instead of raw SQL for consistency
+    /// Build context for recall
+    /// Returns both recent messages (last 5) and semantically relevant memories (top 10)
+    /// Uses embeddings for semantic search via Qdrant vector store
     async fn build_context(
         &self,
         session_id: &str,
-        _user_message: &str,
+        user_message: &str,
     ) -> Result<RecallContext> {
-        let recent = self.app_state.memory_service
-            .get_recent_context(session_id, 5)
-            .await?;
+        info!("Building context with semantic search for session: {}", session_id);
         
-        Ok(RecallContext {
-            recent,
-            semantic: vec![],
-        })
+        // Use parallel_recall_context which does BOTH:
+        // 1. Recent messages from SQLite (chronological, last N messages)
+        // 2. Semantic search via embeddings (vector similarity, top K relevant memories)
+        self.app_state.memory_service
+            .parallel_recall_context(
+                session_id,
+                user_message,  // Embedded and used for vector search
+                5,   // recent_count: last 5 messages
+                10,  // semantic_count: top 10 relevant memories
+            )
+            .await
     }
     
+    /// Select persona based on metadata
+    /// Currently returns default persona, can be extended for context-aware personas
     fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
-        PersonaOverlay::Default  // FIXED: Was PersonaOverload
+        PersonaOverlay::Default
     }
 }
