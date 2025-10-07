@@ -2,6 +2,8 @@
 
 //! Memory routing logic for embedding decisions
 //! Determines which embedding heads to use based on analysis results
+//!
+//! Phase 4.2: Lowered min_salience_threshold from 0.2 to 0.1 to trust Claude's judgment more
 
 use std::collections::HashSet;
 use anyhow::Result;
@@ -24,7 +26,8 @@ pub struct RoutingConfig {
 impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
-            min_salience_threshold: 0.2,
+            // PHASE 4.2: Lowered from 0.2 to 0.1 - trust Claude more, filter less
+            min_salience_threshold: 0.1,
             enable_topic_routing: true,
             enable_language_routing: true,
             max_embedding_heads: 5,

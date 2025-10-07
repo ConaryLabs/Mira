@@ -5,6 +5,7 @@
 // PHASE 1.3 UPDATE: Enhanced build_context with summary retrieval and increased limits
 // PHASE 3.1-3.2 UPDATE: Added efficiency tools (get_project_context, read_files, write_files)
 // PHASE 3.3 UPDATE: Added session tool cache for expensive operations
+// PHASE 5 UPDATE: Doubled iteration limit from 20 to 50
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -178,8 +179,10 @@ impl UnifiedChatHandler {
         // PHASE 3.3: Initialize session tool cache
         let mut tool_cache = SessionToolCache::new();
         
-        // Tool execution loop - allow up to 20 iterations
-        for iteration in 0..20 {
+        // PHASE 5: Tool execution loop - doubled from 20 to 50 iterations
+        // With better tools and context, Claude should iterate less,
+        // but give it room when needed for complex multi-step tasks
+        for iteration in 0..50 {
             info!("Tool loop iteration {}", iteration);
             
             let raw_response = self.app_state.llm.chat_with_tools(
