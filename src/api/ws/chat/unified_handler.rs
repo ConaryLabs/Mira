@@ -3,11 +3,15 @@
 // Delegates all tool logic to src/tools/* for clean separation
 //
 // PHASE 1.3 UPDATE: Enhanced build_context with summary retrieval and increased limits
+// PHASE 3.1-3.2 UPDATE: Added efficiency tools (get_project_context, read_files, write_files)
+// PHASE 3.3 UPDATE: Added session tool cache for expensive operations
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, claude_processor};
@@ -27,6 +31,77 @@ pub struct ChatRequest {
     pub metadata: Option<MessageMetadata>,
     pub session_id: String,
 }
+
+// ===== PHASE 3.3: SESSION TOOL CACHE =====
+
+/// Cached tool result with timestamp
+#[derive(Clone)]
+struct CachedToolResult {
+    result: Value,
+    cached_at: Instant,
+}
+
+/// Session-level cache for expensive tool operations
+struct SessionToolCache {
+    // Cache key: (project_id, tool_name)
+    cache: HashMap<(String, String), CachedToolResult>,
+    // TTL for different tool types
+    project_context_ttl: Duration,
+}
+
+impl SessionToolCache {
+    fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+            project_context_ttl: Duration::from_secs(300), // 5 minutes
+        }
+    }
+    
+    /// Get cached result if still valid
+    fn get(&self, project_id: &str, tool_name: &str, ttl: Duration) -> Option<Value> {
+        let key = (project_id.to_string(), tool_name.to_string());
+        
+        if let Some(cached) = self.cache.get(&key) {
+            if cached.cached_at.elapsed() < ttl {
+                debug!("Cache HIT for {}:{} (age: {:?})", tool_name, project_id, cached.cached_at.elapsed());
+                return Some(cached.result.clone());
+            } else {
+                debug!("Cache EXPIRED for {}:{} (age: {:?})", tool_name, project_id, cached.cached_at.elapsed());
+            }
+        } else {
+            debug!("Cache MISS for {}:{}", tool_name, project_id);
+        }
+        
+        None
+    }
+    
+    /// Store result in cache
+    fn set(&mut self, project_id: &str, tool_name: &str, result: Value) {
+        let key = (project_id.to_string(), tool_name.to_string());
+        
+        self.cache.insert(key, CachedToolResult {
+            result,
+            cached_at: Instant::now(),
+        });
+        
+        debug!("Cached result for {}:{}", tool_name, project_id);
+    }
+    
+    /// Check if tool should be cached
+    fn is_cacheable(&self, tool_name: &str) -> bool {
+        matches!(tool_name, "get_project_context")
+    }
+    
+    /// Get TTL for tool
+    fn get_ttl(&self, tool_name: &str) -> Duration {
+        match tool_name {
+            "get_project_context" => self.project_context_ttl,
+            _ => Duration::from_secs(0), // No cache
+        }
+    }
+}
+
+// ===== END PHASE 3.3 =====
 
 pub struct UnifiedChatHandler {
     app_state: Arc<AppState>,
@@ -68,13 +143,21 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // Conditional tools: only offer project-dependent tools when project exists
+        // PHASE 3: Conditional tools - added efficiency tools
         let tools = if request.project_id.is_some() {
             vec![
+                // Core response tool (always required)
                 get_response_tool_schema(),
+                
+                // Existing single-operation tools
                 get_read_file_tool_schema(),
                 get_code_search_tool_schema(),
                 get_list_files_tool_schema(),
+                
+                // PHASE 3: Efficiency tools - batch operations
+                get_project_context_tool_schema(),  // Complete project overview in 1 call
+                get_read_files_tool_schema(),       // Batch read multiple files
+                get_write_files_tool_schema(),      // Batch write multiple files
             ]
         } else {
             // No project = only allow responding, no file/code operations
@@ -91,6 +174,9 @@ impl UnifiedChatHandler {
         }
         // Add current user message
         chat_messages.push(ChatMessage::text("user", request.content.clone()));
+        
+        // PHASE 3.3: Initialize session tool cache
+        let mut tool_cache = SessionToolCache::new();
         
         // Tool execution loop - allow up to 20 iterations
         for iteration in 0..20 {
@@ -212,9 +298,34 @@ impl UnifiedChatHandler {
                             return Ok(complete_response);
                         }
                         
-                        // Execute tool and catch errors to return to LLM
-                        // This allows Claude to see errors and try alternative approaches
-                        let result = match self.execute_tool(tool_name, tool_input, &request).await {
+                        // PHASE 3.3: Check cache for expensive tools
+                        let result = if let Some(project_id) = request.project_id.as_deref() {
+                            if tool_cache.is_cacheable(tool_name) {
+                                let ttl = tool_cache.get_ttl(tool_name);
+                                
+                                if let Some(cached_result) = tool_cache.get(project_id, tool_name, ttl) {
+                                    Ok(cached_result)
+                                } else {
+                                    // Execute tool and cache result
+                                    match self.execute_tool(tool_name, tool_input, &request).await {
+                                        Ok(r) => {
+                                            tool_cache.set(project_id, tool_name, r.clone());
+                                            Ok(r)
+                                        }
+                                        Err(e) => Err(e)
+                                    }
+                                }
+                            } else {
+                                // Not cacheable - execute directly
+                                self.execute_tool(tool_name, tool_input, &request).await
+                            }
+                        } else {
+                            // No project_id - execute directly
+                            self.execute_tool(tool_name, tool_input, &request).await
+                        };
+                        
+                        // Handle result or error
+                        let result = match result {
                             Ok(r) => r,
                             Err(e) => {
                                 info!("Tool execution error (returned to LLM): {}", e);

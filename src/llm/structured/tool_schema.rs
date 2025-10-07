@@ -271,3 +271,79 @@ pub fn get_image_generation_tool_schema() -> serde_json::Value {
         }
     })
 }
+
+// ============================================================================
+// PHASE 3: EFFICIENCY TOOLS
+// ============================================================================
+
+/// Tool schema for getting complete project context in one call
+/// PHASE 3.1: Reduces 5-10 tool calls to 1
+pub fn get_project_context_tool_schema() -> serde_json::Value {
+    json!({
+        "name": "get_project_context",
+        "description": "Get complete project overview in ONE efficient call: file tree, recent files, languages detected, and code statistics. Much more efficient than making multiple separate tool calls. Use this when you need to understand the overall project structure.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "The project ID to get context for (provided in system prompt)"
+                }
+            },
+            "required": ["project_id"]
+        }
+    })
+}
+
+/// Tool schema for reading multiple files at once
+/// PHASE 3.2: Batch read - reduces N calls to 1
+pub fn get_read_files_tool_schema() -> serde_json::Value {
+    json!({
+        "name": "read_files",
+        "description": "Read MULTIPLE files in a single batch operation. Much more efficient than calling read_file multiple times. Use this when you need to read several files for context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Array of file paths to read. Each path should be relative to the project root."
+                }
+            },
+            "required": ["paths"]
+        }
+    })
+}
+
+/// Tool schema for writing multiple files at once
+/// PHASE 3.2: Batch write - reduces N calls to 1
+pub fn get_write_files_tool_schema() -> serde_json::Value {
+    json!({
+        "name": "write_files",
+        "description": "Write MULTIPLE files in a single batch operation. Use this when you need to update several files at once (e.g., fixing imports across multiple files).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "File path relative to project root"
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Complete file content to write"
+                            }
+                        },
+                        "required": ["path", "content"]
+                    },
+                    "description": "Array of files to write. Each file must have a path and content."
+                }
+            },
+            "required": ["files"]
+        }
+    })
+}
