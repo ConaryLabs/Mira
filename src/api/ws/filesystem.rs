@@ -1,5 +1,5 @@
 // src/api/ws/filesystem.rs
-// WebSocket handler for file system operations
+// WebSocket handler for file system operations - UPDATED with history tracking
 
 use std::sync::Arc;
 use std::fs;
@@ -14,13 +14,14 @@ use crate::{
         ws::message::WsServerMessage,
     },
     state::AppState,
-    utils::is_path_allowed,  // Now using the utility function
+    utils::is_path_allowed,
 };
 
 #[derive(Debug, Deserialize)]
 struct SaveFileRequest {
     path: String,
     content: String,
+    project_id: Option<String>,  // NEW: For history tracking
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,13 +44,13 @@ struct DeleteFileRequest {
 pub async fn handle_filesystem_command(
     method: &str,
     params: Value,
-    _app_state: Arc<AppState>,
+    app_state: Arc<AppState>,
 ) -> ApiResult<WsServerMessage> {
     debug!("Processing filesystem command: {} with params: {:?}", method, params);
     
     let result = match method {
-        "file.save" => save_file(params).await,
-        "files.write" => save_file(params).await,
+        "file.save" => save_file(params, app_state).await,
+        "files.write" => save_file(params, app_state).await,
         "file.read" => read_file(params).await,
         "file.list" => list_files(params).await,
         "file.delete" => delete_file(params).await,
@@ -68,14 +69,41 @@ pub async fn handle_filesystem_command(
     result
 }
 
-/// Save content to a file
-async fn save_file(params: Value) -> ApiResult<WsServerMessage> {
+/// Save content to a file - WITH HISTORY TRACKING
+async fn save_file(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let req: SaveFileRequest = serde_json::from_value(params)
         .map_err(|e| ApiError::bad_request(format!("Invalid save file request: {e}")))?;
     
     info!("Saving file to: {}", req.path);
     
-    // Validate path using utility function
+    // If project_id provided, use history tracking
+    if let Some(project_id) = &req.project_id {
+        info!("Using history tracking for project: {}", project_id);
+        
+        // Extract filename from full path for relative path
+        let file_path = Path::new(&req.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| ApiError::bad_request("Invalid file path"))?;
+        
+        // Call history-tracked write
+        crate::file_system::write_file_with_history(
+            &app_state.sqlite_pool,
+            project_id,
+            file_path,
+            &req.content,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to write file with history: {e}")))?;
+        
+        return Ok(WsServerMessage::Status {
+            message: format!("Saved to {} with history tracking", req.path),
+            detail: Some("File modification history recorded for undo".to_string()),
+        });
+    }
+    
+    // Otherwise, use standard write (no history)
+    info!("Standard write (no history tracking)");
     let path = Path::new(&req.path);
     if !is_path_allowed(path) {
         return Err(ApiError::forbidden("Path outside allowed directories"));

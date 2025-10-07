@@ -1,5 +1,5 @@
 // src/api/ws/project.rs
-// WebSocket handler for project operations - REFACTORED: 509 → ~200 lines!
+// WebSocket handler for project operations - COMPLETE with Phase 3 additions
 
 use std::sync::Arc;
 use serde::Deserialize;
@@ -45,7 +45,6 @@ struct CreateArtifactRequest {
     name: String,
     artifact_type: String,
     content: Option<String>,
-    // metadata: Option<Value>, // Not supported by store
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,7 +52,6 @@ struct UpdateArtifactRequest {
     id: String,
     name: Option<String>,
     content: Option<String>,
-    // metadata: Option<Value>, // Not supported by store
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,7 +100,7 @@ pub async fn handle_project_command(
     debug!("Processing project command: {}", method);
     
     let result = match method {
-        // Project CRUD - each handler is now ~10 lines!
+        // Project CRUD
         "project.create" => {
             let req: CreateProjectRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
@@ -128,7 +126,7 @@ pub async fn handle_project_command(
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to list projects: {}", e)))?;
             
-            // 🚀 NEW: Enrich projects with git attachment information
+            // Enrich projects with git attachment information
             let mut enriched_projects = Vec::new();
             for project in projects {
                 let attachments = app_state.git_client.store
@@ -207,7 +205,7 @@ pub async fn handle_project_command(
             })
         }
         
-        // Artifact CRUD - Fixed to match actual store signatures
+        // Artifact CRUD
         "artifact.create" => {
             let req: CreateArtifactRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
@@ -296,6 +294,13 @@ pub async fn handle_project_command(
             })
         }
         
+        // ========== PHASE 3: LOCAL DIRECTORY SUPPORT ==========
+        
+        "project.attach_local" => attach_local_directory(params, app_state).await,
+        "project.undo_file" => undo_file_modification(params, app_state).await,
+        "project.file_history" => get_file_history(params, app_state).await,
+        "project.modified_files" => get_modified_files(params, app_state).await,
+        
         _ => {
             error!("Unknown project method: {}", method);
             return Err(ApiError::bad_request(format!("Unknown project method: {}", method)));
@@ -308,4 +313,141 @@ pub async fn handle_project_command(
     }
     
     result
+}
+
+// ============================================================================
+// PHASE 3: LOCAL DIRECTORY HANDLERS
+// ============================================================================
+
+/// Attach a local directory to a project
+async fn attach_local_directory(
+    params: Value,
+    app_state: Arc<AppState>,
+) -> ApiResult<WsServerMessage> {
+    info!("Attaching local directory");
+    
+    let project_id = params["project_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing project_id"))?;
+    
+    let directory_path = params["directory_path"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing directory_path"))?;
+    
+    // Attach local directory
+    app_state.git_client.store
+        .attach_local_directory(project_id, directory_path)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to attach local directory: {e}")))?;
+    
+    info!("Local directory attached successfully");
+    
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "type": "local_directory_attached",
+            "project_id": project_id,
+            "path": directory_path,
+            "message": "Local directory attached successfully"
+        }),
+        request_id: None,
+    })
+}
+
+/// Undo file modification
+async fn undo_file_modification(
+    params: Value,
+    app_state: Arc<AppState>,
+) -> ApiResult<WsServerMessage> {
+    info!("Undoing file modification");
+    
+    let project_id = params["project_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing project_id"))?;
+    
+    let file_path = params["file_path"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing file_path"))?;
+    
+    // Undo modification
+    crate::file_system::undo_file_modification(
+        &app_state.sqlite_pool,
+        project_id,
+        file_path,
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to undo modification: {e}")))?;
+    
+    info!("File modification undone successfully");
+    
+    Ok(WsServerMessage::Status {
+        message: format!("Undid modification to {}", file_path),
+        detail: Some("File restored to previous version".to_string()),
+    })
+}
+
+/// Get file modification history
+async fn get_file_history(
+    params: Value,
+    app_state: Arc<AppState>,
+) -> ApiResult<WsServerMessage> {
+    let project_id = params["project_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing project_id"))?;
+    
+    let file_path = params["file_path"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing file_path"))?;
+    
+    let limit = params["limit"]
+        .as_u64()
+        .unwrap_or(10) as usize;
+    
+    // Get history
+    let history = crate::file_system::get_file_history(
+        &app_state.sqlite_pool,
+        project_id,
+        file_path,
+        limit,
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to get file history: {e}")))?;
+    
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "type": "file_history",
+            "project_id": project_id,
+            "file_path": file_path,
+            "history": history,
+            "count": history.len()
+        }),
+        request_id: None,
+    })
+}
+
+/// Get list of modified files for a project
+async fn get_modified_files(
+    params: Value,
+    app_state: Arc<AppState>,
+) -> ApiResult<WsServerMessage> {
+    let project_id = params["project_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing project_id"))?;
+    
+    // Get modified files
+    let files = crate::file_system::get_modified_files(
+        &app_state.sqlite_pool,
+        project_id,
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to get modified files: {e}")))?;
+    
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "type": "modified_files",
+            "project_id": project_id,
+            "files": files,
+            "count": files.len()
+        }),
+        request_id: None,
+    })
 }

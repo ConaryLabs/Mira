@@ -4,6 +4,8 @@ use anyhow::{Result, Context};
 use sqlx::SqlitePool;
 use super::types::{GitRepoAttachment, GitImportStatus};
 use chrono::{DateTime, Utc};
+use std::path::{Path, PathBuf};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct GitStore {
@@ -198,7 +200,7 @@ impl GitStore {
         file_path: &str,
         content_hash: &str,
         language: Option<&str>,
-        line_count: i64,  // Changed from i32 - matches SQLite INTEGER
+        line_count: i64,
     ) -> Result<i64> {
         let result = sqlx::query!(
             r#"
@@ -241,8 +243,8 @@ impl GitStore {
             content_hash: r.content_hash,
             language: r.language,
             last_indexed: r.last_indexed.map(|dt| dt.to_string()).unwrap_or_default(),
-            line_count: r.line_count,        // i64 -> i64 (no cast!)
-            function_count: r.function_count, // i64 -> i64 (no cast!)
+            line_count: r.line_count,
+            function_count: r.function_count,
         }).collect())
     }
 
@@ -277,6 +279,83 @@ impl GitStore {
 
         Ok(())
     }
+
+    // ========== PHASE 3: LOCAL DIRECTORY SUPPORT ==========
+
+    /// Attach a local directory to a project
+    pub async fn attach_local_directory(
+        &self,
+        project_id: &str,
+        directory_path: &str,
+    ) -> Result<()> {
+        info!("Attaching local directory: {} to project {}", directory_path, project_id);
+        
+        // Validate path
+        let path = Path::new(directory_path);
+        if !path.exists() {
+            anyhow::bail!("Directory does not exist: {}", directory_path);
+        }
+        if !path.is_dir() {
+            anyhow::bail!("Path is not a directory: {}", directory_path);
+        }
+        
+        let absolute_path = path.canonicalize()
+            .context("Failed to get absolute path")?;
+        let path_str = absolute_path.to_str()
+            .context("Path contains invalid UTF-8")?;
+        
+        // Insert or update attachment
+        let attachment_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query!(
+            r#"
+            INSERT INTO git_repo_attachments 
+                (id, project_id, repo_url, local_path, attachment_type, import_status, local_path_override)
+            VALUES (?, ?, '', ?, 'local_directory', 'complete', ?)
+            ON CONFLICT(project_id, repo_url) DO UPDATE SET
+                attachment_type = 'local_directory',
+                local_path = excluded.local_path,
+                local_path_override = excluded.local_path_override,
+                import_status = 'complete',
+                last_sync_at = (strftime('%s', 'now'))
+            "#,
+            attachment_id,
+            project_id,
+            path_str,
+            path_str
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to attach local directory")?;
+        
+        info!("Local directory attached successfully");
+        Ok(())
+    }
+
+    /// Get the base path for a project (handles both git and local directories)
+    pub async fn get_project_base_path(&self, project_id: &str) -> Result<PathBuf> {
+        let row = sqlx::query!(
+            r#"
+            SELECT attachment_type, local_path, local_path_override
+            FROM git_repo_attachments
+            WHERE project_id = ?
+            LIMIT 1
+            "#,
+            project_id
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("Project has no attachment")?;
+        
+        let path = if row.attachment_type.as_deref() == Some("local_directory") {
+            // Use override path for local directories
+            row.local_path_override.unwrap_or(row.local_path)
+        } else {
+            // Use regular path for git repos
+            row.local_path
+        };
+        
+        Ok(PathBuf::from(path))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -287,6 +366,6 @@ pub struct RepositoryFile {
     pub content_hash: String,
     pub language: Option<String>,
     pub last_indexed: String,
-    pub line_count: Option<i64>,      // Changed from Option<i32>
-    pub function_count: Option<i64>,  // Changed from Option<i32>
+    pub line_count: Option<i64>,
+    pub function_count: Option<i64>,
 }
