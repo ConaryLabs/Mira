@@ -7,12 +7,10 @@ pub struct TaskConfig {
     // Analysis processor
     pub analysis_enabled: bool,
     pub analysis_interval: Duration,
-    pub analysis_batch_size: usize,
     
-    // Decay scheduler - updated defaults
+    // Decay scheduler
     pub decay_enabled: bool,
     pub decay_interval: Duration,
-    pub decay_batch_size: usize,
     
     // Session cleanup
     pub cleanup_enabled: bool,
@@ -22,6 +20,9 @@ pub struct TaskConfig {
     // Summary processor
     pub summary_processor_enabled: bool,
     pub summary_check_interval: Duration,
+    
+    // Active session processing limit
+    pub active_session_limit: i64,
 }
 
 impl TaskConfig {
@@ -38,12 +39,8 @@ impl TaskConfig {
                     .parse()
                     .unwrap_or(10)
             ),
-            analysis_batch_size: std::env::var("TASK_ANALYSIS_BATCH_SIZE")
-                .unwrap_or_else(|_| "10".to_string())
-                .parse()
-                .unwrap_or(10),
             
-            // Decay every 4 hours (was 2, now more reasonable)
+            // Decay every 4 hours
             decay_enabled: std::env::var("TASK_DECAY_ENABLED")
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()
@@ -54,10 +51,6 @@ impl TaskConfig {
                     .parse()
                     .unwrap_or(14400)
             ),
-            decay_batch_size: std::env::var("TASK_DECAY_BATCH_SIZE")
-                .unwrap_or_else(|_| "1000".to_string())
-                .parse()
-                .unwrap_or(1000),
             
             // Cleanup every hour
             cleanup_enabled: std::env::var("TASK_CLEANUP_ENABLED")
@@ -86,6 +79,12 @@ impl TaskConfig {
                     .parse()
                     .unwrap_or(300)
             ),
+            
+            // Active session processing limit
+            active_session_limit: std::env::var("TASK_ACTIVE_SESSION_LIMIT")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100),
         }
     }
     
@@ -93,21 +92,21 @@ impl TaskConfig {
     pub fn summary(&self) -> String {
         format!(
             "Tasks Config:\n\
-            - Analysis: {} (every {} secs, batch: {})\n\
-            - Decay: {} (every {} hours, batch: {})\n\
+            - Analysis: {} (every {} secs)\n\
+            - Decay: {} (every {} hours)\n\
             - Cleanup: {} (every {} min, max age: {} days)\n\
-            - Summaries: {} (every {} min)",
+            - Summaries: {} (every {} min)\n\
+            - Active session limit: {}",
             if self.analysis_enabled { "ON" } else { "OFF" },
             self.analysis_interval.as_secs(),
-            self.analysis_batch_size,
             if self.decay_enabled { "ON" } else { "OFF" },
             self.decay_interval.as_secs() / 3600,
-            self.decay_batch_size,
             if self.cleanup_enabled { "ON" } else { "OFF" },
             self.cleanup_interval.as_secs() / 60,
             self.session_max_age_hours / 24,
             if self.summary_processor_enabled { "ON" } else { "OFF" },
             self.summary_check_interval.as_secs() / 60,
+            self.active_session_limit,
         )
     }
 }

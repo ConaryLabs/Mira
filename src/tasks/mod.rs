@@ -75,18 +75,18 @@ impl TaskManager {
     }
 
     /// Spawns the analysis processor task
+    /// Processes pending messages through the unified MessagePipeline
     fn spawn_analysis_processor(&self) -> JoinHandle<()> {
         let app_state = self.app_state.clone();
         let interval = self.config.analysis_interval;
-        let batch_size = self.config.analysis_batch_size;
         let metrics = self.metrics.clone();
 
         tokio::spawn(async move {
-            info!("Analysis processor started (interval: {:?}, batch: {})", interval, batch_size);
+            info!("Analysis processor started (interval: {:?})", interval);
             
-            // Use unified MessagePipeline with LlmProvider
+            // MessagePipeline handles comprehensive context gathering and LLM analysis
             let message_pipeline = MessagePipeline::new(
-                app_state.llm.clone(),  // FIXED: Use llm (Arc<dyn LlmProvider>) instead of embedding_client
+                app_state.llm.clone(),
             );
 
             let mut interval_timer = time::interval(interval);
@@ -95,7 +95,7 @@ impl TaskManager {
             loop {
                 interval_timer.tick().await;
                 
-                // Get all active sessions
+                // Process all active sessions
                 match get_active_sessions(&app_state).await {
                     Ok(sessions) => {
                         let start = std::time::Instant::now();
@@ -142,7 +142,6 @@ impl TaskManager {
             interval.as_secs() / 3600
         );
         
-        // Wrap the decay scheduler to add metrics tracking
         tokio::spawn(async move {
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -200,6 +199,7 @@ impl TaskManager {
     }
 
     /// Spawns the summary processor task
+    /// Identifies sessions that may need summaries and delegates to SummarizationEngine
     fn spawn_summary_processor(&self) -> JoinHandle<()> {
         let app_state = self.app_state.clone();
         let interval = self.config.summary_check_interval;
@@ -214,15 +214,14 @@ impl TaskManager {
             loop {
                 interval_timer.tick().await;
                 
-                // Check for sessions needing summaries
+                // Get all sessions with their message counts
+                // SummarizationEngine decides what needs summarizing
                 match check_summary_candidates(&app_state).await {
                     Ok(candidates) => {
                         for (session_id, message_count) in candidates {
-                            // ACCESS THE SUMMARIZATION ENGINE DIRECTLY
                             let summarization_engine = &app_state.memory_service.summarization_engine;
                             
-                            // Use the engine's check_and_process_summaries method
-                            // This handles all the logic for determining what summaries to create
+                            // Engine handles all threshold logic for rolling/session summaries
                             match summarization_engine
                                 .check_and_process_summaries(&session_id, message_count)
                                 .await 
@@ -279,19 +278,21 @@ impl TaskManager {
     }
 }
 
-/// Helper to get active sessions from the database
+/// Get active sessions from the database (configurable limit)
 async fn get_active_sessions(app_state: &Arc<AppState>) -> anyhow::Result<Vec<String>> {
     let pool = &app_state.sqlite_store.pool;
+    let limit = TaskConfig::from_env().active_session_limit;
     
-    let rows = sqlx::query(
+    let rows = sqlx::query(&format!(
         r#"
         SELECT DISTINCT session_id 
         FROM memory_entries 
         WHERE timestamp > datetime('now', '-24 hours')
         ORDER BY timestamp DESC
-        LIMIT 100
-        "#
-    )
+        LIMIT {}
+        "#,
+        limit
+    ))
     .fetch_all(pool)
     .await?;
     
@@ -303,19 +304,19 @@ async fn get_active_sessions(app_state: &Arc<AppState>) -> anyhow::Result<Vec<St
     Ok(sessions)
 }
 
-/// Helper to find sessions needing summaries  
+/// Get all sessions with message counts for summary processing
+/// No pre-filtering - let SummarizationEngine decide what needs summarizing
 async fn check_summary_candidates(app_state: &Arc<AppState>) -> anyhow::Result<Vec<(String, usize)>> {
     let pool = &app_state.sqlite_store.pool;
     
-    // Get all sessions with their message counts
-    // Let the summarization engine decide what to do with them
+    // Return all sessions with their message counts
+    // SummarizationEngine has full control over threshold logic
     let rows = sqlx::query(
         r#"
         SELECT session_id, COUNT(*) as message_count
         FROM memory_entries
         WHERE role IN ('user', 'assistant')
         GROUP BY session_id
-        HAVING message_count >= 10  -- Minimum threshold for any summary
         ORDER BY message_count DESC
         "#
     )
