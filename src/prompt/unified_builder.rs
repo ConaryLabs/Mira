@@ -12,9 +12,9 @@ use chrono::Utc;
 pub struct CodeElement {
     pub element_type: String,
     pub name: String,
-    pub start_line: i64,      // Changed from i32 - matches SQLite INTEGER
-    pub end_line: i64,        // Changed from i32 - matches SQLite INTEGER
-    pub complexity: Option<i64>, // Changed from i32 - matches SQLite INTEGER
+    pub start_line: i64,
+    pub end_line: i64,
+    pub complexity: Option<i64>,
     pub is_async: Option<bool>,
     pub is_public: Option<bool>,
     pub documentation: Option<String>,
@@ -283,18 +283,48 @@ impl UnifiedPromptBuilder {
         false
     }
     
+    // ===== PHASE 1.1: UPDATED CODE BEST PRACTICES =====
     fn add_code_best_practices(prompt: &mut String) {
         prompt.push_str("\n\n");
-        prompt.push_str("==== CODE GENERATION GUIDELINES ====\n");
-        prompt.push_str("When providing code:\n");
-        prompt.push_str("- Always provide complete, runnable code\n");
-        prompt.push_str("- Include necessary imports and dependencies\n");
+        prompt.push_str("==== CODE GENERATION RULES ====\n\n");
+        
+        // ✨ NEW: Artifact instructions
+        prompt.push_str("CRITICAL - ALWAYS USE ARTIFACTS FOR CODE:\n");
+        prompt.push_str("- Use the 'create_artifact' tool for ANY code you write\n");
+        prompt.push_str("- This includes: fixes, new files, examples, snippets, everything\n");
+        prompt.push_str("- Never put code in inline chat messages - always use artifacts\n");
+        prompt.push_str("- Artifacts display in a Monaco editor with syntax highlighting\n");
+        prompt.push_str("- Users can edit, apply, and save artifacts to their project\n\n");
+        
+        // ✨ NEW: Complete file requirement
+        prompt.push_str("CRITICAL - ALWAYS PROVIDE COMPLETE FILES:\n");
+        prompt.push_str("- ALWAYS provide the ENTIRE file content from start to finish\n");
+        prompt.push_str("- Even for single-line fixes, return the COMPLETE file\n");
+        prompt.push_str("- NEVER use '...' or ellipsis to indicate skipped code\n");
+        prompt.push_str("- NEVER use comments like '// rest unchanged' or '// previous code'\n");
+        prompt.push_str("- NEVER truncate imports, functions, or any code sections\n");
+        prompt.push_str("- The user needs the full, working file to save directly to disk\n");
+        prompt.push_str("- Partial code cannot be merged - it must be complete\n\n");
+        
+        // Existing best practices
+        prompt.push_str("CODE QUALITY GUIDELINES:\n");
+        prompt.push_str("- Include all necessary imports and dependencies\n");
         prompt.push_str("- Add helpful comments for complex logic\n");
         prompt.push_str("- Follow language-specific best practices and idioms\n");
         prompt.push_str("- Consider error handling and edge cases\n");
-        prompt.push_str("- If modifying existing code, provide the complete updated version\n");
+        prompt.push_str("- Use proper type annotations where applicable\n");
+        prompt.push_str("- Ensure code is production-ready and well-structured\n\n");
+        
+        prompt.push_str("When fixing code:\n");
+        prompt.push_str("1. Analyze the error and identify the root cause\n");
+        prompt.push_str("2. Load the COMPLETE current file content\n");
+        prompt.push_str("3. Make your changes to the full content\n");
+        prompt.push_str("4. Return the ENTIRE modified file via create_artifact or provide_code_fix\n");
+        prompt.push_str("5. Explain what you changed and why\n\n");
+        
         prompt.push_str("=====================================\n\n");
     }
+    // ===== END PHASE 1.1 =====
     
     fn add_project_context(prompt: &mut String, metadata: Option<&MessageMetadata>, project_id: Option<&str>) {
         if let Some(meta) = metadata {
@@ -335,12 +365,8 @@ impl UnifiedPromptBuilder {
         }
     }
     
-    // ===== PHASE 1.4: UPDATED add_memory_context WITH SUMMARY FORMATTING =====
-    
     fn add_memory_context(prompt: &mut String, context: &RecallContext) {
-        // PHASE 1.4: Add summaries FIRST before any other memory context
-        // Summaries provide high-level overview before diving into specific messages
-        
+        // Add summaries FIRST
         if let Some(session) = &context.session_summary {
             prompt.push_str("\n## SESSION OVERVIEW (Entire Conversation)\n");
             prompt.push_str("This is a comprehensive summary of your entire conversation history:\n\n");
@@ -355,18 +381,15 @@ impl UnifiedPromptBuilder {
             prompt.push_str("\n\n");
         }
         
-        // Check if ANY context exists (recent/semantic messages)
         if context.recent.is_empty() && context.semantic.is_empty() {
-            // If we only have summaries (no specific messages), that's fine - we already added them
             return;
         }
         
-        // EXISTING: Memory context header (keep as-is)
         prompt.push_str("[MEMORY CONTEXT AVAILABLE]\n");
-        prompt.push_str("You have access to our conversation history and memories. ");
+        prompt.push_str("You have access to our conversation history and memories.\n");
         prompt.push_str("Use them naturally when relevant, but don't force references.\n\n");
         
-        // EXISTING: Recent messages formatting (keep as-is)
+        // Recent messages
         if !context.recent.is_empty() {
             prompt.push_str("Recent conversation:\n");
             
@@ -393,7 +416,7 @@ impl UnifiedPromptBuilder {
             prompt.push('\n');
         }
         
-        // EXISTING: Semantic memories formatting (keep as-is)
+        // Semantic memories
         if !context.semantic.is_empty() {
             let important_memories: Vec<_> = context.semantic.iter()
                 .filter(|m| m.salience.unwrap_or(0.0) >= 0.7)
@@ -416,8 +439,6 @@ impl UnifiedPromptBuilder {
             }
         }
     }
-    
-    // ===== END PHASE 1.4 =====
     
     fn add_tool_context(prompt: &mut String, tools: Option<&[Tool]>) {
         if let Some(tool_list) = tools {

@@ -1,10 +1,11 @@
 // src/llm/structured/tool_schema.rs
 // Response schemas and custom function tool definitions
+// PHASE 1.2: Added create_artifact tool
 
 use serde_json::json;
 
 /// Tool schema for structured chat responses
-/// FIXED: Crystal clear that this tool is MANDATORY for all responses
+/// MANDATORY for all responses
 pub fn get_response_tool_schema() -> serde_json::Value {
     json!({
         "name": "respond_to_user",
@@ -89,6 +90,40 @@ pub fn get_response_tool_schema() -> serde_json::Value {
         }
     })
 }
+
+// ===== PHASE 1.2: NEW TOOL =====
+/// Tool schema for creating code artifacts
+/// NEW: Encourages Claude to always use artifacts for code
+pub fn get_create_artifact_tool_schema() -> serde_json::Value {
+    json!({
+        "name": "create_artifact",
+        "description": "Create a code artifact with syntax highlighting and Monaco editor capabilities. Use this for ANY code you write that the user might want to save, edit, or reference later. Always prefer artifacts over inline code blocks. CRITICAL: Always provide COMPLETE file content from line 1 to last line - never use ellipsis ('...') or comments like '// rest unchanged'. The user needs the full, working file to save directly to disk.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The display title for the artifact. Use filename if this is a file (e.g., 'main.rs', 'App.tsx'), or descriptive title for code snippets (e.g., 'Binary Search Implementation')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The COMPLETE code content from start to finish. Include ALL imports, ALL functions, ALL closing braces. Never truncate or use placeholders."
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Programming language for syntax highlighting. Use one of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java', 'cpp', 'c', 'html', 'css', 'json', 'yaml', 'sql', 'bash', 'markdown'",
+                    "enum": ["rust", "typescript", "javascript", "python", "go", "java", "cpp", "c", "html", "css", "json", "yaml", "sql", "bash", "markdown", "text"]
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional: File path if this represents a file in the project (e.g., 'src/main.rs'). Leave null for generic code snippets."
+                }
+            },
+            "required": ["title", "content", "language"]
+        }
+    })
+}
+// ===== END PHASE 1.2 =====
 
 /// Tool schema for code fix responses
 pub fn get_code_fix_tool_schema() -> serde_json::Value {
@@ -273,11 +308,10 @@ pub fn get_image_generation_tool_schema() -> serde_json::Value {
 }
 
 // ============================================================================
-// PHASE 3: EFFICIENCY TOOLS
+// PHASE 3: EFFICIENCY TOOLS (Already implemented - keeping for reference)
 // ============================================================================
 
 /// Tool schema for getting complete project context in one call
-/// PHASE 3.1: Reduces 5-10 tool calls to 1
 pub fn get_project_context_tool_schema() -> serde_json::Value {
     json!({
         "name": "get_project_context",
@@ -296,7 +330,6 @@ pub fn get_project_context_tool_schema() -> serde_json::Value {
 }
 
 /// Tool schema for reading multiple files at once
-/// PHASE 3.2: Batch read - reduces N calls to 1
 pub fn get_read_files_tool_schema() -> serde_json::Value {
     json!({
         "name": "read_files",
@@ -316,7 +349,6 @@ pub fn get_read_files_tool_schema() -> serde_json::Value {
 }
 
 /// Tool schema for writing multiple files at once
-/// PHASE 3.2: Batch write - reduces N calls to 1
 pub fn get_write_files_tool_schema() -> serde_json::Value {
     json!({
         "name": "write_files",
@@ -346,4 +378,43 @@ pub fn get_write_files_tool_schema() -> serde_json::Value {
             "required": ["files"]
         }
     })
+}
+
+// ============================================================================
+// TOOL COLLECTION FUNCTIONS
+// ============================================================================
+
+/// Get all available tools for regular chat
+/// PHASE 1.2: Added create_artifact to tool list
+pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
+    vec![
+        get_response_tool_schema(),
+        get_create_artifact_tool_schema(),  // NEW: Always available for chat
+        get_read_file_tool_schema(),
+        get_list_files_tool_schema(),
+        get_code_search_tool_schema(),
+        get_image_generation_tool_schema(),
+        // Phase 3 efficiency tools
+        get_project_context_tool_schema(),
+        get_read_files_tool_schema(),
+        get_write_files_tool_schema(),
+    ]
+}
+
+/// Get tools for code fix operations
+/// Code fixes use provide_code_fix, not create_artifact
+pub fn get_code_fix_tools() -> Vec<serde_json::Value> {
+    vec![
+        get_code_fix_tool_schema(),
+        get_read_file_tool_schema(),
+        get_code_search_tool_schema(),
+    ]
+}
+
+/// Get minimal tools for simple queries
+pub fn get_minimal_tools() -> Vec<serde_json::Value> {
+    vec![
+        get_response_tool_schema(),
+        get_create_artifact_tool_schema(),  // NEW: Even minimal chat can create artifacts
+    ]
 }
