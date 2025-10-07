@@ -1,8 +1,12 @@
+// src/project/store.rs
+
 use crate::project::types::{Project, Artifact, ArtifactType};
 use sqlx::{SqlitePool, Row};
 use chrono::{Utc, NaiveDateTime, TimeZone};
 use anyhow::Result;
 use uuid::Uuid;
+use std::path::Path;
+use tracing::{info, warn};
 
 pub struct ProjectStore {
     pub pool: SqlitePool,
@@ -136,12 +140,52 @@ impl ProjectStore {
     }
 
     pub async fn delete_project(&self, id: &str) -> Result<bool> {
+        // Step 1: Get all git repo attachments for this project BEFORE deletion
+        let repo_paths = sqlx::query(
+            r#"
+            SELECT local_path
+            FROM git_repo_attachments
+            WHERE project_id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Step 2: Delete filesystem directories for each attachment
+        for row in &repo_paths {
+            let local_path: String = row.get("local_path");
+            let path = Path::new(&local_path);
+            
+            if path.exists() {
+                match tokio::fs::remove_dir_all(path).await {
+                    Ok(_) => {
+                        info!("Deleted repo directory: {}", local_path);
+                    }
+                    Err(e) => {
+                        // Log but don't fail - orphaned directories can be manually cleaned
+                        warn!("Failed to delete repo directory {}: {}", local_path, e);
+                    }
+                }
+            } else {
+                // Directory already gone, no problem
+                info!("Repo directory already removed: {}", local_path);
+            }
+        }
+
+        // Step 3: Delete the project (CASCADE handles DB cleanup)
         let result = sqlx::query("DELETE FROM projects WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
 
-        Ok(result.rows_affected() > 0)
+        let deleted = result.rows_affected() > 0;
+        
+        if deleted {
+            info!("Deleted project {} and cleaned up {} repo directories", id, repo_paths.len());
+        }
+
+        Ok(deleted)
     }
 
     // Artifact operations
