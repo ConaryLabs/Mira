@@ -93,46 +93,12 @@ async fn save_memory(
             id
         }
         "assistant" => {
-            // Build ChatResponse from params
-            use crate::llm::types::ChatResponse;
-            
-            let metadata = params.get("metadata");
-            let response = if let Some(meta) = metadata {
-                ChatResponse {
-                    output: content.to_string(),
-                    persona: meta["persona"].as_str().unwrap_or("assistant").to_string(),
-                    mood: meta["mood"].as_str().unwrap_or("neutral").to_string(),
-                    salience: meta["salience"].as_f64().unwrap_or(5.0) as f32,
-                    summary: meta["summary"].as_str().unwrap_or(content).to_string(),
-                    memory_type: meta["memory_type"].as_str().unwrap_or("other").to_string(),
-                    tags: meta["tags"].as_array()
-                        .map(|arr| arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect())
-                        .unwrap_or_else(|| vec!["assistant".to_string()]),
-                    intent: meta["intent"].as_str().map(String::from),
-                    monologue: meta["monologue"].as_str().map(String::from),
-                    reasoning_summary: meta["reasoning_summary"].as_str().map(String::from),
-                }
-            } else {
-                ChatResponse {
-                    output: content.to_string(),
-                    persona: "assistant".to_string(),
-                    mood: "neutral".to_string(),
-                    salience: 5.0,
-                    summary: content.to_string(),
-                    memory_type: "other".to_string(),
-                    tags: vec!["assistant".to_string()],
-                    intent: None,
-                    monologue: None,
-                    reasoning_summary: None,
-                }
-            };
-            
-            let id = memory.save_assistant_response(&session_id, &response, params["project_id"].as_str())
+            // PHASE 1 FIX: Changed save_assistant_response to save_assistant_message
+            // The new method takes (session_id, content, in_reply_to) instead of ChatResponse
+            let id = memory.save_assistant_message(&session_id, content, None)
                 .await
-                .map_err(|e| ApiError::internal(format!("Failed to save assistant response: {}", e)))?;
-            info!("Saved assistant response {} for session: {}", id, session_id);
+                .map_err(|e| ApiError::internal(format!("Failed to save assistant message: {}", e)))?;
+            info!("Saved assistant message {} for session: {}", id, session_id);
             id
         }
         _ => return Err(ApiError::bad_request(format!("Invalid role: {}. Must be 'user' or 'assistant'", role)))
@@ -186,11 +152,14 @@ async fn get_context(
         memory.parallel_recall_context(&session_id, user_text, recent_count, semantic_count).await
             .map_err(|e| ApiError::internal(format!("Failed to build context: {}", e)))?
     } else {
+        // PHASE 1 FIX: Added missing rolling_summary and session_summary fields
         let recent = memory.get_recent_context(&session_id, recent_count).await
             .map_err(|e| ApiError::internal(format!("Failed to get recent context: {}", e)))?;
         RecallContext {
             recent,
             semantic: Vec::new(),
+            rolling_summary: None,
+            session_summary: None,
         }
     };
     
@@ -306,20 +275,8 @@ async fn import_memories(
                     .map_err(|e| ApiError::internal(e.to_string()))
             }
             "assistant" => {
-                use crate::llm::types::ChatResponse;
-                let response = ChatResponse {
-                    output: mem.content,
-                    persona: "assistant".to_string(),
-                    mood: "neutral".to_string(),
-                    salience: mem.salience.unwrap_or(5.0),
-                    summary: format!("Imported memory {}", idx + 1),
-                    memory_type: mem.memory_type.unwrap_or_else(|| "other".to_string()),
-                    tags: mem.tags.unwrap_or_default(),
-                    intent: None,
-                    monologue: None,
-                    reasoning_summary: None,
-                };
-                memory.save_assistant_response(&session_id, &response, None)
+                // PHASE 1 FIX: Changed save_assistant_response to save_assistant_message
+                memory.save_assistant_message(&session_id, &mem.content, None)
                     .await
                     .map_err(|e| ApiError::internal(e.to_string()))
             }

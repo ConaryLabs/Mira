@@ -131,21 +131,15 @@ impl MemoryService {
         Ok(entry_id)
     }
 
-    /// Save an assistant response with analysis and return the entry ID
-    /// 
-    /// Returns the SQLite message ID (i64) directly - no unnecessary String conversion.
-    /// This ID can be used to create conversation threads or retrieve the response later.
-    /// 
-    /// FIXED: Removed project prefix logic - session is continuous regardless of project.
-    /// project_id is metadata only, doesn't affect session_id.
-    pub async fn save_assistant_response(
+    /// Save an assistant message and return its ID
+    pub async fn save_assistant_message(
         &self,
         session_id: &str,
-        response: &crate::llm::types::ChatResponse,
-        _project_id: Option<&str>  // Kept for future metadata use
+        content: &str,
+        _in_reply_to: Option<i64>
     ) -> Result<i64> {
-        // Create memory entry with unchanged session_id (peter-eternal stays peter-eternal)
-        let entry = MemoryEntry::assistant_message(session_id.to_string(), response.output.clone());
+        let entry = MemoryEntry::assistant_message(session_id.to_string(), content.to_string());
+        // Note: in_reply_to field not available on MemoryEntry, using parent_id instead if needed
         
         // Save via core service
         let entry_id = self.core.save_entry(&entry).await?;
@@ -194,6 +188,76 @@ impl MemoryService {
     ) -> Result<Vec<MemoryEntry>> {
         self.recall_engine.search_similar(session_id, query, limit).await
     }
+
+    // ===== PHASE 1.2: NEW SUMMARY RETRIEVAL METHODS =====
+
+    /// Get most recent rolling summary (last 100 messages, ~2,500 tokens)
+    /// 
+    /// Returns None if no rolling_100 summary exists for this session
+    pub async fn get_rolling_summary(&self, session_id: &str) -> Result<Option<String>> {
+        let pool = self.core.sqlite_store.get_pool();
+        
+        let result = sqlx::query!(
+            r#"
+            SELECT summary_text 
+            FROM rolling_summaries 
+            WHERE session_id = ? 
+              AND summary_type = 'rolling_100'
+            ORDER BY created_at DESC 
+            LIMIT 1
+            "#,
+            session_id
+        )
+        .fetch_optional(pool)
+        .await?;
+        
+        Ok(result.map(|r| r.summary_text))
+    }
+
+    /// Get most recent session summary (entire conversation, ~3,000 tokens)
+    /// 
+    /// Returns None if no snapshot summary exists for this session
+    pub async fn get_session_summary(&self, session_id: &str) -> Result<Option<String>> {
+        let pool = self.core.sqlite_store.get_pool();
+        
+        let result = sqlx::query!(
+            r#"
+            SELECT summary_text 
+            FROM rolling_summaries 
+            WHERE session_id = ? 
+              AND summary_type = 'snapshot'
+            ORDER BY created_at DESC 
+            LIMIT 1
+            "#,
+            session_id
+        )
+        .fetch_optional(pool)
+        .await?;
+        
+        Ok(result.map(|r| r.summary_text))
+    }
+
+    /// Count total messages in session
+    /// 
+    /// Utility method for determining if summaries should be generated
+    pub async fn count_messages(&self, session_id: &str) -> Result<i64> {
+        let pool = self.core.sqlite_store.get_pool();
+        
+        let result = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count 
+            FROM memory_entries 
+            WHERE session_id = ?
+            "#,
+            session_id
+        )
+        .fetch_one(pool)
+        .await?;
+        
+        Ok(result.count as i64)
+    }
+
+    // ===== END PHASE 1.2 =====
 
     /// Create summary
     pub async fn create_summary(

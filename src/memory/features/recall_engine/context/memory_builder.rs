@@ -42,7 +42,13 @@ impl MemoryContextBuilder {
         info!("MemoryContextBuilder: Built context - {} recent, {} semantic", 
               recent.len(), semantic.len());
         
-        Ok(RecallContext { recent, semantic })
+        // PHASE 1.1 FIX: Add summary fields (initialized as None - will be populated by unified_handler)
+        Ok(RecallContext { 
+            recent, 
+            semantic,
+            rolling_summary: None,
+            session_summary: None,
+        })
     }
     
     /// Split hybrid results back into recent/semantic categories for RecallContext

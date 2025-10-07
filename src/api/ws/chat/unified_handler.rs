@@ -1,6 +1,8 @@
 // src/api/ws/chat/unified_handler.rs
 // Unified chat handler with tool execution loop
 // Delegates all tool logic to src/tools/* for clean separation
+//
+// PHASE 1.3 UPDATE: Enhanced build_context with summary retrieval and increased limits
 
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
@@ -54,7 +56,7 @@ impl UnifiedChatHandler {
         // Save user message and run through analysis pipeline
         let user_message_id = self.save_user_message(&request).await?;
         
-        // Build context (recent messages + semantic search)
+        // Build context (recent messages + semantic search + summaries)
         let context = self.build_context(&request.session_id, &request.content).await?;
         let persona = self.select_persona(&request.metadata);
         
@@ -130,31 +132,31 @@ impl UnifiedChatHandler {
                         "I processed your message but didn't generate a response. Please try rephrasing your request.".to_string()
                     };
                     
-                    info!("Claude end_turn without tool call - using fallback response");
+                    info!("Claude ended turn without respond_to_user - using fallback response");
                     
-                    // Create minimal structured response for fallback
+                    // Create a minimal structured response for the fallback
                     StructuredLLMResponse {
                         output: fallback_message,
                         analysis: MessageAnalysis {
-                            salience: 0.3,
-                            topics: vec!["system".to_string()],
+                            salience: 0.5,
+                            topics: vec![],
                             contains_code: false,
-                            programming_lang: None,
-                            routed_to_heads: vec!["semantic".to_string()],
-                            language: "en".to_string(),
+                            routed_to_heads: vec![],
+                            language: String::new(),
                             mood: None,
                             intensity: None,
-                            intent: Some("system_fallback".to_string()),
-                            summary: Some("Claude thinking without output".to_string()),
+                            intent: Some("clarification_needed".to_string()),
+                            summary: None,
                             relationship_impact: None,
+                            programming_lang: None,
                             contains_error: false,
-                            error_type: None,
-                            error_severity: None,
                             error_file: None,
+                            error_severity: None,
+                            error_type: None,
                         },
                         reasoning: None,
-                        schema_name: None,
-                        validation_status: None,
+                        schema_name: Some("fallback_response".to_string()),
+                        validation_status: Some("valid".to_string()),
                     }
                 };
                 
@@ -177,16 +179,12 @@ impl UnifiedChatHandler {
                 return Ok(complete_response);
             }
             
-            if stop_reason == "tool_use" {
-                // Extract and execute tools
-                let mut tool_results = Vec::new();
-                
-                if let Some(content) = raw_response["content"].as_array() {
-                    for block in content {
-                        if block["type"] != "tool_use" {
-                            continue;
-                        }
-                        
+            // stop_reason == "tool_use" - Claude called tools
+            let mut tool_results = Vec::new();
+            
+            if let Some(content) = raw_response["content"].as_array() {
+                for block in content {
+                    if block["type"] == "tool_use" {
                         let tool_name = block["name"].as_str().unwrap_or("");
                         let tool_input = &block["input"];
                         
@@ -306,28 +304,54 @@ impl UnifiedChatHandler {
             .await
     }
     
-    /// Build context for recall
-    /// Returns both recent messages (last 5) and semantically relevant memories (top 10)
-    /// Uses embeddings for semantic search via Qdrant vector store
+    // ===== PHASE 1.3: UPDATED BUILD_CONTEXT WITH SUMMARIES =====
+    
+    /// Build layered context for recall
+    /// 
+    /// PHASE 1.3 CHANGES:
+    /// - Increased limits from 5/10 to 20/15
+    /// - Added rolling summary retrieval (last 100 messages)
+    /// - Added session summary retrieval (entire conversation)
+    /// - Enhanced logging to show what context was built
     async fn build_context(
         &self,
         session_id: &str,
         user_message: &str,
     ) -> Result<RecallContext> {
-        info!("Building context with semantic search for session: {}", session_id);
+        info!("Building layered context with summaries for session: {}", session_id);
         
-        // Use parallel_recall_context which does BOTH:
-        // 1. Recent messages from SQLite (chronological, last N messages)
-        // 2. Semantic search via embeddings (vector similarity, top K relevant memories)
-        self.app_state.memory_service
+        // Get recent + semantic (INCREASED from 5/10 to 20/15)
+        let mut context = self.app_state.memory_service
             .parallel_recall_context(
                 session_id,
                 user_message,  // Embedded and used for vector search
-                5,   // recent_count: last 5 messages
-                10,  // semantic_count: top 10 relevant memories
+                20,  // recent_count: INCREASED from 5
+                15,  // semantic_count: INCREASED from 10
             )
-            .await
+            .await?;
+        
+        // Add rolling summary (last 100 messages, ~2,500 tokens) if exists
+        context.rolling_summary = self.app_state.memory_service
+            .get_rolling_summary(session_id)
+            .await?;
+        
+        // Add session summary (entire conversation, ~3,000 tokens) if exists
+        context.session_summary = self.app_state.memory_service
+            .get_session_summary(session_id)
+            .await?;
+        
+        info!(
+            "Context built: {} recent, {} semantic, rolling={}, session={}",
+            context.recent.len(),
+            context.semantic.len(),
+            context.rolling_summary.is_some(),
+            context.session_summary.is_some()
+        );
+        
+        Ok(context)
     }
+    
+    // ===== END PHASE 1.3 =====
     
     /// Select persona based on metadata
     /// Currently returns default persona, can be extended for context-aware personas

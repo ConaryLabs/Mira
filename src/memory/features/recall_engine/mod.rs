@@ -37,10 +37,22 @@ use context::MemoryContextBuilder;
 // These stay exactly the same for backward compatibility
 
 /// Context for recall operations containing recent and semantic memories
+/// 
+/// PHASE 1.1 UPDATE: Added summary fields for layered context architecture
 #[derive(Debug, Clone)]
 pub struct RecallContext {
+    // Original fields - keep for backward compatibility
     pub recent: Vec<MemoryEntry>,
     pub semantic: Vec<MemoryEntry>,
+    
+    // NEW: Summary layers for generous context
+    /// Rolling summary of last 100 messages (~2,500 tokens)
+    /// Provides mid-range context without full message history
+    pub rolling_summary: Option<String>,
+    
+    /// Session-level snapshot summary (~3,000 tokens)
+    /// Comprehensive overview of entire conversation
+    pub session_summary: Option<String>,
 }
 
 /// Configuration for recall operations

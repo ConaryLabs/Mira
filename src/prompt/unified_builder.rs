@@ -335,15 +335,38 @@ impl UnifiedPromptBuilder {
         }
     }
     
+    // ===== PHASE 1.4: UPDATED add_memory_context WITH SUMMARY FORMATTING =====
+    
     fn add_memory_context(prompt: &mut String, context: &RecallContext) {
+        // PHASE 1.4: Add summaries FIRST before any other memory context
+        // Summaries provide high-level overview before diving into specific messages
+        
+        if let Some(session) = &context.session_summary {
+            prompt.push_str("\n## SESSION OVERVIEW (Entire Conversation)\n");
+            prompt.push_str("This is a comprehensive summary of your entire conversation history:\n\n");
+            prompt.push_str(session);
+            prompt.push_str("\n\n");
+        }
+        
+        if let Some(rolling) = &context.rolling_summary {
+            prompt.push_str("\n## RECENT ACTIVITY (Last 100 Messages)\n");
+            prompt.push_str("Summary of recent discussion:\n\n");
+            prompt.push_str(rolling);
+            prompt.push_str("\n\n");
+        }
+        
+        // Check if ANY context exists (recent/semantic messages)
         if context.recent.is_empty() && context.semantic.is_empty() {
+            // If we only have summaries (no specific messages), that's fine - we already added them
             return;
         }
         
+        // EXISTING: Memory context header (keep as-is)
         prompt.push_str("[MEMORY CONTEXT AVAILABLE]\n");
         prompt.push_str("You have access to our conversation history and memories. ");
         prompt.push_str("Use them naturally when relevant, but don't force references.\n\n");
         
+        // EXISTING: Recent messages formatting (keep as-is)
         if !context.recent.is_empty() {
             prompt.push_str("Recent conversation:\n");
             
@@ -370,6 +393,7 @@ impl UnifiedPromptBuilder {
             prompt.push('\n');
         }
         
+        // EXISTING: Semantic memories formatting (keep as-is)
         if !context.semantic.is_empty() {
             let important_memories: Vec<_> = context.semantic.iter()
                 .filter(|m| m.salience.unwrap_or(0.0) >= 0.7)
@@ -392,6 +416,8 @@ impl UnifiedPromptBuilder {
             }
         }
     }
+    
+    // ===== END PHASE 1.4 =====
     
     fn add_tool_context(prompt: &mut String, tools: Option<&[Tool]>) {
         if let Some(tool_list) = tools {
