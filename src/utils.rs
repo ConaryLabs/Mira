@@ -204,7 +204,7 @@ where
 // ============================================================================
 
 /// Estimate token count for LLMs (rough approximation)
-/// Claude uses similar tokenization, roughly 1 token per 4 characters
+/// LLMs use similar tokenization, roughly 1 token per 4 characters
 pub fn count_tokens(text: &str) -> Result<usize> {
     // Simple approximation based on char count
     // Rough approximation - ~4 chars per token

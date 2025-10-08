@@ -158,7 +158,7 @@ impl LlmProvider for OpenAiProvider {
             return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
         }
         
-        // Return raw response (will be converted to Claude format by caller)
+        // Return raw response (will be converted to unified format by caller)
         Ok(response.json().await?)
     }
 }

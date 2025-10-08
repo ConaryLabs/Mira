@@ -74,7 +74,7 @@ impl AppState {
         // Initialize LLM provider based on config
         let llm: Arc<dyn LlmProvider> = match CONFIG.llm_provider.as_str() {
             "claude" => {
-                info!("🤖 Initializing Claude provider: {}", CONFIG.anthropic_model);
+                info!("🤖 Initializing LLM provider: {}", CONFIG.anthropic_model);
                 Arc::new(ClaudeProvider::new(
                     CONFIG.anthropic_api_key.clone(),
                     CONFIG.anthropic_model.clone(),

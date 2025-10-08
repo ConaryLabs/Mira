@@ -171,7 +171,7 @@ impl LlmProvider for DeepSeekProvider {
             return Err(anyhow!("DeepSeek API error {}: {}", status, error_text));
         }
         
-        // Return raw response (will be converted to Claude format by caller)
+        // Return raw response (will be converted to unified format by caller)
         Ok(response.json().await?)
     }
 }

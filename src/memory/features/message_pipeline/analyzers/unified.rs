@@ -3,7 +3,7 @@
 //! Unified analyzer that coordinates message analysis
 //! Code and error detection handled by LLM - no regex heuristics
 //!
-//! Phase 4.2: Lowered min_salience_threshold from 0.2 to 0.1 to trust Claude's judgment more
+//! Phase 4.2: Lowered min_salience_threshold from 0.2 to 0.1 to trust the model's judgment more
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -70,7 +70,7 @@ pub struct AnalyzerConfig {
 impl Default for AnalyzerConfig {
     fn default() -> Self {
         Self {
-            // PHASE 4.2: Lowered from 0.2 to 0.1 - trust Claude more, filter less
+            // PHASE 4.2: Lowered from 0.2 to 0.1 - trust the model more, filter less
             min_salience_threshold: 0.1,
             analysis_version: "2.0".to_string(),
         }

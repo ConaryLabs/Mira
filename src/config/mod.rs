@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - Multi-Provider LLM Support
+// Central configuration for Mira backend - DeepSeek 3.2 + GPT-5 Routing
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -12,95 +12,79 @@ lazy_static! {
 /// Main configuration structure for Mira
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
-    // ===== MULTI-PROVIDER CONFIGURATION =====
-    pub llm_provider: String,  // "claude" | "gpt5" | "deepseek"
+    // ===== LLM ROUTING (NEW) =====
+    pub llm_routing_enabled: bool,
     
-    // ===== CLAUDE CONFIGURATION =====
-    pub anthropic_api_key: String,
-    pub anthropic_base_url: String,
-    pub anthropic_model: String,
-    pub anthropic_max_tokens: usize,
+    // ===== DEEPSEEK 3.2 =====
+    pub deepseek_api_key: String,
+    pub deepseek_model: String,
+    pub deepseek_max_tokens: usize,
+    pub deepseek_temperature: f32,
     
-    // Extended thinking budgets
-    pub thinking_budget_simple: usize,
-    pub thinking_budget_default: usize,
-    pub thinking_budget_complex: usize,
-    pub thinking_budget_ultra: usize,
+    // ===== GPT-5 RESPONSES API =====
+    pub gpt5_api_key: String,
+    pub gpt5_model: String,
+    pub gpt5_max_tokens: usize,
+    pub gpt5_verbosity: String,
+    pub gpt5_reasoning: String,
     
-    // Context management
-    pub context_window_size: usize,
-    pub context_clear_threshold: usize,
-    pub context_keep_recent: usize,
-    pub context_clear_minimum: usize,
+    // ===== OPENAI (EMBEDDINGS/IMAGES ONLY) =====
+    pub openai_api_key: String,
+    pub openai_embedding_model: String,
     
-    // Temperature by task type
+    // ===== TEMPERATURE BY TASK TYPE (KEEP FOR DEEPSEEK) =====
     pub temperature_deterministic: f32,
     pub temperature_balanced: f32,
     pub temperature_creative: f32,
     
-    // ===== OPENAI CONFIGURATION =====
-    pub openai_api_key: String,  // For chat, embeddings, images (unified)
-    pub openai_embedding_model: String,
-    pub openai_chat_model: String,  // For GPT-5 chat
-    pub openai_max_tokens: usize,  // For GPT-5 chat
-    pub openai_reasoning_effort: String,  // For GPT-5
-    pub openai_verbosity: String,  // For GPT-5
-    
-    // ===== DEEPSEEK CONFIGURATION =====
-    pub deepseek_api_key: Option<String>,
-    pub deepseek_model: String,
-    pub deepseek_max_tokens: usize,
-    
     // ===== KEEP ALL OTHER FIELDS UNCHANGED =====
-    pub max_output_tokens: usize,  // Maps to anthropic_max_tokens
+    pub max_output_tokens: usize,
     pub debug_logging: bool,
 
-    // Structured Output Configuration
-    pub max_json_output_tokens: usize,
+    // Structured Output
     pub enable_json_validation: bool,
     pub max_json_repair_attempts: usize,
+    pub max_json_output_tokens: usize,
     
     // Response Monitoring
     pub token_warning_threshold: usize,
     pub input_token_warning: usize,
-
-    // Database & Storage Configuration
+    
+    // Database & Storage
     pub database_url: String,
-    pub sqlite_max_connections: usize,
+    pub sqlite_max_connections: u32,
 
-    // Session & User Configuration
+    // Session & User
     pub session_id: String,
     pub default_persona: String,
 
-    // Memory & History Configuration
+    // Memory & History
     pub history_message_cap: usize,
     pub history_token_limit: usize,
     pub max_retrieval_tokens: usize,
     pub context_recent_messages: usize,
     pub context_semantic_matches: usize,
 
-    // Memory Service Configuration
+    // Memory Service
     pub always_embed_user: bool,
     pub always_embed_assistant: bool,
     pub embed_min_chars: usize,
     pub dedup_sim_threshold: f32,
     pub salience_min_for_embed: f32,
     pub rollup_every: usize,
-    
-    // Salience threshold
     pub min_salience_for_qdrant: f32,
-    
-    // Summarization Configuration
+
+    // Summarization
     pub enable_summarization: bool,
     pub summary_token_limit: usize,
     pub summary_output_tokens: usize,
     pub summarize_after_messages: usize,
 
-    // Vector Search Configuration
+    // Vector Search
     pub max_vector_results: usize,
     pub enable_vector_search: bool,
 
-    // Tool Configuration
+    // Tools
     pub enable_chat_tools: bool,
     pub enable_web_search: bool,
     pub enable_code_interpreter: bool,
@@ -109,41 +93,41 @@ pub struct MiraConfig {
     pub web_search_max_results: usize,
     pub tool_timeout_seconds: u64,
 
-    // Qdrant Configuration
+    // Qdrant
     pub qdrant_url: String,
     pub qdrant_collection: String,
     pub qdrant_embedding_dim: usize,
 
-    // Server Configuration
+    // Server
     pub host: String,
     pub port: u16,
     pub max_concurrent_embeddings: usize,
 
-    // Timeouts (in seconds)
+    // Timeouts
     pub openai_timeout: u64,
     pub qdrant_timeout: u64,
     pub database_timeout: u64,
 
-    // Logging Configuration
+    // Logging
     pub log_level: String,
     pub trace_sql: bool,
 
-    // Robust Memory Feature Configuration
-    pub embed_heads: String,
+    // Robust Memory
+    pub embed_heads: Vec<String>,
     pub summary_rolling_10: bool,
     pub summary_rolling_100: bool,
     pub use_rolling_summaries_in_context: bool,
     pub rolling_summary_max_age_hours: u32,
     pub rolling_summary_min_gap: usize,
 
-    // Memory Decay Configuration
+    // Memory Decay
     pub decay_recent_half_life_days: f32,
     pub decay_gentle_factor: f32,
     pub decay_stronger_factor: f32,
     pub decay_floor: f32,
     pub decay_high_salience_threshold: f32,
     
-    // Recall & Context Configuration
+    // Recall & Context
     pub recall_recent: usize,
     pub recall_semantic: usize,
     pub recall_k_per_head: usize,
@@ -170,117 +154,55 @@ pub struct MiraConfig {
     pub recent_cache_warmup: bool,
 }
 
-/// Parse an environment variable or die trying
-fn require_env(key: &str) -> String {
-    env::var(key).unwrap_or_else(|_| panic!("{} must be set in .env", key))
-}
-
-/// Parse an environment variable as a specific type or die trying
-fn require_env_parsed<T: std::str::FromStr>(key: &str) -> T 
-where 
-    T::Err: std::fmt::Debug 
-{
-    env::var(key)
-        .unwrap_or_else(|_| panic!("{} must be set in .env", key))
-        .parse::<T>()
-        .unwrap_or_else(|e| panic!("{} must be a valid {}: {:?}", key, std::any::type_name::<T>(), e))
-}
-
 impl MiraConfig {
     pub fn from_env() -> Self {
-        // Load .env file or die
-        dotenv::dotenv().expect("Failed to load .env file - cannot proceed without configuration!");
-
+        // Load .env file
+        dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
+        
         // Validate embedding heads includes all 4
-        let embed_heads = require_env("MIRA_EMBED_HEADS");
-        if !embed_heads.contains("semantic") || 
-           !embed_heads.contains("code") || 
-           !embed_heads.contains("summary") || 
-           !embed_heads.contains("documents") {
-            panic!("MIRA_EMBED_HEADS must include all 4 heads: 'semantic,code,summary,documents' - got: '{}'", embed_heads);
+        let embed_heads_str = require_env("MIRA_EMBED_HEADS");
+        if !embed_heads_str.contains("semantic") || 
+           !embed_heads_str.contains("code") || 
+           !embed_heads_str.contains("summary") || 
+           !embed_heads_str.contains("documents") {
+            panic!("MIRA_EMBED_HEADS must include all 4 heads: 'semantic,code,summary,documents' - got: '{}'", embed_heads_str);
         }
-
-        // Load LLM provider selection
-        let llm_provider = env::var("LLM_PROVIDER")
-            .unwrap_or_else(|_| "claude".to_string());
-
-        // Load Claude API key
-        let anthropic_api_key = require_env("ANTHROPIC_API_KEY");
-        eprintln!("🔑 DEBUG: Loaded ANTHROPIC_API_KEY from .env: {}...", 
-            &anthropic_api_key[..std::cmp::min(25, anthropic_api_key.len())]);
-        eprintln!("🔑 DEBUG: Key length: {} characters", anthropic_api_key.len());
-
-        // Load OpenAI key (unified)
-        let openai_api_key = require_env("OPENAI_API_KEY");
-
-        // GPT-5 configuration
-        let openai_chat_model = env::var("OPENAI_CHAT_MODEL")
-            .unwrap_or_else(|_| "gpt-5".to_string());
-        let openai_max_tokens = env::var("OPENAI_MAX_TOKENS")
-            .unwrap_or_else(|_| "128000".to_string())
-            .parse()
-            .unwrap_or(128000);
-        let openai_reasoning_effort = env::var("OPENAI_REASONING_EFFORT")
-            .unwrap_or_else(|_| "medium".to_string());
-        let openai_verbosity = env::var("OPENAI_VERBOSITY")
-            .unwrap_or_else(|_| "medium".to_string());
-
-        // DeepSeek configuration (optional)
-        let deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
-        let deepseek_model = env::var("DEEPSEEK_MODEL")
-            .unwrap_or_else(|_| "deepseek-chat".to_string());
-        let deepseek_max_tokens = env::var("DEEPSEEK_MAX_TOKENS")
-            .unwrap_or_else(|_| "64000".to_string())
-            .parse()
-            .unwrap_or(64000);
-
-        eprintln!("🤖 LLM Provider: {}", llm_provider);
+        let embed_heads: Vec<String> = embed_heads_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
 
         Self {
-            // Provider selection
-            llm_provider,
+            // ===== LLM ROUTING =====
+            llm_routing_enabled: env_bool("LLM_ROUTING_ENABLED", true),
             
-            // Claude configuration
-            anthropic_api_key,
-            anthropic_base_url: require_env("ANTHROPIC_BASE_URL"),
-            anthropic_model: require_env("ANTHROPIC_MODEL"),
-            anthropic_max_tokens: require_env_parsed("ANTHROPIC_MAX_TOKENS"),
+            // ===== DEEPSEEK 3.2 =====
+            deepseek_api_key: require_env("DEEPSEEK_API_KEY"),
+            deepseek_model: env_or("DEEPSEEK_MODEL", "deepseek-chat"),
+            deepseek_max_tokens: env_usize("DEEPSEEK_MAX_TOKENS", 64000),
+            deepseek_temperature: env_f32("DEEPSEEK_TEMPERATURE", 0.7),
             
-            // Thinking budgets
-            thinking_budget_simple: require_env_parsed("THINKING_BUDGET_SIMPLE"),
-            thinking_budget_default: require_env_parsed("THINKING_BUDGET_DEFAULT"),
-            thinking_budget_complex: require_env_parsed("THINKING_BUDGET_COMPLEX"),
-            thinking_budget_ultra: require_env_parsed("THINKING_BUDGET_ULTRA"),
+            // ===== GPT-5 RESPONSES API =====
+            gpt5_api_key: require_env("GPT5_API_KEY"),
+            gpt5_model: env_or("GPT5_MODEL", "gpt-5"),
+            gpt5_max_tokens: env_usize("GPT5_MAX_TOKENS", 128000),
+            gpt5_verbosity: env_or("GPT5_VERBOSITY", "medium"),
+            gpt5_reasoning: env_or("GPT5_REASONING", "medium"),
             
-            // Context management
-            context_window_size: require_env_parsed("CONTEXT_WINDOW_SIZE"),
-            context_clear_threshold: require_env_parsed("CONTEXT_CLEAR_THRESHOLD"),
-            context_keep_recent: require_env_parsed("CONTEXT_KEEP_RECENT"),
-            context_clear_minimum: require_env_parsed("CONTEXT_CLEAR_MINIMUM"),
+            // ===== OPENAI (EMBEDDINGS/IMAGES) =====
+            openai_api_key: require_env("OPENAI_API_KEY"),
+            openai_embedding_model: env_or("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
             
-            // Temperature
+            // ===== TEMPERATURE =====
             temperature_deterministic: require_env_parsed("TEMPERATURE_DETERMINISTIC"),
             temperature_balanced: require_env_parsed("TEMPERATURE_BALANCED"),
             temperature_creative: require_env_parsed("TEMPERATURE_CREATIVE"),
             
-            // OpenAI configuration
-            openai_api_key,
-            openai_embedding_model: require_env("OPENAI_EMBEDDING_MODEL"),
-            openai_chat_model,
-            openai_max_tokens,
-            openai_reasoning_effort,
-            openai_verbosity,
-            
-            // DeepSeek configuration
-            deepseek_api_key,
-            deepseek_model,
-            deepseek_max_tokens,
-            
-            // Map to Claude value for backward compat
-            max_output_tokens: require_env_parsed("ANTHROPIC_MAX_TOKENS"),
+            // ===== ALL OTHER FIELDS (UNCHANGED) =====
+            max_output_tokens: require_env_parsed("MAX_OUTPUT_TOKENS"),
             debug_logging: require_env_parsed("MIRA_DEBUG_LOGGING"),
 
-            // Structured Output Configuration
+            // Structured Output
             max_json_output_tokens: require_env_parsed("MAX_JSON_OUTPUT_TOKENS"),
             enable_json_validation: require_env_parsed("ENABLE_JSON_VALIDATION"),
             max_json_repair_attempts: require_env_parsed("MAX_JSON_REPAIR_ATTEMPTS"),
@@ -351,7 +273,7 @@ impl MiraConfig {
             log_level: require_env("MIRA_LOG_LEVEL"),
             trace_sql: require_env_parsed("MIRA_TRACE_SQL"),
 
-            // Robust Memory - already validated above
+            // Robust Memory
             embed_heads,
             summary_rolling_10: require_env_parsed("MIRA_SUMMARY_ROLLING_10"),
             summary_rolling_100: require_env_parsed("MIRA_SUMMARY_ROLLING_100"),
@@ -394,7 +316,27 @@ impl MiraConfig {
         }
     }
 
-    /// Get the OpenAI API key (unified for all OpenAI services)
+    /// Validate config on startup
+    pub fn validate(&self) -> anyhow::Result<()> {
+        // Validate DeepSeek model
+        if !["deepseek-chat", "deepseek-reasoner"].contains(&self.deepseek_model.as_str()) {
+            log::warn!("Unknown DeepSeek model '{}', may not work", self.deepseek_model);
+        }
+        
+        // Validate GPT-5 verbosity
+        if !["low", "medium", "high"].contains(&self.gpt5_verbosity.as_str()) {
+            return Err(anyhow::anyhow!("Invalid GPT5_VERBOSITY: must be low/medium/high"));
+        }
+        
+        // Validate GPT-5 reasoning
+        if !["minimal", "low", "medium", "high"].contains(&self.gpt5_reasoning.as_str()) {
+            return Err(anyhow::anyhow!("Invalid GPT5_REASONING: must be minimal/low/medium/high"));
+        }
+        
+        Ok(())
+    }
+
+    /// Get the OpenAI API key (for embeddings/images)
     pub fn get_openai_key(&self) -> Option<String> {
         Some(self.openai_api_key.clone())
     }
@@ -410,51 +352,14 @@ impl MiraConfig {
     }
 
     /// Check if rolling summaries are enabled
-    pub fn rolling_summaries_enabled(&self) -> bool {
+    pub fn is_rolling_summary_enabled(&self) -> bool {
         self.summary_rolling_10 || self.summary_rolling_100
     }
-
-    /// Get the list of enabled embedding heads
-    pub fn get_embedding_heads(&self) -> Vec<String> {
-        self.embed_heads
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    }
-
-    /// Get list of enabled tools
-    pub fn get_enabled_tools(&self) -> Vec<String> {
-        let mut tools = Vec::new();
-        if self.enable_web_search {
-            tools.push("web_search".to_string());
-        }
-        if self.enable_code_interpreter {
-            tools.push("code_interpreter".to_string());
-        }
-        if self.enable_file_search {
-            tools.push("file_search".to_string());
-        }
-        if self.enable_image_generation {
-            tools.push("image_generation".to_string());
-        }
-        tools
-    }
-
-    /// Check if any tools are enabled
-    pub fn has_tools_enabled(&self) -> bool {
-        self.enable_chat_tools && (
-            self.enable_web_search ||
-            self.enable_code_interpreter ||
-            self.enable_file_search ||
-            self.enable_image_generation
-        )
-    }
-
-    /// Get rolling summary configuration for debugging
+    
+    /// Get rolling summary configuration
     pub fn get_rolling_summary_config(&self) -> RollingSummaryConfig {
         RollingSummaryConfig {
-            enabled: self.rolling_summaries_enabled(),
+            enabled: self.is_rolling_summary_enabled(),
             rolling_10: self.summary_rolling_10,
             rolling_100: self.summary_rolling_100,
             use_in_context: self.use_rolling_summaries_in_context,
@@ -462,20 +367,10 @@ impl MiraConfig {
             min_gap: self.rolling_summary_min_gap,
         }
     }
-    
-    /// Get embedding model name
-    pub fn get_embed_model(&self) -> &str {
-        &self.embed_model
-    }
-    
-    /// Get embedding dimensions
-    pub fn get_embed_dimensions(&self) -> usize {
-        self.embed_dimensions
-    }
-    
+
     /// Check if recent cache is enabled
     pub fn is_recent_cache_enabled(&self) -> bool {
-        self.enable_recent_cache
+       self.enable_recent_cache
     }
     
     /// Get recent cache configuration
@@ -515,4 +410,45 @@ impl Default for MiraConfig {
     fn default() -> Self {
         Self::from_env()
     }
+}
+
+// ===== HELPER FUNCTIONS =====
+
+fn require_env(key: &str) -> String {
+    env::var(key).unwrap_or_else(|_| panic!("Missing required env var: {}", key))
+}
+
+fn env_or(key: &str, default: &str) -> String {
+    env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_f32(key: &str, default: f32) -> f32 {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn require_env_parsed<T: std::str::FromStr>(key: &str) -> T 
+where
+    T::Err: std::fmt::Display,
+{
+    env::var(key)
+        .unwrap_or_else(|_| panic!("Missing required env var: {}", key))
+        .parse()
+        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", key, e))
 }

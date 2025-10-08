@@ -5,7 +5,7 @@ use super::{ChatMessage, ProviderResponse};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
-/// Extract messages from Claude-format request
+/// Extract messages from unified format request
 pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<ChatMessage>> {
     let messages_array = request["messages"]
         .as_array()
@@ -33,7 +33,7 @@ pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<ChatMe
     Ok(messages)
 }
 
-/// Convert ProviderResponse to Claude-format Value for backward compatibility
+/// Convert ProviderResponse to unified format Value for backward compatibility
 pub fn provider_response_to_claude_format(response: ProviderResponse) -> Value {
     let mut claude_response = json!({
         "content": [{
@@ -58,7 +58,7 @@ pub fn provider_response_to_claude_format(response: ProviderResponse) -> Value {
     claude_response
 }
 
-/// Convert GPT-5 tool response to Claude format
+/// Convert GPT-5 tool response to unified format
 pub fn gpt5_tool_response_to_claude(response: &Value) -> Result<Value> {
     // GPT-5 Responses API tool format:
     // { "output": [{ "type": "function_call", "call_id": "...", "name": "...", "arguments": "..." }] }

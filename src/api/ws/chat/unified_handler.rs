@@ -199,24 +199,24 @@ impl UnifiedChatHandler {
                 chat_messages.clone(),
                 system_prompt.clone(),
                 tools.clone(),
-                None,  // No forced tool choice - Claude decides
+                None,  // No forced tool choice - the model decides
             ).await?;
             
             // Check stop reason
             let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
             
             if stop_reason == "end_turn" {
-                // Claude finished without calling a tool
+                // Model finished without calling a tool
                 // Try to extract respond_to_user if present, otherwise provide fallback
                 
                 let structured = if claude_processor::has_tool_calls(&raw_response) {
                     // Normal case: has respond_to_user tool call
                     claude_processor::extract_claude_content_from_tool(&raw_response)?
                 } else {
-                    // RESPONSE FIX: Claude didn't call respond_to_user
+                    // RESPONSE FIX: Model didn't call respond_to_user
                     // Check if this is the first iteration - if so, force continuation
                     if iteration == 0 {
-                        warn!("Claude ended turn without respond_to_user on first iteration - forcing continuation");
+                        warn!("Model ended turn without respond_to_user on first iteration - forcing continuation");
                         
                         // Add assistant's thinking (if any) to chat history
                         if let Some(content) = raw_response["content"].clone().as_array() {
@@ -250,7 +250,7 @@ impl UnifiedChatHandler {
                         "I processed your message but didn't generate a response. Please try rephrasing your request.".to_string()
                     };
                     
-                    warn!("Claude ended turn without respond_to_user after reminder - using fallback response");
+                    warn!("Model ended turn without respond_to_user after reminder - using fallback response");
                     
                     // Create a minimal structured response for the fallback
                     StructuredLLMResponse {
@@ -315,7 +315,7 @@ impl UnifiedChatHandler {
                 return Ok(complete_response);
             }
             
-            // stop_reason == "tool_use" - Claude called tools
+            // stop_reason == "tool_use" - Model called tools
             let mut tool_results = Vec::new();
             
             if let Some(content) = raw_response["content"].as_array() {

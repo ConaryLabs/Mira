@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub mod claude;
 pub mod openai;
 pub mod deepseek;
 pub mod conversion;
@@ -71,7 +70,7 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<ProviderResponse>;
     
     /// Chat with tool support (Claude & GPT-5 only)
-    /// Returns raw response in Claude-compatible format
+    /// Returns raw response in provider-compatible format
     async fn chat_with_tools(
         &self,
         _messages: Vec<ChatMessage>,

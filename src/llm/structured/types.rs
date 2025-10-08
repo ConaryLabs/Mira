@@ -39,7 +39,7 @@ pub struct MessageAnalysis {
 
 impl MessageAnalysis {
     /// Normalize salience and intensity to 0.0-1.0 range
-    /// Claude sometimes returns 0-10 scale despite tool schema specifying 0-1
+    /// LLMs sometimes returns 0-10 scale despite tool schema specifying 0-1
     pub fn normalize(&mut self) {
         // Normalize salience if > 1.0 (assume 0-10 scale)
         if self.salience > 1.0 {
