@@ -8,7 +8,6 @@ use crate::llm::provider::LlmProvider;
 use crate::memory::{
     storage::sqlite::store::SqliteMemoryStore,
     storage::qdrant::multi_store::QdrantMultiStore,
-    cache::recent::RecentCache,
     core::types::MemoryEntry,
     features::{
         message_pipeline::MessagePipeline,

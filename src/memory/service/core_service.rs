@@ -4,7 +4,6 @@ use anyhow::Result;
 use crate::memory::{
     storage::sqlite::store::SqliteMemoryStore,
     storage::qdrant::multi_store::QdrantMultiStore,
-    cache::recent::RecentCache,
     core::{
         types::MemoryEntry,
         traits::MemoryStore,  // <- Add this import
