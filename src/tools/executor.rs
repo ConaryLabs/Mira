@@ -1,5 +1,6 @@
 // src/tools/executor.rs
 // PHASE 3 UPDATE: Added efficiency tools (get_project_context, read_files, write_files)
+// ARTIFACT UPDATE: Added create_artifact and provide_code_fix execution
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -25,8 +26,13 @@ impl ToolExecutor {
 
     /// Execute a tool by name
     /// PHASE 3: Added get_project_context, read_files, write_files
+    /// ARTIFACT UPDATE: Added create_artifact, provide_code_fix
     pub async fn execute_tool(&self, tool_name: &str, input: &Value, project_id: &str) -> Result<Value> {
         match tool_name {
+            // Artifact tools
+            "create_artifact" => self.execute_create_artifact(input).await,
+            "provide_code_fix" => self.execute_provide_code_fix(input).await,
+            
             // Existing tools
             "read_file" => self.execute_read_file(input, project_id).await,
             "search_code" => self.execute_search_code(input, project_id).await,
@@ -39,6 +45,118 @@ impl ToolExecutor {
             
             _ => Err(anyhow::anyhow!("Unknown tool: {}", tool_name)),
         }
+    }
+
+    // ===== ARTIFACT TOOLS =====
+
+    /// Create a code artifact with syntax highlighting
+    /// Returns artifact data for Monaco editor display
+    async fn execute_create_artifact(&self, input: &Value) -> Result<Value> {
+        let title = input.get("title")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'title' parameter"))?;
+        
+        let content = input.get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'content' parameter"))?;
+        
+        let language = input.get("language")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'language' parameter"))?;
+        
+        let path = input.get("path")
+            .and_then(|v| v.as_str());
+        
+        info!("Creating artifact: {} ({})", title, language);
+        
+        // Return artifact in format expected by frontend
+        Ok(json!({
+            "type": "artifact",
+            "artifact": {
+                "title": title,
+                "content": content,
+                "language": language,
+                "path": path,
+                "lines": content.lines().count(),
+            },
+            "message": format!("Created artifact: {}", title)
+        }))
+    }
+
+    /// Provide complete code fix for errors
+    /// Returns artifact with fixed file content
+    async fn execute_provide_code_fix(&self, input: &Value) -> Result<Value> {
+        let output = input.get("output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Code fix provided");
+        
+        let files = input.get("files")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'files' array in code fix"))?;
+        
+        info!("Providing code fix with {} file(s)", files.len());
+        
+        // Convert files to artifact format
+        let mut artifacts = Vec::new();
+        for file in files {
+            let path = file.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'path' in file"))?;
+            
+            let content = file.get("content")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'content' in file"))?;
+            
+            let language = file.get("language")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| {
+                    // Infer language from file extension
+                    Path::new(path)
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .and_then(|ext| match ext {
+                            "rs" => Some("rust"),
+                            "ts" => Some("typescript"),
+                            "tsx" => Some("typescript"),
+                            "js" => Some("javascript"),
+                            "jsx" => Some("javascript"),
+                            "py" => Some("python"),
+                            "go" => Some("go"),
+                            "java" => Some("java"),
+                            "cpp" | "cc" | "cxx" => Some("cpp"),
+                            "c" => Some("c"),
+                            "html" => Some("html"),
+                            "css" => Some("css"),
+                            "json" => Some("json"),
+                            "yaml" | "yml" => Some("yaml"),
+                            "sql" => Some("sql"),
+                            "sh" | "bash" => Some("bash"),
+                            "md" => Some("markdown"),
+                            _ => Some("text"),
+                        })
+                        .unwrap_or("text")
+                });
+            
+            artifacts.push(json!({
+                "title": path,
+                "content": content,
+                "language": language,
+                "path": path,
+                "lines": content.lines().count(),
+                "is_fix": true,
+            }));
+        }
+        
+        // Return with analysis metadata if present
+        let analysis = input.get("analysis");
+        
+        Ok(json!({
+            "type": "code_fix",
+            "artifacts": artifacts,
+            "message": output,
+            "analysis": analysis,
+            "file_count": files.len()
+        }))
     }
 
     // ===== EXISTING TOOLS =====

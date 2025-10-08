@@ -6,6 +6,7 @@
 // PHASE 3.1-3.2 UPDATE: Added efficiency tools (get_project_context, read_files, write_files)
 // PHASE 3.3 UPDATE: Added session tool cache for expensive operations
 // PHASE 5 UPDATE: Doubled iteration limit from 20 to 50
+// ARTIFACT UPDATE: Added create_artifact and provide_code_fix tools + artifact collection
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -144,11 +145,15 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // PHASE 3: Conditional tools - added efficiency tools
+        // ARTIFACT UPDATE: Added create_artifact and provide_code_fix tools
         let tools = if request.project_id.is_some() {
             vec![
                 // Core response tool (always required)
                 get_response_tool_schema(),
+                
+                // ARTIFACT TOOLS - Code generation with Monaco editor
+                get_create_artifact_tool_schema(),  // General code artifacts
+                get_code_fix_tool_schema(),         // Error fix artifacts
                 
                 // Existing single-operation tools
                 get_read_file_tool_schema(),
@@ -178,6 +183,9 @@ impl UnifiedChatHandler {
         
         // PHASE 3.3: Initialize session tool cache
         let mut tool_cache = SessionToolCache::new();
+        
+        // ARTIFACT UPDATE: Collect artifacts across tool loop iterations
+        let mut collected_artifacts: Vec<Value> = Vec::new();
         
         // PHASE 5: Tool execution loop - doubled from 20 to 50 iterations
         // With better tools and context, Claude should iterate less,
@@ -255,7 +263,11 @@ impl UnifiedChatHandler {
                     structured,
                     metadata,
                     raw_response,
-                    artifacts: None,
+                    artifacts: if collected_artifacts.is_empty() {
+                        None
+                    } else {
+                        Some(collected_artifacts)
+                    },
                 };
                 
                 save_structured_response(
@@ -288,7 +300,11 @@ impl UnifiedChatHandler {
                                 structured,
                                 metadata,
                                 raw_response,
-                                artifacts: None,
+                                artifacts: if collected_artifacts.is_empty() {
+                                    None
+                                } else {
+                                    Some(collected_artifacts)
+                                },
                             };
                             
                             save_structured_response(
@@ -329,7 +345,21 @@ impl UnifiedChatHandler {
                         
                         // Handle result or error
                         let result = match result {
-                            Ok(r) => r,
+                            Ok(r) => {
+                                // ARTIFACT UPDATE: Capture artifacts from tool results
+                                if tool_name == "create_artifact" {
+                                    if let Some(artifact) = r.get("artifact") {
+                                        info!("Collected artifact from create_artifact tool");
+                                        collected_artifacts.push(artifact.clone());
+                                    }
+                                } else if tool_name == "provide_code_fix" {
+                                    if let Some(artifacts_array) = r.get("artifacts").and_then(|a| a.as_array()) {
+                                        info!("Collected {} artifacts from provide_code_fix tool", artifacts_array.len());
+                                        collected_artifacts.extend(artifacts_array.iter().cloned());
+                                    }
+                                }
+                                r
+                            }
                             Err(e) => {
                                 info!("Tool execution error (returned to LLM): {}", e);
                                 json!({
