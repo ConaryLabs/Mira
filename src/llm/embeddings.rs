@@ -5,24 +5,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use tokenizers::Tokenizer;
-
-#[derive(Debug, Clone)]
-pub struct ChunkConfig {
-    pub chunk_size: usize,
-    pub overlap: usize,
-}
-
-impl ChunkConfig {
-    pub fn for_head(head: &EmbeddingHead) -> Self {
-        match head {
-            EmbeddingHead::Semantic => Self { chunk_size: 500, overlap: 100 },
-            EmbeddingHead::Code => Self { chunk_size: 1000, overlap: 200 },
-            EmbeddingHead::Summary => Self { chunk_size: 2000, overlap: 0 },
-            EmbeddingHead::Documents => Self { chunk_size: 1000, overlap: 200 },
-        }
-    }
-}
 
 pub struct EmbeddingConfig {
     pub model: String,
@@ -158,59 +140,6 @@ impl FromStr for EmbeddingHead {
             "documents" => Ok(EmbeddingHead::Documents),
             _ => Err(anyhow::anyhow!("Unknown embedding head: {}", s)),
         }
-    }
-}
-
-pub struct TextChunker {
-    tokenizer: Tokenizer,
-}
-
-impl TextChunker {
-    pub fn new() -> Result<Self> {
-        let tokenizer = Tokenizer::from_bytes(include_bytes!("../../tokenizer.json"))
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(Self { tokenizer })
-    }
-
-    pub fn chunk_text(&self, text: &str, head: &EmbeddingHead) -> Result<Vec<String>> {
-        let config = ChunkConfig::for_head(head);
-        let chunk_size = config.chunk_size;
-        let chunk_overlap = config.overlap;
-
-        let encoding = self
-            .tokenizer
-            .encode(text, true)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let token_ids = encoding.get_ids();
-
-        if token_ids.len() <= chunk_size {
-            return Ok(vec![text.to_string()]);
-        }
-
-        let mut chunks = Vec::new();
-        let mut start_idx = 0;
-        let step = chunk_size.saturating_sub(chunk_overlap);
-
-        while start_idx < token_ids.len() {
-            let end_idx = std::cmp::min(start_idx + chunk_size, token_ids.len());
-            let chunk_ids = &token_ids[start_idx..end_idx];
-
-            let chunk_text = self
-                .tokenizer
-                .decode(chunk_ids, true)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            chunks.push(chunk_text);
-
-            if step == 0 {
-                break;
-            }
-            if end_idx == token_ids.len() {
-                break;
-            }
-            start_idx += step;
-        }
-
-        Ok(chunks)
     }
 }
 

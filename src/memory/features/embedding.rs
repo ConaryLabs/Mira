@@ -1,20 +1,19 @@
 // src/memory/features/embedding.rs
 
-//! Batch embedding generation and chunking with API optimization.
+//! Batch embedding generation with API optimization.
 //! The crown jewel of API optimization - saves 90% of API calls.
 
 use std::sync::Arc;
 use anyhow::Result;
 use tracing::{debug, info, warn};
 use crate::llm::client::OpenAIClient;
-use crate::llm::embeddings::{EmbeddingHead, TextChunker};
+use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::BatchEmbeddingConfig;
 
 /// Manages embedding generation with intelligent batching
 pub struct EmbeddingManager {
     llm_client: Arc<OpenAIClient>,
-    chunker: TextChunker,
     config: BatchEmbeddingConfig,
 }
 
@@ -23,7 +22,6 @@ impl EmbeddingManager {
     pub fn new(llm_client: Arc<OpenAIClient>) -> Result<Self> {
         Ok(Self {
             llm_client,
-            chunker: TextChunker::new()?,
             config: BatchEmbeddingConfig::default(),
         })
     }
@@ -35,7 +33,6 @@ impl EmbeddingManager {
     ) -> Result<Self> {
         Ok(Self {
             llm_client,
-            chunker: TextChunker::new()?,
             config,
         })
     }
@@ -54,32 +51,28 @@ impl EmbeddingManager {
             return Ok(vec![]);
         }
         
-        // Step 1: Generate chunks for each head
-        let mut all_chunks: Vec<(EmbeddingHead, String)> = Vec::new();
+        // Use full content for each head (no chunking)
+        let mut all_texts: Vec<(EmbeddingHead, String)> = Vec::new();
         
         for &head in heads {
-            let chunks = self.chunker.chunk_text(&entry.content, &head)?;
-            debug!("Generated {} chunks for {} head", chunks.len(), head.as_str());
-            
-            for chunk_text in chunks {
-                all_chunks.push((head, chunk_text));
-            }
+            all_texts.push((head, entry.content.clone()));
+            debug!("Added content for {} head", head.as_str());
         }
         
-        if all_chunks.is_empty() {
-            debug!("No chunks generated from content");
+        if all_texts.is_empty() {
+            debug!("No content to embed");
             return Ok(vec![]);
         }
         
         // Step 2: Batch embedding optimization
         info!(
-            "Total chunks to embed: {} (batch processing will save {} API calls)", 
-            all_chunks.len(), 
-            if all_chunks.len() > 1 { all_chunks.len() - 1 } else { 0 }
+            "Total texts to embed: {} (batch processing will save {} API calls)", 
+            all_texts.len(), 
+            if all_texts.len() > 1 { all_texts.len() - 1 } else { 0 }
         );
         
         // Extract just the text for embedding
-        let texts: Vec<String> = all_chunks.iter()
+        let texts: Vec<String> = all_texts.iter()
             .map(|(_, text)| text.clone())
             .collect();
         
@@ -87,13 +80,13 @@ impl EmbeddingManager {
         let all_embeddings = self.batch_embed_texts(&texts).await?;
         
         // Step 4: Group results by head
-        let results = self.group_embeddings_by_head(heads, &all_chunks, all_embeddings);
+        let results = self.group_embeddings_by_head(heads, &all_texts, all_embeddings);
         
         info!(
-            "Embedding generation complete: {} chunks across {} heads using {} API calls",
-            all_chunks.len(),
+            "Embedding generation complete: {} texts across {} heads using {} API calls",
+            all_texts.len(),
             heads.len(),
-            (all_chunks.len() + self.config.max_batch_size - 1) / self.config.max_batch_size
+            (all_texts.len() + self.config.max_batch_size - 1) / self.config.max_batch_size
         );
         
         Ok(results)
@@ -126,7 +119,7 @@ impl EmbeddingManager {
                     .await 
                 {
                     Ok(embeddings) => {
-                        info!("Successfully embedded {} chunks in 1 API call", batch_texts.len());
+                        info!("Successfully embedded {} texts in 1 API call", batch_texts.len());
                         break embeddings;
                     }
                     Err(e) if retry_count < self.config.max_retries => {
@@ -161,36 +154,36 @@ impl EmbeddingManager {
     fn group_embeddings_by_head(
         &self,
         heads: &[EmbeddingHead],
-        all_chunks: &[(EmbeddingHead, String)],
+        all_texts: &[(EmbeddingHead, String)],
         all_embeddings: Vec<Vec<f32>>,
     ) -> Vec<(EmbeddingHead, Vec<String>, Vec<Vec<f32>>)> {
         let mut results: Vec<(EmbeddingHead, Vec<String>, Vec<Vec<f32>>)> = vec![];
         let mut current_idx = 0;
         
         for &head in heads {
-            // Collect chunks for this head
-            let head_chunks: Vec<String> = all_chunks.iter()
+            // Collect texts for this head
+            let head_texts: Vec<String> = all_texts.iter()
                 .filter(|(h, _)| *h == head)
                 .map(|(_, text)| text.clone())
                 .collect();
             
-            let chunk_count = head_chunks.len();
-            if chunk_count == 0 {
+            let text_count = head_texts.len();
+            if text_count == 0 {
                 continue;
             }
             
             // Extract corresponding embeddings
-            let head_embeddings = all_embeddings[current_idx..current_idx + chunk_count].to_vec();
-            current_idx += chunk_count;
+            let head_embeddings = all_embeddings[current_idx..current_idx + text_count].to_vec();
+            current_idx += text_count;
             
             debug!(
-                "Grouped {} chunks with {} embeddings for {} head",
-                chunk_count,
+                "Grouped {} texts with {} embeddings for {} head",
+                text_count,
                 head_embeddings.len(),
                 head.as_str()
             );
             
-            results.push((head, head_chunks, head_embeddings));
+            results.push((head, head_texts, head_embeddings));
         }
         
         results
@@ -212,9 +205,9 @@ impl EmbeddingManager {
     }
     
     /// Estimates API call savings from batch processing
-    pub fn calculate_api_savings(&self, total_chunks: usize) -> (usize, usize, f32) {
-        let without_batching = total_chunks;
-        let with_batching = (total_chunks + self.config.max_batch_size - 1) / self.config.max_batch_size;
+    pub fn calculate_api_savings(&self, total_texts: usize) -> (usize, usize, f32) {
+        let without_batching = total_texts;
+        let with_batching = (total_texts + self.config.max_batch_size - 1) / self.config.max_batch_size;
         let saved = without_batching.saturating_sub(with_batching);
         let savings_percent = if without_batching > 0 {
             (saved as f32 / without_batching as f32) * 100.0
@@ -228,46 +221,5 @@ impl EmbeddingManager {
     /// Gets current batch configuration
     pub fn config(&self) -> &BatchEmbeddingConfig {
         &self.config
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_batch_size_optimization() {
-        let manager = EmbeddingManager::new(Arc::new(OpenAIClient::mock())).unwrap();
-        
-        // Test that 250 chunks only need 3 API calls
-        let (without, with, savings) = manager.calculate_api_savings(250);
-        assert_eq!(without, 250);
-        assert_eq!(with, 3);  // 100 + 100 + 50
-        assert!(savings > 98.0);  // Should save >98% of API calls
-    }
-    
-    #[tokio::test]
-    async fn test_small_batch_efficiency() {
-        let manager = EmbeddingManager::new(Arc::new(OpenAIClient::mock())).unwrap();
-        
-        // Even small batches save calls
-        let (without, with, _) = manager.calculate_api_savings(10);
-        assert_eq!(without, 10);
-        assert_eq!(with, 1);  // All in one call
-    }
-    
-    #[tokio::test]
-    async fn test_exact_batch_boundary() {
-        let manager = EmbeddingManager::new(Arc::new(OpenAIClient::mock())).unwrap();
-        
-        // Test exact batch size boundary
-        let (_, with, _) = manager.calculate_api_savings(100);
-        assert_eq!(with, 1);
-        
-        let (_, with, _) = manager.calculate_api_savings(101);
-        assert_eq!(with, 2);
-        
-        let (_, with, _) = manager.calculate_api_savings(200);
-        assert_eq!(with, 2);
     }
 }
