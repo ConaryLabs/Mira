@@ -8,6 +8,7 @@
 // PHASE 5 UPDATE: Doubled iteration limit from 20 to 50
 // ARTIFACT UPDATE: Added create_artifact and provide_code_fix tools + artifact collection
 // RESPONSE FIX: Added validation to force respond_to_user if missing
+// EMBEDDING FIX: Added immediate embedding processing after save_structured_response
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,7 +22,7 @@ use crate::llm::structured::{CompleteResponse, claude_processor};
 use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
 use crate::llm::provider::ChatMessage;
-use crate::memory::storage::sqlite::structured_ops::save_structured_response;
+use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
@@ -290,12 +291,26 @@ impl UnifiedChatHandler {
                     },
                 };
                 
-                save_structured_response(
+                // Save to SQLite
+                let message_id = save_structured_response(
                     &self.app_state.sqlite_pool,
                     &request.session_id,
                     &complete_response,
                     Some(user_message_id),
                 ).await?;
+                
+                // EMBEDDING FIX: Process embeddings immediately after save
+                if let Err(e) = process_embeddings(
+                    &self.app_state.sqlite_pool,
+                    message_id,
+                    &request.session_id,
+                    &complete_response.structured,
+                    &self.app_state.embedding_client,
+                    &self.app_state.memory_service.get_multi_store(),
+                ).await {
+                    warn!("Failed to process embeddings for message {}: {}", message_id, e);
+                    // Don't fail the whole request - embeddings are non-critical
+                }
                 
                 return Ok(complete_response);
             }
@@ -327,12 +342,26 @@ impl UnifiedChatHandler {
                                 },
                             };
                             
-                            save_structured_response(
+                            // Save to SQLite
+                            let message_id = save_structured_response(
                                 &self.app_state.sqlite_pool,
                                 &request.session_id,
                                 &complete_response,
                                 Some(user_message_id),
                             ).await?;
+                            
+                            // EMBEDDING FIX: Process embeddings immediately after save
+                            if let Err(e) = process_embeddings(
+                                &self.app_state.sqlite_pool,
+                                message_id,
+                                &request.session_id,
+                                &complete_response.structured,
+                                &self.app_state.embedding_client,
+                                &self.app_state.memory_service.get_multi_store(),
+                            ).await {
+                                warn!("Failed to process embeddings for message {}: {}", message_id, e);
+                                // Don't fail the whole request - embeddings are non-critical
+                            }
                             
                             return Ok(complete_response);
                         }

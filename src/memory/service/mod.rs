@@ -91,6 +91,12 @@ impl MemoryService {
         }
     }
     
+    /// Get reference to the multi-store for direct embedding operations
+    /// Used by unified_handler.rs to process embeddings after saving messages
+    pub fn get_multi_store(&self) -> &Arc<QdrantMultiStore> {
+        &self.core.multi_store
+    }
+    
     /// Save a user message with analysis and return the entry ID
     /// 
     /// Returns the SQLite message ID (i64) directly - no unnecessary String conversion.

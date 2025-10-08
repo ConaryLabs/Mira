@@ -2,9 +2,15 @@
 
 use anyhow::{anyhow, Result};
 use sqlx::{SqlitePool, Transaction, Sqlite};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
+use crate::config::CONFIG;
 use crate::llm::structured::{CompleteResponse, StructuredLLMResponse, LLMMetadata};
+use crate::llm::client::OpenAIClient;
+use crate::llm::embeddings::EmbeddingHead;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use crate::memory::core::types::MemoryEntry;
+use chrono::Utc;
 
 pub async fn save_structured_response(
     pool: &SqlitePool,
@@ -38,9 +44,176 @@ pub async fn save_structured_response(
     
     info!("Saved complete response {} with all metadata", message_id);
     
-    trigger_conditional_operations(message_id, &response.structured).await?;
-    
     Ok(message_id)
+}
+
+/// New function that handles embedding generation and storage
+/// Called separately AFTER save_structured_response to keep transactions clean
+pub async fn process_embeddings(
+    pool: &SqlitePool,
+    message_id: i64,
+    session_id: &str,
+    response: &StructuredLLMResponse,
+    embedding_client: &OpenAIClient,
+    multi_store: &QdrantMultiStore,
+) -> Result<()> {
+    // Skip if no heads to route to
+    if response.analysis.routed_to_heads.is_empty() {
+        debug!("No embedding heads specified for message {}, skipping embeddings", message_id);
+        return Ok(());
+    }
+    
+    info!("Processing embeddings for message {} -> heads: {:?}", message_id, response.analysis.routed_to_heads);
+    
+    // Check salience threshold
+    let min_salience = CONFIG.salience_min_for_embed;
+    if response.analysis.salience < min_salience as f64 {
+        debug!(
+            "Message {} salience ({}) below threshold ({}), skipping embeddings",
+            message_id, response.analysis.salience, min_salience
+        );
+        return Ok(());
+    }
+    
+    // Generate embedding for the message content
+    let embedding = match embedding_client.get_embedding(&response.output).await {
+        Ok(emb) => emb,
+        Err(e) => {
+            warn!("Failed to generate embedding for message {}: {}", message_id, e);
+            return Err(e);
+        }
+    };
+    
+    info!(
+        "Generated embedding for message {} (dimension: {})",
+        message_id,
+        embedding.len()
+    );
+    
+    // Store in each routed head
+    let mut stored_heads = Vec::new();
+    for head_str in &response.analysis.routed_to_heads {
+        // Parse the head string to EmbeddingHead enum
+        let head = match head_str.parse::<EmbeddingHead>() {
+            Ok(h) => h,
+            Err(e) => {
+                warn!("Invalid embedding head '{}' for message {}: {}", head_str, message_id, e);
+                continue;
+            }
+        };
+        
+        // Check if this head is enabled in config
+        if !CONFIG.embed_heads.contains(head_str) {
+            debug!("Head '{}' not enabled in config, skipping", head_str);
+            continue;
+        }
+        
+        // Create memory entry for Qdrant
+        let qdrant_entry = create_qdrant_entry(
+            message_id,
+            session_id,
+            response,
+            embedding.clone(),
+        );
+        
+        // Save to appropriate Qdrant collection
+        match multi_store.save(head, &qdrant_entry).await {
+            Ok(_) => {
+                info!("Stored embedding for message {} in {} collection", message_id, head.as_str());
+                stored_heads.push(head_str.clone());
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to store embedding for message {} in {} collection: {}",
+                    message_id, head.as_str(), e
+                );
+            }
+        }
+    }
+    
+    // Update the message record with embedding metadata
+    if !stored_heads.is_empty() {
+        update_embedding_metadata(pool, message_id, &stored_heads).await?;
+        info!(
+            "Successfully processed embeddings for message {} -> stored in {} collections",
+            message_id,
+            stored_heads.len()
+        );
+    }
+    
+    Ok(())
+}
+
+/// Create a MemoryEntry for Qdrant storage
+fn create_qdrant_entry(
+    message_id: i64,
+    session_id: &str,
+    response: &StructuredLLMResponse,
+    embedding: Vec<f32>,
+) -> MemoryEntry {
+    MemoryEntry {
+        id: Some(message_id),
+        session_id: session_id.to_string(),
+        response_id: None,
+        parent_id: None,
+        role: "assistant".to_string(),
+        content: response.output.clone(),
+        timestamp: Utc::now(),
+        tags: Some(response.analysis.topics.clone()),
+        mood: response.analysis.mood.clone(),
+        intensity: response.analysis.intensity.map(|i| i as f32),
+        salience: Some(response.analysis.salience as f32),
+        original_salience: Some(response.analysis.salience as f32),
+        intent: response.analysis.intent.clone(),
+        topics: Some(response.analysis.topics.clone()),
+        summary: response.analysis.summary.clone(),
+        relationship_impact: response.analysis.relationship_impact.clone(),
+        contains_code: Some(response.analysis.contains_code),
+        language: Some(response.analysis.language.clone()),
+        programming_lang: response.analysis.programming_lang.clone(),
+        analyzed_at: Some(Utc::now()),
+        analysis_version: Some("structured_v1".to_string()),
+        routed_to_heads: Some(response.analysis.routed_to_heads.clone()),
+        last_recalled: Some(Utc::now()),
+        recall_count: Some(0),
+        model_version: None,
+        prompt_tokens: None,
+        completion_tokens: None,
+        reasoning_tokens: None,
+        total_tokens: None,
+        latency_ms: None,
+        generation_time_ms: None,
+        finish_reason: None,
+        tool_calls: None,
+        temperature: None,
+        max_tokens: None,
+        embedding: Some(embedding),
+        embedding_heads: Some(response.analysis.routed_to_heads.clone()),
+        qdrant_point_ids: None,
+    }
+}
+
+/// Update SQLite record with embedding metadata
+async fn update_embedding_metadata(
+    pool: &SqlitePool,
+    message_id: i64,
+    stored_heads: &[String],
+) -> Result<()> {
+    let heads_json = serde_json::to_string(stored_heads)?;
+    
+    sqlx::query!(
+        r#"
+        UPDATE message_analysis
+        SET routed_to_heads = ?
+        WHERE message_id = ?
+        "#,
+        heads_json,
+        message_id
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(())
 }
 
 async fn insert_memory_entry(
@@ -138,23 +311,6 @@ async fn insert_llm_metadata(
     .await?;
     
     debug!("Inserted llm_metadata for message {}", message_id);
-    Ok(())
-}
-
-async fn trigger_conditional_operations(
-    _message_id: i64,
-    response: &StructuredLLMResponse,
-) -> Result<()> {
-    if !response.analysis.routed_to_heads.is_empty() {
-        info!("Queuing embeddings for heads: {:?}", response.analysis.routed_to_heads);
-    }
-    
-    if response.analysis.contains_code {
-        if let Some(ref lang) = response.analysis.programming_lang {
-            info!("Triggering code analysis for {} code", lang);
-        }
-    }
-    
     Ok(())
 }
 

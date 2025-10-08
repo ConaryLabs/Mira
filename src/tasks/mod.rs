@@ -16,9 +16,11 @@ use crate::state::AppState;
 
 pub mod config;
 pub mod metrics;
+pub mod backfill;
 
 use config::TaskConfig;
 use metrics::TaskMetrics;
+use backfill::BackfillTask;
 
 /// Manages all background tasks for the memory system
 pub struct TaskManager {
@@ -42,6 +44,9 @@ impl TaskManager {
     /// Starts all background tasks
     pub async fn start(&mut self) {
         info!("Starting background task manager");
+
+        // Run one-time embedding backfill on startup
+        self.run_backfill().await;
 
         // Start analysis processor
         if self.config.analysis_enabled {
@@ -72,6 +77,24 @@ impl TaskManager {
         self.handles.push(handle);
 
         info!("Started {} background tasks", self.handles.len());
+    }
+
+    /// Run one-time embedding backfill task
+    /// This processes all messages that were "queued" before the embedding processor was implemented
+    async fn run_backfill(&self) {
+        info!("Running one-time embedding backfill check");
+        
+        let backfill = BackfillTask::new(self.app_state.clone());
+        
+        match backfill.run().await {
+            Ok(()) => {
+                info!("Embedding backfill completed successfully");
+            }
+            Err(e) => {
+                error!("Embedding backfill failed: {}", e);
+                // Don't panic - this is non-critical, new messages will still work
+            }
+        }
     }
 
     /// Spawns the analysis processor task
