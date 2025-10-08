@@ -119,11 +119,27 @@ impl UnifiedAnalyzer {
         
         // Extract code detection from LLM response
         let mut is_code = chat_result.contains_code.unwrap_or(false);
-        let programming_lang = chat_result.programming_lang.clone();
+        let mut programming_lang = chat_result.programming_lang.clone();
+        
+        // CRITICAL FIX: Validate programming_lang against database constraint
+        // Database only allows: rust, typescript, javascript, python, go, java
+        // Config languages like json, yaml, bash, etc. must be filtered out
+        if let Some(lang) = programming_lang.as_ref() {
+            let valid_langs = ["rust", "typescript", "javascript", "python", "go", "java"];
+            if !valid_langs.contains(&lang.to_lowercase().as_str()) {
+                warn!("Language '{}' not in DB constraint - setting to NULL to avoid constraint violation", lang);
+                programming_lang = None;
+                // If we filtered out the language, treat as non-code for storage purposes
+                if is_code {
+                    warn!("Detected code with unsupported language - treating as non-code for storage");
+                    is_code = false;
+                }
+            }
+        }
         
         // Safety check: if code detected but no language, treat as non-code
         if is_code && programming_lang.is_none() {
-            warn!("LLM detected code but didn't specify language - treating as non-code to avoid DB constraint");
+            warn!("LLM detected code but didn't specify valid language - treating as non-code to avoid DB constraint");
             is_code = false;
         }
         
