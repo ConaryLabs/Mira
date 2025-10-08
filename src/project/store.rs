@@ -140,10 +140,10 @@ impl ProjectStore {
     }
 
     pub async fn delete_project(&self, id: &str) -> Result<bool> {
-        // Step 1: Get all git repo attachments for this project BEFORE deletion
+        // Step 1: Get all git repo attachments WITH their type
         let repo_paths = sqlx::query(
             r#"
-            SELECT local_path
+            SELECT local_path, attachment_type
             FROM git_repo_attachments
             WHERE project_id = ?
             "#,
@@ -152,24 +152,34 @@ impl ProjectStore {
         .fetch_all(&self.pool)
         .await?;
 
-        // Step 2: Delete filesystem directories for each attachment
+        // Step 2: ONLY delete git repository clones, NOT local directories
+        let mut deleted_count = 0;
         for row in &repo_paths {
             let local_path: String = row.get("local_path");
-            let path = Path::new(&local_path);
+            let attachment_type: Option<String> = row.get("attachment_type");
             
+            // CRITICAL FIX: Skip local directories - they're user source code!
+            if attachment_type.as_deref() == Some("local_directory") {
+                info!("Skipping local directory (not deleting user source): {}", local_path);
+                continue;
+            }
+            
+            // Only delete sandboxed git clones
+            let path = Path::new(&local_path);
             if path.exists() {
                 match tokio::fs::remove_dir_all(path).await {
                     Ok(_) => {
-                        info!("Deleted repo directory: {}", local_path);
+                        info!("Deleted git clone directory: {}", local_path);
+                        deleted_count += 1;
                     }
                     Err(e) => {
                         // Log but don't fail - orphaned directories can be manually cleaned
-                        warn!("Failed to delete repo directory {}: {}", local_path, e);
+                        warn!("Failed to delete git clone directory {}: {}", local_path, e);
                     }
                 }
             } else {
                 // Directory already gone, no problem
-                info!("Repo directory already removed: {}", local_path);
+                info!("Git clone directory already removed: {}", local_path);
             }
         }
 
@@ -182,7 +192,7 @@ impl ProjectStore {
         let deleted = result.rows_affected() > 0;
         
         if deleted {
-            info!("Deleted project {} and cleaned up {} repo directories", id, repo_paths.len());
+            info!("Deleted project {} and cleaned up {} git clone directories", id, deleted_count);
         }
 
         Ok(deleted)
