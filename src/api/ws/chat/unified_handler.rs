@@ -7,6 +7,7 @@
 // PHASE 3.3 UPDATE: Added session tool cache for expensive operations
 // PHASE 5 UPDATE: Doubled iteration limit from 20 to 50
 // ARTIFACT UPDATE: Added create_artifact and provide_code_fix tools + artifact collection
+// RESPONSE FIX: Added validation to force respond_to_user if missing
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -211,8 +212,27 @@ impl UnifiedChatHandler {
                     // Normal case: has respond_to_user tool call
                     claude_processor::extract_claude_content_from_tool(&raw_response)?
                 } else {
-                    // Edge case: Claude thought but didn't respond
-                    // Extract thinking content if available
+                    // RESPONSE FIX: Claude didn't call respond_to_user
+                    // Check if this is the first iteration - if so, force continuation
+                    if iteration == 0 {
+                        warn!("Claude ended turn without respond_to_user on first iteration - forcing continuation");
+                        
+                        // Add assistant's thinking (if any) to chat history
+                        if let Some(content) = raw_response["content"].clone().as_array() {
+                            if !content.is_empty() {
+                                chat_messages.push(ChatMessage::blocks("assistant", Value::Array(content.clone())));
+                            }
+                        }
+                        
+                        // Add a stern reminder as user message
+                        let reminder = "⚠️ CRITICAL REMINDER: You MUST call the respond_to_user tool to communicate with the user. They cannot see your thinking unless you call this tool. Please respond to the user's message now using respond_to_user.";
+                        chat_messages.push(ChatMessage::text("user", reminder.to_string()));
+                        
+                        // Continue loop to force another iteration
+                        continue;
+                    }
+                    
+                    // If we get here after the reminder, extract thinking for fallback
                     let thinking_summary = if let Some(content) = raw_response["content"].as_array() {
                         content.iter()
                             .filter(|block| block["type"] == "thinking")
@@ -229,7 +249,7 @@ impl UnifiedChatHandler {
                         "I processed your message but didn't generate a response. Please try rephrasing your request.".to_string()
                     };
                     
-                    info!("Claude ended turn without respond_to_user - using fallback response");
+                    warn!("Claude ended turn without respond_to_user after reminder - using fallback response");
                     
                     // Create a minimal structured response for the fallback
                     StructuredLLMResponse {

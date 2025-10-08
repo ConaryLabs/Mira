@@ -9,7 +9,7 @@ use serde_json::json;
 pub fn get_response_tool_schema() -> serde_json::Value {
     json!({
         "name": "respond_to_user",
-        "description": "MANDATORY: Use this tool for EVERY response to the user. This is your ONLY way to communicate with them. Other tools (read_file, search_code, list_files) are for gathering information BEFORE calling this tool. After using other tools to gather context, you MUST call this tool to respond. Every user message requires a response via this tool.",
+        "description": "🚨 CRITICAL RESPONSE REQUIREMENT 🚨\n\nThis tool is MANDATORY for EVERY user message - no exceptions.\n\nYou MUST call this tool to communicate with the user. They cannot see your thinking or tool results unless you call this tool.\n\n⚠️ WHEN TO CALL THIS:\n- After gathering context with other tools\n- Even if just acknowledging a message\n- Even if you're unsure or need clarification\n- ALWAYS as the final step in your response\n\n⚠️ OTHER TOOLS ARE FOR GATHERING:\n- read_file, search_code, list_files: Information gathering\n- create_artifact, provide_code_fix: Code generation\n- These tools DO NOT communicate with the user\n\n⚠️ WORKFLOW:\n1. Use other tools to gather information (if needed)\n2. Call respond_to_user to send your message\n3. The conversation ends when you call respond_to_user\n\nThe user is waiting for your response. You must call this tool to communicate with them.",
         "input_schema": {
             "type": "object",
             "properties": {
