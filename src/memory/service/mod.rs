@@ -49,23 +49,12 @@ impl MemoryService {
         llm_provider: Arc<dyn LlmProvider>,
         embedding_client: Arc<OpenAIClient>,
     ) -> Self {
-        Self::new_with_cache(sqlite_store, multi_store, llm_provider, embedding_client, None)
-    }
-    
-    pub fn new_with_cache(
-        sqlite_store: Arc<SqliteMemoryStore>,
-        multi_store: Arc<QdrantMultiStore>,
-        llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<OpenAIClient>,
-        recent_cache: Option<Arc<RecentCache>>,
-    ) -> Self {
         info!("Initializing MemoryService with clean modular architecture");
         
         // Initialize core service
         let core = MemoryCoreService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            recent_cache,
         );
         
         // Initialize MessagePipeline coordinator

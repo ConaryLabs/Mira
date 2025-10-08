@@ -14,19 +14,16 @@ use crate::memory::{
 pub struct MemoryCoreService {
     pub sqlite_store: Arc<SqliteMemoryStore>,
     pub multi_store: Arc<QdrantMultiStore>,
-    pub recent_cache: Option<Arc<RecentCache>>,
 }
 
 impl MemoryCoreService {
     pub fn new(
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
-        recent_cache: Option<Arc<RecentCache>>,
     ) -> Self {
         Self {
             sqlite_store,
             multi_store,
-            recent_cache,
         }
     }
 
