@@ -1,5 +1,5 @@
 // src/tools/executor.rs
-// Smart tool executor: GPT-5 calls tools, DeepSeek handles heavy lifting behind the scenes
+// Smart tool executor: Mira calls tools, DeepSeek handles heavy lifting behind the scenes
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -11,11 +11,13 @@ use tracing::{info, debug, warn};
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::llm::router::{LlmRouter, TaskType};
 use crate::llm::provider::Message;
+use crate::llm::structured::code_fix_processor::ErrorContext;
+use crate::prompt::unified_builder::UnifiedPromptBuilder;
 
 pub struct ToolExecutor {
     code_intelligence: Arc<CodeIntelligenceService>,
     sqlite_pool: SqlitePool,
-    llm_router: Arc<LlmRouter>,  // NEW: For DeepSeek delegation
+    llm_router: Arc<LlmRouter>,
 }
 
 impl ToolExecutor {
@@ -305,91 +307,70 @@ impl ToolExecutor {
             .unwrap_or("Fix the error in this code");
         
         let file_path = input.get("file_path")
-            .and_then(|v| v.as_str());
-        
-        let error_context = input.get("error_context")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .ok_or_else(|| anyhow::anyhow!("Missing 'file_path' parameter"))?;
         
-        // Load the file if path provided
-        let file_content = if let Some(path) = file_path {
-            match super::file_ops::load_complete_file(&self.sqlite_pool, path, project_id).await {
-                Ok(content) => Some(content),
-                Err(e) => {
-                    warn!("Failed to load file for code fix: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
+        let error_type = input.get("error_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("compiler_error");
+        
+        let error_severity = input.get("error_severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("error");
+        
+        // Load the complete file
+        let file_content = super::file_ops::load_complete_file(
+            &self.sqlite_pool, 
+            file_path, 
+            project_id
+        ).await?;
+        
+        info!("Loaded file with {} lines", file_content.lines().count());
+        
+        // Create error context for UnifiedPromptBuilder
+        let error_context = ErrorContext {
+            error_message: error_message.to_string(),
+            file_path: file_path.to_string(),
+            error_type: error_type.to_string(),
+            error_severity: error_severity.to_string(),
+            original_line_count: file_content.lines().count(),
         };
         
-        // Build comprehensive prompt for DeepSeek
-        let prompt = format!(
-            r#"You are fixing a code error. Provide a COMPLETE fixed version of the file.
-
-Error: {}
-
-Error Context:
-{}
-
-{}
-
-Requirements:
-- Provide the COMPLETE fixed file from line 1 to the end
-- Include ALL imports, ALL functions, ALL code
-- Fix the specific error mentioned
-- Do NOT use ellipsis (...) or placeholders
-- Do NOT truncate any code
-- Return only the fixed code, no explanations before or after
-
-Return the complete fixed file:"#,
-            error_message,
-            error_context,
-            if let Some(content) = &file_content {
-                format!("Current File Content:\n```\n{}\n```", content)
-            } else {
-                "No file content provided.".to_string()
-            }
+        // Get code intelligence data if available
+        let code_elements = None; // TODO: Fetch from code_intelligence if needed
+        let quality_issues = None; // TODO: Fetch from code_intelligence if needed
+        
+        // Build comprehensive DeepSeek prompt using unified builder
+        let system_prompt = UnifiedPromptBuilder::build_deepseek_code_prompt(
+            &error_context,
+            &file_content,
+            code_elements,
+            quality_issues,
         );
         
-        // Call DeepSeek to generate the fix
+        // Call DeepSeek via router
         let response = self.llm_router.chat(
             TaskType::Code,
             vec![Message {
                 role: "user".to_string(),
-                content: prompt,
+                content: "Fix the error in this file.".to_string(),
             }],
-            "You are a code fixing assistant. Return complete fixed files with no truncation.".to_string(),
+            system_prompt,
         ).await?;
         
         info!(
-            "✅ DeepSeek generated fix | Tokens: in={} out={} cached={} | {}ms",
+            "✅ DeepSeek generated fix | Lines: {} → {} | Tokens: in={} out={} cached={} | {}ms",
+            file_content.lines().count(),
+            response.content.lines().count(),
             response.tokens.input,
             response.tokens.output,
             response.tokens.cached,
             response.latency_ms
         );
         
-        // Extract code from response (handle code blocks)
-        let fixed_content = if response.content.contains("```") {
-            // Extract from code block
-            response.content
-                .split("```")
-                .nth(1)
-                .map(|block| {
-                    // Skip language identifier line
-                    block.lines().skip(1).collect::<Vec<_>>().join("\n")
-                })
-                .unwrap_or(response.content.clone())
-        } else {
-            response.content.clone()
-        };
-        
-        // Format as artifact
-        let language = file_path
-            .and_then(|p| Path::new(p).extension())
-            .and_then(|ext| ext.to_str())
+        // Detect language from file extension
+        let language = file_path.rsplit('.')
+            .next()
             .and_then(|ext| match ext {
                 "rs" => Some("rust"),
                 "ts" | "tsx" => Some("typescript"),
@@ -397,6 +378,8 @@ Return the complete fixed file:"#,
                 "py" => Some("python"),
                 "go" => Some("go"),
                 "java" => Some("java"),
+                "cpp" | "cc" => Some("cpp"),
+                "c" => Some("c"),
                 _ => Some("text"),
             })
             .unwrap_or("text");
@@ -404,15 +387,15 @@ Return the complete fixed file:"#,
         Ok(json!({
             "type": "code_fix",
             "artifacts": [{
-                "title": file_path.unwrap_or("fixed_code"),
-                "content": fixed_content.trim(),
+                "title": file_path,
+                "content": response.content.trim(),
                 "language": language,
                 "path": file_path,
-                "lines": fixed_content.lines().count(),
+                "lines": response.content.lines().count(),
                 "is_fix": true,
             }],
             "message": "Generated code fix",
-            "generated_by": "deepseek",  // Let GPT-5 know
+            "generated_by": "deepseek",
             "deepseek_tokens": {
                 "input": response.tokens.input,
                 "output": response.tokens.output,
@@ -474,8 +457,8 @@ Return the complete fixed file:"#,
             "query": query,
             "summary": response.content,
             "total_found": raw_results.len(),
-            "raw_results": raw_results.iter().take(20).collect::<Vec<_>>(),  // Include top 20 raw
-            "generated_by": "deepseek",  // Let GPT-5 know
+            "raw_results": raw_results.iter().take(20).collect::<Vec<_>>(),
+            "generated_by": "deepseek",
             "deepseek_tokens": {
                 "input": response.tokens.input,
                 "output": response.tokens.output,
@@ -540,7 +523,7 @@ Be concise and focus on what's most relevant for understanding the codebase."#,
         // Combine basic context with DeepSeek analysis
         let mut result = basic_context;
         result["analysis"] = json!(response.content);
-        result["generated_by"] = json!("deepseek");  // Let GPT-5 know
+        result["generated_by"] = json!("deepseek");
         result["deepseek_tokens"] = json!({
             "input": response.tokens.input,
             "output": response.tokens.output,

@@ -32,6 +32,8 @@ pub struct QualityIssue {
 pub struct UnifiedPromptBuilder;
 
 impl UnifiedPromptBuilder {
+    /// Build system prompt for Mira (conversational AI)
+    /// She orchestrates tools but doesn't generate code directly
     pub fn build_system_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -41,21 +43,29 @@ impl UnifiedPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
         
+        // 1. Core personality
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
         
+        // 2. System architecture (DeepSeek transparency)
+        Self::add_architecture_note(&mut prompt);
+        
+        // 3. Context
         Self::add_project_context(&mut prompt, metadata, project_id);
         Self::add_memory_context(&mut prompt, context);
         Self::add_tool_context(&mut prompt, tools);
         Self::add_file_context(&mut prompt, metadata);
         
+        // 4. Light tool usage hints (if code-related)
         if Self::is_code_related(metadata) {
-            Self::add_code_best_practices(&mut prompt);
+            Self::add_tool_usage_hints(&mut prompt);
         }
         
         prompt
     }
     
+    /// Build prompt for DeepSeek (pure technical code generation)
+    /// No personality - just code fix requirements
     pub fn build_code_fix_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -68,6 +78,8 @@ impl UnifiedPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
         
+        // DeepSeek gets technical instructions, not personality
+        // But we keep persona in case this is used for Mira's direct code fixes
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
         
@@ -84,6 +96,51 @@ impl UnifiedPromptBuilder {
         prompt
     }
     
+    /// Build prompt specifically for DeepSeek (no persona)
+    pub fn build_deepseek_code_prompt(
+        error_context: &ErrorContext,
+        file_content: &str,
+        code_elements: Option<Vec<CodeElement>>,
+        quality_issues: Option<Vec<QualityIssue>>,
+    ) -> String {
+        let mut prompt = String::new();
+        
+        prompt.push_str("You are a code fix specialist.\n");
+        prompt.push_str("Generate complete, working file fixes with no personality or commentary.\n\n");
+        
+        Self::add_code_fix_requirements(
+            &mut prompt,
+            error_context,
+            file_content,
+            code_elements,
+            quality_issues,
+        );
+        
+        prompt
+    }
+    
+    /// Add neutral architecture transparency note
+    fn add_architecture_note(prompt: &mut String) {
+        prompt.push_str("[SYSTEM ARCHITECTURE]\n");
+        prompt.push_str("For heavy code operations (large codebases, code generation, complex analysis),\n");
+        prompt.push_str("some tools delegate work to DeepSeek 3.2 behind the scenes.\n");
+        prompt.push_str("Tool results will include 'generated_by' metadata when this happens.\n");
+        prompt.push_str("You can acknowledge this in your responses if relevant.\n\n");
+    }
+    
+    /// Light hints for Mira - she orchestrates, doesn't generate
+    fn add_tool_usage_hints(prompt: &mut String) {
+        prompt.push_str("[CODE HANDLING]\n");
+        prompt.push_str("For code-related tasks, use the appropriate tools:\n");
+        prompt.push_str("- 'create_artifact' - For any code you write (examples, new files, etc)\n");
+        prompt.push_str("- 'provide_code_fix' - For fixing errors in existing files\n");
+        prompt.push_str("- 'search_code' - For finding code elements in projects\n");
+        prompt.push_str("- 'get_project_context' - For understanding project structure\n\n");
+        prompt.push_str("Artifacts display in a Monaco editor where users can edit and apply changes.\n");
+        prompt.push_str("If the user points you to code fix rules or guidelines, you can reference them.\n\n");
+    }
+    
+    /// Full technical requirements for DeepSeek (code generation)
     fn add_code_fix_requirements(
         prompt: &mut String, 
         error_context: &ErrorContext, 
@@ -282,49 +339,6 @@ impl UnifiedPromptBuilder {
         }
         false
     }
-    
-    // ===== PHASE 1.1: UPDATED CODE BEST PRACTICES =====
-    fn add_code_best_practices(prompt: &mut String) {
-        prompt.push_str("\n\n");
-        prompt.push_str("==== CODE GENERATION RULES ====\n\n");
-        
-        // ✨ NEW: Artifact instructions
-        prompt.push_str("CRITICAL - ALWAYS USE ARTIFACTS FOR CODE:\n");
-        prompt.push_str("- Use the 'create_artifact' tool for ANY code you write\n");
-        prompt.push_str("- This includes: fixes, new files, examples, snippets, everything\n");
-        prompt.push_str("- Never put code in inline chat messages - always use artifacts\n");
-        prompt.push_str("- Artifacts display in a Monaco editor with syntax highlighting\n");
-        prompt.push_str("- Users can edit, apply, and save artifacts to their project\n\n");
-        
-        // ✨ NEW: Complete file requirement
-        prompt.push_str("CRITICAL - ALWAYS PROVIDE COMPLETE FILES:\n");
-        prompt.push_str("- ALWAYS provide the ENTIRE file content from start to finish\n");
-        prompt.push_str("- Even for single-line fixes, return the COMPLETE file\n");
-        prompt.push_str("- NEVER use '...' or ellipsis to indicate skipped code\n");
-        prompt.push_str("- NEVER use comments like '// rest unchanged' or '// previous code'\n");
-        prompt.push_str("- NEVER truncate imports, functions, or any code sections\n");
-        prompt.push_str("- The user needs the full, working file to save directly to disk\n");
-        prompt.push_str("- Partial code cannot be merged - it must be complete\n\n");
-        
-        // Existing best practices
-        prompt.push_str("CODE QUALITY GUIDELINES:\n");
-        prompt.push_str("- Include all necessary imports and dependencies\n");
-        prompt.push_str("- Add helpful comments for complex logic\n");
-        prompt.push_str("- Follow language-specific best practices and idioms\n");
-        prompt.push_str("- Consider error handling and edge cases\n");
-        prompt.push_str("- Use proper type annotations where applicable\n");
-        prompt.push_str("- Ensure code is production-ready and well-structured\n\n");
-        
-        prompt.push_str("When fixing code:\n");
-        prompt.push_str("1. Analyze the error and identify the root cause\n");
-        prompt.push_str("2. Load the COMPLETE current file content\n");
-        prompt.push_str("3. Make your changes to the full content\n");
-        prompt.push_str("4. Return the ENTIRE modified file via create_artifact or provide_code_fix\n");
-        prompt.push_str("5. Explain what you changed and why\n\n");
-        
-        prompt.push_str("=====================================\n\n");
-    }
-    // ===== END PHASE 1.1 =====
     
     fn add_project_context(prompt: &mut String, metadata: Option<&MessageMetadata>, project_id: Option<&str>) {
         if let Some(meta) = metadata {
