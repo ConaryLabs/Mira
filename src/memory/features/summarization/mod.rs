@@ -23,7 +23,7 @@ pub struct SummarizationEngine {
     // Strategy modules
     rolling_strategy: RollingSummaryStrategy,
     snapshot_strategy: SnapshotSummaryStrategy,
-    storage: SummaryStorage,
+    storage: SummaryStorage,  // Private - access via public methods
     triggers: BackgroundTriggers,
     
     // Core dependencies
@@ -133,6 +133,36 @@ impl SummarizationEngine {
         info!("Created snapshot summary for session {}", session_id);
         
         Ok(summary)
+    }
+    
+    /// Get the most recent rolling summary (100-message) for a session
+    /// Public accessor for coordinator to use
+    pub async fn get_rolling_summary(&self, session_id: &str) -> Result<Option<String>> {
+        let summaries = self.storage
+            .get_latest_summaries(session_id)
+            .await?;
+        
+        // Find the rolling_100 summary
+        let rolling_summary = summaries.iter()
+            .find(|s| s.summary_type == "rolling_100")
+            .map(|s| s.summary_text.clone());
+        
+        Ok(rolling_summary)
+    }
+
+    /// Get the most recent snapshot summary for a session
+    /// Public accessor for coordinator to use
+    pub async fn get_session_summary(&self, session_id: &str) -> Result<Option<String>> {
+        let summaries = self.storage
+            .get_latest_summaries(session_id)
+            .await?;
+        
+        // Find the snapshot summary
+        let session_summary = summaries.iter()
+            .find(|s| s.summary_type == "snapshot")
+            .map(|s| s.summary_text.clone());
+        
+        Ok(session_summary)
     }
     
     /// Stats for monitoring

@@ -1,14 +1,12 @@
-// src/memory/service/core_service.rs - Add missing imports at the top
+// src/memory/service/core_service.rs
 use std::sync::Arc;
 use anyhow::Result;
+use chrono::Utc;
 use crate::memory::{
     storage::sqlite::store::SqliteMemoryStore,
     storage::qdrant::multi_store::QdrantMultiStore,
-    core::{
-        types::MemoryEntry,
-        traits::MemoryStore,  // <- Add this import
-    },
-    features::UnifiedAnalysis,  // <- Add this import
+    core::types::MemoryEntry,
+    core::traits::MemoryStore,  // FIXED: Import trait to use its methods
 };
 
 pub struct MemoryCoreService {
@@ -27,29 +25,123 @@ impl MemoryCoreService {
         }
     }
 
+    /// Save a user message and return the entry ID
+    pub async fn save_user_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        project_id: Option<&str>,
+    ) -> Result<i64> {
+        let entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            response_id: None,
+            parent_id: None,
+            role: "user".to_string(),
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            tags: project_id.map(|pid| vec![format!("project:{}", pid)]),
+            mood: None,
+            intensity: None,
+            salience: None,
+            original_salience: None,
+            intent: None,
+            topics: None,
+            summary: None,
+            relationship_impact: None,
+            contains_code: Some(false),
+            language: Some("en".to_string()),
+            programming_lang: None,
+            analyzed_at: None,
+            analysis_version: None,
+            routed_to_heads: None,
+            last_recalled: None,
+            recall_count: None,
+            model_version: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+            latency_ms: None,
+            generation_time_ms: None,
+            finish_reason: None,
+            tool_calls: None,
+            temperature: None,
+            max_tokens: None,
+            embedding: None,
+            embedding_heads: None,
+            qdrant_point_ids: None,
+        };
+
+        let saved = self.sqlite_store.save(&entry).await?;
+        Ok(saved.id.unwrap_or(0))
+    }
+
+    /// Save an assistant message and return the entry ID
+    pub async fn save_assistant_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        parent_id: Option<i64>,
+    ) -> Result<i64> {
+        let entry = MemoryEntry {
+            id: None,
+            session_id: session_id.to_string(),
+            response_id: Some(uuid::Uuid::new_v4().to_string()),
+            parent_id,
+            role: "assistant".to_string(),
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            tags: None,
+            mood: None,
+            intensity: None,
+            salience: None,
+            original_salience: None,
+            intent: None,
+            topics: None,
+            summary: None,
+            relationship_impact: None,
+            contains_code: Some(false),
+            language: Some("en".to_string()),
+            programming_lang: None,
+            analyzed_at: None,
+            analysis_version: None,
+            routed_to_heads: None,
+            last_recalled: None,
+            recall_count: None,
+            model_version: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+            latency_ms: None,
+            generation_time_ms: None,
+            finish_reason: None,
+            tool_calls: None,
+            temperature: None,
+            max_tokens: None,
+            embedding: None,
+            embedding_heads: None,
+            qdrant_point_ids: None,
+        };
+
+        let saved = self.sqlite_store.save(&entry).await?;
+        Ok(saved.id.unwrap_or(0))
+    }
+
     /// Save a memory entry and return the entry ID
     pub async fn save_entry(&self, entry: &MemoryEntry) -> Result<i64> {
         let saved_entry = self.sqlite_store.save(entry).await?;
-        Ok(saved_entry.id.unwrap_or(0)) // Handle Option<i64>
+        Ok(saved_entry.id.unwrap_or(0))
     }
 
     /// Get recent memories for a session
     pub async fn get_recent(&self, session_id: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        self.sqlite_store.load_recent(session_id, limit).await // usize, not i32
-    }
-
-    /// Store analysis results for an entry
-    pub async fn store_analysis(&self, _entry_id: i64, _analysis: &UnifiedAnalysis) -> Result<()> {
-        // Store analysis metadata in SQLite
-        // Store embedding vectors in Qdrant via multi-store
-        // This is where we'd implement analysis storage
-        // For now, just return Ok - we'll implement this properly as we rebuild
-        Ok(())
+        self.sqlite_store.load_recent(session_id, limit).await
     }
 
     /// Get service statistics
     pub async fn get_stats(&self, session_id: &str) -> Result<serde_json::Value> {
-        // Return basic stats - we'll expand this
         Ok(serde_json::json!({
             "session_id": session_id,
             "status": "operational"

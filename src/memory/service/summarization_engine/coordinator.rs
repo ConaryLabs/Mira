@@ -33,7 +33,19 @@ impl SummarizationEngineCoordinator {
         self.engine.create_snapshot_summary(session_id, None).await
     }
 
-    /// Missing method: check_and_process_summaries (for background tasks)
+    /// Get the most recent rolling summary (100-message) for a session
+    pub async fn get_rolling_summary(&self, session_id: &str) -> Result<Option<String>> {
+        // Delegate to engine's public method
+        self.engine.get_rolling_summary(session_id).await
+    }
+
+    /// Get the most recent snapshot summary for a session
+    pub async fn get_session_summary(&self, session_id: &str) -> Result<Option<String>> {
+        // Delegate to engine's public method
+        self.engine.get_session_summary(session_id).await
+    }
+
+    /// Check and process summaries (for background tasks)
     pub async fn check_and_process_summaries(&self, session_id: &str, message_count: usize) -> Result<Option<String>> {
         // This method was being called by background tasks
         // For now, just trigger a rolling summary if needed

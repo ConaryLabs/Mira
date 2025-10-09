@@ -133,7 +133,7 @@ impl UnifiedChatHandler {
             vec![get_response_tool_schema()]
         };
         
-        // Build message history - FIXED: Message is just a struct
+        // Build message history
         let mut chat_messages = Vec::new();
         for entry in context.recent.iter().rev() {
             chat_messages.push(Message {
@@ -213,7 +213,6 @@ impl UnifiedChatHandler {
             
             // Process tool calls
             let mut tool_results = Vec::new();
-            let mut found_respond = false;
             
             for func_call in &raw_response.function_calls {
                 let tool_name = &func_call.name;
@@ -223,7 +222,7 @@ impl UnifiedChatHandler {
                 
                 // Check for respond_to_user (final response)
                 if tool_name == "respond_to_user" {
-                    found_respond = true;
+                    // FIXED: Removed unused found_respond variable - we return immediately anyway
                     
                     let structured = extract_claude_content_from_tool(&raw_response)?;
                     let metadata = extract_claude_metadata(&raw_response, 0)?;
@@ -312,18 +311,13 @@ impl UnifiedChatHandler {
                 }));
             }
             
-            // If we found respond_to_user, we already returned above
-            if found_respond {
-                continue;
-            }
-            
-            // Add assistant message (as text for simplicity) - FIXED
+            // Add assistant message
             chat_messages.push(Message {
                 role: "assistant".to_string(),
                 content: raw_response.text_output.clone(),
             });
             
-            // Add tool results - FIXED
+            // Add tool results
             if !tool_results.is_empty() {
                 let results_text = serde_json::to_string(&tool_results)?;
                 chat_messages.push(Message {

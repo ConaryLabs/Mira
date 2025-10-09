@@ -8,7 +8,7 @@ use crate::memory::{
     storage::qdrant::multi_store::QdrantMultiStore,
     features::{
         message_pipeline::MessagePipeline,
-        recall_engine::RecallEngine,
+        recall_engine::{RecallEngine, RecallContext},
         summarization::SummarizationEngine,
     },
 };
@@ -97,8 +97,9 @@ impl MemoryService {
         )
     }
     
-    // Delegation methods for backward compatibility
+    // ===== DELEGATION METHODS FOR BACKWARD COMPATIBILITY =====
     
+    // Core service delegations
     pub async fn save_user_message(
         &self,
         session_id: &str,
@@ -115,5 +116,30 @@ impl MemoryService {
         parent_id: Option<i64>,
     ) -> anyhow::Result<i64> {
         self.core.save_assistant_message(session_id, content, parent_id).await
+    }
+    
+    // Recall engine delegations
+    pub async fn parallel_recall_context(
+        &self,
+        session_id: &str,
+        query: &str,
+        recent_count: usize,
+        semantic_count: usize
+    ) -> anyhow::Result<RecallContext> {
+        self.recall_engine.parallel_recall_context(session_id, query, recent_count, semantic_count).await
+    }
+    
+    // Summarization engine delegations
+    pub async fn get_rolling_summary(&self, session_id: &str) -> anyhow::Result<Option<String>> {
+        self.summarization_engine.get_rolling_summary(session_id).await
+    }
+    
+    pub async fn get_session_summary(&self, session_id: &str) -> anyhow::Result<Option<String>> {
+        self.summarization_engine.get_session_summary(session_id).await
+    }
+    
+    // Core cleanup delegation
+    pub async fn cleanup_inactive_sessions(&self, max_age_hours: i64) -> anyhow::Result<usize> {
+        self.core.cleanup_inactive_sessions(max_age_hours).await
     }
 }

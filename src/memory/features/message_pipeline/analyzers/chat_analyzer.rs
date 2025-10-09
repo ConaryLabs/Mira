@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info, error, warn};
+use tracing::{debug, info, error};  // FIXED: removed unused 'warn'
 
 use crate::llm::provider::{LlmProvider, Message};
 
