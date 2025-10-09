@@ -55,41 +55,26 @@ CREATE INDEX IF NOT EXISTS idx_analysis_salience ON message_analysis(salience);
 CREATE INDEX IF NOT EXISTS idx_analysis_original_salience ON message_analysis(original_salience);
 CREATE INDEX IF NOT EXISTS idx_analysis_contains_code ON message_analysis(contains_code);
 CREATE INDEX IF NOT EXISTS idx_analysis_message_id ON message_analysis(message_id);
--- topics is JSON TEXT; for now we keep it unindexed (FTS/JSON1 possible later)
 
 -- LLM response metadata (provider-agnostic)
 CREATE TABLE IF NOT EXISTS llm_metadata (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL UNIQUE REFERENCES memory_entries(id) ON DELETE CASCADE,
-
-    -- Model info
     model_version TEXT NOT NULL,
-
-    -- Token usage
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
-    thinking_tokens INTEGER DEFAULT 0,   -- legacy/compat
-    reasoning_tokens INTEGER DEFAULT 0,  -- canonical field
+    thinking_tokens INTEGER DEFAULT 0,
+    reasoning_tokens INTEGER DEFAULT 0,
     total_tokens INTEGER DEFAULT 0,
-
-    -- Performance
     latency_ms INTEGER DEFAULT 0,
     generation_time_ms INTEGER DEFAULT 0,
-
-    -- Response metadata
     finish_reason TEXT,
     stop_reason TEXT,
-    tool_calls TEXT, -- JSON array
-
-    -- Context management
+    tool_calls TEXT,
     context_management_applied BOOLEAN DEFAULT FALSE,
     cleared_tokens INTEGER DEFAULT 0,
-
-    -- Request params
     temperature REAL DEFAULT 0.7,
     max_tokens INTEGER DEFAULT 8192,
-
-    -- Extra
     reasoning_effort TEXT,
     verbosity TEXT
 );
@@ -239,7 +224,7 @@ CREATE TABLE IF NOT EXISTS git_repo_attachments (
     import_status TEXT NOT NULL,
     last_imported_at INTEGER,
     last_sync_at INTEGER,
-    attachment_type TEXT DEFAULT 'git_repository', -- 'git_repository' | 'local_directory'
+    attachment_type TEXT DEFAULT 'git_repository',
     local_path_override TEXT,
     UNIQUE(project_id, repo_url)
 );
@@ -285,11 +270,12 @@ CREATE TABLE IF NOT EXISTS language_configs (
     created_at INTEGER
 );
 
+-- FIXED: Simplified INSERT to avoid nested quote issues
 INSERT OR IGNORE INTO language_configs (language, file_extensions, parser_type, complexity_rules, dependency_patterns)
 VALUES
-('rust', '["rs"]', 'rust_syn', '{"max_cyclomatic":10,"max_nesting":4,"max_function_length":50}', '["use\\s+([^;]+);","mod\\s+([a-zA-Z_][a-zA-Z0-9_]*);"]'),
-('typescript', '["ts","tsx"]', 'typescript_swc', '{"max_cyclomatic":15,"max_nesting":5,"max_component_props":8}', '["import\\s+[^from]*from\\s+[\"\']([^\"\']+)[\"\']","import\\s+[\"\']([^\"\']+)[\"\']"]'),
-('javascript', '["js","jsx"]', 'javascript_babel', '{"max_cyclomatic":15,"max_nesting":5,"max_component_props":8}', '["import\\s+[^from]*from\\s+[\"\']([^\"\']+)[\"\']","require\\([\"\']([^\"\']+)[\"\']\\)"]');
+('rust', '["rs"]', 'rust_syn', '{"max_cyclomatic":10,"max_nesting":4,"max_function_length":50}', NULL),
+('typescript', '["ts","tsx"]', 'typescript_swc', '{"max_cyclomatic":15,"max_nesting":5,"max_component_props":8}', NULL),
+('javascript', '["js","jsx"]', 'javascript_babel', '{"max_cyclomatic":15,"max_nesting":5,"max_component_props":8}', NULL);
 
 CREATE TABLE IF NOT EXISTS repository_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -437,7 +423,7 @@ CREATE TABLE IF NOT EXISTS websocket_responses (
     backend_file_id INTEGER NOT NULL,
     sending_function TEXT NOT NULL,
     response_line INTEGER NOT NULL,
-    response_type TEXT NOT NULL,  -- 'Response' | 'Data' | 'Status' | 'Error'
+    response_type TEXT NOT NULL,
     data_type TEXT,
     project_id TEXT NOT NULL,
     created_at INTEGER DEFAULT (strftime('%s','now')),
@@ -462,7 +448,7 @@ CREATE TABLE IF NOT EXISTS schema_metadata (
 );
 
 INSERT INTO schema_metadata (version, description)
-VALUES ('2.2.0', 'Baseline v2: 0–1 salience, ws epoch timestamps + project FK, documents head, reasoning_tokens, local directories, routed_to_heads/topics defaults');
+VALUES ('2.2.0', 'Baseline v2: 0-1 salience, ws epoch timestamps + project FK, documents head, reasoning_tokens, local directories, routed_to_heads/topics defaults');
 
 PRAGMA foreign_keys=ON;
 COMMIT;
