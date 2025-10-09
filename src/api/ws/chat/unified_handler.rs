@@ -98,36 +98,6 @@ impl UnifiedChatHandler {
         self.handle_chat_with_tools(request).await
     }
     
-    // NEW: Infer task type from user message content
-    fn infer_task_type(content: &str, has_project: bool) -> TaskType {
-        let lower = content.to_lowercase();
-        
-        // Code keywords strongly suggest code tasks
-        let code_keywords = [
-            "fix", "error", "bug", "compile", "function", "class", "method",
-            "implement", "refactor", "optimize", "debug", "code", "syntax",
-            "trait", "struct", "enum", "impl", "fn", "async", "await",
-            "import", "export", "const", "let", "var", "return"
-        ];
-        
-        let code_score = code_keywords.iter()
-            .filter(|&keyword| lower.contains(keyword))
-            .count();
-        
-        // If project context + code keywords, it's definitely code
-        if has_project && code_score >= 2 {
-            return TaskType::Code;
-        }
-        
-        // Strong code signal even without project
-        if code_score >= 3 {
-            return TaskType::Code;
-        }
-        
-        // Default to Chat for everything else (GPT-5 for reasoning)
-        TaskType::Chat
-    }
-    
     async fn handle_chat_with_tools(
         &self,
         request: ChatRequest,
@@ -164,9 +134,12 @@ impl UnifiedChatHandler {
             vec![get_response_tool_schema()]
         };
         
-        // NEW: Infer task type for router
-        let task_type = Self::infer_task_type(&request.content, request.project_id.is_some());
-        info!("🎯 Task type inferred: {:?}", task_type);
+        // NEW: Use router's smart inference with embeddings
+        let task_type = self.app_state.llm_router.infer_task_type(
+            &request.content,
+            request.project_id.is_some()
+        ).await?;
+        info!("🎯 Task type: {:?}", task_type);
         
         // Build message history
         let mut chat_messages = Vec::new();
