@@ -1,5 +1,6 @@
 // src/api/ws/chat/unified_handler.rs
-// Unified chat handler with tool execution loop + LlmRouter
+// Unified chat handler - GPT-5 (Mira) is always the voice
+// DeepSeek is an internal tool for code generation
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,7 +14,7 @@ use crate::llm::structured::{CompleteResponse, has_tool_calls, extract_claude_co
 use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
 use crate::llm::provider::Message;
-use crate::llm::router::TaskType;  // NEW: Import task type for routing
+use crate::llm::router::TaskType;
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
@@ -134,13 +135,6 @@ impl UnifiedChatHandler {
             vec![get_response_tool_schema()]
         };
         
-        // NEW: Use router's smart inference with embeddings
-        let task_type = self.app_state.llm_router.infer_task_type(
-            &request.content,
-            request.project_id.is_some()
-        ).await?;
-        info!("🎯 Task type: {:?}", task_type);
-        
         // Build message history
         let mut chat_messages = Vec::new();
         for entry in context.recent.iter().rev() {
@@ -158,26 +152,28 @@ impl UnifiedChatHandler {
         let mut tool_cache = SessionToolCache::new();
         let mut collected_artifacts: Vec<Value> = Vec::new();
         
+        // ALWAYS use GPT-5 (Mira's voice)
+        info!("🎙️ Mira (GPT-5) handling conversation");
+        
         // Tool execution loop (50 iterations max)
         for iteration in 0..50 {
             info!("Tool loop iteration {}", iteration);
             
-            // NEW: Use router instead of direct LLM call (correct arg order)
+            // Always call GPT-5 - Mira decides what to do
             let raw_response = self.app_state.llm_router.chat_with_tools(
-                task_type,
+                TaskType::Chat,  // Always Chat (GPT-5)
                 chat_messages.clone(),
                 system_prompt.clone(),
                 tools.clone(),
                 None,
             ).await?;
             
-            // NEW: Log tokens (ToolResponse has .tokens field)
+            // Log tokens
             info!(
-                "🤖 Tokens: in={} out={} reasoning={} cached={} | latency={}ms",
+                "🤖 GPT-5 | Tokens: in={} out={} reasoning={} | latency={}ms",
                 raw_response.tokens.input,
                 raw_response.tokens.output,
                 raw_response.tokens.reasoning,
-                raw_response.tokens.cached,
                 raw_response.latency_ms
             );
             
@@ -360,6 +356,7 @@ impl UnifiedChatHandler {
         let executor = crate::tools::ToolExecutor::new(
             self.app_state.code_intelligence.clone(),
             self.app_state.sqlite_pool.clone(),
+            self.app_state.llm_router.clone(),  // NEW: Pass router for DeepSeek delegation
         );
 
         let project_id = request.project_id.as_deref()

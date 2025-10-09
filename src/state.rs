@@ -94,11 +94,10 @@ impl AppState {
             CONFIG.openai_embedding_model.clone(),
         ));
         
-        // Create router with embedding-based classification
+        // Create router with LLM-based classification (DeepSeek classifies tasks)
         let llm_router = Arc::new(LlmRouter::new(
             deepseek.clone(),
             gpt5.clone(),
-            embedding_client.clone(),
         ));
         
         // Initialize Qdrant multi-store
@@ -116,7 +115,7 @@ impl AppState {
             embedding_client.clone(),
         ));
         
-        info!("✅ System initialized: DeepSeek 3.2 + GPT-5 with embedding-based routing");
+        info!("✅ System initialized: DeepSeek 3.2 + GPT-5 with LLM-based routing");
         
         Ok(Self {
             sqlite_store,

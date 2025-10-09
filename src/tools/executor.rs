@@ -1,56 +1,59 @@
 // src/tools/executor.rs
-// PHASE 3 UPDATE: Added efficiency tools (get_project_context, read_files, write_files)
-// ARTIFACT UPDATE: Added create_artifact and provide_code_fix execution
+// Smart tool executor: GPT-5 calls tools, DeepSeek handles heavy lifting behind the scenes
 
 use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::path::Path;
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
+use crate::llm::router::{LlmRouter, TaskType};
+use crate::llm::provider::Message;
 
 pub struct ToolExecutor {
     code_intelligence: Arc<CodeIntelligenceService>,
     sqlite_pool: SqlitePool,
+    llm_router: Arc<LlmRouter>,  // NEW: For DeepSeek delegation
 }
 
 impl ToolExecutor {
-    pub fn new(code_intelligence: Arc<CodeIntelligenceService>, sqlite_pool: SqlitePool) -> Self {
+    pub fn new(
+        code_intelligence: Arc<CodeIntelligenceService>,
+        sqlite_pool: SqlitePool,
+        llm_router: Arc<LlmRouter>,
+    ) -> Self {
         Self {
             code_intelligence,
             sqlite_pool,
+            llm_router,
         }
     }
 
     /// Execute a tool by name
-    /// PHASE 3: Added get_project_context, read_files, write_files
-    /// ARTIFACT UPDATE: Added create_artifact, provide_code_fix
+    /// Automatically delegates heavy operations to DeepSeek
     pub async fn execute_tool(&self, tool_name: &str, input: &Value, project_id: &str) -> Result<Value> {
         match tool_name {
-            // Artifact tools
+            // Light tools - execute normally
             "create_artifact" => self.execute_create_artifact(input).await,
-            "provide_code_fix" => self.execute_provide_code_fix(input).await,
-            
-            // Existing tools
             "read_file" => self.execute_read_file(input, project_id).await,
-            "search_code" => self.execute_search_code(input, project_id).await,
             "list_files" => self.execute_list_files(input, project_id).await,
-            
-            // Phase 3: Efficiency tools
-            "get_project_context" => self.execute_project_context(input, project_id).await,
             "read_files" => self.execute_read_files(input, project_id).await,
             "write_files" => self.execute_write_files(input, project_id).await,
+            
+            // Heavy tools - delegate to DeepSeek internally
+            "provide_code_fix" => self.execute_code_fix_with_deepseek(input, project_id).await,
+            "search_code" => self.execute_search_with_deepseek(input, project_id).await,
+            "get_project_context" => self.execute_project_context_with_deepseek(input, project_id).await,
             
             _ => Err(anyhow::anyhow!("Unknown tool: {}", tool_name)),
         }
     }
 
-    // ===== ARTIFACT TOOLS =====
+    // ===== LIGHT TOOLS (Execute Normally) =====
 
     /// Create a code artifact with syntax highlighting
-    /// Returns artifact data for Monaco editor display
     async fn execute_create_artifact(&self, input: &Value) -> Result<Value> {
         let title = input.get("title")
             .and_then(|v| v.as_str())
@@ -69,7 +72,6 @@ impl ToolExecutor {
         
         info!("Creating artifact: {} ({})", title, language);
         
-        // Return artifact in format expected by frontend
         Ok(json!({
             "type": "artifact",
             "artifact": {
@@ -82,84 +84,6 @@ impl ToolExecutor {
             "message": format!("Created artifact: {}", title)
         }))
     }
-
-    /// Provide complete code fix for errors
-    /// Returns artifact with fixed file content
-    async fn execute_provide_code_fix(&self, input: &Value) -> Result<Value> {
-        let output = input.get("output")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Code fix provided");
-        
-        let files = input.get("files")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'files' array in code fix"))?;
-        
-        info!("Providing code fix with {} file(s)", files.len());
-        
-        // Convert files to artifact format
-        let mut artifacts = Vec::new();
-        for file in files {
-            let path = file.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Missing 'path' in file"))?;
-            
-            let content = file.get("content")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Missing 'content' in file"))?;
-            
-            let language = file.get("language")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| {
-                    // Infer language from file extension
-                    Path::new(path)
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .and_then(|ext| match ext {
-                            "rs" => Some("rust"),
-                            "ts" => Some("typescript"),
-                            "tsx" => Some("typescript"),
-                            "js" => Some("javascript"),
-                            "jsx" => Some("javascript"),
-                            "py" => Some("python"),
-                            "go" => Some("go"),
-                            "java" => Some("java"),
-                            "cpp" | "cc" | "cxx" => Some("cpp"),
-                            "c" => Some("c"),
-                            "html" => Some("html"),
-                            "css" => Some("css"),
-                            "json" => Some("json"),
-                            "yaml" | "yml" => Some("yaml"),
-                            "sql" => Some("sql"),
-                            "sh" | "bash" => Some("bash"),
-                            "md" => Some("markdown"),
-                            _ => Some("text"),
-                        })
-                        .unwrap_or("text")
-                });
-            
-            artifacts.push(json!({
-                "title": path,
-                "content": content,
-                "language": language,
-                "path": path,
-                "lines": content.lines().count(),
-                "is_fix": true,
-            }));
-        }
-        
-        // Return with analysis metadata if present
-        let analysis = input.get("analysis");
-        
-        Ok(json!({
-            "type": "code_fix",
-            "artifacts": artifacts,
-            "message": output,
-            "analysis": analysis,
-            "file_count": files.len()
-        }))
-    }
-
-    // ===== EXISTING TOOLS =====
 
     async fn execute_read_file(&self, input: &Value, project_id: &str) -> Result<Value> {
         let path = input.get("path")
@@ -174,24 +98,6 @@ impl ToolExecutor {
             "path": path,
             "content": content,
             "lines": content.lines().count()
-        }))
-    }
-
-    async fn execute_search_code(&self, input: &Value, project_id: &str) -> Result<Value> {
-        let query = input.get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'query' parameter"))?;
-
-        info!("Searching code: {}", query);
-        
-        let results = self.code_intelligence
-            .search_elements_for_project(query, project_id, Some(20))
-            .await?;
-
-        Ok(json!({
-            "query": query,
-            "results": results,
-            "count": results.len()
         }))
     }
 
@@ -241,9 +147,7 @@ impl ToolExecutor {
         }))
     }
 
-    /// Try to list files from project's git repository
     async fn try_list_project_repo(&self, path: &str, project_id: &str) -> Result<Option<Vec<Value>>> {
-        // Get git attachment for project
         let attachment = match sqlx::query!(
             r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
             project_id
@@ -252,19 +156,18 @@ impl ToolExecutor {
         .await? {
             Some(att) => att,
             None => {
-                debug!("No git attachment for project {}, will list backend directory", project_id);
+                debug!("No git attachment for project {}", project_id);
                 return Ok(None);
             }
         };
 
         let base_path = Path::new(&attachment.local_path).join(path);
         
-        // Try to read directory
         let mut dir = match tokio::fs::read_dir(&base_path).await {
             Ok(d) => d,
             Err(e) => {
-                debug!("Failed to list project repo directory {}: {}", base_path.display(), e);
-                return Ok(None);  // Trigger fallback
+                debug!("Failed to list project repo directory: {}", e);
+                return Ok(None);
             }
         };
         
@@ -284,19 +187,6 @@ impl ToolExecutor {
         Ok(Some(entries))
     }
 
-    // ===== PHASE 3: EFFICIENCY TOOLS =====
-
-    /// Get complete project overview in one call
-    /// PHASE 3.1: Returns file tree, recent files, languages, code stats
-    async fn execute_project_context(&self, _input: &Value, project_id: &str) -> Result<Value> {
-        info!("Getting complete project context for: {}", project_id);
-        
-        // Delegate to dedicated module
-        crate::tools::project_context::get_project_context(project_id, &self.sqlite_pool).await
-    }
-
-    /// Read multiple files in one batch
-    /// PHASE 3.2: Reduces N file reads to 1 tool call
     async fn execute_read_files(&self, input: &Value, project_id: &str) -> Result<Value> {
         let paths = input.get("paths")
             .and_then(|v| v.as_array())
@@ -336,8 +226,6 @@ impl ToolExecutor {
         }))
     }
 
-    /// Write multiple files in one batch
-    /// PHASE 3.2: Reduces N file writes to 1 tool call
     async fn execute_write_files(&self, input: &Value, project_id: &str) -> Result<Value> {
         let files = input.get("files")
             .and_then(|v| v.as_array())
@@ -345,7 +233,6 @@ impl ToolExecutor {
 
         info!("Writing {} files in batch", files.len());
         
-        // Get git attachment for base path
         let attachment = sqlx::query!(
             r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
             project_id
@@ -370,7 +257,6 @@ impl ToolExecutor {
             
             let full_path = repo_path.join(path);
             
-            // Create parent directories if needed
             if let Some(parent) = full_path.parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
                     results.push(json!({
@@ -405,5 +291,251 @@ impl ToolExecutor {
             "total": files.len(),
             "successful": results.iter().filter(|r| r["success"].as_bool().unwrap_or(false)).count()
         }))
+    }
+
+    // ===== HEAVY TOOLS (Delegate to DeepSeek) =====
+
+    /// Generate code fix using DeepSeek (heavy token operation)
+    async fn execute_code_fix_with_deepseek(&self, input: &Value, project_id: &str) -> Result<Value> {
+        info!("🔧 Delegating code fix generation to DeepSeek");
+        
+        // Extract fix request details
+        let error_message = input.get("error_message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Fix the error in this code");
+        
+        let file_path = input.get("file_path")
+            .and_then(|v| v.as_str());
+        
+        let error_context = input.get("error_context")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        
+        // Load the file if path provided
+        let file_content = if let Some(path) = file_path {
+            match super::file_ops::load_complete_file(&self.sqlite_pool, path, project_id).await {
+                Ok(content) => Some(content),
+                Err(e) => {
+                    warn!("Failed to load file for code fix: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        // Build comprehensive prompt for DeepSeek
+        let prompt = format!(
+            r#"You are fixing a code error. Provide a COMPLETE fixed version of the file.
+
+Error: {}
+
+Error Context:
+{}
+
+{}
+
+Requirements:
+- Provide the COMPLETE fixed file from line 1 to the end
+- Include ALL imports, ALL functions, ALL code
+- Fix the specific error mentioned
+- Do NOT use ellipsis (...) or placeholders
+- Do NOT truncate any code
+- Return only the fixed code, no explanations before or after
+
+Return the complete fixed file:"#,
+            error_message,
+            error_context,
+            if let Some(content) = &file_content {
+                format!("Current File Content:\n```\n{}\n```", content)
+            } else {
+                "No file content provided.".to_string()
+            }
+        );
+        
+        // Call DeepSeek to generate the fix
+        let response = self.llm_router.chat(
+            TaskType::Code,
+            vec![Message {
+                role: "user".to_string(),
+                content: prompt,
+            }],
+            "You are a code fixing assistant. Return complete fixed files with no truncation.".to_string(),
+        ).await?;
+        
+        info!(
+            "✅ DeepSeek generated fix | Tokens: in={} out={} cached={} | {}ms",
+            response.tokens.input,
+            response.tokens.output,
+            response.tokens.cached,
+            response.latency_ms
+        );
+        
+        // Extract code from response (handle code blocks)
+        let fixed_content = if response.content.contains("```") {
+            // Extract from code block
+            response.content
+                .split("```")
+                .nth(1)
+                .map(|block| {
+                    // Skip language identifier line
+                    block.lines().skip(1).collect::<Vec<_>>().join("\n")
+                })
+                .unwrap_or(response.content.clone())
+        } else {
+            response.content.clone()
+        };
+        
+        // Format as artifact
+        let language = file_path
+            .and_then(|p| Path::new(p).extension())
+            .and_then(|ext| ext.to_str())
+            .and_then(|ext| match ext {
+                "rs" => Some("rust"),
+                "ts" | "tsx" => Some("typescript"),
+                "js" | "jsx" => Some("javascript"),
+                "py" => Some("python"),
+                "go" => Some("go"),
+                "java" => Some("java"),
+                _ => Some("text"),
+            })
+            .unwrap_or("text");
+        
+        Ok(json!({
+            "type": "code_fix",
+            "artifacts": [{
+                "title": file_path.unwrap_or("fixed_code"),
+                "content": fixed_content.trim(),
+                "language": language,
+                "path": file_path,
+                "lines": fixed_content.lines().count(),
+                "is_fix": true,
+            }],
+            "message": "Generated code fix",
+            "deepseek_tokens": {
+                "input": response.tokens.input,
+                "output": response.tokens.output,
+                "cached": response.tokens.cached,
+            }
+        }))
+    }
+
+    /// Search code using DeepSeek for large codebases
+    async fn execute_search_with_deepseek(&self, input: &Value, project_id: &str) -> Result<Value> {
+        let query = input.get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'query' parameter"))?;
+
+        info!("Searching code: {}", query);
+        
+        // Get raw search results from code intelligence
+        let raw_results = self.code_intelligence
+            .search_elements_for_project(query, project_id, Some(50))
+            .await?;
+        
+        // If results are small, return directly (no DeepSeek needed)
+        if raw_results.len() <= 10 {
+            return Ok(json!({
+                "query": query,
+                "results": raw_results,
+                "count": raw_results.len(),
+                "source": "direct"
+            }));
+        }
+        
+        info!("🔧 Large result set ({}), using DeepSeek to summarize", raw_results.len());
+        
+        // Use DeepSeek to analyze and summarize large result sets
+        let results_summary = format!(
+            "Found {} code elements matching '{}'. Summarize the most relevant ones:\n\n{}",
+            raw_results.len(),
+            query,
+            serde_json::to_string_pretty(&raw_results)?
+        );
+        
+        let response = self.llm_router.chat(
+            TaskType::Code,
+            vec![Message {
+                role: "user".to_string(),
+                content: results_summary,
+            }],
+            "You are a code search assistant. Summarize search results concisely, focusing on the most relevant findings.".to_string(),
+        ).await?;
+        
+        info!(
+            "✅ DeepSeek summarized search | Tokens: in={} out={}",
+            response.tokens.input,
+            response.tokens.output
+        );
+        
+        Ok(json!({
+            "query": query,
+            "summary": response.content,
+            "total_found": raw_results.len(),
+            "raw_results": raw_results.iter().take(20).collect::<Vec<_>>(),  // Include top 20 raw
+            "source": "deepseek_summarized"
+        }))
+    }
+
+    /// Get project context using DeepSeek to analyze structure
+    async fn execute_project_context_with_deepseek(&self, _input: &Value, project_id: &str) -> Result<Value> {
+        info!("🔧 Delegating project analysis to DeepSeek");
+        
+        // Get basic context first
+        let basic_context = crate::tools::project_context::get_project_context(
+            project_id, 
+            &self.sqlite_pool
+        ).await?;
+        
+        // Check if project is large enough to need DeepSeek analysis
+        let file_count = basic_context.get("file_count")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        
+        // Small projects don't need DeepSeek
+        if file_count < 50 {
+            return Ok(basic_context);
+        }
+        
+        info!("Large project ({} files), using DeepSeek for analysis", file_count);
+        
+        // Use DeepSeek to analyze and summarize project structure
+        let analysis_prompt = format!(
+            r#"Analyze this project structure and provide a concise summary:
+
+{}
+
+Provide:
+1. Project type and main language
+2. Key directories and their purposes
+3. Main entry points
+4. Notable patterns or architecture
+5. Potential areas of concern
+
+Be concise and focus on what's most relevant for understanding the codebase."#,
+            serde_json::to_string_pretty(&basic_context)?
+        );
+        
+        let response = self.llm_router.chat(
+            TaskType::Code,
+            vec![Message {
+                role: "user".to_string(),
+                content: analysis_prompt,
+            }],
+            "You are a code architecture analyst. Provide clear, actionable insights about codebases.".to_string(),
+        ).await?;
+        
+        info!(
+            "✅ DeepSeek analyzed project | Tokens: in={} out={}",
+            response.tokens.input,
+            response.tokens.output
+        );
+        
+        // Combine basic context with DeepSeek analysis
+        let mut result = basic_context;
+        result["analysis"] = json!(response.content);
+        result["analyzed_by"] = json!("deepseek");
+        
+        Ok(result)
     }
 }

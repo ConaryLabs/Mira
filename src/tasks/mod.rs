@@ -108,8 +108,7 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
             
-            // NEW: MessagePipeline uses GPT-5 via router for message analysis
-            // GPT-5 is better at understanding sentiment, intent, and context
+            // MessagePipeline uses GPT-5 for message analysis (Mira's voice everywhere)
             let gpt5_provider = app_state.llm_router.route(TaskType::Chat);
             
             let message_pipeline = MessagePipeline::new(gpt5_provider);

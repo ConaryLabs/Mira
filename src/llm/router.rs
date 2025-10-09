@@ -1,14 +1,17 @@
 // src/llm/router.rs
-// Smart LLM router with embedding-based task classification
+// Smart LLM router with DeepSeek-based task classification
 // DeepSeek 3.2 for code, GPT-5 for reasoning/chat
 
-use crate::llm::provider::{LlmProvider, Message, Response, ToolResponse, ToolContext, OpenAiEmbeddings};
+use crate::llm::provider::{LlmProvider, Message, Response, ToolResponse, ToolContext};
 use crate::llm::provider::deepseek::DeepSeekProvider;
 use crate::llm::provider::gpt5::Gpt5Provider;
 use anyhow::Result;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::{info, debug};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+use tracing::{info, debug, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskType {
@@ -16,19 +19,63 @@ pub enum TaskType {
     Chat,  // GPT-5: Complex reasoning, multi-turn
 }
 
+/// Simple classification cache to avoid redundant API calls
+struct ClassificationCache {
+    cache: HashMap<String, (TaskType, Instant)>,
+    ttl: Duration,
+}
+
+impl ClassificationCache {
+    fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+            ttl: Duration::from_secs(300), // 5 minutes
+        }
+    }
+    
+    fn get(&mut self, key: &str) -> Option<TaskType> {
+        if let Some((task_type, cached_at)) = self.cache.get(key) {
+            if cached_at.elapsed() < self.ttl {
+                debug!("Cache HIT for classification");
+                return Some(*task_type);
+            } else {
+                // Expired
+                self.cache.remove(key);
+            }
+        }
+        None
+    }
+    
+    fn set(&mut self, key: String, task_type: TaskType) {
+        self.cache.insert(key, (task_type, Instant::now()));
+    }
+    
+    fn hash_message(message: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        message.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+}
+
 pub struct LlmRouter {
     deepseek: Arc<DeepSeekProvider>,
     gpt5: Arc<Gpt5Provider>,
-    embedding_client: Arc<OpenAiEmbeddings>,
+    cache: Arc<RwLock<ClassificationCache>>,
 }
 
 impl LlmRouter {
     pub fn new(
         deepseek: Arc<DeepSeekProvider>, 
         gpt5: Arc<Gpt5Provider>,
-        embedding_client: Arc<OpenAiEmbeddings>,
     ) -> Self {
-        Self { deepseek, gpt5, embedding_client }
+        Self { 
+            deepseek, 
+            gpt5,
+            cache: Arc::new(RwLock::new(ClassificationCache::new())),
+        }
     }
     
     /// Route to appropriate provider based on task type
@@ -53,137 +100,69 @@ impl LlmRouter {
         }
     }
     
-    /// Smart task type inference using embeddings + keywords
-    pub async fn infer_task_type(&self, message: &str, has_project: bool) -> Result<TaskType> {
-        // Step 1: Try embedding-based classification
-        match self.classify_with_embeddings(message).await {
+    /// Smart task type inference using DeepSeek (fast, cheap, accurate)
+    pub async fn infer_task_type(&self, message: &str, _has_project: bool) -> Result<TaskType> {
+        // Check cache first
+        let cache_key = ClassificationCache::hash_message(message);
+        {
+            let mut cache = self.cache.write().await;
+            if let Some(cached_type) = cache.get(&cache_key) {
+                return Ok(cached_type);
+            }
+        }
+        
+        // Use DeepSeek to classify (fast: ~200-500ms, cheap: ~$0.00001 per message)
+        match self.classify_with_llm(message).await {
             Ok(task_type) => {
-                debug!("🧠 Embedding-based classification: {:?}", task_type);
-                return Ok(task_type);
+                // Cache the result
+                let mut cache = self.cache.write().await;
+                cache.set(cache_key, task_type);
+                Ok(task_type)
             }
             Err(e) => {
-                debug!("Embedding classification failed, falling back to keywords: {}", e);
+                warn!("LLM classification failed ({}), defaulting to Chat (GPT-5)", e);
+                Ok(TaskType::Chat)  // Safe default - GPT-5 handles everything
             }
         }
-        
-        // Step 2: Fallback to keyword-based classification
-        Ok(self.classify_with_keywords(message, has_project))
     }
     
-    /// Embedding-based classification using prototype examples
-    async fn classify_with_embeddings(&self, message: &str) -> Result<TaskType> {
-        // Prototype examples for each task type
-        let code_prototypes = vec![
-            "Fix this compilation error in the function",
-            "Implement a method to handle user authentication",
-            "Debug this stack trace and find the bug",
-            "Refactor this code to use async/await",
-            "error[E0308]: mismatched types in main.rs",
-        ];
+    /// LLM-based classification using DeepSeek
+    async fn classify_with_llm(&self, message: &str) -> Result<TaskType> {
+        let classification_prompt = format!(
+            r#"Classify this user message as either "code" or "chat".
+
+Message: "{}"
+
+Classification rules:
+- "code": Programming tasks, debugging, implementation, fixing errors, refactoring, writing code
+- "chat": Explanations, discussions, reasoning, opinions, advice, general questions, understanding concepts
+
+Respond with ONLY one word: code or chat"#,
+            message.chars().take(500).collect::<String>() // Truncate long messages
+        );
         
-        let chat_prototypes = vec![
-            "Explain how this algorithm works",
-            "What do you think about this approach?",
-            "Help me understand the trade-offs here",
-            "Walk me through the architecture decisions",
-            "Discuss the pros and cons of microservices",
-        ];
+        let response = self.deepseek.chat(
+            vec![Message {
+                role: "user".to_string(),
+                content: classification_prompt,
+            }],
+            "You are a task classifier. Respond with only the word 'code' or 'chat'.".to_string(),
+        ).await?;
         
-        // Embed the user message
-        let message_embedding = self.embedding_client.embed(message).await?;
+        let classification = response.content.trim().to_lowercase();
         
-        // Calculate average similarity to code prototypes
-        let mut code_similarities = Vec::new();
-        for prototype in &code_prototypes {
-            let proto_embedding = self.embedding_client.embed(prototype).await?;
-            let similarity = cosine_similarity(&message_embedding, &proto_embedding);
-            code_similarities.push(similarity);
-        }
-        let avg_code_sim = code_similarities.iter().sum::<f32>() / code_similarities.len() as f32;
-        
-        // Calculate average similarity to chat prototypes
-        let mut chat_similarities = Vec::new();
-        for prototype in &chat_prototypes {
-            let proto_embedding = self.embedding_client.embed(prototype).await?;
-            let similarity = cosine_similarity(&message_embedding, &proto_embedding);
-            chat_similarities.push(similarity);
-        }
-        let avg_chat_sim = chat_similarities.iter().sum::<f32>() / chat_similarities.len() as f32;
-        
-        // Decision threshold: need clear signal (>0.05 difference)
-        let diff = (avg_code_sim - avg_chat_sim).abs();
-        
-        if diff < 0.05 {
-            // Too close to call - let keywords decide
-            return Err(anyhow::anyhow!("Ambiguous: code_sim={:.3}, chat_sim={:.3}", avg_code_sim, avg_chat_sim));
-        }
-        
-        if avg_code_sim > avg_chat_sim {
-            debug!("Code prototypes match better: {:.3} vs {:.3}", avg_code_sim, avg_chat_sim);
-            Ok(TaskType::Code)
-        } else {
-            debug!("Chat prototypes match better: {:.3} vs {:.3}", avg_chat_sim, avg_code_sim);
-            Ok(TaskType::Chat)
-        }
-    }
-    
-    /// Keyword-based classification (fallback)
-    fn classify_with_keywords(&self, message: &str, has_project: bool) -> TaskType {
-        let lower = message.to_lowercase();
-        
-        // Code indicators (strong signals)
-        let code_keywords = [
-            "error[", "error:", "warning:",  // Compiler errors
-            "fix", "refactor", "implement", "function", "method",
-            "class", "struct", "enum", "trait", "impl",
-            "bug", "compile", "syntax", "type error",
-            "import", "export", "async", "await", "return",
-            "fn ", "let ", "const ", "var ", "def ", "func ",
-            "cargo", "npm", "pip", "go build",
-            "undefined reference", "cannot find", "expected", "found",
-            "stack trace", "panic", "segfault",
-        ];
-        
-        // Chat indicators (reasoning/explanation)
-        let chat_keywords = [
-            "explain", "what is", "why does", "how does", "when should",
-            "tell me about", "describe", "discuss", "analyze",
-            "compare", "evaluate", "consider", "think about",
-            "what do you think", "your opinion", "advice",
-            "help me understand", "walk me through",
-        ];
-        
-        // Count matches for each category
-        let code_score = code_keywords.iter()
-            .filter(|kw| lower.contains(*kw))
-            .count();
-        
-        let chat_score = chat_keywords.iter()
-            .filter(|kw| lower.contains(*kw))
-            .count();
-        
-        // Decision logic
-        if code_score > chat_score {
-            debug!("Detected Code task (score: {} vs {})", code_score, chat_score);
-            TaskType::Code
-        } else if chat_score > code_score {
-            debug!("Detected Chat task (score: {} vs {})", chat_score, code_score);
-            TaskType::Chat
-        } else {
-            // Tie: check for explicit code patterns
-            if lower.contains("```") || lower.contains("error[") || lower.contains("fix this") {
-                debug!("Detected Code task (code block/error pattern)");
-                TaskType::Code
-            } else {
-                // Project context can hint at code work
-                if has_project && code_score >= 1 {
-                    debug!("Defaulting to Code (has project context)");
-                    TaskType::Code
-                } else {
-                    // Default to Chat (GPT-5 for quality)
-                    debug!("Defaulting to Chat (ambiguous, prefer quality)");
-                    TaskType::Chat
-                }
+        match classification.as_str() {
+            c if c.contains("code") => {
+                debug!("🤖 DeepSeek classified as: Code");
+                Ok(TaskType::Code)
+            }
+            c if c.contains("chat") => {
+                debug!("🤖 DeepSeek classified as: Chat");
+                Ok(TaskType::Chat)
+            }
+            _ => {
+                // Response unclear, use keywords as fallback
+                Err(anyhow::anyhow!("Unclear classification response: '{}'", classification))
             }
         }
     }
@@ -251,8 +230,8 @@ impl LlmRouter {
             
             debug!("Processing {} function calls", response.function_calls.len());
             
-            // For GPT-5, set previous_response_id for next call
-            if matches!(self.route(task_type).as_ref(), gpt5) {
+            // For GPT-5 (Chat tasks), set previous_response_id for next call
+            if task_type == TaskType::Chat {
                 context = Some(ToolContext::Gpt5 {
                     previous_response_id: response.id.clone(),
                 });
@@ -273,21 +252,4 @@ impl LlmRouter {
         
         Err(anyhow::anyhow!("Max iterations reached without completion"))
     }
-}
-
-/// Calculate cosine similarity between two embeddings
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-    
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let magnitude_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let magnitude_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    
-    if magnitude_a == 0.0 || magnitude_b == 0.0 {
-        return 0.0;
-    }
-    
-    dot_product / (magnitude_a * magnitude_b)
 }
