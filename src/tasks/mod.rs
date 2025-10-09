@@ -12,6 +12,7 @@ use sqlx::Row;
 
 use crate::memory::features::decay;
 use crate::memory::features::message_pipeline::MessagePipeline;
+use crate::llm::router::TaskType;  // NEW: Import TaskType
 use crate::state::AppState;
 
 pub mod config;
@@ -107,10 +108,11 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
             
-            // MessagePipeline handles comprehensive context gathering and LLM analysis
-            let message_pipeline = MessagePipeline::new(
-                app_state.llm.clone(),
-            );
+            // NEW: MessagePipeline uses GPT-5 via router for message analysis
+            // GPT-5 is better at understanding sentiment, intent, and context
+            let gpt5_provider = app_state.llm_router.route(TaskType::Chat);
+            
+            let message_pipeline = MessagePipeline::new(gpt5_provider);
 
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -319,41 +321,32 @@ async fn get_active_sessions(app_state: &Arc<AppState>) -> anyhow::Result<Vec<St
     .fetch_all(pool)
     .await?;
     
-    let sessions: Vec<String> = rows
-        .iter()
-        .map(|row| row.get("session_id"))
-        .collect();
-    
-    Ok(sessions)
+    Ok(rows.iter()
+        .filter_map(|row| row.try_get::<String, _>("session_id").ok())
+        .collect())
 }
 
-/// Get all sessions with message counts for summary processing
-/// No pre-filtering - let SummarizationEngine decide what needs summarizing
+/// Check which sessions might need summarization
 async fn check_summary_candidates(app_state: &Arc<AppState>) -> anyhow::Result<Vec<(String, usize)>> {
     let pool = &app_state.sqlite_store.pool;
     
-    // Return all sessions with their message counts
-    // SummarizationEngine has full control over threshold logic
     let rows = sqlx::query(
         r#"
-        SELECT session_id, COUNT(*) as message_count
+        SELECT session_id, COUNT(*) as count
         FROM memory_entries
-        WHERE role IN ('user', 'assistant')
+        WHERE timestamp > datetime('now', '-7 days')
         GROUP BY session_id
-        ORDER BY message_count DESC
+        HAVING COUNT(*) >= 10
         "#
     )
     .fetch_all(pool)
     .await?;
     
-    let candidates: Vec<(String, usize)> = rows
-        .iter()
-        .map(|row| {
-            let session_id: String = row.get("session_id");
-            let count: i64 = row.get("message_count");
-            (session_id, count as usize)
+    Ok(rows.iter()
+        .filter_map(|row| {
+            let session_id: String = row.try_get("session_id").ok()?;
+            let count: i64 = row.try_get("count").ok()?;
+            Some((session_id, count as usize))
         })
-        .collect();
-    
-    Ok(candidates)
+        .collect())
 }

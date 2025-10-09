@@ -1,5 +1,5 @@
 // src/api/ws/chat/unified_handler.rs
-// Unified chat handler with tool execution loop
+// Unified chat handler with tool execution loop + LlmRouter
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,6 +13,7 @@ use crate::llm::structured::{CompleteResponse, has_tool_calls, extract_claude_co
 use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
 use crate::llm::provider::Message;
+use crate::llm::router::TaskType;  // NEW: Import task type for routing
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
@@ -97,6 +98,36 @@ impl UnifiedChatHandler {
         self.handle_chat_with_tools(request).await
     }
     
+    // NEW: Infer task type from user message content
+    fn infer_task_type(content: &str, has_project: bool) -> TaskType {
+        let lower = content.to_lowercase();
+        
+        // Code keywords strongly suggest code tasks
+        let code_keywords = [
+            "fix", "error", "bug", "compile", "function", "class", "method",
+            "implement", "refactor", "optimize", "debug", "code", "syntax",
+            "trait", "struct", "enum", "impl", "fn", "async", "await",
+            "import", "export", "const", "let", "var", "return"
+        ];
+        
+        let code_score = code_keywords.iter()
+            .filter(|&keyword| lower.contains(keyword))
+            .count();
+        
+        // If project context + code keywords, it's definitely code
+        if has_project && code_score >= 2 {
+            return TaskType::Code;
+        }
+        
+        // Strong code signal even without project
+        if code_score >= 3 {
+            return TaskType::Code;
+        }
+        
+        // Default to Chat for everything else (GPT-5 for reasoning)
+        TaskType::Chat
+    }
+    
     async fn handle_chat_with_tools(
         &self,
         request: ChatRequest,
@@ -133,6 +164,10 @@ impl UnifiedChatHandler {
             vec![get_response_tool_schema()]
         };
         
+        // NEW: Infer task type for router
+        let task_type = Self::infer_task_type(&request.content, request.project_id.is_some());
+        info!("🎯 Task type inferred: {:?}", task_type);
+        
         // Build message history
         let mut chat_messages = Vec::new();
         for entry in context.recent.iter().rev() {
@@ -154,12 +189,24 @@ impl UnifiedChatHandler {
         for iteration in 0..50 {
             info!("Tool loop iteration {}", iteration);
             
-            let raw_response = self.app_state.llm.chat_with_tools(
+            // NEW: Use router instead of direct LLM call (correct arg order)
+            let raw_response = self.app_state.llm_router.chat_with_tools(
+                task_type,
                 chat_messages.clone(),
                 system_prompt.clone(),
                 tools.clone(),
                 None,
             ).await?;
+            
+            // NEW: Log tokens (ToolResponse has .tokens field)
+            info!(
+                "🤖 Tokens: in={} out={} reasoning={} cached={} | latency={}ms",
+                raw_response.tokens.input,
+                raw_response.tokens.output,
+                raw_response.tokens.reasoning,
+                raw_response.tokens.cached,
+                raw_response.latency_ms
+            );
             
             // Check if response has tool calls
             if !has_tool_calls(&raw_response) {
@@ -222,8 +269,6 @@ impl UnifiedChatHandler {
                 
                 // Check for respond_to_user (final response)
                 if tool_name == "respond_to_user" {
-                    // FIXED: Removed unused found_respond variable - we return immediately anyway
-                    
                     let structured = extract_claude_content_from_tool(&raw_response)?;
                     let metadata = extract_claude_metadata(&raw_response, 0)?;
                     
