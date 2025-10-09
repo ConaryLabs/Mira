@@ -75,8 +75,22 @@ pub async fn process_embeddings(
         return Ok(());
     }
     
+    // FIXED: Truncate content to avoid OpenAI's 8192 token limit
+    // OpenAI's text-embedding-3-large has 8192 token limit
+    // Rough estimate: 1 token ≈ 4 characters, so 8192 tokens ≈ 32768 chars
+    // We'll be conservative and cap at 30000 characters
+    let content_to_embed = if response.output.len() > 30000 {
+        warn!(
+            "Message {} content too long ({} chars), truncating to 30000 for embedding",
+            message_id, response.output.len()
+        );
+        &response.output[..30000]
+    } else {
+        &response.output
+    };
+    
     // Generate embedding for the message content
-    let embedding = match embedding_client.embed(&response.output).await {
+    let embedding = match embedding_client.embed(content_to_embed).await {
         Ok(emb) => emb,
         Err(e) => {
             warn!("Failed to generate embedding for message {}: {}", message_id, e);
@@ -85,9 +99,10 @@ pub async fn process_embeddings(
     };
     
     info!(
-        "Generated embedding for message {} (dimension: {})",
+        "Generated embedding for message {} (dimension: {}, content length: {})",
         message_id,
-        embedding.len()
+        embedding.len(),
+        content_to_embed.len()
     );
     
     // Store in each routed head
@@ -287,7 +302,6 @@ async fn insert_llm_metadata(
     message_id: i64,
     metadata: &LLMMetadata,
 ) -> Result<()> {
-    // FIXED: Use correct field names from LLMMetadata struct
     sqlx::query!(
         r#"
         INSERT INTO llm_metadata (
@@ -298,9 +312,9 @@ async fn insert_llm_metadata(
         "#,
         message_id,
         metadata.model_version,
-        metadata.prompt_tokens,  // LLMMetadata uses prompt_tokens
-        metadata.completion_tokens,  // LLMMetadata uses completion_tokens
-        metadata.thinking_tokens,  // FIXED: Use metadata.thinking_tokens not response.tokens
+        metadata.prompt_tokens,
+        metadata.completion_tokens,
+        metadata.thinking_tokens,
         metadata.total_tokens,
         metadata.latency_ms,
         metadata.latency_ms,
@@ -315,12 +329,13 @@ async fn insert_llm_metadata(
     Ok(())
 }
 
-pub async fn load_structured_response(
-    pool: &SqlitePool,
-    message_id: i64,
-) -> Result<Option<CompleteResponse>> {
+pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Result<Option<CompleteResponse>> {
     let memory_row = match sqlx::query!(
-        "SELECT session_id, response_id, content, timestamp, tags FROM memory_entries WHERE id = ?",
+        r#"
+        SELECT id, session_id, response_id, role, content, timestamp
+        FROM memory_entries
+        WHERE id = ?
+        "#,
         message_id
     )
     .fetch_optional(pool)
@@ -331,9 +346,10 @@ pub async fn load_structured_response(
 
     let analysis_row = match sqlx::query!(
         r#"
-        SELECT mood, intensity, salience, intent, topics, summary, relationship_impact,
-               contains_code, language, programming_lang, routed_to_heads
-        FROM message_analysis WHERE message_id = ?
+        SELECT mood, intensity, salience, original_salience, intent, topics, summary,
+               relationship_impact, contains_code, language, programming_lang, routed_to_heads
+        FROM message_analysis
+        WHERE message_id = ?
         "#,
         message_id
     )
@@ -347,7 +363,8 @@ pub async fn load_structured_response(
         r#"
         SELECT model_version, input_tokens, output_tokens, thinking_tokens,
                total_tokens, latency_ms, finish_reason, temperature, max_tokens
-        FROM llm_metadata WHERE message_id = ?
+        FROM llm_metadata
+        WHERE message_id = ?
         "#,
         message_id
     )
@@ -379,7 +396,7 @@ pub async fn load_structured_response(
             summary: analysis_row.summary,
             relationship_impact: analysis_row.relationship_impact,
             programming_lang: analysis_row.programming_lang,
-            contains_error: false,  // Not stored in DB for old messages
+            contains_error: false,
             error_type: None,
             error_severity: None,
             error_file: None,
@@ -393,7 +410,7 @@ pub async fn load_structured_response(
         response_id: memory_row.response_id,
         prompt_tokens: metadata_row.input_tokens.map(|v| v as i64),
         completion_tokens: metadata_row.output_tokens.map(|v| v as i64),
-        thinking_tokens: metadata_row.thinking_tokens.map(|v| v as i64),  // FIXED: Use metadata_row not undefined row
+        thinking_tokens: metadata_row.thinking_tokens.map(|v| v as i64),
         total_tokens: metadata_row.total_tokens.map(|v| v as i64),
         latency_ms: metadata_row.latency_ms.unwrap_or(0) as i64,
         finish_reason: metadata_row.finish_reason,
@@ -415,6 +432,18 @@ pub async fn load_structured_response(
     }))
 }
 
+#[derive(Debug, Clone)]
+pub struct ResponseStatistics {
+    pub total_responses: i64,
+    pub avg_tokens: f64,
+    pub avg_latency_ms: f64,
+    pub max_tokens: i64,
+    pub min_tokens: i64,
+}
+
+// Backwards compatibility alias
+pub type StructuredResponseStats = ResponseStatistics;
+
 pub async fn get_response_statistics(pool: &SqlitePool) -> Result<ResponseStatistics> {
     let stats_row = sqlx::query!(
         r#"
@@ -432,22 +461,10 @@ pub async fn get_response_statistics(pool: &SqlitePool) -> Result<ResponseStatis
     .await?;
 
     Ok(ResponseStatistics {
-        total_responses: stats_row.total_responses as u64,
+        total_responses: stats_row.total_responses as i64,
         avg_tokens: stats_row.avg_tokens.unwrap_or(0.0),
         avg_latency_ms: stats_row.avg_latency_ms.unwrap_or(0.0),
-        max_tokens: stats_row.max_tokens.unwrap_or(0) as u32,
-        min_tokens: stats_row.min_tokens.unwrap_or(0) as u32,
+        max_tokens: stats_row.max_tokens.unwrap_or(0) as i64,
+        min_tokens: stats_row.min_tokens.unwrap_or(0) as i64,
     })
 }
-
-#[derive(Debug)]
-pub struct ResponseStatistics {
-    pub total_responses: u64,
-    pub avg_tokens: f64,
-    pub avg_latency_ms: f64,
-    pub max_tokens: u32,
-    pub min_tokens: u32,
-}
-
-pub type StructuredResponseStats = ResponseStatistics;
-pub use get_response_statistics as get_structured_response_stats;

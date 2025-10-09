@@ -12,6 +12,7 @@ use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
 use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence, documents};
 use crate::state::AppState;
+use crate::config::CONFIG; // NEW: use configured session id
 
 pub struct MessageRouter {
     app_state: Arc<AppState>,
@@ -77,8 +78,9 @@ impl MessageRouter {
     ) -> Result<()> {
         info!("Processing chat message from {}", self.addr);
 
+        // Use configured session id instead of hardcoded one
         let request = ChatRequest {
-            session_id: "peter-eternal".to_string(),
+            session_id: CONFIG.session_id.clone(),
             content,
             project_id,
             metadata,
@@ -104,6 +106,21 @@ impl MessageRouter {
         &self,
         complete_response: crate::llm::structured::CompleteResponse,
     ) -> Result<()> {
+        // Emit artifact-created events explicitly so the frontend can pop the viewer
+        if let Some(ref artifacts) = complete_response.artifacts {
+            for artifact in artifacts {
+                self.connection
+                    .send_message(WsServerMessage::Data {
+                        data: json!({
+                            "type": "artifact_created",
+                            "artifact": artifact,
+                        }),
+                        request_id: None,
+                    })
+                    .await?;
+            }
+        }
+
         let response_data = json!({
             "content": complete_response.structured.output,
             "analysis": {

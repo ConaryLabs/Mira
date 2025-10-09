@@ -9,6 +9,9 @@ use serde_json::{json, Value};
 use std::time::Instant;
 use tracing::{debug, error, info};
 
+// Use global config for logging controls
+use crate::config::CONFIG;
+
 pub struct Gpt5Provider {
     client: Client,
     api_key: String,
@@ -67,11 +70,17 @@ impl Gpt5Provider {
                 // Copy all fields from the nested "function" object
                 if let Some(obj) = function.as_object() {
                     for (key, value) in obj {
-                        flattened[key] = value.clone();
+                        // NOTE: serde_json::Value doesn't provide direct index assignment on a temporary,
+                        // so we build a mutable object map when needed.
                     }
                 }
                 
-                return flattened;
+                // A safer flatten: clone and then set type
+                let mut out = function.clone();
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert("type".to_string(), json!("function"));
+                }
+                return out;
             }
         }
         
@@ -148,8 +157,12 @@ impl Gpt5Provider {
     
     /// Extract text from Responses API (multiple fallback paths)
     fn extract_text(&self, response: &Value) -> String {
-        // 🔥 DUMP THE ENTIRE RESPONSE FIRST
-        error!("🔥 RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
+        // 🔥 DUMP THE ENTIRE RESPONSE (gated by debug flag)
+        if CONFIG.debug_logging {
+            error!("🔥 RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
+        } else {
+            debug!("RAW GPT-5 RESPONSE (truncated log)");
+        }
         
         // FIRST: Check for structured JSON output (when using json_schema)
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
@@ -218,28 +231,71 @@ impl Gpt5Provider {
         "".to_string()
     }
     
-    /// Extract function calls from Responses API
+    /// Helper: parse arguments which may be a JSON object or a stringified JSON
+    fn parse_arguments_value(args_val: &Value) -> Option<Value> {
+        if args_val.is_object() {
+            return Some(args_val.clone());
+        }
+        if let Some(s) = args_val.as_str() {
+            if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+                return Some(parsed);
+            }
+        }
+        None
+    }
+
+    /// Extract function calls from Responses API (robust to schema variants)
     fn extract_function_calls(&self, response: &Value) -> Vec<FunctionCall> {
         let mut calls = Vec::new();
         
-        // Check output array for tool_use items
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
             for item in output_array {
-                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                    if let (Some(id), Some(name), Some(args)) = (
-                        item.get("call_id").and_then(|i| i.as_str()),
-                        item.get("name").and_then(|n| n.as_str()),
-                        item.get("arguments").and_then(|a| a.as_str())
-                    ) {
-                        // Parse arguments JSON string
-                        if let Ok(parsed_args) = serde_json::from_str::<Value>(args) {
-                            calls.push(FunctionCall {
-                                id: id.to_string(),
-                                name: name.to_string(),
-                                arguments: parsed_args,
-                            });
+                let item_type = item.get("type").and_then(|t| t.as_str());
+                match item_type {
+                    // Top-level function/tool call variants
+                    Some("function_call") | Some("tool_call") => {
+                        let id = item.get("call_id")
+                            .or_else(|| item.get("id"))
+                            .and_then(|v| v.as_str());
+                        let name = item.get("name").and_then(|v| v.as_str());
+                        let args_val = item.get("arguments");
+
+                        if let (Some(id), Some(name), Some(args_val)) = (id, name, args_val) {
+                            if let Some(arguments) = Self::parse_arguments_value(args_val) {
+                                calls.push(FunctionCall {
+                                    id: id.to_string(),
+                                    name: name.to_string(),
+                                    arguments,
+                                });
+                            }
                         }
                     }
+                    // Message content may contain tool uses
+                    Some("message") => {
+                        if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                            for content in content_array {
+                                let ctype = content.get("type").and_then(|t| t.as_str());
+                                if matches!(ctype, Some("tool_use") | Some("function_call")) {
+                                    let id = content.get("id")
+                                        .or_else(|| content.get("call_id"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let name = content.get("name").and_then(|v| v.as_str());
+                                    let args_val = content.get("arguments").or_else(|| content.get("input"));
+                                    if let (Some(name), Some(args_val)) = (name, args_val) {
+                                        if let Some(arguments) = Self::parse_arguments_value(args_val) {
+                                            calls.push(FunctionCall {
+                                                id: id.to_string(),
+                                                name: name.to_string(),
+                                                arguments,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

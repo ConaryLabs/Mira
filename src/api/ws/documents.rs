@@ -12,6 +12,7 @@ use crate::{
     api::{error::ApiError, ws::message::WsServerMessage},
     memory::features::document_processing::DocumentProcessor,
     state::AppState,
+    config::CONFIG, // Use unified config for Qdrant URL
 };
 
 /// Document command request structure
@@ -97,9 +98,8 @@ pub struct DocumentHandler {
 impl DocumentHandler {
     /// Create a new document handler
     pub fn new(state: Arc<AppState>) -> Self {
-        // Create Qdrant client using the same URL from config
-        let qdrant_url = std::env::var("MIRA_QDRANT_URL")
-            .unwrap_or_else(|_| "http://localhost:6334".to_string());
+        // Use unified CONFIG for Qdrant URL to avoid env var drift
+        let qdrant_url = CONFIG.qdrant_url.clone();
         
         let qdrant_client = qdrant_client::Qdrant::from_url(&qdrant_url)
             .build()
@@ -281,11 +281,8 @@ impl DocumentHandler {
     
     /// Handle document list
     async fn handle_list(&self, params: ListParams) -> Result<WsServerMessage> {
-        // Create Qdrant client using the same URL from config
-        let qdrant_url = std::env::var("MIRA_QDRANT_URL")
-            .unwrap_or_else(|_| "http://localhost:6334".to_string());
-        
-        let qdrant_client = qdrant_client::Qdrant::from_url(&qdrant_url)
+        // Use unified CONFIG for Qdrant URL (avoid env var mismatch)
+        let qdrant_client = qdrant_client::Qdrant::from_url(&CONFIG.qdrant_url)
             .build()
             .expect("Failed to create Qdrant client");
         

@@ -322,6 +322,21 @@ impl UnifiedChatHandler {
             .as_object()
             .ok_or_else(|| anyhow!("Missing 'analysis' field"))?;
         
+        // FIXED: Never allow empty routed_to_heads - always default to semantic
+        let routed_to_heads = {
+            let heads = analysis_obj["routed_to_heads"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_else(|| vec![]);
+            
+            // If GPT-5 returns empty array, default to semantic
+            if heads.is_empty() {
+                vec!["semantic".to_string()]
+            } else {
+                heads
+            }
+        };
+        
         let analysis = MessageAnalysis {
             salience: analysis_obj["salience"].as_f64().unwrap_or(0.5),
             topics: analysis_obj["topics"]
@@ -332,10 +347,7 @@ impl UnifiedChatHandler {
             programming_lang: analysis_obj["programming_lang"].as_str().map(String::from),
             contains_error: analysis_obj["contains_error"].as_bool().unwrap_or(false),
             error_type: analysis_obj["error_type"].as_str().map(String::from),
-            routed_to_heads: analysis_obj["routed_to_heads"]
-                .as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_else(|| vec!["semantic".to_string()]),
+            routed_to_heads,
             language: analysis_obj["language"]
                 .as_str()
                 .unwrap_or("en")
