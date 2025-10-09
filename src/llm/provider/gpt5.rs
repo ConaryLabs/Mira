@@ -53,16 +53,70 @@ impl Gpt5Provider {
         input
     }
     
-    /// Build Responses API request body
-    /// FIXED: Parameters moved to nested structure in new API
-    /// - verbosity -> text.verbosity
-    /// - reasoning_effort -> reasoning.effort
+    /// Flatten tool schema from OpenAI Chat Completions format to Responses API format
+    /// Chat Completions: {"type": "function", "function": {"name": "...", ...}}
+    /// Responses API:    {"type": "function", "name": "...", ...}
+    fn flatten_tool_schema(&self, tool: &Value) -> Value {
+        if tool["type"] == "function" {
+            if let Some(function) = tool.get("function") {
+                // Flatten: pull everything from "function" up to the top level
+                let mut flattened = json!({
+                    "type": "function"
+                });
+                
+                // Copy all fields from the nested "function" object
+                if let Some(obj) = function.as_object() {
+                    for (key, value) in obj {
+                        flattened[key] = value.clone();
+                    }
+                }
+                
+                return flattened;
+            }
+        }
+        
+        // Return as-is if not a nested function tool (e.g., custom tools)
+        tool.clone()
+    }
+    
+    /// Build Responses API request body with structured output
     fn build_request(&self, messages: Vec<Message>, system: String, tools: Option<Vec<Value>>) -> Value {
         let mut body = json!({
             "model": self.model,
             "input": self.format_input(messages, system),
             "text": {
-                "verbosity": self.verbosity
+                "verbosity": self.verbosity,
+                "format": {
+                    "type": "json_schema",
+                    "name": "response_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "output": {
+                                "type": "string",
+                                "description": "Your response to the user"
+                            },
+                            "analysis": {
+                                "type": "object",
+                                "properties": {
+                                    "salience": {"type": "number"},
+                                    "topics": {"type": "array", "items": {"type": "string"}},
+                                    "contains_code": {"type": "boolean"},
+                                    "programming_lang": {"type": ["string", "null"]},
+                                    "contains_error": {"type": "boolean"},
+                                    "error_type": {"type": ["string", "null"]},
+                                    "routed_to_heads": {"type": "array", "items": {"type": "string"}},
+                                    "language": {"type": "string"}
+                                },
+                                "required": ["salience", "topics", "contains_code", "programming_lang", "contains_error", "error_type", "routed_to_heads", "language"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": ["output", "analysis"],
+                        "additionalProperties": false
+                    },
+                    "strict": true
+                }
             },
             "reasoning": {
                 "effort": self.reasoning
@@ -71,7 +125,22 @@ impl Gpt5Provider {
         });
         
         if let Some(tools) = tools {
-            body["tools"] = json!(tools);
+            // Flatten and add tools for file operations, code search, etc.
+            let flattened_tools: Vec<Value> = tools.iter()
+                .filter(|t| {
+                    // Skip respond_to_user - we use structured output instead
+                    if let Some(name) = t.pointer("/function/name").or_else(|| t.get("name")) {
+                        name.as_str() != Some("respond_to_user")
+                    } else {
+                        true
+                    }
+                })
+                .map(|t| self.flatten_tool_schema(t))
+                .collect();
+            
+            if !flattened_tools.is_empty() {
+                body["tools"] = Value::Array(flattened_tools);
+            }
         }
         
         body
@@ -79,14 +148,20 @@ impl Gpt5Provider {
     
     /// Extract text from Responses API (multiple fallback paths)
     fn extract_text(&self, response: &Value) -> String {
-        // PRIMARY: output[1].content[0].text (output[0]=reasoning, output[1]=message)
+        // FIRST: Check for structured JSON output (when using json_schema)
+        // The output array contains the structured JSON directly
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
             for item in output_array {
+                // Type "message" with JSON content
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
                     if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
-                        if let Some(first_content) = content_array.first() {
-                            if let Some(text) = first_content.get("text").and_then(|t| t.as_str()) {
-                                return text.to_string();
+                        for content in content_array {
+                            // Look for output_text type (structured JSON)
+                            if content.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                                if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
+                                    debug!("Found structured JSON in output_text");
+                                    return text.to_string();
+                                }
                             }
                         }
                     }
@@ -210,6 +285,10 @@ impl LlmProvider for Gpt5Provider {
         let start = Instant::now();
         let mut body = self.build_request(messages.clone(), system.clone(), Some(tools.clone()));
         
+        // CRITICAL: Force tool usage - GPT-5 will skip tools if not required
+        // This ensures respond_to_user is always called
+        body["tool_choice"] = json!("required");
+        
         // KEY FEATURE: Use previous_response_id for multi-turn
         // This preserves reasoning context and saves tokens
         if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
@@ -221,7 +300,7 @@ impl LlmProvider for Gpt5Provider {
             body["input"] = json!([]);
         }
         
-        debug!("GPT-5 tool request: {} tools", tools.len());
+        debug!("GPT-5 tool request: {} tools, tool_choice=required", tools.len());
         
         let response = self.client
             .post("https://api.openai.com/v1/responses")
