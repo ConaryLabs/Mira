@@ -21,6 +21,7 @@ reqwest = { version = "0.12.4", features = ["json", "rustls-tls", "stream", "mul
 
 # Database
 sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
+libsqlite3-sys = { version = "0.27", features = ["bundled"] }
 
 # Core utilities
 dotenv = "0.15.0"

@@ -255,16 +255,23 @@ impl SummaryStorage {
     }
 
     /// Get latest summary of each type for context
+    /// FIXED: SQLite doesn't support DISTINCT ON - using subquery instead
     pub async fn get_latest_summaries(&self, session_id: &str) -> Result<Vec<SummaryRecord>> {
         let rows = sqlx::query(
             r#"
-            SELECT DISTINCT ON (summary_type) 
-                id, summary_type, summary_text, message_count, created_at
+            SELECT id, summary_type, summary_text, message_count, created_at
             FROM rolling_summaries 
             WHERE session_id = ? 
-            ORDER BY summary_type, created_at DESC
+              AND id IN (
+                SELECT MAX(id)
+                FROM rolling_summaries
+                WHERE session_id = ?
+                GROUP BY summary_type
+              )
+            ORDER BY created_at DESC
             "#
         )
+        .bind(session_id)
         .bind(session_id)
         .fetch_all(self.sqlite_store.get_pool())
         .await?;

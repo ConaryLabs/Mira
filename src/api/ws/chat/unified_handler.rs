@@ -103,12 +103,18 @@ impl UnifiedChatHandler {
         &self,
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
+        eprintln!("1. Starting handle_chat_with_tools");
+        
         // Save user message
         let user_message_id = self.save_user_message(&request).await?;
+        eprintln!("2. User message saved: {}", user_message_id);
         
         // Build context
         let context = self.build_context(&request.session_id, &request.content).await?;
+        eprintln!("3. Context built - recent: {}, semantic: {}", context.recent.len(), context.semantic.len());
+        
         let persona = self.select_persona(&request.metadata);
+        eprintln!("4. Persona selected");
         
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
@@ -117,6 +123,7 @@ impl UnifiedChatHandler {
             request.metadata.as_ref(),
             request.project_id.as_deref(),
         );
+        eprintln!("5. System prompt built - length: {}", system_prompt.len());
         
         // Define tools
         let tools = if request.project_id.is_some() {
@@ -134,6 +141,7 @@ impl UnifiedChatHandler {
         } else {
             vec![get_response_tool_schema()]
         };
+        eprintln!("6. Tools defined: {}", tools.len());
         
         // Build message history
         let mut chat_messages = Vec::new();
@@ -147,16 +155,20 @@ impl UnifiedChatHandler {
             role: "user".to_string(),
             content: request.content.clone(),
         });
+        eprintln!("7. Message history built: {} messages", chat_messages.len());
         
         // Initialize cache and artifacts
         let mut tool_cache = SessionToolCache::new();
         let mut collected_artifacts: Vec<Value> = Vec::new();
+        
+        eprintln!("8. About to enter tool loop");
         
         // ALWAYS use GPT-5 (Mira's voice)
         info!("🎙️ Mira (GPT-5) handling conversation");
         
         // Tool execution loop (50 iterations max)
         for iteration in 0..50 {
+            eprintln!("9. Tool loop iteration {}", iteration);
             info!("Tool loop iteration {}", iteration);
             
             // Always call GPT-5 - Mira decides what to do
@@ -167,6 +179,8 @@ impl UnifiedChatHandler {
                 tools.clone(),
                 None,
             ).await?;
+            
+            eprintln!("10. Got LLM response");
             
             // Log tokens
             info!(
@@ -366,13 +380,23 @@ impl UnifiedChatHandler {
     }
     
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
-        self.app_state.memory_service
+        eprintln!("=== SAVING USER MESSAGE ===");
+        eprintln!("Session: {}", request.session_id);
+        eprintln!("Content length: {}", request.content.len());
+        eprintln!("Project ID: {:?}", request.project_id);
+        
+        eprintln!("About to call save_user_message in memory service");
+        
+        let result = self.app_state.memory_service
             .save_user_message(
                 &request.session_id,
                 &request.content,
                 request.project_id.as_deref()
             )
-            .await
+            .await;
+        
+        eprintln!("Result: {:?}", result);
+        result
     }
     
     async fn build_context(
@@ -380,17 +404,22 @@ impl UnifiedChatHandler {
         session_id: &str,
         user_message: &str,
     ) -> Result<RecallContext> {
+        eprintln!("=== BUILDING CONTEXT ===");
+        
         let mut context = self.app_state.memory_service
             .parallel_recall_context(session_id, user_message, 20, 15)
             .await?;
+        eprintln!("Parallel recall done");
         
         context.rolling_summary = self.app_state.memory_service
             .get_rolling_summary(session_id)
             .await?;
+        eprintln!("Rolling summary done");
         
         context.session_summary = self.app_state.memory_service
             .get_session_summary(session_id)
             .await?;
+        eprintln!("Session summary done");
         
         Ok(context)
     }

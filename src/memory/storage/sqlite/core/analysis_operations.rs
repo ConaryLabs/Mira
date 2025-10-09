@@ -117,46 +117,48 @@ impl AnalysisOperations {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut entries = Vec::with_capacity(rows.len());
+        let mut entries = Vec::new();
 
         for row in rows {
-            let id: i64 = row.get("id");
-            let session_id: String = row.get("session_id");
-            let role: String = row.get("role");
-            let content: String = row.get("content");
-            let timestamp: NaiveDateTime = row.get("timestamp");
-            let tags: Option<String> = row.get("tags");
-            let response_id: Option<String> = row.get("response_id");
-            let parent_id: Option<i64> = row.get("parent_id");
+            let id: i64 = row.try_get("id")?;
+            let session_id: String = row.try_get("session_id")?;
+            let role: String = row.try_get("role")?;
+            let content: String = row.try_get("content")?;
+            let timestamp: i64 = row.try_get("timestamp")?;
+            let tags: Option<String> = row.try_get("tags")?;
+            let response_id: Option<String> = row.try_get("response_id")?;
+            let parent_id: Option<i64> = row.try_get("parent_id")?;
 
-            let mood: Option<String> = row.get("mood");
-            let intensity: Option<f32> = row.get("intensity");
-            let salience: Option<f32> = row.get("salience");
-            let original_salience: Option<f32> = row.get("original_salience");
-            let intent: Option<String> = row.get("intent");
-            let topics_json: Option<String> = row.get("topics");
-            let summary: Option<String> = row.get("summary");
-            let relationship_impact: Option<String> = row.get("relationship_impact");
-            let contains_code: Option<i64> = row.get("contains_code");
-            let language: Option<String> = row.get("language");
-            let programming_lang: Option<String> = row.get("programming_lang");
-            let analysis_version: Option<String> = row.get("analysis_version");
-            let routed_to_heads_json: Option<String> = row.get("routed_to_heads");
-            let analyzed_at: Option<NaiveDateTime> = row.get("analyzed_at");
-            let last_recalled: Option<NaiveDateTime> = row.get("last_recalled");
-            let recall_count: Option<i64> = row.get("recall_count");
+            // Analysis fields
+            let mood: Option<String> = row.try_get("mood")?;
+            let intensity: Option<f32> = row.try_get("intensity")?;
+            let salience: Option<f32> = row.try_get("salience")?;
+            let original_salience: Option<f32> = row.try_get("original_salience")?;
+            let intent: Option<String> = row.try_get("intent")?;
+            let topics: Option<String> = row.try_get("topics")?;
+            let summary: Option<String> = row.try_get("summary")?;
+            let relationship_impact: Option<String> = row.try_get("relationship_impact")?;
+            let contains_code: Option<i64> = row.try_get("contains_code")?;
+            let language: Option<String> = row.try_get("language")?;
+            let programming_lang: Option<String> = row.try_get("programming_lang")?;
+            let analyzed_at: Option<NaiveDateTime> = row.try_get("analyzed_at")?;
+            let analysis_version: Option<String> = row.try_get("analysis_version")?;
+            let routed_to_heads: Option<String> = row.try_get("routed_to_heads")?;
+            let last_recalled: Option<NaiveDateTime> = row.try_get("last_recalled")?;
+            let recall_count: Option<i64> = row.try_get("recall_count")?;
 
-            let tags_vec = tags
+            // Parse JSON fields
+            let tags_vec: Option<Vec<String>> = tags
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+                .and_then(|t| serde_json::from_str(t).ok());
 
-            let topics_vec = topics_json
+            let topics_vec: Option<Vec<String>> = topics
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+                .and_then(|t| serde_json::from_str(t).ok());
 
-            let routed_to_heads_vec = routed_to_heads_json
+            let routed_to_heads_vec: Option<Vec<String>> = routed_to_heads
                 .as_ref()
-                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+                .and_then(|h| serde_json::from_str(h).ok());
 
             let entry = MemoryEntry {
                 id: Some(id),
@@ -165,7 +167,7 @@ impl AnalysisOperations {
                 parent_id,
                 role,
                 content,
-                timestamp: Utc.from_utc_datetime(&timestamp),
+                timestamp: TimeZone::from_utc_datetime(&Utc, &NaiveDateTime::from_timestamp_opt(timestamp, 0).unwrap()),
                 tags: tags_vec,
                 mood,
                 intensity,
@@ -182,7 +184,7 @@ impl AnalysisOperations {
                 analysis_version,
                 routed_to_heads: routed_to_heads_vec,
                 last_recalled: last_recalled.map(|dt| TimeZone::from_utc_datetime(&Utc, &dt)),
-                recall_count,  // No cast - i64 -> i64 direct assignment
+                recall_count,
                 model_version: None,
                 prompt_tokens: None,
                 completion_tokens: None,

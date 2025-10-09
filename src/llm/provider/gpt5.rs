@@ -54,12 +54,19 @@ impl Gpt5Provider {
     }
     
     /// Build Responses API request body
+    /// FIXED: Parameters moved to nested structure in new API
+    /// - verbosity -> text.verbosity
+    /// - reasoning_effort -> reasoning.effort
     fn build_request(&self, messages: Vec<Message>, system: String, tools: Option<Vec<Value>>) -> Value {
         let mut body = json!({
             "model": self.model,
             "input": self.format_input(messages, system),
-            "verbosity": self.verbosity,
-            "reasoning_effort": self.reasoning,
+            "text": {
+                "verbosity": self.verbosity
+            },
+            "reasoning": {
+                "effort": self.reasoning
+            },
             "max_output_tokens": self.max_tokens,
         });
         
@@ -167,7 +174,7 @@ impl LlmProvider for Gpt5Provider {
         let start = Instant::now();
         let body = self.build_request(messages, system, None);
         
-        debug!("GPT-5 request: model={}, reasoning_effort={}", self.model, self.reasoning);
+        debug!("GPT-5 request: model={}, reasoning.effort={}", self.model, self.reasoning);
         
         let response = self.client
             .post("https://api.openai.com/v1/responses")
