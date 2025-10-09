@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 pub struct Gpt5Provider {
     client: Client,
@@ -148,42 +148,73 @@ impl Gpt5Provider {
     
     /// Extract text from Responses API (multiple fallback paths)
     fn extract_text(&self, response: &Value) -> String {
+        // 🔥 DUMP THE ENTIRE RESPONSE FIRST
+        error!("🔥 RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
+        
         // FIRST: Check for structured JSON output (when using json_schema)
-        // The output array contains the structured JSON directly
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
-            for item in output_array {
+            error!("✅ Found output array with {} items", output_array.len());
+            
+            for (idx, item) in output_array.iter().enumerate() {
+                error!("  Item {}: type = {:?}", idx, item.get("type"));
+                
                 // Type "message" with JSON content
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                    error!("  ✅ Found message type at index {}", idx);
+                    
                     if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
-                        for content in content_array {
+                        error!("    Content array has {} items", content_array.len());
+                        
+                        for (cidx, content) in content_array.iter().enumerate() {
+                            debug!("      Content {}: type = {:?}", cidx, content.get("type"));
+                            
                             // Look for output_text type (structured JSON)
                             if content.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                                 if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
-                                    debug!("Found structured JSON in output_text");
+                                    debug!("🎯 Found structured JSON in output_text (length: {})", text.len());
+                                    return text.to_string();
+                                } else {
+                                    debug!("⚠️ output_text exists but no text field");
+                                }
+                            }
+                            
+                            // Also try regular "text" type
+                            if content.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
+                                    debug!("🎯 Found text in regular text field (length: {})", text.len());
                                     return text.to_string();
                                 }
                             }
                         }
+                    } else {
+                        debug!("    ⚠️ No content array in message");
                     }
                 }
             }
+            debug!("❌ No structured JSON found in output array");
+        } else {
+            debug!("❌ No output array in response");
         }
         
         // FALLBACK 1: Direct path /output/1/content/0/text
         if let Some(text) = response.pointer("/output/1/content/0/text").and_then(|t| t.as_str()) {
+            debug!("🎯 Found text via JSON pointer /output/1/content/0/text");
             return text.to_string();
         }
         
         // FALLBACK 2: Convenience field output_text
         if let Some(text) = response.get("output_text").and_then(|t| t.as_str()) {
+            debug!("🎯 Found text via output_text convenience field");
             return text.to_string();
         }
         
         // FALLBACK 3: Try output.message.content[0].text
         if let Some(text) = response.pointer("/output/message/content/0/text").and_then(|t| t.as_str()) {
+            debug!("🎯 Found text via /output/message/content/0/text");
             return text.to_string();
         }
         
+        error!("💀 ALL TEXT EXTRACTION PATHS FAILED - returning empty string");
         "".to_string()
     }
     
@@ -194,17 +225,20 @@ impl Gpt5Provider {
         // Check output array for tool_use items
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
             for item in output_array {
-                if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
                     if let (Some(id), Some(name), Some(args)) = (
-                        item.get("id").and_then(|i| i.as_str()),
+                        item.get("call_id").and_then(|i| i.as_str()),
                         item.get("name").and_then(|n| n.as_str()),
-                        item.get("arguments")
+                        item.get("arguments").and_then(|a| a.as_str())
                     ) {
-                        calls.push(FunctionCall {
-                            id: id.to_string(),
-                            name: name.to_string(),
-                            arguments: args.clone(),
-                        });
+                        // Parse arguments JSON string
+                        if let Ok(parsed_args) = serde_json::from_str::<Value>(args) {
+                            calls.push(FunctionCall {
+                                id: id.to_string(),
+                                name: name.to_string(),
+                                arguments: parsed_args,
+                            });
+                        }
                     }
                 }
             }
@@ -218,12 +252,14 @@ impl Gpt5Provider {
         let usage = &response["usage"];
         let input = usage["input_tokens"].as_i64().unwrap_or(0);
         let output = usage["output_tokens"].as_i64().unwrap_or(0);
-        let reasoning = usage["reasoning_tokens"].as_i64().unwrap_or(0);
+        
+        // Extract reasoning tokens from output_tokens_details
+        let reasoning = usage["output_tokens_details"]["reasoning_tokens"].as_i64().unwrap_or(0);
         
         // Log reasoning token usage
         if reasoning > 0 {
             let reasoning_percent = if output > 0 {
-                (reasoning as f64 / (output as f64 + reasoning as f64)) * 100.0
+                (reasoning as f64 / output as f64) * 100.0
             } else {
                 0.0
             };
@@ -285,9 +321,9 @@ impl LlmProvider for Gpt5Provider {
         let start = Instant::now();
         let mut body = self.build_request(messages.clone(), system.clone(), Some(tools.clone()));
         
-        // CRITICAL: Force tool usage - GPT-5 will skip tools if not required
-        // This ensures respond_to_user is always called
-        body["tool_choice"] = json!("required");
+        // DON'T force tool_choice - let GPT-5 decide between structured output and tools
+        // Setting tool_choice="required" prevents structured JSON output from being returned
+        // GPT-5 will intelligently choose between returning structured JSON or calling tools
         
         // KEY FEATURE: Use previous_response_id for multi-turn
         // This preserves reasoning context and saves tokens
@@ -300,7 +336,7 @@ impl LlmProvider for Gpt5Provider {
             body["input"] = json!([]);
         }
         
-        debug!("GPT-5 tool request: {} tools, tool_choice=required", tools.len());
+        debug!("GPT-5 tool request: {} tools, tool_choice=auto (allows structured output)", tools.len());
         
         let response = self.client
             .post("https://api.openai.com/v1/responses")

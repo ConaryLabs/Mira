@@ -180,121 +180,129 @@ impl UnifiedChatHandler {
             
             // DEBUG: Log what we got
             debug!("text_output length: {}", raw_response.text_output.len());
-            debug!("text_output preview: {}", &raw_response.text_output[..raw_response.text_output.len().min(200)]);
-            debug!("raw_response keys: {:?}", raw_response.raw_response.as_object().map(|o| o.keys().collect::<Vec<_>>()));
-            
-            // Parse structured JSON response
-            let structured = self.parse_structured_output(&raw_response.text_output)?;
-            
-            // If no tool calls, we're done - return the response
-            if raw_response.function_calls.is_empty() {
-                info!("Response complete (no tool calls needed)");
-                
-                let metadata = LLMMetadata {
-                    response_id: Some(raw_response.id.clone()),
-                    prompt_tokens: Some(raw_response.tokens.input),
-                    completion_tokens: Some(raw_response.tokens.output),
-                    thinking_tokens: Some(raw_response.tokens.reasoning),
-                    total_tokens: Some(raw_response.tokens.input + raw_response.tokens.output + raw_response.tokens.reasoning),
-                    model_version: "gpt-5".to_string(),
-                    finish_reason: Some("stop".to_string()),
-                    latency_ms: raw_response.latency_ms,
-                    temperature: 0.7,
-                    max_tokens: 128000,
-                };
-                
-                let complete_response = CompleteResponse {
-                    structured,
-                    metadata,
-                    raw_response: raw_response.raw_response.clone(),
-                    artifacts: if collected_artifacts.is_empty() { None } else { Some(collected_artifacts) },
-                };
-                
-                // Save to database
-                let message_id = save_structured_response(
-                    &self.app_state.sqlite_pool,
-                    &request.session_id,
-                    &complete_response,
-                    Some(user_message_id),
-                ).await?;
-                
-                // Process embeddings
-                if let Err(e) = process_embeddings(
-                    &self.app_state.sqlite_pool,
-                    message_id,
-                    &request.session_id,
-                    &complete_response.structured,
-                    &self.app_state.embedding_client,
-                    &self.app_state.memory_service.get_multi_store(),
-                ).await {
-                    warn!("Failed to process embeddings: {}", e);
-                }
-                
-                return Ok(complete_response);
+            debug!("function_calls count: {}", raw_response.function_calls.len());
+            if !raw_response.text_output.is_empty() {
+                debug!("text_output preview: {}", &raw_response.text_output[..raw_response.text_output.len().min(200)]);
             }
             
-            // Execute tool calls
-            info!("Executing {} tools", raw_response.function_calls.len());
-            
-            for func_call in &raw_response.function_calls {
-                let tool_name = &func_call.name;
-                let tool_input = &func_call.arguments;
+            // CRITICAL FIX: Check for tool calls FIRST
+            // If GPT-5 returned tool calls, execute them and continue the loop
+            // Only parse structured output when we have the final response (no tool calls)
+            if !raw_response.function_calls.is_empty() {
+                // Execute tool calls
+                info!("Executing {} tools", raw_response.function_calls.len());
                 
-                debug!("Tool: {}", tool_name);
-                
-                // Execute tool with caching
-                let result = if let Some(project_id) = request.project_id.as_deref() {
-                    if tool_cache.is_cacheable(tool_name) {
-                        let ttl = tool_cache.get_ttl(tool_name);
-                        
-                        if let Some(cached) = tool_cache.get(project_id, tool_name, ttl) {
-                            Ok(cached)
-                        } else {
-                            match self.execute_tool(tool_name, tool_input, &request).await {
-                                Ok(r) => {
-                                    tool_cache.set(project_id, tool_name, r.clone());
-                                    Ok(r)
+                for func_call in &raw_response.function_calls {
+                    let tool_name = &func_call.name;
+                    let tool_input = &func_call.arguments;
+                    
+                    debug!("Tool: {}", tool_name);
+                    
+                    // Execute tool with caching
+                    let result = if let Some(project_id) = request.project_id.as_deref() {
+                        if tool_cache.is_cacheable(tool_name) {
+                            let ttl = tool_cache.get_ttl(tool_name);
+                            
+                            if let Some(cached) = tool_cache.get(project_id, tool_name, ttl) {
+                                Ok(cached)
+                            } else {
+                                match self.execute_tool(tool_name, tool_input, &request).await {
+                                    Ok(r) => {
+                                        tool_cache.set(project_id, tool_name, r.clone());
+                                        Ok(r)
+                                    }
+                                    Err(e) => Err(e)
                                 }
-                                Err(e) => Err(e)
                             }
+                        } else {
+                            self.execute_tool(tool_name, tool_input, &request).await
                         }
                     } else {
                         self.execute_tool(tool_name, tool_input, &request).await
-                    }
-                } else {
-                    self.execute_tool(tool_name, tool_input, &request).await
-                };
-                
-                // Handle result
-                let result_value = match result {
-                    Ok(r) => {
-                        // Collect artifacts
-                        if tool_name == "create_artifact" {
-                            if let Some(artifact) = r.get("artifact") {
-                                collected_artifacts.push(artifact.clone());
+                    };
+                    
+                    // Handle result
+                    let result_value = match result {
+                        Ok(r) => {
+                            // Collect artifacts
+                            if tool_name == "create_artifact" {
+                                if let Some(artifact) = r.get("artifact") {
+                                    collected_artifacts.push(artifact.clone());
+                                }
+                            } else if tool_name == "provide_code_fix" {
+                                if let Some(artifacts_array) = r.get("artifacts").and_then(|a| a.as_array()) {
+                                    collected_artifacts.extend(artifacts_array.iter().cloned());
+                                }
                             }
-                        } else if tool_name == "provide_code_fix" {
-                            if let Some(artifacts_array) = r.get("artifacts").and_then(|a| a.as_array()) {
-                                collected_artifacts.extend(artifacts_array.iter().cloned());
-                            }
+                            r
                         }
-                        r
-                    }
-                    Err(e) => {
-                        warn!("Tool error: {}", e);
-                        json!({
-                            "error": e.to_string(),
-                            "status": "failed"
-                        })
-                    }
-                };
+                        Err(e) => {
+                            warn!("Tool error: {}", e);
+                            json!({
+                                "error": e.to_string(),
+                                "status": "failed"
+                            })
+                        }
+                    };
+                    
+                    // Add tool result to conversation
+                    chat_messages.push(Message {
+                        role: "user".to_string(),
+                        content: format!("Tool result ({}): {}", tool_name, result_value.to_string()),
+                    });
+                }
                 
-                // Add tool result to conversation
-                chat_messages.push(Message {
-                    role: "user".to_string(),
-                    content: format!("Tool result ({}): {}", tool_name, result_value.to_string()),
-                });
+                // Continue loop to get GPT-5's response after tool execution
+                continue;
             }
+            
+            // No tool calls - this is the final response
+            // Parse structured JSON output
+            info!("Response complete (no tool calls needed)");
+            
+            let structured = self.parse_structured_output(&raw_response.text_output)?;
+            
+            let metadata = LLMMetadata {
+                response_id: Some(raw_response.id.clone()),
+                prompt_tokens: Some(raw_response.tokens.input),
+                completion_tokens: Some(raw_response.tokens.output),
+                thinking_tokens: Some(raw_response.tokens.reasoning),
+                total_tokens: Some(raw_response.tokens.input + raw_response.tokens.output + raw_response.tokens.reasoning),
+                model_version: "gpt-5".to_string(),
+                finish_reason: Some("stop".to_string()),
+                latency_ms: raw_response.latency_ms,
+                temperature: 0.7,
+                max_tokens: 128000,
+            };
+            
+            let complete_response = CompleteResponse {
+                structured,
+                metadata,
+                raw_response: raw_response.raw_response.clone(),
+                artifacts: if collected_artifacts.is_empty() { None } else { Some(collected_artifacts) },
+            };
+            
+            // Save to database
+            let message_id = save_structured_response(
+                &self.app_state.sqlite_pool,
+                &request.session_id,
+                &complete_response,
+                Some(user_message_id),
+            ).await?;
+            
+            // Process embeddings
+            if let Err(e) = process_embeddings(
+                &self.app_state.sqlite_pool,
+                message_id,
+                &request.session_id,
+                &complete_response.structured,
+                &self.app_state.embedding_client,
+                &self.app_state.memory_service.get_multi_store(),
+            ).await {
+                warn!("Failed to process embeddings: {}", e);
+            }
+            
+            return Ok(complete_response);
         }
         
         Err(anyhow!("Tool loop exceeded max iterations"))
