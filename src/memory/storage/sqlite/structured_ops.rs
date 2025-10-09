@@ -1,6 +1,6 @@
 // src/memory/storage/sqlite/structured_ops.rs
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use sqlx::{SqlitePool, Transaction, Sqlite};
 use tracing::{debug, info, warn};
 
@@ -50,7 +50,7 @@ pub async fn save_structured_response(
 /// New function that handles embedding generation and storage
 /// Called separately AFTER save_structured_response to keep transactions clean
 pub async fn process_embeddings(
-    pool: &SqlitePool,
+    _pool: &SqlitePool,
     message_id: i64,
     session_id: &str,
     response: &StructuredLLMResponse,
@@ -106,7 +106,7 @@ pub async fn process_embeddings(
     );
     
     // Store in each routed head
-    let mut stored_heads = Vec::new();
+    let mut stored_count = 0;
     for head_str in &response.analysis.routed_to_heads {
         // Parse the head string to EmbeddingHead enum
         let head = match head_str.parse::<EmbeddingHead>() {
@@ -135,7 +135,7 @@ pub async fn process_embeddings(
         match multi_store.save(head, &qdrant_entry).await {
             Ok(_) => {
                 info!("Stored embedding for message {} in {} collection", message_id, head.as_str());
-                stored_heads.push(head_str.clone());
+                stored_count += 1;
             }
             Err(e) => {
                 warn!(
@@ -146,13 +146,11 @@ pub async fn process_embeddings(
         }
     }
     
-    // Update the message record with embedding metadata
-    if !stored_heads.is_empty() {
-        update_embedding_metadata(pool, message_id, &stored_heads).await?;
+    if stored_count > 0 {
         info!(
             "Successfully processed embeddings for message {} -> stored in {} collections",
             message_id,
-            stored_heads.len()
+            stored_count
         );
     }
     
@@ -206,29 +204,6 @@ fn create_qdrant_entry(
         embedding_heads: Some(response.analysis.routed_to_heads.clone()),
         qdrant_point_ids: None,
     }
-}
-
-/// Update SQLite record with embedding metadata
-async fn update_embedding_metadata(
-    pool: &SqlitePool,
-    message_id: i64,
-    stored_heads: &[String],
-) -> Result<()> {
-    let heads_json = serde_json::to_string(stored_heads)?;
-    
-    sqlx::query!(
-        r#"
-        UPDATE message_analysis
-        SET routed_to_heads = ?
-        WHERE message_id = ?
-        "#,
-        heads_json,
-        message_id
-    )
-    .execute(pool)
-    .await?;
-    
-    Ok(())
 }
 
 async fn insert_memory_entry(
@@ -374,13 +349,9 @@ pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Res
         None => return Ok(None),
     };
 
-    let topics: Vec<String> = serde_json::from_str(
-        &analysis_row.topics.ok_or_else(|| anyhow!("Missing topics field"))?
-    )?;
-    
-    let routed_to_heads: Vec<String> = serde_json::from_str(
-        &analysis_row.routed_to_heads.ok_or_else(|| anyhow!("Missing routed_to_heads field"))?
-    )?;
+    // FIXED: topics and routed_to_heads are now NOT NULL, so they're String not Option<String>
+    let topics: Vec<String> = serde_json::from_str(&analysis_row.topics)?;
+    let routed_to_heads: Vec<String> = serde_json::from_str(&analysis_row.routed_to_heads)?;
 
     let structured = StructuredLLMResponse {
         output: memory_row.content,
