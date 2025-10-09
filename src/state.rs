@@ -10,9 +10,8 @@ use crate::config::CONFIG;
 use crate::llm::client::{OpenAIClient, config::ClientConfig};
 use crate::llm::provider::{
     LlmProvider,
-    claude::ClaudeProvider,
-    openai::OpenAiProvider,
     deepseek::DeepSeekProvider,
+    gpt5::Gpt5Provider,
 };
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -67,54 +66,22 @@ impl AppState {
             (*code_intelligence).clone(),
         );
         
-        // Get OpenAI key for embeddings (try both env vars)
-        let openai_key = CONFIG.get_openai_key()
-            .ok_or_else(|| anyhow!("OPENAI_API_KEY or OPENAI_EMBEDDING_API_KEY required for embeddings"))?;
+        // Validate config
+        CONFIG.validate()?;
         
-        // Initialize LLM provider based on config
-        let llm: Arc<dyn LlmProvider> = match CONFIG.llm_provider.as_str() {
-            "claude" => {
-                info!("🤖 Initializing LLM provider: {}", CONFIG.anthropic_model);
-                Arc::new(ClaudeProvider::new(
-                    CONFIG.anthropic_api_key.clone(),
-                    CONFIG.anthropic_model.clone(),
-                    CONFIG.anthropic_max_tokens,
-                ))
-            },
-            
-            "gpt5" => {
-                info!("🤖 Initializing GPT-5 provider: {}", CONFIG.openai_chat_model);
-                Arc::new(OpenAiProvider::new(
-                    openai_key.clone(),
-                    CONFIG.openai_chat_model.clone(),
-                    CONFIG.openai_max_tokens,
-                    CONFIG.openai_reasoning_effort.clone(),
-                    CONFIG.openai_verbosity.clone(),
-                ))
-            },
-            
-            "deepseek" => {
-                let deepseek_key = CONFIG.deepseek_api_key.clone()
-                    .ok_or_else(|| anyhow!("DEEPSEEK_API_KEY required when LLM_PROVIDER=deepseek"))?;
-                info!("🤖 Initializing DeepSeek provider: {}", CONFIG.deepseek_model);
-                Arc::new(DeepSeekProvider::new(
-                    deepseek_key,
-                    CONFIG.deepseek_model.clone(),
-                    CONFIG.deepseek_max_tokens,
-                ))
-            },
-            
-            unknown => {
-                return Err(anyhow!(
-                    "Unknown LLM_PROVIDER: '{}'. Valid options: claude, gpt5, deepseek",
-                    unknown
-                ));
-            }
-        };
+        // Initialize LLM provider - use DeepSeek by default for Phase 2
+        // Router will be added in Phase 3
+        info!("🤖 Initializing DeepSeek provider: {}", CONFIG.deepseek_model);
+        let llm: Arc<dyn LlmProvider> = Arc::new(DeepSeekProvider::new(
+            CONFIG.deepseek_api_key.clone(),
+            CONFIG.deepseek_model.clone(),
+            CONFIG.deepseek_max_tokens,
+            CONFIG.deepseek_temperature,
+        ));
         
         // Keep OpenAI client for embeddings only
         let embedding_config = ClientConfig {
-            api_key: openai_key,
+            api_key: CONFIG.openai_api_key.clone(),
             base_url: "https://api.openai.com".to_string(),
             model: CONFIG.openai_embedding_model.clone(),
             max_output_tokens: 8192,  // Not used for embeddings, but required
@@ -134,6 +101,8 @@ impl AppState {
             llm.clone(),                // For chat/analysis
             embedding_client.clone(),   // For embeddings
         ));
+        
+        info!("✅ System initialized with DeepSeek 3.2");
         
         Ok(Self {
             sqlite_store,

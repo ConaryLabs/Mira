@@ -1,7 +1,7 @@
 // src/llm/mod.rs
 
 pub mod classification;
-pub mod client;
+// pub mod client;  // REMOVED: Phase 2 migration
 pub mod embeddings;
 pub mod intent;
 pub mod moderation;

@@ -1,14 +1,5 @@
 // src/api/ws/chat/unified_handler.rs
 // Unified chat handler with tool execution loop
-// Delegates all tool logic to src/tools/* for clean separation
-//
-// PHASE 1.3 UPDATE: Enhanced build_context with summary retrieval and increased limits
-// PHASE 3.1-3.2 UPDATE: Added efficiency tools (get_project_context, read_files, write_files)
-// PHASE 3.3 UPDATE: Added session tool cache for expensive operations
-// PHASE 5 UPDATE: Doubled iteration limit from 20 to 50
-// ARTIFACT UPDATE: Added create_artifact and provide_code_fix tools + artifact collection
-// RESPONSE FIX: Added validation to force respond_to_user if missing
-// EMBEDDING FIX: Added immediate embedding processing after save_structured_response
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,10 +9,10 @@ use serde_json::{json, Value};
 use tracing::{info, warn, debug};
 
 use crate::api::ws::message::MessageMetadata;
-use crate::llm::structured::{CompleteResponse, claude_processor};
+use crate::llm::structured::{CompleteResponse, has_tool_calls, extract_claude_content_from_tool, extract_claude_metadata};
 use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
-use crate::llm::provider::ChatMessage;
+use crate::llm::provider::Message;
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
@@ -36,20 +27,16 @@ pub struct ChatRequest {
     pub session_id: String,
 }
 
-// ===== PHASE 3.3: SESSION TOOL CACHE =====
+// ===== SESSION TOOL CACHE =====
 
-/// Cached tool result with timestamp
 #[derive(Clone)]
 struct CachedToolResult {
     result: Value,
     cached_at: Instant,
 }
 
-/// Session-level cache for expensive tool operations
 struct SessionToolCache {
-    // Cache key: (project_id, tool_name)
     cache: HashMap<(String, String), CachedToolResult>,
-    // TTL for different tool types
     project_context_ttl: Duration,
 }
 
@@ -57,55 +44,41 @@ impl SessionToolCache {
     fn new() -> Self {
         Self {
             cache: HashMap::new(),
-            project_context_ttl: Duration::from_secs(300), // 5 minutes
+            project_context_ttl: Duration::from_secs(300),
         }
     }
     
-    /// Get cached result if still valid
     fn get(&self, project_id: &str, tool_name: &str, ttl: Duration) -> Option<Value> {
         let key = (project_id.to_string(), tool_name.to_string());
         
         if let Some(cached) = self.cache.get(&key) {
             if cached.cached_at.elapsed() < ttl {
-                debug!("Cache HIT for {}:{} (age: {:?})", tool_name, project_id, cached.cached_at.elapsed());
+                debug!("Cache HIT for {}:{}", tool_name, project_id);
                 return Some(cached.result.clone());
-            } else {
-                debug!("Cache EXPIRED for {}:{} (age: {:?})", tool_name, project_id, cached.cached_at.elapsed());
             }
-        } else {
-            debug!("Cache MISS for {}:{}", tool_name, project_id);
         }
-        
         None
     }
     
-    /// Store result in cache
     fn set(&mut self, project_id: &str, tool_name: &str, result: Value) {
         let key = (project_id.to_string(), tool_name.to_string());
-        
         self.cache.insert(key, CachedToolResult {
             result,
             cached_at: Instant::now(),
         });
-        
-        debug!("Cached result for {}:{}", tool_name, project_id);
     }
     
-    /// Check if tool should be cached
     fn is_cacheable(&self, tool_name: &str) -> bool {
         matches!(tool_name, "get_project_context")
     }
     
-    /// Get TTL for tool
     fn get_ttl(&self, tool_name: &str) -> Duration {
         match tool_name {
             "get_project_context" => self.project_context_ttl,
-            _ => Duration::from_secs(0), // No cache
+            _ => Duration::from_secs(0),
         }
     }
 }
-
-// ===== END PHASE 3.3 =====
 
 pub struct UnifiedChatHandler {
     app_state: Arc<AppState>,
@@ -121,21 +94,17 @@ impl UnifiedChatHandler {
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
         info!("Processing message for session: {}", request.session_id);
-        
-        // Route to tool execution loop - LLM decides what tools to use
         self.handle_chat_with_tools(request).await
     }
     
-    /// Main chat processing with tool execution loop
-    /// Allows Claude to use tools iteratively until it responds with respond_to_user
     async fn handle_chat_with_tools(
         &self,
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
-        // Save user message and run through analysis pipeline
+        // Save user message
         let user_message_id = self.save_user_message(&request).await?;
         
-        // Build context (recent messages + semantic search + summaries)
+        // Build context
         let context = self.build_context(&request.session_id, &request.content).await?;
         let persona = self.select_persona(&request.metadata);
         
@@ -147,51 +116,38 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // ARTIFACT UPDATE: Added create_artifact and provide_code_fix tools
+        // Define tools
         let tools = if request.project_id.is_some() {
             vec![
-                // Core response tool (always required)
                 get_response_tool_schema(),
-                
-                // ARTIFACT TOOLS - Code generation with Monaco editor
-                get_create_artifact_tool_schema(),  // General code artifacts
-                get_code_fix_tool_schema(),         // Error fix artifacts
-                
-                // Existing single-operation tools
+                get_create_artifact_tool_schema(),
+                get_code_fix_tool_schema(),
                 get_read_file_tool_schema(),
                 get_code_search_tool_schema(),
                 get_list_files_tool_schema(),
-                
-                // PHASE 3: Efficiency tools - batch operations
-                get_project_context_tool_schema(),  // Complete project overview in 1 call
-                get_read_files_tool_schema(),       // Batch read multiple files
-                get_write_files_tool_schema(),      // Batch write multiple files
+                get_project_context_tool_schema(),
+                get_read_files_tool_schema(),
+                get_write_files_tool_schema(),
             ]
         } else {
-            // No project = only allow responding, no file/code operations
             vec![get_response_tool_schema()]
         };
         
-        // Build initial message history from context
+        // Build message history
         let mut chat_messages = Vec::new();
         for entry in context.recent.iter().rev() {
-            chat_messages.push(ChatMessage::text(
+            chat_messages.push(Message::text(
                 if entry.role == "user" { "user" } else { "assistant" },
                 entry.content.clone(),
             ));
         }
-        // Add current user message
-        chat_messages.push(ChatMessage::text("user", request.content.clone()));
+        chat_messages.push(Message::text("user", request.content.clone()));
         
-        // PHASE 3.3: Initialize session tool cache
+        // Initialize cache and artifacts
         let mut tool_cache = SessionToolCache::new();
-        
-        // ARTIFACT UPDATE: Collect artifacts across tool loop iterations
         let mut collected_artifacts: Vec<Value> = Vec::new();
         
-        // PHASE 5: Tool execution loop - doubled from 20 to 50 iterations
-        // With better tools and context, Claude should iterate less,
-        // but give it room when needed for complex multi-step tasks
+        // Tool execution loop (50 iterations max)
         for iteration in 0..50 {
             info!("Tool loop iteration {}", iteration);
             
@@ -199,275 +155,178 @@ impl UnifiedChatHandler {
                 chat_messages.clone(),
                 system_prompt.clone(),
                 tools.clone(),
-                None,  // No forced tool choice - the model decides
+                None,
             ).await?;
             
-            // Check stop reason
-            let stop_reason = raw_response["stop_reason"].as_str().unwrap_or("");
-            
-            if stop_reason == "end_turn" {
-                // Model finished without calling a tool
-                // Try to extract respond_to_user if present, otherwise provide fallback
+            // Check if response has tool calls
+            if !has_tool_calls(&raw_response) {
+                // No tool calls - model finished
+                warn!("Model ended without tool calls on iteration {}", iteration);
                 
-                let structured = if claude_processor::has_tool_calls(&raw_response) {
-                    // Normal case: has respond_to_user tool call
-                    claude_processor::extract_claude_content_from_tool(&raw_response)?
-                } else {
-                    // RESPONSE FIX: Model didn't call respond_to_user
-                    // Check if this is the first iteration - if so, force continuation
-                    if iteration == 0 {
-                        warn!("Model ended turn without respond_to_user on first iteration - forcing continuation");
-                        
-                        // Add assistant's thinking (if any) to chat history
-                        if let Some(content) = raw_response["content"].clone().as_array() {
-                            if !content.is_empty() {
-                                chat_messages.push(ChatMessage::blocks("assistant", Value::Array(content.clone())));
-                            }
-                        }
-                        
-                        // Add a stern reminder as user message
-                        let reminder = "⚠️ CRITICAL REMINDER: You MUST call the respond_to_user tool to communicate with the user. They cannot see your thinking unless you call this tool. Please respond to the user's message now using respond_to_user.";
-                        chat_messages.push(ChatMessage::text("user", reminder.to_string()));
-                        
-                        // Continue loop to force another iteration
-                        continue;
-                    }
-                    
-                    // If we get here after the reminder, extract thinking for fallback
-                    let thinking_summary = if let Some(content) = raw_response["content"].as_array() {
-                        content.iter()
-                            .filter(|block| block["type"] == "thinking")
-                            .filter_map(|block| block["thinking"].as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n\n")
-                    } else {
-                        String::new()
-                    };
-                    
-                    let fallback_message = if !thinking_summary.is_empty() {
-                        format!("I processed your message but didn't generate a response. My thoughts were:\n\n{}", thinking_summary)
-                    } else {
-                        "I processed your message but didn't generate a response. Please try rephrasing your request.".to_string()
-                    };
-                    
-                    warn!("Model ended turn without respond_to_user after reminder - using fallback response");
-                    
-                    // Create a minimal structured response for the fallback
-                    StructuredLLMResponse {
-                        output: fallback_message,
-                        analysis: MessageAnalysis {
-                            salience: 0.5,
-                            topics: vec![],
-                            contains_code: false,
-                            routed_to_heads: vec![],
-                            language: String::new(),
-                            mood: None,
-                            intensity: None,
-                            intent: Some("clarification_needed".to_string()),
-                            summary: None,
-                            relationship_impact: None,
-                            programming_lang: None,
-                            contains_error: false,
-                            error_file: None,
-                            error_severity: None,
-                            error_type: None,
-                        },
-                        reasoning: None,
-                        schema_name: Some("fallback_response".to_string()),
-                        validation_status: Some("valid".to_string()),
-                    }
+                if iteration == 0 {
+                    // Force continuation on first iteration
+                    let reminder = "⚠️ You MUST call the respond_to_user tool. Please respond now.";
+                    chat_messages.push(Message::text("user", reminder));
+                    continue;
+                }
+                
+                // Create fallback response
+                let structured = StructuredLLMResponse {
+                    output: "I processed your message but didn't generate a response.".to_string(),
+                    analysis: MessageAnalysis {
+                        salience: 0.5,
+                        topics: vec![],
+                        contains_code: false,
+                        routed_to_heads: vec![],
+                        language: "en".to_string(),
+                        mood: None,
+                        intensity: None,
+                        intent: Some("clarification_needed".to_string()),
+                        summary: None,
+                        relationship_impact: None,
+                        programming_lang: None,
+                        contains_error: false,
+                        error_file: None,
+                        error_severity: None,
+                        error_type: None,
+                    },
+                    reasoning: None,
+                    schema_name: Some("fallback".to_string()),
+                    validation_status: Some("valid".to_string()),
                 };
                 
-                let metadata = claude_processor::extract_claude_metadata(&raw_response, 0)?;
+                let metadata = extract_claude_metadata(&raw_response, 0)?;
                 
-                let complete_response = CompleteResponse {
+                return Ok(CompleteResponse {
                     structured,
                     metadata,
-                    raw_response,
-                    artifacts: if collected_artifacts.is_empty() {
-                        None
-                    } else {
-                        Some(collected_artifacts)
-                    },
-                };
-                
-                // Save to SQLite
-                let message_id = save_structured_response(
-                    &self.app_state.sqlite_pool,
-                    &request.session_id,
-                    &complete_response,
-                    Some(user_message_id),
-                ).await?;
-                
-                // EMBEDDING FIX: Process embeddings immediately after save
-                if let Err(e) = process_embeddings(
-                    &self.app_state.sqlite_pool,
-                    message_id,
-                    &request.session_id,
-                    &complete_response.structured,
-                    &self.app_state.embedding_client,
-                    &self.app_state.memory_service.get_multi_store(),
-                ).await {
-                    warn!("Failed to process embeddings for message {}: {}", message_id, e);
-                    // Don't fail the whole request - embeddings are non-critical
-                }
-                
-                return Ok(complete_response);
+                    raw_response: raw_response.raw_response.clone(),
+                    artifacts: if collected_artifacts.is_empty() { None } else { Some(collected_artifacts) },
+                });
             }
             
-            // stop_reason == "tool_use" - Model called tools
+            // Process tool calls
             let mut tool_results = Vec::new();
+            let mut found_respond = false;
             
-            if let Some(content) = raw_response["content"].as_array() {
-                for block in content {
-                    if block["type"] == "tool_use" {
-                        let tool_name = block["name"].as_str().unwrap_or("");
-                        let tool_input = &block["input"];
-                        
-                        info!("Executing tool: {}", tool_name);
-                        
-                        // Check for respond_to_user (final response)
-                        if tool_name == "respond_to_user" {
-                            let structured = claude_processor::extract_claude_content_from_tool(&raw_response)?;
-                            let metadata = claude_processor::extract_claude_metadata(&raw_response, 0)?;
-                            
-                            let complete_response = CompleteResponse {
-                                structured,
-                                metadata,
-                                raw_response,
-                                artifacts: if collected_artifacts.is_empty() {
-                                    None
-                                } else {
-                                    Some(collected_artifacts)
-                                },
-                            };
-                            
-                            // Save to SQLite
-                            let message_id = save_structured_response(
-                                &self.app_state.sqlite_pool,
-                                &request.session_id,
-                                &complete_response,
-                                Some(user_message_id),
-                            ).await?;
-                            
-                            // EMBEDDING FIX: Process embeddings immediately after save
-                            if let Err(e) = process_embeddings(
-                                &self.app_state.sqlite_pool,
-                                message_id,
-                                &request.session_id,
-                                &complete_response.structured,
-                                &self.app_state.embedding_client,
-                                &self.app_state.memory_service.get_multi_store(),
-                            ).await {
-                                warn!("Failed to process embeddings for message {}: {}", message_id, e);
-                                // Don't fail the whole request - embeddings are non-critical
-                            }
-                            
-                            return Ok(complete_response);
-                        }
-                        
-                        // PHASE 3.3: Check cache for expensive tools
-                        let result = if let Some(project_id) = request.project_id.as_deref() {
-                            if tool_cache.is_cacheable(tool_name) {
-                                let ttl = tool_cache.get_ttl(tool_name);
-                                
-                                if let Some(cached_result) = tool_cache.get(project_id, tool_name, ttl) {
-                                    Ok(cached_result)
-                                } else {
-                                    // Execute tool and cache result
-                                    match self.execute_tool(tool_name, tool_input, &request).await {
-                                        Ok(r) => {
-                                            tool_cache.set(project_id, tool_name, r.clone());
-                                            Ok(r)
-                                        }
-                                        Err(e) => Err(e)
-                                    }
-                                }
-                            } else {
-                                // Not cacheable - execute directly
-                                self.execute_tool(tool_name, tool_input, &request).await
-                            }
-                        } else {
-                            // No project_id - execute directly
-                            self.execute_tool(tool_name, tool_input, &request).await
-                        };
-                        
-                        // Handle result or error
-                        let result = match result {
-                            Ok(r) => {
-                                // ARTIFACT UPDATE: Capture artifacts from tool results
-                                if tool_name == "create_artifact" {
-                                    if let Some(artifact) = r.get("artifact") {
-                                        info!("Collected artifact from create_artifact tool");
-                                        collected_artifacts.push(artifact.clone());
-                                    }
-                                } else if tool_name == "provide_code_fix" {
-                                    if let Some(artifacts_array) = r.get("artifacts").and_then(|a| a.as_array()) {
-                                        info!("Collected {} artifacts from provide_code_fix tool", artifacts_array.len());
-                                        collected_artifacts.extend(artifacts_array.iter().cloned());
-                                    }
-                                }
-                                r
-                            }
-                            Err(e) => {
-                                info!("Tool execution error (returned to LLM): {}", e);
-                                json!({
-                                    "error": e.to_string(),
-                                    "status": "failed",
-                                    "hint": "This operation failed. Try a different approach."
-                                })
-                            }
-                        };
-                        
-                        tool_results.push(json!({
-                            "type": "tool_result",
-                            "tool_use_id": block["id"],
-                            "content": result.to_string()
-                        }));
+            for func_call in &raw_response.function_calls {
+                let tool_name = &func_call.name;
+                let tool_input = &func_call.arguments;
+                
+                info!("Executing tool: {}", tool_name);
+                
+                // Check for respond_to_user (final response)
+                if tool_name == "respond_to_user" {
+                    found_respond = true;
+                    
+                    let structured = extract_claude_content_from_tool(&raw_response)?;
+                    let metadata = extract_claude_metadata(&raw_response, 0)?;
+                    
+                    let complete_response = CompleteResponse {
+                        structured,
+                        metadata,
+                        raw_response: raw_response.raw_response.clone(),
+                        artifacts: if collected_artifacts.is_empty() { None } else { Some(collected_artifacts) },
+                    };
+                    
+                    // Save to database
+                    let message_id = save_structured_response(
+                        &self.app_state.sqlite_pool,
+                        &request.session_id,
+                        &complete_response,
+                        Some(user_message_id),
+                    ).await?;
+                    
+                    // Process embeddings
+                    if let Err(e) = process_embeddings(
+                        &self.app_state.sqlite_pool,
+                        message_id,
+                        &request.session_id,
+                        &complete_response.structured,
+                        &self.app_state.embedding_client,
+                        &self.app_state.memory_service.get_multi_store(),
+                    ).await {
+                        warn!("Failed to process embeddings: {}", e);
                     }
+                    
+                    return Ok(complete_response);
                 }
                 
-                // Add assistant message with tool calls (only if content exists)
-                // This prevents "all messages must have non-empty content" error
-                if let Some(content) = raw_response["content"].clone().as_array() {
-                    if !content.is_empty() {
-                        // Verify content blocks are valid
-                        let has_valid_content = content.iter().any(|block| {
-                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                !text.trim().is_empty()
-                            } else if block.get("type") == Some(&json!("tool_use")) {
-                                true
-                            } else if block.get("type") == Some(&json!("thinking")) {
-                                true
-                            } else {
-                                false
-                            }
-                        });
+                // Execute tool with caching
+                let result = if let Some(project_id) = request.project_id.as_deref() {
+                    if tool_cache.is_cacheable(tool_name) {
+                        let ttl = tool_cache.get_ttl(tool_name);
                         
-                        if has_valid_content {
-                            chat_messages.push(ChatMessage::blocks("assistant", Value::Array(content.clone())));
+                        if let Some(cached) = tool_cache.get(project_id, tool_name, ttl) {
+                            Ok(cached)
                         } else {
-                            warn!("Skipping assistant message with empty content blocks");
+                            match self.execute_tool(tool_name, tool_input, &request).await {
+                                Ok(r) => {
+                                    tool_cache.set(project_id, tool_name, r.clone());
+                                    Ok(r)
+                                }
+                                Err(e) => Err(e)
+                            }
                         }
+                    } else {
+                        self.execute_tool(tool_name, tool_input, &request).await
                     }
-                }
-                
-                // Add user message with tool results (only if results exist)
-                if !tool_results.is_empty() {
-                    chat_messages.push(ChatMessage::blocks("user", Value::Array(tool_results)));
                 } else {
-                    // No tool results means tool loop failed - break to prevent infinite loop
-                    warn!("No tool results after tool_use - breaking tool loop to prevent infinite iterations");
-                    break;
-                }
+                    self.execute_tool(tool_name, tool_input, &request).await
+                };
+                
+                // Handle result
+                let result_value = match result {
+                    Ok(r) => {
+                        // Collect artifacts
+                        if tool_name == "create_artifact" {
+                            if let Some(artifact) = r.get("artifact") {
+                                collected_artifacts.push(artifact.clone());
+                            }
+                        } else if tool_name == "provide_code_fix" {
+                            if let Some(artifacts_array) = r.get("artifacts").and_then(|a| a.as_array()) {
+                                collected_artifacts.extend(artifacts_array.iter().cloned());
+                            }
+                        }
+                        r
+                    }
+                    Err(e) => {
+                        info!("Tool error: {}", e);
+                        json!({
+                            "error": e.to_string(),
+                            "status": "failed"
+                        })
+                    }
+                };
+                
+                tool_results.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": func_call.id,
+                    "content": result_value.to_string()
+                }));
+            }
+            
+            // If we found respond_to_user, we already returned above
+            if found_respond {
+                continue;
+            }
+            
+            // Add assistant message (as text for simplicity)
+            chat_messages.push(Message::text("assistant", raw_response.text_output.clone()));
+            
+            // Add tool results
+            if !tool_results.is_empty() {
+                let results_text = serde_json::to_string(&tool_results)?;
+                chat_messages.push(Message::text("user", results_text));
+            } else {
+                warn!("No tool results - breaking loop");
+                break;
             }
         }
         
         Err(anyhow!("Tool loop exceeded max iterations"))
     }
     
-    /// Execute tool via ToolExecutor
-    /// All tool logic is delegated to src/tools/executor.rs
     async fn execute_tool(
         &self,
         tool_name: &str,
@@ -485,8 +344,6 @@ impl UnifiedChatHandler {
         executor.execute_tool(tool_name, input, project_id).await
     }
     
-    /// Save user message through MemoryService
-    /// Runs through analysis pipeline (sentiment, topics, salience, etc.)
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
         self.app_state.memory_service
             .save_user_message(
@@ -497,57 +354,26 @@ impl UnifiedChatHandler {
             .await
     }
     
-    // ===== PHASE 1.3: UPDATED BUILD_CONTEXT WITH SUMMARIES =====
-    
-    /// Build layered context for recall
-    /// 
-    /// PHASE 1.3 CHANGES:
-    /// - Increased limits from 5/10 to 20/15
-    /// - Added rolling summary retrieval (last 100 messages)
-    /// - Added session summary retrieval (entire conversation)
-    /// - Enhanced logging to show what context was built
     async fn build_context(
         &self,
         session_id: &str,
         user_message: &str,
     ) -> Result<RecallContext> {
-        info!("Building layered context with summaries for session: {}", session_id);
-        
-        // Get recent + semantic (INCREASED from 5/10 to 20/15)
         let mut context = self.app_state.memory_service
-            .parallel_recall_context(
-                session_id,
-                user_message,  // Embedded and used for vector search
-                20,  // recent_count: INCREASED from 5
-                15,  // semantic_count: INCREASED from 10
-            )
+            .parallel_recall_context(session_id, user_message, 20, 15)
             .await?;
         
-        // Add rolling summary (last 100 messages, ~2,500 tokens) if exists
         context.rolling_summary = self.app_state.memory_service
             .get_rolling_summary(session_id)
             .await?;
         
-        // Add session summary (entire conversation, ~3,000 tokens) if exists
         context.session_summary = self.app_state.memory_service
             .get_session_summary(session_id)
             .await?;
         
-        info!(
-            "Context built: {} recent, {} semantic, rolling={}, session={}",
-            context.recent.len(),
-            context.semantic.len(),
-            context.rolling_summary.is_some(),
-            context.session_summary.is_some()
-        );
-        
         Ok(context)
     }
     
-    // ===== END PHASE 1.3 =====
-    
-    /// Select persona based on metadata
-    /// Currently returns default persona, can be extended for context-aware personas
     fn select_persona(&self, _metadata: &Option<MessageMetadata>) -> PersonaOverlay {
         PersonaOverlay::Default
     }

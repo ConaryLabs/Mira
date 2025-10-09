@@ -1,84 +1,99 @@
 // src/llm/provider/mod.rs
-// LLM Provider trait and type definitions for multi-provider support
+// LLM Provider trait - clean, provider-agnostic interface
 
-use anyhow::Result;
 use async_trait::async_trait;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod openai;
 pub mod deepseek;
+pub mod gpt5;
 pub mod conversion;
 
-/// Message format for all providers - content can be string OR array of blocks
+/// Simple message format for all providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
+pub struct Message {
     pub role: String,
-    pub content: Value,  // String or array of content blocks
-}
-
-impl ChatMessage {
-    /// Helper to create simple text message
-    pub fn text(role: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            role: role.into(),
-            content: Value::String(content.into()),
-        }
-    }
-    
-    /// Helper to create message with complex content blocks
-    pub fn blocks(role: impl Into<String>, content: Value) -> Self {
-        Self {
-            role: role.into(),
-            content,
-        }
-    }
-}
-
-/// Unified response from any provider
-#[derive(Debug, Clone)]
-pub struct ProviderResponse {
     pub content: String,
-    pub thinking: Option<String>,
-    pub metadata: ProviderMetadata,
 }
 
-/// Metadata returned by provider
-#[derive(Debug, Clone)]
-pub struct ProviderMetadata {
-    pub model_version: String,
-    pub input_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    pub thinking_tokens: Option<i64>,
-    pub total_tokens: Option<i64>,
+/// Token usage tracking across all providers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub input: i64,
+    pub output: i64,
+    pub reasoning: i64,  // For GPT-5 and DeepSeek R1
+    pub cached: i64,     // For DeepSeek cache hits
+}
+
+/// Basic chat response (no tools)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Response {
+    pub content: String,
+    pub model: String,
+    pub tokens: TokenUsage,
     pub latency_ms: i64,
-    pub finish_reason: Option<String>,
+}
+
+/// Function call from LLM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+/// Tool calling response with function calls
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResponse {
+    pub id: String,                         // Response ID (for multi-turn)
+    pub text_output: String,                // Text response
+    pub function_calls: Vec<FunctionCall>,  // Function calls made
+    pub tokens: TokenUsage,
+    pub latency_ms: i64,
+    pub raw_response: Value,                // Full API response
+}
+
+/// Context for multi-turn conversations
+#[derive(Debug, Clone)]
+pub enum ToolContext {
+    Gpt5 {
+        previous_response_id: String,  // For GPT-5 multi-turn
+    },
+    DeepSeek {
+        // No special context needed for DeepSeek
+    },
 }
 
 /// Universal LLM provider interface
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
-    /// Provider name for logging/debugging
+    /// Provider name for logging
     fn name(&self) -> &'static str;
     
-    /// Chat completion with optional thinking/reasoning
+    /// Basic chat (no tools)
     async fn chat(
         &self,
-        messages: Vec<ChatMessage>,
+        messages: Vec<Message>,
         system: String,
-        thinking_budget: Option<u32>,
-    ) -> Result<ProviderResponse>;
+    ) -> Result<Response>;
     
-    /// Chat with tool support (Claude & GPT-5 only)
-    /// Returns raw response in provider-compatible format
+    /// Chat with tool calling
     async fn chat_with_tools(
         &self,
-        _messages: Vec<ChatMessage>,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        context: Option<ToolContext>,
+    ) -> Result<ToolResponse>;
+    
+    /// Streaming chat (optional, default not implemented)
+    async fn stream(
+        &self,
+        _messages: Vec<Message>,
         _system: String,
-        _tools: Vec<Value>,
-        _tool_choice: Option<Value>,
-    ) -> Result<Value> {
-        // Default: not supported
-        Err(anyhow::anyhow!("{} does not support tool calling", self.name()))
+    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin>> {
+        Err(anyhow::anyhow!("{} does not support streaming", self.name()))
     }
 }

@@ -5,8 +5,8 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::llm::provider::{LlmProvider, ChatMessage};
-use crate::llm::structured::{CompleteResponse, code_fix_processor, claude_processor};
+use crate::llm::provider::{LlmProvider, Message};
+use crate::llm::structured::{CompleteResponse, code_fix_processor, has_tool_calls, extract_claude_content_from_tool, extract_claude_metadata, analyze_message_complexity};
 use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::memory::features::recall_engine::RecallContext;
@@ -68,7 +68,7 @@ impl CodeFixHandler {
             file_lines
         );
 
-        let (thinking_budget, _) = claude_processor::analyze_message_complexity(&error_context.error_message);
+        let (thinking_budget, _) = analyze_message_complexity(&error_context.error_message);
 
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             persona,
@@ -79,17 +79,17 @@ impl CodeFixHandler {
         );
 
         // Use Value::String for content
-        let analysis_messages = vec![ChatMessage {
+        let analysis_messages = vec![Message {
             role: "user".to_string(),
-            content: Value::String(analysis_prompt),
+            content: analysis_prompt,
         }];
 
         let analysis_response = self.llm
-            .chat(analysis_messages, system_prompt.clone(), Some(thinking_budget as u32))
+            .chat(analysis_messages, system_prompt.clone())
             .await?;
 
         // Extract thinking content
-        let thinking = analysis_response.thinking.unwrap_or_default();
+        let thinking = analysis_response.content;
         let analysis_text = analysis_response.content;
 
         info!("Phase 1 complete - {} chars of thinking, {} chars analysis", 
@@ -118,14 +118,14 @@ impl CodeFixHandler {
         )?;
 
         // Extract and convert to provider format with Value::String
-        let fix_messages: Vec<ChatMessage> = fix_request["messages"]
+        let fix_messages: Vec<Message> = fix_request["messages"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Missing messages in fix request"))?
             .iter()
             .filter_map(|m| {
-                Some(ChatMessage {
+                Some(Message {
                     role: m["role"].as_str()?.to_string(),
-                    content: Value::String(m["content"].as_str()?.to_string()),
+                    content: m["content"].as_str(?.to_string()),
                 })
             })
             .collect();
@@ -146,13 +146,13 @@ impl CodeFixHandler {
             .await?;
 
         // Extract structured code fix
-        let code_fix = code_fix_processor::extract_code_fix_response(&fix_response)?;
+        let code_fix = code_fix_processor::extract_code_fix_response(&fix_response.raw_response)?;
 
         info!("Code fix generated: {} files", code_fix.files.len());
 
         // Convert to CompleteResponse using the built-in method
-        let metadata = claude_processor::extract_claude_metadata(&fix_response, 0)?;
-        Ok(code_fix.into_complete_response(metadata, fix_response))
+        let metadata = extract_claude_metadata(&fix_response, 0)?;
+        Ok(code_fix.into_complete_response(metadata, fix_response.raw_response))
     }
 
     /// Get code intelligence for specific file

@@ -320,7 +320,7 @@ impl MiraConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
         // Validate DeepSeek model
         if !["deepseek-chat", "deepseek-reasoner"].contains(&self.deepseek_model.as_str()) {
-            log::warn!("Unknown DeepSeek model '{}', may not work", self.deepseek_model);
+            tracing::warn!("Unknown DeepSeek model '{}', may not work", self.deepseek_model);
         }
         
         // Validate GPT-5 verbosity
@@ -383,6 +383,12 @@ impl MiraConfig {
             warmup: self.recent_cache_warmup,
         }
     }
+
+    /// Get embedding heads from config
+    pub fn get_embedding_heads(&self) -> Vec<String> {
+        self.embed_heads.clone()
+    }
+
 }
 
 /// Configuration structures for monitoring

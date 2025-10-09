@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(subscriber)?;
     
     info!("Starting Mira Backend");
-    info!("Model: {}", CONFIG.anthropic_model);
+    info!("Model: {}", CONFIG.deepseek_model);
     info!("Tools: {}", if CONFIG.enable_chat_tools { "enabled" } else { "disabled" });
     
     let pool = SqlitePoolOptions::new()

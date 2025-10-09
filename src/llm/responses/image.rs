@@ -85,10 +85,23 @@ impl ImageGenerationManager {
         let mut images = Vec::new();
 
         // Try the unified output format first
-        if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
-            for item in output_array {
-                // Look for image output items
-                if item.get("type").and_then(|t| t.as_str()) == Some("image") {
+        if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
+            for item in output {
+                if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
+                    images.push(ImageData {
+                        url: url.to_string(),
+                        revised_prompt: item.get("revised_prompt")
+                            .and_then(|p| p.as_str())
+                            .map(|s| s.to_string()),
+                    });
+                }
+            }
+        }
+
+        // Fallback: try data array format (OpenAI DALL-E format)
+        if images.is_empty() {
+            if let Some(data) = response.get("data").and_then(|d| d.as_array()) {
+                for item in data {
                     if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
                         images.push(ImageData {
                             url: url.to_string(),
@@ -100,7 +113,6 @@ impl ImageGenerationManager {
                 }
             }
         }
-
 
         if images.is_empty() {
             warn!("Could not find image URLs in response: {:?}", response);

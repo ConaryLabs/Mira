@@ -7,7 +7,7 @@ pub fn validate_response(response: &StructuredLLMResponse) -> Result<()> {
         return Err(anyhow!("output cannot be empty (memory_entries.content NOT NULL)"));
     }
     
-    // FIXED: Salience should be 0.0-1.0, not 0-10
+    // Salience should be 0.0-1.0
     if response.analysis.salience < 0.0 || response.analysis.salience > 1.0 {
         return Err(anyhow!(
             "salience {} violates CHECK(salience >= 0 AND salience <= 1)",
@@ -15,10 +15,11 @@ pub fn validate_response(response: &StructuredLLMResponse) -> Result<()> {
         ));
     }
     
+    // Validate intensity if present
     if let Some(intensity) = response.analysis.intensity {
         if intensity < 0.0 || intensity > 1.0 {
             return Err(anyhow!(
-                "intensity {} violates CHECK(intensity >= 0 AND intensity <= 1)",
+                "intensity {} must be between 0.0 and 1.0",
                 intensity
             ));
         }
@@ -44,11 +45,10 @@ pub fn validate_response(response: &StructuredLLMResponse) -> Result<()> {
         return Err(anyhow!("programming_lang is required when contains_code=true"));
     }
     
-    if let Some(ref lang) = response.analysis.programming_lang {
-        const VALID_LANGS: &[&str] = &["rust", "typescript", "javascript", "python", "go", "java"];
-        // FIXED: Explicitly specify the type for as_str()
-        if !VALID_LANGS.contains(&lang.as_str()) {
-            return Err(anyhow!("programming_lang '{}' not in language_configs", lang));
+    // Validate error fields consistency
+    if response.analysis.contains_error {
+        if response.analysis.error_type.is_none() {
+            return Err(anyhow!("error_type is required when contains_error=true"));
         }
     }
     

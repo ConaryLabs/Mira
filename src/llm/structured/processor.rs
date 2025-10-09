@@ -5,7 +5,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::types::*;
-use super::claude_processor;  // Import from sibling module
+use crate::llm::structured::{has_tool_calls, extract_claude_content_from_tool, extract_claude_metadata, analyze_message_complexity};
 
 // Delegate to tool-based request building
 pub fn build_structured_request(
@@ -13,7 +13,7 @@ pub fn build_structured_request(
     system_prompt: String,
     context_messages: Vec<Value>,
 ) -> Result<Value> {
-    claude_processor::build_claude_request_with_tool(
+    build_claude_request_with_tool(
         user_message,
         system_prompt,
         context_messages,
@@ -22,10 +22,10 @@ pub fn build_structured_request(
 
 // Delegate metadata extraction to Claude processor
 pub fn extract_metadata(raw_response: &Value, latency_ms: i64) -> Result<LLMMetadata> {
-    claude_processor::extract_claude_metadata(raw_response, latency_ms)
+    extract_claude_metadata(raw_response, latency_ms)
 }
 
 // Delegate to tool-based content extraction
 pub fn extract_structured_content(raw_response: &Value) -> Result<StructuredLLMResponse> {
-    claude_processor::extract_claude_content_from_tool(raw_response)
+    extract_claude_content_from_tool(raw_response)
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::Value;
 use tracing::info;
-use crate::llm::provider::{LlmProvider, ChatMessage};
+use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
 
 /// Handles on-demand snapshot summary operations
@@ -34,9 +34,9 @@ impl SnapshotSummaryStrategy {
         info!("Creating snapshot summary for session {} with {} messages", session_id, messages.len());
         
         // Use provider.chat() with Value::String for content
-        let chat_messages = vec![ChatMessage {
+        let chat_messages = vec![Message {
             role: "user".to_string(),
-            content: Value::String(prompt),
+            content: prompt,
         }];
         
         let response = self.llm_provider

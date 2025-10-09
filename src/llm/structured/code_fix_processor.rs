@@ -10,10 +10,11 @@ use tracing::warn;
 use crate::config::CONFIG;
 use super::types::{CompleteResponse, LLMMetadata, StructuredLLMResponse, MessageAnalysis};
 use super::tool_schema::get_code_fix_tool_schema;
-use super::claude_processor::analyze_message_complexity;
+use super::analyze_message_complexity;
 
 // Import ChatAnalysisResult for LLM-based error detection
 use crate::memory::features::message_pipeline::analyzers::ChatAnalysisResult;
+use crate::llm::structured::{has_tool_calls, extract_claude_content_from_tool, extract_claude_metadata, analyze_message_complexity};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeFixFile {
@@ -118,8 +119,8 @@ pub fn build_code_fix_request(
 
     // Forced tool choice for guaranteed artifacts (disables thinking)
     Ok(json!({
-        "model": CONFIG.anthropic_model,
-        "max_tokens": CONFIG.anthropic_max_tokens,
+        "model": CONFIG.deepseek_model,
+        "max_tokens": CONFIG.deepseek_max_tokens,
         "temperature": temperature,
         "system": system_prompt,
         "messages": messages,

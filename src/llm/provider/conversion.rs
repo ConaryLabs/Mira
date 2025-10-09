@@ -1,12 +1,12 @@
 // src/llm/provider/conversion.rs
 // Format conversion helpers for translating between provider formats
 
-use super::{ChatMessage, ProviderResponse};
+use super::{Message, Response};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
 /// Extract messages from unified format request
-pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<ChatMessage>> {
+pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<Message>> {
     let messages_array = request["messages"]
         .as_array()
         .ok_or_else(|| anyhow!("No messages array in request"))?;
@@ -24,36 +24,30 @@ pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<ChatMe
             .to_string();
         
         // FIXED: Use Value::String for content
-        messages.push(ChatMessage { 
+        messages.push(Message { 
             role, 
-            content: Value::String(content) 
+            content: content 
         });
     }
     
     Ok(messages)
 }
 
-/// Convert ProviderResponse to unified format Value for backward compatibility
-pub fn provider_response_to_claude_format(response: ProviderResponse) -> Value {
+/// Convert Response to unified format Value for backward compatibility
+pub fn provider_response_to_claude_format(response: Response) -> Value {
     let mut claude_response = json!({
         "content": [{
             "type": "text",
             "text": response.content
         }],
-        "stop_reason": response.metadata.finish_reason.unwrap_or_else(|| "end_turn".to_string()),
+        "stop_reason": Some("end_turn".to_string()).unwrap_or_else(|| "end_turn".to_string()),
         "usage": {
-            "input_tokens": response.metadata.input_tokens.unwrap_or(0),
-            "output_tokens": response.metadata.output_tokens.unwrap_or(0),
+            "input_tokens": response.tokens.input.unwrap_or(0),
+            "output_tokens": response.tokens.output.unwrap_or(0),
         }
     });
     
     // Add thinking if present
-    if let Some(thinking) = response.thinking {
-        claude_response["thinking"] = json!(thinking);
-        if let Some(thinking_tokens) = response.metadata.thinking_tokens {
-            claude_response["usage"]["thinking_tokens"] = json!(thinking_tokens);
-        }
-    }
     
     claude_response
 }

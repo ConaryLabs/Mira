@@ -54,7 +54,7 @@ impl SummaryStorage {
         
         info!("Stored summary {} in rolling_summaries table", summary_id);
 
-        if CONFIG.embed_heads.contains("summary") {
+        if CONFIG.embed_heads.contains(&"summary".to_string()) {
             match self.llm_client.get_embedding(summary).await {
                 Ok(embedding) => {
                     let qdrant_entry = self.create_qdrant_entry(
