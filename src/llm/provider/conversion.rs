@@ -5,7 +5,25 @@ use super::{Message, Response};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
-/// Extract messages from unified format request
+/// Convert Response to legacy format for backward compatibility  
+pub fn to_legacy_format(response: &Response) -> Value {
+    json!({
+        "content": [{
+            "type": "text",
+            "text": response.content
+        }],
+        "usage": {
+            "input_tokens": response.tokens.input,  // FIXED: Already i64, no unwrap_or
+            "output_tokens": response.tokens.output,  // FIXED: Already i64, no unwrap_or
+            "thinking_tokens": response.tokens.reasoning,
+            "cached_tokens": response.tokens.cached
+        },
+        "model": response.model,
+        "stop_reason": "end_turn"
+    })
+}
+
+/// Extract messages from Claude-format request
 pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<Message>> {
     let messages_array = request["messages"]
         .as_array()
@@ -23,36 +41,37 @@ pub fn extract_messages_from_claude_format(request: &Value) -> Result<Vec<Messag
             .ok_or_else(|| anyhow!("Missing content in message"))?
             .to_string();
         
-        // FIXED: Use Value::String for content
-        messages.push(Message { 
-            role, 
-            content: content 
-        });
+        messages.push(Message { role, content });
     }
     
     Ok(messages)
 }
 
-/// Convert Response to unified format Value for backward compatibility
-pub fn provider_response_to_claude_format(response: Response) -> Value {
-    let mut claude_response = json!({
-        "content": [{
-            "type": "text",
-            "text": response.content
-        }],
-        "stop_reason": Some("end_turn".to_string()).unwrap_or_else(|| "end_turn".to_string()),
-        "usage": {
-            "input_tokens": response.tokens.input.unwrap_or(0),
-            "output_tokens": response.tokens.output.unwrap_or(0),
-        }
-    });
-    
-    // Add thinking if present
-    
-    claude_response
+/// Convert Message to Claude format
+pub fn to_claude_message(message: &Message) -> Value {
+    json!({
+        "role": message.role,
+        "content": message.content
+    })
 }
 
-/// Convert GPT-5 tool response to unified format
+/// Convert Message to OpenAI/DeepSeek format
+pub fn to_openai_message(message: &Message) -> Value {
+    json!({
+        "role": message.role,
+        "content": message.content
+    })
+}
+
+/// Convert provider Response to common format
+pub fn from_provider_response(response: Response) -> Value {
+    json!({
+        "role": "assistant",
+        "content": response.content,
+    })
+}
+
+/// Convert GPT-5 tool response to Claude-compatible format
 pub fn gpt5_tool_response_to_claude(response: &Value) -> Result<Value> {
     // GPT-5 Responses API tool format:
     // { "output": [{ "type": "function_call", "call_id": "...", "name": "...", "arguments": "..." }] }

@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 use anyhow::Result;
-use serde_json::Value;
 use tracing::{info, debug};
 use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
@@ -34,17 +33,16 @@ impl RollingSummaryStrategy {
 
         info!("Creating {}-message rolling summary for session {}", window_size, session_id);
         
-        // Use provider.chat() with Value::String for content
         let messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
         
+        // FIXED: Remove None argument - .chat() now takes only 2 args
         let response = self.llm_provider
             .chat(
                 messages,
                 "You are a conversation summarizer. Create detailed, technical summaries that preserve important context and specifics.".to_string(),
-                None, // No thinking for summaries
             )
             .await?;
 

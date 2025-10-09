@@ -9,7 +9,7 @@ use anyhow::Result;
 use tracing::debug;
 use chrono::Utc;
 
-use crate::llm::{client::OpenAIClient, embeddings::EmbeddingHead};
+use crate::llm::{provider::OpenAiEmbeddings, embeddings::EmbeddingHead};
 use crate::memory::{
     core::types::MemoryEntry,
     storage::qdrant::multi_store::QdrantMultiStore,
@@ -19,15 +19,15 @@ use super::super::scoring::CompositeScorer;
 
 #[derive(Clone)]
 pub struct MultiHeadSearch {
-    llm_client: Arc<OpenAIClient>,
+    embedding_client: Arc<OpenAiEmbeddings>,
     multi_store: Arc<QdrantMultiStore>,
     scorer: CompositeScorer,
 }
 
 impl MultiHeadSearch {
-    pub fn new(llm_client: Arc<OpenAIClient>, multi_store: Arc<QdrantMultiStore>) -> Self {
+    pub fn new(embedding_client: Arc<OpenAiEmbeddings>, multi_store: Arc<QdrantMultiStore>) -> Self {
         Self {
-            llm_client,
+            embedding_client,
             multi_store,
             scorer: CompositeScorer::new(),
         }
@@ -43,8 +43,8 @@ impl MultiHeadSearch {
     ) -> Result<Vec<ScoredMemory>> {
         debug!("MultiHeadSearch: Searching across {} heads for '{}'", heads.len(), query);
         
-        // Generate query embedding
-        let embedding = self.llm_client.get_embedding(query).await?;
+        // Generate query embedding with explicit type
+        let embedding: Vec<f32> = self.embedding_client.embed(query).await?;
         
         // Calculate per-head limit
         let k_per_head = limit / heads.len().max(1);

@@ -287,6 +287,7 @@ async fn insert_llm_metadata(
     message_id: i64,
     metadata: &LLMMetadata,
 ) -> Result<()> {
+    // FIXED: Use correct field names from LLMMetadata struct
     sqlx::query!(
         r#"
         INSERT INTO llm_metadata (
@@ -297,9 +298,9 @@ async fn insert_llm_metadata(
         "#,
         message_id,
         metadata.model_version,
-        metadata.prompt_tokens,
-        metadata.completion_tokens,
-        response.tokens.reasoning,
+        metadata.prompt_tokens,  // LLMMetadata uses prompt_tokens
+        metadata.completion_tokens,  // LLMMetadata uses completion_tokens
+        metadata.thinking_tokens,  // FIXED: Use metadata.thinking_tokens not response.tokens
         metadata.total_tokens,
         metadata.latency_ms,
         metadata.latency_ms,
@@ -392,7 +393,7 @@ pub async fn load_structured_response(
         response_id: memory_row.response_id,
         prompt_tokens: metadata_row.input_tokens.map(|v| v as i64),
         completion_tokens: metadata_row.output_tokens.map(|v| v as i64),
-        thinking_tokens: row.get::<Option<i64>, _>("thinking_tokens").map(|v| v as i64),
+        thinking_tokens: metadata_row.thinking_tokens.map(|v| v as i64),  // FIXED: Use metadata_row not undefined row
         total_tokens: metadata_row.total_tokens.map(|v| v as i64),
         latency_ms: metadata_row.latency_ms.unwrap_or(0) as i64,
         finish_reason: metadata_row.finish_reason,

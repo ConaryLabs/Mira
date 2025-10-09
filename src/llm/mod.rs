@@ -1,14 +1,13 @@
 // src/llm/mod.rs
 
 pub mod classification;
-// pub mod client;  // REMOVED: Phase 2 migration
 pub mod embeddings;
 pub mod intent;
 pub mod moderation;
-pub mod provider;  // NEW: Multi-provider support
+pub mod provider;
 pub mod responses;
 pub mod schema;
 pub mod structured;
 pub mod types;
 
-pub use client::OpenAIClient;
+// OpenAI embeddings are now accessed via provider::OpenAiEmbeddings

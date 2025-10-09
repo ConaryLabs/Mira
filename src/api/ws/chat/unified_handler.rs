@@ -133,15 +133,18 @@ impl UnifiedChatHandler {
             vec![get_response_tool_schema()]
         };
         
-        // Build message history
+        // Build message history - FIXED: Message is just a struct
         let mut chat_messages = Vec::new();
         for entry in context.recent.iter().rev() {
-            chat_messages.push(Message::text(
-                if entry.role == "user" { "user" } else { "assistant" },
-                entry.content.clone(),
-            ));
+            chat_messages.push(Message {
+                role: if entry.role == "user" { "user".to_string() } else { "assistant".to_string() },
+                content: entry.content.clone(),
+            });
         }
-        chat_messages.push(Message::text("user", request.content.clone()));
+        chat_messages.push(Message {
+            role: "user".to_string(),
+            content: request.content.clone(),
+        });
         
         // Initialize cache and artifacts
         let mut tool_cache = SessionToolCache::new();
@@ -166,7 +169,10 @@ impl UnifiedChatHandler {
                 if iteration == 0 {
                     // Force continuation on first iteration
                     let reminder = "⚠️ You MUST call the respond_to_user tool. Please respond now.";
-                    chat_messages.push(Message::text("user", reminder));
+                    chat_messages.push(Message {
+                        role: "user".to_string(),
+                        content: reminder.to_string(),
+                    });
                     continue;
                 }
                 
@@ -311,13 +317,19 @@ impl UnifiedChatHandler {
                 continue;
             }
             
-            // Add assistant message (as text for simplicity)
-            chat_messages.push(Message::text("assistant", raw_response.text_output.clone()));
+            // Add assistant message (as text for simplicity) - FIXED
+            chat_messages.push(Message {
+                role: "assistant".to_string(),
+                content: raw_response.text_output.clone(),
+            });
             
-            // Add tool results
+            // Add tool results - FIXED
             if !tool_results.is_empty() {
                 let results_text = serde_json::to_string(&tool_results)?;
-                chat_messages.push(Message::text("user", results_text));
+                chat_messages.push(Message {
+                    role: "user".to_string(),
+                    content: results_text,
+                });
             } else {
                 warn!("No tool results - breaking loop");
                 break;

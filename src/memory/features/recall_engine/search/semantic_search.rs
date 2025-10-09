@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::debug;
 
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::OpenAiEmbeddings;
 use crate::memory::{
     core::types::MemoryEntry,
     storage::qdrant::multi_store::QdrantMultiStore,
@@ -17,21 +17,21 @@ use super::super::{ScoredMemory, RecallConfig};
 
 #[derive(Clone)]
 pub struct SemanticSearch {
-    llm_client: Arc<OpenAIClient>,
+    embedding_client: Arc<OpenAiEmbeddings>,
     multi_store: Arc<QdrantMultiStore>,
 }
 
 impl SemanticSearch {
-    pub fn new(llm_client: Arc<OpenAIClient>, multi_store: Arc<QdrantMultiStore>) -> Self {
+    pub fn new(embedding_client: Arc<OpenAiEmbeddings>, multi_store: Arc<QdrantMultiStore>) -> Self {
         Self {
-            llm_client,
+            embedding_client,
             multi_store,
         }
     }
 
     /// Get embedding for a query (helper for other search strategies)
     pub async fn get_embedding(&self, query: &str) -> Result<Vec<f32>> {
-        self.llm_client.get_embedding(query).await
+        self.embedding_client.embed(query).await
     }
 
     /// Get raw search results without scoring (helper for hybrid search)
@@ -41,7 +41,7 @@ impl SemanticSearch {
         query: &str,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        let embedding = self.llm_client.get_embedding(query).await?;
+        let embedding: Vec<f32> = self.embedding_client.embed(query).await?;
         
         let results_with_heads = self.multi_store
             .search_all(session_id, &embedding, limit)
@@ -64,7 +64,7 @@ impl SemanticSearch {
         debug!("SemanticSearch: Searching for '{}' in session {}", query, session_id);
         
         // Generate query embedding
-        let embedding = self.llm_client.get_embedding(query).await?;
+        let embedding: Vec<f32> = self.embedding_client.embed(query).await?;
         
         // Search across all embedding heads (multi-head vector search)
         let results_with_heads = self.multi_store
