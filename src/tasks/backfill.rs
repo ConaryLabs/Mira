@@ -9,6 +9,7 @@ use crate::{
     AppState,
     config::CONFIG,
     llm::embeddings::EmbeddingHead,
+    llm::provider::OpenAiEmbeddings,
     memory::core::types::MemoryEntry,
     memory::storage::qdrant::multi_store::QdrantMultiStore,
 };
@@ -157,14 +158,14 @@ impl BackfillTask {
         &self,
         _pool: &SqlitePool,
         messages: &[MessageForBackfill],
-        embedding_client: &crate::llm::client::OpenAIClient,
+        embedding_client: &Arc<OpenAiEmbeddings>,
         multi_store: &Arc<QdrantMultiStore>,
     ) -> Result<usize> {
         // Collect all texts for batch embedding
         let texts: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
 
         // Get batch embeddings from OpenAI
-        let embeddings = match embedding_client.embedding_client().get_batch_embeddings(texts).await {
+        let embeddings = match embedding_client.embed_batch(texts).await {
             Ok(embs) => embs,
             Err(e) => {
                 error!("Failed to get batch embeddings: {}", e);

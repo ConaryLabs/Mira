@@ -6,7 +6,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::CONFIG;
 use crate::llm::structured::{CompleteResponse, StructuredLLMResponse, LLMMetadata};
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::OpenAiEmbeddings;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::memory::core::types::MemoryEntry;
@@ -54,7 +54,7 @@ pub async fn process_embeddings(
     message_id: i64,
     session_id: &str,
     response: &StructuredLLMResponse,
-    embedding_client: &OpenAIClient,
+    embedding_client: &OpenAiEmbeddings,
     multi_store: &QdrantMultiStore,
 ) -> Result<()> {
     // Skip if no heads to route to
@@ -76,7 +76,7 @@ pub async fn process_embeddings(
     }
     
     // Generate embedding for the message content
-    let embedding = match embedding_client.get_embedding(&response.output).await {
+    let embedding = match embedding_client.embed(&response.output).await {
         Ok(emb) => emb,
         Err(e) => {
             warn!("Failed to generate embedding for message {}: {}", message_id, e);

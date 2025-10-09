@@ -51,4 +51,49 @@ impl OpenAiEmbeddings {
         
         Ok(embedding)
     }
+    
+    /// Generate embeddings for multiple texts in a single API call (batch optimization)
+    pub async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let body = json!({
+            "model": self.model,
+            "input": texts,
+        });
+        
+        let response = self.client
+            .post("https://api.openai.com/v1/embeddings")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow!("OpenAI API error {}: {}", status, error_text));
+        }
+        
+        let raw = response.json::<Value>().await?;
+        let data_array = raw["data"]
+            .as_array()
+            .ok_or_else(|| anyhow!("No data array in OpenAI response"))?;
+        
+        let embeddings = data_array
+            .iter()
+            .filter_map(|item| {
+                item["embedding"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect::<Vec<f32>>()
+                    })
+            })
+            .collect();
+        
+        Ok(embeddings)
+    }
 }

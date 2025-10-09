@@ -93,8 +93,6 @@ async fn save_memory(
             id
         }
         "assistant" => {
-            // PHASE 1 FIX: Changed save_assistant_response to save_assistant_message
-            // The new method takes (session_id, content, in_reply_to) instead of ChatResponse
             let id = memory.save_assistant_message(&session_id, content, None)
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to save assistant message: {}", e)))?;
@@ -124,7 +122,7 @@ async fn search_memory(
         .ok_or_else(|| ApiError::bad_request("query is required"))?;
     let max_results = params["max_results"].as_u64().unwrap_or(10) as usize;
     
-    let results = memory.search_similar(&session_id, query, max_results).await
+    let results = memory.recall_engine.search_similar(&session_id, query, max_results).await
         .unwrap_or_else(|e| {
             warn!("Search failed for session {}: {}, returning empty results", session_id, e);
             Vec::new()
@@ -149,11 +147,10 @@ async fn get_context(
     let semantic_count = params["semantic_count"].as_u64().unwrap_or(5) as usize;
     
     let context = if let Some(user_text) = params["user_text"].as_str() {
-        memory.parallel_recall_context(&session_id, user_text, recent_count, semantic_count).await
+        memory.recall_engine.parallel_recall_context(&session_id, user_text, recent_count, semantic_count).await
             .map_err(|e| ApiError::internal(format!("Failed to build context: {}", e)))?
     } else {
-        // PHASE 1 FIX: Added missing rolling_summary and session_summary fields
-        let recent = memory.get_recent_context(&session_id, recent_count).await
+        let recent = memory.recall_engine.get_recent_context(&session_id, recent_count).await
             .map_err(|e| ApiError::internal(format!("Failed to get recent context: {}", e)))?;
         RecallContext {
             recent,
@@ -186,7 +183,7 @@ async fn get_recent_memories(
     let session_id = get_session_id(params["session_id"].as_str());
     let count = params["count"].as_u64().unwrap_or(20) as usize;
     
-    let memories = memory.get_recent_context(&session_id, count).await
+    let memories = memory.recall_engine.get_recent_context(&session_id, count).await
         .map_err(|e| ApiError::internal(format!("Failed to get recent memories: {}", e)))?;
     
     Ok(WsServerMessage::Data {
@@ -200,16 +197,13 @@ async fn get_recent_memories(
 }
 
 async fn get_memory_stats(
-    params: Value,
+    _params: Value,
     memory: &Arc<crate::memory::MemoryService>
 ) -> ApiResult<WsServerMessage> {
-    let session_id = get_session_id(params["session_id"].as_str());
-    let stats = memory.get_stats(&session_id).await
-        .map_err(|e| ApiError::internal(format!("Failed to get stats: {}", e)))?;
+    let stats = memory.get_stats();
     
     Ok(WsServerMessage::Data {
         data: json!({
-            "session_id": session_id,
             "stats": stats
         }),
         request_id: None,
@@ -223,7 +217,7 @@ async fn trigger_rolling_summary(
     let session_id = get_session_id(params["session_id"].as_str());
     let window_size = params["window_size"].as_u64().unwrap_or(10) as usize;
     
-    let message = memory.create_rolling_summary(&session_id, window_size).await
+    let message = memory.summarization_engine.create_rolling_summary(&session_id, window_size).await
         .map_err(|e| ApiError::internal(format!("Failed to create rolling summary: {}", e)))?;
     
     Ok(WsServerMessage::Data {
@@ -242,7 +236,7 @@ async fn trigger_snapshot_summary(
 ) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
     
-    let summary = memory.create_snapshot_summary(&session_id, None).await
+    let summary = memory.summarization_engine.create_snapshot_summary(&session_id, None).await
         .map_err(|e| ApiError::internal(format!("Failed to create snapshot summary: {}", e)))?;
     
     Ok(WsServerMessage::Data {
@@ -275,7 +269,6 @@ async fn import_memories(
                     .map_err(|e| ApiError::internal(e.to_string()))
             }
             "assistant" => {
-                // PHASE 1 FIX: Changed save_assistant_response to save_assistant_message
                 memory.save_assistant_message(&session_id, &mem.content, None)
                     .await
                     .map_err(|e| ApiError::internal(e.to_string()))
@@ -312,7 +305,7 @@ async fn export_memories(
     let session_id = get_session_id(params["session_id"].as_str());
     let count = params["count"].as_u64().unwrap_or(1000) as usize;
     
-    let memories = memory.get_recent_context(&session_id, count).await
+    let memories = memory.recall_engine.get_recent_context(&session_id, count).await
         .map_err(|e| ApiError::internal(format!("Failed to export memories: {}", e)))?;
     
     info!("Exported {} memories for session {}", memories.len(), session_id);
@@ -338,7 +331,7 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> ApiResult<WsServerMess
     });
     
     // Test embedding generation
-    match app_state.embedding_client.get_embedding("test").await {
+    match app_state.embedding_client.embed("test").await {
         Ok(embedding) => {
             status["embedding_test"] = json!({
                 "success": true,

@@ -1,24 +1,25 @@
 // src/llm/responses/image.rs
 // Image generation using gpt-image-1 via unified /v1/responses API
 
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
-use crate::llm::client::OpenAIClient;
-
 /// Manages image generation through the unified Responses API
 #[derive(Clone)]
 pub struct ImageGenerationManager {
-    client: Arc<OpenAIClient>,
+    client: Client,
+    api_key: String,
 }
 
 impl ImageGenerationManager {
-    pub fn new(client: Arc<OpenAIClient>) -> Self {
-        Self { client }
+    pub fn new(api_key: String) -> Self {
+        Self { 
+            client: Client::new(),
+            api_key,
+        }
     }
 
     /// Generate images using GPT-Image-1 via the unified /v1/responses endpoint
@@ -62,11 +63,25 @@ impl ImageGenerationManager {
         }
 
         // Make the API call
-        let response = self.client.post_response(body).await
+        let response = self.client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
             .context("Failed to call GPT-Image-1 via /v1/responses")?;
 
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow::anyhow!("Image generation API error {}: {}", status, error_text));
+        }
+
+        let response_json: Value = response.json().await?;
+
         // Parse the response to extract image URLs
-        let images = self.parse_images_from_response(&response)?;
+        let images = self.parse_images_from_response(&response_json)?;
 
         if images.is_empty() {
             return Err(anyhow::anyhow!("No images returned from GPT-Image-1"));

@@ -1,3 +1,5 @@
+//  src/memory/features/summarization/mod.rs
+
 pub mod strategies;
 pub mod storage;
 pub mod triggers;
@@ -5,8 +7,7 @@ pub mod triggers;
 use std::sync::Arc;
 use anyhow::Result;
 use tracing::info;
-use crate::llm::client::OpenAIClient;
-use crate::llm::provider::LlmProvider;
+use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -31,10 +32,10 @@ pub struct SummarizationEngine {
 
 impl SummarizationEngine {
     /// Creates new summarization engine with all strategy modules
-    /// Takes both LlmProvider (for summary generation) and OpenAIClient (for embeddings)
+    /// Takes both LlmProvider (for summary generation) and OpenAiEmbeddings (for embeddings)
     pub fn new(
         llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<OpenAIClient>,
+        embedding_client: Arc<OpenAiEmbeddings>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
@@ -63,7 +64,7 @@ impl SummarizationEngine {
                 SummaryType::Snapshot => return Ok(None), // Snapshots are manual only
             };
             
-            // Load messages
+            // Load messages using the trait
             let messages = self.sqlite_store
                 .load_recent(session_id, window_size)
                 .await?;

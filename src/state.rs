@@ -3,15 +3,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use sqlx::SqlitePool;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tracing::info;
 
 use crate::config::CONFIG;
-use crate::llm::client::{OpenAIClient, config::ClientConfig};
 use crate::llm::provider::{
     LlmProvider,
+    OpenAiEmbeddings,
     deepseek::DeepSeekProvider,
-    gpt5::Gpt5Provider,
 };
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -41,7 +40,7 @@ pub struct AppState {
     pub git_store: GitStore,
     pub git_client: GitClient,
     pub llm: Arc<dyn LlmProvider>,  // Multi-provider LLM for chat/analysis
-    pub embedding_client: Arc<OpenAIClient>,  // OpenAI for embeddings only
+    pub embedding_client: Arc<OpenAiEmbeddings>,  // OpenAI for embeddings only
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
@@ -79,14 +78,11 @@ impl AppState {
             CONFIG.deepseek_temperature,
         ));
         
-        // Keep OpenAI client for embeddings only
-        let embedding_config = ClientConfig {
-            api_key: CONFIG.openai_api_key.clone(),
-            base_url: "https://api.openai.com".to_string(),
-            model: CONFIG.openai_embedding_model.clone(),
-            max_output_tokens: 8192,  // Not used for embeddings, but required
-        };
-        let embedding_client = Arc::new(OpenAIClient::new(embedding_config)?);
+        // Keep OpenAI for embeddings only - simple, clean
+        let embedding_client = Arc::new(OpenAiEmbeddings::new(
+            CONFIG.openai_api_key.clone(),
+            CONFIG.openai_embedding_model.clone(),
+        ));
         
         // Initialize Qdrant multi-store
         let multi_store = Arc::new(QdrantMultiStore::new(

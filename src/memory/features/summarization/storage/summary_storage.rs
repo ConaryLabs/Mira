@@ -5,7 +5,7 @@ use anyhow::Result;
 use chrono::Utc;
 use tracing::{info, warn};
 use sqlx::Row;
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::OpenAiEmbeddings;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
@@ -15,19 +15,19 @@ use crate::config::CONFIG;
 
 /// Handles all summary storage operations
 pub struct SummaryStorage {
-    llm_client: Arc<OpenAIClient>,
+    embedding_client: Arc<OpenAiEmbeddings>,
     sqlite_store: Arc<SqliteMemoryStore>,
     multi_store: Arc<QdrantMultiStore>,
 }
 
 impl SummaryStorage {
     pub fn new(
-        llm_client: Arc<OpenAIClient>,
+        embedding_client: Arc<OpenAiEmbeddings>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
         Self {
-            llm_client,
+            embedding_client,
             sqlite_store,
             multi_store,
         }
@@ -55,7 +55,7 @@ impl SummaryStorage {
         info!("Stored summary {} in rolling_summaries table", summary_id);
 
         if CONFIG.embed_heads.contains(&"summary".to_string()) {
-            match self.llm_client.get_embedding(summary).await {
+            match self.embedding_client.embed(summary).await {
                 Ok(embedding) => {
                     let qdrant_entry = self.create_qdrant_entry(
                         session_id,

@@ -11,6 +11,8 @@ use qdrant_client::qdrant::{
 };
 use std::sync::Arc;
 use std::collections::HashMap;
+use crate::llm::provider::OpenAiEmbeddings;
+use crate::config::CONFIG;
 
 /// Document record from database
 #[derive(Debug, Clone)]
@@ -41,15 +43,17 @@ pub struct DocumentSearchResult {
 pub struct DocumentStorage {
     sqlite_pool: SqlitePool,
     qdrant_client: Qdrant,
-    embedding_client: Arc<crate::llm::client::embedding::EmbeddingClient>,
+    embedding_client: Arc<OpenAiEmbeddings>,
 }
 
 impl DocumentStorage {
     /// Create a new document storage handler
     pub fn new(sqlite_pool: SqlitePool, qdrant_client: Qdrant) -> Self {
-        // Create the embedding client with config
-        let config = crate::llm::client::config::ClientConfig::default();
-        let embedding_client = Arc::new(crate::llm::client::embedding::EmbeddingClient::new(config));
+        // Create the embedding client - simple and clean
+        let embedding_client = Arc::new(OpenAiEmbeddings::new(
+            CONFIG.openai_api_key.clone(),
+            CONFIG.openai_embedding_model.clone(),
+        ));
         
         Self {
             sqlite_pool,
@@ -174,7 +178,7 @@ impl DocumentStorage {
         for (idx, chunk) in document.chunks.iter().enumerate() {
             // Generate embedding for chunk content
             let embedding = self.embedding_client
-                .get_embedding(&chunk.content)
+                .embed(&chunk.content)
                 .await?;
             
             // Create payload with document and chunk metadata
@@ -222,7 +226,7 @@ impl DocumentStorage {
     ) -> Result<Vec<DocumentSearchResult>> {
         // Generate query embedding
         let query_embedding = self.embedding_client
-            .get_embedding(query)
+            .embed(query)
             .await?;
         
         // Create filter for project_id

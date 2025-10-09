@@ -21,7 +21,7 @@ impl RecallEngineCoordinator {
     }
     
     pub async fn build_context(&self, session_id: &str, query: &str) -> Result<RecallContext> {
-        self.engine.build_recall_context(session_id, query, Some(self.config.clone())).await
+        self.engine.build_context(session_id, Some(query.to_string()), self.config.clone()).await
     }
     
     pub async fn parallel_recall_context(
@@ -37,7 +37,7 @@ impl RecallEngineCoordinator {
             semantic_count,
             ..self.config.clone()
         };
-        self.engine.build_recall_context(session_id, query, Some(config)).await
+        self.engine.build_context(session_id, Some(query.to_string()), config).await
     }
     
     pub async fn get_recent_context(&self, session_id: &str, count: usize) -> Result<Vec<MemoryEntry>> {

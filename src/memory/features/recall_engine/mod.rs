@@ -11,10 +11,9 @@
 
 use std::sync::Arc;
 use anyhow::Result;
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::llm::client::OpenAIClient;
-use crate::llm::provider::LlmProvider;
+use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::{
     core::types::MemoryEntry,
@@ -124,10 +123,10 @@ pub struct RecallEngine {
 
 impl RecallEngine {
     /// Creates a new recall engine with clean modular architecture
-    /// Takes both LlmProvider (for future chat features) and OpenAIClient (for embeddings)
+    /// Takes both LlmProvider (for future chat features) and OpenAiEmbeddings (for embeddings)
     pub fn new(
         _llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<OpenAIClient>,
+        embedding_client: Arc<OpenAiEmbeddings>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
@@ -167,37 +166,34 @@ impl RecallEngine {
         
         match mode {
             SearchMode::Recent { limit } => {
-                // Delegate to focused recent search strategy
                 self.recent_search.search(session_id, limit).await
             }
             SearchMode::Semantic { query, limit } => {
-                // Delegate to focused semantic search strategy
                 self.semantic_search.search(session_id, &query, limit).await
             }
             SearchMode::Hybrid { query, config } => {
-                // Delegate to focused hybrid search strategy
                 self.hybrid_search.search(session_id, &query, &config).await
             }
             SearchMode::MultiHead { query, heads, limit } => {
-                // Delegate to focused multihead search strategy
                 self.multihead_search.search(session_id, &query, &heads, limit).await
             }
         }
     }
-
-    /// Builds a recall context - SAME API as before
-    /// 
-    /// This preserves backward compatibility while using the new clean architecture
-    pub async fn build_recall_context(
+    
+    /// Build context for prompt construction - delegates to context builder
+    pub async fn build_context(
         &self,
         session_id: &str,
-        query: &str,
-        config: Option<RecallConfig>,
+        query: Option<String>,
+        config: RecallConfig,
     ) -> Result<RecallContext> {
-        info!("Building recall context for session: {}", session_id);
-        
-        // Delegate to the focused context builder
-        let config = config.unwrap_or_default();
-        self.context_builder.build_context(session_id, query, config).await
+        // Convert Option<String> to &str for context builder
+        let query_str = query.as_deref().unwrap_or("");
+        self.context_builder.build_context(session_id, query_str, config).await
+    }
+    
+    /// Get engine statistics
+    pub fn get_stats(&self) -> String {
+        "RecallEngine: Recent, Semantic, Hybrid, MultiHead strategies active".to_string()
     }
 }

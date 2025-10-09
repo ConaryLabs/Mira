@@ -6,33 +6,33 @@
 use std::sync::Arc;
 use anyhow::Result;
 use tracing::{debug, info, warn};
-use crate::llm::client::OpenAIClient;
+use crate::llm::provider::OpenAiEmbeddings;
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::BatchEmbeddingConfig;
 
 /// Manages embedding generation with intelligent batching
 pub struct EmbeddingManager {
-    llm_client: Arc<OpenAIClient>,
+    embedding_client: Arc<OpenAiEmbeddings>,
     config: BatchEmbeddingConfig,
 }
 
 impl EmbeddingManager {
     /// Creates a new embedding manager with default configuration
-    pub fn new(llm_client: Arc<OpenAIClient>) -> Result<Self> {
+    pub fn new(embedding_client: Arc<OpenAiEmbeddings>) -> Result<Self> {
         Ok(Self {
-            llm_client,
+            embedding_client,
             config: BatchEmbeddingConfig::default(),
         })
     }
     
     /// Creates manager with custom batch configuration
     pub fn with_config(
-        llm_client: Arc<OpenAIClient>,
+        embedding_client: Arc<OpenAiEmbeddings>,
         config: BatchEmbeddingConfig,
     ) -> Result<Self> {
         Ok(Self {
-            llm_client,
+            embedding_client,
             config,
         })
     }
@@ -113,9 +113,8 @@ impl EmbeddingManager {
             // Retry logic for robustness
             let mut retry_count = 0;
             let batch_embeddings = loop {
-                match self.llm_client
-                    .embedding_client()
-                    .get_batch_embeddings(batch_texts.to_vec())
+                match self.embedding_client
+                    .embed_batch(batch_texts.to_vec())
                     .await 
                 {
                     Ok(embeddings) => {
@@ -135,11 +134,7 @@ impl EmbeddingManager {
                         ).await;
                     }
                     Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "Failed to embed batch after {} retries: {}", 
-                            self.config.max_retries, 
-                            e
-                        ));
+                        return Err(anyhow::anyhow!("Batch embedding failed after {} retries: {}", retry_count, e));
                     }
                 }
             };
@@ -150,76 +145,33 @@ impl EmbeddingManager {
         Ok(all_embeddings)
     }
     
-    /// Groups embeddings by their corresponding heads
+    /// Groups embeddings back to their corresponding heads
     fn group_embeddings_by_head(
         &self,
         heads: &[EmbeddingHead],
         all_texts: &[(EmbeddingHead, String)],
         all_embeddings: Vec<Vec<f32>>,
     ) -> Vec<(EmbeddingHead, Vec<String>, Vec<Vec<f32>>)> {
-        let mut results: Vec<(EmbeddingHead, Vec<String>, Vec<Vec<f32>>)> = vec![];
-        let mut current_idx = 0;
+        let mut results = Vec::new();
         
         for &head in heads {
-            // Collect texts for this head
-            let head_texts: Vec<String> = all_texts.iter()
-                .filter(|(h, _)| *h == head)
-                .map(|(_, text)| text.clone())
-                .collect();
+            let mut head_texts = Vec::new();
+            let mut head_embeddings = Vec::new();
             
-            let text_count = head_texts.len();
-            if text_count == 0 {
-                continue;
+            for (i, (text_head, text)) in all_texts.iter().enumerate() {
+                if text_head == &head {
+                    head_texts.push(text.clone());
+                    if i < all_embeddings.len() {
+                        head_embeddings.push(all_embeddings[i].clone());
+                    }
+                }
             }
             
-            // Extract corresponding embeddings
-            let head_embeddings = all_embeddings[current_idx..current_idx + text_count].to_vec();
-            current_idx += text_count;
-            
-            debug!(
-                "Grouped {} texts with {} embeddings for {} head",
-                text_count,
-                head_embeddings.len(),
-                head.as_str()
-            );
-            
-            results.push((head, head_texts, head_embeddings));
+            if !head_texts.is_empty() {
+                results.push((head, head_texts, head_embeddings));
+            }
         }
         
         results
-    }
-    
-    /// Generates a single embedding for text (non-batched).
-    /// Use sparingly - batch operations are 90% more efficient.
-    pub async fn generate_single_embedding(&self, text: &str) -> Result<Vec<f32>> {
-        warn!("Using single embedding API call - consider batching for efficiency");
-        
-        let embeddings = self.llm_client
-            .embedding_client()
-            .get_batch_embeddings(vec![text.to_string()])
-            .await?;
-        
-        embeddings.into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No embedding returned"))
-    }
-    
-    /// Estimates API call savings from batch processing
-    pub fn calculate_api_savings(&self, total_texts: usize) -> (usize, usize, f32) {
-        let without_batching = total_texts;
-        let with_batching = (total_texts + self.config.max_batch_size - 1) / self.config.max_batch_size;
-        let saved = without_batching.saturating_sub(with_batching);
-        let savings_percent = if without_batching > 0 {
-            (saved as f32 / without_batching as f32) * 100.0
-        } else {
-            0.0
-        };
-        
-        (without_batching, with_batching, savings_percent)
-    }
-    
-    /// Gets current batch configuration
-    pub fn config(&self) -> &BatchEmbeddingConfig {
-        &self.config
     }
 }
