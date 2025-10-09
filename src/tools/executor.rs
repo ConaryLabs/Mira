@@ -412,10 +412,12 @@ Return the complete fixed file:"#,
                 "is_fix": true,
             }],
             "message": "Generated code fix",
+            "generated_by": "deepseek",  // Let GPT-5 know
             "deepseek_tokens": {
                 "input": response.tokens.input,
                 "output": response.tokens.output,
                 "cached": response.tokens.cached,
+                "latency_ms": response.latency_ms,
             }
         }))
     }
@@ -473,7 +475,11 @@ Return the complete fixed file:"#,
             "summary": response.content,
             "total_found": raw_results.len(),
             "raw_results": raw_results.iter().take(20).collect::<Vec<_>>(),  // Include top 20 raw
-            "source": "deepseek_summarized"
+            "generated_by": "deepseek",  // Let GPT-5 know
+            "deepseek_tokens": {
+                "input": response.tokens.input,
+                "output": response.tokens.output,
+            }
         }))
     }
 
@@ -534,7 +540,11 @@ Be concise and focus on what's most relevant for understanding the codebase."#,
         // Combine basic context with DeepSeek analysis
         let mut result = basic_context;
         result["analysis"] = json!(response.content);
-        result["analyzed_by"] = json!("deepseek");
+        result["generated_by"] = json!("deepseek");  // Let GPT-5 know
+        result["deepseek_tokens"] = json!({
+            "input": response.tokens.input,
+            "output": response.tokens.output,
+        });
         
         Ok(result)
     }
