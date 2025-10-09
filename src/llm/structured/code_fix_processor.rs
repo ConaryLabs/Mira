@@ -1,5 +1,6 @@
 // src/llm/structured/code_fix_processor.rs
-// Code fix request/response handling with tool calling
+// Code fix request/response handling with unified provider support
+// Works with both DeepSeek 3.2 and GPT-5 Responses API
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -111,20 +112,37 @@ pub fn build_code_fix_request(
     }))
 }
 
+/// Extract code fix from ToolResponse raw_response
+/// OpenAI/DeepSeek/GPT-5 format only
 pub fn extract_code_fix_response(raw_response: &Value) -> Result<CodeFixResponse> {
-    let content = raw_response["content"].as_array()
-        .ok_or_else(|| anyhow!("Missing content array in response"))?;
+    // OpenAI/GPT-5/DeepSeek format: choices[0].message.tool_calls
+    let choices = raw_response["choices"]
+        .as_array()
+        .ok_or_else(|| anyhow!("Missing choices array in response"))?;
     
-    let tool_block = content.iter()
-        .find(|block| {
-            block["type"] == "tool_use" && 
-            block["name"] == "provide_code_fix"
-        })
-        .ok_or_else(|| anyhow!("No provide_code_fix tool call"))?;
+    let message = choices
+        .get(0)
+        .and_then(|c| c.get("message"))
+        .ok_or_else(|| anyhow!("Missing message in choices[0]"))?;
     
-    let tool_input = &tool_block["input"];
+    let tool_calls = message["tool_calls"]
+        .as_array()
+        .ok_or_else(|| anyhow!("Missing tool_calls array in message"))?;
     
-    let response: CodeFixResponse = serde_json::from_value(tool_input.clone())
+    let tool_call = tool_calls
+        .iter()
+        .find(|call| call["function"]["name"] == "provide_code_fix")
+        .ok_or_else(|| anyhow!("No provide_code_fix tool call found"))?;
+    
+    // Parse arguments (they're a JSON string in OpenAI format)
+    let args_str = tool_call["function"]["arguments"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Missing function arguments"))?;
+    
+    let tool_input: Value = serde_json::from_str(args_str)
+        .map_err(|e| anyhow!("Failed to parse arguments JSON: {}", e))?;
+    
+    let response: CodeFixResponse = serde_json::from_value(tool_input)
         .map_err(|e| anyhow!("Failed to parse code fix response: {}", e))?;
     
     response.validate()
