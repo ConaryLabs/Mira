@@ -69,8 +69,9 @@ impl SqliteMemoryStore {
     }
 
     /// Get statistics about structured responses
-    pub async fn get_structured_response_stats(&self) -> Result<super::structured_ops::StructuredResponseStats> {
-        super::structured_ops::get_structured_response_stats(&self.pool).await
+    /// FIXED: Call get_response_statistics directly with correct return type
+    pub async fn get_structured_response_stats(&self) -> Result<super::structured_ops::ResponseStatistics> {
+        super::structured_ops::get_response_statistics(&self.pool).await
     }
 
     // =====================================
