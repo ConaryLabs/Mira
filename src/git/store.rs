@@ -5,6 +5,8 @@ use sqlx::SqlitePool;
 use super::types::{GitRepoAttachment, GitImportStatus};
 use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use tracing::info;
 
 #[derive(Clone)]
@@ -221,6 +223,48 @@ impl GitStore {
         Ok(result.last_insert_rowid())
     }
 
+    /// Insert a file record into repository_files table (reads file from disk)
+    pub async fn insert_file_record(
+        &self,
+        file_path: &Path,
+        attachment_id: &str,
+        git_dir: &Path,
+    ) -> Result<i64> {
+        let content = tokio::fs::read(file_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path.display(), e))?;
+        
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        let content_hash = format!("{:x}", hasher.finish());
+        
+        let content_str = String::from_utf8_lossy(&content);
+        let line_count = content_str.lines().count() as i64;
+        
+        // Detect language based on file extension
+        let language = if is_rust_file(file_path) {
+            Some("rust".to_string())
+        } else if is_typescript_file(file_path) {
+            Some("typescript".to_string())
+        } else if is_javascript_file(file_path) {
+            Some("javascript".to_string())
+        } else {
+            None
+        };
+        
+        let repo_path = git_dir.join(attachment_id);
+        let relative_path = file_path.strip_prefix(&repo_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| file_path.to_string_lossy().to_string());
+        
+        self.insert_repository_file(
+            attachment_id,
+            &relative_path,
+            &content_hash,
+            language.as_deref(),
+            line_count,
+        ).await
+    }
+
     pub async fn get_repository_files(&self, attachment_id: &str) -> Result<Vec<RepositoryFile>> {
         let rows = sqlx::query!(
             r#"
@@ -368,4 +412,27 @@ pub struct RepositoryFile {
     pub last_indexed: String,
     pub line_count: Option<i64>,
     pub function_count: Option<i64>,
+}
+
+// Helper functions for file type detection
+
+fn is_rust_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("rs"))
+        .unwrap_or(false)
+}
+
+fn is_typescript_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e == "ts" || e == "tsx")
+        .unwrap_or(false)
+}
+
+fn is_javascript_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e == "js" || e == "jsx" || e == "mjs")
+        .unwrap_or(false)
 }

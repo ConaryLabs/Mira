@@ -13,12 +13,14 @@ pub mod tree_builder;
 pub mod diff_parser;
 pub mod branch_manager;
 pub mod project_ops;
+pub mod code_sync;  // NEW
 
 pub use operations::GitOperations;
 pub use tree_builder::{FileNode, FileNodeType, TreeBuilder};
 pub use diff_parser::{DiffInfo, DiffParser};
 pub use branch_manager::{BranchInfo, CommitInfo, BranchManager};
 pub use project_ops::ProjectOps;
+pub use code_sync::CodeSync;  // NEW
 
 #[derive(Clone)]
 pub struct GitClient {
@@ -54,11 +56,17 @@ impl GitClient {
 
     fn create_operations(&self) -> GitOperations {
         match &self.code_intelligence {
-            Some(code_intel) => GitOperations::with_code_intelligence(
-                self.git_dir.clone(),
-                self.store.clone(),
-                code_intel.clone()
-            ),
+            Some(code_intel) => {
+                let code_sync = CodeSync::new(
+                    self.store.clone(),
+                    code_intel.clone()
+                );
+                GitOperations::with_code_sync(
+                    self.git_dir.clone(),
+                    self.store.clone(),
+                    code_sync
+                )
+            },
             None => GitOperations::new(self.git_dir.clone(), self.store.clone()),
         }
     }
@@ -166,7 +174,4 @@ impl GitClient {
         let diff_parser = DiffParser::new();
         diff_parser.get_file_at_commit(attachment, commit_id, file_path)
     }
-
-    // REMOVED: These methods don't belong here - use the CodeIntelligenceService directly
-    // The GitClient should focus on git operations, not code intelligence queries
 }
