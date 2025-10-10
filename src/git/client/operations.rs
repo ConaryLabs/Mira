@@ -6,6 +6,7 @@ use git2::Repository;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{info, debug, warn};
+use sha2::{Sha256, Digest};
 
 use crate::git::types::{GitRepoAttachment, GitImportStatus};
 use crate::git::store::GitStore;
@@ -235,10 +236,10 @@ impl GitOperations {
         // Use project-aware analysis to enable WebSocket detection
         let result = code_intel.analyze_and_store_with_project(
             file_id,
-            &content,
             &file_path_str,
-            language,
+            &content,
             project_id,  // Enables WebSocket call/handler detection
+            language,
         ).await?;
 
         debug!(
@@ -264,6 +265,134 @@ impl GitOperations {
         self.commit_and_push(attachment, commit_message).await?;
         
         info!("Successfully synced changes for repository {}", attachment.id);
+        Ok(())
+    }
+
+    /// Re-parse changed files after git pull (Layer 3)
+    async fn reparse_after_pull(&self, attachment: &GitRepoAttachment) -> Result<()> {
+        // Only run if code intelligence is available
+        let code_intelligence = match &self.code_intelligence {
+            Some(ci) => ci,
+            None => {
+                debug!("Code intelligence not available, skipping post-pull parsing");
+                return Ok(());
+            }
+        };
+
+        info!("Re-parsing changed files after pull for attachment {}", attachment.id);
+
+        let local_path = attachment.local_path.clone();
+        let attachment_id = attachment.id.clone();
+        let project_id = attachment.project_id.clone();
+        
+        // Get list of parseable files that might have changed
+        let files_to_check = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>> {
+            let mut files = Vec::new();
+            
+            for entry in walkdir::WalkDir::new(&local_path)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| !should_ignore_path(e.path()))
+            {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+
+                let path = entry.path();
+                if !is_parseable_file(path) {
+                    continue;
+                }
+
+                // Read file content
+                let content = match std::fs::read_to_string(path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                // Get relative path
+                let relative_path = match path.strip_prefix(&local_path) {
+                    Ok(p) => p.to_string_lossy().to_string(),
+                    Err(_) => continue,
+                };
+
+                files.push((relative_path, content));
+            }
+
+            Ok(files)
+        })
+        .await
+        .into_api_error("Failed to scan directory")?
+        .into_api_error("Failed to list files")?;
+
+        // Re-parse each file
+        let mut parsed_count = 0;
+        for (file_path, content) in files_to_check {
+            // Check if file hash changed
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            let current_hash = format!("{:x}", hasher.finalize());
+
+            let last_hash = sqlx::query_scalar!(
+                r#"
+                SELECT content_hash FROM repository_files
+                WHERE attachment_id = ? AND file_path = ?
+                "#,
+                attachment_id,
+                file_path
+            )
+            .fetch_optional(&self.store.pool)
+            .await?;
+
+            // Skip if unchanged
+            if last_hash.as_deref() == Some(current_hash.as_str()) {
+                continue;
+            }
+
+            // File changed - re-parse
+            let language = detect_language_from_path(&file_path);
+            
+            // Upsert file record
+            let file_id = sqlx::query_scalar!(
+                r#"
+                INSERT INTO repository_files (attachment_id, file_path, content_hash, language, last_indexed)
+                VALUES (?, ?, ?, ?, strftime('%s','now'))
+                ON CONFLICT(attachment_id, file_path) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    language = excluded.language,
+                    last_indexed = strftime('%s','now')
+                RETURNING id
+                "#,
+                attachment_id,
+                file_path,
+                current_hash,
+                language
+            )
+            .fetch_one(&self.store.pool)
+            .await?;
+
+            // Parse AST
+            match code_intelligence
+                .analyze_and_store_with_project(file_id, &file_path, &content, &project_id, &language)
+                .await
+            {
+                Ok(_) => {
+                    parsed_count += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to parse {} after pull: {}", file_path, e);
+                }
+            }
+        }
+
+        if parsed_count > 0 {
+            info!("Re-parsed {} files after pull", parsed_count);
+        }
+
         Ok(())
     }
 
@@ -299,6 +428,11 @@ impl GitOperations {
         self.store.update_last_sync(&attachment.id, Utc::now())
             .await
             .into_api_error("Failed to update last sync time")?;
+
+        // Layer 3: Re-parse changed files after successful pull
+        if let Err(e) = self.reparse_after_pull(attachment).await {
+            warn!("Failed to re-parse after pull (non-fatal): {}", e);
+        }
 
         info!("Successfully pulled changes for repository {}", attachment.id);
         Ok(())
@@ -425,6 +559,8 @@ impl GitOperations {
     }
 }
 
+// Helper functions
+
 fn is_rust_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -444,6 +580,32 @@ fn is_javascript_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e == "js" || e == "jsx" || e == "mjs")
         .unwrap_or(false)
+}
+
+fn is_parseable_file(path: &Path) -> bool {
+    is_rust_file(path) || is_typescript_file(path) || is_javascript_file(path)
+}
+
+fn should_ignore_path(path: &Path) -> bool {
+    path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        matches!(
+            s.as_ref(),
+            "node_modules" | ".git" | "target" | "dist" | "build" | ".next" | "vendor" | ".cargo"
+        )
+    })
+}
+
+fn detect_language_from_path(path: &str) -> String {
+    if path.ends_with(".rs") {
+        "rust".to_string()
+    } else if path.ends_with(".ts") || path.ends_with(".tsx") {
+        "typescript".to_string()
+    } else if path.ends_with(".js") || path.ends_with(".jsx") {
+        "javascript".to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 fn walk_directory(dir: &Path) -> Result<Vec<PathBuf>, anyhow::Error> {
