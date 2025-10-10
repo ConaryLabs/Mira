@@ -355,13 +355,23 @@ impl Gpt5Provider {
         let reasoning = reasoning_override.unwrap_or(&self.reasoning);
         let verbosity = verbosity_override.unwrap_or(&self.verbosity);
         
+        // Filter tools first - remove respond_to_user since we use structured output
+        let flattened_tools: Vec<Value> = tools.iter()
+            .filter(|t| {
+                if let Some(name) = t.pointer("/function/name").or_else(|| t.get("name")) {
+                    name.as_str() != Some("respond_to_user")
+                } else {
+                    true
+                }
+            })
+            .map(|t| self.flatten_tool_schema(t))
+            .collect();
+        
         let mut body = json!({
             "model": self.model,
             "input": self.format_input(messages.clone(), system.clone()),
             "instructions": system,  // CRITICAL: Must provide every time
             "max_output_tokens": self.max_tokens,
-            "tools": tools.iter().map(|t| self.flatten_tool_schema(t)).collect::<Vec<_>>(),
-            "tool_choice": {"type": "auto"},
             "reasoning": {
                 "effort": reasoning
             },
@@ -401,6 +411,13 @@ impl Gpt5Provider {
             },
         });
         
+        // Only add tools if we have any after filtering
+        if !flattened_tools.is_empty() {
+            body["tools"] = Value::Array(flattened_tools);
+            // CRITICAL: Don't set tool_choice when using json_schema format
+            // The structured output and tool_choice conflict in GPT-5 API
+        }
+        
         // CRITICAL: Handle previous_response_id for multi-turn
         if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
             body["previous_response_id"] = json!(previous_response_id);
@@ -409,7 +426,7 @@ impl Gpt5Provider {
             debug!("GPT-5 multi-turn: continuing from {}", previous_response_id);
         }
         
-        debug!("GPT-5 tool request: reasoning={}, verbosity={}", reasoning, verbosity);
+        debug!("GPT-5 tool request: reasoning={}, verbosity={}, tools={}", reasoning, verbosity, body.get("tools").map(|t| t.as_array().map(|a| a.len()).unwrap_or(0)).unwrap_or(0));
         
         let response = self.client
             .post("https://api.openai.com/v1/responses")
@@ -453,13 +470,23 @@ impl Gpt5Provider {
         let reasoning = reasoning_override.unwrap_or(&self.reasoning);
         let verbosity = verbosity_override.unwrap_or(&self.verbosity);
         
+        // Filter tools first - remove respond_to_user since we use structured output
+        let flattened_tools: Vec<Value> = tools.iter()
+            .filter(|t| {
+                if let Some(name) = t.pointer("/function/name").or_else(|| t.get("name")) {
+                    name.as_str() != Some("respond_to_user")
+                } else {
+                    true
+                }
+            })
+            .map(|t| self.flatten_tool_schema(t))
+            .collect();
+        
         let mut body = json!({
             "model": self.model,
             "input": self.format_input(messages.clone(), system.clone()),
             "instructions": system,
             "max_output_tokens": self.max_tokens,
-            "tools": tools.iter().map(|t| self.flatten_tool_schema(t)).collect::<Vec<_>>(),
-            "tool_choice": {"type": "auto"},
             "reasoning": {
                 "effort": reasoning
             },
@@ -500,6 +527,12 @@ impl Gpt5Provider {
             "stream": true,  // ENABLE STREAMING
         });
         
+        // Only add tools if we have any after filtering
+        if !flattened_tools.is_empty() {
+            body["tools"] = Value::Array(flattened_tools);
+            // CRITICAL: Don't set tool_choice when using json_schema format
+        }
+        
         // Handle previous_response_id
         if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
             body["previous_response_id"] = json!(previous_response_id);
@@ -507,7 +540,7 @@ impl Gpt5Provider {
             debug!("GPT-5 streaming: continuing from {}", previous_response_id);
         }
         
-        debug!("GPT-5 streaming request: reasoning={}, verbosity={}", reasoning, verbosity);
+        debug!("GPT-5 streaming request: reasoning={}, verbosity={}, tools={}", reasoning, verbosity, body.get("tools").map(|t| t.as_array().map(|a| a.len()).unwrap_or(0)).unwrap_or(0));
         
         let response = self.client
             .post("https://api.openai.com/v1/responses")
