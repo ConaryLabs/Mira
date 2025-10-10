@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::any::Any;
 use std::time::Instant;
 use tracing::{debug, error, info};
 
@@ -157,23 +158,23 @@ impl Gpt5Provider {
     
     /// Extract text from Responses API (multiple fallback paths)
     fn extract_text(&self, response: &Value) -> String {
-        // 🔥 DUMP THE ENTIRE RESPONSE (gated by debug flag)
+        // Dump the entire response (gated by debug flag)
         if CONFIG.debug_logging {
-            error!("🔥 RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
+            error!("RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
         } else {
             debug!("RAW GPT-5 RESPONSE (truncated log)");
         }
         
         // FIRST: Check for structured JSON output (when using json_schema)
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
-            error!("✅ Found output array with {} items", output_array.len());
+            error!("Found output array with {} items", output_array.len());
             
             for (idx, item) in output_array.iter().enumerate() {
                 error!("  Item {}: type = {:?}", idx, item.get("type"));
                 
                 // Type "message" with JSON content
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
-                    error!("  ✅ Found message type at index {}", idx);
+                    error!("  Found message type at index {}", idx);
                     
                     if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
                         error!("    Content array has {} items", content_array.len());
@@ -184,50 +185,50 @@ impl Gpt5Provider {
                             // Look for output_text type (structured JSON)
                             if content.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                                 if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
-                                    debug!("🎯 Found structured JSON in output_text (length: {})", text.len());
+                                    debug!("Found structured JSON in output_text (length: {})", text.len());
                                     return text.to_string();
                                 } else {
-                                    debug!("⚠️ output_text exists but no text field");
+                                    debug!("output_text exists but no text field");
                                 }
                             }
                             
                             // Also try regular "text" type
                             if content.get("type").and_then(|t| t.as_str()) == Some("text") {
                                 if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
-                                    debug!("🎯 Found text in regular text field (length: {})", text.len());
+                                    debug!("Found text in regular text field (length: {})", text.len());
                                     return text.to_string();
                                 }
                             }
                         }
                     } else {
-                        debug!("    ⚠️ No content array in message");
+                        debug!("    No content array in message");
                     }
                 }
             }
-            debug!("❌ No structured JSON found in output array");
+            debug!("No structured JSON found in output array");
         } else {
-            debug!("❌ No output array in response");
+            debug!("No output array in response");
         }
         
         // FALLBACK 1: Direct path /output/1/content/0/text
         if let Some(text) = response.pointer("/output/1/content/0/text").and_then(|t| t.as_str()) {
-            debug!("🎯 Found text via JSON pointer /output/1/content/0/text");
+            debug!("Found text via JSON pointer /output/1/content/0/text");
             return text.to_string();
         }
         
         // FALLBACK 2: Convenience field output_text
         if let Some(text) = response.get("output_text").and_then(|t| t.as_str()) {
-            debug!("🎯 Found text via output_text convenience field");
+            debug!("Found text via output_text convenience field");
             return text.to_string();
         }
         
         // FALLBACK 3: Try output.message.content[0].text
         if let Some(text) = response.pointer("/output/message/content/0/text").and_then(|t| t.as_str()) {
-            debug!("🎯 Found text via /output/message/content/0/text");
+            debug!("Found text via /output/message/content/0/text");
             return text.to_string();
         }
         
-        error!("💀 ALL TEXT EXTRACTION PATHS FAILED - returning empty string");
+        error!("ALL TEXT EXTRACTION PATHS FAILED - returning empty string");
         "".to_string()
     }
     
@@ -319,7 +320,7 @@ impl Gpt5Provider {
             } else {
                 0.0
             };
-            info!("🧠 GPT-5 reasoning: {} tokens ({:.1}% of output)", reasoning, reasoning_percent);
+            info!("GPT-5 reasoning: {} tokens ({:.1}% of output)", reasoning, reasoning_percent);
         }
         
         TokenUsage {
@@ -329,12 +330,118 @@ impl Gpt5Provider {
             cached: 0,  // GPT-5 doesn't expose cache metrics
         }
     }
+    
+    /// Internal method with reasoning/verbosity overrides for orchestrator
+    /// CRITICAL: Use this for dynamic reasoning/verbosity per iteration
+    pub async fn chat_with_tools_internal(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        context: Option<ToolContext>,
+        reasoning_override: Option<&str>,
+        verbosity_override: Option<&str>,
+    ) -> Result<ToolResponse> {
+        let start = Instant::now();
+        
+        // Use overrides if provided, otherwise fall back to instance defaults
+        let reasoning = reasoning_override.unwrap_or(&self.reasoning);
+        let verbosity = verbosity_override.unwrap_or(&self.verbosity);
+        
+        let mut body = json!({
+            "model": self.model,
+            "input": self.format_input(messages.clone(), system.clone()),
+            "instructions": system,  // CRITICAL: Must provide every time
+            "max_output_tokens": self.max_tokens,
+            "tools": tools.iter().map(|t| self.flatten_tool_schema(t)).collect::<Vec<_>>(),
+            "tool_choice": {"type": "auto"},
+            "reasoning": {
+                "effort": reasoning
+            },
+            "text": {
+                "verbosity": verbosity,
+                "format": {
+                    "type": "json_schema",
+                    "name": "response_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "output": {
+                                "type": "string",
+                                "description": "Your response to the user"
+                            },
+                            "analysis": {
+                                "type": "object",
+                                "properties": {
+                                    "salience": {"type": "number"},
+                                    "topics": {"type": "array", "items": {"type": "string"}},
+                                    "contains_code": {"type": "boolean"},
+                                    "programming_lang": {"type": ["string", "null"]},
+                                    "contains_error": {"type": "boolean"},
+                                    "error_type": {"type": ["string", "null"]},
+                                    "routed_to_heads": {"type": "array", "items": {"type": "string"}},
+                                    "language": {"type": "string"}
+                                },
+                                "required": ["salience", "topics", "contains_code", "programming_lang", "contains_error", "error_type", "routed_to_heads", "language"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": ["output", "analysis"],
+                        "additionalProperties": false
+                    },
+                    "strict": true
+                }
+            },
+        });
+        
+        // CRITICAL: Handle previous_response_id for multi-turn
+        if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
+            body["previous_response_id"] = json!(previous_response_id);
+            // When using previous_response_id, send empty input to save tokens
+            body["input"] = json!([]);
+            debug!("GPT-5 multi-turn: continuing from {}", previous_response_id);
+        }
+        
+        debug!("GPT-5 tool request: reasoning={}, verbosity={}", reasoning, verbosity);
+        
+        let response = self.client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
+        }
+        
+        let raw = response.json::<Value>().await?;
+        let latency = start.elapsed().as_millis() as i64;
+        
+        // Extract response_id - we need this for next iteration!
+        let response_id = raw["id"].as_str().unwrap_or("").to_string();
+        
+        Ok(ToolResponse {
+            id: response_id,
+            text_output: self.extract_text(&raw),
+            function_calls: self.extract_function_calls(&raw),
+            tokens: self.extract_tokens(&raw),
+            latency_ms: latency,
+            raw_response: raw,
+        })
+    }
 }
 
 #[async_trait]
 impl LlmProvider for Gpt5Provider {
     fn name(&self) -> &'static str {
         "gpt5"
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
     }
     
     async fn chat(&self, messages: Vec<Message>, system: String) -> Result<Response> {
@@ -374,50 +481,8 @@ impl LlmProvider for Gpt5Provider {
         tools: Vec<Value>,
         context: Option<ToolContext>,
     ) -> Result<ToolResponse> {
-        let start = Instant::now();
-        let mut body = self.build_request(messages.clone(), system.clone(), Some(tools.clone()));
-        
-        // DON'T force tool_choice - let GPT-5 decide between structured output and tools
-        // Setting tool_choice="required" prevents structured JSON output from being returned
-        // GPT-5 will intelligently choose between returning structured JSON or calling tools
-        
-        // KEY FEATURE: Use previous_response_id for multi-turn
-        // This preserves reasoning context and saves tokens
-        if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
-            body["previous_response_id"] = json!(previous_response_id);
-            debug!("GPT-5 multi-turn: continuing from {}", previous_response_id);
-            
-            // When using previous_response_id, input is optional
-            // Send empty messages to save tokens
-            body["input"] = json!([]);
-        }
-        
-        debug!("GPT-5 tool request: {} tools, tool_choice=auto (allows structured output)", tools.len());
-        
-        let response = self.client
-            .post("https://api.openai.com/v1/responses")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await?;
-        
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
-        }
-        
-        let raw = response.json::<Value>().await?;
-        let latency = start.elapsed().as_millis() as i64;
-        
-        Ok(ToolResponse {
-            id: raw["id"].as_str().unwrap_or("").to_string(),
-            text_output: self.extract_text(&raw),
-            function_calls: self.extract_function_calls(&raw),
-            tokens: self.extract_tokens(&raw),
-            latency_ms: latency,
-            raw_response: raw,
-        })
+        // Just calls internal with defaults - orchestrator uses internal method directly
+        self.chat_with_tools_internal(messages, system, tools, context, None, None).await
     }
     
     async fn stream(

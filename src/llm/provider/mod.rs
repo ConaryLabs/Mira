@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::any::Any;
 
 pub mod openai;
-pub mod deepseek;
 pub mod gpt5;
 pub mod conversion;
 
@@ -25,8 +25,8 @@ pub struct Message {
 pub struct TokenUsage {
     pub input: i64,
     pub output: i64,
-    pub reasoning: i64,  // For GPT-5 and DeepSeek R1
-    pub cached: i64,     // For DeepSeek cache hits
+    pub reasoning: i64,  // For GPT-5
+    pub cached: i64,     // For future use
 }
 
 /// Basic chat response (no tools)
@@ -63,9 +63,6 @@ pub enum ToolContext {
     Gpt5 {
         previous_response_id: String,  // For GPT-5 multi-turn
     },
-    DeepSeek {
-        // No special context needed for DeepSeek
-    },
 }
 
 /// Universal LLM provider interface
@@ -73,6 +70,9 @@ pub enum ToolContext {
 pub trait LlmProvider: Send + Sync {
     /// Provider name for logging
     fn name(&self) -> &'static str;
+    
+    /// Downcast to concrete type (for accessing provider-specific methods)
+    fn as_any(&self) -> &dyn Any;
     
     /// Basic chat (no tools)
     async fn chat(
