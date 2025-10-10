@@ -324,15 +324,43 @@ async fn attach_local_directory(
     params: Value,
     app_state: Arc<AppState>,
 ) -> ApiResult<WsServerMessage> {
+    // ========== DEBUG LOGGING ==========
+    info!("🔍 [ATTACH_LOCAL] Raw params received: {:?}", params);
+    info!("🔍 [ATTACH_LOCAL] Params type: {}", 
+          if params.is_object() { "object" } 
+          else if params.is_null() { "null" } 
+          else { "other" });
+    
+    // Log individual keys if it's an object
+    if let Some(obj) = params.as_object() {
+        info!("🔍 [ATTACH_LOCAL] Param keys present: {:?}", obj.keys().collect::<Vec<_>>());
+        for (key, value) in obj {
+            info!("🔍 [ATTACH_LOCAL]   {}: {:?} (type: {})", 
+                key, 
+                value,
+                if value.is_string() { "string" }
+                else if value.is_null() { "null" }
+                else { "other" }
+            );
+        }
+    }
+    // ========== END DEBUG LOGGING ==========
+    
     info!("Attaching local directory");
     
     let project_id = params["project_id"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("Missing project_id"))?;
     
+    info!("🔍 [ATTACH_LOCAL] project_id extracted: {}", project_id);
+    
     let directory_path = params["directory_path"]
         .as_str()
         .ok_or_else(|| ApiError::bad_request("Missing directory_path"))?;
+    
+    info!("🔍 [ATTACH_LOCAL] directory_path extracted: '{}'", directory_path);
+    info!("🔍 [ATTACH_LOCAL] directory_path length: {}", directory_path.len());
+    info!("🔍 [ATTACH_LOCAL] directory_path is_empty: {}", directory_path.is_empty());
     
     // Attach local directory
     app_state.git_client.store

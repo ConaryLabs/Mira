@@ -35,23 +35,35 @@ pub async fn get_project_context(project_id: &str, pool: &SqlitePool) -> Result<
         count_code_elements(pool, project_id)
     )?;
     
+    // Count total files
+    let total_files = if let Some(tree_array) = tree.as_array() {
+        tree_array.iter().filter(|item| {
+            item.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false) == false
+        }).count()
+    } else {
+        0
+    };
+    
+    // Add total_files to code_stats
+    let mut code_stats = code_elements.as_object().unwrap().clone();
+    code_stats.insert("total_files".to_string(), json!(total_files));
+    
     Ok(json!({
         "project_id": project_id,
         "local_path": attachment.local_path,
         "file_tree": tree,
         "recent_files": recent_files,
         "languages": languages,
-        "code_stats": code_elements,
+        "code_stats": code_stats,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     }))
 }
 
-/// Build complete file tree structure
+/// Build complete file tree structure (no depth limit)
 async fn build_full_tree(path: &Path) -> Result<Value> {
     let mut tree = Vec::new();
     
     for entry in WalkDir::new(path)
-        .max_depth(10)
         .into_iter()
         .filter_entry(|e| !is_ignored(e.path()))
     {
@@ -83,7 +95,6 @@ async fn get_recently_modified(path: &Path, limit: usize) -> Result<Vec<Value>> 
     let mut files: Vec<(PathBuf, SystemTime)> = Vec::new();
     
     for entry in WalkDir::new(path)
-        .max_depth(10)
         .into_iter()
         .filter_entry(|e| !is_ignored(e.path()))
         .filter_map(|e| e.ok())
@@ -120,7 +131,6 @@ async fn detect_languages(path: &Path) -> HashMap<String, usize> {
     let mut languages: HashMap<String, usize> = HashMap::new();
     
     for entry in WalkDir::new(path)
-        .max_depth(10)
         .into_iter()
         .filter_entry(|e| !is_ignored(e.path()))
         .filter_map(|e| e.ok())

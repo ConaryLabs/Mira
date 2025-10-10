@@ -407,9 +407,10 @@ impl ToolExecutor {
 
     /// Search code using DeepSeek for large codebases
     async fn execute_search_with_deepseek(&self, input: &Value, project_id: &str) -> Result<Value> {
-        let query = input.get("query")
+        // FIXED: Read from "pattern" parameter (GPT-5 schema uses "pattern", not "query")
+        let query = input.get("pattern")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'query' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'pattern' parameter"))?;
 
         info!("Searching code: {}", query);
         
@@ -476,13 +477,23 @@ impl ToolExecutor {
             &self.sqlite_pool
         ).await?;
         
-        // Check if project is large enough to need DeepSeek analysis
-        let file_count = basic_context.get("file_count")
+        // Extract file count from code_stats (if available) or count from file_tree
+        let file_count = basic_context.get("code_stats")
+            .and_then(|stats| stats.get("total_files"))
             .and_then(|v| v.as_i64())
+            .or_else(|| {
+                // Fallback: count files in file_tree
+                basic_context.get("file_tree")
+                    .and_then(|tree| tree.as_str())
+                    .map(|tree_str| tree_str.lines().count() as i64)
+            })
             .unwrap_or(0);
+        
+        info!("📊 Detected file count: {}", file_count);
         
         // Small projects don't need DeepSeek
         if file_count < 50 {
+            info!("📊 Skipping DeepSeek analysis - project too small ({} files)", file_count);
             return Ok(basic_context);
         }
         

@@ -114,7 +114,7 @@ pub fn get_code_fix_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "provide_code_fix",
-            "description": "Provide a complete fixed version of the file(s) with the error resolved",
+            "description": "REQUIRED for fixing code errors. Call this when the user reports a compiler error, runtime error, type error, or any code bug that needs fixing.\n\nWhen to use:\n- User shares compiler/build errors\n- Stack traces or runtime failures\n- Type errors or linting issues\n- Code that needs debugging or fixing\n\nThis tool uses DeepSeek for efficient code generation and provides complete fixed files (never snippets).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -208,7 +208,7 @@ pub fn get_read_file_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a single file from the project",
+            "description": "Read the contents of a single file from the project. Call this when you need to examine a specific file's contents to answer the user's question or understand the codebase.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -229,7 +229,7 @@ pub fn get_list_files_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files in a directory with optional filtering",
+            "description": "List files in a directory with optional filtering. Call this when you need to explore the project structure or find files matching a pattern.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -257,7 +257,7 @@ pub fn get_code_search_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "search_code",
-            "description": "Search for code elements (functions, structs, imports) in the project",
+            "description": "REQUIRED for finding code elements in the project. Call this when the user asks to find, locate, or search for functions, structs, classes, types, or any code patterns.\n\nWhen to use:\n- 'Find the function X'\n- 'Where is the struct Y defined?'\n- 'Search for implementations of Z'\n- 'Locate all instances of pattern P'\n\nThis tool uses DeepSeek to intelligently summarize large result sets, making it efficient for big codebases.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -287,7 +287,7 @@ pub fn get_image_generation_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate an image using DALL-E",
+            "description": "Generate an image using DALL-E. Call this when the user explicitly requests image generation or visual content creation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -318,7 +318,7 @@ pub fn get_project_context_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "get_project_context",
-            "description": "Get comprehensive project context including file tree, git status, and key files",
+            "description": "REQUIRED for understanding project structure. Call this when the user asks about:\n\n- Project overview or architecture\n- Directory structure\n- Main entry points\n- Technology stack\n- 'Tell me about this project'\n- 'What kind of project is this?'\n\nThis tool uses DeepSeek to analyze and summarize large projects (50+ files), providing intelligent insights about architecture and patterns.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -332,7 +332,7 @@ pub fn get_project_context_tool_schema() -> serde_json::Value {
                     },
                     "max_depth": {
                         "type": "integer",
-                        "description": "Maximum directory depth for file tree (default: 3)"
+                        "description": "Maximum directory depth for file tree (default: 100, effectively unlimited)"
                     }
                 }
             }
@@ -346,7 +346,7 @@ pub fn get_read_files_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "read_files",
-            "description": "Read multiple files in a single batch operation. More efficient than multiple read_file calls.",
+            "description": "Read multiple files in a single batch operation. More efficient than multiple read_file calls. Use this when you need to examine several related files at once.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -368,7 +368,7 @@ pub fn get_write_files_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "write_files",
-            "description": "Write MULTIPLE files in a single batch operation. Use this when you need to update several files at once (e.g., fixing imports across multiple files).",
+            "description": "Write MULTIPLE files in a single batch operation. Use this when you need to update several files at once (e.g., fixing imports across multiple files, creating new modules with multiple files).",
             "parameters": {
                 "type": "object",
                 "properties": {
