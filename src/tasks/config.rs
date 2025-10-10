@@ -21,6 +21,10 @@ pub struct TaskConfig {
     pub summary_processor_enabled: bool,
     pub summary_check_interval: Duration,
     
+    // Code sync (Layer 2: Background parsing)
+    pub code_sync_enabled: bool,
+    pub code_sync_interval: Duration,
+    
     // Active session processing limit
     pub active_session_limit: i64,
 }
@@ -63,50 +67,40 @@ impl TaskConfig {
                     .parse()
                     .unwrap_or(3600)
             ),
-            session_max_age_hours: std::env::var("TASK_SESSION_MAX_AGE_HOURS")
-                .unwrap_or_else(|_| "168".to_string())
+            session_max_age_hours: std::env::var("SESSION_MAX_AGE_HOURS")
+                .unwrap_or_else(|_| "168".to_string())  // 7 days
                 .parse()
-                .unwrap_or(168),  // 7 days
+                .unwrap_or(168),
             
-            // Summary check every 5 minutes
+            // Summary check every 30 minutes
             summary_processor_enabled: std::env::var("TASK_SUMMARY_ENABLED")
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()
                 .unwrap_or(true),
             summary_check_interval: Duration::from_secs(
                 std::env::var("TASK_SUMMARY_INTERVAL")
-                    .unwrap_or_else(|_| "300".to_string())
+                    .unwrap_or_else(|_| "1800".to_string())
+                    .parse()
+                    .unwrap_or(1800)
+            ),
+            
+            // Code sync every 5 minutes (Layer 2: Safety net for external changes)
+            code_sync_enabled: std::env::var("TASK_CODE_SYNC_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
+            code_sync_interval: Duration::from_secs(
+                std::env::var("TASK_CODE_SYNC_INTERVAL")
+                    .unwrap_or_else(|_| "300".to_string())  // 5 minutes
                     .parse()
                     .unwrap_or(300)
             ),
             
-            // Active session processing limit
-            active_session_limit: std::env::var("TASK_ACTIVE_SESSION_LIMIT")
+            // Limit active sessions to avoid overload
+            active_session_limit: std::env::var("ACTIVE_SESSION_LIMIT")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()
                 .unwrap_or(100),
         }
-    }
-    
-    /// Get a human-readable summary of the configuration
-    pub fn summary(&self) -> String {
-        format!(
-            "Tasks Config:\n\
-            - Analysis: {} (every {} secs)\n\
-            - Decay: {} (every {} hours)\n\
-            - Cleanup: {} (every {} min, max age: {} days)\n\
-            - Summaries: {} (every {} min)\n\
-            - Active session limit: {}",
-            if self.analysis_enabled { "ON" } else { "OFF" },
-            self.analysis_interval.as_secs(),
-            if self.decay_enabled { "ON" } else { "OFF" },
-            self.decay_interval.as_secs() / 3600,
-            if self.cleanup_enabled { "ON" } else { "OFF" },
-            self.cleanup_interval.as_secs() / 60,
-            self.session_max_age_hours / 24,
-            if self.summary_processor_enabled { "ON" } else { "OFF" },
-            self.summary_check_interval.as_secs() / 60,
-            self.active_session_limit,
-        )
     }
 }

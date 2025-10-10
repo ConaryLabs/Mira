@@ -5,8 +5,8 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use std::path::PathBuf;
 use tracing::{info, warn};
+use sha2::{Sha256, Digest};
 
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
@@ -81,71 +81,43 @@ impl ToolExecutor {
         Ok(json!({
             "path": path,
             "content": content,
-            "lines": content.lines().count()
+            "lines": content.lines().count(),
         }))
     }
 
     async fn execute_list_files(&self, input: &Value, project_id: &str) -> Result<Value> {
-        let directory = input.get("directory")
+        let path = input.get("path")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         
-        let repo_path = self.get_repo_path(project_id).await?;
-        let full_path = repo_path.join(directory);
-        
-        if !full_path.exists() {
-            return Ok(json!({
-                "directory": directory,
-                "files": [],
-                "total": 0
-            }));
-        }
-        
-        let mut files = Vec::new();
-        if let Ok(entries) = tokio::fs::read_dir(&full_path).await {
-            let mut entries = entries;
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if let Ok(metadata) = entry.metadata().await {
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    files.push(json!({
-                        "name": file_name,
-                        "is_dir": metadata.is_dir(),
-                        "size": metadata.len()
-                    }));
-                }
-            }
-        }
+        let files = super::file_ops::list_project_files(&self.sqlite_pool, path, project_id).await?;
         
         Ok(json!({
-            "directory": directory,
+            "path": path,
             "files": files,
-            "total": files.len()
+            "count": files.len(),
         }))
     }
 
     async fn execute_read_files(&self, input: &Value, project_id: &str) -> Result<Value> {
         let paths = input.get("paths")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'paths' parameter or not an array"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'paths' array"))?;
         
         let mut results = Vec::new();
-        
-        for path_value in paths {
-            let path = path_value.as_str()
-                .ok_or_else(|| anyhow::anyhow!("Path must be a string"))?;
-            
-            match super::file_ops::load_complete_file(&self.sqlite_pool, path, project_id).await {
+        for path in paths {
+            let path_str = path.as_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+            match super::file_ops::load_complete_file(&self.sqlite_pool, path_str, project_id).await {
                 Ok(content) => {
                     results.push(json!({
-                        "path": path,
+                        "path": path_str,
                         "content": content,
-                        "lines": content.lines().count(),
                         "success": true
                     }));
                 }
                 Err(e) => {
                     results.push(json!({
-                        "path": path,
+                        "path": path_str,
                         "error": e.to_string(),
                         "success": false
                     }));
@@ -155,44 +127,33 @@ impl ToolExecutor {
         
         Ok(json!({
             "files": results,
-            "total": paths.len(),
-            "successful": results.iter().filter(|r| r["success"].as_bool().unwrap_or(false)).count()
+            "count": results.len()
         }))
     }
 
     async fn execute_write_files(&self, input: &Value, project_id: &str) -> Result<Value> {
         let files = input.get("files")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'files' parameter or not an array"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'files' array"))?;
         
-        let repo_path = self.get_repo_path(project_id).await?;
         let mut results = Vec::new();
         let mut files_to_parse: Vec<(String, String)> = Vec::new();
         
-        // Write all files first
         for file in files {
             let path = file.get("path")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Missing 'path' in file object"))?;
+                .ok_or_else(|| anyhow::anyhow!("Missing file path"))?;
             
             let content = file.get("content")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Missing 'content' in file object"))?;
+                .ok_or_else(|| anyhow::anyhow!("Missing file content"))?;
             
-            let full_path = repo_path.join(path);
-            
-            if let Some(parent) = full_path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    results.push(json!({
-                        "path": path,
-                        "success": false,
-                        "error": format!("Failed to create parent directory: {}", e)
-                    }));
-                    continue;
-                }
-            }
-            
-            match tokio::fs::write(&full_path, content).await {
+            match crate::file_system::write_file_with_history(
+                &self.sqlite_pool,
+                project_id,
+                path,
+                content,
+            ).await {
                 Ok(_) => {
                     results.push(json!({
                         "path": path,
@@ -271,64 +232,77 @@ impl ToolExecutor {
         
         Ok(())
     }
-    
-    /// Upsert file record in repository_files table
+
+    /// Get or create repository_files record
     async fn upsert_repository_file(&self, project_id: &str, file_path: &str, content: &str) -> Result<i64> {
-        use sha2::{Sha256, Digest};
+        // Get attachment_id for this project
+        let attachment = sqlx::query!(
+            r#"
+            SELECT id FROM git_repo_attachments
+            WHERE project_id = ?
+            LIMIT 1
+            "#,
+            project_id
+        )
+        .fetch_optional(&self.sqlite_pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Project has no attachment (git repo or local directory)"))?;
         
+        let attachment_id = attachment.id;
+        
+        // Calculate content hash
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
         
+        // Detect language
+        let language = detect_language_from_path(file_path);
+        
+        // Insert or update file record
         let file_id = sqlx::query_scalar!(
             r#"
-            INSERT INTO repository_files (project_id, file_path, content_hash, last_modified)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(project_id, file_path) DO UPDATE SET
+            INSERT INTO repository_files (attachment_id, file_path, content_hash, language, last_indexed)
+            VALUES (?, ?, ?, ?, strftime('%s','now'))
+            ON CONFLICT(attachment_id, file_path) DO UPDATE SET
                 content_hash = excluded.content_hash,
-                last_modified = CURRENT_TIMESTAMP
+                language = excluded.language,
+                last_indexed = strftime('%s','now')
             RETURNING id
             "#,
-            project_id,
+            attachment_id,
             file_path,
-            hash
+            hash,
+            language
         )
         .fetch_one(&self.sqlite_pool)
         .await?;
         
         Ok(file_id)
     }
-
-    /// Get repository path for a project
-    async fn get_repo_path(&self, project_id: &str) -> Result<PathBuf> {
-        let attachment = sqlx::query!(
-            r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
-            project_id
-        )
-        .fetch_optional(&self.sqlite_pool)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("No repository attached to project {}", project_id))?;
-        
-        Ok(PathBuf::from(attachment.local_path))
-    }
 }
 
 /// Check if file should be parsed for code intelligence
 fn should_parse_file(path: &str) -> bool {
-    path.ends_with(".rs") || 
-    path.ends_with(".ts") || path.ends_with(".tsx") ||
-    path.ends_with(".js") || path.ends_with(".jsx")
+    let parseable_extensions = [
+        ".rs",   // Rust
+        ".ts",   // TypeScript
+        ".tsx",  // TypeScript React
+        ".js",   // JavaScript
+        ".jsx",  // JavaScript React
+    ];
+    
+    parseable_extensions.iter().any(|ext| path.ends_with(ext))
 }
 
-/// Detect language from file path
+/// Detect programming language from file extension
 fn detect_language_from_path(path: &str) -> String {
     if path.ends_with(".rs") {
-        "rust"
+        "rust".to_string()
     } else if path.ends_with(".ts") || path.ends_with(".tsx") {
-        "typescript"
+        "typescript".to_string()
     } else if path.ends_with(".js") || path.ends_with(".jsx") {
-        "javascript"
+        "javascript".to_string()
     } else {
-        "unknown"
-    }.to_string()
+        "unknown".to_string()
+    }
 }

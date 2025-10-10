@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use sqlx::Row;
 
 use crate::memory::features::decay;
@@ -17,10 +17,12 @@ use crate::state::AppState;
 pub mod config;
 pub mod metrics;
 pub mod backfill;
+pub mod code_sync;  // NEW
 
 use config::TaskConfig;
 use metrics::TaskMetrics;
 use backfill::BackfillTask;
+use code_sync::CodeSyncTask;  // NEW
 
 /// Manages all background tasks for the memory system
 pub struct TaskManager {
@@ -72,6 +74,12 @@ impl TaskManager {
             self.handles.push(handle);
         }
 
+        // Start code sync task (Layer 2: Background sync every 5min)
+        if self.config.code_sync_enabled {
+            let handle = self.spawn_code_sync();
+            self.handles.push(handle);
+        }
+
         // Start metrics reporter
         let handle = self.spawn_metrics_reporter();
         self.handles.push(handle);
@@ -95,6 +103,40 @@ impl TaskManager {
                 // Don't panic - this is non-critical, new messages will still work
             }
         }
+    }
+
+    /// Spawns the code sync task (Layer 2: Background safety net)
+    fn spawn_code_sync(&self) -> JoinHandle<()> {
+        let pool = self.app_state.sqlite_pool.clone();
+        let code_intelligence = self.app_state.code_intelligence.clone();
+        let interval = self.config.code_sync_interval;
+        let metrics = self.metrics.clone();
+
+        tokio::spawn(async move {
+            info!("Code sync task started (interval: {:?})", interval);
+            
+            let sync_task = CodeSyncTask::new(pool, code_intelligence);
+            let mut interval_timer = time::interval(interval);
+            interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+
+            loop {
+                interval_timer.tick().await;
+                
+                let start = std::time::Instant::now();
+                
+                match sync_task.run().await {
+                    Ok(()) => {
+                        let duration = start.elapsed();
+                        metrics.record_task_duration("code_sync", duration);
+                        metrics.add_processed_items("code_sync", 1);
+                    }
+                    Err(e) => {
+                        error!("Code sync failed: {}", e);
+                        metrics.record_error("code_sync");
+                    }
+                }
+            }
+        })
     }
 
     /// Spawns the analysis processor task
@@ -223,7 +265,6 @@ impl TaskManager {
     }
 
     /// Spawns the summary processor task
-    /// Identifies sessions that may need summaries and delegates to SummarizationEngine
     fn spawn_summary_processor(&self) -> JoinHandle<()> {
         let app_state = self.app_state.clone();
         let interval = self.config.summary_check_interval;
@@ -238,29 +279,22 @@ impl TaskManager {
             loop {
                 interval_timer.tick().await;
                 
-                // Get all sessions with their message counts
-                // SummarizationEngine decides what needs summarizing
                 match check_summary_candidates(&app_state).await {
                     Ok(candidates) => {
                         for (session_id, message_count) in candidates {
                             let summarization_engine = &app_state.memory_service.summarization_engine;
                             
-                            // Engine handles all threshold logic for rolling/session summaries
                             match summarization_engine
-                                .check_and_process_summaries(&session_id, message_count)
+                                .check_and_process_summaries(&session_id, message_count as usize)
                                 .await 
                             {
                                 Ok(Some(summary_id)) => {
                                     info!("Created summary {} for session {}", summary_id, session_id);
                                     metrics.add_processed_items("summary", 1);
                                 }
-                                Ok(None) => {
-                                    // No summary needed at this message count
-                                    debug!("No summary needed for session {} at {} messages", 
-                                        session_id, message_count);
-                                }
+                                Ok(None) => {}
                                 Err(e) => {
-                                    error!("Summary processing failed for session {}: {}", session_id, e);
+                                    error!("Summary processing failed for {}: {}", session_id, e);
                                     metrics.record_error("summary");
                                 }
                             }
@@ -278,75 +312,56 @@ impl TaskManager {
     /// Spawns the metrics reporter task
     fn spawn_metrics_reporter(&self) -> JoinHandle<()> {
         let metrics = self.metrics.clone();
-        let interval = Duration::from_secs(3600); // 1 hour
-
+        
         tokio::spawn(async move {
-            let mut interval_timer = time::interval(interval);
-            interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-
+            let mut interval = time::interval(Duration::from_secs(300)); // 5 minutes
+            interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+            
             loop {
-                interval_timer.tick().await;
+                interval.tick().await;
                 metrics.report();
             }
         })
     }
 
-    /// Gracefully shuts down all tasks
+    /// Gracefully shutdown all background tasks
     pub async fn shutdown(self) {
-        info!("Shutting down {} background tasks", self.handles.len());
+        info!("Shutting down background tasks");
         
         for handle in self.handles {
             handle.abort();
         }
         
-        info!("All background tasks terminated");
+        info!("All background tasks stopped");
     }
 }
 
-/// Get active sessions from the database (configurable limit)
-async fn get_active_sessions(app_state: &Arc<AppState>) -> anyhow::Result<Vec<String>> {
-    let pool = &app_state.sqlite_store.pool;
-    let limit = TaskConfig::from_env().active_session_limit;
-    
-    let rows = sqlx::query(&format!(
-        r#"
-        SELECT DISTINCT session_id 
-        FROM memory_entries 
-        WHERE timestamp > datetime('now', '-24 hours')
-        ORDER BY timestamp DESC
-        LIMIT {}
-        "#,
-        limit
-    ))
-    .fetch_all(pool)
+/// Get active sessions for processing
+async fn get_active_sessions(app_state: &AppState) -> anyhow::Result<Vec<String>> {
+    let sessions = sqlx::query(
+        "SELECT DISTINCT session_id FROM memory_entries 
+         WHERE timestamp > (strftime('%s', 'now') - 86400)
+         LIMIT 100"
+    )
+    .fetch_all(&app_state.sqlite_pool)
     .await?;
     
-    Ok(rows.iter()
+    Ok(sessions.iter()
         .filter_map(|row| row.try_get::<String, _>("session_id").ok())
         .collect())
 }
 
-/// Check which sessions might need summarization
-async fn check_summary_candidates(app_state: &Arc<AppState>) -> anyhow::Result<Vec<(String, usize)>> {
-    let pool = &app_state.sqlite_store.pool;
-    
-    let rows = sqlx::query(
-        r#"
-        SELECT session_id, COUNT(*) as count
-        FROM memory_entries
-        WHERE timestamp > datetime('now', '-7 days')
-        GROUP BY session_id
-        HAVING COUNT(*) >= 10
-        "#
+/// Check which sessions might need summaries
+async fn check_summary_candidates(app_state: &AppState) -> anyhow::Result<Vec<(String, i64)>> {
+    let candidates = sqlx::query_as::<_, (String, i64)>(
+        "SELECT session_id, COUNT(*) as count 
+         FROM memory_entries 
+         WHERE timestamp > (strftime('%s', 'now') - 604800)
+         GROUP BY session_id
+         HAVING count >= 10"
     )
-    .fetch_all(pool)
+    .fetch_all(&app_state.sqlite_pool)
     .await?;
     
-    Ok(rows.iter()
-        .filter_map(|row| {
-            let session_id: String = row.try_get("session_id").ok()?;
-            let count: i64 = row.try_get("count").ok()?;
-            Some((session_id, count as usize))
-        })
-        .collect())
+    Ok(candidates)
 }
