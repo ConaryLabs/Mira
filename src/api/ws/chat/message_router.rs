@@ -11,8 +11,9 @@ use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
 use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence, documents};
+use crate::llm::provider::StreamEvent;
 use crate::state::AppState;
-use crate::config::CONFIG; // NEW: use configured session id
+use crate::config::CONFIG;
 
 pub struct MessageRouter {
     app_state: Arc<AppState>,
@@ -76,9 +77,8 @@ impl MessageRouter {
         project_id: Option<String>,
         metadata: Option<MessageMetadata>,
     ) -> Result<()> {
-        info!("Processing chat message from {}", self.addr);
+        info!("Processing streaming chat message from {}", self.addr);
 
-        // Use configured session id instead of hardcoded one
         let request = ChatRequest {
             session_id: CONFIG.session_id.clone(),
             content,
@@ -86,12 +86,85 @@ impl MessageRouter {
             metadata,
         };
 
-        match self.unified_handler.handle_message(request).await {
+        // Create callback for streaming events
+        let connection = self.connection.clone();
+        let on_event = move |event: StreamEvent| -> Result<()> {
+            match event {
+                StreamEvent::TextDelta { delta } => {
+                    // Send text delta to client
+                    let _ = connection.send_message(WsServerMessage::Data {
+                        data: json!({
+                            "type": "stream_delta",
+                            "content": delta,
+                        }),
+                        request_id: None,
+                    });
+                    Ok(())
+                }
+                StreamEvent::ReasoningDelta { delta } => {
+                    // Send reasoning delta (optional display)
+                    let _ = connection.send_message(WsServerMessage::Data {
+                        data: json!({
+                            "type": "reasoning_delta",
+                            "content": delta,
+                        }),
+                        request_id: None,
+                    });
+                    Ok(())
+                }
+                StreamEvent::ToolCallStart { id, name } => {
+                    // Notify client that tool is being called
+                    let _ = connection.send_message(WsServerMessage::Status {
+                        message: format!("Executing tool: {}", name),
+                        detail: Some(id),
+                    });
+                    Ok(())
+                }
+                StreamEvent::ToolCallArgumentsDelta { id: _, delta: _ } => {
+                    // Tool arguments streaming (optional to display)
+                    Ok(())
+                }
+                StreamEvent::ToolCallComplete { id, name, arguments: _ } => {
+                    // Tool execution complete
+                    let _ = connection.send_message(WsServerMessage::Status {
+                        message: format!("Tool completed: {}", name),
+                        detail: Some(id),
+                    });
+                    Ok(())
+                }
+                StreamEvent::Done { response_id, input_tokens, output_tokens, reasoning_tokens } => {
+                    // Stream complete notification
+                    let _ = connection.send_message(WsServerMessage::Data {
+                        data: json!({
+                            "type": "stream_done",
+                            "response_id": response_id,
+                            "tokens": {
+                                "input": input_tokens,
+                                "output": output_tokens,
+                                "reasoning": reasoning_tokens,
+                            }
+                        }),
+                        request_id: None,
+                    });
+                    Ok(())
+                }
+                StreamEvent::Error { message } => {
+                    let _ = connection.send_message(WsServerMessage::Error {
+                        message,
+                        code: "STREAM_ERROR".to_string(),
+                    });
+                    Ok(())
+                }
+            }
+        };
+
+        // Use streaming handler
+        match self.unified_handler.handle_message_streaming(request, on_event).await {
             Ok(complete_response) => {
                 self.send_complete_response_to_client(complete_response).await?;
             }
             Err(e) => {
-                error!("Error handling chat message: {}", e);
+                error!("Error handling streaming chat message: {}", e);
                 self.connection.send_message(WsServerMessage::Error {
                     message: e.to_string(),
                     code: "CHAT_ERROR".to_string(),
@@ -129,7 +202,6 @@ impl MessageRouter {
                 "contains_code": complete_response.structured.analysis.contains_code,
                 "routed_to_heads": complete_response.structured.analysis.routed_to_heads,
                 "language": complete_response.structured.analysis.language,
-                // Optional fields
                 "mood": complete_response.structured.analysis.mood,
                 "intensity": complete_response.structured.analysis.intensity,
                 "intent": complete_response.structured.analysis.intent,
@@ -299,10 +371,8 @@ impl MessageRouter {
     }
 
     async fn handle_document_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        // Create a channel for progress updates
         let (tx, mut rx) = mpsc::unbounded_channel();
         
-        // Spawn a task to forward progress updates
         let connection = self.connection.clone();
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
@@ -310,13 +380,10 @@ impl MessageRouter {
             }
         });
         
-        // Create document handler with AppState
         let handler = documents::DocumentHandler::new(self.app_state.clone());
-        
         let command = documents::DocumentCommand { method, params };
         let response = handler.handle_command(command, Some(tx)).await?;
         
-        // Forward the response
         match response {
             WsServerMessage::Data { data, .. } => {
                 self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
