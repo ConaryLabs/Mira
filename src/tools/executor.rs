@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
@@ -167,7 +167,9 @@ impl ToolExecutor {
         
         let repo_path = self.get_repo_path(project_id).await?;
         let mut results = Vec::new();
+        let mut files_to_parse: Vec<(String, String)> = Vec::new();
         
+        // Write all files first
         for file in files {
             let path = file.get("path")
                 .and_then(|v| v.as_str())
@@ -197,6 +199,11 @@ impl ToolExecutor {
                         "success": true,
                         "bytes_written": content.len()
                     }));
+                    
+                    // Collect files to parse (Layer 1: Auto-parse after writes)
+                    if should_parse_file(path) {
+                        files_to_parse.push((path.to_string(), content.to_string()));
+                    }
                 }
                 Err(e) => {
                     results.push(json!({
@@ -205,6 +212,14 @@ impl ToolExecutor {
                         "error": e.to_string()
                     }));
                 }
+            }
+        }
+        
+        // Parse all parseable files that were successfully written
+        for (file_path, content) in files_to_parse {
+            match self.parse_and_store_file(project_id, &file_path, &content).await {
+                Ok(_) => info!("Auto-parsed after write: {}", file_path),
+                Err(e) => warn!("Parse failed (non-fatal): {} - {}", file_path, e),
             }
         }
         
@@ -241,6 +256,49 @@ impl ToolExecutor {
         crate::tools::project_context::get_project_context(project_id, &self.sqlite_pool).await
     }
 
+    /// Parse and store a file's AST (Layer 1: Auto-parse after writes)
+    async fn parse_and_store_file(&self, project_id: &str, file_path: &str, content: &str) -> Result<()> {
+        // Get or create file record
+        let file_id = self.upsert_repository_file(project_id, file_path, content).await?;
+        
+        // Detect language
+        let language = detect_language_from_path(file_path);
+        
+        // Parse and store code elements
+        self.code_intelligence
+            .analyze_and_store_with_project(file_id, file_path, content, project_id, &language)
+            .await?;
+        
+        Ok(())
+    }
+    
+    /// Upsert file record in repository_files table
+    async fn upsert_repository_file(&self, project_id: &str, file_path: &str, content: &str) -> Result<i64> {
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        
+        let file_id = sqlx::query_scalar!(
+            r#"
+            INSERT INTO repository_files (project_id, file_path, content_hash, last_modified)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(project_id, file_path) DO UPDATE SET
+                content_hash = excluded.content_hash,
+                last_modified = CURRENT_TIMESTAMP
+            RETURNING id
+            "#,
+            project_id,
+            file_path,
+            hash
+        )
+        .fetch_one(&self.sqlite_pool)
+        .await?;
+        
+        Ok(file_id)
+    }
+
     /// Get repository path for a project
     async fn get_repo_path(&self, project_id: &str) -> Result<PathBuf> {
         let attachment = sqlx::query!(
@@ -253,4 +311,24 @@ impl ToolExecutor {
         
         Ok(PathBuf::from(attachment.local_path))
     }
+}
+
+/// Check if file should be parsed for code intelligence
+fn should_parse_file(path: &str) -> bool {
+    path.ends_with(".rs") || 
+    path.ends_with(".ts") || path.ends_with(".tsx") ||
+    path.ends_with(".js") || path.ends_with(".jsx")
+}
+
+/// Detect language from file path
+fn detect_language_from_path(path: &str) -> String {
+    if path.ends_with(".rs") {
+        "rust"
+    } else if path.ends_with(".ts") || path.ends_with(".tsx") {
+        "typescript"
+    } else if path.ends_with(".js") || path.ends_with(".jsx") {
+        "javascript"
+    } else {
+        "unknown"
+    }.to_string()
 }
