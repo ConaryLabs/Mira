@@ -1,5 +1,5 @@
 // src/api/ws/chat/unified_handler.rs
-// Unified chat handler - delegates orchestration to ChatOrchestrator
+// Unified chat handler - delegates orchestration to ChatOrchestrator or StreamingOrchestrator
 
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
@@ -10,13 +10,13 @@ use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, LLMMetadata};
 use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
-use crate::llm::provider::Message;
+use crate::llm::provider::{Message, StreamEvent};
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
-use crate::tools::ChatOrchestrator;
+use crate::tools::{ChatOrchestrator, StreamingOrchestrator};
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -35,6 +35,7 @@ impl UnifiedChatHandler {
         Self { app_state }
     }
     
+    /// Handle message with non-streaming orchestrator (returns complete response)
     pub async fn handle_message(
         &self,
         request: ChatRequest,
@@ -77,6 +78,56 @@ impl UnifiedChatHandler {
         
         // Parse structured output and convert to CompleteResponse
         self.finalize_response(result, user_message_id, &request).await
+    }
+    
+    /// Handle message with streaming orchestrator (streams events via callback)
+    pub async fn handle_message_streaming<F>(
+        &self,
+        request: ChatRequest,
+        mut on_event: F,
+    ) -> Result<CompleteResponse>
+    where
+        F: FnMut(StreamEvent) -> Result<()> + Send,
+    {
+        info!("Processing streaming message for session: {}", request.session_id);
+        
+        // Save user message
+        let user_message_id = self.save_user_message(&request).await?;
+        debug!("User message saved: {}", user_message_id);
+        
+        // Build context
+        let context = self.build_context(&request.session_id, &request.content).await?;
+        debug!("Context built - recent: {}, semantic: {}", context.recent.len(), context.semantic.len());
+        
+        // Build system prompt
+        let persona = self.select_persona(&request.metadata);
+        let system_prompt = UnifiedPromptBuilder::build_system_prompt(
+            &persona,
+            &context,
+            None,
+            request.metadata.as_ref(),
+            request.project_id.as_deref(),
+        );
+        
+        // Get available tools
+        let tools = self.get_tools(&request);
+        debug!("Available tools: {}", tools.len());
+        
+        // Build message history
+        let messages = self.build_messages(&context, &request);
+        
+        // Delegate to streaming orchestrator
+        let orchestrator = StreamingOrchestrator::new(self.app_state.clone());
+        let result = orchestrator.execute_with_tools_streaming(
+            messages,
+            system_prompt,
+            tools,
+            request.project_id.as_deref(),
+            on_event,
+        ).await?;
+        
+        // Convert streaming result to CompleteResponse
+        self.finalize_streaming_response(result, user_message_id, &request).await
     }
     
     fn get_tools(&self, request: &ChatRequest) -> Vec<Value> {
@@ -133,6 +184,58 @@ impl UnifiedChatHandler {
             model_version: "gpt-5".to_string(),
             finish_reason: Some("stop".to_string()),
             latency_ms: result.latency_ms,
+            temperature: 0.7,
+            max_tokens: 128000,
+        };
+        
+        let complete_response = CompleteResponse {
+            structured,
+            metadata,
+            raw_response: Value::Null,
+            artifacts: if result.artifacts.is_empty() { None } else { Some(result.artifacts) },
+        };
+        
+        // Save to database
+        let message_id = save_structured_response(
+            &self.app_state.sqlite_pool,
+            &request.session_id,
+            &complete_response,
+            Some(user_message_id),
+        ).await?;
+        
+        // Process embeddings
+        if let Err(e) = process_embeddings(
+            &self.app_state.sqlite_pool,
+            message_id,
+            &request.session_id,
+            &complete_response.structured,
+            &self.app_state.embedding_client,
+            &self.app_state.memory_service.get_multi_store(),
+        ).await {
+            warn!("Failed to process embeddings: {}", e);
+        }
+        
+        Ok(complete_response)
+    }
+    
+    async fn finalize_streaming_response(
+        &self,
+        result: crate::tools::StreamingResult,
+        user_message_id: i64,
+        request: &ChatRequest,
+    ) -> Result<CompleteResponse> {
+        // Parse structured output from streaming result
+        let structured = self.parse_structured_output(&result.content)?;
+        
+        let metadata = LLMMetadata {
+            response_id: None,
+            prompt_tokens: Some(result.tokens.input),
+            completion_tokens: Some(result.tokens.output),
+            thinking_tokens: Some(result.tokens.reasoning),
+            total_tokens: Some(result.tokens.input + result.tokens.output + result.tokens.reasoning),
+            model_version: "gpt-5".to_string(),
+            finish_reason: Some("stop".to_string()),
+            latency_ms: 0, // Streaming doesn't track single latency
             temperature: 0.7,
             max_tokens: 128000,
         };

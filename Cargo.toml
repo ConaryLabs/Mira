@@ -44,8 +44,9 @@ git2 = "0.18.3"
 base64 = "0.22"
 bytes = "1.5"
 
-# Streaming and async
-tokio-stream = { version = "0.1", features = ["net"] }
+# Streaming and async - UPDATED FOR STREAMING SUPPORT
+tokio-stream = { version = "0.1", features = ["net", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3.31"
 
 # Rate limiting and retry logic
@@ -61,7 +62,7 @@ regex = "1.11.2"
 # Vector database
 qdrant-client = "1.12"
 
-# Document processing (NEW)
+# Document processing
 pdf-extract = "0.7"
 lopdf = "0.34"
 zip = "2.2"
