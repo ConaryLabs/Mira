@@ -58,7 +58,7 @@ impl ChatOrchestrator {
                 ReasoningConfig::for_direct_response()
             };
             
-            info!("🎯 Orchestrator call {}: reasoning={}, verbosity={}", iteration, reasoning, verbosity);
+            info!("Orchestrator call {}: reasoning={}, verbosity={}", iteration, reasoning, verbosity);
             
             // Get provider and downcast to Gpt5Provider
             let provider = self.state.llm_router.get_provider();
@@ -96,7 +96,7 @@ impl ChatOrchestrator {
             
             // Check for tool calls
             if !raw_response.function_calls.is_empty() {
-                info!("🔧 Executing {} tools", raw_response.function_calls.len());
+                info!("Executing {} tools", raw_response.function_calls.len());
                 
                 tools_called.clear();
                 
