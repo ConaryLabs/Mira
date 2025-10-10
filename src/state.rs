@@ -9,7 +9,6 @@ use tracing::info;
 use crate::config::CONFIG;
 use crate::llm::provider::{
     OpenAiEmbeddings,
-    deepseek::DeepSeekProvider,
     gpt5::Gpt5Provider,
 };
 use crate::llm::router::LlmRouter;
@@ -40,8 +39,8 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub llm_router: Arc<LlmRouter>,  // NEW: Smart router with DeepSeek + GPT-5
-    pub embedding_client: Arc<OpenAiEmbeddings>,  // OpenAI for embeddings
+    pub llm_router: Arc<LlmRouter>,
+    pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
@@ -69,17 +68,8 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
         
-        // Initialize DeepSeek provider
-        info!("🤖 Initializing DeepSeek provider: {}", CONFIG.deepseek_model);
-        let deepseek = Arc::new(DeepSeekProvider::new(
-            CONFIG.deepseek_api_key.clone(),
-            CONFIG.deepseek_model.clone(),
-            CONFIG.deepseek_max_tokens,
-            CONFIG.deepseek_temperature,
-        ));
-        
         // Initialize GPT-5 provider
-        info!("🤖 Initializing GPT-5 provider: {}", CONFIG.gpt5_model);
+        info!("Initializing GPT-5 provider: {}", CONFIG.gpt5_model);
         let gpt5 = Arc::new(Gpt5Provider::new(
             CONFIG.gpt5_api_key.clone(),
             CONFIG.gpt5_model.clone(),
@@ -94,11 +84,8 @@ impl AppState {
             CONFIG.openai_embedding_model.clone(),
         ));
         
-        // Create router with LLM-based classification (DeepSeek classifies tasks)
-        let llm_router = Arc::new(LlmRouter::new(
-            deepseek.clone(),
-            gpt5.clone(),
-        ));
+        // Create simplified router - GPT-5 only
+        let llm_router = Arc::new(LlmRouter::new(gpt5.clone()));
         
         // Initialize Qdrant multi-store
         let multi_store = Arc::new(QdrantMultiStore::new(
@@ -106,16 +93,15 @@ impl AppState {
             "mira",
         ).await?);
         
-        // Initialize memory service with GPT-5 for analysis (via router)
-        let gpt5_for_analysis = llm_router.route(crate::llm::router::TaskType::Chat);
+        // Memory service uses GPT-5 directly
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            gpt5_for_analysis,  // Use GPT-5 for message analysis
+            gpt5.clone(),
             embedding_client.clone(),
         ));
         
-        info!("✅ System initialized: DeepSeek 3.2 + GPT-5 with LLM-based routing");
+        info!("Application state initialized successfully");
         
         Ok(Self {
             sqlite_store,

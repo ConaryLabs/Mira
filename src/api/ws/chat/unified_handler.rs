@@ -13,7 +13,6 @@ use crate::llm::structured::{CompleteResponse, LLMMetadata};
 use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::{StructuredLLMResponse, MessageAnalysis};
 use crate::llm::provider::Message;
-use crate::llm::router::TaskType;
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
@@ -124,7 +123,6 @@ impl UnifiedChatHandler {
         let tools = if request.project_id.is_some() {
             vec![
                 get_create_artifact_tool_schema(),
-                get_code_fix_tool_schema(),
                 get_read_file_tool_schema(),
                 get_code_search_tool_schema(),
                 get_list_files_tool_schema(),
@@ -154,7 +152,7 @@ impl UnifiedChatHandler {
         let mut tool_cache = SessionToolCache::new();
         let mut collected_artifacts: Vec<Value> = Vec::new();
         
-        info!("🎙️ Mira (GPT-5) processing request");
+        info!("Processing GPT-5 request");
         
         // Tool execution loop - continue until response is complete
         for iteration in 0..10 {
@@ -162,7 +160,6 @@ impl UnifiedChatHandler {
             
             // Call GPT-5 with structured output + optional tools
             let raw_response = self.app_state.llm_router.chat_with_tools(
-                TaskType::Chat,
                 chat_messages.clone(),
                 system_prompt.clone(),
                 tools.clone(),
@@ -171,7 +168,7 @@ impl UnifiedChatHandler {
             
             // Log tokens
             info!(
-                "🤖 GPT-5 | Tokens: in={} out={} reasoning={} | latency={}ms",
+                "GPT-5 response | input_tokens={} output_tokens={} reasoning_tokens={} latency_ms={}",
                 raw_response.tokens.input,
                 raw_response.tokens.output,
                 raw_response.tokens.reasoning,
@@ -185,7 +182,7 @@ impl UnifiedChatHandler {
                 debug!("text_output preview: {}", &raw_response.text_output[..raw_response.text_output.len().min(200)]);
             }
             
-            // CRITICAL FIX: Check for tool calls FIRST
+            // Check for tool calls first before parsing structured output
             // If GPT-5 returned tool calls, execute them and continue the loop
             // Only parse structured output when we have the final response (no tool calls)
             if !raw_response.function_calls.is_empty() {
@@ -224,14 +221,10 @@ impl UnifiedChatHandler {
                     // Handle result
                     let result_value = match result {
                         Ok(r) => {
-                            // Collect artifacts
+                            // Collect artifacts from create_artifact tool
                             if tool_name == "create_artifact" {
                                 if let Some(artifact) = r.get("artifact") {
                                     collected_artifacts.push(artifact.clone());
-                                }
-                            } else if tool_name == "provide_code_fix" {
-                                if let Some(artifacts_array) = r.get("artifacts").and_then(|a| a.as_array()) {
-                                    collected_artifacts.extend(artifacts_array.iter().cloned());
                                 }
                             }
                             r
@@ -322,7 +315,7 @@ impl UnifiedChatHandler {
             .as_object()
             .ok_or_else(|| anyhow!("Missing 'analysis' field"))?;
         
-        // FIXED: Never allow empty routed_to_heads - always default to semantic
+        // Ensure routed_to_heads always has at least one entry, defaulting to semantic
         let routed_to_heads = {
             let heads = analysis_obj["routed_to_heads"]
                 .as_array()
@@ -379,7 +372,6 @@ impl UnifiedChatHandler {
         let executor = crate::tools::ToolExecutor::new(
             self.app_state.code_intelligence.clone(),
             self.app_state.sqlite_pool.clone(),
-            self.app_state.llm_router.clone(),
         );
 
         let project_id = request.project_id.as_deref()

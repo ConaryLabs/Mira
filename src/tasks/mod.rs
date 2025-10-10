@@ -12,7 +12,6 @@ use sqlx::Row;
 
 use crate::memory::features::decay;
 use crate::memory::features::message_pipeline::MessagePipeline;
-use crate::llm::router::TaskType;  // NEW: Import TaskType
 use crate::state::AppState;
 
 pub mod config;
@@ -109,7 +108,7 @@ impl TaskManager {
             info!("Analysis processor started (interval: {:?})", interval);
             
             // MessagePipeline uses GPT-5 for message analysis (Mira's voice everywhere)
-            let gpt5_provider = app_state.llm_router.route(TaskType::Chat);
+            let gpt5_provider = app_state.llm_router.get_provider();
             
             let message_pipeline = MessagePipeline::new(gpt5_provider);
 
@@ -149,6 +148,7 @@ impl TaskManager {
                     }
                     Err(e) => {
                         error!("Failed to get active sessions: {}", e);
+                        metrics.record_error("analysis");
                     }
                 }
             }
@@ -268,6 +268,7 @@ impl TaskManager {
                     }
                     Err(e) => {
                         error!("Failed to check summary candidates: {}", e);
+                        metrics.record_error("summary");
                     }
                 }
             }

@@ -1,80 +1,9 @@
 // src/llm/structured/tool_schema.rs
-// Unified tool schemas for DeepSeek 3.2 + GPT-5
-// OpenAI function calling format (compatible with both providers)
+// Tool schemas for GPT-5 function calling
 
 use serde_json::json;
 
-/// Tool schema for structured chat responses
-/// MANDATORY for all responses
-pub fn get_response_tool_schema() -> serde_json::Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "respond_to_user",
-            "description": "🚨 CRITICAL RESPONSE REQUIREMENT 🚨\n\nThis tool is MANDATORY for EVERY user message - no exceptions.\n\nYou MUST call this tool to communicate with the user. They cannot see your thinking or tool results unless you call this tool.\n\n⚠️ WHEN TO CALL THIS:\n- After gathering context with other tools\n- Even if just acknowledging a message\n- Even if you're unsure or need clarification\n- ALWAYS as the final step in your response\n\n⚠️ OTHER TOOLS ARE FOR GATHERING:\n- read_file, search_code, list_files: Information gathering\n- create_artifact, provide_code_fix: Code generation\n- These tools DO NOT communicate with the user\n\n⚠️ WORKFLOW:\n1. Use other tools to gather information (if needed)\n2. Call respond_to_user to send your message\n3. The conversation ends when you call respond_to_user\n\nThe user is waiting for your response. You must call this tool to communicate with them.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "output": {
-                        "type": "string",
-                        "description": "Your actual response to the user - the message they will see"
-                    },
-                    "analysis": {
-                        "type": "object",
-                        "properties": {
-                            "salience": {
-                                "type": "number",
-                                "description": "Importance score 0.0-1.0. How important is this to remember long-term? 0.0=trivial, 0.5=normal, 1.0=critical. Default to 0.5 if unsure."
-                            },
-                            "topics": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "List of topics discussed. Use ['general'] if no specific topics."
-                            },
-                            "contains_code": {
-                                "type": "boolean",
-                                "description": "Does this message contain actual code (code blocks, snippets)? NOT just technical terms."
-                            },
-                            "programming_lang": {
-                                "type": "string",
-                                "description": "REQUIRED if contains_code=true. Must be one of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'. Set to null if contains_code=false or language unknown."
-                            },
-                            "contains_error": {
-                                "type": "boolean",
-                                "description": "Does this message contain an actual error that needs fixing (compiler error, runtime error, stack trace, build failure)? NOT just discussing errors in general."
-                            },
-                            "error_type": {
-                                "type": "string",
-                                "description": "REQUIRED if contains_error=true. One of: 'compiler', 'runtime', 'test_failure', 'build_failure', 'linter', 'type_error'. Set to null if contains_error=false."
-                            },
-                            "error_file": {
-                                "type": "string",
-                                "description": "If contains_error=true and a file path is mentioned in the error, extract it. Otherwise null."
-                            },
-                            "error_severity": {
-                                "type": "string",
-                                "description": "If contains_error=true, rate as 'critical' (blocking), 'warning' (should fix), or 'info' (minor). Otherwise null."
-                            },
-                            "routed_to_heads": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "Which memory heads should process this (valid: 'semantic', 'code', 'summary', 'documents'). Use 'code' if contains_code=true or contains_error=true. Use ['semantic'] as default."
-                            },
-                            "language": {
-                                "type": "string",
-                                "description": "Natural language code (e.g., 'en', 'es', 'fr'). Default to 'en'."
-                            }
-                        },
-                        "required": ["salience", "topics", "contains_code", "routed_to_heads", "language"]
-                    }
-                },
-                "required": ["output", "analysis"]
-            }
-        }
-    })
-}
-
-/// Tool schema for creating artifacts
+/// Tool schema for artifact creation
 pub fn get_create_artifact_tool_schema() -> serde_json::Value {
     json!({
         "type": "function",
@@ -108,101 +37,7 @@ pub fn get_create_artifact_tool_schema() -> serde_json::Value {
     })
 }
 
-/// Tool schema for code fix responses
-pub fn get_code_fix_tool_schema() -> serde_json::Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "provide_code_fix",
-            "description": "REQUIRED for fixing code errors. Call this when the user reports a compiler error, runtime error, type error, or any code bug that needs fixing.\n\nWhen to use:\n- User shares compiler/build errors\n- Stack traces or runtime failures\n- Type errors or linting issues\n- Code that needs debugging or fixing\n\nThis tool uses DeepSeek for efficient code generation and provides complete fixed files (never snippets).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "output": {
-                        "type": "string",
-                        "description": "Explanation of the fix for the user"
-                    },
-                    "analysis": {
-                        "type": "object",
-                        "properties": {
-                            "salience": { 
-                                "type": "number",
-                                "description": "Importance score 0.0-1.0"
-                            },
-                            "topics": { 
-                                "type": "array", 
-                                "items": { "type": "string" } 
-                            },
-                            "contains_code": { 
-                                "type": "boolean",
-                                "description": "Always true for code fixes"
-                            },
-                            "programming_lang": { 
-                                "type": "string",
-                                "description": "REQUIRED. Must be one of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'"
-                            },
-                            "contains_error": {
-                                "type": "boolean",
-                                "description": "Always true for error fixes"
-                            },
-                            "error_type": {
-                                "type": "string",
-                                "description": "Type of error being fixed"
-                            },
-                            "routed_to_heads": { 
-                                "type": "array", 
-                                "items": { "type": "string" },
-                                "description": "Valid values: 'semantic', 'code', 'summary', 'documents'. Should include 'code'."
-                            },
-                            "language": { 
-                                "type": "string",
-                                "description": "Natural language (e.g., 'en')"
-                            }
-                        },
-                        "required": ["salience", "topics", "contains_code", "programming_lang", "contains_error", "error_type", "routed_to_heads", "language"]
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Detailed reasoning about the fix"
-                    },
-                    "fix_type": {
-                        "type": "string",
-                        "description": "Type of fix (e.g., 'compiler_error', 'runtime_error')"
-                    },
-                    "files": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "File path relative to project root"
-                                },
-                                "content": {
-                                    "type": "string",
-                                    "description": "COMPLETE file content from line 1 to last line"
-                                },
-                                "change_type": {
-                                    "type": "string",
-                                    "enum": ["primary", "import", "type", "cascade"],
-                                    "description": "Type of change"
-                                }
-                            },
-                            "required": ["path", "content", "change_type"]
-                        }
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "description": "Confidence score 0.0-1.0"
-                    }
-                },
-                "required": ["output", "analysis", "fix_type", "files", "confidence"]
-            }
-        }
-    })
-}
-
-/// Tool schema for reading a single file
+/// Tool schema for reading a file
 pub fn get_read_file_tool_schema() -> serde_json::Value {
     json!({
         "type": "function",
@@ -257,7 +92,7 @@ pub fn get_code_search_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "search_code",
-            "description": "REQUIRED for finding code elements in the project. Call this when the user asks to find, locate, or search for functions, structs, classes, types, or any code patterns.\n\nWhen to use:\n- 'Find the function X'\n- 'Where is the struct Y defined?'\n- 'Search for implementations of Z'\n- 'Locate all instances of pattern P'\n\nThis tool uses DeepSeek to intelligently summarize large result sets, making it efficient for big codebases.",
+            "description": "Search for code elements (functions, structs, classes, types) in the project. Returns matching code elements with file paths and line numbers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -318,7 +153,7 @@ pub fn get_project_context_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "get_project_context",
-            "description": "REQUIRED for understanding project structure. Call this when the user asks about:\n\n- Project overview or architecture\n- Directory structure\n- Main entry points\n- Technology stack\n- 'Tell me about this project'\n- 'What kind of project is this?'\n\nThis tool uses DeepSeek to analyze and summarize large projects (50+ files), providing intelligent insights about architecture and patterns.",
+            "description": "Get comprehensive project context including file tree, languages, recent files, and code statistics.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -397,14 +232,9 @@ pub fn get_write_files_tool_schema() -> serde_json::Value {
     })
 }
 
-// ============================================================================
-// TOOL COLLECTION FUNCTIONS
-// ============================================================================
-
-/// Get all available tools for regular chat
+/// Get all available tools for chat with project context
 pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
     vec![
-        get_response_tool_schema(),
         get_create_artifact_tool_schema(),
         get_read_file_tool_schema(),
         get_list_files_tool_schema(),
@@ -416,19 +246,9 @@ pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
     ]
 }
 
-/// Get tools for code fix operations
-pub fn get_code_fix_tools() -> Vec<serde_json::Value> {
-    vec![
-        get_code_fix_tool_schema(),
-        get_read_file_tool_schema(),
-        get_code_search_tool_schema(),
-    ]
-}
-
 /// Get minimal tools for simple queries
 pub fn get_minimal_tools() -> Vec<serde_json::Value> {
     vec![
-        get_response_tool_schema(),
         get_create_artifact_tool_schema(),
     ]
 }
