@@ -1,11 +1,9 @@
 // src/api/ws/chat/unified_handler.rs
-// Unified chat handler - GPT-5 native structured outputs
+// Unified chat handler - delegates orchestration to ChatOrchestrator
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
 use anyhow::{Result, anyhow};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tracing::{info, warn, debug};
 
 use crate::api::ws::message::MessageMetadata;
@@ -18,6 +16,7 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
+use crate::tools::ChatOrchestrator;
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -25,59 +24,6 @@ pub struct ChatRequest {
     pub project_id: Option<String>,
     pub metadata: Option<MessageMetadata>,
     pub session_id: String,
-}
-
-// ===== SESSION TOOL CACHE =====
-
-#[derive(Clone)]
-struct CachedToolResult {
-    result: Value,
-    cached_at: Instant,
-}
-
-struct SessionToolCache {
-    cache: HashMap<(String, String), CachedToolResult>,
-    project_context_ttl: Duration,
-}
-
-impl SessionToolCache {
-    fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
-            project_context_ttl: Duration::from_secs(300),
-        }
-    }
-    
-    fn get(&self, project_id: &str, tool_name: &str, ttl: Duration) -> Option<Value> {
-        let key = (project_id.to_string(), tool_name.to_string());
-        
-        if let Some(cached) = self.cache.get(&key) {
-            if cached.cached_at.elapsed() < ttl {
-                debug!("Cache HIT for {}:{}", tool_name, project_id);
-                return Some(cached.result.clone());
-            }
-        }
-        None
-    }
-    
-    fn set(&mut self, project_id: &str, tool_name: &str, result: Value) {
-        let key = (project_id.to_string(), tool_name.to_string());
-        self.cache.insert(key, CachedToolResult {
-            result,
-            cached_at: Instant::now(),
-        });
-    }
-    
-    fn is_cacheable(&self, tool_name: &str) -> bool {
-        matches!(tool_name, "get_project_context")
-    }
-    
-    fn get_ttl(&self, tool_name: &str) -> Duration {
-        match tool_name {
-            "get_project_context" => self.project_context_ttl,
-            _ => Duration::from_secs(0),
-        }
-    }
 }
 
 pub struct UnifiedChatHandler {
@@ -94,13 +40,7 @@ impl UnifiedChatHandler {
         request: ChatRequest,
     ) -> Result<CompleteResponse> {
         info!("Processing message for session: {}", request.session_id);
-        self.handle_chat_with_tools(request).await
-    }
-    
-    async fn handle_chat_with_tools(
-        &self,
-        request: ChatRequest,
-    ) -> Result<CompleteResponse> {
+        
         // Save user message
         let user_message_id = self.save_user_message(&request).await?;
         debug!("User message saved: {}", user_message_id);
@@ -109,6 +49,7 @@ impl UnifiedChatHandler {
         let context = self.build_context(&request.session_id, &request.content).await?;
         debug!("Context built - recent: {}, semantic: {}", context.recent.len(), context.semantic.len());
         
+        // Build system prompt
         let persona = self.select_persona(&request.metadata);
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
@@ -118,9 +59,28 @@ impl UnifiedChatHandler {
             request.project_id.as_deref(),
         );
         
-        // Define optional tools (file ops, code search, etc.)
-        // GPT-5 will use these only when needed
-        let tools = if request.project_id.is_some() {
+        // Get available tools
+        let tools = self.get_tools(&request);
+        debug!("Available tools: {}", tools.len());
+        
+        // Build message history
+        let messages = self.build_messages(&context, &request);
+        
+        // Delegate to orchestrator
+        let orchestrator = ChatOrchestrator::new(self.app_state.clone());
+        let result = orchestrator.execute_with_tools(
+            messages,
+            system_prompt,
+            tools,
+            request.project_id.as_deref(),
+        ).await?;
+        
+        // Parse structured output and convert to CompleteResponse
+        self.finalize_response(result, user_message_id, &request).await
+    }
+    
+    fn get_tools(&self, request: &ChatRequest) -> Vec<Value> {
+        if request.project_id.is_some() {
             vec![
                 get_create_artifact_tool_schema(),
                 get_read_file_tool_schema(),
@@ -132,176 +92,81 @@ impl UnifiedChatHandler {
             ]
         } else {
             vec![]
-        };
-        debug!("Available tools: {}", tools.len());
+        }
+    }
+    
+    fn build_messages(&self, context: &RecallContext, request: &ChatRequest) -> Vec<Message> {
+        let mut messages = Vec::new();
         
-        // Build message history
-        let mut chat_messages = Vec::new();
+        // Add recent conversation history
         for entry in context.recent.iter().rev() {
-            chat_messages.push(Message {
+            messages.push(Message {
                 role: if entry.role == "user" { "user".to_string() } else { "assistant".to_string() },
                 content: entry.content.clone(),
             });
         }
-        chat_messages.push(Message {
+        
+        // Add current user message
+        messages.push(Message {
             role: "user".to_string(),
             content: request.content.clone(),
         });
         
-        // Initialize cache and artifacts
-        let mut tool_cache = SessionToolCache::new();
-        let mut collected_artifacts: Vec<Value> = Vec::new();
-        
-        info!("Processing GPT-5 request");
-        
-        // Tool execution loop - continue until response is complete
-        for iteration in 0..10 {
-            info!("Iteration {}", iteration);
-            
-            // Call GPT-5 with structured output + optional tools
-            let raw_response = self.app_state.llm_router.chat_with_tools(
-                chat_messages.clone(),
-                system_prompt.clone(),
-                tools.clone(),
-                None,
-            ).await?;
-            
-            // Log tokens
-            info!(
-                "GPT-5 response | input_tokens={} output_tokens={} reasoning_tokens={} latency_ms={}",
-                raw_response.tokens.input,
-                raw_response.tokens.output,
-                raw_response.tokens.reasoning,
-                raw_response.latency_ms
-            );
-            
-            // DEBUG: Log what we got
-            debug!("text_output length: {}", raw_response.text_output.len());
-            debug!("function_calls count: {}", raw_response.function_calls.len());
-            if !raw_response.text_output.is_empty() {
-                debug!("text_output preview: {}", &raw_response.text_output[..raw_response.text_output.len().min(200)]);
-            }
-            
-            // Check for tool calls first before parsing structured output
-            // If GPT-5 returned tool calls, execute them and continue the loop
-            // Only parse structured output when we have the final response (no tool calls)
-            if !raw_response.function_calls.is_empty() {
-                // Execute tool calls
-                info!("Executing {} tools", raw_response.function_calls.len());
-                
-                for func_call in &raw_response.function_calls {
-                    let tool_name = &func_call.name;
-                    let tool_input = &func_call.arguments;
-                    
-                    debug!("Tool: {}", tool_name);
-                    
-                    // Execute tool with caching
-                    let result = if let Some(project_id) = request.project_id.as_deref() {
-                        if tool_cache.is_cacheable(tool_name) {
-                            let ttl = tool_cache.get_ttl(tool_name);
-                            
-                            if let Some(cached) = tool_cache.get(project_id, tool_name, ttl) {
-                                Ok(cached)
-                            } else {
-                                match self.execute_tool(tool_name, tool_input, &request).await {
-                                    Ok(r) => {
-                                        tool_cache.set(project_id, tool_name, r.clone());
-                                        Ok(r)
-                                    }
-                                    Err(e) => Err(e)
-                                }
-                            }
-                        } else {
-                            self.execute_tool(tool_name, tool_input, &request).await
-                        }
-                    } else {
-                        self.execute_tool(tool_name, tool_input, &request).await
-                    };
-                    
-                    // Handle result
-                    let result_value = match result {
-                        Ok(r) => {
-                            // Collect artifacts from create_artifact tool
-                            if tool_name == "create_artifact" {
-                                if let Some(artifact) = r.get("artifact") {
-                                    collected_artifacts.push(artifact.clone());
-                                }
-                            }
-                            r
-                        }
-                        Err(e) => {
-                            warn!("Tool error: {}", e);
-                            json!({
-                                "error": e.to_string(),
-                                "status": "failed"
-                            })
-                        }
-                    };
-                    
-                    // Add tool result to conversation
-                    chat_messages.push(Message {
-                        role: "user".to_string(),
-                        content: format!("Tool result ({}): {}", tool_name, result_value.to_string()),
-                    });
-                }
-                
-                // Continue loop to get GPT-5's response after tool execution
-                continue;
-            }
-            
-            // No tool calls - this is the final response
-            // Parse structured JSON output
-            info!("Response complete (no tool calls needed)");
-            
-            let structured = self.parse_structured_output(&raw_response.text_output)?;
-            
-            let metadata = LLMMetadata {
-                response_id: Some(raw_response.id.clone()),
-                prompt_tokens: Some(raw_response.tokens.input),
-                completion_tokens: Some(raw_response.tokens.output),
-                thinking_tokens: Some(raw_response.tokens.reasoning),
-                total_tokens: Some(raw_response.tokens.input + raw_response.tokens.output + raw_response.tokens.reasoning),
-                model_version: "gpt-5".to_string(),
-                finish_reason: Some("stop".to_string()),
-                latency_ms: raw_response.latency_ms,
-                temperature: 0.7,
-                max_tokens: 128000,
-            };
-            
-            let complete_response = CompleteResponse {
-                structured,
-                metadata,
-                raw_response: raw_response.raw_response.clone(),
-                artifacts: if collected_artifacts.is_empty() { None } else { Some(collected_artifacts) },
-            };
-            
-            // Save to database
-            let message_id = save_structured_response(
-                &self.app_state.sqlite_pool,
-                &request.session_id,
-                &complete_response,
-                Some(user_message_id),
-            ).await?;
-            
-            // Process embeddings
-            if let Err(e) = process_embeddings(
-                &self.app_state.sqlite_pool,
-                message_id,
-                &request.session_id,
-                &complete_response.structured,
-                &self.app_state.embedding_client,
-                &self.app_state.memory_service.get_multi_store(),
-            ).await {
-                warn!("Failed to process embeddings: {}", e);
-            }
-            
-            return Ok(complete_response);
-        }
-        
-        Err(anyhow!("Tool loop exceeded max iterations"))
+        messages
     }
     
-    /// Parse GPT-5's structured JSON output
+    async fn finalize_response(
+        &self,
+        result: crate::tools::ChatResult,
+        user_message_id: i64,
+        request: &ChatRequest,
+    ) -> Result<CompleteResponse> {
+        // Parse structured output from orchestrator result
+        let structured = self.parse_structured_output(&result.content)?;
+        
+        let metadata = LLMMetadata {
+            response_id: None,
+            prompt_tokens: Some(result.tokens.input),
+            completion_tokens: Some(result.tokens.output),
+            thinking_tokens: Some(result.tokens.reasoning),
+            total_tokens: Some(result.tokens.input + result.tokens.output + result.tokens.reasoning),
+            model_version: "gpt-5".to_string(),
+            finish_reason: Some("stop".to_string()),
+            latency_ms: result.latency_ms,
+            temperature: 0.7,
+            max_tokens: 128000,
+        };
+        
+        let complete_response = CompleteResponse {
+            structured,
+            metadata,
+            raw_response: Value::Null,
+            artifacts: if result.artifacts.is_empty() { None } else { Some(result.artifacts) },
+        };
+        
+        // Save to database
+        let message_id = save_structured_response(
+            &self.app_state.sqlite_pool,
+            &request.session_id,
+            &complete_response,
+            Some(user_message_id),
+        ).await?;
+        
+        // Process embeddings
+        if let Err(e) = process_embeddings(
+            &self.app_state.sqlite_pool,
+            message_id,
+            &request.session_id,
+            &complete_response.structured,
+            &self.app_state.embedding_client,
+            &self.app_state.memory_service.get_multi_store(),
+        ).await {
+            warn!("Failed to process embeddings: {}", e);
+        }
+        
+        Ok(complete_response)
+    }
+    
     fn parse_structured_output(&self, text_output: &str) -> Result<StructuredLLMResponse> {
         let parsed: Value = serde_json::from_str(text_output)
             .map_err(|e| anyhow!("Failed to parse structured output: {}", e))?;
@@ -361,23 +226,6 @@ impl UnifiedChatHandler {
             schema_name: Some("gpt5_structured".to_string()),
             validation_status: Some("valid".to_string()),
         })
-    }
-    
-    async fn execute_tool(
-        &self,
-        tool_name: &str,
-        input: &Value,
-        request: &ChatRequest,
-    ) -> Result<Value> {
-        let executor = crate::tools::ToolExecutor::new(
-            self.app_state.code_intelligence.clone(),
-            self.app_state.sqlite_pool.clone(),
-        );
-
-        let project_id = request.project_id.as_deref()
-            .ok_or_else(|| anyhow!("No project context for {}", tool_name))?;
-
-        executor.execute_tool(tool_name, input, project_id).await
     }
     
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
