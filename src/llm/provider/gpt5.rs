@@ -10,6 +10,13 @@ use std::any::Any;
 use std::time::Instant;
 use tracing::{debug, error, info};
 
+// Streaming imports
+use futures::stream::{Stream, StreamExt};
+use tokio_stream::wrappers::LinesStream;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use std::pin::Pin;
+use crate::llm::provider::stream::StreamEvent;
+
 // Use global config for logging controls
 use crate::config::CONFIG;
 
@@ -64,13 +71,13 @@ impl Gpt5Provider {
         if tool["type"] == "function" {
             if let Some(function) = tool.get("function") {
                 // Flatten: pull everything from "function" up to the top level
-                let mut flattened = json!({
+                let _flattened = json!({
                     "type": "function"
                 });
                 
                 // Copy all fields from the nested "function" object
-                if let Some(obj) = function.as_object() {
-                    for (key, value) in obj {
+                if let Some(_obj) = function.as_object() {
+                    for (_key, _value) in _obj {
                         // NOTE: serde_json::Value doesn't provide direct index assignment on a temporary,
                         // so we build a mutable object map when needed.
                     }
@@ -431,6 +438,118 @@ impl Gpt5Provider {
             latency_ms: latency,
             raw_response: raw,
         })
+    }
+    
+    /// Streaming version of chat_with_tools_internal
+    pub async fn chat_with_tools_streaming(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        context: Option<ToolContext>,
+        reasoning_override: Option<&str>,
+        verbosity_override: Option<&str>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
+        let reasoning = reasoning_override.unwrap_or(&self.reasoning);
+        let verbosity = verbosity_override.unwrap_or(&self.verbosity);
+        
+        let mut body = json!({
+            "model": self.model,
+            "input": self.format_input(messages.clone(), system.clone()),
+            "instructions": system,
+            "max_output_tokens": self.max_tokens,
+            "tools": tools.iter().map(|t| self.flatten_tool_schema(t)).collect::<Vec<_>>(),
+            "tool_choice": {"type": "auto"},
+            "reasoning": {
+                "effort": reasoning
+            },
+            "text": {
+                "verbosity": verbosity,
+                "format": {
+                    "type": "json_schema",
+                    "name": "response_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "output": {
+                                "type": "string",
+                                "description": "Your response to the user"
+                            },
+                            "analysis": {
+                                "type": "object",
+                                "properties": {
+                                    "salience": {"type": "number"},
+                                    "topics": {"type": "array", "items": {"type": "string"}},
+                                    "contains_code": {"type": "boolean"},
+                                    "programming_lang": {"type": ["string", "null"]},
+                                    "contains_error": {"type": "boolean"},
+                                    "error_type": {"type": ["string", "null"]},
+                                    "routed_to_heads": {"type": "array", "items": {"type": "string"}},
+                                    "language": {"type": "string"}
+                                },
+                                "required": ["salience", "topics", "contains_code", "programming_lang", "contains_error", "error_type", "routed_to_heads", "language"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": ["output", "analysis"],
+                        "additionalProperties": false
+                    },
+                    "strict": true
+                }
+            },
+            "stream": true,  // ENABLE STREAMING
+        });
+        
+        // Handle previous_response_id
+        if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
+            body["previous_response_id"] = json!(previous_response_id);
+            body["input"] = json!([]);
+            debug!("GPT-5 streaming: continuing from {}", previous_response_id);
+        }
+        
+        debug!("GPT-5 streaming request: reasoning={}, verbosity={}", reasoning, verbosity);
+        
+        let response = self.client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
+        }
+        
+        // Convert response bytes to line stream
+        let byte_stream = response.bytes_stream();
+        let reader = tokio_util::io::StreamReader::new(
+            byte_stream.map(|result| result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+        );
+        let buf_reader = BufReader::new(reader);
+        let lines = buf_reader.lines();
+        let line_stream = LinesStream::new(lines);
+        
+        // Convert lines to StreamEvents
+        let event_stream = line_stream.filter_map(|line_result| async move {
+            match line_result {
+                Ok(line) => {
+                    if line.is_empty() {
+                        // Empty lines separate events in SSE
+                        return None;
+                    }
+                    
+                    // Parse the SSE line into a StreamEvent
+                    StreamEvent::from_sse_line(&line).map(Ok)
+                }
+                Err(e) => {
+                    Some(Err(anyhow!("Stream read error: {}", e)))
+                }
+            }
+        });
+        
+        Ok(Box::pin(event_stream))
     }
 }
 

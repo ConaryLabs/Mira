@@ -9,9 +9,11 @@ use std::any::Any;
 pub mod openai;
 pub mod gpt5;
 pub mod conversion;
+pub mod stream;
 
 // Export the embeddings client
 pub use openai::OpenAiEmbeddings;
+pub use stream::StreamEvent;
 
 /// Simple message format for all providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
