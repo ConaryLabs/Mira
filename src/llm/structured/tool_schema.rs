@@ -9,7 +9,7 @@ pub fn get_create_artifact_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "create_artifact",
-            "description": "Create a code artifact that the user can view, edit, and apply to their project. Use this when generating complete code files, large code snippets, or any code the user will want to save/use.",
+            "description": "Create a code artifact that the user can view, edit, and apply to their project. Use this when generating complete code files, large code snippets, or any code the user will want to save/use.\n\nCODING STYLE GUIDELINES:\n- Write complete, production-ready code with no placeholders or TODOs\n- Use descriptive variable names (e.g., user_session, file_content, not x, y)\n- Include comprehensive error handling\n- Add inline comments for complex logic\n- Follow language idioms (e.g., Rust: use Result<T>, match; TypeScript: use const, async/await)\n- Keep functions focused and under 50 lines when possible\n- Include all necessary imports and dependencies",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -19,7 +19,7 @@ pub fn get_create_artifact_tool_schema() -> serde_json::Value {
                     },
                     "content": {
                         "type": "string",
-                        "description": "The COMPLETE code content from start to finish. Include ALL imports, ALL functions, ALL closing braces. Never truncate or use placeholders."
+                        "description": "The COMPLETE code content from start to finish. Include ALL imports, ALL functions, ALL closing braces. Never truncate or use placeholders like '...', '// rest of code', or 'TODO'."
                     },
                     "language": {
                         "type": "string",
@@ -64,23 +64,16 @@ pub fn get_list_files_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files in a directory with optional filtering. Call this when you need to explore the project structure or find files matching a pattern.",
+            "description": "List files and directories in a specific directory of the project. Use this to explore the project structure or find files.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
+                    "directory": {
                         "type": "string",
-                        "description": "Directory path relative to project root (default: '.')"
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "Optional glob pattern to filter files (e.g., '*.rs', 'src/**/*.ts')"
-                    },
-                    "recursive": {
-                        "type": "boolean",
-                        "description": "Whether to list files recursively (default: false)"
+                        "description": "Directory path relative to project root (e.g., 'src' or 'src/api'). Use empty string '' for project root."
                     }
-                }
+                },
+                "required": ["directory"]
             }
         }
     })
@@ -92,27 +85,30 @@ pub fn get_code_search_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "search_code",
-            "description": "Search for code elements (functions, structs, classes, types) in the project. Returns matching code elements with file paths and line numbers.",
+            "description": "Search for code elements (functions, structs, classes, components) in the project by name or pattern. Returns matching elements with their locations and signatures.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "Search pattern (function name, struct name, etc.)"
-                    },
-                    "element_type": {
-                        "type": "string",
-                        "enum": ["function", "struct", "enum", "trait", "impl", "import", "any"],
-                        "description": "Type of code element to search for (default: 'any')"
+                        "description": "Search pattern or name (e.g., 'handle_request', 'User', 'Button')"
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of results (default: 10)"
+                        "description": "Maximum number of results to return (default: 50)",
+                        "default": 50
                     }
                 },
                 "required": ["pattern"]
             }
         }
+    })
+}
+
+/// Tool schema for web search (built-in GPT-5 Responses API tool)
+pub fn get_web_search_tool_schema() -> serde_json::Value {
+    json!({
+        "type": "web_search"
     })
 }
 
@@ -122,7 +118,7 @@ pub fn get_image_generation_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate an image using DALL-E. Call this when the user explicitly requests image generation or visual content creation.",
+            "description": "Generate an image using DALL-E based on a text prompt. Use this when the user asks you to create, draw, or generate an image.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -132,13 +128,9 @@ pub fn get_image_generation_tool_schema() -> serde_json::Value {
                     },
                     "size": {
                         "type": "string",
+                        "description": "Image size",
                         "enum": ["1024x1024", "1792x1024", "1024x1792"],
-                        "description": "Image size (default: '1024x1024')"
-                    },
-                    "quality": {
-                        "type": "string",
-                        "enum": ["standard", "hd"],
-                        "description": "Image quality (default: 'standard')"
+                        "default": "1024x1024"
                     }
                 },
                 "required": ["prompt"]
@@ -153,23 +145,11 @@ pub fn get_project_context_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "get_project_context",
-            "description": "Get comprehensive project context including file tree, languages, recent files, and code statistics.",
+            "description": "Get comprehensive information about the project including file tree, statistics, languages used, and overall structure. Use this to understand the project at a high level.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "include_tree": {
-                        "type": "boolean",
-                        "description": "Include file tree (default: true)"
-                    },
-                    "include_git": {
-                        "type": "boolean",
-                        "description": "Include git status (default: true)"
-                    },
-                    "max_depth": {
-                        "type": "integer",
-                        "description": "Maximum directory depth for file tree (default: 100, effectively unlimited)"
-                    }
-                }
+                "properties": {},
+                "required": []
             }
         }
     })
@@ -181,7 +161,7 @@ pub fn get_read_files_tool_schema() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": "read_files",
-            "description": "Read multiple files in a single batch operation. More efficient than multiple read_file calls. Use this when you need to examine several related files at once.",
+            "description": "Read MULTIPLE files in a single batch operation. More efficient than multiple read_file calls. Use this when you need to examine several related files at once.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -239,6 +219,7 @@ pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
         get_read_file_tool_schema(),
         get_list_files_tool_schema(),
         get_code_search_tool_schema(),
+        get_web_search_tool_schema(),           // ADDED: Step 2.3
         get_image_generation_tool_schema(),
         get_project_context_tool_schema(),
         get_read_files_tool_schema(),
@@ -250,5 +231,6 @@ pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
 pub fn get_minimal_tools() -> Vec<serde_json::Value> {
     vec![
         get_create_artifact_tool_schema(),
+        get_web_search_tool_schema(),           // ADDED: Useful even without projects
     ]
 }
