@@ -1,5 +1,6 @@
 // src/tools/streaming_orchestrator.rs
 // Streaming chat orchestration with real-time event callbacks
+// NOW OWNS PROMPT BUILDING - handler just passes raw context
 
 use anyhow::Result;
 use serde_json::Value;
@@ -13,6 +14,10 @@ use crate::llm::provider::gpt5::Gpt5Provider;
 use crate::llm::ReasoningConfig;
 use crate::tools::ToolExecutor;
 use crate::state::AppState;
+use crate::memory::features::recall_engine::RecallContext;
+use crate::persona::PersonaOverlay;
+use crate::api::ws::message::MessageMetadata;
+use crate::prompt::unified_builder::UnifiedPromptBuilder;
 
 pub struct StreamingOrchestrator {
     state: Arc<AppState>,
@@ -32,17 +37,30 @@ impl StreamingOrchestrator {
     pub async fn execute_with_tools_streaming<F>(
         &self,
         messages: Vec<Message>,
-        system_prompt: String,
+        persona: PersonaOverlay,
+        context: RecallContext,
         tools: Vec<Value>,
+        metadata: Option<MessageMetadata>,
         project_id: Option<&str>,
         mut on_event: F,
     ) -> Result<StreamingResult>
     where
         F: FnMut(StreamEvent) -> Result<()> + Send,
     {
+        // Build system prompt HERE, not in handler
+        let system_prompt = UnifiedPromptBuilder::build_system_prompt(
+            &persona,
+            &context,
+            None, // tools are passed separately to LLM
+            metadata.as_ref(),
+            project_id,
+        );
+        
+        debug!("System prompt built: {} chars", system_prompt.len());
+        
         let mut iteration = 0;
         let max_iterations = 5;
-        let mut context: Option<ToolContext> = None;
+        let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
         
@@ -73,19 +91,19 @@ impl StreamingOrchestrator {
                 .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
             
             let mut stream = gpt5_provider.chat_with_tools_streaming(
-                if context.is_some() { vec![] } else { messages.clone() },
+                if context_obj.is_some() { vec![] } else { messages.clone() },
                 system_prompt.clone(),
                 tools.clone(),
-                context.clone(),
+                context_obj.clone(),
                 Some(reasoning),
                 Some(verbosity),
             ).await?;
             
-            debug!("Stream created successfully, starting to process events");
+            debug!("Stream started for iteration {}", iteration);
             
-            let mut structured_response_output = String::new();
-            let mut tool_calls: HashMap<String, ToolCallBuilder> = HashMap::new();
             let mut response_id = String::new();
+            let mut tool_calls: HashMap<String, ToolCallBuilder> = HashMap::new();
+            let mut structured_response_output = String::new();
             let mut event_count = 0;
             
             while let Some(event_result) = stream.next().await {
@@ -93,33 +111,30 @@ impl StreamingOrchestrator {
                 let event = event_result?;
                 
                 match &event {
-                    StreamEvent::TextDelta { delta } => {
-                        debug!("TextDelta received (shouldn't happen with custom tools): {}", delta);
+                    StreamEvent::TextDelta { delta: _ } => {
                         on_event(event.clone())?;
                     }
                     StreamEvent::ReasoningDelta { delta: _ } => {
                         on_event(event.clone())?;
                     }
-                    StreamEvent::ToolCallStart { id, name } => {
-                        debug!("Tool call started: {} ({})", name, id);
-                        
-                        if name == "structured_response" {
-                            debug!("Starting structured_response accumulation");
-                        } else {
-                            tool_calls.insert(id.clone(), ToolCallBuilder {
-                                name: name.clone(),
+                    StreamEvent::ToolCallArgumentsDelta { id, delta } => {
+                        tool_calls.entry(id.clone())
+                            .or_insert_with(|| ToolCallBuilder {
+                                name: String::new(),
                                 arguments: String::new(),
-                            });
-                        }
+                            })
+                            .arguments
+                            .push_str(delta);
                         
                         on_event(event.clone())?;
                     }
-                    StreamEvent::ToolCallArgumentsDelta { id, delta } => {
-                        if let Some(builder) = tool_calls.get_mut(id) {
-                            builder.arguments.push_str(delta);
-                        } else if id.contains("structured_response") || delta.contains("OUTPUT:") {
-                            structured_response_output.push_str(delta);
-                        }
+                    StreamEvent::ToolCallStart { id, name } => {
+                        debug!("Tool call started: {} ({})", name, id);
+                        
+                        tool_calls.insert(id.clone(), ToolCallBuilder {
+                            name: name.clone(),
+                            arguments: String::new(),
+                        });
                         
                         on_event(event.clone())?;
                     }
@@ -167,7 +182,7 @@ impl StreamingOrchestrator {
             
             debug!("Stream finished. Events: {}, structured output: {} bytes", event_count, structured_response_output.len());
             
-            context = Some(ToolContext::Gpt5 {
+            context_obj = Some(ToolContext::Gpt5 {
                 previous_response_id: response_id.clone(),
             });
             

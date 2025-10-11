@@ -1,5 +1,6 @@
 // src/tools/chat_orchestrator.rs
 // Chat orchestration with tool execution loop
+// NOW OWNS PROMPT BUILDING - handler just passes raw context
 
 use anyhow::Result;
 use serde_json::Value;
@@ -11,6 +12,10 @@ use crate::llm::provider::gpt5::Gpt5Provider;
 use crate::llm::ReasoningConfig;
 use crate::tools::ToolExecutor;
 use crate::state::AppState;
+use crate::memory::features::recall_engine::RecallContext;
+use crate::persona::PersonaOverlay;
+use crate::api::ws::message::MessageMetadata;
+use crate::prompt::unified_builder::UnifiedPromptBuilder;
 
 pub struct ChatOrchestrator {
     state: Arc<AppState>,
@@ -30,13 +35,26 @@ impl ChatOrchestrator {
     pub async fn execute_with_tools(
         &self,
         messages: Vec<Message>,
-        system_prompt: String,
+        persona: PersonaOverlay,
+        context: RecallContext,
         tools: Vec<Value>,
+        metadata: Option<MessageMetadata>,
         project_id: Option<&str>,
     ) -> Result<ChatResult> {
+        // Build system prompt HERE, not in handler
+        let system_prompt = UnifiedPromptBuilder::build_system_prompt(
+            &persona,
+            &context,
+            None, // tools are passed separately to LLM
+            metadata.as_ref(),
+            project_id,
+        );
+        
+        debug!("System prompt built: {} chars", system_prompt.len());
+        
         let mut iteration = 0;
         let max_iterations = 5;
-        let mut context: Option<ToolContext> = None;
+        let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
         
@@ -63,10 +81,10 @@ impl ChatOrchestrator {
                 .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
             
             let raw_response = gpt5_provider.chat_with_tools_internal(
-                if context.is_some() { vec![] } else { messages.clone() },
+                if context_obj.is_some() { vec![] } else { messages.clone() },
                 system_prompt.clone(),
                 tools.clone(),
-                context.clone(),
+                context_obj.clone(),
                 Some(reasoning),
                 Some(verbosity),
             ).await?;
@@ -79,7 +97,7 @@ impl ChatOrchestrator {
                 raw_response.latency_ms
             );
             
-            context = Some(ToolContext::Gpt5 {
+            context_obj = Some(ToolContext::Gpt5 {
                 previous_response_id: raw_response.id.clone(),
             });
             

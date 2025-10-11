@@ -1,5 +1,6 @@
 // src/api/ws/chat/unified_handler.rs
-// Unified chat handler - delegates orchestration to ChatOrchestrator or StreamingOrchestrator
+// Unified chat handler - THIN ROUTER, delegates everything to orchestrators
+// NO PROMPT BUILDING - just gathers context and routes
 
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
@@ -14,7 +15,6 @@ use crate::llm::provider::{Message, StreamEvent};
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
-use crate::prompt::unified_builder::UnifiedPromptBuilder;
 use crate::state::AppState;
 use crate::tools::{ChatOrchestrator, StreamingOrchestrator};
 
@@ -41,37 +41,36 @@ impl UnifiedChatHandler {
     ) -> Result<CompleteResponse> {
         info!("Processing message for session: {}", request.session_id);
         
+        // 1. Save user message
         let user_message_id = self.save_user_message(&request).await?;
         debug!("User message saved: {}", user_message_id);
         
-        // CRITICAL FIX: Process embeddings for user message
-        self.process_user_message_embeddings(user_message_id, &request).await?;
-        
+        // 2. Build context (recall)
         let context = self.build_context(&request.session_id, &request.content).await?;
         debug!("Context built - recent: {}, semantic: {}", context.recent.len(), context.semantic.len());
         
+        // 3. Select persona
         let persona = self.select_persona(&request.metadata);
-        let system_prompt = UnifiedPromptBuilder::build_system_prompt(
-            &persona,
-            &context,
-            None,
-            request.metadata.as_ref(),
-            request.project_id.as_deref(),
-        );
         
+        // 4. Get tools
         let tools = self.get_tools(&request);
         debug!("Available tools: {}", tools.len());
         
+        // 5. Build messages
         let messages = self.build_messages(&context, &request);
         
+        // 6. Delegate to orchestrator (which builds prompt and executes)
         let orchestrator = ChatOrchestrator::new(self.app_state.clone());
         let result = orchestrator.execute_with_tools(
             messages,
-            system_prompt,
+            persona,
+            context,
             tools,
+            request.metadata.clone(),
             request.project_id.as_deref(),
         ).await?;
         
+        // 7. Save response
         self.finalize_response(result, user_message_id, &request).await
     }
     
@@ -85,38 +84,37 @@ impl UnifiedChatHandler {
     {
         info!("Processing streaming message for session: {}", request.session_id);
         
+        // 1. Save user message
         let user_message_id = self.save_user_message(&request).await?;
         debug!("User message saved: {}", user_message_id);
         
-        // CRITICAL FIX: Process embeddings for user message
-        self.process_user_message_embeddings(user_message_id, &request).await?;
-        
+        // 2. Build context (recall)
         let context = self.build_context(&request.session_id, &request.content).await?;
         debug!("Context built - recent: {}, semantic: {}", context.recent.len(), context.semantic.len());
         
+        // 3. Select persona
         let persona = self.select_persona(&request.metadata);
-        let system_prompt = UnifiedPromptBuilder::build_system_prompt(
-            &persona,
-            &context,
-            None,
-            request.metadata.as_ref(),
-            request.project_id.as_deref(),
-        );
         
+        // 4. Get tools
         let tools = self.get_tools(&request);
         debug!("Available tools: {}", tools.len());
         
+        // 5. Build messages
         let messages = self.build_messages(&context, &request);
         
+        // 6. Delegate to streaming orchestrator (which builds prompt and executes)
         let orchestrator = StreamingOrchestrator::new(self.app_state.clone());
         let result = orchestrator.execute_with_tools_streaming(
             messages,
-            system_prompt,
+            persona,
+            context,
             tools,
+            request.metadata.clone(),
             request.project_id.as_deref(),
             on_event,
         ).await?;
         
+        // 7. Save response
         self.finalize_streaming_response(result, user_message_id, &request).await
     }
     
@@ -267,120 +265,6 @@ impl UnifiedChatHandler {
                 request.project_id.as_deref()
             )
             .await
-    }
-    
-    /// Process embeddings for user message
-    async fn process_user_message_embeddings(
-        &self,
-        user_message_id: i64,
-        request: &ChatRequest,
-    ) -> Result<()> {
-        use crate::config::CONFIG;
-        use crate::llm::embeddings::EmbeddingHead;
-        use crate::memory::core::types::MemoryEntry;
-        use crate::memory::storage::sqlite::structured_ops::track_embedding_in_db;
-        use chrono::Utc;
-        
-        // Generate embedding for user message
-        let embedding = match self.app_state.embedding_client.embed(&request.content).await {
-            Ok(emb) => emb,
-            Err(e) => {
-                warn!("Failed to generate embedding for user message {}: {}", user_message_id, e);
-                return Ok(()); // Don't fail the request
-            }
-        };
-        
-        debug!("Generated embedding for user message {} (dimension: {})", 
-            user_message_id, embedding.len());
-        
-        // Determine which heads to route to (semantic by default for user messages)
-        let heads_to_route = vec!["semantic".to_string()];
-        
-        // Store in each routed head
-        for head_str in &heads_to_route {
-            let head = match head_str.parse::<EmbeddingHead>() {
-                Ok(h) => h,
-                Err(e) => {
-                    warn!("Invalid embedding head '{}' for user message {}: {}", head_str, user_message_id, e);
-                    continue;
-                }
-            };
-            
-            if !CONFIG.embed_heads.contains(head_str) {
-                debug!("Head '{}' not enabled in config, skipping", head_str);
-                continue;
-            }
-            
-            // Create memory entry for Qdrant
-            let qdrant_entry = MemoryEntry {
-                id: Some(user_message_id),
-                session_id: request.session_id.clone(),
-                response_id: None,
-                parent_id: None,
-                role: "user".to_string(),
-                content: request.content.clone(),
-                timestamp: Utc::now(),
-                tags: request.project_id.as_ref().map(|pid| vec![format!("project:{}", pid)]),
-                mood: None,
-                intensity: None,
-                salience: Some(5.0), // Default salience for user messages
-                original_salience: Some(5.0),
-                intent: None,
-                topics: None,
-                summary: None,
-                relationship_impact: None,
-                contains_code: Some(false),
-                language: Some("en".to_string()),
-                programming_lang: None,
-                analyzed_at: Some(Utc::now()),
-                analysis_version: Some("user_v1".to_string()),
-                routed_to_heads: Some(heads_to_route.clone()),
-                last_recalled: Some(Utc::now()),
-                recall_count: Some(0),
-                model_version: None,
-                prompt_tokens: None,
-                completion_tokens: None,
-                reasoning_tokens: None,
-                total_tokens: None,
-                latency_ms: None,
-                generation_time_ms: None,
-                finish_reason: None,
-                tool_calls: None,
-                temperature: None,
-                max_tokens: None,
-                embedding: Some(embedding.clone()),
-                embedding_heads: Some(heads_to_route.clone()),
-                qdrant_point_ids: None,
-            };
-            
-            // Save to Qdrant and track in DB
-            match self.app_state.memory_service.get_multi_store().save(head, &qdrant_entry).await {
-                Ok(point_id) => {
-                    debug!("Stored user message {} embedding in {} collection (point_id: {})", 
-                        user_message_id, head.as_str(), point_id);
-                    
-                    let collection_name = self.app_state.memory_service.get_multi_store()
-                        .get_collection_name(head)
-                        .unwrap_or_else(|| format!("unknown-{}", head.as_str()));
-                    
-                    if let Err(e) = track_embedding_in_db(
-                        &self.app_state.sqlite_pool,
-                        user_message_id,
-                        &point_id,
-                        &collection_name,
-                        head_str,
-                    ).await {
-                        warn!("Failed to track user message {} embedding: {}", user_message_id, e);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to store user message {} embedding in {} collection: {}", 
-                        user_message_id, head.as_str(), e);
-                }
-            }
-        }
-        
-        Ok(())
     }
     
     async fn build_context(
