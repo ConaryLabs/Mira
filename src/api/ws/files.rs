@@ -1,7 +1,6 @@
 // src/api/ws/files.rs
 // Handles file upload and download operations through WebSocket
 // Supports chunked transfers for large files (up to 500MB)
-// Refactored to use AppState for session management
 
 use std::sync::Arc;
 use serde::Deserialize;
@@ -33,8 +32,6 @@ struct UploadChunkRequest {
 #[derive(Deserialize)]
 struct UploadCompleteRequest {
     session_id: String,
-    save_as_artifact: Option<bool>,
-    _memory_attachment: Option<bool>, // TODO: Implement memory attachment integration
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,7 +92,6 @@ async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
         received_size: 0,
     };
     
-    // Store session in AppState
     app_state.upload_sessions.write().await.insert(session_id.clone(), session);
     
     info!("Upload session created: {}", session_id);
@@ -196,9 +192,7 @@ async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsS
         )));
     }
     
-    // Determine upload directory - scope to project if provided
-    // Note: We'd need to track project_id in UploadSession to actually use it here
-    // For now, save to ./uploads (this is a limitation of the current session design)
+    // Save to ./uploads
     let upload_dir = std::path::Path::new("./uploads");
     std::fs::create_dir_all(upload_dir)
         .map_err(|e| ApiError::internal(format!("Failed to create upload directory: {e}")))?;
@@ -208,11 +202,6 @@ async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsS
         .map_err(|e| ApiError::internal(format!("Failed to save file: {e}")))?;
     
     info!("File saved successfully: {}", file_path.display());
-    
-    // TODO: Implement artifact saving
-    if request.save_as_artifact.unwrap_or(false) {
-        debug!("Saving as artifact requested but not yet implemented");
-    }
     
     Ok(WsServerMessage::Data {
         data: serde_json::json!({
