@@ -1,8 +1,6 @@
 // src/llm/mod.rs
 
-pub mod classification;
 pub mod embeddings;
-pub mod intent;
 pub mod moderation;
 pub mod provider;
 pub mod responses;
