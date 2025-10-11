@@ -33,7 +33,7 @@ pub struct UnifiedPromptBuilder;
 
 impl UnifiedPromptBuilder {
     /// Build system prompt for Mira (conversational AI)
-    /// She orchestrates tools but doesn't generate code directly
+    /// Pure personality from persona/default.rs - no system meta-info
     pub fn build_system_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -43,20 +43,17 @@ impl UnifiedPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
         
-        // 1. Core personality
+        // 1. Core personality - pure, unmodified
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
         
-        // 2. System architecture (DeepSeek transparency)
-        Self::add_architecture_note(&mut prompt);
-        
-        // 3. Context
+        // 2. Context only - no system architecture notes
         Self::add_project_context(&mut prompt, metadata, project_id);
         Self::add_memory_context(&mut prompt, context);
         Self::add_tool_context(&mut prompt, tools);
         Self::add_file_context(&mut prompt, metadata);
         
-        // 4. Light tool usage hints (if code-related)
+        // 3. Light tool usage hints (if code-related)
         if Self::is_code_related(metadata) {
             Self::add_tool_usage_hints(&mut prompt);
         }
@@ -64,8 +61,8 @@ impl UnifiedPromptBuilder {
         prompt
     }
     
-    /// Build prompt for DeepSeek (pure technical code generation)
-    /// No personality - just code fix requirements
+    /// Build prompt for code fixes with personality intact
+    /// Used when Mira needs to provide technical fixes
     pub fn build_code_fix_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -78,8 +75,7 @@ impl UnifiedPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
         
-        // DeepSeek gets technical instructions, not personality
-        // But we keep persona in case this is used for Mira's direct code fixes
+        // Keep persona for Mira's direct code fixes
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
         
@@ -96,8 +92,9 @@ impl UnifiedPromptBuilder {
         prompt
     }
     
-    /// Build prompt specifically for DeepSeek (no persona)
-    pub fn build_deepseek_code_prompt(
+    /// Build prompt for pure technical code operations (no personality)
+    /// Only used when personality would interfere with technical accuracy
+    pub fn build_technical_code_prompt(
         error_context: &ErrorContext,
         file_content: &str,
         code_elements: Option<Vec<CodeElement>>,
@@ -119,15 +116,6 @@ impl UnifiedPromptBuilder {
         prompt
     }
     
-    /// Add neutral architecture transparency note
-    fn add_architecture_note(prompt: &mut String) {
-        prompt.push_str("[SYSTEM ARCHITECTURE]\n");
-        prompt.push_str("For heavy code operations (large codebases, code generation, complex analysis),\n");
-        prompt.push_str("some tools delegate work to DeepSeek 3.2 behind the scenes.\n");
-        prompt.push_str("Tool results will include 'generated_by' metadata when this happens.\n");
-        prompt.push_str("You can acknowledge this in your responses if relevant.\n\n");
-    }
-    
     /// Light hints for Mira - she orchestrates, doesn't generate
     fn add_tool_usage_hints(prompt: &mut String) {
         prompt.push_str("[CODE HANDLING]\n");
@@ -140,7 +128,8 @@ impl UnifiedPromptBuilder {
         prompt.push_str("If the user points you to code fix rules or guidelines, you can reference them.\n\n");
     }
     
-    /// Full technical requirements for DeepSeek (code generation)
+    /// Full technical requirements for code generation
+    /// Model-agnostic - works with any LLM backend
     fn add_code_fix_requirements(
         prompt: &mut String, 
         error_context: &ErrorContext, 
@@ -463,18 +452,9 @@ impl UnifiedPromptBuilder {
             prompt.push_str(&format!("[TOOLS AVAILABLE: {} tools]\n", tool_list.len()));
             
             for tool in tool_list {
-                let description = if let Some(func) = &tool.function {
-                    format!("- {}: {}", func.name, func.description)
-                } else {
-                    match tool.tool_type.as_str() {
-                        "code_interpreter" => "- Code Interpreter: Execute Python code and analyze data".to_string(),
-                        "image_generation" => "- Image Generation: Create images from text descriptions".to_string(),
-                        "file_search" => "- File Search: Search through uploaded documents".to_string(),
-                        "web_search" => "- Web Search: Search the internet for information".to_string(),
-                        _ => format!("- {}: Available tool", tool.tool_type),
-                    }
-                };
-                prompt.push_str(&format!("{}\n", description));
+                if let Some(func) = &tool.function {
+                    prompt.push_str(&format!("- {}: {}\n", func.name, func.description));
+                }
             }
             
             prompt.push_str("Use tools as appropriate. You should integrate tool results naturally into the conversation.\n");

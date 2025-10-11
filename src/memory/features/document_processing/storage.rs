@@ -8,6 +8,7 @@ use qdrant_client::qdrant::{
     PointStruct, SearchPoints, Filter, Condition,
     with_payload_selector::SelectorOptions,
     WithPayloadSelector, Vectors, UpsertPointsBuilder,
+    DeletePointsBuilder,
 };
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -137,7 +138,6 @@ impl DocumentStorage {
         .await?;
         
         // 2. Store document chunks in SQLite
-        // FIXED: Removed 'id' column (auto-increment INTEGER), added qdrant_point_id
         for (idx, chunk) in document.chunks.iter().enumerate() {
             let chunk_index = idx as i64;
             let char_start = chunk.char_start as i64;
@@ -195,9 +195,9 @@ impl DocumentStorage {
                 payload.insert("page_number".to_string(), (page as i64).into());
             }
             
-            // Create point for Qdrant
+            // Create point for Qdrant with matching chunk ID
             let point = PointStruct {
-                id: Some(uuid::Uuid::new_v4().to_string().into()),
+                id: Some(chunk.id.clone().into()),
                 vectors: Some(Vectors::from(embedding)),
                 payload,
                 ..Default::default()
@@ -338,7 +338,6 @@ impl DocumentStorage {
     pub async fn get_document_chunks(&self, document_id: &str) -> Result<Vec<super::DocumentChunk>> {
         #[derive(sqlx::FromRow)]
         struct ChunkRow {
-            id: i64,  // Changed to i64 to match INTEGER PRIMARY KEY
             document_id: String,
             chunk_index: i64,
             qdrant_point_id: String,
@@ -350,7 +349,6 @@ impl DocumentStorage {
         let rows = sqlx::query_as::<_, ChunkRow>(
             r#"
             SELECT 
-                id,
                 document_id,
                 chunk_index,
                 qdrant_point_id,
@@ -384,10 +382,46 @@ impl DocumentStorage {
     
     /// Delete a document and all its chunks
     pub async fn delete_document(&self, document_id: &str) -> Result<()> {
-        // Start transaction
+        // CRITICAL FIX: Get chunk IDs BEFORE deleting from SQLite
+        let chunk_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT qdrant_point_id FROM document_chunks WHERE document_id = ?"
+        )
+        .bind(document_id)
+        .fetch_all(&self.sqlite_pool)
+        .await?;
+        
+        // Delete from Qdrant first if there are chunks
+        if !chunk_ids.is_empty() {
+            tracing::info!("Deleting {} chunk embeddings from Qdrant for document {}", 
+                chunk_ids.len(), document_id);
+            
+            // Convert chunk IDs to PointId format
+            let point_ids: Vec<qdrant_client::qdrant::PointId> = chunk_ids
+                .iter()
+                .map(|id| id.clone().into())
+                .collect();
+            
+            // Delete from Qdrant "documents" collection
+            let delete_operation = DeletePointsBuilder::new("documents")
+                .points(point_ids)
+                .build();
+            
+            match self.qdrant_client.delete_points(delete_operation).await {
+                Ok(_) => {
+                    tracing::info!("Successfully deleted {} points from Qdrant", chunk_ids.len());
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to delete points from Qdrant for document {}: {}", 
+                        document_id, e);
+                    // Continue with SQLite deletion even if Qdrant fails
+                }
+            }
+        }
+        
+        // Start transaction for SQLite cleanup
         let mut tx = self.sqlite_pool.begin().await?;
         
-        // Delete chunks first (foreign key constraint)
+        // Delete chunks from SQLite (foreign key constraint)
         sqlx::query!(
             "DELETE FROM document_chunks WHERE document_id = ?",
             document_id
@@ -395,7 +429,7 @@ impl DocumentStorage {
         .execute(&mut *tx)
         .await?;
         
-        // Delete document
+        // Delete document from SQLite
         sqlx::query!(
             "DELETE FROM documents WHERE id = ?",
             document_id

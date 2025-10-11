@@ -65,13 +65,33 @@ impl SummaryStorage {
                         embedding,
                     );
                     
-                    self.multi_store
+                    // CRITICAL FIX: Capture point_id and track it
+                    match self.multi_store
                         .save(EmbeddingHead::Summary, &qdrant_entry)
-                        .await?;
-                    
-                    self.mark_embedding_generated(summary_id).await?;
-                    
-                    info!("Stored summary {} embedding in Qdrant Summary collection", summary_id);
+                        .await {
+                        Ok(point_id) => {
+                            info!("Stored summary {} embedding in Qdrant Summary collection (point_id: {})", 
+                                summary_id, point_id);
+                            
+                            // Track the embedding in message_embeddings table
+                            let collection_name = self.multi_store
+                                .get_collection_name(EmbeddingHead::Summary)
+                                .unwrap_or_else(|| "memory-summary".to_string());
+                            
+                            if let Err(e) = self.track_summary_embedding(
+                                summary_id,
+                                &point_id,
+                                &collection_name,
+                            ).await {
+                                warn!("Failed to track summary {} embedding: {}", summary_id, e);
+                            }
+                            
+                            self.mark_embedding_generated(summary_id).await?;
+                        }
+                        Err(e) => {
+                            warn!("Failed to store summary {} embedding in Qdrant: {}", summary_id, e);
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("Failed to generate embedding for summary {}: {}", summary_id, e);
@@ -79,6 +99,30 @@ impl SummaryStorage {
             }
         }
 
+        Ok(())
+    }
+
+    /// Track summary embedding in message_embeddings table
+    /// Note: We use message_embeddings table even for summaries since they share the same structure
+    async fn track_summary_embedding(
+        &self,
+        summary_id: i64,
+        qdrant_point_id: &str,
+        collection_name: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO message_embeddings (
+                message_id, qdrant_point_id, collection_name, embedding_head
+            ) VALUES (?, ?, ?, 'summary')
+            "#,
+            summary_id,
+            qdrant_point_id,
+            collection_name
+        )
+        .execute(self.sqlite_store.get_pool())
+        .await?;
+        
         Ok(())
     }
 

@@ -73,7 +73,8 @@ impl QdrantMultiStore {
     }
 
     /// Save a memory entry to a specific collection
-    pub async fn save(&self, head: EmbeddingHead, entry: &MemoryEntry) -> Result<()> {
+    /// Returns the point_id used in Qdrant (message_id as string)
+    pub async fn save(&self, head: EmbeddingHead, entry: &MemoryEntry) -> Result<String> {
         debug!("Saving memory to {} collection", head.as_str());
         
         // Ensure the entry has an embedding
@@ -81,12 +82,54 @@ impl QdrantMultiStore {
             return Err(anyhow!("Cannot save to Qdrant without embedding"));
         }
         
+        // Get the point_id that will be used (message_id as string)
+        let point_id = entry.id
+            .ok_or_else(|| anyhow!("Cannot save to Qdrant without message_id"))?
+            .to_string();
+        
         if let Some(store) = self.stores.get(&head) {
-            store.save(entry).await.map(|_| ())
+            store.save(entry).await?;
+            Ok(point_id)
         } else {
             warn!("No Qdrant store found for embedding head: {}", head.as_str());
             Err(anyhow!("Collection {} not initialized", head.as_str()))
         }
+    }
+
+    /// Delete a memory entry from a specific collection by message_id
+    pub async fn delete(&self, head: EmbeddingHead, message_id: i64) -> Result<()> {
+        debug!("Deleting message {} from {} collection", message_id, head.as_str());
+        
+        if let Some(store) = self.stores.get(&head) {
+            store.delete(message_id).await
+        } else {
+            warn!("No Qdrant store found for embedding head: {}", head.as_str());
+            Ok(()) // Don't fail if collection doesn't exist
+        }
+    }
+
+    /// Delete a memory entry from all collections
+    pub async fn delete_from_all(&self, message_id: i64) -> Result<()> {
+        debug!("Deleting message {} from all collections", message_id);
+        
+        for (head, store) in &self.stores {
+            match store.delete(message_id).await {
+                Ok(_) => debug!("Deleted message {} from {} collection", message_id, head.as_str()),
+                Err(e) => warn!("Failed to delete message {} from {} collection: {}", message_id, head.as_str(), e),
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Get the Qdrant point ID for a message (just the message_id as string)
+    pub fn get_point_id(message_id: i64) -> String {
+        message_id.to_string()
+    }
+
+    /// Get collection name for a specific head
+    pub fn get_collection_name(&self, head: EmbeddingHead) -> Option<String> {
+        self.stores.get(&head).map(|store| store.collection_name.clone())
     }
 
     /// Search within a specific collection

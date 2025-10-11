@@ -50,7 +50,7 @@ pub async fn save_structured_response(
 /// New function that handles embedding generation and storage
 /// Called separately AFTER save_structured_response to keep transactions clean
 pub async fn process_embeddings(
-    _pool: &SqlitePool,
+    pool: &SqlitePool,
     message_id: i64,
     session_id: &str,
     response: &StructuredLLMResponse,
@@ -131,10 +131,31 @@ pub async fn process_embeddings(
             embedding.clone(),
         );
         
-        // Save to appropriate Qdrant collection
+        // Save to appropriate Qdrant collection and get the point_id
         match multi_store.save(head, &qdrant_entry).await {
-            Ok(_) => {
-                info!("Stored embedding for message {} in {} collection", message_id, head.as_str());
+            Ok(point_id) => {
+                info!("Stored embedding for message {} in {} collection (point_id: {})", 
+                    message_id, head.as_str(), point_id);
+                
+                // CRITICAL FIX: Track the embedding in message_embeddings table
+                let collection_name = multi_store.get_collection_name(head)
+                    .unwrap_or_else(|| format!("unknown-{}", head.as_str()));
+                
+                if let Err(e) = track_embedding_in_db(
+                    pool,
+                    message_id,
+                    &point_id,
+                    &collection_name,
+                    head_str,
+                ).await {
+                    warn!(
+                        "Failed to track embedding for message {} in message_embeddings table: {}",
+                        message_id, e
+                    );
+                } else {
+                    debug!("Tracked embedding {} in message_embeddings table", point_id);
+                }
+                
                 stored_count += 1;
             }
             Err(e) => {
@@ -155,6 +176,94 @@ pub async fn process_embeddings(
     }
     
     Ok(())
+}
+
+/// Track an embedding in the message_embeddings table
+pub async fn track_embedding_in_db(
+    pool: &SqlitePool,
+    message_id: i64,
+    qdrant_point_id: &str,
+    collection_name: &str,
+    embedding_head: &str,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO message_embeddings (
+            message_id, qdrant_point_id, collection_name, embedding_head
+        ) VALUES (?, ?, ?, ?)
+        "#,
+        message_id,
+        qdrant_point_id,
+        collection_name,
+        embedding_head
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(())
+}
+
+/// Delete all embeddings for a message from both Qdrant and the tracking table
+pub async fn delete_message_embeddings(
+    pool: &SqlitePool,
+    multi_store: &QdrantMultiStore,
+    message_id: i64,
+) -> Result<()> {
+    // Get all embeddings for this message from the tracking table
+    let embeddings = sqlx::query!(
+        r#"
+        SELECT qdrant_point_id, collection_name, embedding_head
+        FROM message_embeddings
+        WHERE message_id = ?
+        "#,
+        message_id
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    // Delete from Qdrant collections
+    for embedding in &embeddings {
+        if let Ok(head) = embedding.embedding_head.parse::<EmbeddingHead>() {
+            if let Err(e) = multi_store.delete(head, message_id).await {
+                warn!(
+                    "Failed to delete message {} from {} collection: {}",
+                    message_id, embedding.embedding_head, e
+                );
+            }
+        }
+    }
+    
+    // Delete from tracking table
+    sqlx::query!(
+        "DELETE FROM message_embeddings WHERE message_id = ?",
+        message_id
+    )
+    .execute(pool)
+    .await?;
+    
+    info!("Deleted {} embeddings for message {}", embeddings.len(), message_id);
+    Ok(())
+}
+
+/// Get all Qdrant point IDs for a message
+pub async fn get_message_point_ids(
+    pool: &SqlitePool,
+    message_id: i64,
+) -> Result<Vec<(String, String, String)>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT qdrant_point_id, collection_name, embedding_head
+        FROM message_embeddings
+        WHERE message_id = ?
+        "#,
+        message_id
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(rows.into_iter()
+        .map(|r| (r.qdrant_point_id, r.collection_name, r.embedding_head))
+        .collect())
 }
 
 /// Create a MemoryEntry for Qdrant storage

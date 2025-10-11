@@ -5,8 +5,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
-use tracing::{debug, info};
-use uuid::Uuid;
+use tracing::{debug, info, warn};
 
 use crate::memory::storage::qdrant::mapping::{memory_entry_to_payload, payload_to_memory_entry};
 use crate::memory::core::traits::MemoryStore;
@@ -133,7 +132,9 @@ impl QdrantMemoryStore {
                             .filter_map(|v| v.as_f64().map(|f| f as f32))
                             .collect::<Vec<f32>>()
                     }) {
-                        let id = point.get("id").and_then(|v| v.as_i64());
+                        // CRITICAL FIX: Get message_id from payload, not from point.id
+                        // Point IDs are now strings, but message_id in payload is i64
+                        let id = payload.get("id").and_then(|v| v.as_i64());
                         entries.push(payload_to_memory_entry(payload, &vector, id));
                     }
                 }
@@ -206,7 +207,12 @@ impl MemoryStore for QdrantMemoryStore {
             .as_ref()
             .ok_or_else(|| anyhow!("Cannot save to Qdrant without embedding"))?;
 
-        let point_id = Uuid::new_v4().to_string();
+        // CRITICAL FIX: Use message_id as Qdrant point ID instead of random UUID
+        // This allows us to delete by message_id and track the relationship
+        let point_id = entry.id
+            .ok_or_else(|| anyhow!("Cannot save to Qdrant without message_id"))?
+            .to_string();
+
         let payload = memory_entry_to_payload(entry);
 
         let upsert_url = format!(
@@ -239,8 +245,11 @@ impl MemoryStore for QdrantMemoryStore {
         }
 
         debug!(
-            "Saved memory to Qdrant collection '{}' (salience: {:?})",
-            self.collection_name, entry.salience
+            "Saved memory {} to Qdrant collection '{}' (point_id: {}, salience: {:?})",
+            entry.id.unwrap(),
+            self.collection_name,
+            point_id,
+            entry.salience
         );
         Ok(entry.clone())
     }
@@ -268,10 +277,23 @@ impl MemoryStore for QdrantMemoryStore {
         Ok(updated.clone())
     }
 
-    async fn delete(&self, _id: i64) -> Result<()> {
-        // This expects a SQLite ID, but Qdrant uses point IDs
-        // Deletion should be coordinated through the service layer
-        debug!("delete by SQLite ID not implemented for Qdrant store");
-        Ok(())
+    async fn delete(&self, id: i64) -> Result<()> {
+        // FIXED: Actually delete from Qdrant using message_id as point_id
+        let point_id = id.to_string();
+        
+        match self.delete_by_point_id(&point_id).await {
+            Ok(_) => {
+                debug!("Deleted message {} from Qdrant collection '{}'", id, self.collection_name);
+                Ok(())
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to delete message {} from Qdrant collection '{}': {}",
+                    id, self.collection_name, e
+                );
+                // Don't fail - the point might not exist in this collection
+                Ok(())
+            }
+        }
     }
 }
