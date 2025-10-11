@@ -394,6 +394,11 @@ NEWLINE: /\n/
             verbosity,
         );
         
+        // CRITICAL DEBUG: Log the exact request being sent to GPT-5
+        error!("========== GPT-5 REQUEST BODY ==========");
+        error!("{}", serde_json::to_string_pretty(&body).unwrap_or_else(|_| "Failed to serialize".to_string()));
+        error!("========================================");
+        
         debug!("GPT-5 streaming request: reasoning={}, verbosity={}", reasoning, verbosity);
         
         let response = self.client

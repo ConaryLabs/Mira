@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use serde_json::Value;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::llm::structured::{CompleteResponse, LLMMetadata};
@@ -253,8 +253,20 @@ impl UnifiedChatHandler {
     fn parse_structured_output(&self, text_output: &str) -> Result<StructuredLLMResponse> {
         use crate::llm::provider::lark_parser::parse_lark_output;
         
+        // CRITICAL DEBUG: Log exactly what we're trying to parse
+        debug!("========== RAW LARK OUTPUT ==========");
+        debug!("Length: {} chars", text_output.len());
+        debug!("Content:\n{}", text_output);
+        debug!("First 200 chars: {:?}", &text_output.chars().take(200).collect::<String>());
+        debug!("=====================================");
+        
         parse_lark_output(text_output)
-            .map_err(|e| anyhow!("Failed to parse Lark output: {}", e))
+            .map_err(|e| {
+                error!("Lark parsing failed!");
+                error!("Error: {}", e);
+                error!("Raw output was:\n{}", text_output);
+                anyhow!("Failed to parse Lark output: {}", e)
+            })
     }
     
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {

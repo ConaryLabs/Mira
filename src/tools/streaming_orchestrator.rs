@@ -162,7 +162,10 @@ impl StreamingOrchestrator {
                         
                         if name == "structured_response" {
                             structured_response_output = arguments.to_string();
+                            debug!("========== STRUCTURED RESPONSE CAPTURED ==========");
                             debug!("Structured response complete: {} bytes", structured_response_output.len());
+                            debug!("First 500 chars: {}", &structured_response_output.chars().take(500).collect::<String>());
+                            debug!("==================================================");
                         } else {
                             tool_calls.insert(id.clone(), ToolCallBuilder {
                                 name: name.clone(),
@@ -179,7 +182,10 @@ impl StreamingOrchestrator {
                         total_reasoning_tokens += reasoning_tokens;
                         
                         if let Some(text) = final_text {
+                            debug!("========== FINAL TEXT FROM DONE EVENT ==========");
                             debug!("Using final_text from Done event: {} bytes", text.len());
+                            debug!("First 500 chars: {}", &text.chars().take(500).collect::<String>());
+                            debug!("===============================================");
                             structured_response_output = text.clone();
                         }
                         
@@ -276,6 +282,13 @@ impl StreamingOrchestrator {
                 
                 continue;
             }
+            
+            // Debug logging before returning
+            debug!("========== STREAMING RESULT ==========");
+            debug!("Content length: {} chars", structured_response_output.len());
+            debug!("First 500 chars: {}", &structured_response_output.chars().take(500).collect::<String>());
+            debug!("Artifacts count: {}", collected_artifacts.len());
+            debug!("======================================");
             
             return Ok(StreamingResult {
                 content: structured_response_output,
