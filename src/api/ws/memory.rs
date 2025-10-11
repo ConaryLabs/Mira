@@ -1,5 +1,4 @@
 // src/api/ws/memory.rs
-// Thin WebSocket routing layer for memory commands - delegates to MemoryService
 
 use std::sync::Arc;
 use serde::Deserialize;
@@ -18,13 +17,15 @@ use crate::{
 
 const DEFAULT_SESSION: &str = "peter-eternal";
 
-// Simple request structs for parsing
 #[derive(Debug, Deserialize)]
 struct ImportMemoryData {
     content: String,
     role: String,
+    #[allow(dead_code)]
     salience: Option<f32>,
+    #[allow(dead_code)]
     tags: Option<Vec<String>>,
+    #[allow(dead_code)]
     memory_type: Option<String>,
 }
 
@@ -32,7 +33,6 @@ fn get_session_id(session_id: Option<&str>) -> String {
     session_id.map(String::from).unwrap_or_else(|| DEFAULT_SESSION.to_string())
 }
 
-/// Main router for memory commands - delegates to MemoryService
 pub async fn handle_memory_command(
     method: &str,
     params: Value,
@@ -55,7 +55,6 @@ pub async fn handle_memory_command(
         "memory.export" => export_memories(params, memory).await,
         "memory.check_qdrant" => check_qdrant_status(app_state).await,
         
-        // Not implemented yet - return pending status
         "memory.pin" | "memory.unpin" | "memory.delete" | "memory.update_salience" => {
             Ok(WsServerMessage::Data {
                 data: json!({
@@ -330,7 +329,6 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> ApiResult<WsServerMess
         "collection_name": CONFIG.qdrant_collection.clone(),
     });
     
-    // Test embedding generation
     match app_state.embedding_client.embed("test").await {
         Ok(embedding) => {
             status["embedding_test"] = json!({

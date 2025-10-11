@@ -1,23 +1,5 @@
 // src/tools/streaming_orchestrator.rs
 // Streaming chat orchestration with real-time event callbacks
-//
-// Usage:
-//   let orchestrator = StreamingOrchestrator::new(app_state);
-//   let result = orchestrator.execute_with_tools_streaming(
-//       messages,
-//       system_prompt,
-//       tools,
-//       Some("project-id"),
-//       |event| {
-//           // Forward event to WebSocket
-//           match event {
-//               StreamEvent::TextDelta { delta } => { /* send to client */ }
-//               StreamEvent::Done { .. } => { /* stream complete */ }
-//               _ => {}
-//           }
-//           Ok(())
-//       },
-//   ).await?;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -47,8 +29,6 @@ impl StreamingOrchestrator {
         Self { state, executor }
     }
     
-    /// Execute chat with streaming + tool loop
-    /// The callback is called for each stream event (text deltas, tool calls, etc)
     pub async fn execute_with_tools_streaming<F>(
         &self,
         messages: Vec<Message>,
@@ -63,11 +43,9 @@ impl StreamingOrchestrator {
         let mut iteration = 0;
         let max_iterations = 5;
         let mut context: Option<ToolContext> = None;
-        let mut accumulated_text = String::new();
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
         
-        // Track total tokens across iterations
         let mut total_input_tokens = 0;
         let mut total_output_tokens = 0;
         let mut total_reasoning_tokens = 0;
@@ -78,7 +56,6 @@ impl StreamingOrchestrator {
                 return Err(anyhow::anyhow!("Max iterations reached"));
             }
             
-            // Determine reasoning/verbosity based on iteration
             let (reasoning, verbosity) = if iteration == 1 {
                 ReasoningConfig::for_tool_selection()
             } else if !tools_called.is_empty() {
@@ -90,7 +67,6 @@ impl StreamingOrchestrator {
             
             info!("Streaming call {}: reasoning={}, verbosity={}", iteration, reasoning, verbosity);
             
-            // Get provider and start streaming
             let provider = self.state.llm_router.get_provider();
             let gpt5_provider = provider.as_any()
                 .downcast_ref::<Gpt5Provider>()
@@ -105,51 +81,73 @@ impl StreamingOrchestrator {
                 Some(verbosity),
             ).await?;
             
-            // Process stream events
-            let mut stream_text = String::new();
+            debug!("Stream created successfully, starting to process events");
+            
+            let mut structured_response_output = String::new();
             let mut tool_calls: HashMap<String, ToolCallBuilder> = HashMap::new();
             let mut response_id = String::new();
+            let mut event_count = 0;
             
             while let Some(event_result) = stream.next().await {
+                event_count += 1;
                 let event = event_result?;
                 
                 match &event {
                     StreamEvent::TextDelta { delta } => {
-                        stream_text.push_str(delta);
-                        // Forward to callback for real-time display
+                        debug!("TextDelta received (shouldn't happen with custom tools): {}", delta);
                         on_event(event.clone())?;
                     }
                     StreamEvent::ReasoningDelta { delta: _ } => {
-                        // Forward reasoning deltas (optional display)
                         on_event(event.clone())?;
                     }
                     StreamEvent::ToolCallStart { id, name } => {
                         debug!("Tool call started: {} ({})", name, id);
-                        tool_calls.insert(id.clone(), ToolCallBuilder {
-                            name: name.clone(),
-                            arguments: String::new(),
-                        });
+                        
+                        if name == "structured_response" {
+                            debug!("Starting structured_response accumulation");
+                        } else {
+                            tool_calls.insert(id.clone(), ToolCallBuilder {
+                                name: name.clone(),
+                                arguments: String::new(),
+                            });
+                        }
+                        
                         on_event(event.clone())?;
                     }
                     StreamEvent::ToolCallArgumentsDelta { id, delta } => {
                         if let Some(builder) = tool_calls.get_mut(id) {
                             builder.arguments.push_str(delta);
+                        } else if id.contains("structured_response") || delta.contains("OUTPUT:") {
+                            structured_response_output.push_str(delta);
                         }
+                        
                         on_event(event.clone())?;
                     }
                     StreamEvent::ToolCallComplete { id, name, arguments } => {
                         debug!("Tool call complete: {} ({})", name, id);
-                        tool_calls.insert(id.clone(), ToolCallBuilder {
-                            name: name.clone(),
-                            arguments: arguments.to_string(),
-                        });
+                        
+                        if name == "structured_response" {
+                            structured_response_output = arguments.to_string();
+                            debug!("Structured response complete: {} bytes", structured_response_output.len());
+                        } else {
+                            tool_calls.insert(id.clone(), ToolCallBuilder {
+                                name: name.clone(),
+                                arguments: arguments.to_string(),
+                            });
+                        }
+                        
                         on_event(event.clone())?;
                     }
-                    StreamEvent::Done { response_id: rid, input_tokens, output_tokens, reasoning_tokens } => {
+                    StreamEvent::Done { response_id: rid, input_tokens, output_tokens, reasoning_tokens, final_text } => {
                         response_id = rid.clone();
                         total_input_tokens += input_tokens;
                         total_output_tokens += output_tokens;
                         total_reasoning_tokens += reasoning_tokens;
+                        
+                        if let Some(text) = final_text {
+                            debug!("Using final_text from Done event: {} bytes", text.len());
+                            structured_response_output = text.clone();
+                        }
                         
                         info!(
                             "Stream done | input={} output={} reasoning={}",
@@ -167,14 +165,12 @@ impl StreamingOrchestrator {
                 }
             }
             
-            // Save response_id for next iteration
+            debug!("Stream finished. Events: {}, structured output: {} bytes", event_count, structured_response_output.len());
+            
             context = Some(ToolContext::Gpt5 {
                 previous_response_id: response_id.clone(),
             });
             
-            accumulated_text = stream_text.clone();
-            
-            // Execute tool calls if any
             if !tool_calls.is_empty() {
                 info!("Executing {} tools", tool_calls.len());
                 
@@ -186,21 +182,18 @@ impl StreamingOrchestrator {
                     
                     debug!("Executing tool: {} ({})", tool_name, tool_id);
                     
-                    // Parse arguments
                     let arguments: Value = serde_json::from_str(&tool_call.arguments)
                         .unwrap_or_else(|e| {
                             warn!("Failed to parse tool arguments: {}", e);
                             Value::Object(Default::default())
                         });
                     
-                    // Execute tool
                     let result = self.executor.execute_tool(
                         tool_name,
                         &arguments,
                         project_id.unwrap_or(""),
                     ).await?;
                     
-                    // Collect artifacts
                     if tool_name == "create_artifact" {
                         if let Some(artifact) = result.get("artifact") {
                             collected_artifacts.push(artifact.clone());
@@ -208,13 +201,11 @@ impl StreamingOrchestrator {
                     }
                 }
                 
-                // Continue loop for synthesis
                 continue;
             }
             
-            // No tools - done
             return Ok(StreamingResult {
-                content: accumulated_text,
+                content: structured_response_output,
                 artifacts: collected_artifacts,
                 tokens: TokenUsage {
                     input: total_input_tokens,
@@ -227,14 +218,12 @@ impl StreamingOrchestrator {
     }
 }
 
-/// Builder for accumulating tool call arguments from stream
 #[derive(Debug)]
 struct ToolCallBuilder {
     name: String,
     arguments: String,
 }
 
-/// Result of streaming orchestration
 #[derive(Debug)]
 pub struct StreamingResult {
     pub content: String,

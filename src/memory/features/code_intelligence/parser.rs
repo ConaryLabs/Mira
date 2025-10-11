@@ -4,10 +4,9 @@ use syn::{ItemFn, ItemStruct, ItemEnum, ItemImpl, Visibility, visit::{self, Visi
 use crate::memory::features::code_intelligence::types::*;
 use sha2::{Sha256, Digest};
 
-/// Rust-specific parser using syn crate
 #[derive(Clone)]
 pub struct RustParser {
-    max_complexity: i64,  // Changed from u32 - matches CodeElement
+    max_complexity: i64,
 }
 
 impl RustParser {
@@ -23,7 +22,7 @@ impl RustParser {
 impl LanguageParser for RustParser {
     async fn parse_file(&self, content: &str, file_path: &str) -> Result<FileAnalysis> {
         let syntax_tree = syn::parse_file(content)?;
-        let mut analyzer = RustAnalyzer::new(self.max_complexity, content, file_path);
+        let mut analyzer = RustAnalyzer::new(self.max_complexity, file_path);
         analyzer.visit_file(&syntax_tree);
 
         let (elements, dependencies, quality_issues, total_complexity, test_count) = analyzer.finalize();
@@ -36,7 +35,7 @@ impl LanguageParser for RustParser {
             complexity_score: total_complexity,
             test_count,
             doc_coverage,
-            websocket_calls: Vec::new(),  // Rust WebSocket calls handled separately via WebSocketAnalyzer
+            websocket_calls: Vec::new(),
         })
     }
 
@@ -62,19 +61,18 @@ impl RustParser {
 }
 
 struct RustAnalyzer<'content> {
-    max_complexity: i64,  // Changed from u32
+    max_complexity: i64,
     elements: Vec<CodeElement>,
     dependencies: Vec<ExternalDependency>,
     quality_issues: Vec<QualityIssue>,
-    total_complexity: i64,  // Changed from u32
-    test_count: i64,  // Changed from u32
+    total_complexity: i64,
+    test_count: i64,
     current_module_path: Vec<String>,
-    content: &'content str,
     file_path: &'content str,
 }
 
 impl<'content> RustAnalyzer<'content> {
-    fn new(max_complexity: i64, content: &'content str, file_path: &'content str) -> Self {
+    fn new(max_complexity: i64, file_path: &'content str) -> Self {
         Self {
             max_complexity,
             elements: Vec::new(),
@@ -83,7 +81,6 @@ impl<'content> RustAnalyzer<'content> {
             total_complexity: 0,
             test_count: 0,
             current_module_path: Vec::new(),
-            content,
             file_path,
         }
     }
@@ -128,12 +125,12 @@ impl<'content> RustAnalyzer<'content> {
         format!("{:x}", hasher.finalize())[..16].to_string()
     }
 
-    fn extract_line_numbers<T: syn::spanned::Spanned>(&self, item: &T) -> (i64, i64) {  // Changed return type from (u32, u32)
+    fn extract_line_numbers<T: syn::spanned::Spanned>(&self, item: &T) -> (i64, i64) {
         let span = item.span();
         let start = span.start();
         let end = span.end();
         
-        (start.line as i64, end.line as i64)  // Cast to i64 instead of u32
+        (start.line as i64, end.line as i64)
     }
 
     fn build_full_path(&self, element_name: &str) -> String {
@@ -147,11 +144,11 @@ impl<'content> RustAnalyzer<'content> {
         format!("{}::{}", clean_file_path, module_path)
     }
 
-    fn calculate_function_complexity(&self, block: &syn::Block) -> i64 {  // Changed return type from u32
+    fn calculate_function_complexity(&self, block: &syn::Block) -> i64 {
         let complexity = 1;
         
         struct ComplexityVisitor {
-            complexity: i64,  // Changed from u32
+            complexity: i64,
         }
         
         impl<'ast> Visit<'ast> for ComplexityVisitor {

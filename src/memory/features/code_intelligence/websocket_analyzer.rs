@@ -1,18 +1,15 @@
 // src/memory/features/code_intelligence/websocket_analyzer.rs
-// Separate analyzer for WebSocket patterns - keeps parsers clean
 
 use anyhow::Result;
 use syn::{Expr as SynExpr, Stmt, Pat, visit::{self, Visit}, spanned::Spanned, Member};
 use super::types::{WebSocketCall, WebSocketHandler, WebSocketResponse};
 use quote::quote;
 
-// For TypeScript parsing - use fully qualified names to avoid confusion with syn
 use swc_common::{sync::Lrc, SourceMap, FileName};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{Visit as SwcVisit, VisitWith};
 
-/// Analyzes Rust code for WebSocket message patterns
 pub struct WebSocketAnalyzer {
     handlers: Vec<WebSocketHandler>,
     responses: Vec<WebSocketResponse>,
@@ -28,7 +25,6 @@ impl WebSocketAnalyzer {
         }
     }
     
-    /// Analyze a Rust file for WebSocket patterns
     pub fn analyze_rust_file(content: &str) -> Result<WebSocketAnalysis> {
         let syntax_tree = syn::parse_file(content)?;
         let mut analyzer = Self::new();
@@ -90,9 +86,7 @@ impl WebSocketAnalyzer {
         None
     }
     
-    /// Scan for method handler functions (e.g., handle_git_operation)
     fn scan_for_method_handlers(&mut self, func: &syn::ItemFn) {
-        // Check if function has a 'method' parameter of type &str
         let has_method_param = func.sig.inputs.iter().any(|arg| {
             if let syn::FnArg::Typed(pat_type) = arg {
                 if let syn::Pat::Ident(ident) = &*pat_type.pat {
@@ -106,23 +100,19 @@ impl WebSocketAnalyzer {
             return;
         }
 
-        // Scan function body for match on method with string literals
         self.scan_block_for_method_match(&func.block);
     }
 
     fn scan_block_for_method_match(&mut self, block: &syn::Block) {
         for stmt in &block.stmts {
             if let Stmt::Expr(SynExpr::Match(match_expr), _) = stmt {
-                // Check if matching on 'method'
                 if let SynExpr::Path(path) = &*match_expr.expr {
                     if path.path.segments.last().map(|s| s.ident == "method").unwrap_or(false) {
-                        // Extract method string handlers
                         for arm in &match_expr.arms {
                             if let Pat::Lit(expr_lit) = &arm.pat {
                                 if let syn::Lit::Str(lit_str) = &expr_lit.lit {
                                     let method_str = lit_str.value();
                                     
-                                    // Infer message_type from method prefix
                                     let message_type = if method_str.starts_with("git.") {
                                         "GitCommand"
                                     } else if method_str.starts_with("project.") {
@@ -217,12 +207,8 @@ impl<'ast> Visit<'ast> for WebSocketAnalyzer {
     fn visit_item_fn(&mut self, func: &'ast syn::ItemFn) {
         self.current_function = func.sig.ident.to_string();
         
-        // Level 1: WsClientMessage enum match patterns
         self.scan_for_websocket_handlers(&func.block);
-        
-        // Level 2: method string match patterns in handlers
         self.scan_for_method_handlers(func);
-        
         self.scan_for_websocket_responses(&func.block);
         self.current_function.clear();
         
@@ -236,7 +222,6 @@ pub struct WebSocketAnalysis {
     pub responses: Vec<WebSocketResponse>,
 }
 
-/// Analyzes TypeScript/JavaScript for WebSocket send() calls
 pub struct TypeScriptWebSocketAnalyzer {
     calls: Vec<WebSocketCall>,
     current_function: Option<String>,
@@ -252,7 +237,7 @@ impl TypeScriptWebSocketAnalyzer {
 
         let lexer = Lexer::new(
             Syntax::Typescript(TsSyntax {
-                tsx: true,  // Always enable JSX parsing for TypeScript
+                tsx: true,
                 decorators: true,
                 ..Default::default()
             }),
@@ -343,18 +328,17 @@ impl SwcVisit for TypeScriptWebSocketAnalyzer {
         };
 
         if is_send_call && !call.args.is_empty() {
-            if let ExprOrSpread { expr, .. } = &call.args[0] {
-                if let swc_ecma_ast::Expr::Object(obj) = &**expr {
-                    if let Some(message_type) = self.extract_message_type(obj) {
-                        let method = self.extract_method(obj);
-                        
-                        self.calls.push(WebSocketCall {
-                            message_type,
-                            method,
-                            line_number: call.span.lo.0 as usize,
-                            element: self.current_function.clone().unwrap_or_else(|| "anonymous".to_string()),
-                        });
-                    }
+            let ExprOrSpread { expr, .. } = &call.args[0];
+            if let swc_ecma_ast::Expr::Object(obj) = &**expr {
+                if let Some(message_type) = self.extract_message_type(obj) {
+                    let method = self.extract_method(obj);
+                    
+                    self.calls.push(WebSocketCall {
+                        message_type,
+                        method,
+                        line_number: call.span.lo.0 as usize,
+                        element: self.current_function.clone().unwrap_or_else(|| "anonymous".to_string()),
+                    });
                 }
             }
         }

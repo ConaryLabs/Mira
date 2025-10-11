@@ -2,13 +2,11 @@
 
 use crate::memory::core::types::MemoryEntry;
 use anyhow::Result;
-use chrono::TimeZone;
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde_json;
 use sqlx::{Row, SqlitePool};
 use tracing::debug;
 
-/// Analysis data structure matching message_analysis table
 #[derive(Debug, Clone)]
 pub struct MessageAnalysis {
     pub mood: Option<String>,
@@ -26,7 +24,6 @@ pub struct MessageAnalysis {
     pub routed_to_heads: Option<Vec<String>>,
 }
 
-/// Handles message analysis storage and complex joins
 pub struct AnalysisOperations {
     pool: SqlitePool,
 }
@@ -36,7 +33,6 @@ impl AnalysisOperations {
         Self { pool }
     }
 
-    /// Store message analysis data
     pub async fn store_analysis(&self, message_id: i64, analysis: &MessageAnalysis) -> Result<()> {
         let topics_json = analysis.topics
             .as_ref()
@@ -46,7 +42,6 @@ impl AnalysisOperations {
             .as_ref()
             .map(|heads| serde_json::to_string(heads).unwrap_or("[]".to_string()));
 
-        // Use salience as original_salience when first storing
         let original_salience = analysis.original_salience.or(analysis.salience);
 
         sqlx::query(
@@ -94,7 +89,6 @@ impl AnalysisOperations {
         Ok(())
     }
 
-    /// Load memories with analysis data
     pub async fn load_memories_with_analysis(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
         let rows = sqlx::query(
             r#"
@@ -129,7 +123,6 @@ impl AnalysisOperations {
             let response_id: Option<String> = row.try_get("response_id")?;
             let parent_id: Option<i64> = row.try_get("parent_id")?;
 
-            // Analysis fields
             let mood: Option<String> = row.try_get("mood")?;
             let intensity: Option<f32> = row.try_get("intensity")?;
             let salience: Option<f32> = row.try_get("salience")?;
@@ -147,7 +140,6 @@ impl AnalysisOperations {
             let last_recalled: Option<NaiveDateTime> = row.try_get("last_recalled")?;
             let recall_count: Option<i64> = row.try_get("recall_count")?;
 
-            // Parse JSON fields
             let tags_vec: Option<Vec<String>> = tags
                 .as_ref()
                 .and_then(|t| serde_json::from_str(t).ok());
@@ -167,7 +159,7 @@ impl AnalysisOperations {
                 parent_id,
                 role,
                 content,
-                timestamp: TimeZone::from_utc_datetime(&Utc, &NaiveDateTime::from_timestamp_opt(timestamp, 0).unwrap()),
+                timestamp: DateTime::from_timestamp(timestamp, 0).unwrap(),
                 tags: tags_vec,
                 mood,
                 intensity,
@@ -208,7 +200,6 @@ impl AnalysisOperations {
         Ok(entries)
     }
 
-    /// Update recall metadata
     pub async fn update_recall_metadata(&self, message_id: i64) -> Result<()> {
         sqlx::query(
             r#"
@@ -226,7 +217,6 @@ impl AnalysisOperations {
         Ok(())
     }
 
-    /// Update only the salience (used by decay system)
     pub async fn update_salience(&self, message_id: i64, new_salience: f32) -> Result<()> {
         sqlx::query(
             r#"

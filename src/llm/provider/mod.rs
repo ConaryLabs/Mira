@@ -1,5 +1,6 @@
 // src/llm/provider/mod.rs
 // LLM Provider trait - clean, provider-agnostic interface
+
 use async_trait::async_trait;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ pub mod openai;
 pub mod gpt5;
 pub mod conversion;
 pub mod stream;
+pub mod lark_parser;
 
 // Export the embeddings client
 pub use openai::OpenAiEmbeddings;
@@ -92,7 +94,6 @@ pub trait LlmProvider: Send + Sync {
         context: Option<ToolContext>,
     ) -> Result<ToolResponse>;
     
-    /// Streaming chat (optional, default not implemented)
     async fn stream(
         &self,
         _messages: Vec<Message>,

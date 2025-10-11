@@ -132,8 +132,9 @@ impl MessageRouter {
                     });
                     Ok(())
                 }
-                StreamEvent::Done { response_id, input_tokens, output_tokens, reasoning_tokens } => {
+                StreamEvent::Done { response_id, input_tokens, output_tokens, reasoning_tokens, final_text: _ } => {
                     // Stream complete notification
+                    // final_text is handled by orchestrator, we just forward token stats
                     let _ = connection.send_message(WsServerMessage::Data {
                         data: json!({
                             "type": "stream_done",

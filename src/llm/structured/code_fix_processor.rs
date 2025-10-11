@@ -8,14 +8,9 @@ use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::config::CONFIG;
-use super::types::{CompleteResponse, LLMMetadata, StructuredLLMResponse, MessageAnalysis};
-// COMMENTED OUT: get_code_fix_tool_schema no longer exists
-// use super::tool_schema::get_code_fix_tool_schema;
+use super::types::MessageAnalysis;
 use super::analyze_message_complexity;
 use crate::memory::features::message_pipeline::analyzers::ChatAnalysisResult;
-
-// Rest of the file remains unchanged - this file is legacy and rarely used
-// Functions in this file are kept for backward compatibility but not actively maintained
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeFixFile {
@@ -52,7 +47,6 @@ pub struct ErrorContext {
     pub original_line_count: usize,
 }
 
-/// Extract error context from LLM analysis result
 pub fn extract_error_context(analysis: &ChatAnalysisResult) -> Option<ErrorContext> {
     if !analysis.contains_error.unwrap_or(false) {
         return None;
@@ -69,7 +63,6 @@ pub fn extract_error_context(analysis: &ChatAnalysisResult) -> Option<ErrorConte
     })
 }
 
-/// Legacy function - no longer used with GPT-5
 pub fn build_code_fix_request(
     error_message: &str,
     file_path: &str,
@@ -109,8 +102,6 @@ pub fn build_code_fix_request(
         "temperature": temperature,
         "system": system_prompt,
         "messages": messages,
-        // Tool schema commented out since it no longer exists
-        // "tools": [get_code_fix_tool_schema()],
         "tool_choice": {
             "type": "tool",
             "name": "provide_code_fix"
@@ -118,7 +109,6 @@ pub fn build_code_fix_request(
     }))
 }
 
-/// Legacy function - extract code fix from ToolResponse
 pub fn extract_code_fix_response(raw_response: &Value) -> Result<CodeFixResponse> {
     let choices = raw_response["choices"]
         .as_array()

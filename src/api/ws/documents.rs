@@ -1,5 +1,4 @@
 // src/api/ws/documents.rs
-//! WebSocket handler for document operations
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -12,26 +11,23 @@ use crate::{
     api::{error::ApiError, ws::message::WsServerMessage},
     memory::features::document_processing::DocumentProcessor,
     state::AppState,
-    config::CONFIG, // Use unified config for Qdrant URL
+    config::CONFIG,
 };
 
-/// Document command request structure
 #[derive(Debug, Deserialize)]
 pub struct DocumentCommand {
     pub method: String,
     pub params: Value,
 }
 
-/// Document upload parameters
 #[derive(Debug, Deserialize)]
 pub struct UploadParams {
     pub project_id: String,
     pub file_name: String,
-    pub content: String,  // Base64 encoded file content
-    pub file_type: Option<String>,  // Optional - will be derived from file_name if not provided
+    pub content: String,
+    pub file_type: Option<String>,
 }
 
-/// Document search parameters
 #[derive(Debug, Deserialize)]
 pub struct SearchParams {
     pub project_id: String,
@@ -44,25 +40,21 @@ fn default_limit() -> usize {
     10
 }
 
-/// Document retrieve parameters
 #[derive(Debug, Deserialize)]
 pub struct RetrieveParams {
     pub document_id: String,
 }
 
-/// Document list parameters
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     pub project_id: String,
 }
 
-/// Document delete parameters
 #[derive(Debug, Deserialize)]
 pub struct DeleteParams {
     pub document_id: String,
 }
 
-/// Progress update message
 #[derive(Debug, Serialize)]
 pub struct ProgressUpdate {
     #[serde(rename = "type")]
@@ -72,33 +64,13 @@ pub struct ProgressUpdate {
     pub status: String,
 }
 
-/// Detect file type from filename extension
-fn detect_file_type(file_name: &str) -> String {
-    let extension = file_name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
-    
-    match extension.as_str() {
-        "pdf" => "pdf",
-        "docx" | "doc" => "docx",
-        "txt" => "txt",
-        "md" | "markdown" => "markdown",
-        _ => "unknown",
-    }.to_string()
-}
-
-/// Document handler for WebSocket commands
 pub struct DocumentHandler {
     state: Arc<AppState>,
     processor: Arc<DocumentProcessor>,
 }
 
 impl DocumentHandler {
-    /// Create a new document handler
     pub fn new(state: Arc<AppState>) -> Self {
-        // Use unified CONFIG for Qdrant URL to avoid env var drift
         let qdrant_url = CONFIG.qdrant_url.clone();
         
         let qdrant_client = qdrant_client::Qdrant::from_url(&qdrant_url)
@@ -116,7 +88,6 @@ impl DocumentHandler {
         }
     }
     
-    /// Handle document command
     pub async fn handle_command(
         &self,
         command: DocumentCommand,
@@ -149,27 +120,18 @@ impl DocumentHandler {
         }
     }
     
-    /// Handle document upload
     async fn handle_upload(
         &self,
         params: UploadParams,
         progress_tx: Option<mpsc::UnboundedSender<WsServerMessage>>,
     ) -> Result<WsServerMessage> {
-        // Decode base64 content
         let file_content = general_purpose::STANDARD.decode(&params.content)
             .map_err(|e| ApiError::bad_request(format!("Invalid base64 content: {}", e)))?;
         
-        // Derive file_type from filename if not provided
-        let file_type = params.file_type
-            .clone()
-            .unwrap_or_else(|| detect_file_type(&params.file_name));
-        
-        // Create temporary file
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join(&params.file_name);
         tokio::fs::write(&temp_path, file_content).await?;
         
-        // Send initial progress
         if let Some(ref tx) = progress_tx {
             let _ = tx.send(WsServerMessage::Data {
                 data: json!({
@@ -182,7 +144,6 @@ impl DocumentHandler {
             });
         }
         
-        // Create progress callback
         let progress_callback: Option<Box<dyn Fn(f32) + Send + Sync>> = progress_tx.map(|tx| {
             let file_name = params.file_name.clone();
             Box::new(move |progress: f32| {
@@ -198,17 +159,14 @@ impl DocumentHandler {
             }) as Box<dyn Fn(f32) + Send + Sync>
         });
         
-        // Process document
         match self.processor.process_document(
             &temp_path,
             &params.project_id,
             progress_callback
         ).await {
             Ok(processed) => {
-                // Clean up temp file
                 let _ = tokio::fs::remove_file(&temp_path).await;
                 
-                // Return success with document info
                 Ok(WsServerMessage::Data {
                     data: json!({
                         "type": "document_processed",
@@ -226,10 +184,8 @@ impl DocumentHandler {
                 })
             }
             Err(e) => {
-                // Clean up temp file
                 let _ = tokio::fs::remove_file(&temp_path).await;
                 
-                // Check for duplicate error
                 if e.to_string().contains("already exists") {
                     Err(ApiError::conflict(e.to_string()).into())
                 } else {
@@ -239,7 +195,6 @@ impl DocumentHandler {
         }
     }
     
-    /// Handle document search
     async fn handle_search(&self, params: SearchParams) -> Result<WsServerMessage> {
         let results = self.processor
             .search_documents(&params.project_id, &params.query, params.limit)
@@ -256,10 +211,8 @@ impl DocumentHandler {
         })
     }
     
-    /// Handle document retrieval
     async fn handle_retrieve(&self, params: RetrieveParams) -> Result<WsServerMessage> {
         if let Some(document) = self.processor.retrieve_document(&params.document_id).await? {
-            // Read file content for download
             let file_content = tokio::fs::read(&document.file_path).await?;
             let encoded = general_purpose::STANDARD.encode(&file_content);
             
@@ -279,9 +232,7 @@ impl DocumentHandler {
         }
     }
     
-    /// Handle document list
     async fn handle_list(&self, params: ListParams) -> Result<WsServerMessage> {
-        // Use unified CONFIG for Qdrant URL (avoid env var mismatch)
         let qdrant_client = qdrant_client::Qdrant::from_url(&CONFIG.qdrant_url)
             .build()
             .expect("Failed to create Qdrant client");
@@ -311,7 +262,6 @@ impl DocumentHandler {
         })
     }
     
-    /// Handle document deletion
     async fn handle_delete(&self, params: DeleteParams) -> Result<WsServerMessage> {
         self.processor.delete_document(&params.document_id).await?;
         
