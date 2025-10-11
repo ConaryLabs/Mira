@@ -19,6 +19,10 @@ pub struct MiraConfig {
     pub gpt5_verbosity: String,
     pub gpt5_reasoning: String,
     
+    // ===== DEEPSEEK (CODE GENERATION ONLY) =====
+    pub use_deepseek_codegen: bool,
+    pub deepseek_api_key: String,
+    
     // ===== OPENAI (EMBEDDINGS/IMAGES ONLY) =====
     pub openai_api_key: String,
     pub openai_embedding_model: String,
@@ -165,6 +169,13 @@ impl MiraConfig {
             gpt5_max_tokens: env_usize("GPT5_MAX_TOKENS", 128000),
             gpt5_verbosity: env_or("GPT5_VERBOSITY", "medium"),
             gpt5_reasoning: env_or("GPT5_REASONING", "medium"),
+            
+            // ===== DEEPSEEK (CODE GENERATION ONLY) =====
+            use_deepseek_codegen: env::var("USE_DEEPSEEK_CODEGEN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),  // Default to false for safety
+            deepseek_api_key: env_or("DEEPSEEK_API_KEY", ""),
             
             // ===== OPENAI (EMBEDDINGS/IMAGES) =====
             openai_api_key: require_env("OPENAI_API_KEY"),

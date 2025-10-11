@@ -87,7 +87,7 @@ impl WebSocketConnection {
         let welcome_msg = format!("Connected to Mira v{}", env!("CARGO_PKG_VERSION"));
         let config_msg = format!(
             "Model: {} | Tools: {}",
-            CONFIG.deepseek_model,
+            CONFIG.gpt5_model,
             if CONFIG.enable_chat_tools { "enabled" } else { "disabled" }
         );
 

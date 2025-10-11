@@ -3,7 +3,6 @@
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::tools::types::Tool;
-use crate::llm::structured::code_fix_processor::ErrorContext;
 use crate::persona::PersonaOverlay;
 use chrono::Utc;
 
@@ -27,6 +26,16 @@ pub struct QualityIssue {
     pub description: String,
     pub element_name: Option<String>,
     pub suggestion: Option<String>,
+}
+
+// Error context for code fix operations
+#[derive(Debug, Clone)]
+pub struct ErrorContext {
+    pub error_message: String,
+    pub file_path: String,
+    pub error_type: String,
+    pub error_severity: String,
+    pub original_line_count: usize,
 }
 
 pub struct UnifiedPromptBuilder;
@@ -120,8 +129,7 @@ impl UnifiedPromptBuilder {
     fn add_tool_usage_hints(prompt: &mut String) {
         prompt.push_str("[CODE HANDLING]\n");
         prompt.push_str("For code-related tasks, use the appropriate tools:\n");
-        prompt.push_str("- 'create_artifact' - For any code you write (examples, new files, etc)\n");
-        prompt.push_str("- 'provide_code_fix' - For fixing errors in existing files\n");
+        prompt.push_str("- 'create_artifact' - For any code you write (examples, new files, fixes, etc)\n");
         prompt.push_str("- 'search_code' - For finding code elements in projects\n");
         prompt.push_str("- 'get_project_context' - For understanding project structure\n\n");
         prompt.push_str("Artifacts display in a Monaco editor where users can edit and apply changes.\n");

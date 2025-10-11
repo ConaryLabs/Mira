@@ -12,10 +12,12 @@ pub mod gpt5;
 pub mod conversion;
 pub mod stream;
 pub mod lark_parser;
+pub mod deepseek;  // ADD THIS
 
 // Export the embeddings client
 pub use openai::OpenAiEmbeddings;
 pub use stream::StreamEvent;
+pub use deepseek::DeepSeekProvider;  // ADD THIS
 
 /// Simple message format for all providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
