@@ -10,7 +10,6 @@ pub mod core;
 pub mod features;
 pub mod storage;
 pub mod service;
-pub mod context;  // Keep if still needed
 
 // Re-export commonly used items
 pub use self::core::{
