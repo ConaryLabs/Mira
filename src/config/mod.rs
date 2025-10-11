@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - DeepSeek 3.2 + GPT-5 Routing
+// Central configuration for Mira backend - GPT-5 Only
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -12,15 +12,6 @@ lazy_static! {
 /// Main configuration structure for Mira
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
-    // ===== LLM ROUTING (NEW) =====
-    pub llm_routing_enabled: bool,
-    
-    // ===== DEEPSEEK 3.2 =====
-    pub deepseek_api_key: String,
-    pub deepseek_model: String,
-    pub deepseek_max_tokens: usize,
-    pub deepseek_temperature: f32,
-    
     // ===== GPT-5 RESPONSES API =====
     pub gpt5_api_key: String,
     pub gpt5_model: String,
@@ -32,12 +23,7 @@ pub struct MiraConfig {
     pub openai_api_key: String,
     pub openai_embedding_model: String,
     
-    // ===== TEMPERATURE BY TASK TYPE (KEEP FOR DEEPSEEK) =====
-    pub temperature_deterministic: f32,
-    pub temperature_balanced: f32,
-    pub temperature_creative: f32,
-    
-    // ===== KEEP ALL OTHER FIELDS UNCHANGED =====
+    // ===== CORE CONFIGURATION =====
     pub max_output_tokens: usize,
     pub debug_logging: bool,
 
@@ -173,15 +159,6 @@ impl MiraConfig {
             .collect();
 
         Self {
-            // ===== LLM ROUTING =====
-            llm_routing_enabled: env_bool("LLM_ROUTING_ENABLED", true),
-            
-            // ===== DEEPSEEK 3.2 =====
-            deepseek_api_key: require_env("DEEPSEEK_API_KEY"),
-            deepseek_model: env_or("DEEPSEEK_MODEL", "deepseek-chat"),
-            deepseek_max_tokens: env_usize("DEEPSEEK_MAX_TOKENS", 64000),
-            deepseek_temperature: env_f32("DEEPSEEK_TEMPERATURE", 0.7),
-            
             // ===== GPT-5 RESPONSES API =====
             gpt5_api_key: require_env("GPT5_API_KEY"),
             gpt5_model: env_or("GPT5_MODEL", "gpt-5"),
@@ -193,12 +170,7 @@ impl MiraConfig {
             openai_api_key: require_env("OPENAI_API_KEY"),
             openai_embedding_model: env_or("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
             
-            // ===== TEMPERATURE =====
-            temperature_deterministic: require_env_parsed("TEMPERATURE_DETERMINISTIC"),
-            temperature_balanced: require_env_parsed("TEMPERATURE_BALANCED"),
-            temperature_creative: require_env_parsed("TEMPERATURE_CREATIVE"),
-            
-            // ===== ALL OTHER FIELDS (UNCHANGED) =====
+            // ===== CORE CONFIGURATION =====
             max_output_tokens: require_env_parsed("MAX_OUTPUT_TOKENS"),
             debug_logging: require_env_parsed("MIRA_DEBUG_LOGGING"),
 
@@ -318,11 +290,6 @@ impl MiraConfig {
 
     /// Validate config on startup
     pub fn validate(&self) -> anyhow::Result<()> {
-        // Validate DeepSeek model
-        if !["deepseek-chat", "deepseek-reasoner"].contains(&self.deepseek_model.as_str()) {
-            tracing::warn!("Unknown DeepSeek model '{}', may not work", self.deepseek_model);
-        }
-        
         // Validate GPT-5 verbosity
         if !["low", "medium", "high"].contains(&self.gpt5_verbosity.as_str()) {
             return Err(anyhow::anyhow!("Invalid GPT5_VERBOSITY: must be low/medium/high"));
@@ -388,7 +355,6 @@ impl MiraConfig {
     pub fn get_embedding_heads(&self) -> Vec<String> {
         self.embed_heads.clone()
     }
-
 }
 
 /// Configuration structures for monitoring
@@ -429,20 +395,6 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 fn env_usize(key: &str, default: usize) -> usize {
-    env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_f32(key: &str, default: f32) -> f32 {
-    env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_bool(key: &str, default: bool) -> bool {
     env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
