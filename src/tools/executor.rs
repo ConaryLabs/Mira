@@ -225,9 +225,9 @@ impl ToolExecutor {
         // Detect language
         let language = detect_language_from_path(file_path);
         
-        // Parse and store code elements
+        // Parse and store code elements - FIXED: correct parameter order
         self.code_intelligence
-            .analyze_and_store_with_project(file_id, file_path, content, project_id, &language)
+            .analyze_and_store_with_project(file_id, content, file_path, &language, project_id)
             .await?;
         
         Ok(())

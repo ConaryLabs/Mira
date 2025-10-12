@@ -99,6 +99,7 @@ impl ChatOrchestrator {
             
             context_obj = Some(ToolContext::Gpt5 {
                 previous_response_id: raw_response.id.clone(),
+                tool_outputs: vec![], // Non-streaming path doesn't collect tool outputs yet
             });
             
             if !raw_response.function_calls.is_empty() {

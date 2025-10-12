@@ -207,6 +207,12 @@ impl UnifiedChatHandler {
         user_message_id: i64,
         request: &ChatRequest,
     ) -> Result<CompleteResponse> {
+        debug!("=== FINALIZE STREAMING RESPONSE ===");
+        debug!("Result content length: {}", result.content.len());
+        debug!("Result artifacts count: {}", result.artifacts.len());
+        debug!("Tokens: input={}, output={}, reasoning={}", 
+            result.tokens.input, result.tokens.output, result.tokens.reasoning);
+        
         let structured = self.parse_structured_output(&result.content)?;
         
         let metadata = LLMMetadata {
@@ -251,16 +257,50 @@ impl UnifiedChatHandler {
     }
     
     fn parse_structured_output(&self, text_output: &str) -> Result<StructuredLLMResponse> {
-        // Parse JSON response from json_schema format
-        debug!("Parsing JSON structured output: {} chars", text_output.len());
+        debug!("=== PARSE STRUCTURED OUTPUT ===");
+        debug!("Input length: {} chars", text_output.len());
         
-        serde_json::from_str(text_output)
-            .map_err(|e| {
+        // CRITICAL DEBUG: Check if empty
+        if text_output.is_empty() {
+            error!("EMPTY OUTPUT - stream accumulated nothing!");
+            error!("This means the GPT-5 streaming parser is not extracting text from events");
+            return Err(anyhow!("Empty structured output from stream - no JSON received"));
+        }
+        
+        // Show first 1000 chars for debugging
+        let preview = if text_output.len() > 1000 {
+            format!("{}... (truncated, {} total)", &text_output[..1000], text_output.len())
+        } else {
+            text_output.to_string()
+        };
+        debug!("Content preview:\n{}", preview);
+        
+        // Try to parse as JSON
+        match serde_json::from_str::<StructuredLLMResponse>(text_output) {
+            Ok(structured) => {
+                debug!("Successfully parsed structured response");
+                debug!("Output length: {} chars", structured.output.len());
+                debug!("Salience: {}", structured.analysis.salience);
+                debug!("Topics: {:?}", structured.analysis.topics);
+                Ok(structured)
+            }
+            Err(e) => {
                 error!("Failed to parse JSON response: {}", e);
+                error!("Parse error details: {:?}", e);
                 error!("Raw output (first 500 chars): {}", 
                     &text_output.chars().take(500).collect::<String>());
-                anyhow!("Failed to parse structured output: {}", e)
-            })
+                
+                // Try to identify the issue
+                if let Ok(value) = serde_json::from_str::<Value>(text_output) {
+                    error!("Valid JSON but wrong structure. Actual structure:");
+                    error!("{}", serde_json::to_string_pretty(&value).unwrap_or_else(|_| "Failed to format".to_string()));
+                } else {
+                    error!("Not valid JSON at all!");
+                }
+                
+                Err(anyhow!("Failed to parse structured output: {}", e))
+            }
+        }
     }
     
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {

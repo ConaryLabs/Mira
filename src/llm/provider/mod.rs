@@ -66,6 +66,7 @@ pub struct ToolResponse {
 pub enum ToolContext {
     Gpt5 {
         previous_response_id: String,  // For GPT-5 multi-turn
+        tool_outputs: Vec<Value>,      // Tool outputs from previous turn
     },
 }
 

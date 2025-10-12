@@ -3,7 +3,7 @@
 // NOW OWNS PROMPT BUILDING - handler just passes raw context
 
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::collections::HashMap;
 use futures::StreamExt;
@@ -141,6 +141,7 @@ impl StreamingOrchestrator {
                             .or_insert_with(|| ToolCallBuilder {
                                 name: String::new(),
                                 arguments: String::new(),
+                                call_id: id.clone(),
                             })
                             .arguments
                             .push_str(delta);
@@ -153,6 +154,7 @@ impl StreamingOrchestrator {
                         tool_calls.insert(id.clone(), ToolCallBuilder {
                             name: name.clone(),
                             arguments: String::new(),
+                            call_id: id.clone(),
                         });
                         
                         on_event(event.clone())?;
@@ -163,6 +165,7 @@ impl StreamingOrchestrator {
                         tool_calls.insert(id.clone(), ToolCallBuilder {
                             name: name.clone(),
                             arguments: arguments.to_string(),
+                            call_id: id.clone(),
                         });
                         
                         on_event(event.clone())?;
@@ -204,15 +207,12 @@ impl StreamingOrchestrator {
             debug!("First 200 chars: {:?}", &structured_response_output.chars().take(200).collect::<String>());
             debug!("=====================================");
             
-            context_obj = Some(ToolContext::Gpt5 {
-                previous_response_id: response_id.clone(),
-            });
-            
             if !tool_calls.is_empty() {
                 info!("Executing {} tools", tool_calls.len());
                 
                 tools_called.clear();
                 let mut tool_results: Vec<(String, Value)> = Vec::new();
+                let mut tool_outputs: Vec<Value> = Vec::new(); // NEW: Track outputs for GPT-5
                 
                 for (tool_id, tool_call) in tool_calls.iter() {
                     let tool_name = &tool_call.name;
@@ -250,7 +250,15 @@ impl StreamingOrchestrator {
                         {
                             Ok(artifact_json) => {
                                 info!("DeepSeek generation successful with full context");
-                                collected_artifacts.push(artifact_json);
+                                collected_artifacts.push(artifact_json.clone());
+                                
+                                // Add tool output for GPT-5 continuation
+                                tool_outputs.push(json!({
+                                    "type": "function_call_output",
+                                    "call_id": tool_id,
+                                    "output": serde_json::to_string(&artifact_json)?
+                                }));
+                                
                                 continue; // Skip normal tool execution
                             }
                             Err(e) => {
@@ -270,12 +278,25 @@ impl StreamingOrchestrator {
                     // TRACK the result for context building
                     tool_results.push((tool_name.clone(), result.clone()));
                     
+                    // CRITICAL: Add tool output in GPT-5 format
+                    tool_outputs.push(json!({
+                        "type": "function_call_output",
+                        "call_id": tool_id,
+                        "output": serde_json::to_string(&result)?
+                    }));
+                    
                     if tool_name == "create_artifact" {
                         if let Some(artifact) = result.get("artifact") {
                             collected_artifacts.push(artifact.clone());
                         }
                     }
                 }
+                
+                // Set context for next iteration with tool outputs
+                context_obj = Some(ToolContext::Gpt5 {
+                    previous_response_id: response_id.clone(),
+                    tool_outputs, // NEW: Include tool outputs
+                });
                 
                 continue;
             }
@@ -447,6 +468,7 @@ impl StreamingOrchestrator {
 struct ToolCallBuilder {
     name: String,
     arguments: String,
+    call_id: String, // NEW: Track call_id for tool outputs
 }
 
 #[derive(Debug)]

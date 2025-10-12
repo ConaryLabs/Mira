@@ -72,6 +72,7 @@ impl LlmRouter {
             
             context = Some(ToolContext::Gpt5 {
                 previous_response_id: response.id.clone(),
+                tool_outputs: vec![], // No tool execution in this legacy path
             });
             
             current_messages.push(Message {

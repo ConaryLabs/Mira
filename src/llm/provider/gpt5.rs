@@ -8,7 +8,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::any::Any;
 use std::time::Instant;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 // Streaming imports
 use futures::stream::{Stream, StreamExt};
@@ -184,9 +184,17 @@ impl Gpt5Provider {
         }
         
         // Handle multi-turn with previous_response_id
-        if let Some(ToolContext::Gpt5 { previous_response_id }) = context {
+        if let Some(ToolContext::Gpt5 { previous_response_id, tool_outputs }) = context {
             body["previous_response_id"] = json!(previous_response_id);
-            body["input"] = json!([]);
+            
+            // Include tool outputs in input if present
+            if !tool_outputs.is_empty() {
+                debug!("GPT-5 multi-turn: sending {} tool outputs", tool_outputs.len());
+                body["input"] = json!(tool_outputs);
+            } else {
+                body["input"] = json!([]);
+            }
+            
             debug!("GPT-5 multi-turn: continuing from {}", previous_response_id);
         }
         
@@ -492,10 +500,18 @@ impl LlmProvider for Gpt5Provider {
 fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
     let event_type = json.get("type")?.as_str()?;
     
+    // CRITICAL: Log every single event to debug streaming issues
+    debug!("GPT-5 SSE EVENT: {}", event_type);
+    
+    // Extra logging for text-related events to see where JSON might be hiding
+    if event_type.contains("text") || event_type.contains("output") || event_type.contains("content") {
+        warn!("TEXT-RELATED EVENT: {} | json: {}", event_type, 
+            serde_json::to_string(json).unwrap_or_else(|_| "serialize failed".to_string()));
+    }
+    
     match event_type {
         // Text delta - streaming token by token
         "response.output_text.delta" => {
-            // Delta is at root level in json_schema format!
             let delta = json.get("delta")?.as_str()?.to_string();
             Some(Ok(StreamEvent::TextDelta { delta }))
         }
@@ -506,18 +522,62 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
             Some(Ok(StreamEvent::ReasoningDelta { delta }))
         }
         
-        // Complete text with structured output (json_schema format)
+        // FIXED: Complete text with structured output (json_schema format)
+        // This is where the JSON actually comes through!
         "response.output_text.done" => {
-            // Don't send this - we already accumulated it from deltas
-            // This would duplicate the text
-            debug!("Ignoring response.output_text.done - already have text from deltas");
+            // Try to extract the complete text from this event
+            if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
+                if !text.is_empty() {
+                    debug!("Found complete JSON in response.output_text.done: {} bytes", text.len());
+                    // Send as a text delta so it gets accumulated
+                    return Some(Ok(StreamEvent::TextDelta { 
+                        delta: text.to_string() 
+                    }));
+                }
+            }
+            
+            // Also check in output_text field
+            if let Some(text) = json.get("output_text").and_then(|t| t.as_str()) {
+                if !text.is_empty() {
+                    debug!("Found complete JSON in output_text field: {} bytes", text.len());
+                    return Some(Ok(StreamEvent::TextDelta { 
+                        delta: text.to_string() 
+                    }));
+                }
+            }
+            
+            warn!("response.output_text.done event has no text content");
             None
         }
         
-        // Content part done - also contains the full text
+        // Content part done - also may contain the full text
         "response.content_part.done" => {
-            // Also ignore - redundant with deltas
-            debug!("Ignoring response.content_part.done - already have text from deltas");
+            // Check for text in various possible locations
+            if let Some(text) = json.pointer("/text").and_then(|t| t.as_str()) {
+                if !text.is_empty() {
+                    debug!("Found complete JSON in response.content_part.done: {} bytes", text.len());
+                    return Some(Ok(StreamEvent::TextDelta { 
+                        delta: text.to_string() 
+                    }));
+                }
+            }
+            
+            // Check in content array
+            if let Some(content_array) = json.pointer("/content").and_then(|c| c.as_array()) {
+                for item in content_array {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                            if !text.is_empty() {
+                                debug!("Found complete JSON in content array: {} bytes", text.len());
+                                return Some(Ok(StreamEvent::TextDelta { 
+                                    delta: text.to_string() 
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            
             None
         }
         
@@ -540,8 +600,51 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
             }))
         }
         
-        // Output item done - ignore, we already have the text
-        "response.output_item.done" => None,
+        // Output item done - NEW GPT-5 structure wraps everything here
+        "response.output_item.done" => {
+            if let Some(item) = json.get("item") {
+                // Check if this is a function call (GPT-5's new structure)
+                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
+                    if let (Some(call_id), Some(name), Some(args)) = (
+                        item.get("call_id").and_then(|i| i.as_str()),
+                        item.get("name").and_then(|n| n.as_str()),
+                        item.get("arguments").and_then(|a| a.as_str()),
+                    ) {
+                        debug!("Extracting function call from output_item.done: {} ({})", name, call_id);
+                        
+                        // Parse arguments string to JSON
+                        let arguments: Value = serde_json::from_str(args)
+                            .unwrap_or_else(|e| {
+                                warn!("Failed to parse tool arguments in output_item.done: {}", e);
+                                json!({})
+                            });
+                        
+                        return Some(Ok(StreamEvent::ToolCallComplete {
+                            id: call_id.to_string(),
+                            name: name.to_string(),
+                            arguments,
+                        }));
+                    }
+                }
+                
+                // Check if this contains text content (for messages with json_schema)
+                if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                    for content in content_array {
+                        if content.get("type").and_then(|t| t.as_str()) == Some("text") {
+                            if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
+                                if !text.is_empty() {
+                                    debug!("Found complete JSON in response.output_item.done: {} bytes", text.len());
+                                    return Some(Ok(StreamEvent::TextDelta { 
+                                        delta: text.to_string() 
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
         
         // Final completion event with usage stats
         "response.completed" | "response.done" => {
