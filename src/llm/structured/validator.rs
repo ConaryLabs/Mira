@@ -33,7 +33,7 @@ pub fn validate_response(response: &StructuredLLMResponse) -> Result<()> {
         return Err(anyhow!("routed_to_heads cannot be empty (at least one head required)"));
     }
     
-    const VALID_HEADS: &[&str] = &["semantic", "code", "summary", "documents"];
+    const VALID_HEADS: &[&str] = &["semantic", "code", "summary", "documents", "relationship"];
     for head in &response.analysis.routed_to_heads {
         if !VALID_HEADS.contains(&head.as_str()) {
             return Err(anyhow!("invalid memory head '{}', must be one of: {:?}", 

@@ -1,9 +1,8 @@
 // src/memory/features/message_pipeline/mod.rs
 
-//! Message Pipeline - Unified analysis and routing for all message types
+//! Message Pipeline - Unified analysis for all message types
 
 pub mod analyzers;
-pub mod routing;
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -12,36 +11,27 @@ use tracing::{info, debug, error};
 use crate::llm::provider::LlmProvider;
 use crate::memory::storage::sqlite::core::MessageAnalysis;
 
-use self::{
-    analyzers::unified::UnifiedAnalyzer,
-    routing::memory_routing::MemoryRouter,
-};
+use self::analyzers::unified::UnifiedAnalyzer;
 
-/// Main MessagePipeline - coordinates analysis and routing
+/// Main MessagePipeline - coordinates analysis
 pub struct MessagePipeline {
     analyzer: UnifiedAnalyzer,
-    router: MemoryRouter,
 }
 
 impl MessagePipeline {
     /// Create new message pipeline
     pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
         let analyzer = UnifiedAnalyzer::new(llm_provider);
-        let router = MemoryRouter::new(RoutingConfig::default());
-        
-        Self { analyzer, router }
+        Self { analyzer }
     }
     
     /// Create message pipeline with custom configuration
     pub fn with_config(
         llm_provider: Arc<dyn LlmProvider>,
         analyzer_config: AnalyzerConfig,
-        routing_config: RoutingConfig,
     ) -> Self {
         let analyzer = UnifiedAnalyzer::with_config(llm_provider, analyzer_config);
-        let router = MemoryRouter::new(routing_config);
-        
-        Self { analyzer, router }
+        Self { analyzer }
     }
     
     /// Main analysis entry point
@@ -64,33 +54,13 @@ impl MessagePipeline {
         debug!("Analysis complete: salience={}, is_code={}", 
                analysis_result.salience, analysis_result.is_code);
         
-        let routing_strategy = self.router
-            .determine_routing(&analysis_result)
-            .await
-            .map_err(|e| {
-                error!("Routing determination failed: {}", e);
-                e
-            })?;
-        
-        self.router
-            .validate_routing(&routing_strategy)
-            .map_err(|e| {
-                error!("Routing validation failed: {}", e);
-                e
-            })?;
-        
-        debug!("Routing complete: primary={:?}, secondary={:?}", 
-               routing_strategy.primary_head, routing_strategy.secondary_heads);
-        
         let pipeline_result = MessagePipelineResult {
             analysis: analysis_result.clone(),
-            routing: routing_strategy.clone(),
             should_embed: analysis_result.routing.should_embed,
-            embedding_heads: self.router.get_all_heads(&routing_strategy),
         };
         
-        info!("Message processing complete: should_embed={}, heads={}", 
-              pipeline_result.should_embed, pipeline_result.embedding_heads.len());
+        info!("Message processing complete: should_embed={}", 
+              pipeline_result.should_embed);
         
         Ok(pipeline_result)
     }
@@ -114,16 +84,6 @@ impl MessagePipeline {
     
     /// Quick content classification without full analysis
     pub fn classify_content(&self, content: &str) -> ContentClassification {
-        let is_code = content.contains("```") || 
-                      content.contains("fn ") ||
-                      content.contains("impl ") ||
-                      content.contains("function ");
-        
-        let is_question = content.contains("?") || 
-                         content.to_lowercase().starts_with("how ") ||
-                         content.to_lowercase().starts_with("what ") ||
-                         content.to_lowercase().starts_with("why ");
-        
         let estimated_complexity = if content.len() > 1000 { 
             ContentComplexity::High 
         } else if content.len() > 200 { 
@@ -133,8 +93,6 @@ impl MessagePipeline {
         };
         
         ContentClassification {
-            is_code,
-            is_question,
             estimated_complexity,
             content_length: content.len(),
         }
@@ -145,9 +103,7 @@ impl MessagePipeline {
 #[derive(Debug, Clone)]
 pub struct MessagePipelineResult {
     pub analysis: UnifiedAnalysisResult,
-    pub routing: routing::memory_routing::RoutingStrategy,
     pub should_embed: bool,
-    pub embedding_heads: Vec<crate::llm::embeddings::EmbeddingHead>,
 }
 
 impl MessagePipelineResult {
@@ -166,12 +122,7 @@ impl MessagePipelineResult {
             contains_code: Some(self.analysis.is_code),
             language: self.analysis.programming_lang.clone(),
             programming_lang: self.analysis.programming_lang.clone(),
-            routed_to_heads: Some(
-                self.embedding_heads
-                    .iter()
-                    .map(|h| h.as_str().to_string())
-                    .collect::<Vec<_>>()
-            ),
+            routed_to_heads: None, // GPT-5's routed_to_heads used directly from structured response
         }
     }
     
@@ -189,8 +140,6 @@ impl MessagePipelineResult {
 /// Quick content classification without full analysis
 #[derive(Debug, Clone)]
 pub struct ContentClassification {
-    pub is_code: bool,
-    pub is_question: bool,
     pub estimated_complexity: ContentComplexity,
     pub content_length: usize,
 }
@@ -204,7 +153,6 @@ pub enum ContentComplexity {
 
 // Re-export key types
 pub use analyzers::unified::{UnifiedAnalysisResult, AnalyzerConfig, RoutingDecision};
-pub use routing::memory_routing::{RoutingStrategy, RoutingConfig};
 
 pub type UnifiedAnalysis = UnifiedAnalysisResult;
 pub type PipelineConfig = AnalyzerConfig;
