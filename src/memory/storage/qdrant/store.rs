@@ -132,8 +132,7 @@ impl QdrantMemoryStore {
                             .filter_map(|v| v.as_f64().map(|f| f as f32))
                             .collect::<Vec<f32>>()
                     }) {
-                        // CRITICAL FIX: Get message_id from payload, not from point.id
-                        // Point IDs are now strings, but message_id in payload is i64
+                        // Get message_id from payload
                         let id = payload.get("id").and_then(|v| v.as_i64());
                         entries.push(payload_to_memory_entry(payload, &vector, id));
                     }
@@ -145,13 +144,21 @@ impl QdrantMemoryStore {
         Ok(entries)
     }
     
-    /// Delete a point by its Qdrant point ID
-    pub async fn delete_by_point_id(&self, point_id: &str) -> Result<()> {
+    /// Delete a point by its numeric ID
+    pub async fn delete_by_id(&self, message_id: i64) -> Result<()> {
+        // Ensure the ID is positive for Qdrant
+        if message_id < 0 {
+            return Err(anyhow!("Message ID must be positive for Qdrant"));
+        }
+        
+        let point_id = message_id as u64;
+        
         let delete_url = format!(
             "{}/collections/{}/points/delete?wait=true",
             self.base_url, self.collection_name
         );
 
+        // Send as integer, not string
         let delete_body = json!({
             "points": [point_id]
         });
@@ -207,11 +214,16 @@ impl MemoryStore for QdrantMemoryStore {
             .as_ref()
             .ok_or_else(|| anyhow!("Cannot save to Qdrant without embedding"))?;
 
-        // CRITICAL FIX: Use message_id as Qdrant point ID instead of random UUID
-        // This allows us to delete by message_id and track the relationship
-        let point_id = entry.id
-            .ok_or_else(|| anyhow!("Cannot save to Qdrant without message_id"))?
-            .to_string();
+        // Get message_id and ensure it's positive for Qdrant
+        let message_id = entry.id
+            .ok_or_else(|| anyhow!("Cannot save to Qdrant without message_id"))?;
+        
+        if message_id < 0 {
+            return Err(anyhow!("Message ID must be positive for Qdrant"));
+        }
+        
+        // Use message_id as unsigned integer - Qdrant point ID
+        let point_id = message_id as u64;
 
         let payload = memory_entry_to_payload(entry);
 
@@ -220,10 +232,11 @@ impl MemoryStore for QdrantMemoryStore {
             self.base_url, self.collection_name
         );
 
+        // CRITICAL FIX: Send point_id as integer, NOT as string
         let upsert_body = json!({
             "points": [
                 {
-                    "id": point_id,
+                    "id": point_id,  // Integer, not string!
                     "vector": embedding,
                     "payload": payload
                 }
@@ -246,7 +259,7 @@ impl MemoryStore for QdrantMemoryStore {
 
         debug!(
             "Saved memory {} to Qdrant collection '{}' (point_id: {}, salience: {:?})",
-            entry.id.unwrap(),
+            message_id,
             self.collection_name,
             point_id,
             entry.salience
@@ -278,10 +291,8 @@ impl MemoryStore for QdrantMemoryStore {
     }
 
     async fn delete(&self, id: i64) -> Result<()> {
-        // FIXED: Actually delete from Qdrant using message_id as point_id
-        let point_id = id.to_string();
-        
-        match self.delete_by_point_id(&point_id).await {
+        // Delete from Qdrant using message_id as point_id
+        match self.delete_by_id(id).await {
             Ok(_) => {
                 debug!("Deleted message {} from Qdrant collection '{}'", id, self.collection_name);
                 Ok(())

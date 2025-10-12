@@ -192,7 +192,7 @@ impl Gpt5Provider {
     /// Extract text from json_schema response
     fn extract_text(&self, response: &Value) -> String {
         if CONFIG.debug_logging {
-            error!("RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
+            debug!("RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
         }
         
         // Check for text content in output array
@@ -367,21 +367,23 @@ impl Gpt5Provider {
         let buf_reader = BufReader::new(async_read);
         let lines = buf_reader.lines();
         
-        error!("DEBUG: GPT-5 stream created, starting to read SSE events");
+        // Only log if debug_logging is enabled
+        if CONFIG.debug_logging {
+            debug!("GPT-5 stream created, starting to read SSE events");
+        }
         
         Ok(Box::pin(LinesStream::new(lines).filter_map(move |line| async move {
             match line {
                 Ok(line) => {
-                    error!("DEBUG: GPT-5 SSE: Received line (length: {})", line.len());
-                    
                     if line.is_empty() || line.starts_with(": ") {
                         return None;
                     }
                     
                     let data = line.strip_prefix("data: ")?;
                     if data == "[DONE]" {
-                        error!("DEBUG: GPT-5 SSE: Received [DONE] marker");
-                        // Return Done event with empty values (will be filled by orchestrator)
+                        if CONFIG.debug_logging {
+                            debug!("GPT-5 SSE: Received [DONE] marker");
+                        }
                         return Some(Ok(StreamEvent::Done {
                             response_id: String::new(),
                             input_tokens: 0,
@@ -392,10 +394,7 @@ impl Gpt5Provider {
                     }
                     
                     match serde_json::from_str::<Value>(data) {
-                        Ok(json) => {
-                            error!("DEBUG: GPT-5 SSE: Parsed JSON event successfully");
-                            parse_gpt5_streaming_event(&json)
-                        }
+                        Ok(json) => parse_gpt5_streaming_event(&json),
                         Err(e) => {
                             error!("Failed to parse GPT-5 SSE: {} - Line: {}", e, data);
                             None
@@ -490,23 +489,43 @@ impl LlmProvider for Gpt5Provider {
 fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
     let event_type = json.get("type")?.as_str()?;
     
-    // DEBUG: Log every raw event from GPT-5
-    debug!("GPT-5 raw SSE event: type={}, full_json={}", event_type, serde_json::to_string(json).unwrap_or_else(|_| "parse_error".to_string()));
-    
     match event_type {
+        // Text delta - streaming token by token
         "response.output_text.delta" => {
-            let delta = json.pointer("/delta/content")?.as_str()?.to_string();
+            // Delta is at root level in json_schema format!
+            let delta = json.get("delta")?.as_str()?.to_string();
             Some(Ok(StreamEvent::TextDelta { delta }))
         }
+        
+        // Reasoning delta
         "response.reasoning.delta" => {
-            let delta = json.pointer("/delta/content")?.as_str()?.to_string();
+            let delta = json.get("delta")?.as_str()?.to_string();
             Some(Ok(StreamEvent::ReasoningDelta { delta }))
         }
+        
+        // Complete text with structured output (json_schema format)
+        "response.output_text.done" => {
+            // Don't send this - we already accumulated it from deltas
+            // This would duplicate the text
+            debug!("Ignoring response.output_text.done - already have text from deltas");
+            None
+        }
+        
+        // Content part done - also contains the full text
+        "response.content_part.done" => {
+            // Also ignore - redundant with deltas
+            debug!("Ignoring response.content_part.done - already have text from deltas");
+            None
+        }
+        
+        // Tool call deltas
         "response.function_call_arguments.delta" => {
             let id = json.get("call_id")?.as_str()?.to_string();
-            let delta = json.pointer("/delta")?.as_str()?.to_string();
+            let delta = json.get("delta")?.as_str()?.to_string();
             Some(Ok(StreamEvent::ToolCallArgumentsDelta { id, delta }))
         }
+        
+        // Tool call complete
         "response.function_call_arguments.done" => {
             let id = json.get("call_id")?.as_str()?.to_string();
             let name = json.get("name")?.as_str()?.to_string();
@@ -517,16 +536,34 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
                 arguments,
             }))
         }
-        "response.done" => {
-            let response_id = json.get("response_id")
-                .or_else(|| json.get("id"))
+        
+        // Output item done - ignore, we already have the text
+        "response.output_item.done" => None,
+        
+        // Final completion event with usage stats
+        "response.completed" | "response.done" => {
+            let response_obj = json.get("response").unwrap_or(json);
+            
+            let response_id = response_obj.get("id")
                 .and_then(|id| id.as_str())
                 .unwrap_or("")
                 .to_string();
             
-            let input_tokens = json.pointer("/usage/input_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
-            let output_tokens = json.pointer("/usage/output_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
-            let reasoning_tokens = json.pointer("/usage/reasoning_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
+            let input_tokens = response_obj.pointer("/usage/input_tokens")
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0);
+            
+            let output_tokens = response_obj.pointer("/usage/output_tokens")
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0);
+            
+            let reasoning_tokens = response_obj.pointer("/usage/output_tokens_details/reasoning_tokens")
+                .or_else(|| response_obj.pointer("/usage/reasoning_tokens"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0);
+            
+            debug!("Stream complete: {} input, {} output, {} reasoning tokens", 
+                   input_tokens, output_tokens, reasoning_tokens);
             
             Some(Ok(StreamEvent::Done {
                 response_id,
@@ -536,6 +573,10 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
                 final_text: None,
             }))
         }
-        _ => None,
+        
+        _ => {
+            debug!("Ignoring unrecognized GPT-5 event type: {}", event_type);
+            None
+        }
     }
 }
