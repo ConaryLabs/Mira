@@ -6,6 +6,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest};
@@ -86,16 +87,21 @@ impl MessageRouter {
             metadata,
         };
 
+        // Generate a unique stream ID for this chat message
+        let stream_id = Uuid::new_v4().to_string();
+        let stream_id_clone = stream_id.clone();
+
         // Create callback for streaming events
         let connection = self.connection.clone();
         let on_event = move |event: StreamEvent| -> Result<()> {
             match event {
                 StreamEvent::TextDelta { delta } => {
-                    // Send text delta to client
+                    // Send text delta to client with message_id for deduplication
                     let _ = connection.send_message(WsServerMessage::Data {
                         data: json!({
                             "type": "stream_delta",
                             "content": delta,
+                            "message_id": format!("{}-delta", stream_id_clone),
                         }),
                         request_id: None,
                     });
@@ -107,6 +113,7 @@ impl MessageRouter {
                         data: json!({
                             "type": "reasoning_delta",
                             "content": delta,
+                            "message_id": format!("{}-reasoning", stream_id_clone),
                         }),
                         request_id: None,
                     });
@@ -133,12 +140,13 @@ impl MessageRouter {
                     Ok(())
                 }
                 StreamEvent::Done { response_id, input_tokens, output_tokens, reasoning_tokens, final_text: _ } => {
-                    // Stream complete notification
+                    // Stream complete notification with unique message_id
                     // final_text is handled by orchestrator, we just forward token stats
                     let _ = connection.send_message(WsServerMessage::Data {
                         data: json!({
                             "type": "stream_done",
                             "response_id": response_id,
+                            "message_id": format!("{}-done", stream_id_clone),
                             "tokens": {
                                 "input": input_tokens,
                                 "output": output_tokens,
@@ -162,7 +170,7 @@ impl MessageRouter {
         // Use streaming handler
         match self.unified_handler.handle_message_streaming(request, on_event).await {
             Ok(complete_response) => {
-                self.send_complete_response_to_client(complete_response).await?;
+                self.send_complete_response_to_client(complete_response, stream_id).await?;
             }
             Err(e) => {
                 error!("Error handling streaming chat message: {}", e);
@@ -179,6 +187,7 @@ impl MessageRouter {
     async fn send_complete_response_to_client(
         &self,
         complete_response: crate::llm::structured::CompleteResponse,
+        stream_id: String,
     ) -> Result<()> {
         // Emit artifact-created events explicitly so the frontend can pop the viewer
         if let Some(ref artifacts) = complete_response.artifacts {
@@ -188,6 +197,7 @@ impl MessageRouter {
                         data: json!({
                             "type": "artifact_created",
                             "artifact": artifact,
+                            "message_id": format!("{}-artifact", stream_id),
                         }),
                         request_id: None,
                     })
@@ -197,6 +207,7 @@ impl MessageRouter {
 
         let response_data = json!({
             "content": complete_response.structured.output,
+            "message_id": format!("{}-complete", stream_id),
             "analysis": {
                 "salience": complete_response.structured.analysis.salience,
                 "topics": complete_response.structured.analysis.topics,

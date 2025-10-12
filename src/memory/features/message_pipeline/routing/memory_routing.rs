@@ -153,12 +153,13 @@ impl MemoryRouter {
         // Respect max heads limit
         let mut heads_vec: Vec<EmbeddingHead> = heads.into_iter().collect();
         
-        // Sort for deterministic ordering
+        // Sort for deterministic ordering (most specific first)
         heads_vec.sort_by_key(|head| match head {
-            EmbeddingHead::Code => 1,
-            EmbeddingHead::Documents => 2,
-            EmbeddingHead::Summary => 3,
-            EmbeddingHead::Semantic => 10,
+            EmbeddingHead::Code => 1,          // Most specific
+            EmbeddingHead::Documents => 2,     // Domain specific
+            EmbeddingHead::Summary => 3,       // Context specific
+            EmbeddingHead::Relationship => 4,  // Personal/emotional
+            EmbeddingHead::Semantic => 10,     // Least specific (catch-all)
         });
         
         if heads_vec.len() > self.config.max_embedding_heads {
@@ -238,7 +239,8 @@ pub fn prioritize_heads(heads: Vec<EmbeddingHead>) -> Vec<EmbeddingHead> {
         EmbeddingHead::Code => 1,          // Most specific
         EmbeddingHead::Documents => 2,     // Domain specific  
         EmbeddingHead::Summary => 3,       // Context specific
-        EmbeddingHead::Semantic => 10,     // Least specific
+        EmbeddingHead::Relationship => 4,  // Personal/emotional
+        EmbeddingHead::Semantic => 10,     // Least specific (catch-all)
     });
     
     heads

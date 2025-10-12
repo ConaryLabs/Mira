@@ -1,5 +1,5 @@
 // src/memory/storage/qdrant/multi_store.rs  
-// Qdrant multi-collection store for 4-head memory system
+// Qdrant multi-collection store for 5-head memory system
 
 use std::{collections::HashMap, sync::Arc};
 use anyhow::{anyhow, Result};
@@ -22,15 +22,18 @@ pub struct QdrantMultiStore {
 }
 
 impl QdrantMultiStore {
-    /// Create a new multi-collection store with all 4 heads
+    /// Create a new multi-collection store with all 5 heads
     pub async fn new(base_url: &str, collection_base_name: &str) -> Result<Self> {
         info!("Initializing Qdrant multi-collection store with base: {}", collection_base_name);
         let mut stores = HashMap::new();
         let heads = CONFIG.get_embedding_heads();
 
-        // Ensure we have all 4 heads
-        if !heads.contains(&"documents".to_string()) {
-            warn!("Documents head not found in config! Add 'documents' to MIRA_EMBED_HEADS");
+        // Ensure we have all 5 heads
+        let expected_heads = ["semantic", "code", "summary", "documents", "relationship"];
+        for expected in &expected_heads {
+            if !heads.contains(&expected.to_string()) {
+                warn!("{} head not found in config! Add '{}' to MIRA_EMBED_HEADS", expected, expected);
+            }
         }
 
         for head_str in &heads {
@@ -63,7 +66,13 @@ impl QdrantMultiStore {
         info!("Multi-collection Qdrant store initialized with {} collections", stores.len());
         
         // Verify we have all expected heads
-        for expected in &[EmbeddingHead::Semantic, EmbeddingHead::Code, EmbeddingHead::Summary, EmbeddingHead::Documents] {
+        for expected in &[
+            EmbeddingHead::Semantic, 
+            EmbeddingHead::Code, 
+            EmbeddingHead::Summary, 
+            EmbeddingHead::Documents,
+            EmbeddingHead::Relationship
+        ] {
             if !stores.contains_key(expected) {
                 warn!("Missing expected collection: {}", expected.as_str());
             }
@@ -229,6 +238,11 @@ impl QdrantMultiStore {
     /// Get the documents store
     pub fn get_documents_store(&self) -> Option<&Arc<QdrantMemoryStore>> {
         self.stores.get(&EmbeddingHead::Documents)
+    }
+    
+    /// Get the relationship store
+    pub fn get_relationship_store(&self) -> Option<&Arc<QdrantMemoryStore>> {
+        self.stores.get(&EmbeddingHead::Relationship)
     }
 
     /// Get store for a specific head

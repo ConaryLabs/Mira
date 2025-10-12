@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::collections::HashMap;
 use futures::StreamExt;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 
 use crate::llm::provider::{Message, ToolContext, TokenUsage, StreamEvent, DeepSeekProvider};
 use crate::llm::provider::gpt5::Gpt5Provider;
@@ -109,25 +109,14 @@ impl StreamingOrchestrator {
                 .downcast_ref::<Gpt5Provider>()
                 .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
             
-            let mut stream = match gpt5_provider.chat_with_tools_streaming(
+            let mut stream = gpt5_provider.chat_with_tools_streaming(
                 if context_obj.is_some() { vec![] } else { messages.clone() },
                 system_prompt.clone(),
                 tools.clone(),
                 context_obj.clone(),
                 Some(reasoning),
                 Some(verbosity),
-            ).await {
-                Ok(s) => {
-                    error!("DEBUG: Stream created successfully");
-                    s
-                }
-                Err(e) => {
-                    error!("DEBUG: Stream creation FAILED: {}", e);
-                    return Err(e);
-                }
-            };
-            
-            error!("DEBUG: Stream started for iteration {}", iteration);
+            ).await?;
             
             let mut response_id = String::new();
             let mut tool_calls: HashMap<String, ToolCallBuilder> = HashMap::new();
@@ -137,31 +126,6 @@ impl StreamingOrchestrator {
             while let Some(event_result) = stream.next().await {
                 event_count += 1;
                 let event = event_result?;
-                
-                // DEBUG: Log every event type
-                match &event {
-                    StreamEvent::TextDelta { delta } => {
-                        debug!("Event {}: TextDelta ({} bytes)", event_count, delta.len());
-                    }
-                    StreamEvent::ReasoningDelta { .. } => {
-                        debug!("Event {}: ReasoningDelta", event_count);
-                    }
-                    StreamEvent::ToolCallStart { name, .. } => {
-                        debug!("Event {}: ToolCallStart ({})", event_count, name);
-                    }
-                    StreamEvent::ToolCallArgumentsDelta { .. } => {
-                        debug!("Event {}: ToolCallArgumentsDelta", event_count);
-                    }
-                    StreamEvent::ToolCallComplete { name, .. } => {
-                        debug!("Event {}: ToolCallComplete ({})", event_count, name);
-                    }
-                    StreamEvent::Done { .. } => {
-                        debug!("Event {}: Done", event_count);
-                    }
-                    StreamEvent::Error { message } => {
-                        debug!("Event {}: Error ({})", event_count, message);
-                    }
-                }
                 
                 match &event {
                     StreamEvent::TextDelta { delta } => {
@@ -233,12 +197,12 @@ impl StreamingOrchestrator {
                 }
             }
             
-            error!("========== STREAM COMPLETE ==========");
-            error!("Events received: {}", event_count);
-            error!("Text accumulated: {} bytes", structured_response_output.len());
-            error!("Tool calls: {}", tool_calls.len());
-            error!("First 200 chars: {:?}", &structured_response_output.chars().take(200).collect::<String>());
-            error!("=====================================");
+            debug!("========== STREAM COMPLETE ==========");
+            debug!("Events received: {}", event_count);
+            debug!("Text accumulated: {} bytes", structured_response_output.len());
+            debug!("Tool calls: {}", tool_calls.len());
+            debug!("First 200 chars: {:?}", &structured_response_output.chars().take(200).collect::<String>());
+            debug!("=====================================");
             
             context_obj = Some(ToolContext::Gpt5 {
                 previous_response_id: response_id.clone(),

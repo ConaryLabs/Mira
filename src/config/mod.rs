@@ -149,13 +149,14 @@ impl MiraConfig {
         // Load .env file
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
         
-        // Validate embedding heads includes all 4
+        // Validate embedding heads includes all 5
         let embed_heads_str = require_env("MIRA_EMBED_HEADS");
         if !embed_heads_str.contains("semantic") || 
            !embed_heads_str.contains("code") || 
            !embed_heads_str.contains("summary") || 
-           !embed_heads_str.contains("documents") {
-            panic!("MIRA_EMBED_HEADS must include all 4 heads: 'semantic,code,summary,documents' - got: '{}'", embed_heads_str);
+           !embed_heads_str.contains("documents") ||
+           !embed_heads_str.contains("relationship") {
+            panic!("MIRA_EMBED_HEADS must include all 5 heads: 'semantic,code,summary,documents,relationship' - got: '{}'", embed_heads_str);
         }
         let embed_heads: Vec<String> = embed_heads_str
             .split(',')

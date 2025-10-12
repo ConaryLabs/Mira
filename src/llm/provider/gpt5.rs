@@ -138,8 +138,12 @@ impl Gpt5Provider {
                                     },
                                     "routed_to_heads": {
                                         "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "Memory heads for routing"
+                                        "items": {
+                                            "type": "string",
+                                            "enum": ["semantic", "code", "summary", "documents", "relationship"]
+                                        },
+                                        "description": "Memory collection routing. semantic=general conversation, code=programming content, summary=session summaries, documents=uploaded files, relationship=emotional/personal exchanges",
+                                        "minItems": 1
                                     },
                                     "language": {
                                         "type": "string",
@@ -367,7 +371,6 @@ impl Gpt5Provider {
         let buf_reader = BufReader::new(async_read);
         let lines = buf_reader.lines();
         
-        // Only log if debug_logging is enabled
         if CONFIG.debug_logging {
             debug!("GPT-5 stream created, starting to read SSE events");
         }

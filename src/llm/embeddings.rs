@@ -84,6 +84,7 @@ pub enum EmbeddingHead {
     Code,
     Summary,
     Documents,
+    Relationship,
 }
 
 impl EmbeddingHead {
@@ -93,6 +94,7 @@ impl EmbeddingHead {
             EmbeddingHead::Code => "code",
             EmbeddingHead::Summary => "summary",
             EmbeddingHead::Documents => "documents",
+            EmbeddingHead::Relationship => "relationship",
         }
     }
     
@@ -102,24 +104,8 @@ impl EmbeddingHead {
             EmbeddingHead::Code,
             EmbeddingHead::Summary,
             EmbeddingHead::Documents,
+            EmbeddingHead::Relationship,
         ]
-    }
-    
-    pub fn should_route(&self, content: &str, role: &str) -> bool {
-        match self {
-            EmbeddingHead::Semantic => {
-                role == "user" || role == "assistant"
-            },
-            EmbeddingHead::Code => {
-                contains_code_indicators(content)
-            },
-            EmbeddingHead::Summary => {
-                role == "system" && content.contains("Summary:")
-            },
-            EmbeddingHead::Documents => {
-                role == "document"
-            },
-        }
     }
 }
 
@@ -138,33 +124,8 @@ impl FromStr for EmbeddingHead {
             "code" => Ok(EmbeddingHead::Code),
             "summary" => Ok(EmbeddingHead::Summary),
             "documents" => Ok(EmbeddingHead::Documents),
+            "relationship" => Ok(EmbeddingHead::Relationship),
             _ => Err(anyhow::anyhow!("Unknown embedding head: {}", s)),
         }
     }
-}
-
-fn contains_code_indicators(content: &str) -> bool {
-    let code_patterns = [
-        "```",           
-        "fn ",           
-        "def ",          
-        "function ",     
-        "class ",        
-        "import ",       
-        "const ",        
-        "let ",          
-        "var ",          
-        "return ",       
-        "if (",          
-        "for (",         
-        "while (",       
-        "SELECT ",       
-        "CREATE TABLE",  
-        "pub struct",    
-        "async fn",      
-        "#include",      
-    ];
-    
-    let lower_content = content.to_lowercase();
-    code_patterns.iter().any(|pattern| lower_content.contains(&pattern.to_lowercase()))
 }
