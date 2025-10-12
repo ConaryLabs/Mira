@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::collections::HashMap;
 use futures::StreamExt;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 
 use crate::llm::provider::{Message, ToolContext, TokenUsage, StreamEvent, DeepSeekProvider};
 use crate::llm::provider::gpt5::Gpt5Provider;
@@ -109,16 +109,25 @@ impl StreamingOrchestrator {
                 .downcast_ref::<Gpt5Provider>()
                 .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
             
-            let mut stream = gpt5_provider.chat_with_tools_streaming(
+            let mut stream = match gpt5_provider.chat_with_tools_streaming(
                 if context_obj.is_some() { vec![] } else { messages.clone() },
                 system_prompt.clone(),
                 tools.clone(),
                 context_obj.clone(),
                 Some(reasoning),
                 Some(verbosity),
-            ).await?;
+            ).await {
+                Ok(s) => {
+                    error!("DEBUG: Stream created successfully");
+                    s
+                }
+                Err(e) => {
+                    error!("DEBUG: Stream creation FAILED: {}", e);
+                    return Err(e);
+                }
+            };
             
-            debug!("Stream started for iteration {}", iteration);
+            error!("DEBUG: Stream started for iteration {}", iteration);
             
             let mut response_id = String::new();
             let mut tool_calls: HashMap<String, ToolCallBuilder> = HashMap::new();
@@ -129,8 +138,35 @@ impl StreamingOrchestrator {
                 event_count += 1;
                 let event = event_result?;
                 
+                // DEBUG: Log every event type
                 match &event {
-                    StreamEvent::TextDelta { delta: _ } => {
+                    StreamEvent::TextDelta { delta } => {
+                        debug!("Event {}: TextDelta ({} bytes)", event_count, delta.len());
+                    }
+                    StreamEvent::ReasoningDelta { .. } => {
+                        debug!("Event {}: ReasoningDelta", event_count);
+                    }
+                    StreamEvent::ToolCallStart { name, .. } => {
+                        debug!("Event {}: ToolCallStart ({})", event_count, name);
+                    }
+                    StreamEvent::ToolCallArgumentsDelta { .. } => {
+                        debug!("Event {}: ToolCallArgumentsDelta", event_count);
+                    }
+                    StreamEvent::ToolCallComplete { name, .. } => {
+                        debug!("Event {}: ToolCallComplete ({})", event_count, name);
+                    }
+                    StreamEvent::Done { .. } => {
+                        debug!("Event {}: Done", event_count);
+                    }
+                    StreamEvent::Error { message } => {
+                        debug!("Event {}: Error ({})", event_count, message);
+                    }
+                }
+                
+                match &event {
+                    StreamEvent::TextDelta { delta } => {
+                        // Accumulate text for structured response (json_schema format)
+                        structured_response_output.push_str(delta);
                         on_event(event.clone())?;
                     }
                     StreamEvent::ReasoningDelta { delta: _ } => {
@@ -160,18 +196,10 @@ impl StreamingOrchestrator {
                     StreamEvent::ToolCallComplete { id, name, arguments } => {
                         debug!("Tool call complete: {} ({})", name, id);
                         
-                        if name == "structured_response" {
-                            structured_response_output = arguments.to_string();
-                            debug!("========== STRUCTURED RESPONSE CAPTURED ==========");
-                            debug!("Structured response complete: {} bytes", structured_response_output.len());
-                            debug!("First 500 chars: {}", &structured_response_output.chars().take(500).collect::<String>());
-                            debug!("==================================================");
-                        } else {
-                            tool_calls.insert(id.clone(), ToolCallBuilder {
-                                name: name.clone(),
-                                arguments: arguments.to_string(),
-                            });
-                        }
+                        tool_calls.insert(id.clone(), ToolCallBuilder {
+                            name: name.clone(),
+                            arguments: arguments.to_string(),
+                        });
                         
                         on_event(event.clone())?;
                     }
@@ -181,17 +209,17 @@ impl StreamingOrchestrator {
                         total_output_tokens += output_tokens;
                         total_reasoning_tokens += reasoning_tokens;
                         
-                        if let Some(text) = final_text {
-                            debug!("========== FINAL TEXT FROM DONE EVENT ==========");
-                            debug!("Using final_text from Done event: {} bytes", text.len());
-                            debug!("First 500 chars: {}", &text.chars().take(500).collect::<String>());
-                            debug!("===============================================");
-                            structured_response_output = text.clone();
+                        // Use final_text if available (fallback if accumulated text is empty)
+                        if structured_response_output.is_empty() {
+                            if let Some(text) = final_text {
+                                debug!("Using final_text from Done event: {} bytes", text.len());
+                                structured_response_output = text.clone();
+                            }
                         }
                         
                         info!(
-                            "Stream done | input={} output={} reasoning={}",
-                            input_tokens, output_tokens, reasoning_tokens
+                            "Stream done | input={} output={} reasoning={} | text_length={}",
+                            input_tokens, output_tokens, reasoning_tokens, structured_response_output.len()
                         );
                         
                         on_event(event.clone())?;
@@ -205,7 +233,12 @@ impl StreamingOrchestrator {
                 }
             }
             
-            debug!("Stream finished. Events: {}, structured output: {} bytes", event_count, structured_response_output.len());
+            error!("========== STREAM COMPLETE ==========");
+            error!("Events received: {}", event_count);
+            error!("Text accumulated: {} bytes", structured_response_output.len());
+            error!("Tool calls: {}", tool_calls.len());
+            error!("First 200 chars: {:?}", &structured_response_output.chars().take(200).collect::<String>());
+            error!("=====================================");
             
             context_obj = Some(ToolContext::Gpt5 {
                 previous_response_id: response_id.clone(),
@@ -283,12 +316,8 @@ impl StreamingOrchestrator {
                 continue;
             }
             
-            // Debug logging before returning
-            debug!("========== STREAMING RESULT ==========");
-            debug!("Content length: {} chars", structured_response_output.len());
-            debug!("First 500 chars: {}", &structured_response_output.chars().take(500).collect::<String>());
-            debug!("Artifacts count: {}", collected_artifacts.len());
-            debug!("======================================");
+            // Final result - return accumulated JSON text
+            debug!("Streaming complete - returning {} bytes of JSON", structured_response_output.len());
             
             return Ok(StreamingResult {
                 content: structured_response_output,

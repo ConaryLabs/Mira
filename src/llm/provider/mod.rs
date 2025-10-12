@@ -1,6 +1,5 @@
 // src/llm/provider/mod.rs
 // LLM Provider trait - clean, provider-agnostic interface
-
 use async_trait::async_trait;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -11,13 +10,12 @@ pub mod openai;
 pub mod gpt5;
 pub mod conversion;
 pub mod stream;
-pub mod lark_parser;
-pub mod deepseek;  // ADD THIS
+pub mod deepseek;
 
 // Export the embeddings client
 pub use openai::OpenAiEmbeddings;
 pub use stream::StreamEvent;
-pub use deepseek::DeepSeekProvider;  // ADD THIS
+pub use deepseek::DeepSeekProvider;
 
 /// Simple message format for all providers
 #[derive(Debug, Clone, Serialize, Deserialize)]

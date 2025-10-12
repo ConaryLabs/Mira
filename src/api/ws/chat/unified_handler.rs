@@ -251,21 +251,15 @@ impl UnifiedChatHandler {
     }
     
     fn parse_structured_output(&self, text_output: &str) -> Result<StructuredLLMResponse> {
-        use crate::llm::provider::lark_parser::parse_lark_output;
+        // Parse JSON response from json_schema format
+        debug!("Parsing JSON structured output: {} chars", text_output.len());
         
-        // CRITICAL DEBUG: Log exactly what we're trying to parse
-        debug!("========== RAW LARK OUTPUT ==========");
-        debug!("Length: {} chars", text_output.len());
-        debug!("Content:\n{}", text_output);
-        debug!("First 200 chars: {:?}", &text_output.chars().take(200).collect::<String>());
-        debug!("=====================================");
-        
-        parse_lark_output(text_output)
+        serde_json::from_str(text_output)
             .map_err(|e| {
-                error!("Lark parsing failed!");
-                error!("Error: {}", e);
-                error!("Raw output was:\n{}", text_output);
-                anyhow!("Failed to parse Lark output: {}", e)
+                error!("Failed to parse JSON response: {}", e);
+                error!("Raw output (first 500 chars): {}", 
+                    &text_output.chars().take(500).collect::<String>());
+                anyhow!("Failed to parse structured output: {}", e)
             })
     }
     
