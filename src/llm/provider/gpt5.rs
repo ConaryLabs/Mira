@@ -178,8 +178,6 @@ impl Gpt5Provider {
             
             if !flattened_tools.is_empty() {
                 body["tools"] = Value::Array(flattened_tools);
-                // CRITICAL: Don't set tool_choice when using json_schema format
-                // The structured output and tool_choice conflict in GPT-5 API
             }
         }
         
@@ -187,7 +185,6 @@ impl Gpt5Provider {
         if let Some(ToolContext::Gpt5 { previous_response_id, tool_outputs }) = context {
             body["previous_response_id"] = json!(previous_response_id);
             
-            // Include tool outputs in input if present
             if !tool_outputs.is_empty() {
                 debug!("GPT-5 multi-turn: sending {} tool outputs", tool_outputs.len());
                 body["input"] = json!(tool_outputs);
@@ -210,7 +207,6 @@ impl Gpt5Provider {
         // Check for text content in output array
         if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
             for item in output_array {
-                // Look for message type with content
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
                     if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
                         for content in content_array {
@@ -380,7 +376,7 @@ impl Gpt5Provider {
         let lines = buf_reader.lines();
         
         if CONFIG.debug_logging {
-            debug!("GPT-5 stream created, starting to read SSE events");
+            debug!("GPT-5 stream initialized");
         }
         
         Ok(Box::pin(LinesStream::new(lines).filter_map(move |line| async move {
@@ -500,88 +496,36 @@ impl LlmProvider for Gpt5Provider {
 fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
     let event_type = json.get("type")?.as_str()?;
     
-    // CRITICAL: Log every single event to debug streaming issues
-    debug!("GPT-5 SSE EVENT: {}", event_type);
-    
-    // Extra logging for text-related events to see where JSON might be hiding
-    if event_type.contains("text") || event_type.contains("output") || event_type.contains("content") {
-        warn!("TEXT-RELATED EVENT: {} | json: {}", event_type, 
-            serde_json::to_string(json).unwrap_or_else(|_| "serialize failed".to_string()));
-    }
-    
     match event_type {
-        // Text delta - streaming token by token
+        // Token-by-token streaming - THE ONLY PLACE WE ACCUMULATE TEXT
         "response.output_text.delta" => {
             let delta = json.get("delta")?.as_str()?.to_string();
             Some(Ok(StreamEvent::TextDelta { delta }))
         }
         
-        // Reasoning delta
+        // Reasoning token streaming
         "response.reasoning.delta" => {
             let delta = json.get("delta")?.as_str()?.to_string();
             Some(Ok(StreamEvent::ReasoningDelta { delta }))
         }
         
-        // FIXED: Complete text with structured output (json_schema format)
-        // This is where the JSON actually comes through!
+        // Text output done - ignore to avoid duplicate accumulation
         "response.output_text.done" => {
-            // Try to extract the complete text from this event
-            if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
-                if !text.is_empty() {
-                    debug!("Found complete JSON in response.output_text.done: {} bytes", text.len());
-                    // Send as a text delta so it gets accumulated
-                    return Some(Ok(StreamEvent::TextDelta { 
-                        delta: text.to_string() 
-                    }));
-                }
+            if CONFIG.debug_logging {
+                debug!("Text output complete (ignoring to prevent duplication)");
             }
-            
-            // Also check in output_text field
-            if let Some(text) = json.get("output_text").and_then(|t| t.as_str()) {
-                if !text.is_empty() {
-                    debug!("Found complete JSON in output_text field: {} bytes", text.len());
-                    return Some(Ok(StreamEvent::TextDelta { 
-                        delta: text.to_string() 
-                    }));
-                }
-            }
-            
-            warn!("response.output_text.done event has no text content");
             None
         }
         
-        // Content part done - also may contain the full text
+        // Content part done - ignore to avoid duplicate accumulation
         "response.content_part.done" => {
-            // Check for text in various possible locations
-            if let Some(text) = json.pointer("/text").and_then(|t| t.as_str()) {
-                if !text.is_empty() {
-                    debug!("Found complete JSON in response.content_part.done: {} bytes", text.len());
-                    return Some(Ok(StreamEvent::TextDelta { 
-                        delta: text.to_string() 
-                    }));
-                }
+            if CONFIG.debug_logging {
+                debug!("Content part complete (ignoring to prevent duplication)");
             }
-            
-            // Check in content array
-            if let Some(content_array) = json.pointer("/content").and_then(|c| c.as_array()) {
-                for item in content_array {
-                    if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                            if !text.is_empty() {
-                                debug!("Found complete JSON in content array: {} bytes", text.len());
-                                return Some(Ok(StreamEvent::TextDelta { 
-                                    delta: text.to_string() 
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-            
             None
         }
         
-        // Tool call deltas
+        // Tool call argument streaming
         "response.function_call_arguments.delta" => {
             let id = json.get("call_id")?.as_str()?.to_string();
             let delta = json.get("delta")?.as_str()?.to_string();
@@ -600,22 +544,23 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
             }))
         }
         
-        // Output item done - NEW GPT-5 structure wraps everything here
+        // Output item done - extract function calls only, not text
         "response.output_item.done" => {
             if let Some(item) = json.get("item") {
-                // Check if this is a function call (GPT-5's new structure)
+                // Extract function calls (GPT-5's wrapped structure)
                 if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
                     if let (Some(call_id), Some(name), Some(args)) = (
                         item.get("call_id").and_then(|i| i.as_str()),
                         item.get("name").and_then(|n| n.as_str()),
                         item.get("arguments").and_then(|a| a.as_str()),
                     ) {
-                        debug!("Extracting function call from output_item.done: {} ({})", name, call_id);
+                        if CONFIG.debug_logging {
+                            debug!("Function call: {} ({})", name, call_id);
+                        }
                         
-                        // Parse arguments string to JSON
                         let arguments: Value = serde_json::from_str(args)
                             .unwrap_or_else(|e| {
-                                warn!("Failed to parse tool arguments in output_item.done: {}", e);
+                                warn!("Failed to parse tool arguments: {}", e);
                                 json!({})
                             });
                         
@@ -627,26 +572,15 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
                     }
                 }
                 
-                // Check if this contains text content (for messages with json_schema)
-                if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
-                    for content in content_array {
-                        if content.get("type").and_then(|t| t.as_str()) == Some("text") {
-                            if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
-                                if !text.is_empty() {
-                                    debug!("Found complete JSON in response.output_item.done: {} bytes", text.len());
-                                    return Some(Ok(StreamEvent::TextDelta { 
-                                        delta: text.to_string() 
-                                    }));
-                                }
-                            }
-                        }
-                    }
+                // Ignore text content - already accumulated via deltas
+                if CONFIG.debug_logging {
+                    debug!("Output item complete (ignoring text to prevent duplication)");
                 }
             }
             None
         }
         
-        // Final completion event with usage stats
+        // Stream completion with token stats
         "response.completed" | "response.done" => {
             let response_obj = json.get("response").unwrap_or(json);
             
@@ -668,8 +602,10 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
                 .and_then(|t| t.as_i64())
                 .unwrap_or(0);
             
-            debug!("Stream complete: {} input, {} output, {} reasoning tokens", 
-                   input_tokens, output_tokens, reasoning_tokens);
+            if CONFIG.debug_logging {
+                debug!("Stream complete: {} input, {} output, {} reasoning tokens", 
+                       input_tokens, output_tokens, reasoning_tokens);
+            }
             
             Some(Ok(StreamEvent::Done {
                 response_id,
@@ -681,7 +617,7 @@ fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
         }
         
         _ => {
-            debug!("Ignoring unrecognized GPT-5 event type: {}", event_type);
+            debug!("Ignoring GPT-5 event: {}", event_type);
             None
         }
     }

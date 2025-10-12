@@ -78,7 +78,7 @@ impl StreamingOrchestrator {
         debug!("System prompt built: {} chars", system_prompt.len());
         
         let mut iteration = 0;
-        let max_iterations = 5;
+        let max_iterations = 20;
         let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
