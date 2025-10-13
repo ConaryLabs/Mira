@@ -273,6 +273,9 @@ fn create_qdrant_entry(
     response: &StructuredLLMResponse,
     embedding: Vec<f32>,
 ) -> MemoryEntry {
+    // Also sanitize programming_lang for consistency (Qdrant isn't constrained but keep data tidy)
+    let sanitized_lang = sanitize_programming_lang(&response.analysis.programming_lang);
+
     MemoryEntry {
         id: Some(message_id),
         session_id: session_id.to_string(),
@@ -292,7 +295,7 @@ fn create_qdrant_entry(
         relationship_impact: response.analysis.relationship_impact.clone(),
         contains_code: Some(response.analysis.contains_code),
         language: Some(response.analysis.language.clone()),
-        programming_lang: response.analysis.programming_lang.clone(),
+        programming_lang: sanitized_lang,
         analyzed_at: Some(Utc::now()),
         analysis_version: Some("structured_v1".to_string()),
         routed_to_heads: Some(response.analysis.routed_to_heads.clone()),
@@ -312,6 +315,22 @@ fn create_qdrant_entry(
         embedding: Some(embedding),
         embedding_heads: Some(response.analysis.routed_to_heads.clone()),
         qdrant_point_ids: None,
+    }
+}
+
+/// Limit programming_lang to the DB-allowed set or None
+fn sanitize_programming_lang(lang_opt: &Option<String>) -> Option<String> {
+    let Some(raw) = lang_opt.as_ref().map(|s| s.to_lowercase()) else { return None };
+    match raw.as_str() {
+        // Allowed as-is
+        "rust" | "typescript" | "javascript" | "python" | "go" | "java" => Some(raw),
+        // Common aliases
+        "ts" | "tsx" => Some("typescript".to_string()),
+        "js" | "jsx" | "node" => Some("javascript".to_string()),
+        "py" => Some("python".to_string()),
+        "golang" => Some("go".to_string()),
+        // Everything else (css, html, json, yaml, bash, etc.) -> None
+        _ => None,
     }
 }
 
@@ -351,6 +370,15 @@ async fn insert_message_analysis(
 ) -> Result<()> {
     let topics_json = serde_json::to_string(&analysis.topics)?;
     let heads_json = serde_json::to_string(&analysis.routed_to_heads)?;
+
+    // Sanitize programming_lang to satisfy SQLite CHECK constraint
+    let db_lang = sanitize_programming_lang(&analysis.programming_lang);
+    if analysis.programming_lang.is_some() && db_lang.is_none() {
+        warn!(
+            "Coercing unsupported programming_lang='{:?}' to NULL for message {}",
+            analysis.programming_lang, message_id
+        );
+    }
     
     sqlx::query!(
         r#"
@@ -371,7 +399,7 @@ async fn insert_message_analysis(
         analysis.relationship_impact,
         analysis.contains_code,
         analysis.language,
-        analysis.programming_lang,
+        db_lang,
         heads_json
     )
     .execute(&mut **tx)
