@@ -17,6 +17,7 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::state::AppState;
 use crate::tools::{ChatOrchestrator, StreamingOrchestrator};
+use crate::config::CONFIG;
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -137,7 +138,17 @@ impl UnifiedChatHandler {
     fn build_messages(&self, context: &RecallContext, request: &ChatRequest) -> Vec<Message> {
         let mut messages = Vec::new();
         
-        for entry in context.recent.iter().rev() {
+        // Limit how many recent messages we stuff into the prompt to avoid token blowups
+        let limit = CONFIG.recent_message_limit.max(1);
+        let recent_slice: Vec<_> = context
+            .recent
+            .iter()
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect();
+        
+        for entry in recent_slice.into_iter().rev() {
             messages.push(Message {
                 role: if entry.role == "user" { "user".to_string() } else { "assistant".to_string() },
                 content: entry.content.clone(),

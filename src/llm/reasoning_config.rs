@@ -10,22 +10,22 @@ impl ReasoningConfig {
     }
     
     /// Settings for synthesizing response after tool(s) executed
+    /// CRITICAL: Uses HIGH reasoning to force synthesis instead of more tool calls
     pub fn for_synthesis_after_tools(tools_called: &[&str]) -> (&'static str, &'static str) {
-        // Use highest reasoning requirement from all tools called
-        let mut max_reasoning = ("medium", "medium");
-        let mut max_rank = Self::reasoning_rank(max_reasoning.0);
+        // FIXED: Always use high reasoning after tools to force synthesis
+        // This prevents infinite tool-calling loops where GPT-5 keeps searching
+        // instead of answering with what it has.
         
-        for tool in tools_called {
-            if let Some(config) = Self::get_tool_config(tool) {
-                let rank = Self::reasoning_rank(config.0);
-                if rank > max_rank {
-                    max_rank = rank;
-                    max_reasoning = config;
-                }
-            }
+        // Check if any tool requires special handling
+        let has_code_gen = tools_called.iter().any(|&t| t == "create_artifact");
+        
+        if has_code_gen {
+            // Code generation needs clean output, but still high reasoning
+            ("high", "medium")
+        } else {
+            // Default: HIGH reasoning to synthesize from tool results
+            ("high", "high")
         }
-        
-        max_reasoning
     }
     
     /// Settings for direct response (no tools)
@@ -33,14 +33,16 @@ impl ReasoningConfig {
         ("medium", "medium")  // Use defaults
     }
     
-    /// Get configuration for a specific tool
+    /// Get configuration for a specific tool (legacy, no longer used)
+    /// Kept for backwards compatibility but synthesis now always uses high
+    #[allow(dead_code)]
     fn get_tool_config(tool: &str) -> Option<(&'static str, &'static str)> {
         match tool {
             // Fast I/O - minimal synthesis needed
             "read_file" => Some(("minimal", "low")),
             "list_files" => Some(("minimal", "low")),
             "read_files" => Some(("minimal", "low")),
-            "search_code" => Some(("minimal", "low")),
+            "search_code" => Some(("low", "low")),  // Changed from minimal - needs better synthesis
             
             // Write operations - basic confirmation
             "write_files" => Some(("low", "low")),
@@ -55,6 +57,7 @@ impl ReasoningConfig {
         }
     }
     
+    #[allow(dead_code)]
     fn reasoning_rank(reasoning: &str) -> u8 {
         match reasoning {
             "minimal" => 1,

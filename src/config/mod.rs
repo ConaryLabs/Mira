@@ -4,6 +4,7 @@
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::env;
+use tracing::warn;
 
 lazy_static! {
     pub static ref CONFIG: MiraConfig = MiraConfig::from_env();
@@ -142,6 +143,10 @@ pub struct MiraConfig {
     pub recent_cache_ttl_seconds: u64,
     pub recent_cache_max_per_session: usize,
     pub recent_cache_warmup: bool,
+
+    // New: Tooling & Embedding behavior
+    pub tool_max_iterations: usize,
+    pub embed_code_from_chat: bool,
 }
 
 impl MiraConfig {
@@ -149,19 +154,19 @@ impl MiraConfig {
         // Load .env file
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
         
-        // Validate embedding heads includes all 5
+        // Embedding heads: allow subsets; warn if missing common heads
         let embed_heads_str = require_env("MIRA_EMBED_HEADS");
-        if !embed_heads_str.contains("semantic") || 
-           !embed_heads_str.contains("code") || 
-           !embed_heads_str.contains("summary") || 
-           !embed_heads_str.contains("documents") ||
-           !embed_heads_str.contains("relationship") {
-            panic!("MIRA_EMBED_HEADS must include all 5 heads: 'semantic,code,summary,documents,relationship' - got: '{}'", embed_heads_str);
-        }
         let embed_heads: Vec<String> = embed_heads_str
             .split(',')
             .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
             .collect();
+        if !embed_heads.iter().any(|h| h == "semantic") {
+            warn!("MIRA_EMBED_HEADS does not include 'semantic' — retrieval quality may suffer");
+        }
+        if !embed_heads.iter().any(|h| h == "code") {
+            warn!("MIRA_EMBED_HEADS does not include 'code' — code-head embeddings disabled globally");
+        }
 
         Self {
             // ===== GPT-5 RESPONSES API =====
@@ -297,6 +302,10 @@ impl MiraConfig {
             recent_cache_ttl_seconds: require_env_parsed("MIRA_RECENT_CACHE_TTL"),
             recent_cache_max_per_session: require_env_parsed("MIRA_RECENT_CACHE_MAX_PER_SESSION"),
             recent_cache_warmup: require_env_parsed("MIRA_RECENT_CACHE_WARMUP"),
+
+            // New: Tooling & Embedding behavior
+            tool_max_iterations: env_usize("MIRA_TOOL_MAX_ITERATIONS", 30),
+            embed_code_from_chat: env::var("MIRA_EMBED_CODE_FROM_CHAT").ok().and_then(|v| v.parse().ok()).unwrap_or(false),
         }
     }
 

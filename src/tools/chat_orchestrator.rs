@@ -5,7 +5,7 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::llm::provider::{Message, ToolContext, TokenUsage};
 use crate::llm::provider::gpt5::Gpt5Provider;
@@ -16,6 +16,7 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::api::ws::message::MessageMetadata;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
+use crate::config::CONFIG;
 
 pub struct ChatOrchestrator {
     state: Arc<AppState>,
@@ -53,22 +54,60 @@ impl ChatOrchestrator {
         debug!("System prompt built: {} chars", system_prompt.len());
         
         let mut iteration = 0;
-        let max_iterations = 25;
+        let max_iterations = CONFIG.tool_max_iterations;  // Configurable
         let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
         
         loop {
             iteration += 1;
+
             if iteration > max_iterations {
-                return Err(anyhow::anyhow!("Max iterations reached"));
+                warn!("Hit max iterations ({}) - forcing final synthesis without tools", max_iterations);
+
+                let provider = self.state.llm_router.get_provider();
+                let gpt5_provider = provider.as_any()
+                    .downcast_ref::<Gpt5Provider>()
+                    .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
+
+                // Final pass: disable tools and synthesize
+                let raw_response = gpt5_provider.chat_with_tools_internal(
+                    vec![],
+                    system_prompt.clone(),
+                    vec![],
+                    context_obj.clone(),
+                    Some("high"),
+                    Some("high"),
+                ).await?;
+
+                info!(
+                    "GPT-5 final synthesis | input={} output={} reasoning={} latency={}ms",
+                    raw_response.tokens.input,
+                    raw_response.tokens.output,
+                    raw_response.tokens.reasoning,
+                    raw_response.latency_ms
+                );
+
+                return Ok(ChatResult {
+                    content: raw_response.text_output,
+                    artifacts: collected_artifacts,
+                    tokens: raw_response.tokens,
+                    latency_ms: raw_response.latency_ms,
+                });
             }
             
+            // CRITICAL FIX: Force synthesis after 12 iterations to prevent infinite loops
             let (reasoning, verbosity) = if iteration == 1 {
                 ReasoningConfig::for_tool_selection()
             } else if !tools_called.is_empty() {
-                let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
-                ReasoningConfig::for_synthesis_after_tools(&tool_refs)
+                if iteration > 12 {
+                    // After 12 tool calls, FORCE synthesis with max reasoning
+                    info!("🛑 Forcing synthesis after {} iterations (too many tool calls)", iteration);
+                    ("high", "high")
+                } else {
+                    let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
+                    ReasoningConfig::for_synthesis_after_tools(&tool_refs)
+                }
             } else {
                 ReasoningConfig::for_direct_response()
             };
@@ -119,15 +158,41 @@ impl ChatOrchestrator {
                         project_id.unwrap_or(""),
                     ).await?;
                     
+                    // FIXED: Handle both "artifact" (singular) and "artifacts" (plural array)
                     if tool_name == "create_artifact" {
+                        let before_count = collected_artifacts.len();
+                        
+                        // Check for singular "artifact" field
                         if let Some(artifact) = result.get("artifact") {
                             collected_artifacts.push(artifact.clone());
+                            debug!("Collected artifact from 'artifact' field");
+                        }
+                        // Check for plural "artifacts" array field
+                        else if let Some(artifacts_array) = result.get("artifacts") {
+                            if let Some(arr) = artifacts_array.as_array() {
+                                for artifact in arr {
+                                    collected_artifacts.push(artifact.clone());
+                                }
+                                debug!("Collected {} artifacts from 'artifacts' array", arr.len());
+                            }
+                        }
+                        
+                        let after_count = collected_artifacts.len();
+                        let new_artifacts = after_count - before_count;
+                        
+                        if new_artifacts == 0 {
+                            warn!("create_artifact executed but NO artifacts collected - check executor return format!");
+                            warn!("Result keys: {:?}", result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                        } else {
+                            info!("Successfully collected {} new artifact(s), total: {}", new_artifacts, after_count);
                         }
                     }
                 }
                 
                 continue;
             }
+            
+            debug!("Non-streaming complete - returning {} artifacts", collected_artifacts.len());
             
             return Ok(ChatResult {
                 content: raw_response.text_output,

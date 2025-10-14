@@ -74,6 +74,26 @@ pub async fn process_embeddings(
         );
         return Ok(());
     }
+
+    // Gate: skip code-head embeddings for chat responses unless explicitly enabled
+    let mut routed_heads: Vec<String> = response.analysis.routed_to_heads.clone();
+    if !CONFIG.embed_code_from_chat {
+        let before = routed_heads.len();
+        routed_heads.retain(|h| h != "code");
+        if routed_heads.len() != before {
+            debug!(
+                "Message {}: skipping 'code' head per config (embed_code_from_chat=false)",
+                message_id
+            );
+        }
+    }
+    if routed_heads.is_empty() {
+        debug!(
+            "Message {}: no eligible heads after gating (possibly only 'code'), skipping embeddings",
+            message_id
+        );
+        return Ok(());
+    }
     
     // FIXED: Truncate content to avoid OpenAI's 8192 token limit
     // OpenAI's text-embedding-3-large has 8192 token limit
@@ -107,7 +127,7 @@ pub async fn process_embeddings(
     
     // Store in each routed head
     let mut stored_count = 0;
-    for head_str in &response.analysis.routed_to_heads {
+    for head_str in &routed_heads {
         // Parse the head string to EmbeddingHead enum
         let head = match head_str.parse::<EmbeddingHead>() {
             Ok(h) => h,

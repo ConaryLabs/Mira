@@ -18,6 +18,7 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::api::ws::message::MessageMetadata;
 use crate::prompt::unified_builder::UnifiedPromptBuilder;
+use crate::config::CONFIG;
 
 pub struct StreamingOrchestrator {
     state: Arc<AppState>,
@@ -78,7 +79,7 @@ impl StreamingOrchestrator {
         debug!("System prompt built: {} chars", system_prompt.len());
         
         let mut iteration = 0;
-        let max_iterations = 20;
+        let max_iterations = CONFIG.tool_max_iterations;  // Configurable
         let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
@@ -89,15 +90,97 @@ impl StreamingOrchestrator {
         
         loop {
             iteration += 1;
+
+            // If we blew past max iterations, force a final synthesis without tools
             if iteration > max_iterations {
-                return Err(anyhow::anyhow!("Max iterations reached"));
+                warn!("Hit max iterations ({}) - forcing final synthesis without tools", max_iterations);
+                
+                let provider = self.state.llm_router.get_provider();
+                let gpt5_provider = provider.as_any()
+                    .downcast_ref::<Gpt5Provider>()
+                    .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
+
+                // Final pass: disable tools to prevent any more calls
+                let mut stream = gpt5_provider.chat_with_tools_streaming(
+                    vec![],                       // no new user/assistant messages
+                    system_prompt.clone(),        // same system prompt
+                    vec![],                       // NO TOOLS
+                    context_obj.clone(),          // include tool outputs so far
+                    Some("high"),
+                    Some("high"),
+                ).await?;
+
+                let mut structured_response_output = String::new();
+                let mut response_id = String::new();
+                
+                while let Some(event_result) = stream.next().await {
+                    let event = event_result?;
+                    match &event {
+                        StreamEvent::TextDelta { delta } => {
+                            structured_response_output.push_str(delta);
+                            on_event(event.clone())?;
+                        }
+                        StreamEvent::ReasoningDelta { .. } => {
+                            on_event(event.clone())?;
+                        }
+                        StreamEvent::Done { response_id: rid, input_tokens, output_tokens, reasoning_tokens, final_text } => {
+                            response_id = rid.clone();
+                            total_input_tokens += input_tokens;
+                            total_output_tokens += output_tokens;
+                            total_reasoning_tokens += reasoning_tokens;
+
+                            if structured_response_output.is_empty() {
+                                if let Some(text) = final_text {
+                                    debug!("Using final_text from Done event: {} bytes", text.len());
+                                    structured_response_output = text.clone();
+                                }
+                            }
+
+                            info!(
+                                "Final synthesis done | input={} output={} reasoning={} | text_length={}",
+                                input_tokens, output_tokens, reasoning_tokens, structured_response_output.len()
+                            );
+                            on_event(event.clone())?;
+                        }
+                        StreamEvent::ToolCallArgumentsDelta { .. }
+                        | StreamEvent::ToolCallStart { .. }
+                        | StreamEvent::ToolCallComplete { .. } => {
+                            // Tools are disabled; ignore
+                        }
+                        StreamEvent::Error { message } => {
+                            warn!("Stream error during final synthesis: {}", message);
+                            let msg = message.clone();
+                            on_event(event.clone())?;
+                            return Err(anyhow::anyhow!("Stream error: {}", msg));
+                        }
+                    }
+                }
+
+                debug!("Final forced synthesis - returning {} bytes of JSON", structured_response_output.len());
+                return Ok(StreamingResult {
+                    content: structured_response_output,
+                    artifacts: collected_artifacts,
+                    tokens: TokenUsage {
+                        input: total_input_tokens,
+                        output: total_output_tokens,
+                        reasoning: total_reasoning_tokens,
+                        cached: 0,
+                    },
+                });
             }
             
+            // CRITICAL FIX: Force synthesis after 12 iterations to prevent infinite loops
             let (reasoning, verbosity) = if iteration == 1 {
                 ReasoningConfig::for_tool_selection()
             } else if !tools_called.is_empty() {
-                let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
-                ReasoningConfig::for_synthesis_after_tools(&tool_refs)
+                if iteration > 12 {
+                    // After 12 tool calls, FORCE synthesis with max reasoning
+                    info!("🛑 Forcing synthesis after {} iterations (too many tool calls)", iteration);
+                    ("high", "high")
+                } else {
+                    let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
+                    ReasoningConfig::for_synthesis_after_tools(&tool_refs)
+                }
             } else {
                 ReasoningConfig::for_direct_response()
             };
