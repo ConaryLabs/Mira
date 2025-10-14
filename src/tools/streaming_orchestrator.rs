@@ -504,16 +504,74 @@ impl StreamingOrchestrator {
                         }
                     },
                     "search_code" => {
+                        // FIXED: Use actual CodeElement fields instead of non-existent "file" and "snippet"
                         if let Some(results) = result.get("results").and_then(|r| r.as_array()) {
                             ctx.push_str(&format!("Found {} matches:\n", results.len()));
-                            for (i, r) in results.iter().take(3).enumerate() {
-                                if let Some(file) = r.get("file").and_then(|f| f.as_str()) {
-                                    ctx.push_str(&format!("  {}. {}\n", i + 1, file));
-                                    if let Some(snippet) = r.get("snippet").and_then(|s| s.as_str()) {
-                                        ctx.push_str(&format!("     {}\n", snippet));
+                            
+                            // Show up to 5 results with full details
+                            for (i, r) in results.iter().take(5).enumerate() {
+                                // Extract all available fields from CodeElement
+                                let element_type = r.get("element_type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                                let name = r.get("name").and_then(|n| n.as_str()).unwrap_or("unnamed");
+                                let full_path = r.get("full_path").and_then(|p| p.as_str()).unwrap_or("unknown path");
+                                
+                                ctx.push_str(&format!("\n  {}. {} '{}' in {}\n", i + 1, element_type, name, full_path));
+                                
+                                // Show line range
+                                if let (Some(start), Some(end)) = (
+                                    r.get("start_line").and_then(|s| s.as_i64()),
+                                    r.get("end_line").and_then(|e| e.as_i64())
+                                ) {
+                                    ctx.push_str(&format!("     Lines {}-{}\n", start, end));
+                                }
+                                
+                                // Show visibility and async/test flags
+                                if let Some(visibility) = r.get("visibility").and_then(|v| v.as_str()) {
+                                    let mut flags = vec![visibility];
+                                    if r.get("is_async").and_then(|a| a.as_bool()).unwrap_or(false) {
+                                        flags.push("async");
+                                    }
+                                    if r.get("is_test").and_then(|t| t.as_bool()).unwrap_or(false) {
+                                        flags.push("test");
+                                    }
+                                    ctx.push_str(&format!("     Attributes: {}\n", flags.join(", ")));
+                                }
+                                
+                                // Show complexity if it's a function
+                                if element_type == "function" {
+                                    if let Some(complexity) = r.get("complexity_score").and_then(|c| c.as_i64()) {
+                                        if complexity > 0 {
+                                            ctx.push_str(&format!("     Complexity: {}\n", complexity));
+                                        }
                                     }
                                 }
+                                
+                                // Show documentation if available (first 150 chars)
+                                if let Some(doc) = r.get("documentation").and_then(|d| d.as_str()) {
+                                    let doc_preview = if doc.len() > 150 {
+                                        format!("{}...", &doc[..150])
+                                    } else {
+                                        doc.to_string()
+                                    };
+                                    ctx.push_str(&format!("     Doc: {}\n", doc_preview));
+                                }
+                                
+                                // Show code snippet (first 400 chars - enough for small functions)
+                                if let Some(content) = r.get("content").and_then(|c| c.as_str()) {
+                                    let snippet = if content.len() > 400 {
+                                        format!("{}...", &content[..400])
+                                    } else {
+                                        content.to_string()
+                                    };
+                                    ctx.push_str(&format!("     Code:\n```\n{}\n```\n", snippet));
+                                }
                             }
+                            
+                            // Show count if there are more results
+                            if results.len() > 5 {
+                                ctx.push_str(&format!("\n... and {} more matches (showing top 5)\n", results.len() - 5));
+                            }
+                            ctx.push_str("\n");
                         }
                     },
                     _ => {
