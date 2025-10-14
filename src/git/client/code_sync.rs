@@ -124,9 +124,9 @@ impl CodeSync {
             .fetch_one(&self.store.pool)
             .await?;
 
-            // Parse AST
+            // Parse AST - FIXED: correct parameter order (content, file_path, language, project_id)
             match self.code_intelligence
-                .analyze_and_store_with_project(file_id, &file_path, &content, &project_id, &language)
+                .analyze_and_store_with_project(file_id, &content, &file_path, &language, &project_id)
                 .await
             {
                 Ok(_) => {
@@ -168,13 +168,13 @@ impl CodeSync {
             return Ok(()); // Skip unsupported file types
         };
         
-        // Use project-aware analysis to enable WebSocket detection
+        // FIXED: correct parameter order (content, file_path, language, project_id)
         let result = self.code_intelligence.analyze_and_store_with_project(
             file_id,
-            &file_path_str,
             &content,
-            project_id,
+            &file_path_str,
             language,
+            project_id,
         ).await?;
 
         debug!(
