@@ -4,6 +4,7 @@ use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::tools::types::Tool;
 use crate::persona::PersonaOverlay;
+use crate::config::CONFIG;
 use chrono::Utc;
 
 // Code intelligence types for context formatting
@@ -377,19 +378,22 @@ impl UnifiedPromptBuilder {
     }
     
     fn add_memory_context(prompt: &mut String, context: &RecallContext) {
-        // Add summaries FIRST
-        if let Some(session) = &context.session_summary {
-            prompt.push_str("\n## SESSION OVERVIEW (Entire Conversation)\n");
-            prompt.push_str("This is a comprehensive summary of your entire conversation history:\n\n");
-            prompt.push_str(session);
-            prompt.push_str("\n\n");
-        }
-        
-        if let Some(rolling) = &context.rolling_summary {
-            prompt.push_str("\n## RECENT ACTIVITY (Last 100 Messages)\n");
-            prompt.push_str("Summary of recent discussion:\n\n");
-            prompt.push_str(rolling);
-            prompt.push_str("\n\n");
+        // FIXED: Check config flag before adding summaries
+        if CONFIG.use_rolling_summaries_in_context {
+            // Add summaries FIRST (only if config enabled)
+            if let Some(session) = &context.session_summary {
+                prompt.push_str("\n## SESSION OVERVIEW (Entire Conversation)\n");
+                prompt.push_str("This is a comprehensive summary of your entire conversation history:\n\n");
+                prompt.push_str(session);
+                prompt.push_str("\n\n");
+            }
+            
+            if let Some(rolling) = &context.rolling_summary {
+                prompt.push_str("\n## RECENT ACTIVITY (Last 100 Messages)\n");
+                prompt.push_str("Summary of recent discussion:\n\n");
+                prompt.push_str(rolling);
+                prompt.push_str("\n\n");
+            }
         }
         
         if context.recent.is_empty() && context.semantic.is_empty() {
