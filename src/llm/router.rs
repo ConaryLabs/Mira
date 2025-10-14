@@ -6,7 +6,6 @@ use crate::llm::provider::gpt5::Gpt5Provider;
 use anyhow::Result;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::info;
 
 pub struct LlmRouter {
     gpt5: Arc<Gpt5Provider>,
@@ -37,55 +36,5 @@ impl LlmRouter {
         context: Option<ToolContext>,
     ) -> Result<ToolResponse> {
         self.gpt5.chat_with_tools(messages, system, tools, context).await
-    }
-    
-    /// Multi-turn tool calling with GPT-5
-    pub async fn call_with_tools(
-        &self,
-        messages: Vec<Message>,
-        system: String,
-        tools: Vec<Value>,
-        max_iterations: usize,
-    ) -> Result<ToolResponse> {
-        let mut current_messages = messages;
-        let mut iteration = 0;
-        let mut context: Option<ToolContext> = None;
-        
-        loop {
-            iteration += 1;
-            
-            if iteration > max_iterations {
-                info!("Maximum iteration limit reached");
-                break;
-            }
-            
-            let response = self.gpt5.chat_with_tools(
-                current_messages.clone(),
-                system.clone(),
-                tools.clone(),
-                context.clone(),
-            ).await?;
-            
-            if response.function_calls.is_empty() {
-                return Ok(response);
-            }
-            
-            context = Some(ToolContext::Gpt5 {
-                previous_response_id: response.id.clone(),
-                tool_outputs: vec![], // No tool execution in this legacy path
-            });
-            
-            current_messages.push(Message {
-                role: "assistant".to_string(),
-                content: response.text_output.clone(),
-            });
-            
-            current_messages.push(Message {
-                role: "user".to_string(),
-                content: "[tool results]".to_string(),
-            });
-        }
-        
-        Err(anyhow::anyhow!("Max iterations reached"))
     }
 }
