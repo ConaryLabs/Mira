@@ -1,7 +1,7 @@
 // src/api/ws/chat/mod.rs
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{ConnectInfo, State, WebSocketUpgrade},
@@ -27,7 +27,7 @@ use crate::state::AppState;
 
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
-    State(app_state): State<Arc<AppState>>,
+    State(app_state): State<Arc<AppState>>, 
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
 ) -> impl IntoResponse {
     info!("WebSocket upgrade request from {}", addr);
@@ -61,16 +61,22 @@ async fn handle_socket(
         return;
     }
 
-    let heartbeat_manager = Arc::new(HeartbeatManager::new(connection.clone()));
-    let heartbeat_handle = tokio::spawn({
-        let manager = heartbeat_manager.clone();
-        let addr = addr;
-        async move {
-            if let Err(e) = manager.start().await {
-                warn!("Heartbeat manager error for {}: {}", addr, e);
-            }
-        }
-    });
+    // Bridge: HeartbeatManager expects a non-async Fn(&str). We wrap our async send
+    // in a spawned task that calls connection.send_status with a heartbeat label.
+    let status_sender = {
+        let c = connection.clone();
+        Arc::new(move |payload: &str| {
+            let c = c.clone();
+            let payload_owned = payload.to_string();
+            tokio::spawn(async move {
+                // Ignore send errors if the connection closed mid-flight
+                let _ = c.send_status("heartbeat", Some(payload_owned)).await;
+            });
+        })
+    };
+
+    let heartbeat_manager = Arc::new(HeartbeatManager::new(status_sender));
+    heartbeat_manager.start(Duration::from_secs(4));
 
     let message_router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
 
@@ -115,7 +121,8 @@ async fn handle_socket(
         }
     }
 
-    heartbeat_handle.abort();
+    // Clean shutdown of heartbeat task
+    heartbeat_manager.stop();
     
     let connection_duration = connection_start.elapsed();
     info!("WebSocket client {} disconnected after {:?}", addr, connection_duration);

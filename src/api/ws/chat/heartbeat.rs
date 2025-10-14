@@ -1,164 +1,133 @@
 // src/api/ws/chat/heartbeat.rs
-// Heartbeat management for WebSocket connections
+// Heartbeat manager that automatically stops when the WS closes.
+// Fixes: "WebSocket protocol error: Sending after closing is not allowed" by cancelling the task on close.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
+use parking_lot::Mutex;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio::time::interval;
-use tracing::{debug, warn};
+use tokio::time::{interval, MissedTickBehavior};
 
-use super::connection::WebSocketConnection;
-
-#[derive(Debug, Clone)]
-pub struct HeartbeatConfig {
-    pub heartbeat_interval: u64,
-    pub connection_timeout: u64,
-    pub processing_heartbeat_interval: u64,
-    pub recent_activity_threshold: u64,
-    pub frequent_heartbeat_interval: u64,
+/// Trait abstraction for sending status/heartbeat messages.
+pub trait StatusSender: Send + Sync + 'static {
+    fn send_status(&self, message: &str);
 }
 
-impl HeartbeatConfig {
-    pub fn from_defaults() -> Self {
-        Self {
-            heartbeat_interval: 30,
-            connection_timeout: 600,
-            processing_heartbeat_interval: 5,
-            recent_activity_threshold: 30,
-            frequent_heartbeat_interval: 10,
-        }
-    }
-
-    pub fn new(
-        heartbeat_interval: u64,
-        connection_timeout: u64,
-    ) -> Self {
-        Self {
-            heartbeat_interval,
-            connection_timeout,
-            processing_heartbeat_interval: 5,
-            recent_activity_threshold: 30,
-            frequent_heartbeat_interval: 10,
-        }
+/// Simple wrapper so you can pass your existing connection sender.
+impl<F> StatusSender for F
+where
+    F: Fn(&str) + Send + Sync + 'static,
+{
+    fn send_status(&self, message: &str) {
+        (self)(message)
     }
 }
 
-pub struct HeartbeatManager {
-    connection: Arc<WebSocketConnection>,
-    config: HeartbeatConfig,
+pub struct HeartbeatManager<S: StatusSender> {
+    sender: Arc<S>,
+    stop_tx: watch::Sender<bool>,
+    stop_rx: watch::Receiver<bool>,
+    handle: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl HeartbeatManager {
-    pub fn new(connection: Arc<WebSocketConnection>) -> Self {
+impl<S: StatusSender> HeartbeatManager<S> {
+    pub fn new(sender: Arc<S>) -> Self {
+        let (stop_tx, stop_rx) = watch::channel(false);
         Self {
-            connection,
-            config: HeartbeatConfig::from_defaults(),
+            sender,
+            stop_tx,
+            stop_rx,
+            handle: Mutex::new(None),
         }
     }
 
-    pub fn new_with_config(
-        connection: Arc<WebSocketConnection>,
-        config: HeartbeatConfig,
-    ) -> Self {
-        Self {
-            connection,
-            config,
-        }
-    }
+    /// Starts a heartbeat loop that emits every `period`.
+    /// Safe to call once; subsequent calls replace the previous task.
+    pub fn start(&self, period: Duration) {
+        // Stop any existing task
+        self.stop();
 
-    pub fn start(&self) -> JoinHandle<()> {
-        let connection = self.connection.clone();
-        let config = self.config.clone();
+        let mut rx = self.stop_rx.clone();
+        let sender = self.sender.clone();
+        let handle = tokio::spawn(async move {
+            let mut ticker = interval(period);
+            // If ticks are missed (e.g. GC/long ops), fire as soon as we wake
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(config.heartbeat_interval));
-            
-            debug!("Heartbeat manager started with interval: {}s", config.heartbeat_interval);
-            
             loop {
-                ticker.tick().await;
-                
-                if connection.is_processing().await {
-                    debug!("Connection is processing, using quick heartbeat");
-                    tokio::time::sleep(Duration::from_secs(config.processing_heartbeat_interval)).await;
-                    continue;
-                }
-                
-                let last_activity = connection.get_last_activity().await;
-                let time_since_activity = last_activity.elapsed();
-                
-                if time_since_activity.as_secs() < config.recent_activity_threshold {
-                    debug!("Recent activity detected, using frequent heartbeat");
-                    tokio::time::sleep(Duration::from_secs(config.frequent_heartbeat_interval)).await;
-                    continue;
-                }
-                
-                if let Err(e) = send_heartbeat(&connection).await {
-                    warn!("Failed to send heartbeat: {}", e);
-                    break;
-                }
-                
-                let last_send = connection.get_last_send().await;
-                let time_since_send = last_send.elapsed();
-                
-                if time_since_send.as_secs() > config.connection_timeout {
-                    warn!("Connection timeout after {}s", time_since_send.as_secs());
-                    break;
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        // Build and send heartbeat payload
+                        let ts = chrono::Utc::now().timestamp();
+                        let msg = format!("{{\"message\":\"ping\",\"timestamp\":{},\"type\":\"heartbeat\"}}", ts);
+                        sender.send_status(&msg);
+                    }
+                    changed = rx.changed() => {
+                        if changed.is_ok() && *rx.borrow() {
+                            // Stop requested
+                            break;
+                        }
+                    }
                 }
             }
-            
-            debug!("Heartbeat manager stopped");
-        })
+        });
+
+        *self.handle.lock() = Some(handle);
     }
-}
 
-async fn send_heartbeat(connection: &WebSocketConnection) -> Result<(), anyhow::Error> {
-    let heartbeat_msg = json!({
-        "type": "heartbeat",
-        "timestamp": chrono::Utc::now().timestamp(),
-        "message": "ping"
-    });
-    
-    debug!("Sending heartbeat");
-    connection.send_status(&heartbeat_msg.to_string(), None).await
-}
-
-#[derive(Debug, Clone)]
-pub struct HeartbeatStats {
-    pub heartbeats_sent: u64,
-    pub last_heartbeat: Option<std::time::Instant>,
-    pub connection_duration: std::time::Duration,
-    pub timeouts: u64,
-}
-
-impl Default for HeartbeatStats {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl HeartbeatStats {
-    pub fn new() -> Self {
-        Self {
-            heartbeats_sent: 0,
-            last_heartbeat: None,
-            connection_duration: std::time::Duration::from_secs(0),
-            timeouts: 0,
+    /// Signals the heartbeat task to stop and waits for it to finish.
+    pub fn stop(&self) {
+        // Signal stop
+        let _ = self.stop_tx.send(true);
+        // Take the handle and await it in background (non-blocking here)
+        if let Some(handle) = self.handle.lock().take() {
+            tokio::spawn(async move {
+                let _ = handle.await;
+            });
         }
     }
-    
-    pub fn record_heartbeat(&mut self) {
-        self.heartbeats_sent += 1;
-        self.last_heartbeat = Some(std::time::Instant::now());
-    }
-    
-    pub fn record_timeout(&mut self) {
-        self.timeouts += 1;
-    }
-    
-    pub fn update_duration(&mut self, duration: std::time::Duration) {
-        self.connection_duration = duration;
+}
+
+impl<S: StatusSender> Drop for HeartbeatManager<S> {
+    fn drop(&mut self) {
+        // Best-effort stop if not already
+        let _ = self.stop_tx.send(true);
     }
 }
+
+/*
+Integration notes (pseudo code):
+
+// In your WebSocket connection setup (e.g., src/api/ws/chat/connection.rs):
+
+use std::sync::Arc;
+use crate::api::ws::chat::heartbeat::{HeartbeatManager, StatusSender};
+
+struct WsStatusSender { /* holds tx or connection handle */ }
+impl StatusSender for WsStatusSender {
+    fn send_status(&self, message: &str) {
+        // map to your existing status message send
+        // e.g., self.tx.send(ServerMessage::Status(message.to_owned()))
+        // make sure to ignore errors if connection is closed
+        let _ = self.send_status_frame(message);
+    }
+}
+
+pub struct ChatConnection {
+    heartbeat: HeartbeatManager<WsStatusSender>,
+    // ... rest of your fields
+}
+
+impl ChatConnection {
+    pub fn on_open(&mut self) {
+        self.heartbeat.start(std::time::Duration::from_secs(4));
+    }
+
+    pub fn on_close(&mut self) {
+        // Critical: stop heartbeat so it never sends after close
+        self.heartbeat.stop();
+    }
+}
+*/

@@ -285,9 +285,33 @@ impl StreamingOrchestrator {
                         "output": serde_json::to_string(&result)?
                     }));
                     
+                    // FIXED: Handle both "artifact" (singular) and "artifacts" (plural array)
                     if tool_name == "create_artifact" {
+                        let before_count = collected_artifacts.len();
+                        
+                        // Check for singular "artifact" field
                         if let Some(artifact) = result.get("artifact") {
                             collected_artifacts.push(artifact.clone());
+                            debug!("Collected artifact from 'artifact' field");
+                        }
+                        // Check for plural "artifacts" array field
+                        else if let Some(artifacts_array) = result.get("artifacts") {
+                            if let Some(arr) = artifacts_array.as_array() {
+                                for artifact in arr {
+                                    collected_artifacts.push(artifact.clone());
+                                }
+                                debug!("Collected {} artifacts from 'artifacts' array", arr.len());
+                            }
+                        }
+                        
+                        let after_count = collected_artifacts.len();
+                        let new_artifacts = after_count - before_count;
+                        
+                        if new_artifacts == 0 {
+                            warn!("create_artifact executed but NO artifacts collected - check executor return format!");
+                            warn!("Result keys: {:?}", result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                        } else {
+                            info!("Successfully collected {} new artifact(s), total: {}", new_artifacts, after_count);
                         }
                     }
                 }
@@ -303,6 +327,7 @@ impl StreamingOrchestrator {
             
             // Final result - return accumulated JSON text
             debug!("Streaming complete - returning {} bytes of JSON", structured_response_output.len());
+            debug!("Final artifacts count: {}", collected_artifacts.len());
             
             return Ok(StreamingResult {
                 content: structured_response_output,
