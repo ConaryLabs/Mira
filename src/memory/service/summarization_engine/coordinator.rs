@@ -46,14 +46,10 @@ impl SummarizationEngineCoordinator {
     }
 
     /// Check and process summaries (for background tasks)
+    /// FIXED: Now delegates to engine which has proper rolling_10/rolling_100 trigger logic
     pub async fn check_and_process_summaries(&self, session_id: &str, message_count: usize) -> Result<Option<String>> {
-        // This method was being called by background tasks
-        // For now, just trigger a rolling summary if needed
-        if message_count > 0 && message_count % 10 == 0 {
-            let summary = self.create_rolling_summary(session_id, 10).await?;
-            Ok(Some(summary))
-        } else {
-            Ok(None)
-        }
+        // Delegate to engine's method which properly checks triggers
+        // and creates both rolling_10 (every 10) and rolling_100 (every 100) as needed
+        self.engine.check_and_process_summaries(session_id, message_count).await
     }
 }
