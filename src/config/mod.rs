@@ -83,6 +83,7 @@ pub struct MiraConfig {
     pub enable_image_generation: bool,
     pub web_search_max_results: usize,
     pub tool_timeout_seconds: u64,
+    pub tool_max_iterations: usize,
 
     // Qdrant
     pub qdrant_url: String,
@@ -144,8 +145,7 @@ pub struct MiraConfig {
     pub recent_cache_max_per_session: usize,
     pub recent_cache_warmup: bool,
 
-    // New: Tooling & Embedding behavior
-    pub tool_max_iterations: usize,
+    // Embedding behavior
     pub embed_code_from_chat: bool,
 }
 
@@ -242,6 +242,7 @@ impl MiraConfig {
             enable_image_generation: require_env_parsed("MIRA_ENABLE_IMAGE_GENERATION"),
             web_search_max_results: require_env_parsed("MIRA_WEB_SEARCH_MAX_RESULTS"),
             tool_timeout_seconds: require_env_parsed("MIRA_TOOL_TIMEOUT_SECONDS"),
+            tool_max_iterations: env_usize("TOOL_MAX_ITERATIONS", 25),
 
             // Qdrant
             qdrant_url: require_env("QDRANT_URL"),
@@ -303,8 +304,7 @@ impl MiraConfig {
             recent_cache_max_per_session: require_env_parsed("MIRA_RECENT_CACHE_MAX_PER_SESSION"),
             recent_cache_warmup: require_env_parsed("MIRA_RECENT_CACHE_WARMUP"),
 
-            // New: Tooling & Embedding behavior
-            tool_max_iterations: env_usize("MIRA_TOOL_MAX_ITERATIONS", 30),
+            // Embedding behavior
             embed_code_from_chat: env::var("MIRA_EMBED_CODE_FROM_CHAT").ok().and_then(|v| v.parse().ok()).unwrap_or(false),
         }
     }

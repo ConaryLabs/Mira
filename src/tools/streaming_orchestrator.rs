@@ -1,6 +1,6 @@
 // src/tools/streaming_orchestrator.rs
 // Streaming chat orchestration with real-time event callbacks
-// NOW OWNS PROMPT BUILDING - handler just passes raw context
+// Owns prompt building - handler just passes raw context
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -33,7 +33,7 @@ impl StreamingOrchestrator {
             state.sqlite_pool.clone(),
         );
         
-        // Initialize DeepSeek provider if configured
+        // Initialize DeepSeek provider if API key is configured
         let deepseek_provider = if DeepSeekProvider::is_available() {
             info!("DeepSeek provider enabled for code generation");
             Some(DeepSeekProvider::new())
@@ -49,6 +49,8 @@ impl StreamingOrchestrator {
         }
     }
     
+    /// Execute a streaming chat with tool support
+    /// Handles multi-turn tool execution loop with automatic synthesis
     pub async fn execute_with_tools_streaming<F>(
         &self,
         messages: Vec<Message>,
@@ -62,12 +64,12 @@ impl StreamingOrchestrator {
     where
         F: FnMut(StreamEvent) -> Result<()> + Send,
     {
-        // Store references for context building
+        // Store references for context building in DeepSeek codegen
         let messages_ref = &messages;
         let context_ref = &context;
         let metadata_ref = metadata.as_ref();
         
-        // Build system prompt HERE, not in handler
+        // Build system prompt with persona, memory, and project context
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
             &context,
@@ -79,7 +81,7 @@ impl StreamingOrchestrator {
         debug!("System prompt built: {} chars", system_prompt.len());
         
         let mut iteration = 0;
-        let max_iterations = CONFIG.tool_max_iterations;  // Configurable
+        let max_iterations = CONFIG.tool_max_iterations;
         let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
@@ -91,7 +93,8 @@ impl StreamingOrchestrator {
         loop {
             iteration += 1;
 
-            // If we blew past max iterations, force a final synthesis without tools
+            // Safety valve: force final synthesis if we exceed max iterations
+            // This prevents infinite tool-calling loops
             if iteration > max_iterations {
                 warn!("Hit max iterations ({}) - forcing final synthesis without tools", max_iterations);
                 
@@ -103,15 +106,14 @@ impl StreamingOrchestrator {
                 // Final pass: disable tools to prevent any more calls
                 let mut stream = gpt5_provider.chat_with_tools_streaming(
                     vec![],                       // no new user/assistant messages
-                    system_prompt.clone(),        // same system prompt
-                    vec![],                       // NO TOOLS
-                    context_obj.clone(),          // include tool outputs so far
+                    system_prompt.clone(),
+                    vec![],                       // no tools - force synthesis
+                    context_obj.clone(),          // include all tool outputs
                     Some("high"),
                     Some("high"),
                 ).await?;
 
                 let mut structured_response_output = String::new();
-                let mut response_id = String::new();
                 
                 while let Some(event_result) = stream.next().await {
                     let event = event_result?;
@@ -123,12 +125,12 @@ impl StreamingOrchestrator {
                         StreamEvent::ReasoningDelta { .. } => {
                             on_event(event.clone())?;
                         }
-                        StreamEvent::Done { response_id: rid, input_tokens, output_tokens, reasoning_tokens, final_text } => {
-                            response_id = rid.clone();
+                        StreamEvent::Done { input_tokens, output_tokens, reasoning_tokens, final_text, .. } => {
                             total_input_tokens += input_tokens;
                             total_output_tokens += output_tokens;
                             total_reasoning_tokens += reasoning_tokens;
 
+                            // Use final_text as fallback if we didn't accumulate anything
                             if structured_response_output.is_empty() {
                                 if let Some(text) = final_text {
                                     debug!("Using final_text from Done event: {} bytes", text.len());
@@ -145,7 +147,7 @@ impl StreamingOrchestrator {
                         StreamEvent::ToolCallArgumentsDelta { .. }
                         | StreamEvent::ToolCallStart { .. }
                         | StreamEvent::ToolCallComplete { .. } => {
-                            // Tools are disabled; ignore
+                            // Tools are disabled in final synthesis; ignore any calls
                         }
                         StreamEvent::Error { message } => {
                             warn!("Stream error during final synthesis: {}", message);
@@ -169,18 +171,14 @@ impl StreamingOrchestrator {
                 });
             }
             
-            // CRITICAL FIX: Force synthesis after 12 iterations to prevent infinite loops
+            // Adaptive reasoning: adjust thinking depth based on context
+            // First turn: evaluate which tools to use
+            // After tools: synthesize results into coherent response
             let (reasoning, verbosity) = if iteration == 1 {
                 ReasoningConfig::for_tool_selection()
             } else if !tools_called.is_empty() {
-                if iteration > 12 {
-                    // After 12 tool calls, FORCE synthesis with max reasoning
-                    info!("🛑 Forcing synthesis after {} iterations (too many tool calls)", iteration);
-                    ("high", "high")
-                } else {
-                    let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
-                    ReasoningConfig::for_synthesis_after_tools(&tool_refs)
-                }
+                let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
+                ReasoningConfig::for_synthesis_after_tools(&tool_refs)
             } else {
                 ReasoningConfig::for_direct_response()
             };
@@ -206,6 +204,7 @@ impl StreamingOrchestrator {
             let mut structured_response_output = String::new();
             let mut event_count = 0;
             
+            // Process streaming events from LLM
             while let Some(event_result) = stream.next().await {
                 event_count += 1;
                 let event = event_result?;
@@ -290,18 +289,19 @@ impl StreamingOrchestrator {
             debug!("First 200 chars: {:?}", &structured_response_output.chars().take(200).collect::<String>());
             debug!("=====================================");
             
+            // Execute any pending tool calls and continue loop
             if !tool_calls.is_empty() {
                 info!("Executing {} tools", tool_calls.len());
                 
                 tools_called.clear();
                 let mut tool_results: Vec<(String, Value)> = Vec::new();
-                let mut tool_outputs: Vec<Value> = Vec::new(); // NEW: Track outputs for GPT-5
+                let mut tool_outputs: Vec<Value> = Vec::new();
                 
-                for (tool_id, tool_call) in tool_calls.iter() {
+                for (_tool_id, tool_call) in tool_calls.iter() {
                     let tool_name = &tool_call.name;
                     tools_called.push(tool_name.clone());
                     
-                    debug!("Executing tool: {} ({})", tool_name, tool_id);
+                    debug!("Executing tool: {} ({})", tool_name, tool_call.call_id);
                     
                     let arguments: Value = serde_json::from_str(&tool_call.arguments)
                         .unwrap_or_else(|e| {
@@ -309,11 +309,11 @@ impl StreamingOrchestrator {
                             Value::Object(Default::default())
                         });
                     
-                    // INTERCEPT: Route create_artifact to DeepSeek if available
+                    // Route create_artifact to DeepSeek for cheaper token usage
                     if tool_name == "create_artifact" && self.deepseek_provider.is_some() {
                         info!("Routing create_artifact to DeepSeek for cheap generation");
                         
-                        // Build rich context from conversation, memory, AND previous tool results
+                        // Build rich context from conversation, memory, and previous tool results
                         let codegen_context = self.build_codegen_context(
                             messages_ref,
                             context_ref,
@@ -338,7 +338,7 @@ impl StreamingOrchestrator {
                                 // Add tool output for GPT-5 continuation
                                 tool_outputs.push(json!({
                                     "type": "function_call_output",
-                                    "call_id": tool_id,
+                                    "call_id": tool_call.call_id,
                                     "output": serde_json::to_string(&artifact_json)?
                                 }));
                                 
@@ -351,34 +351,32 @@ impl StreamingOrchestrator {
                         }
                     }
                     
-                    // Normal tool execution (GPT-5 or other tools)
+                    // Normal tool execution for non-codegen tools or DeepSeek fallback
                     let result = self.executor.execute_tool(
                         tool_name,
                         &arguments,
                         project_id.unwrap_or(""),
                     ).await?;
                     
-                    // TRACK the result for context building
+                    // Track result for context building in next DeepSeek call
                     tool_results.push((tool_name.clone(), result.clone()));
                     
-                    // CRITICAL: Add tool output in GPT-5 format
+                    // Format tool output for GPT-5 continuation
                     tool_outputs.push(json!({
                         "type": "function_call_output",
-                        "call_id": tool_id,
+                        "call_id": tool_call.call_id,
                         "output": serde_json::to_string(&result)?
                     }));
                     
-                    // FIXED: Handle both "artifact" (singular) and "artifacts" (plural array)
+                    // Collect artifacts from create_artifact tool
+                    // Handles both singular "artifact" and plural "artifacts" array formats
                     if tool_name == "create_artifact" {
                         let before_count = collected_artifacts.len();
                         
-                        // Check for singular "artifact" field
                         if let Some(artifact) = result.get("artifact") {
                             collected_artifacts.push(artifact.clone());
                             debug!("Collected artifact from 'artifact' field");
-                        }
-                        // Check for plural "artifacts" array field
-                        else if let Some(artifacts_array) = result.get("artifacts") {
+                        } else if let Some(artifacts_array) = result.get("artifacts") {
                             if let Some(arr) = artifacts_array.as_array() {
                                 for artifact in arr {
                                     collected_artifacts.push(artifact.clone());
@@ -399,16 +397,16 @@ impl StreamingOrchestrator {
                     }
                 }
                 
-                // Set context for next iteration with tool outputs
+                // Build context for next iteration with tool outputs
                 context_obj = Some(ToolContext::Gpt5 {
                     previous_response_id: response_id.clone(),
-                    tool_outputs, // NEW: Include tool outputs
+                    tool_outputs,
                 });
                 
                 continue;
             }
             
-            // Final result - return accumulated JSON text
+            // No tool calls - this is the final response
             debug!("Streaming complete - returning {} bytes of JSON", structured_response_output.len());
             debug!("Final artifacts count: {}", collected_artifacts.len());
             
@@ -426,7 +424,7 @@ impl StreamingOrchestrator {
     }
     
     /// Build rich context for DeepSeek code generation
-    /// Includes: project info, recent conversation, memory context, tool results
+    /// Includes: project info, recent conversation, memory context, and previous tool results
     fn build_codegen_context(
         &self,
         messages: &[Message],
@@ -438,7 +436,7 @@ impl StreamingOrchestrator {
     ) -> String {
         let mut ctx = String::new();
         
-        // GENERATION INTENT - Make this prominent
+        // Generation intent - what the user is asking for
         ctx.push_str("=== GENERATION REQUEST ===\n");
         if let Some(desc) = tool_arguments.get("description").and_then(|v| v.as_str()) {
             ctx.push_str(&format!("Task: {}\n", desc));
@@ -451,7 +449,7 @@ impl StreamingOrchestrator {
         }
         ctx.push_str("\n");
         
-        // Project context
+        // Project context from metadata
         if let Some(meta) = metadata {
             ctx.push_str("=== PROJECT INFO ===\n");
             if let Some(project_name) = &meta.project_name {
@@ -468,7 +466,7 @@ impl StreamingOrchestrator {
                 }
             }
             
-            // Current file context
+            // Current file context (if editing existing file)
             if let Some(file_path) = &meta.file_path {
                 ctx.push_str(&format!("\nCurrent file: {}\n", file_path));
                 if let Some(content) = &meta.file_content {
@@ -485,13 +483,14 @@ impl StreamingOrchestrator {
             ctx.push_str(&format!("=== PROJECT INFO ===\nID: {}\n\n", pid));
         }
         
-        // PREVIOUS TOOL RESULTS - This is the gold
+        // Previous tool results - critical for multi-step codegen
+        // Example: user searches for function, then asks to implement similar pattern
         if !previous_tool_results.is_empty() {
             ctx.push_str("=== PREVIOUS TOOL RESULTS ===\n");
             for (tool_name, result) in previous_tool_results {
                 ctx.push_str(&format!("Tool: {}\n", tool_name));
                 
-                // Format based on tool type
+                // Format based on tool type for readability
                 match tool_name.as_str() {
                     "read_file" => {
                         if let Some(content) = result.get("content").and_then(|c| c.as_str()) {
@@ -504,13 +503,11 @@ impl StreamingOrchestrator {
                         }
                     },
                     "search_code" => {
-                        // FIXED: Use actual CodeElement fields instead of non-existent "file" and "snippet"
                         if let Some(results) = result.get("results").and_then(|r| r.as_array()) {
                             ctx.push_str(&format!("Found {} matches:\n", results.len()));
                             
                             // Show up to 5 results with full details
                             for (i, r) in results.iter().take(5).enumerate() {
-                                // Extract all available fields from CodeElement
                                 let element_type = r.get("element_type").and_then(|t| t.as_str()).unwrap_or("unknown");
                                 let name = r.get("name").and_then(|n| n.as_str()).unwrap_or("unnamed");
                                 let full_path = r.get("full_path").and_then(|p| p.as_str()).unwrap_or("unknown path");
@@ -525,7 +522,7 @@ impl StreamingOrchestrator {
                                     ctx.push_str(&format!("     Lines {}-{}\n", start, end));
                                 }
                                 
-                                // Show visibility and async/test flags
+                                // Show visibility and flags
                                 if let Some(visibility) = r.get("visibility").and_then(|v| v.as_str()) {
                                     let mut flags = vec![visibility];
                                     if r.get("is_async").and_then(|a| a.as_bool()).unwrap_or(false) {
@@ -537,7 +534,7 @@ impl StreamingOrchestrator {
                                     ctx.push_str(&format!("     Attributes: {}\n", flags.join(", ")));
                                 }
                                 
-                                // Show complexity if it's a function
+                                // Show complexity for functions
                                 if element_type == "function" {
                                     if let Some(complexity) = r.get("complexity_score").and_then(|c| c.as_i64()) {
                                         if complexity > 0 {
@@ -546,7 +543,7 @@ impl StreamingOrchestrator {
                                     }
                                 }
                                 
-                                // Show documentation if available (first 150 chars)
+                                // Show documentation (first 150 chars)
                                 if let Some(doc) = r.get("documentation").and_then(|d| d.as_str()) {
                                     let doc_preview = if doc.len() > 150 {
                                         format!("{}...", &doc[..150])
@@ -556,7 +553,7 @@ impl StreamingOrchestrator {
                                     ctx.push_str(&format!("     Doc: {}\n", doc_preview));
                                 }
                                 
-                                // Show code snippet (first 400 chars - enough for small functions)
+                                // Show code snippet (first 400 chars)
                                 if let Some(content) = r.get("content").and_then(|c| c.as_str()) {
                                     let snippet = if content.len() > 400 {
                                         format!("{}...", &content[..400])
@@ -567,7 +564,6 @@ impl StreamingOrchestrator {
                                 }
                             }
                             
-                            // Show count if there are more results
                             if results.len() > 5 {
                                 ctx.push_str(&format!("\n... and {} more matches (showing top 5)\n", results.len() - 5));
                             }
@@ -602,13 +598,14 @@ impl StreamingOrchestrator {
             ctx.push_str("\n");
         }
         
-        // Session summary
+        // Session summary from memory
         if let Some(summary) = &context.session_summary {
             ctx.push_str("=== SESSION SUMMARY ===\n");
             ctx.push_str(&format!("{}\n\n", summary));
         }
         
-        // High-salience recent memories (top 3 from recent context)
+        // High-salience recent memories (top 3)
+        // Helps maintain consistency with patterns user has established
         if !context.recent.is_empty() {
             let high_salience: Vec<_> = context.recent.iter()
                 .filter(|m| m.salience.unwrap_or(0.0) > 0.7)
@@ -630,11 +627,12 @@ impl StreamingOrchestrator {
     }
 }
 
+/// Accumulates tool call information as it streams in
 #[derive(Debug)]
 struct ToolCallBuilder {
     name: String,
     arguments: String,
-    call_id: String, // NEW: Track call_id for tool outputs
+    call_id: String,
 }
 
 #[derive(Debug)]

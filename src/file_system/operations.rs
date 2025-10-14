@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Write file to disk ensuring parent directories exist and using a temp-file + rename strategy
 /// for best-effort atomic replacement. Mirrors existing permissions on Unix.

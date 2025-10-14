@@ -1,6 +1,6 @@
 // src/tools/chat_orchestrator.rs
 // Chat orchestration with tool execution loop
-// NOW OWNS PROMPT BUILDING - handler just passes raw context
+// Owns prompt building - handler just passes raw context
 
 use anyhow::Result;
 use serde_json::Value;
@@ -33,6 +33,8 @@ impl ChatOrchestrator {
         Self { state, executor }
     }
     
+    /// Execute a non-streaming chat with tool support
+    /// Handles multi-turn tool execution loop with automatic synthesis
     pub async fn execute_with_tools(
         &self,
         messages: Vec<Message>,
@@ -42,7 +44,7 @@ impl ChatOrchestrator {
         metadata: Option<MessageMetadata>,
         project_id: Option<&str>,
     ) -> Result<ChatResult> {
-        // Build system prompt HERE, not in handler
+        // Build system prompt with persona, memory, and project context
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
             &context,
@@ -54,7 +56,7 @@ impl ChatOrchestrator {
         debug!("System prompt built: {} chars", system_prompt.len());
         
         let mut iteration = 0;
-        let max_iterations = CONFIG.tool_max_iterations;  // Configurable
+        let max_iterations = CONFIG.tool_max_iterations;
         let mut context_obj: Option<ToolContext> = None;
         let mut collected_artifacts = Vec::new();
         let mut tools_called: Vec<String> = Vec::new();
@@ -62,6 +64,7 @@ impl ChatOrchestrator {
         loop {
             iteration += 1;
 
+            // Safety valve: force final synthesis if we exceed max iterations
             if iteration > max_iterations {
                 warn!("Hit max iterations ({}) - forcing final synthesis without tools", max_iterations);
 
@@ -70,11 +73,11 @@ impl ChatOrchestrator {
                     .downcast_ref::<Gpt5Provider>()
                     .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
 
-                // Final pass: disable tools and synthesize
+                // Final pass: disable tools to prevent any more calls
                 let raw_response = gpt5_provider.chat_with_tools_internal(
                     vec![],
                     system_prompt.clone(),
-                    vec![],
+                    vec![],                       // no tools - force synthesis
                     context_obj.clone(),
                     Some("high"),
                     Some("high"),
@@ -96,18 +99,14 @@ impl ChatOrchestrator {
                 });
             }
             
-            // CRITICAL FIX: Force synthesis after 12 iterations to prevent infinite loops
+            // Adaptive reasoning: adjust thinking depth based on context
+            // First turn: evaluate which tools to use
+            // After tools: synthesize results into coherent response
             let (reasoning, verbosity) = if iteration == 1 {
                 ReasoningConfig::for_tool_selection()
             } else if !tools_called.is_empty() {
-                if iteration > 12 {
-                    // After 12 tool calls, FORCE synthesis with max reasoning
-                    info!("🛑 Forcing synthesis after {} iterations (too many tool calls)", iteration);
-                    ("high", "high")
-                } else {
-                    let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
-                    ReasoningConfig::for_synthesis_after_tools(&tool_refs)
-                }
+                let tool_refs: Vec<&str> = tools_called.iter().map(|s| s.as_str()).collect();
+                ReasoningConfig::for_synthesis_after_tools(&tool_refs)
             } else {
                 ReasoningConfig::for_direct_response()
             };
@@ -141,6 +140,7 @@ impl ChatOrchestrator {
                 tool_outputs: vec![], // Non-streaming path doesn't collect tool outputs yet
             });
             
+            // Execute any pending tool calls and continue loop
             if !raw_response.function_calls.is_empty() {
                 info!("Executing {} tools", raw_response.function_calls.len());
                 
@@ -158,17 +158,15 @@ impl ChatOrchestrator {
                         project_id.unwrap_or(""),
                     ).await?;
                     
-                    // FIXED: Handle both "artifact" (singular) and "artifacts" (plural array)
+                    // Collect artifacts from create_artifact tool
+                    // Handles both singular "artifact" and plural "artifacts" array formats
                     if tool_name == "create_artifact" {
                         let before_count = collected_artifacts.len();
                         
-                        // Check for singular "artifact" field
                         if let Some(artifact) = result.get("artifact") {
                             collected_artifacts.push(artifact.clone());
                             debug!("Collected artifact from 'artifact' field");
-                        }
-                        // Check for plural "artifacts" array field
-                        else if let Some(artifacts_array) = result.get("artifacts") {
+                        } else if let Some(artifacts_array) = result.get("artifacts") {
                             if let Some(arr) = artifacts_array.as_array() {
                                 for artifact in arr {
                                     collected_artifacts.push(artifact.clone());
@@ -192,6 +190,7 @@ impl ChatOrchestrator {
                 continue;
             }
             
+            // No tool calls - this is the final response
             debug!("Non-streaming complete - returning {} artifacts", collected_artifacts.len());
             
             return Ok(ChatResult {
