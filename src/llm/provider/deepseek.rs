@@ -1,5 +1,6 @@
 // src/llm/provider/deepseek.rs
 // DeepSeek provider - specialized for cheap code generation with JSON mode
+// Owns its own context building for codegen
 
 use anyhow::Result;
 use reqwest::Client;
@@ -7,6 +8,9 @@ use serde_json::{json, Value};
 use tracing::{debug, info, error};
 
 use crate::config::CONFIG;
+use crate::llm::provider::Message;
+use crate::memory::features::recall_engine::RecallContext;
+use crate::api::ws::message::MessageMetadata;
 
 pub struct DeepSeekProvider {
     client: Client,
@@ -20,13 +24,29 @@ impl DeepSeekProvider {
     }
     
     /// Generate code artifact using DeepSeek reasoner with JSON mode
-    /// Returns JSON: {"path": "...", "content": "...", "language": "..."}
+    /// Builds its own rich context from provided materials
     pub async fn generate_code_artifact(
         &self,
         tool_input: &Value,
-        context: Option<&str>,
+        messages: &[Message],
+        context: &RecallContext,
+        metadata: Option<&MessageMetadata>,
+        project_id: Option<&str>,
+        previous_tool_results: &[(String, Value)],
     ) -> Result<Value> {
         info!("DeepSeek: Generating code artifact via reasoner");
+        
+        // Build rich context for code generation
+        let codegen_context = self.build_context(
+            messages,
+            context,
+            metadata,
+            project_id,
+            tool_input,
+            previous_tool_results,
+        );
+        
+        debug!("DeepSeek context built: {} chars", codegen_context.len());
         
         // Extract parameters from tool input
         let description = tool_input.get("description")
@@ -56,24 +76,13 @@ impl DeepSeekProvider {
             language
         );
         
-        let user_prompt = if let Some(ctx) = context {
-            format!(
-                "Generate a {} file at path: {}\n\n\
-                Description: {}\n\n\
-                Additional context:\n{}\n\n\
-                Remember: Output ONLY the JSON object, no other text.",
-                language, path, description, ctx
-            )
-        } else {
-            format!(
-                "Generate a {} file at path: {}\n\n\
-                Description: {}\n\n\
-                Remember: Output ONLY the JSON object, no other text.",
-                language, path, description
-            )
-        };
-        
-        debug!("DeepSeek request: {} chars of context", context.map(|c| c.len()).unwrap_or(0));
+        let user_prompt = format!(
+            "Generate a {} file at path: {}\n\n\
+            Description: {}\n\n\
+            Additional context:\n{}\n\n\
+            Remember: Output ONLY the JSON object, no other text.",
+            language, path, description, codegen_context
+        );
         
         // Call DeepSeek API with JSON mode
         let request_body = json!({
@@ -83,13 +92,14 @@ impl DeepSeekProvider {
                 {"role": "user", "content": user_prompt}
             ],
             "response_format": {"type": "json_object"},
-            "max_tokens": 32000,
+            "temperature": 0.7,
+            "max_tokens": 32000,  // DeepSeek Reasoner supports up to 32K output tokens
         });
         
         let response = self.client
-            .post("https://api.deepseek.com/chat/completions")
-            .header("Content-Type", "application/json")
+            .post("https://api.deepseek.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", CONFIG.deepseek_api_key))
+            .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
             .await
@@ -101,8 +111,8 @@ impl DeepSeekProvider {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            error!("DeepSeek API error ({}): {}", status, error_text);
-            return Err(anyhow::anyhow!("DeepSeek API error ({}): {}", status, error_text));
+            error!("DeepSeek API error {}: {}", status, error_text);
+            return Err(anyhow::anyhow!("DeepSeek API error {}: {}", status, error_text));
         }
         
         let response_json: Value = response.json().await
@@ -111,7 +121,7 @@ impl DeepSeekProvider {
                 anyhow::anyhow!("Failed to parse DeepSeek response: {}", e)
             })?;
         
-        debug!("DeepSeek response: {:?}", response_json);
+        debug!("DeepSeek raw response: {}", serde_json::to_string_pretty(&response_json).unwrap_or_default());
         
         // Extract content from response
         let content_str = response_json
@@ -144,6 +154,209 @@ impl DeepSeekProvider {
               artifact_json["path"].as_str().unwrap_or("unknown"));
         
         Ok(artifact_json)
+    }
+    
+    /// Build rich context for DeepSeek code generation
+    /// Includes: generation intent, project info, tool results, conversation, and memory
+    fn build_context(
+        &self,
+        messages: &[Message],
+        context: &RecallContext,
+        metadata: Option<&MessageMetadata>,
+        project_id: Option<&str>,
+        tool_arguments: &Value,
+        previous_tool_results: &[(String, Value)],
+    ) -> String {
+        let mut ctx = String::new();
+        
+        // Generation intent - what the user is asking for
+        ctx.push_str("=== GENERATION REQUEST ===\n");
+        if let Some(desc) = tool_arguments.get("description").and_then(|v| v.as_str()) {
+            ctx.push_str(&format!("Task: {}\n", desc));
+        }
+        if let Some(path) = tool_arguments.get("path").and_then(|v| v.as_str()) {
+            ctx.push_str(&format!("Target file: {}\n", path));
+        }
+        if let Some(lang) = tool_arguments.get("language").and_then(|v| v.as_str()) {
+            ctx.push_str(&format!("Language: {}\n", lang));
+        }
+        ctx.push_str("\n");
+        
+        // Project context from metadata
+        if let Some(meta) = metadata {
+            ctx.push_str("=== PROJECT INFO ===\n");
+            if let Some(project_name) = &meta.project_name {
+                ctx.push_str(&format!("Name: {}\n", project_name));
+                
+                if meta.has_repository == Some(true) {
+                    ctx.push_str("Type: Git repository\n");
+                    if let Some(branch) = &meta.branch {
+                        ctx.push_str(&format!("Branch: {}\n", branch));
+                    }
+                    if let Some(root) = &meta.repo_root {
+                        ctx.push_str(&format!("Root: {}\n", root));
+                    }
+                }
+            }
+            
+            // Current file context (if editing existing file)
+            if let Some(file_path) = &meta.file_path {
+                ctx.push_str(&format!("\nCurrent file: {}\n", file_path));
+                if let Some(content) = &meta.file_content {
+                    let preview = if content.len() > 500 {
+                        format!("{}...\n(truncated, {} total chars)", &content[..500], content.len())
+                    } else {
+                        content.clone()
+                    };
+                    ctx.push_str(&format!("Content:\n```\n{}\n```\n", preview));
+                }
+            }
+            ctx.push_str("\n");
+        } else if let Some(pid) = project_id {
+            ctx.push_str(&format!("=== PROJECT INFO ===\nID: {}\n\n", pid));
+        }
+        
+        // Previous tool results - critical for multi-step codegen
+        // Example: user searches for function, then asks to implement similar pattern
+        if !previous_tool_results.is_empty() {
+            ctx.push_str("=== PREVIOUS TOOL RESULTS ===\n");
+            for (tool_name, result) in previous_tool_results {
+                ctx.push_str(&format!("Tool: {}\n", tool_name));
+                
+                // Format based on tool type for readability
+                match tool_name.as_str() {
+                    "read_file" => {
+                        if let Some(content) = result.get("content").and_then(|c| c.as_str()) {
+                            let preview = if content.len() > 1000 {
+                                format!("{}...\n(truncated, {} total chars)", &content[..1000], content.len())
+                            } else {
+                                content.to_string()
+                            };
+                            ctx.push_str(&format!("Content:\n```\n{}\n```\n", preview));
+                        }
+                    },
+                    "search_code" => {
+                        if let Some(results) = result.get("results").and_then(|r| r.as_array()) {
+                            ctx.push_str(&format!("Found {} matches:\n", results.len()));
+                            
+                            // Show up to 5 results with full details
+                            for (i, r) in results.iter().take(5).enumerate() {
+                                let element_type = r.get("element_type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                                let name = r.get("name").and_then(|n| n.as_str()).unwrap_or("unnamed");
+                                let full_path = r.get("full_path").and_then(|p| p.as_str()).unwrap_or("unknown path");
+                                
+                                ctx.push_str(&format!("\n  {}. {} '{}' in {}\n", i + 1, element_type, name, full_path));
+                                
+                                // Show line range
+                                if let (Some(start), Some(end)) = (
+                                    r.get("start_line").and_then(|s| s.as_i64()),
+                                    r.get("end_line").and_then(|e| e.as_i64())
+                                ) {
+                                    ctx.push_str(&format!("     Lines {}-{}\n", start, end));
+                                }
+                                
+                                // Show visibility and flags
+                                if let Some(visibility) = r.get("visibility").and_then(|v| v.as_str()) {
+                                    let mut flags = vec![visibility];
+                                    if r.get("is_async").and_then(|a| a.as_bool()).unwrap_or(false) {
+                                        flags.push("async");
+                                    }
+                                    if r.get("is_test").and_then(|t| t.as_bool()).unwrap_or(false) {
+                                        flags.push("test");
+                                    }
+                                    ctx.push_str(&format!("     Attributes: {}\n", flags.join(", ")));
+                                }
+                                
+                                // Show complexity for functions
+                                if element_type == "function" {
+                                    if let Some(complexity) = r.get("complexity_score").and_then(|c| c.as_i64()) {
+                                        if complexity > 0 {
+                                            ctx.push_str(&format!("     Complexity: {}\n", complexity));
+                                        }
+                                    }
+                                }
+                                
+                                // Show documentation (first 150 chars)
+                                if let Some(doc) = r.get("documentation").and_then(|d| d.as_str()) {
+                                    let doc_preview = if doc.len() > 150 {
+                                        format!("{}...", &doc[..150])
+                                    } else {
+                                        doc.to_string()
+                                    };
+                                    ctx.push_str(&format!("     Doc: {}\n", doc_preview));
+                                }
+                                
+                                // Show code snippet (first 400 chars)
+                                if let Some(content) = r.get("content").and_then(|c| c.as_str()) {
+                                    let snippet = if content.len() > 400 {
+                                        format!("{}...", &content[..400])
+                                    } else {
+                                        content.to_string()
+                                    };
+                                    ctx.push_str(&format!("     Code:\n```\n{}\n```\n", snippet));
+                                }
+                            }
+                            
+                            if results.len() > 5 {
+                                ctx.push_str(&format!("\n... and {} more matches (showing top 5)\n", results.len() - 5));
+                            }
+                            ctx.push_str("\n");
+                        }
+                    },
+                    _ => {
+                        // Generic result formatting
+                        ctx.push_str(&format!("{}\n", serde_json::to_string_pretty(result).unwrap_or_else(|_| "{}".to_string())));
+                    }
+                }
+                ctx.push_str("\n");
+            }
+        }
+        
+        // Recent conversation (last 5 messages, condensed)
+        if messages.len() > 1 {
+            ctx.push_str("=== RECENT CONVERSATION ===\n");
+            for msg in messages.iter().rev().take(5).rev() {
+                let role = match msg.role.as_str() {
+                    "user" => "User",
+                    "assistant" => "Assistant",
+                    _ => "System",
+                };
+                let content_preview = if msg.content.len() > 200 {
+                    format!("{}...", &msg.content[..200])
+                } else {
+                    msg.content.clone()
+                };
+                ctx.push_str(&format!("{}: {}\n", role, content_preview));
+            }
+            ctx.push_str("\n");
+        }
+        
+        // Session summary from memory
+        if let Some(summary) = &context.session_summary {
+            ctx.push_str("=== SESSION SUMMARY ===\n");
+            ctx.push_str(&format!("{}\n\n", summary));
+        }
+        
+        // High-salience recent memories (top 3)
+        // Helps maintain consistency with patterns user has established
+        if !context.recent.is_empty() {
+            let high_salience: Vec<_> = context.recent.iter()
+                .filter(|m| m.salience.unwrap_or(0.0) > 0.7)
+                .take(3)
+                .collect();
+                
+            if !high_salience.is_empty() {
+                ctx.push_str("=== HIGH-SALIENCE CONTEXT ===\n");
+                for mem in high_salience {
+                    if let Some(summary) = &mem.summary {
+                        ctx.push_str(&format!("- {}\n", summary));
+                    }
+                }
+                ctx.push_str("\n");
+            }
+        }
+        
+        ctx
     }
     
     /// Check if DeepSeek is configured and available
