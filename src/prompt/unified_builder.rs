@@ -341,24 +341,10 @@ impl UnifiedPromptBuilder {
     fn add_project_context(prompt: &mut String, metadata: Option<&MessageMetadata>, project_id: Option<&str>) {
         if let Some(meta) = metadata {
             if let Some(project_name) = &meta.project_name {
-                prompt.push_str(&format!("[ACTIVE PROJECT: {}]", project_name));
-                
-                if meta.has_repository == Some(true) {
-                    prompt.push_str(" - Git repository attached");
-                    
-                    if let Some(branch) = &meta.branch {
-                        prompt.push_str(&format!(" (branch: {})", branch));
-                    }
-                    
-                    if let Some(repo_root) = &meta.repo_root {
-                        prompt.push_str(&format!(" at {}", repo_root));
-                    }
-                }
-                
-                prompt.push_str("\n");
-                prompt.push_str("When the user refers to 'the project', 'this project', asks about files, ");
-                prompt.push_str("code, repository, or project-related questions without specifying which ");
-                prompt.push_str("project, they mean this one. ");
+                prompt.push_str(&format!(
+                    "[ACTIVE PROJECT: {}]\n",
+                    project_name
+                ));
                 
                 if meta.request_repo_context == Some(true) {
                     prompt.push_str("The user wants you to be aware of the repository context ");
@@ -404,17 +390,12 @@ impl UnifiedPromptBuilder {
         prompt.push_str("You have access to our conversation history and memories.\n");
         prompt.push_str("Use them naturally when relevant, but don't force references.\n\n");
         
-        // Recent messages
+        // Recent messages - FIXED: Use ALL recent messages fetched, not just last 10
         if !context.recent.is_empty() {
             prompt.push_str("Recent conversation:\n");
             
-            let recent_slice = if context.recent.len() > 10 {
-                &context.recent[context.recent.len() - 10..]
-            } else {
-                &context.recent
-            };
-            
-            for entry in recent_slice {
+            // Use all recent messages instead of truncating to 10
+            for entry in &context.recent {
                 let time_ago = Utc::now().signed_duration_since(entry.timestamp);
                 let time_str = if time_ago.num_minutes() < 60 {
                     format!("{}m ago", time_ago.num_minutes())
@@ -431,12 +412,11 @@ impl UnifiedPromptBuilder {
             prompt.push('\n');
         }
         
-        // Semantic memories
+        // Semantic memories - FIXED: Lower threshold to 0.6, use ALL that pass quality bar
         if !context.semantic.is_empty() {
             let important_memories: Vec<_> = context.semantic.iter()
-                .filter(|m| m.salience.unwrap_or(0.0) >= 0.7)
-                .take(3)
-                .collect();
+                .filter(|m| m.salience.unwrap_or(0.0) >= 0.6)  // Lowered from 0.7, quality gate
+                .collect();  // No take() limit - use everything high-quality
             
             if !important_memories.is_empty() {
                 prompt.push_str("Key memories that might be relevant:\n");
