@@ -11,7 +11,6 @@ use crate::llm::provider::{
     OpenAiEmbeddings,
     gpt5::Gpt5Provider,
 };
-use crate::llm::router::LlmRouter;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::memory::service::MemoryService;
@@ -39,7 +38,7 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub llm_router: Arc<LlmRouter>,
+    pub gpt5_provider: Arc<Gpt5Provider>,  // Direct provider - no router
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
@@ -68,9 +67,9 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
         
-        // Initialize GPT-5 provider
+        // Initialize GPT-5 provider directly
         info!("Initializing GPT-5 provider: {}", CONFIG.gpt5_model);
-        let gpt5 = Arc::new(Gpt5Provider::new(
+        let gpt5_provider = Arc::new(Gpt5Provider::new(
             CONFIG.gpt5_api_key.clone(),
             CONFIG.gpt5_model.clone(),
             CONFIG.gpt5_max_tokens,
@@ -84,9 +83,6 @@ impl AppState {
             CONFIG.openai_embedding_model.clone(),
         ));
         
-        // Create simplified router - GPT-5 only
-        let llm_router = Arc::new(LlmRouter::new(gpt5.clone()));
-        
         // Initialize Qdrant multi-store
         let multi_store = Arc::new(QdrantMultiStore::new(
             &CONFIG.qdrant_url,
@@ -97,7 +93,7 @@ impl AppState {
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            gpt5.clone(),
+            gpt5_provider.clone(),
             embedding_client.clone(),
         ));
         
@@ -109,7 +105,7 @@ impl AppState {
             project_store,
             git_store,
             git_client,
-            llm_router,
+            gpt5_provider,  // Store provider directly
             embedding_client,
             memory_service,
             code_intelligence,

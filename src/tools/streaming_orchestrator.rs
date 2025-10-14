@@ -10,7 +10,6 @@ use futures::StreamExt;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::{Message, ToolContext, TokenUsage, StreamEvent, DeepSeekProvider};
-use crate::llm::provider::gpt5::Gpt5Provider;
 use crate::llm::ReasoningConfig;
 use crate::tools::ToolExecutor;
 use crate::state::AppState;
@@ -89,17 +88,11 @@ impl StreamingOrchestrator {
             iteration += 1;
 
             // Safety valve: force final synthesis if we exceed max iterations
-            // This prevents infinite tool-calling loops
             if iteration > max_iterations {
                 warn!("Hit max iterations ({}) - forcing final synthesis without tools", max_iterations);
                 
-                let provider = self.state.llm_router.get_provider();
-                let gpt5_provider = provider.as_any()
-                    .downcast_ref::<Gpt5Provider>()
-                    .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
-
-                // Final pass: disable tools to prevent any more calls
-                let mut stream = gpt5_provider.chat_with_tools_streaming(
+                // Use provider directly - no router, no downcast
+                let mut stream = self.state.gpt5_provider.chat_with_tools_streaming(
                     vec![],                       // no new user/assistant messages
                     system_prompt.clone(),
                     vec![],                       // no tools - force synthesis
@@ -125,7 +118,6 @@ impl StreamingOrchestrator {
                             total_output_tokens += output_tokens;
                             total_reasoning_tokens += reasoning_tokens;
 
-                            // Use final_text as fallback if we didn't accumulate anything
                             if structured_response_output.is_empty() {
                                 if let Some(text) = final_text {
                                     debug!("Using final_text from Done event: {} bytes", text.len());
@@ -142,7 +134,7 @@ impl StreamingOrchestrator {
                         StreamEvent::ToolCallArgumentsDelta { .. }
                         | StreamEvent::ToolCallStart { .. }
                         | StreamEvent::ToolCallComplete { .. } => {
-                            // Tools are disabled in final synthesis; ignore any calls
+                            // Tools are disabled in final synthesis
                         }
                         StreamEvent::Error { message } => {
                             warn!("Stream error during final synthesis: {}", message);
@@ -153,7 +145,7 @@ impl StreamingOrchestrator {
                     }
                 }
 
-                debug!("Final forced synthesis - returning {} bytes of JSON", structured_response_output.len());
+                debug!("Final forced synthesis - returning {} bytes", structured_response_output.len());
                 return Ok(StreamingResult {
                     content: structured_response_output,
                     artifacts: collected_artifacts,
@@ -166,9 +158,7 @@ impl StreamingOrchestrator {
                 });
             }
             
-            // Adaptive reasoning: adjust thinking depth based on context
-            // First turn: evaluate which tools to use
-            // After tools: synthesize results into coherent response
+            // Adaptive reasoning based on context
             let (reasoning, verbosity) = if iteration == 1 {
                 ReasoningConfig::for_tool_selection()
             } else if !tools_called.is_empty() {
@@ -180,12 +170,8 @@ impl StreamingOrchestrator {
             
             info!("Streaming call {}: reasoning={}, verbosity={}", iteration, reasoning, verbosity);
             
-            let provider = self.state.llm_router.get_provider();
-            let gpt5_provider = provider.as_any()
-                .downcast_ref::<Gpt5Provider>()
-                .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
-            
-            let mut stream = gpt5_provider.chat_with_tools_streaming(
+            // Use provider directly - no router bullshit
+            let mut stream = self.state.gpt5_provider.chat_with_tools_streaming(
                 if context_obj.is_some() { vec![] } else { messages.clone() },
                 system_prompt.clone(),
                 tools.clone(),
@@ -206,7 +192,6 @@ impl StreamingOrchestrator {
                 
                 match &event {
                     StreamEvent::TextDelta { delta } => {
-                        // Accumulate text for structured response (json_schema format)
                         structured_response_output.push_str(delta);
                         on_event(event.clone())?;
                     }
@@ -253,7 +238,6 @@ impl StreamingOrchestrator {
                         total_output_tokens += output_tokens;
                         total_reasoning_tokens += reasoning_tokens;
                         
-                        // Use final_text if available (fallback if accumulated text is empty)
                         if structured_response_output.is_empty() {
                             if let Some(text) = final_text {
                                 debug!("Using final_text from Done event: {} bytes", text.len());
@@ -281,10 +265,9 @@ impl StreamingOrchestrator {
             debug!("Events received: {}", event_count);
             debug!("Text accumulated: {} bytes", structured_response_output.len());
             debug!("Tool calls: {}", tool_calls.len());
-            debug!("First 200 chars: {:?}", &structured_response_output.chars().take(200).collect::<String>());
             debug!("=====================================");
             
-            // Execute any pending tool calls and continue loop
+            // Execute any pending tool calls
             if !tool_calls.is_empty() {
                 info!("Executing {} tools", tool_calls.len());
                 
@@ -304,11 +287,10 @@ impl StreamingOrchestrator {
                             Value::Object(Default::default())
                         });
                     
-                    // Route create_artifact to DeepSeek for cheaper token usage
+                    // Route create_artifact to DeepSeek if available
                     if tool_name == "create_artifact" && self.deepseek_provider.is_some() {
-                        info!("Routing create_artifact to DeepSeek for cheap generation");
+                        info!("Routing create_artifact to DeepSeek");
                         
-                        // DeepSeek builds its own context from raw materials
                         match self.deepseek_provider
                             .as_ref()
                             .unwrap()
@@ -323,36 +305,32 @@ impl StreamingOrchestrator {
                             .await
                         {
                             Ok(artifact_json) => {
-                                info!("DeepSeek generation successful with full context");
+                                info!("DeepSeek generation successful");
                                 collected_artifacts.push(artifact_json.clone());
                                 
-                                // Add tool output for GPT-5 continuation
                                 tool_outputs.push(json!({
                                     "type": "function_call_output",
                                     "call_id": tool_call.call_id,
                                     "output": serde_json::to_string(&artifact_json)?
                                 }));
                                 
-                                continue; // Skip normal tool execution
+                                continue;
                             }
                             Err(e) => {
-                                warn!("DeepSeek generation failed, falling back to GPT-5: {}", e);
-                                // Fall through to normal execution
+                                warn!("DeepSeek failed, falling back to GPT-5: {}", e);
                             }
                         }
                     }
                     
-                    // Normal tool execution for non-codegen tools or DeepSeek fallback
+                    // Normal tool execution
                     let result = self.executor.execute_tool(
                         tool_name,
                         &arguments,
                         project_id.unwrap_or(""),
                     ).await?;
                     
-                    // Track result for context building in next DeepSeek call
                     tool_results.push((tool_name.clone(), result.clone()));
                     
-                    // Format tool output for GPT-5 continuation
                     tool_outputs.push(json!({
                         "type": "function_call_output",
                         "call_id": tool_call.call_id,
@@ -360,7 +338,6 @@ impl StreamingOrchestrator {
                     }));
                     
                     // Collect artifacts from create_artifact tool
-                    // Handles both singular "artifact" and plural "artifacts" array formats
                     if tool_name == "create_artifact" {
                         let before_count = collected_artifacts.len();
                         
@@ -380,15 +357,14 @@ impl StreamingOrchestrator {
                         let new_artifacts = after_count - before_count;
                         
                         if new_artifacts == 0 {
-                            warn!("create_artifact executed but NO artifacts collected - check executor return format!");
-                            warn!("Result keys: {:?}", result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                            warn!("create_artifact executed but NO artifacts collected!");
                         } else {
                             info!("Successfully collected {} new artifact(s), total: {}", new_artifacts, after_count);
                         }
                     }
                 }
                 
-                // Build context for next iteration with tool outputs
+                // Build context for next iteration
                 context_obj = Some(ToolContext::Gpt5 {
                     previous_response_id: response_id.clone(),
                     tool_outputs,
@@ -397,8 +373,8 @@ impl StreamingOrchestrator {
                 continue;
             }
             
-            // No tool calls - this is the final response
-            debug!("Streaming complete - returning {} bytes of JSON", structured_response_output.len());
+            // No tool calls - final response
+            debug!("Streaming complete - returning {} bytes", structured_response_output.len());
             debug!("Final artifacts count: {}", collected_artifacts.len());
             
             return Ok(StreamingResult {

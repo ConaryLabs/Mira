@@ -4,7 +4,6 @@ pub mod embeddings;
 pub mod moderation;
 pub mod provider;
 pub mod responses;
-pub mod router;
 pub mod schema;
 pub mod structured;
 pub mod types;

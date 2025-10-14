@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::{Message, ToolContext, TokenUsage};
-use crate::llm::provider::gpt5::Gpt5Provider;
 use crate::llm::ReasoningConfig;
 use crate::tools::ToolExecutor;
 use crate::state::AppState;
@@ -68,13 +67,8 @@ impl ChatOrchestrator {
             if iteration > max_iterations {
                 warn!("Hit max iterations ({}) - forcing final synthesis without tools", max_iterations);
 
-                let provider = self.state.llm_router.get_provider();
-                let gpt5_provider = provider.as_any()
-                    .downcast_ref::<Gpt5Provider>()
-                    .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
-
-                // Final pass: disable tools to prevent any more calls
-                let raw_response = gpt5_provider.chat_with_tools_internal(
+                // Use provider directly - no router, no downcast
+                let raw_response = self.state.gpt5_provider.chat_with_tools_internal(
                     vec![],
                     system_prompt.clone(),
                     vec![],                       // no tools - force synthesis
@@ -113,12 +107,8 @@ impl ChatOrchestrator {
             
             info!("Orchestrator call {}: reasoning={}, verbosity={}", iteration, reasoning, verbosity);
             
-            let provider = self.state.llm_router.get_provider();
-            let gpt5_provider = provider.as_any()
-                .downcast_ref::<Gpt5Provider>()
-                .ok_or_else(|| anyhow::anyhow!("Expected Gpt5Provider"))?;
-            
-            let raw_response = gpt5_provider.chat_with_tools_internal(
+            // Use provider directly - no router, no downcast bullshit
+            let raw_response = self.state.gpt5_provider.chat_with_tools_internal(
                 if context_obj.is_some() { vec![] } else { messages.clone() },
                 system_prompt.clone(),
                 tools.clone(),

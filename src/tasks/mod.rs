@@ -17,12 +17,12 @@ use crate::state::AppState;
 pub mod config;
 pub mod metrics;
 pub mod backfill;
-pub mod code_sync;  // NEW
+pub mod code_sync;
 
 use config::TaskConfig;
 use metrics::TaskMetrics;
 use backfill::BackfillTask;
-use code_sync::CodeSyncTask;  // NEW
+use code_sync::CodeSyncTask;
 
 /// Manages all background tasks for the memory system
 pub struct TaskManager {
@@ -88,7 +88,6 @@ impl TaskManager {
     }
 
     /// Run one-time embedding backfill task
-    /// This processes all messages that were "queued" before the embedding processor was implemented
     async fn run_backfill(&self) {
         info!("Running one-time embedding backfill check");
         
@@ -100,7 +99,6 @@ impl TaskManager {
             }
             Err(e) => {
                 error!("Embedding backfill failed: {}", e);
-                // Don't panic - this is non-critical, new messages will still work
             }
         }
     }
@@ -140,7 +138,6 @@ impl TaskManager {
     }
 
     /// Spawns the analysis processor task
-    /// Processes pending messages through the unified MessagePipeline
     fn spawn_analysis_processor(&self) -> JoinHandle<()> {
         let app_state = self.app_state.clone();
         let interval = self.config.analysis_interval;
@@ -149,9 +146,8 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
             
-            // MessagePipeline uses GPT-5 for message analysis (Mira's voice everywhere)
-            let gpt5_provider = app_state.llm_router.get_provider();
-            
+            // Use GPT-5 provider directly - no router
+            let gpt5_provider = app_state.gpt5_provider.clone();
             let message_pipeline = MessagePipeline::new(gpt5_provider);
 
             let mut interval_timer = time::interval(interval);
@@ -160,7 +156,6 @@ impl TaskManager {
             loop {
                 interval_timer.tick().await;
                 
-                // Process all active sessions
                 match get_active_sessions(&app_state).await {
                     Ok(sessions) => {
                         let start = std::time::Instant::now();
@@ -202,16 +197,13 @@ impl TaskManager {
         let app_state = self.app_state.clone();
         let interval = self.config.decay_interval;
         let metrics = self.metrics.clone();
-        
-        info!(
-            "Decay scheduler started (interval: {} hours)", 
-            interval.as_secs() / 3600
-        );
-        
+
         tokio::spawn(async move {
+            info!("Decay scheduler started (interval: {:?})", interval);
+            
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-            
+
             loop {
                 interval_timer.tick().await;
                 
@@ -221,10 +213,10 @@ impl TaskManager {
                     Ok(()) => {
                         let duration = start.elapsed();
                         metrics.record_task_duration("decay", duration);
-                        metrics.add_processed_items("decay", 1); // 1 cycle completed
+                        info!("Decay cycle completed in {:?}", duration);
                     }
                     Err(e) => {
-                        error!("Decay cycle failed: {:#}", e);
+                        error!("Decay scheduler failed: {}", e);
                         metrics.record_error("decay");
                     }
                 }
@@ -234,13 +226,13 @@ impl TaskManager {
 
     /// Spawns the session cleanup task
     fn spawn_session_cleanup(&self) -> JoinHandle<()> {
-        let memory_service = self.app_state.memory_service.clone();
+        let pool = self.app_state.sqlite_pool.clone();
         let interval = self.config.cleanup_interval;
-        let max_age_hours = self.config.session_max_age_hours;
+        let max_age = self.config.session_max_age_hours;
         let metrics = self.metrics.clone();
 
         tokio::spawn(async move {
-            info!("Session cleanup started (interval: {:?}, max age: {}h)", interval, max_age_hours);
+            info!("Session cleanup started (interval: {:?}, max_age: {}h)", interval, max_age);
             
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -248,11 +240,11 @@ impl TaskManager {
             loop {
                 interval_timer.tick().await;
                 
-                match memory_service.cleanup_inactive_sessions(max_age_hours).await {
+                match cleanup_old_sessions(&pool, max_age).await {
                     Ok(count) => {
                         if count > 0 {
                             info!("Cleaned up {} inactive sessions", count);
-                            metrics.add_processed_items("cleanup", count);
+                            metrics.add_processed_items("cleanup", count as usize);
                         }
                     }
                     Err(e) => {
@@ -364,4 +356,17 @@ async fn check_summary_candidates(app_state: &AppState) -> anyhow::Result<Vec<(S
     .await?;
     
     Ok(candidates)
+}
+
+/// Cleanup old sessions
+async fn cleanup_old_sessions(pool: &sqlx::SqlitePool, max_age_hours: i64) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        "DELETE FROM memory_entries 
+         WHERE timestamp < (strftime('%s', 'now') - ?1)"
+    )
+    .bind(max_age_hours * 3600)
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected())
 }
