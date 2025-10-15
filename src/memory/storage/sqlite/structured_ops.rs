@@ -1,4 +1,5 @@
 // src/memory/storage/sqlite/structured_ops.rs
+// FIXED: Smart embedding skip logic to avoid waste and double-embedding
 
 use anyhow::Result;
 use sqlx::{SqlitePool, Transaction, Sqlite};
@@ -49,6 +50,11 @@ pub async fn save_structured_response(
 
 /// New function that handles embedding generation and storage
 /// Called separately AFTER save_structured_response to keep transactions clean
+/// 
+/// SMART SKIP LOGIC:
+/// - Large code responses (>30k AND is_code): Skip - code intelligence handles function-level embeddings
+/// - Large non-code responses (>30k AND NOT is_code): Truncate with warning (future: chunk)
+/// - Small responses (<30k): Embed normally
 pub async fn process_embeddings(
     pool: &SqlitePool,
     message_id: i64,
@@ -95,14 +101,27 @@ pub async fn process_embeddings(
         return Ok(());
     }
     
-    // FIXED: Truncate content to avoid OpenAI's 8192 token limit
-    // OpenAI's text-embedding-3-large has 8192 token limit
-    // Rough estimate: 1 token ≈ 4 characters, so 8192 tokens ≈ 32768 chars
-    // We'll be conservative and cap at 30000 characters
-    let content_to_embed = if response.output.len() > 30000 {
+    // ====================================================================
+    // SMART SKIP LOGIC: Avoid double-embedding and wasted API calls
+    // ====================================================================
+    let content_len = response.output.len();
+    let is_code = response.analysis.contains_code;
+    
+    // Case 1: Large code response - code intelligence handles it better
+    if content_len > 30000 && is_code {
+        info!(
+            "Message {} is large code response ({} chars) - skipping semantic embedding (code intelligence provides function-level embeddings)",
+            message_id, content_len
+        );
+        return Ok(());
+    }
+    
+    // Case 2: Content fits within token limit - embed normally
+    // Case 3: Large non-code content - truncate with warning (future: implement chunking)
+    let content_to_embed = if content_len > 30000 {
         warn!(
-            "Message {} content too long ({} chars), truncating to 30000 for embedding",
-            message_id, response.output.len()
+            "Message {} content too long ({} chars), truncating to 30000 for embedding. Consider implementing chunking for non-code content.",
+            message_id, content_len
         );
         &response.output[..30000]
     } else {
