@@ -19,6 +19,11 @@ impl MessagePipelineCoordinator {
         }
     }
     
+    /// Get reference to underlying pipeline for direct access
+    pub fn get_pipeline(&self) -> &Arc<MessagePipeline> {
+        &self.pipeline
+    }
+    
     pub async fn analyze_message(&self, entry: &MemoryEntry, role: &str) -> Result<UnifiedAnalysisResult> {
         // Use the coordinator-compatible method that returns UnifiedAnalysisResult
         self.pipeline.analyze_message_for_coordinator(&entry.content, role, None).await

@@ -13,6 +13,7 @@ use crate::llm::structured::tool_schema::*;
 use crate::llm::structured::types::StructuredLLMResponse;
 use crate::llm::provider::{Message, StreamEvent};
 use crate::memory::storage::sqlite::structured_ops::{save_structured_response, process_embeddings};
+use crate::memory::storage::sqlite::user_message_processing::process_user_message;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::state::AppState;
@@ -315,13 +316,29 @@ impl UnifiedChatHandler {
     }
     
     async fn save_user_message(&self, request: &ChatRequest) -> Result<i64> {
-        self.app_state.memory_service
+        // Step 1: Save basic user message entry
+        let message_id = self.app_state.memory_service
             .save_user_message(
                 &request.session_id,
                 &request.content,
                 request.project_id.as_deref()
             )
-            .await
+            .await?;
+        
+        // Step 2: Process user message (analyze + embed with smart skip logic)
+        if let Err(e) = process_user_message(
+            &self.app_state.sqlite_pool,
+            message_id,
+            &request.content,
+            self.app_state.memory_service.message_pipeline.get_pipeline(),
+            &self.app_state.embedding_client,
+            &self.app_state.memory_service.get_multi_store(),
+        ).await {
+            warn!("Failed to process user message {}: {}", message_id, e);
+            // Non-fatal - message is still saved, just not analyzed/embedded
+        }
+        
+        Ok(message_id)
     }
     
     async fn build_context(
