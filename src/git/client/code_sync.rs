@@ -105,7 +105,10 @@ impl CodeSync {
             // File changed - re-parse
             let language = detect_language_from_path(&file_path);
             
-            // Upsert file record
+            // CRITICAL FIX: Use transaction to ensure atomicity and prevent FK violations
+            let mut tx = self.store.pool.begin().await?;
+            
+            // Step 1: Upsert file record
             let file_id = sqlx::query_scalar!(
                 r#"
                 INSERT INTO repository_files (attachment_id, file_path, content_hash, language, last_indexed)
@@ -121,10 +124,23 @@ impl CodeSync {
                 current_hash,
                 language
             )
-            .fetch_one(&self.store.pool)
+            .fetch_one(&mut *tx)
             .await?;
 
-            // Parse AST - FIXED: correct parameter order (content, file_path, language, project_id)
+            // Step 2: Delete old code elements for this file (prevents UNIQUE constraint violations)
+            sqlx::query!(
+                r#"
+                DELETE FROM code_elements WHERE file_id = ?
+                "#,
+                file_id
+            )
+            .execute(&mut *tx)
+            .await?;
+            
+            // Step 3: Commit transaction (ensures file_id exists and old elements are gone)
+            tx.commit().await?;
+
+            // Step 4: Parse AST and store new elements
             match self.code_intelligence
                 .analyze_and_store_with_project(file_id, &content, &file_path, &language, &project_id)
                 .await
@@ -168,7 +184,17 @@ impl CodeSync {
             return Ok(()); // Skip unsupported file types
         };
         
-        // FIXED: correct parameter order (content, file_path, language, project_id)
+        // Delete old elements before re-parsing to prevent FK/UNIQUE violations
+        sqlx::query!(
+            r#"
+            DELETE FROM code_elements WHERE file_id = ?
+            "#,
+            file_id
+        )
+        .execute(&self.store.pool)
+        .await?;
+        
+        // Parse and store new elements
         let result = self.code_intelligence.analyze_and_store_with_project(
             file_id,
             &content,
