@@ -1,4 +1,5 @@
 // src/prompt/unified_builder.rs
+// FIXED: Removed ALL content truncation
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
@@ -273,14 +274,9 @@ impl UnifiedPromptBuilder {
                     
                     prompt.push('\n');
                     
-                    // Add documentation if available
+                    // Add full documentation - NO TRUNCATION
                     if let Some(doc) = &element.documentation {
-                        let doc_preview = if doc.len() > 80 {
-                            format!("{}...", &doc[..77])
-                        } else {
-                            doc.clone()
-                        };
-                        prompt.push_str(&format!("    Doc: {}\n", doc_preview));
+                        prompt.push_str(&format!("    Doc: {}\n", doc));
                     }
                 }
                 
@@ -390,11 +386,10 @@ impl UnifiedPromptBuilder {
         prompt.push_str("You have access to our conversation history and memories.\n");
         prompt.push_str("Use them naturally when relevant, but don't force references.\n\n");
         
-        // Recent messages - FIXED: Use ALL recent messages fetched, not just last 10
+        // Recent messages - NO TRUNCATION
         if !context.recent.is_empty() {
             prompt.push_str("Recent conversation:\n");
             
-            // Use all recent messages instead of truncating to 10
             for entry in &context.recent {
                 let time_ago = Utc::now().signed_duration_since(entry.timestamp);
                 let time_str = if time_ago.num_minutes() < 60 {
@@ -405,9 +400,7 @@ impl UnifiedPromptBuilder {
                     format!("{}d ago", time_ago.num_days())
                 };
                 
-                let content = Self::truncate_safely(&entry.content, 200);
-                
-                prompt.push_str(&format!("[{}] {} ({})\n", entry.role, content, time_str));
+                prompt.push_str(&format!("[{}] {} ({})\n", entry.role, entry.content, time_str));
             }
             prompt.push('\n');
         }
@@ -415,8 +408,8 @@ impl UnifiedPromptBuilder {
         // Semantic memories - FIXED: Lower threshold to 0.6, use ALL that pass quality bar
         if !context.semantic.is_empty() {
             let important_memories: Vec<_> = context.semantic.iter()
-                .filter(|m| m.salience.unwrap_or(0.0) >= 0.6)  // Lowered from 0.7, quality gate
-                .collect();  // No take() limit - use everything high-quality
+                .filter(|m| m.salience.unwrap_or(0.0) >= 0.6)
+                .collect();
             
             if !important_memories.is_empty() {
                 prompt.push_str("Key memories that might be relevant:\n");
@@ -466,10 +459,10 @@ impl UnifiedPromptBuilder {
                 }
                 
                 if let Some(content) = &meta.file_content {
-                    let preview = Self::truncate_safely(content, 1000);
-                    prompt.push_str("Current file content (truncated if large):\n");
+                    // NO TRUNCATION - send full file
+                    prompt.push_str("Current file content:\n");
                     prompt.push_str("```\n");
-                    prompt.push_str(&preview);
+                    prompt.push_str(content);
                     prompt.push_str("\n```\n");
                 }
                 
@@ -491,8 +484,8 @@ impl UnifiedPromptBuilder {
                     ));
                     
                     if let Some(text) = &selection.text {
-                        let preview = Self::truncate_safely(text, 500);
-                        prompt.push_str(&format!("```\n{}\n```\n", preview));
+                        // NO TRUNCATION - send full selection
+                        prompt.push_str(&format!("```\n{}\n```\n", text));
                     }
                     context_added = true;
                 }
@@ -502,15 +495,6 @@ impl UnifiedPromptBuilder {
                 prompt.push('\n');
             }
         }
-    }
-    
-    fn truncate_safely(s: &str, max_chars: usize) -> String {
-        if s.chars().count() <= max_chars {
-            return s.to_string();
-        }
-        
-        let truncated: String = s.chars().take(max_chars).collect();
-        format!("{}...", truncated)
     }
     
     pub fn build_simple_prompt(
