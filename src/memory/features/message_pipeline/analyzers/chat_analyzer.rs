@@ -1,11 +1,12 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 // Chat message analyzer - extracts sentiment, intent, topics, code, and error detection
+// FIXED: Handles both structured JSON responses and text-embedded JSON
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info, error};  // FIXED: removed unused 'warn'
+use tracing::{debug, info, error};
 
 use crate::llm::provider::{LlmProvider, Message};
 
@@ -228,13 +229,13 @@ For each message, provide analysis as JSON array."#,
             programming_lang,
             contains_error: parsed.contains_error,
             error_type,
-            error_file: parsed.error_file.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
+            error_file: parsed.error_file,
             error_severity,
-            mood: parsed.mood.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
+            mood: parsed.mood,
             intensity: parsed.intensity.map(|i| i.clamp(0.0, 1.0)),
-            intent: parsed.intent.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
-            summary: parsed.summary.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
-            relationship_impact: parsed.relationship_impact.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
+            intent: parsed.intent,
+            summary: parsed.summary,
+            relationship_impact: parsed.relationship_impact,
             content: original_content.to_string(),
             processed_at: chrono::Utc::now(),
         })
@@ -246,10 +247,8 @@ For each message, provide analysis as JSON array."#,
         original_messages: &[(String, String)],
     ) -> Result<Vec<ChatAnalysisResult>> {
         
-        let json_str = self.extract_json_from_response(response)?;
-        
         #[derive(Deserialize)]
-        struct BatchAnalysis {
+        struct BatchItem {
             message_index: usize,
             salience: f32,
             topics: Vec<String>,
@@ -266,7 +265,8 @@ For each message, provide analysis as JSON array."#,
             relationship_impact: Option<String>,
         }
         
-        let analyses: Vec<BatchAnalysis> = serde_json::from_str(&json_str)
+        let json_str = self.extract_json_from_response(response)?;
+        let analyses: Vec<BatchItem> = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse batch response: {}", e))?;
         
         let mut results = Vec::new();
@@ -304,7 +304,13 @@ For each message, provide analysis as JSON array."#,
     }
     
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
-        // Strategy 1: Find JSON in markdown code blocks
+        // STRATEGY 0: Try parsing entire response as JSON first (for structured responses like GPT-5 json_schema)
+        if let Ok(_) = serde_json::from_str::<Value>(response) {
+            debug!("Response is already valid JSON (structured response)");
+            return Ok(response.to_string());
+        }
+        
+        // STRATEGY 1: Find JSON in markdown code blocks
         if let Some(opening_pos) = response.find("```") {
             let backtick_count = response[opening_pos..].chars().take_while(|&c| c == '`').count();
             let after_backticks = &response[opening_pos + backtick_count..];
@@ -321,7 +327,7 @@ For each message, provide analysis as JSON array."#,
                         let json_content = &response[json_start..json_end];
                         let trimmed = json_content.trim();
                         
-                        if !trimmed.is_empty() {
+                        if !trimmed.is_empty() && serde_json::from_str::<Value>(trimmed).is_ok() {
                             debug!("Extracted JSON from {} backtick code block", backtick_count);
                             return Ok(trimmed.to_string());
                         }
@@ -330,7 +336,7 @@ For each message, provide analysis as JSON array."#,
             }
         }
         
-        // Strategy 2: Look for raw JSON object
+        // STRATEGY 2: Look for raw JSON object
         if let Some(obj_start) = response.find('{') {
             if let Some(obj_end) = response.rfind('}') {
                 if obj_start < obj_end {
@@ -343,12 +349,13 @@ For each message, provide analysis as JSON array."#,
             }
         }
         
-        // Strategy 3: Look for JSON array
+        // STRATEGY 3: Look for JSON array
         if let Some(arr_start) = response.find('[') {
             if let Some(arr_end) = response.rfind(']') {
                 if arr_start < arr_end {
                     let json_candidate = &response[arr_start..=arr_end];
                     if serde_json::from_str::<Value>(json_candidate).is_ok() {
+                        debug!("Extracted JSON array");
                         return Ok(json_candidate.to_string());
                     }
                 }
