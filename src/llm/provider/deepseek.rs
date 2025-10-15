@@ -1,6 +1,7 @@
 // src/llm/provider/deepseek.rs
 // DeepSeek provider - specialized for cheap code generation with JSON mode
 // Owns its own context building for codegen
+// FIXED: Removed ALL arbitrary content truncation
 
 use anyhow::Result;
 use reqwest::Client;
@@ -158,6 +159,7 @@ impl DeepSeekProvider {
     
     /// Build rich context for DeepSeek code generation
     /// Includes: generation intent, project info, tool results, conversation, and memory
+    /// FIXED: No arbitrary truncation - let token limits handle content size naturally
     fn build_context(
         &self,
         messages: &[Message],
@@ -200,15 +202,11 @@ impl DeepSeekProvider {
             }
             
             // Current file context (if editing existing file)
+            // FIXED: Show full content, no truncation
             if let Some(file_path) = &meta.file_path {
                 ctx.push_str(&format!("\nCurrent file: {}\n", file_path));
                 if let Some(content) = &meta.file_content {
-                    let preview = if content.len() > 500 {
-                        format!("{}...\n(truncated, {} total chars)", &content[..500], content.len())
-                    } else {
-                        content.clone()
-                    };
-                    ctx.push_str(&format!("Content:\n```\n{}\n```\n", preview));
+                    ctx.push_str(&format!("Content:\n```\n{}\n```\n", content));
                 }
             }
             ctx.push_str("\n");
@@ -217,7 +215,7 @@ impl DeepSeekProvider {
         }
         
         // Previous tool results - critical for multi-step codegen
-        // Example: user searches for function, then asks to implement similar pattern
+        // FIXED: Show full content from tool results, no truncation
         if !previous_tool_results.is_empty() {
             ctx.push_str("=== PREVIOUS TOOL RESULTS ===\n");
             for (tool_name, result) in previous_tool_results {
@@ -227,12 +225,7 @@ impl DeepSeekProvider {
                 match tool_name.as_str() {
                     "read_file" => {
                         if let Some(content) = result.get("content").and_then(|c| c.as_str()) {
-                            let preview = if content.len() > 1000 {
-                                format!("{}...\n(truncated, {} total chars)", &content[..1000], content.len())
-                            } else {
-                                content.to_string()
-                            };
-                            ctx.push_str(&format!("Content:\n```\n{}\n```\n", preview));
+                            ctx.push_str(&format!("Content:\n```\n{}\n```\n", content));
                         }
                     },
                     "search_code" => {
@@ -276,24 +269,14 @@ impl DeepSeekProvider {
                                     }
                                 }
                                 
-                                // Show documentation (first 150 chars)
+                                // FIXED: Show full documentation, no truncation
                                 if let Some(doc) = r.get("documentation").and_then(|d| d.as_str()) {
-                                    let doc_preview = if doc.len() > 150 {
-                                        format!("{}...", &doc[..150])
-                                    } else {
-                                        doc.to_string()
-                                    };
-                                    ctx.push_str(&format!("     Doc: {}\n", doc_preview));
+                                    ctx.push_str(&format!("     Doc: {}\n", doc));
                                 }
                                 
-                                // Show code snippet (first 400 chars)
+                                // FIXED: Show full code snippet, no truncation
                                 if let Some(content) = r.get("content").and_then(|c| c.as_str()) {
-                                    let snippet = if content.len() > 400 {
-                                        format!("{}...", &content[..400])
-                                    } else {
-                                        content.to_string()
-                                    };
-                                    ctx.push_str(&format!("     Code:\n```\n{}\n```\n", snippet));
+                                    ctx.push_str(&format!("     Code:\n```\n{}\n```\n", content));
                                 }
                             }
                             
@@ -312,7 +295,8 @@ impl DeepSeekProvider {
             }
         }
         
-        // Recent conversation (last 5 messages, condensed)
+        // Recent conversation (last 5 messages)
+        // FIXED: Show full message content, no truncation
         if messages.len() > 1 {
             ctx.push_str("=== RECENT CONVERSATION ===\n");
             for msg in messages.iter().rev().take(5).rev() {
@@ -321,12 +305,7 @@ impl DeepSeekProvider {
                     "assistant" => "Assistant",
                     _ => "System",
                 };
-                let content_preview = if msg.content.len() > 200 {
-                    format!("{}...", &msg.content[..200])
-                } else {
-                    msg.content.clone()
-                };
-                ctx.push_str(&format!("{}: {}\n", role, content_preview));
+                ctx.push_str(&format!("{}: {}\n", role, msg.content));
             }
             ctx.push_str("\n");
         }
