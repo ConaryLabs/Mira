@@ -13,30 +13,35 @@ pub mod tree_builder;
 pub mod diff_parser;
 pub mod branch_manager;
 pub mod project_ops;
-pub mod code_sync;  // NEW
+pub mod code_sync;
 
 pub use operations::GitOperations;
 pub use tree_builder::{FileNode, FileNodeType, TreeBuilder};
 pub use diff_parser::{DiffInfo, DiffParser};
 pub use branch_manager::{BranchInfo, CommitInfo, BranchManager};
 pub use project_ops::ProjectOps;
-pub use code_sync::CodeSync;  // NEW
+pub use code_sync::CodeSync;
 
 #[derive(Clone)]
 pub struct GitClient {
     pub git_dir: PathBuf,
     pub store: GitStore,
     pub code_intelligence: Option<CodeIntelligenceService>,
+    operations: GitOperations,  // FIXED: Store operations instead of creating on every call
 }
 
 impl GitClient {
     pub fn new<P: AsRef<Path>>(git_dir: P, store: GitStore) -> Self {
         fs::create_dir_all(&git_dir).ok();
         
+        let git_dir_buf = git_dir.as_ref().to_path_buf();
+        let operations = GitOperations::new(git_dir_buf.clone(), store.clone());
+        
         Self {
-            git_dir: git_dir.as_ref().to_path_buf(),
+            git_dir: git_dir_buf,
             store,
             code_intelligence: None,
+            operations,
         }
     }
 
@@ -47,27 +52,21 @@ impl GitClient {
     ) -> Self {
         fs::create_dir_all(&git_dir).ok();
         
+        let git_dir_buf = git_dir.as_ref().to_path_buf();
+        
+        // Create operations with code sync
+        let code_sync = CodeSync::new(store.clone(), code_intelligence.clone());
+        let operations = GitOperations::with_code_sync(
+            git_dir_buf.clone(),
+            store.clone(),
+            code_sync
+        );
+        
         Self {
-            git_dir: git_dir.as_ref().to_path_buf(),
+            git_dir: git_dir_buf,
             store,
             code_intelligence: Some(code_intelligence),
-        }
-    }
-
-    fn create_operations(&self) -> GitOperations {
-        match &self.code_intelligence {
-            Some(code_intel) => {
-                let code_sync = CodeSync::new(
-                    self.store.clone(),
-                    code_intel.clone()
-                );
-                GitOperations::with_code_sync(
-                    self.git_dir.clone(),
-                    self.store.clone(),
-                    code_sync
-                )
-            },
-            None => GitOperations::new(self.git_dir.clone(), self.store.clone()),
+            operations,
         }
     }
 
@@ -75,30 +74,24 @@ impl GitClient {
         self.code_intelligence.is_some()
     }
 
-    // Core repository operations
+    // Core repository operations - FIXED: Use stored operations
     pub async fn attach_repo(&self, project_id: &str, repo_url: &str) -> Result<GitRepoAttachment> {
-        let ops = self.create_operations();
-        ops.attach_repo(project_id, repo_url).await
+        self.operations.attach_repo(project_id, repo_url).await
     }
 
     pub async fn clone_repo(&self, attachment: &GitRepoAttachment) -> Result<()> {
-        let ops = self.create_operations();
-        ops.clone_repo(attachment).await
+        self.operations.clone_repo(attachment).await
     }
 
     pub async fn import_codebase(&self, attachment: &GitRepoAttachment) -> Result<()> {
-        let ops = self.create_operations();
-        ops.import_codebase(attachment).await
+        self.operations.import_codebase(attachment).await
     }
 
     pub async fn sync_changes(&self, attachment: &GitRepoAttachment, commit_message: &str) -> Result<()> {
-        let ops = self.create_operations();
-        ops.sync_changes(attachment, commit_message).await
+        self.operations.sync_changes(attachment, commit_message).await
     }
 
     pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
-        let ops = self.create_operations();
-        
         // Fetch the attachment from store first
         let attachment = self.store
             .get_attachment(attachment_id)
@@ -106,72 +99,67 @@ impl GitClient {
             .map_err(|e| ApiError::internal(format!("Failed to get git attachment: {}", e)))?
             .ok_or_else(|| ApiError::not_found(format!("Git attachment not found: {}", attachment_id)))?;
         
-        ops.pull_changes(&attachment)
-            .await
+        self.operations.pull_changes(&attachment).await
             .map_err(|e| ApiError::internal(format!("Failed to pull changes: {}", e)))
     }
-    
+
     pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
-        let ops = self.create_operations();
-        ops.reset_to_remote(attachment_id).await
+        self.operations.reset_to_remote(attachment_id).await
     }
 
-    // File tree operations
+    // File operations - use stored operations
     pub fn get_file_tree(&self, attachment: &GitRepoAttachment) -> Result<Vec<FileNode>> {
-        let tree_builder = TreeBuilder::new();
-        tree_builder.get_file_tree(attachment)
+        let builder = tree_builder::TreeBuilder::new();
+        builder.get_file_tree(attachment)
     }
 
-    pub fn get_file_content(&self, attachment: &GitRepoAttachment, file_path: &str) -> Result<String> {
-        let tree_builder = TreeBuilder::new();
-        tree_builder.get_file_content(attachment, file_path)
+    pub fn get_file_content(&self, attachment: &GitRepoAttachment, path: &str) -> Result<String> {
+        let full_path = Path::new(&attachment.local_path).join(path);
+        std::fs::read_to_string(&full_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", path, e))
     }
 
     pub fn update_file_content(
         &self,
         attachment: &GitRepoAttachment,
-        file_path: &str,
+        path: &str,
         content: &str,
-        commit_message: Option<&str>,
+        _message: Option<&str>
     ) -> Result<()> {
-        let tree_builder = TreeBuilder::new();
-        tree_builder.update_file_content(attachment, file_path, content, commit_message)
+        let full_path = Path::new(&attachment.local_path).join(path);
+        
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        
+        std::fs::write(&full_path, content)
+            .map_err(|e| anyhow::anyhow!("Failed to write file {}: {}", path, e))
     }
 
-    // Branch management
+    // Branch operations
     pub fn get_branches(&self, attachment: &GitRepoAttachment) -> Result<Vec<BranchInfo>> {
-        let branch_manager = BranchManager::new();
-        branch_manager.get_branches(attachment)
+        let manager = branch_manager::BranchManager::new();
+        manager.get_branches(attachment)
     }
 
-    pub fn switch_branch(&self, attachment: &GitRepoAttachment, branch_name: &str) -> Result<()> {
-        let branch_manager = BranchManager::new();
-        branch_manager.switch_branch(attachment, branch_name)
+    pub fn switch_branch(&self, attachment: &GitRepoAttachment, branch: &str) -> Result<()> {
+        let manager = branch_manager::BranchManager::new();
+        manager.switch_branch(attachment, branch)
     }
 
     pub fn get_commits(&self, attachment: &GitRepoAttachment, limit: usize) -> Result<Vec<CommitInfo>> {
-        let branch_manager = BranchManager::new();
-        branch_manager.get_commits(attachment, limit)
-    }
-
-    pub fn get_commit_history(&self, attachment: &GitRepoAttachment, limit: Option<usize>) -> Result<Vec<CommitInfo>> {
-        let branch_manager = BranchManager::new();
-        branch_manager.get_commits(attachment, limit.unwrap_or(50))
+        let manager = branch_manager::BranchManager::new();
+        manager.get_commits(attachment, limit)
     }
 
     // Diff operations
     pub fn get_diff(&self, attachment: &GitRepoAttachment, commit_id: &str) -> Result<DiffInfo> {
-        let diff_parser = DiffParser::new();
-        diff_parser.get_commit_diff(attachment, commit_id)
+        let parser = diff_parser::DiffParser::new();
+        parser.get_commit_diff(attachment, commit_id)
     }
 
-    pub fn get_file_at_commit(
-        &self,
-        attachment: &GitRepoAttachment,
-        commit_id: &str,
-        file_path: &str,
-    ) -> Result<String> {
-        let diff_parser = DiffParser::new();
-        diff_parser.get_file_at_commit(attachment, commit_id, file_path)
+    pub fn get_file_at_commit(&self, attachment: &GitRepoAttachment, path: &str, commit: &str) -> Result<String> {
+        let parser = diff_parser::DiffParser::new();
+        parser.get_file_at_commit(attachment, path, commit)
     }
 }
