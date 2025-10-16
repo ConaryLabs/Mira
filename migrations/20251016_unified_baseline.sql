@@ -2,7 +2,6 @@
 -- Unified baseline schema: Clean slate with zero cruft
 -- Operations (coding) + Messages (conversation) + Relationship + Code Intelligence
 
-BEGIN TRANSACTION;
 PRAGMA foreign_keys=OFF;
 
 -- ============================================================================
@@ -532,4 +531,3 @@ INSERT INTO schema_metadata (version, description)
 VALUES ('3.0.0', 'Clean baseline: Operations (coding) + Messages (conversation) + Relationship + Code Intelligence');
 
 PRAGMA foreign_keys=ON;
-COMMIT;
