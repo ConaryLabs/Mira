@@ -1,7 +1,6 @@
 // src/utils.rs
-// Utility functions module
+// Minimal utility functions - only what's actually needed
 
-use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::sync::Arc;
 use std::num::NonZeroU32;
@@ -32,45 +31,6 @@ pub fn get_timestamp_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis()
-}
-
-// ============================================================================
-// Path security utilities
-// ============================================================================
-
-/// Security check for file system operations
-/// Validates that a path is within allowed directories and doesn't contain traversal attempts
-pub fn is_path_allowed(path: &Path) -> bool {
-    let allowed_prefixes = vec![
-        "/home",
-        "/tmp",
-        "/var/www",
-        "./repos",
-        "./uploads",
-    ];
-    
-    let path_str = path.to_string_lossy();
-    
-    // Check for directory traversal attempts
-    if path_str.contains("..") {
-        warn!("Blocked directory traversal attempt: {}", path_str);
-        return false;
-    }
-    
-    // Check if path starts with any allowed prefix
-    for prefix in &allowed_prefixes {
-        if path_str.starts_with(prefix) {
-            return true;
-        }
-    }
-    
-    // Also allow relative paths in the current working directory
-    if !path.is_absolute() {
-        return true;
-    }
-    
-    warn!("Path outside allowed directories: {}", path_str);
-    false
 }
 
 // ============================================================================
@@ -133,7 +93,7 @@ impl Default for RetryConfig {
     }
 }
 
-/// Simple retry with exponential backoff (without backoff crate complexity)
+/// Retry with exponential backoff for transient errors
 pub async fn retry_with_backoff<F, Fut, T>(
     mut operation: F,
     config: RetryConfig,
@@ -197,72 +157,4 @@ where
             duration
         )),
     }
-}
-
-// ============================================================================
-// Token counting utilities (LLM-agnostic)
-// ============================================================================
-
-/// Estimate token count for LLMs (rough approximation)
-/// LLMs use similar tokenization, roughly 1 token per 4 characters
-pub fn count_tokens(text: &str) -> Result<usize> {
-    // Simple approximation based on char count
-    // Rough approximation - ~4 chars per token
-    Ok((text.len() + 3) / 4)
-}
-
-/// Count tokens for multiple texts
-pub fn count_tokens_batch(texts: &[String]) -> Result<Vec<usize>> {
-    texts.iter()
-        .map(|text| count_tokens(text))
-        .collect()
-}
-
-// ============================================================================
-// WebSocket connection guard for cleanup
-// ============================================================================
-
-pub struct ConnectionGuard {
-    handle: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl ConnectionGuard {
-    pub fn new(handle: tokio::task::JoinHandle<()>) -> Self {
-        Self { handle: Some(handle) }
-    }
-}
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            handle.abort();
-        }
-    }
-}
-
-// ============================================================================
-// JSON repair utilities
-// ============================================================================
-
-/// Try to repair common JSON issues
-pub fn repair_json_simple(json_str: &str) -> String {
-    json_str
-        .replace("'", "\"")           // Single to double quotes
-        .replace(",]", "]")            // Trailing commas in arrays
-        .replace(",}", "}")            // Trailing commas in objects
-        .replace("undefined", "null")  // JavaScript undefined
-        .replace("NaN", "null")        // Not a number
-}
-
-/// Parse JSON with lenient fallbacks
-pub fn parse_json_lenient(json_str: &str) -> Result<serde_json::Value> {
-    // Try normal parsing first
-    if let Ok(value) = serde_json::from_str(json_str) {
-        return Ok(value);
-    }
-    
-    // Try with basic repairs
-    let repaired = repair_json_simple(json_str);
-    serde_json::from_str(&repaired)
-        .map_err(|e| anyhow::anyhow!("Failed to parse JSON even with repairs: {}", e))
 }
