@@ -35,7 +35,7 @@ impl LanguageParser for RustParser {
             complexity_score: total_complexity,
             test_count,
             doc_coverage,
-            websocket_calls: Vec::new(),
+            // REMOVED: websocket_calls (Phase 1 - WebSocket tracking deleted)
         })
     }
 

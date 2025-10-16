@@ -49,11 +49,10 @@ impl SqliteMemoryStore {
     }
 
     // =====================================
-    // NEW: STRUCTURED RESPONSE OPERATIONS
+    // STRUCTURED RESPONSE OPERATIONS
     // =====================================
 
-    /// Save complete structured response atomically to all 3 tables
-    /// This is the new way to save assistant responses with full metadata
+    /// Save complete structured response atomically
     pub async fn save_structured_response(
         &self,
         session_id: &str,
@@ -68,11 +67,7 @@ impl SqliteMemoryStore {
         super::structured_ops::load_structured_response(&self.pool, message_id).await
     }
 
-    /// Get statistics about structured responses
-    /// FIXED: Call get_response_statistics directly with correct return type
-    pub async fn get_structured_response_stats(&self) -> Result<super::structured_ops::ResponseStatistics> {
-        super::structured_ops::get_response_statistics(&self.pool).await
-    }
+    // REMOVED: get_structured_response_stats (function deleted in Phase 1)
 
     // =====================================
     // EXISTING API - BASIC FUNCTIONALITY

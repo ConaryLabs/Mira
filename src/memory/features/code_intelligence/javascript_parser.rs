@@ -2,7 +2,7 @@
 use anyhow::Result;
 use swc_common::{sync::Lrc, FileName, SourceMap, Span, Spanned};
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
-use swc_ecma_ast::{Expr, Pat, FnDecl, ClassDecl, VarDecl, ImportDecl, CallExpr, ObjectLit};
+use swc_ecma_ast::{Expr, Pat, FnDecl, ClassDecl, VarDecl, ImportDecl, CallExpr};
 use swc_ecma_visit::{Visit, VisitWith};
 use crate::memory::features::code_intelligence::types::*;
 use sha2::{Sha256, Digest};
@@ -56,7 +56,7 @@ impl LanguageParser for JavaScriptParser {
             complexity_score: analyzer.total_complexity,
             test_count: analyzer.test_count,
             doc_coverage,
-            websocket_calls: analyzer.websocket_calls,
+            // REMOVED: websocket_calls (Phase 1 - WebSocket tracking deleted)
         })
     }
     
@@ -81,7 +81,7 @@ struct JavaScriptAnalyzer<'a> {
     content: &'a str,
     file_path: &'a str,
     current_path: Vec<String>,
-    websocket_calls: Vec<WebSocketCall>,
+    // REMOVED: websocket_calls (Phase 1 - WebSocket tracking deleted)
     current_function: Option<String>,
 }
 
@@ -97,7 +97,7 @@ impl<'a> JavaScriptAnalyzer<'a> {
             content,
             file_path,
             current_path: Vec::new(),
-            websocket_calls: Vec::new(),
+            // REMOVED: websocket_calls (Phase 1 - WebSocket tracking deleted)
             current_function: None,
         }
     }
@@ -250,44 +250,7 @@ impl<'a> JavaScriptAnalyzer<'a> {
         None
     }
 
-    fn extract_object_field(&self, obj: &ObjectLit, field: &str) -> Option<String> {
-        use swc_ecma_ast::{PropOrSpread, Prop, PropName, Expr, Lit};
-        
-        for prop in &obj.props {
-            if let PropOrSpread::Prop(prop) = prop {
-                if let Prop::KeyValue(kv) = &**prop {
-                    if let PropName::Ident(ident) = &kv.key {
-                        if ident.sym.to_string() == field {
-                            if let Expr::Lit(Lit::Str(s)) = &*kv.value {
-                                return Some(s.value.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn extract_websocket_call(&mut self, call: &CallExpr) {
-        use swc_ecma_ast::Expr;
-        
-        if let Some(arg) = call.args.first() {
-            if let Expr::Object(obj) = &*arg.expr {
-                let message_type = self.extract_object_field(obj, "type");
-                let method = self.extract_object_field(obj, "method");
-                
-                if let Some(msg_type) = message_type {
-                    self.websocket_calls.push(WebSocketCall {
-                        message_type: msg_type,
-                        method,
-                        line_number: self.get_line_number(call.span) as usize,
-                        element: self.current_function.clone().unwrap_or_else(|| "global".to_string()),
-                    });
-                }
-            }
-        }
-    }
+    // REMOVED: extract_object_field, extract_websocket_call (Phase 1 - WebSocket tracking deleted)
 }
 
 impl<'a> Visit for JavaScriptAnalyzer<'a> {
@@ -471,17 +434,7 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        use swc_ecma_ast::{Callee, Expr};
-        
-        // Detect send() calls for WebSocket messages
-        if let Callee::Expr(expr) = &call.callee {
-            if let Expr::Ident(ident) = &**expr {
-                if ident.sym == "send" {
-                    self.extract_websocket_call(call);
-                }
-            }
-        }
-        
+        // REMOVED: WebSocket call detection (Phase 1 - WebSocket tracking deleted)
         call.visit_children_with(self);
     }
 }

@@ -14,7 +14,6 @@ use crate::{
         ws::message::WsServerMessage,
     },
     state::AppState,
-    utils::is_path_allowed,
 };
 
 #[derive(Debug, Deserialize)]
@@ -105,9 +104,6 @@ async fn save_file(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServe
     // Otherwise, use standard write (no history)
     info!("Standard write (no history tracking)");
     let path = Path::new(&req.path);
-    if !is_path_allowed(path) {
-        return Err(ApiError::forbidden("Path outside allowed directories"));
-    }
     
     // Create parent directories if needed
     if let Some(parent) = path.parent() {
@@ -134,11 +130,7 @@ async fn read_file(params: Value) -> ApiResult<WsServerMessage> {
     
     debug!("Reading file from: {}", req.path);
     
-    // Validate path using utility function
     let path = Path::new(&req.path);
-    if !is_path_allowed(path) {
-        return Err(ApiError::forbidden("Path outside allowed directories"));
-    }
     
     if !path.exists() {
         return Err(ApiError::not_found(format!("File not found: {}", req.path)));
@@ -166,9 +158,6 @@ async fn list_files(params: Value) -> ApiResult<WsServerMessage> {
     debug!("Listing files in: {}", req.path);
     
     let path = Path::new(&req.path);
-    if !is_path_allowed(path) {
-        return Err(ApiError::forbidden("Path outside allowed directories"));
-    }
     
     if !path.exists() {
         return Err(ApiError::not_found(format!("Directory not found: {}", req.path)));
@@ -220,9 +209,6 @@ async fn delete_file(params: Value) -> ApiResult<WsServerMessage> {
     warn!("Deleting file: {}", req.path);
     
     let path = Path::new(&req.path);
-    if !is_path_allowed(path) {
-        return Err(ApiError::forbidden("Path outside allowed directories"));
-    }
     
     if !path.exists() {
         return Err(ApiError::not_found(format!("File not found: {}", req.path)));
@@ -251,9 +237,6 @@ async fn check_file_exists(params: Value) -> ApiResult<WsServerMessage> {
         .ok_or_else(|| ApiError::bad_request("Missing path"))?;
     
     let file_path = Path::new(path);
-    if !is_path_allowed(file_path) {
-        return Err(ApiError::forbidden("Path outside allowed directories"));
-    }
     
     let exists = file_path.exists();
     let is_file = if exists { file_path.is_file() } else { false };

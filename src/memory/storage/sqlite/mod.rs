@@ -7,10 +7,6 @@ pub mod user_message_processing;
 pub use store::SqliteMemoryStore;
 pub use structured_ops::{
     save_structured_response, 
-    load_structured_response, 
-    get_response_statistics,
+    load_structured_response,
     ResponseStatistics,
-    // Backwards compatibility aliases
-    get_response_statistics as get_structured_response_stats,
-    ResponseStatistics as StructuredResponseStats,
 };

@@ -1,5 +1,6 @@
 // src/memory/storage/sqlite/structured_ops.rs
 // FIXED: Smart embedding skip logic to avoid waste and double-embedding
+// PHASE 1 UPDATE: Removed llm_metadata table operations (table deleted)
 
 use anyhow::Result;
 use sqlx::{SqlitePool, Transaction, Sqlite};
@@ -35,15 +36,12 @@ pub async fn save_structured_response(
         &response.structured.analysis,
     ).await?;
     
-    insert_llm_metadata(
-        &mut tx,
-        message_id,
-        &response.metadata,
-    ).await?;
+    // REMOVED: insert_llm_metadata (table deleted in Phase 1)
+    // LLM metadata will be tracked in operations table for coding operations
     
     tx.commit().await?;
     
-    info!("Saved complete response {} with all metadata", message_id);
+    info!("Saved complete response {} with analysis", message_id);
     
     Ok(message_id)
 }
@@ -176,7 +174,7 @@ pub async fn process_embeddings(
                 info!("Stored embedding for message {} in {} collection (point_id: {})", 
                     message_id, head.as_str(), point_id);
                 
-                // CRITICAL FIX: Track the embedding in message_embeddings table
+                // Track the embedding in message_embeddings table
                 let collection_name = multi_store.get_collection_name(head)
                     .unwrap_or_else(|| format!("unknown-{}", head.as_str()));
                 
@@ -312,7 +310,7 @@ fn create_qdrant_entry(
     response: &StructuredLLMResponse,
     embedding: Vec<f32>,
 ) -> MemoryEntry {
-    // Also sanitize programming_lang for consistency (Qdrant isn't constrained but keep data tidy)
+    // Also sanitize programming_lang for consistency
     let sanitized_lang = sanitize_programming_lang(&response.analysis.programming_lang);
 
     MemoryEntry {
@@ -448,38 +446,6 @@ async fn insert_message_analysis(
     Ok(())
 }
 
-async fn insert_llm_metadata(
-    tx: &mut Transaction<'_, Sqlite>,
-    message_id: i64,
-    metadata: &LLMMetadata,
-) -> Result<()> {
-    sqlx::query!(
-        r#"
-        INSERT INTO llm_metadata (
-            message_id, model_version, input_tokens, output_tokens,
-            thinking_tokens, total_tokens, latency_ms, generation_time_ms,
-            finish_reason, tool_calls, temperature, max_tokens
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-        "#,
-        message_id,
-        metadata.model_version,
-        metadata.prompt_tokens,
-        metadata.completion_tokens,
-        metadata.thinking_tokens,
-        metadata.total_tokens,
-        metadata.latency_ms,
-        metadata.latency_ms,
-        metadata.finish_reason,
-        metadata.temperature,
-        metadata.max_tokens
-    )
-    .execute(&mut **tx)
-    .await?;
-    
-    debug!("Inserted llm_metadata for message {}", message_id);
-    Ok(())
-}
-
 pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Result<Option<CompleteResponse>> {
     let memory_row = match sqlx::query!(
         r#"
@@ -510,22 +476,6 @@ pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Res
         None => return Ok(None),
     };
 
-    let metadata_row = match sqlx::query!(
-        r#"
-        SELECT model_version, input_tokens, output_tokens, thinking_tokens,
-               total_tokens, latency_ms, finish_reason, temperature, max_tokens
-        FROM llm_metadata
-        WHERE message_id = ?
-        "#,
-        message_id
-    )
-    .fetch_optional(pool)
-    .await? {
-        Some(row) => row,
-        None => return Ok(None),
-    };
-
-    // FIXED: topics and routed_to_heads are now NOT NULL, so they're String not Option<String>
     let topics: Vec<String> = serde_json::from_str(&analysis_row.topics)?;
     let routed_to_heads: Vec<String> = serde_json::from_str(&analysis_row.routed_to_heads)?;
 
@@ -553,17 +503,18 @@ pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Res
         validation_status: Some("valid".to_string()),
     };
 
+    // Create minimal metadata (since llm_metadata table is gone)
     let metadata = LLMMetadata {
         response_id: memory_row.response_id,
-        prompt_tokens: metadata_row.input_tokens.map(|v| v as i64),
-        completion_tokens: metadata_row.output_tokens.map(|v| v as i64),
-        thinking_tokens: metadata_row.thinking_tokens.map(|v| v as i64),
-        total_tokens: metadata_row.total_tokens.map(|v| v as i64),
-        latency_ms: metadata_row.latency_ms.unwrap_or(0) as i64,
-        finish_reason: metadata_row.finish_reason,
-        model_version: metadata_row.model_version,
-        temperature: metadata_row.temperature.unwrap_or(0.0),
-        max_tokens: metadata_row.max_tokens.unwrap_or(4096) as i64,
+        prompt_tokens: None,
+        completion_tokens: None,
+        thinking_tokens: None,
+        total_tokens: None,
+        latency_ms: 0,
+        finish_reason: None,
+        model_version: "unknown".to_string(),
+        temperature: 0.0,
+        max_tokens: 4096,
     };
 
     let raw_response = serde_json::json!({
@@ -590,28 +541,3 @@ pub struct ResponseStatistics {
 
 // Backwards compatibility alias
 pub type StructuredResponseStats = ResponseStatistics;
-
-pub async fn get_response_statistics(pool: &SqlitePool) -> Result<ResponseStatistics> {
-    let stats_row = sqlx::query!(
-        r#"
-        SELECT 
-            COUNT(*) as total_responses,
-            AVG(CAST(total_tokens AS REAL)) as avg_tokens,
-            AVG(CAST(latency_ms AS REAL)) as avg_latency_ms,
-            MAX(total_tokens) as max_tokens,
-            MIN(total_tokens) as min_tokens
-        FROM llm_metadata
-        WHERE total_tokens IS NOT NULL
-        "#
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(ResponseStatistics {
-        total_responses: stats_row.total_responses as i64,
-        avg_tokens: stats_row.avg_tokens.unwrap_or(0.0),
-        avg_latency_ms: stats_row.avg_latency_ms.unwrap_or(0.0),
-        max_tokens: stats_row.max_tokens.unwrap_or(0) as i64,
-        min_tokens: stats_row.min_tokens.unwrap_or(0) as i64,
-    })
-}

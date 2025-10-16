@@ -12,7 +12,11 @@ pub mod state;
 pub mod utils;
 pub mod tasks;
 pub mod tools;
-pub mod file_system;  // NEW: Phase 3 - File operations with history tracking
+pub mod file_system;
+
+// Phase 2 - Core type definitions (operations & relationship systems)
+pub mod operations;
+pub mod relationship;
 
 // Export commonly used items
 pub use state::AppState;

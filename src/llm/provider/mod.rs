@@ -8,7 +8,6 @@ use std::any::Any;
 
 pub mod openai;
 pub mod gpt5;
-pub mod conversion;
 pub mod stream;
 pub mod deepseek;
 

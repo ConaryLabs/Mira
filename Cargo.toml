@@ -78,7 +78,3 @@ walkdir = "2.5.0"
 tokio-tungstenite = "0.27.0"
 url = "2.5.0"
 uuid = { version = "1.8", features = ["v4"] }
-
-[[bin]]
-name = "mira-import"
-path = "src/bin/mira_import.rs"
