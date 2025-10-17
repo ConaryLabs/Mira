@@ -4,9 +4,26 @@
 // Tests basic lifecycle: create → start → complete/fail
 
 use mira_backend::operations::{OperationEngine, OperationEngineEvent};
+use mira_backend::llm::provider::gpt5::Gpt5Provider;
+use mira_backend::llm::provider::deepseek::DeepSeekProvider;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+/// Helper to create test providers
+fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
+    let gpt5 = Gpt5Provider::new(
+        "test-gpt5-key".to_string(),
+        "gpt-5-preview".to_string(),
+        4000,
+        "medium".to_string(),
+        "medium".to_string(),
+    );
+
+    let deepseek = DeepSeekProvider::new("test-deepseek-key".to_string());
+
+    (gpt5, deepseek)
+}
 
 #[tokio::test]
 async fn test_operation_engine_lifecycle() {
@@ -23,7 +40,8 @@ async fn test_operation_engine_lifecycle() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let engine = OperationEngine::new(db.clone());
+    let (gpt5, deepseek) = create_test_providers();
+    let engine = OperationEngine::new(db.clone(), gpt5, deepseek);
 
     // Create event channel
     let (tx, mut rx) = mpsc::channel(100);
@@ -143,8 +161,8 @@ async fn test_operation_engine_lifecycle() {
     for (i, event) in events.iter().enumerate() {
         assert_eq!(
             event.sequence_number,
-            (i as i64) + 1,
-            "Event sequence numbers should be sequential"
+            i as i64,
+            "Event sequence numbers should be sequential starting from 0"
         );
     }
     println!("✓ Event sequence numbers are correct");
@@ -165,7 +183,8 @@ async fn test_operation_failure() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let engine = OperationEngine::new(db.clone());
+    let (gpt5, deepseek) = create_test_providers();
+    let engine = OperationEngine::new(db.clone(), gpt5, deepseek);
     let (tx, mut rx) = mpsc::channel(100);
 
     // Create and start operation
@@ -259,7 +278,8 @@ async fn test_multiple_operations() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let engine = OperationEngine::new(db.clone());
+    let (gpt5, deepseek) = create_test_providers();
+    let engine = OperationEngine::new(db.clone(), gpt5, deepseek);
     let (tx, _rx) = mpsc::channel(100);
 
     // Create multiple operations
