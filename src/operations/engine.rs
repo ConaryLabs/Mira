@@ -10,6 +10,7 @@ use crate::prompt::UnifiedPromptBuilder;
 use crate::persona::PersonaOverlay;
 use crate::tools::types::Tool;
 use crate::config::CONFIG;
+use crate::relationship::{RelationshipService, FactsService};
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -72,27 +73,35 @@ pub enum OperationEngineEvent {
 /// Manages: create → run → complete
 /// Handles: GPT-5 streaming, DeepSeek delegation, event emission, DB tracking
 /// PHASE 8: Now with memory storage and context loading
+/// STEP 5: Now with relationship integration
 pub struct OperationEngine {
     db: Arc<SqlitePool>,
     gpt5: Gpt5Provider,
     deepseek: DeepSeekProvider,
     memory_service: Arc<MemoryService>,
+    relationship_service: Arc<RelationshipService>,
+    facts_service: Arc<FactsService>,
 }
 
 impl OperationEngine {
     /// Create a new operation engine
-    /// PHASE 8: Now requires MemoryService for context/storage
+    /// PHASE 8: Requires MemoryService for context/storage
+    /// STEP 5: Requires RelationshipService and FactsService
     pub fn new(
         db: Arc<SqlitePool>,
         gpt5: Gpt5Provider,
         deepseek: DeepSeekProvider,
         memory_service: Arc<MemoryService>,
+        relationship_service: Arc<RelationshipService>,
+        facts_service: Arc<FactsService>,
     ) -> Self {
         Self { 
             db, 
             gpt5, 
             deepseek,
             memory_service,
+            relationship_service,
+            facts_service,
         }
     }
 
@@ -183,7 +192,8 @@ impl OperationEngine {
     }
 
     /// Complete an operation successfully
-    /// PHASE 8: Now stores result in memory
+    /// PHASE 8: Stores result in memory
+    /// STEP 5: Processes relationship updates
     pub async fn complete_operation(
         &self,
         operation_id: &str,
@@ -215,7 +225,7 @@ impl OperationEngine {
             match self.memory_service.save_assistant_message(
                 session_id,
                 response_content,
-                None, // No parent for now
+                None,
             ).await {
                 Ok(msg_id) => {
                     info!("Stored operation result in memory: message_id={}", msg_id);
@@ -226,7 +236,15 @@ impl OperationEngine {
                         response_content,
                     ).await {
                         warn!("Failed to process assistant message embeddings {}: {}", msg_id, e);
-                        // Non-fatal - message is still saved
+                    }
+                    
+                    // STEP 5: Process relationship updates from response
+                    if let Err(e) = self.process_relationship_updates(
+                        session_id,
+                        response_content,
+                        None, // TODO: Get relationship_impact from analysis
+                    ).await {
+                        warn!("Failed to process relationship updates: {}", e);
                     }
                 }
                 Err(e) => {
@@ -262,6 +280,24 @@ impl OperationEngine {
             })
             .await;
 
+        Ok(())
+    }
+
+    /// STEP 5: Process relationship updates from LLM response
+    /// Delegates to RelationshipService for actual processing
+    async fn process_relationship_updates(
+        &self,
+        session_id: &str,
+        _response_content: &str,
+        relationship_impact: Option<&str>,
+    ) -> Result<()> {
+        let user_id = session_id;
+        
+        // Delegate to relationship service
+        self.relationship_service
+            .process_llm_updates(user_id, relationship_impact)
+            .await?;
+        
         Ok(())
     }
 
@@ -324,6 +360,7 @@ impl OperationEngine {
 
     /// Run an operation with full orchestration
     /// PHASE 8: Now loads context and stores messages
+    /// STEP 5: Now includes user profile in system prompt
     pub async fn run_operation(
         &self,
         operation_id: &str,
@@ -355,14 +392,13 @@ impl OperationEngine {
             user_content,
         ).await {
             warn!("Failed to process user message embeddings {}: {}", user_msg_id, e);
-            // Non-fatal - message is still saved, just not analyzed/embedded
         }
 
         // PHASE 8 STEP 2: Load memory context
         let recall_context = self.load_memory_context(session_id, user_content).await?;
         
-        // PHASE 8 STEP 3: Build system prompt with context
-        let system_prompt = self.build_system_prompt_with_context(&recall_context);
+        // PHASE 8 STEP 3 + STEP 5: Build system prompt with context AND user profile
+        let system_prompt = self.build_system_prompt_with_context(session_id, &recall_context).await;
         
         // Build messages
         let messages = vec![Message::user(user_content.to_string())];
@@ -372,7 +408,7 @@ impl OperationEngine {
 
         // Build delegation tools
         let tools = get_delegation_tools();
-        let previous_response_id = None; // First turn, no previous response
+        let previous_response_id = None;
 
         // Check cancellation before GPT-5 call
         if let Some(token) = &cancel_token {
@@ -472,14 +508,13 @@ impl OperationEngine {
             self.update_operation_status(operation_id, "generating", event_tx).await?;
         }
 
-        // Complete the operation (now stores in memory)
+        // Complete the operation (now stores in memory + processes relationships)
         self.complete_operation(operation_id, session_id, Some(accumulated_text), event_tx).await?;
 
         Ok(())
     }
 
     /// PHASE 8: Load memory context for operation
-    /// Uses existing MemoryService::parallel_recall_context
     async fn load_memory_context(
         &self,
         session_id: &str,
@@ -487,7 +522,6 @@ impl OperationEngine {
     ) -> Result<RecallContext> {
         debug!("Loading memory context for session: {}", session_id);
         
-        // Use configured recall counts
         let recent_count = CONFIG.context_recent_messages as usize;
         let semantic_count = CONFIG.context_semantic_matches as usize;
         
@@ -504,7 +538,6 @@ impl OperationEngine {
                     context.semantic.len()
                 );
                 
-                // Load summaries if enabled
                 if CONFIG.use_rolling_summaries_in_context {
                     context.rolling_summary = self.memory_service
                         .get_rolling_summary(session_id)
@@ -537,24 +570,48 @@ impl OperationEngine {
         }
     }
 
-    /// PHASE 8: Build system prompt with memory context
-    /// Uses existing UnifiedPromptBuilder instead of duplicating logic
-    fn build_system_prompt_with_context(&self, context: &RecallContext) -> String {
+    /// PHASE 8 + STEP 5: Build system prompt with memory AND relationship context
+    async fn build_system_prompt_with_context(
+        &self,
+        session_id: &str,
+        context: &RecallContext,
+    ) -> String {
         let persona = PersonaOverlay::Default;
-        let tools_json = get_delegation_tools(); // Vec<Value>
+        let tools_json = get_delegation_tools();
         
-        // Convert Vec<Value> to Vec<Tool>
         let tools: Vec<Tool> = tools_json.iter()
             .filter_map(|v| serde_json::from_value::<Tool>(v.clone()).ok())
             .collect();
         
-        UnifiedPromptBuilder::build_system_prompt(
+        // STEP 5: Try to load user profile context
+        let user_id = session_id;
+        let profile_context = self.relationship_service
+            .context_loader()
+            .get_llm_context_string(user_id)
+            .await
+            .ok()
+            .filter(|s| !s.is_empty());
+        
+        if profile_context.is_some() {
+            info!("Loaded profile context for user {}", user_id);
+        }
+        
+        // Build base prompt
+        let mut base_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
             context,
             Some(&tools),
-            None, // No metadata for now
-            None, // No project_id for now
-        )
+            None,
+            None,
+        );
+        
+        // Inject profile context if available
+        if let Some(profile) = profile_context {
+            base_prompt.push_str("\n\n## User Context\n");
+            base_prompt.push_str(&profile);
+        }
+        
+        base_prompt
     }
 
     /// Delegate to DeepSeek with the given tool call
@@ -715,7 +772,7 @@ impl OperationEngine {
             content.to_string(),
             content_hash,
             Some(language.to_string()),
-            None, // diff
+            None,
         );
 
         // Store in database
@@ -916,7 +973,7 @@ impl OperationEngine {
                 .and_then(|s| serde_json::from_str(&s).ok());
 
             OperationEvent {
-                id: 0, // Placeholder - DB auto-generates this
+                id: 0,
                 operation_id: operation_id.to_string(),
                 event_type: row.event_type,
                 created_at: row.created_at,
@@ -929,59 +986,45 @@ impl OperationEngine {
     }
 
     /// PHASE 8.5: Process user message embeddings
-    /// Uses the same smart skip logic as unified_handler to avoid wasting tokens
     async fn process_user_message_embeddings(
         &self,
         message_id: i64,
         content: &str,
     ) -> Result<()> {
-        // Analyze the user message using message pipeline
         let pipeline_result = self.memory_service
             .message_pipeline
             .get_pipeline()
             .analyze_message(content, "user", None)
             .await?;
 
-        // Only process embeddings if analysis says we should
         if !pipeline_result.should_embed {
             debug!("Message {} skipped embedding (low salience or not relevant)", message_id);
             return Ok(());
         }
 
-        // Get the embedding client and multi_store from app_state
-        // Note: These should be passed in or accessible via memory_service
-        // For now, log that we'd process embeddings here
         info!("Would process embeddings for user message {}", message_id);
-        
-        // TODO: Wire up actual embedding processing when we have access to embedding_client
-        // This matches the pattern in unified_handler.rs but needs the right dependencies
         
         Ok(())
     }
 
     /// PHASE 8.5: Process assistant message embeddings
-    /// Smart skip logic for large code responses
     async fn process_assistant_message_embeddings(
         &self,
         message_id: i64,
         content: &str,
     ) -> Result<()> {
-        // Analyze the assistant message
         let pipeline_result = self.memory_service
             .message_pipeline
             .get_pipeline()
             .analyze_message(content, "assistant", None)
             .await?;
 
-        // Only process embeddings if analysis says we should
         if !pipeline_result.should_embed {
             debug!("Message {} skipped embedding (low salience or large code)", message_id);
             return Ok(());
         }
 
         info!("Would process embeddings for assistant message {}", message_id);
-        
-        // TODO: Wire up actual embedding processing when we have access to embedding_client
         
         Ok(())
     }
