@@ -1,8 +1,10 @@
 // src/operations/mod.rs
 
+pub mod engine;
 pub mod types;
 
-use chrono::{DateTime, Utc};
+pub use engine::{OperationEngine, OperationEngineEvent};
+
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -151,116 +153,5 @@ impl Operation {
             delegate_calls: 0,
             metadata: None,
         }
-    }
-    
-    pub fn with_context_snapshot(mut self, snapshot: String) -> Self {
-        self.context_snapshot = Some(snapshot);
-        self
-    }
-    
-    pub fn with_response_id(mut self, response_id: String) -> Self {
-        self.response_id = Some(response_id);
-        self
-    }
-    
-    pub fn with_parent_response(mut self, parent_response_id: String) -> Self {
-        self.parent_response_id = Some(parent_response_id);
-        self
-    }
-    
-    pub fn start(&mut self) {
-        self.status = "running".to_string();
-        self.started_at = Some(chrono::Utc::now().timestamp());
-    }
-    
-    pub fn complete(&mut self, result: Option<String>) {
-        self.status = "completed".to_string();
-        self.completed_at = Some(chrono::Utc::now().timestamp());
-        self.result = result;
-    }
-    
-    pub fn fail(&mut self, error: String) {
-        self.status = "failed".to_string();
-        self.completed_at = Some(chrono::Utc::now().timestamp());
-        self.error = Some(error);
-    }
-}
-
-impl OperationEvent {
-    pub fn new(
-        operation_id: String,
-        event_type: String,
-        sequence_number: i64,
-        event_data: Option<String>,
-    ) -> Self {
-        Self {
-            id: 0, // Will be set by database
-            operation_id,
-            event_type,
-            event_data,
-            sequence_number,
-            created_at: chrono::Utc::now().timestamp(),
-        }
-    }
-}
-
-impl Artifact {
-    pub fn new(
-        operation_id: String,
-        kind: String,
-        content: String,
-    ) -> Self {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        let content_hash = format!("{:x}", hasher.finalize());
-        
-        Self {
-            id: Uuid::new_v4().to_string(),
-            operation_id,
-            kind,
-            file_path: None,
-            content,
-            preview: None,
-            language: None,
-            content_hash: Some(content_hash),
-            previous_artifact_id: None,
-            is_new_file: 1,
-            diff_from_previous: None,
-            related_files: None,
-            dependencies: None,
-            project_context: None,
-            user_requirements: None,
-            constraints: None,
-            created_at: chrono::Utc::now().timestamp(),
-            completed_at: None,
-            applied_at: None,
-            generated_by: None,
-            generation_time_ms: None,
-            context_tokens: None,
-            output_tokens: None,
-            metadata: None,
-        }
-    }
-    
-    pub fn with_file_path(mut self, path: String) -> Self {
-        self.file_path = Some(path);
-        self
-    }
-    
-    pub fn with_language(mut self, language: String) -> Self {
-        self.language = Some(language);
-        self
-    }
-    
-    pub fn with_previous(mut self, previous_artifact_id: String, diff: Option<String>) -> Self {
-        self.previous_artifact_id = Some(previous_artifact_id);
-        self.diff_from_previous = diff;
-        self.is_new_file = 0;
-        self
-    }
-    
-    pub fn mark_applied(&mut self) {
-        self.applied_at = Some(chrono::Utc::now().timestamp());
     }
 }
