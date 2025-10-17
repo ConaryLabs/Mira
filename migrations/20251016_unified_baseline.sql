@@ -1,6 +1,7 @@
 -- migrations/20251016_unified_baseline.sql
 -- Unified baseline schema: Clean slate with zero cruft
 -- Operations (coding) + Messages (conversation) + Relationship + Code Intelligence
+-- UPDATED: Oct 17, 2025 - Added error fields, relaxed programming_lang constraint, added 'relationship' to embedding_head
 
 PRAGMA foreign_keys=OFF;
 
@@ -39,7 +40,14 @@ CREATE TABLE IF NOT EXISTS message_analysis (
     relationship_impact TEXT,
     contains_code BOOLEAN DEFAULT FALSE,
     language TEXT DEFAULT 'en',
-    programming_lang TEXT CHECK(programming_lang IN ('rust', 'typescript', 'javascript', 'python', 'go', 'java') OR programming_lang IS NULL),
+    programming_lang TEXT,  -- UPDATED: Removed CHECK constraint - accepts any language now
+    
+    -- NEW: Error tracking fields
+    contains_error BOOLEAN DEFAULT FALSE,
+    error_type TEXT,
+    error_severity TEXT,
+    error_file TEXT,
+    
     analyzed_at INTEGER DEFAULT (strftime('%s','now')),
     analysis_version TEXT,
     routed_to_heads TEXT NOT NULL DEFAULT '[]',
@@ -52,6 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_analysis_salience ON message_analysis(salience);
 CREATE INDEX IF NOT EXISTS idx_analysis_original_salience ON message_analysis(original_salience);
 CREATE INDEX IF NOT EXISTS idx_analysis_contains_code ON message_analysis(contains_code);
 CREATE INDEX IF NOT EXISTS idx_analysis_message_id ON message_analysis(message_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_contains_error ON message_analysis(contains_error);
+CREATE INDEX IF NOT EXISTS idx_analysis_error_severity ON message_analysis(error_severity);
 
 -- ============================================================================
 -- EMBEDDINGS
@@ -62,7 +72,7 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
     message_id INTEGER NOT NULL REFERENCES memory_entries(id) ON DELETE CASCADE,
     qdrant_point_id TEXT NOT NULL,
     collection_name TEXT NOT NULL,
-    embedding_head TEXT NOT NULL CHECK(embedding_head IN ('semantic','code','summary','documents')),
+    embedding_head TEXT NOT NULL CHECK(embedding_head IN ('semantic','code','summary','documents','relationship')),  -- UPDATED: Added 'relationship'
     generated_at INTEGER DEFAULT (strftime('%s','now'))
 );
 
@@ -528,6 +538,6 @@ CREATE TABLE IF NOT EXISTS schema_metadata (
 );
 
 INSERT INTO schema_metadata (version, description)
-VALUES ('3.0.0', 'Clean baseline: Operations (coding) + Messages (conversation) + Relationship + Code Intelligence');
+VALUES ('3.0.0', 'Clean baseline: Operations (coding) + Messages (conversation) + Relationship + Code Intelligence + Error tracking');
 
 PRAGMA foreign_keys=ON;

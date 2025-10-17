@@ -5,6 +5,7 @@ pub mod storage;
 pub mod pattern_engine;
 pub mod context_loader;
 pub mod service;
+pub mod facts_service;  // NEW: Facts service
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -17,6 +18,7 @@ pub use storage::RelationshipStorage;
 pub use pattern_engine::PatternEngine;
 pub use context_loader::ContextLoader;
 pub use service::RelationshipService;
+pub use facts_service::FactsService;  // NEW: Export facts service
 
 /// User's profile and preferences
 /// Maps directly to `user_profile` table
@@ -105,12 +107,12 @@ pub struct MemoryFact {
     // Confidence
     #[sqlx(default)]
     pub confidence: f64,
-    pub source: Option<String>, // Where this came from
+    pub source: Option<String>, // Where this came from (maps to context in DB)
     
     // Timing
     #[sqlx(default)]
-    pub learned_at: i64,
-    pub last_confirmed: Option<i64>,
+    pub learned_at: i64,  // Maps to created_at in DB
+    pub last_confirmed: Option<i64>,  // Maps to last_referenced in DB
     #[sqlx(default)]
-    pub times_referenced: i64,
+    pub times_referenced: i64,  // Maps to reference_count in DB
 }

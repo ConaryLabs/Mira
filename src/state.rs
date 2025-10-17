@@ -21,6 +21,7 @@ use crate::git::store::GitStore;
 use crate::git::client::GitClient;
 use crate::operations::OperationEngine;
 use crate::api::ws::chat::routing::MessageRouter;
+use crate::relationship::{RelationshipService, FactsService};  // NEW: Import relationship services
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -49,6 +50,8 @@ pub struct AppState {
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
     pub operation_engine: Arc<OperationEngine>,
     pub message_router: Arc<MessageRouter>,
+    pub relationship_service: Arc<RelationshipService>,  // NEW: Relationship service
+    pub facts_service: Arc<FactsService>,                 // NEW: Facts service
 }
 
 impl AppState {
@@ -109,13 +112,24 @@ impl AppState {
             embedding_client.clone(),
         ));
         
-        // PHASE 8: Initialize OperationEngine WITH MemoryService
-        info!("Initializing OperationEngine with memory integration");
+        // NEW: Initialize relationship services
+        info!("Initializing RelationshipService");
+        let relationship_service = Arc::new(RelationshipService::new(
+            Arc::new(pool.clone())
+        ));
+        
+        info!("Initializing FactsService");
+        let facts_service = Arc::new(FactsService::new(pool.clone()));
+        
+        // PHASE 8: Initialize OperationEngine WITH MemoryService AND Relationship Services
+        info!("Initializing OperationEngine with memory and relationship integration");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
             (*gpt5_provider).clone(),
             (*deepseek_provider).clone(),
-            memory_service.clone(), // ADDED: Pass memory service
+            memory_service.clone(),
+            relationship_service.clone(),  // NEW: Pass relationship service
+            facts_service.clone(),          // NEW: Pass facts service
         ));
         
         // Initialize MessageRouter
@@ -137,6 +151,8 @@ impl AppState {
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),
             operation_engine,
             message_router,
+            relationship_service,  // NEW: Add to struct
+            facts_service,          // NEW: Add to struct
         })
     }
 }
