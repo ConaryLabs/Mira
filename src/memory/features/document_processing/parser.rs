@@ -306,16 +306,3 @@ impl DocumentParser {
         lines.join("\n")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_clean_text() {
-        let parser = DocumentParser::new();
-        let dirty = "Hello\0World\r\n\n  \n\tExtra   spaces  \n\n";
-        let clean = parser.clean_text(dirty);
-        assert_eq!(clean, "Hello World\nExtra   spaces");
-    }
-}

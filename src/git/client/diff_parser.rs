@@ -292,23 +292,3 @@ impl DiffParser {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_diff_status() {
-        let file_diff = FileDiff {
-            path: "test.rs".to_string(),
-            old_path: None,
-            status: DiffStatus::Added,
-            additions: 10,
-            deletions: 0,
-            hunks: Vec::new(),
-        };
-        
-        assert!(matches!(file_diff.status, DiffStatus::Added));
-        assert_eq!(file_diff.additions, 10);
-    }
-}

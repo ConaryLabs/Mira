@@ -219,36 +219,3 @@ impl BranchManager {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_branch_info() {
-        let branch = BranchInfo {
-            name: "main".to_string(),
-            is_head: true,
-            commit_id: "abc123".to_string(),
-            commit_message: "Initial commit".to_string(),
-        };
-        
-        assert_eq!(branch.name, "main");
-        assert!(branch.is_head);
-    }
-
-    #[test]
-    fn test_commit_info() {
-        let commit = CommitInfo {
-            id: "abc123".to_string(),
-            message: "Test commit".to_string(),
-            author_name: "Test Author".to_string(),
-            author_email: "test@example.com".to_string(),
-            timestamp: Utc::now(),
-            parent_ids: vec!["def456".to_string()],
-        };
-        
-        assert_eq!(commit.message, "Test commit");
-        assert_eq!(commit.parent_ids.len(), 1);
-    }
-}

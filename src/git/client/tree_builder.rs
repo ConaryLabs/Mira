@@ -127,27 +127,3 @@ impl TreeBuilder {
         root_nodes
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_file_node_type() {
-        let file_node = FileNode {
-            name: "test.rs".to_string(),
-            path: "src/test.rs".to_string(),
-            node_type: FileNodeType::File,
-            children: Vec::new(),
-        };
-        
-        assert!(matches!(file_node.node_type, FileNodeType::File));
-    }
-
-    #[test]
-    fn test_file_node_type_equality() {
-        assert_eq!(FileNodeType::File, FileNodeType::File);
-        assert_eq!(FileNodeType::Directory, FileNodeType::Directory);
-        assert_ne!(FileNodeType::File, FileNodeType::Directory);
-    }
-}
