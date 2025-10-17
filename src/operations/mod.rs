@@ -2,8 +2,10 @@
 
 pub mod engine;
 pub mod types;
+pub mod delegation_tools;
 
 pub use engine::{OperationEngine, OperationEngineEvent};
+pub use delegation_tools::{get_delegation_tools, parse_tool_call};
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -65,63 +67,31 @@ pub struct Operation {
 /// Maps directly to `operation_events` table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OperationEvent {
-    #[sqlx(default)]
-    pub id: i64,
+    pub id: String,
     pub operation_id: String,
-    pub event_type: String,
-    pub event_data: Option<String>, // JSON
-    pub sequence_number: i64,
-    #[sqlx(default)]
+    pub event_type: String, // e.g., "started", "analysis", "delegated", "completed"
     pub created_at: i64,
+    pub sequence_number: i64,
+    pub payload: Option<String>, // JSON
 }
 
-/// Generated code artifacts from operations
+/// Artifacts generated during operations (code files, documents, etc.)
 /// Maps directly to `artifacts` table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Artifact {
     pub id: String,
     pub operation_id: String,
-    
-    // Artifact content
-    pub kind: String, // "file", "snippet", "diff", "test"
+    pub kind: String, // e.g., "code", "document", "diagram"
     pub file_path: Option<String>,
     pub content: String,
-    pub preview: Option<String>,
-    
-    // Code-specific fields
+    pub content_hash: String, // SHA-256 for deduplication
     pub language: Option<String>,
-    
-    // Change tracking
-    pub content_hash: Option<String>, // SHA-256 of content
-    pub previous_artifact_id: Option<String>,
-    #[sqlx(default)]
-    pub is_new_file: i64, // SQLite boolean (0 or 1)
-    pub diff_from_previous: Option<String>,
-    
-    // Context used for generation
-    pub related_files: Option<String>, // JSON array
-    pub dependencies: Option<String>, // JSON array
-    pub project_context: Option<String>, // JSON
-    pub user_requirements: Option<String>,
-    pub constraints: Option<String>,
-    
-    // Timing
-    #[sqlx(default)]
+    pub diff: Option<String>,
     pub created_at: i64,
-    pub completed_at: Option<i64>,
-    pub applied_at: Option<i64>, // When user applied to codebase
-    
-    // Generation metadata
-    pub generated_by: Option<String>, // e.g., "deepseek-reasoner-3.2"
-    pub generation_time_ms: Option<i64>,
-    pub context_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    
-    // Metadata
-    pub metadata: Option<String>, // JSON
 }
 
 impl Operation {
+    /// Create a new operation
     pub fn new(session_id: String, kind: String, user_message: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
@@ -152,6 +122,50 @@ impl Operation {
             cost_usd: None,
             delegate_calls: 0,
             metadata: None,
+        }
+    }
+}
+
+impl OperationEvent {
+    /// Create a new event
+    pub fn new(
+        operation_id: String,
+        event_type: String,
+        sequence_number: i64,
+        payload: Option<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            operation_id,
+            event_type,
+            created_at: chrono::Utc::now().timestamp(),
+            sequence_number,
+            payload,
+        }
+    }
+}
+
+impl Artifact {
+    /// Create a new artifact
+    pub fn new(
+        operation_id: String,
+        kind: String,
+        file_path: Option<String>,
+        content: String,
+        content_hash: String,
+        language: Option<String>,
+        diff: Option<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            operation_id,
+            kind,
+            file_path,
+            content,
+            content_hash,
+            language,
+            diff,
+            created_at: chrono::Utc::now().timestamp(),
         }
     }
 }

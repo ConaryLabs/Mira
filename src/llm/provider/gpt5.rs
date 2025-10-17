@@ -1,22 +1,113 @@
 // src/llm/provider/gpt5.rs
-// GPT-5 Responses API implementation with json_schema
+// GPT-5 Responses API implementation with streaming + tool calling
 
-use super::{LlmProvider, Message, Response, ToolResponse, TokenUsage, FunctionCall, ToolContext};
+use super::{LlmProvider, Message, Response, TokenUsage};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::any::Any;
+use std::pin::Pin;
 use std::time::Instant;
 use tracing::{debug, error, warn};
 
-// Streaming imports
-use futures::stream::{Stream, StreamExt};
-use tokio_stream::wrappers::LinesStream;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use std::pin::Pin;
-use crate::llm::provider::stream::StreamEvent;
-use crate::config::CONFIG;
+/// SSE stream that properly buffers lines across byte chunks
+struct SseStream<S> {
+    inner: S,
+    buffer: String,
+}
+
+impl<S> SseStream<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            buffer: String::new(),
+        }
+    }
+}
+
+impl<S, E> Stream for SseStream<S>
+where
+    S: Stream<Item = Result<bytes::Bytes, E>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    type Item = Result<String>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+
+        loop {
+            // Check if we have a complete line in buffer
+            if let Some(newline_pos) = self.buffer.find('\n') {
+                let line = self.buffer[..newline_pos].to_string();
+                self.buffer.drain(..=newline_pos);
+                return Poll::Ready(Some(Ok(line)));
+            }
+
+            // Need more data
+            match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    match String::from_utf8(bytes.to_vec()) {
+                        Ok(text) => {
+                            self.buffer.push_str(&text);
+                            // Continue loop to check for complete lines
+                        }
+                        Err(e) => {
+                            return Poll::Ready(Some(Err(anyhow!(
+                                "Invalid UTF-8 in stream: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Some(Err(anyhow!("Stream error: {}", e))));
+                }
+                Poll::Ready(None) => {
+                    // Stream ended, return remaining buffer if non-empty
+                    if !self.buffer.is_empty() {
+                        let line = std::mem::take(&mut self.buffer);
+                        return Poll::Ready(Some(Ok(line)));
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+/// Stream events from GPT-5 Responses API
+#[derive(Debug, Clone)]
+pub enum Gpt5StreamEvent {
+    /// Text content delta
+    TextDelta { delta: String },
+    /// Reasoning content delta  
+    ReasoningDelta { delta: String },
+    /// Tool call started
+    ToolCallStart { id: String, name: String },
+    /// Tool call arguments delta
+    ToolCallArgumentsDelta { id: String, delta: String },
+    /// Tool call completed
+    ToolCallComplete {
+        id: String,
+        name: String,
+        arguments: Value,
+    },
+    /// Response completed
+    Done {
+        response_id: String,
+        input_tokens: i64,
+        output_tokens: i64,
+        reasoning_tokens: i64,
+    },
+    /// Error occurred
+    Error { message: String },
+}
 
 pub struct Gpt5Provider {
     client: Client,
@@ -44,366 +135,130 @@ impl Gpt5Provider {
             reasoning: normalize_reasoning(&reasoning),
         }
     }
-    
-    fn format_input(&self, messages: Vec<Message>, system: String) -> Vec<Value> {
-        let mut input = vec![json!({
-            "role": "system",
-            "content": system
-        })];
-        
-        for msg in messages {
-            input.push(json!({
-                "role": msg.role,
-                "content": msg.content
-            }));
-        }
-        
-        input
-    }
-    
-    fn flatten_tool_schema(&self, tool: &Value) -> Value {
-        if tool["type"] == "function" {
-            if let Some(function) = tool.get("function") {
-                let mut out = function.clone();
-                if let Some(obj) = out.as_object_mut() {
-                    obj.insert("type".to_string(), json!("function"));
-                }
-                return out;
-            }
-        }
-        tool.clone()
-    }
-    
-    /// Build request with json_schema for structured output
-    fn build_request(
+
+    /// Create a response with tools (non-streaming)
+    /// Returns response_id for multi-turn tracking
+    pub async fn create_with_tools(
         &self,
         messages: Vec<Message>,
         system: String,
         tools: Vec<Value>,
-        context: Option<ToolContext>,
-        reasoning: Option<&str>,
-        verbosity: Option<&str>,
-    ) -> Value {
-        let reasoning = reasoning.unwrap_or(&self.reasoning);
-        let verbosity = verbosity.unwrap_or(&self.verbosity);
-        
-        let mut body = json!({
-            "model": self.model,
-            "stream": true,
-            "input": self.format_input(messages, system),
-            "max_output_tokens": self.max_tokens,
-            "reasoning": {
-                "effort": reasoning
-            },
-            "text": {
-                "verbosity": verbosity,
-                "format": {
-                    "type": "json_schema",
-                    "name": "structured_response",
-                    "strict": true,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "output": {
-                                "type": "string",
-                                "description": "Your actual response to the user"
-                            },
-                            "analysis": {
-                                "type": "object",
-                                "properties": {
-                                    "salience": {
-                                        "type": "number",
-                                        "description": "Importance score 0.0-1.0"
-                                    },
-                                    "topics": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                        "description": "Relevant topics from this exchange"
-                                    },
-                                    "contains_code": {
-                                        "type": "boolean",
-                                        "description": "Whether response contains code"
-                                    },
-                                    "programming_lang": {
-                                        "type": ["string", "null"],
-                                        "description": "Programming language if code present"
-                                    },
-                                    "contains_error": {
-                                        "type": "boolean",
-                                        "description": "Whether discussing an error"
-                                    },
-                                    "error_type": {
-                                        "type": ["string", "null"],
-                                        "description": "Type of error if present"
-                                    },
-                                    "routed_to_heads": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "string",
-                                            "enum": ["semantic", "code", "summary", "documents", "relationship"]
-                                        },
-                                        "description": "Memory collection routing. semantic=general conversation, code=programming content, summary=session summaries, documents=uploaded files, relationship=emotional/personal exchanges",
-                                        "minItems": 1
-                                    },
-                                    "language": {
-                                        "type": "string",
-                                        "description": "ISO language code"
-                                    }
-                                },
-                                "required": [
-                                    "salience",
-                                    "topics",
-                                    "contains_code",
-                                    "programming_lang",
-                                    "contains_error",
-                                    "error_type",
-                                    "routed_to_heads",
-                                    "language"
-                                ],
-                                "additionalProperties": false
-                            }
-                        },
-                        "required": ["output", "analysis"],
-                        "additionalProperties": false
-                    }
-                }
-            }
-        });
-        
-        // Add function tools if present
-        if !tools.is_empty() {
-            let flattened_tools: Vec<Value> = tools.iter()
-                .map(|t| self.flatten_tool_schema(t))
-                .collect();
-            
-            if !flattened_tools.is_empty() {
-                body["tools"] = Value::Array(flattened_tools);
-            }
-        }
-        
-        // Handle multi-turn with previous_response_id
-        if let Some(ToolContext::Gpt5 { previous_response_id, tool_outputs }) = context {
-            body["previous_response_id"] = json!(previous_response_id);
-            
-            if !tool_outputs.is_empty() {
-                debug!("GPT-5 multi-turn: sending {} tool outputs", tool_outputs.len());
-                body["input"] = json!(tool_outputs);
-            } else {
-                body["input"] = json!([]);
-            }
-            
-            debug!("GPT-5 multi-turn: continuing from {}", previous_response_id);
-        }
-        
-        body
-    }
-    
-    /// Extract text from json_schema response
-    fn extract_text(&self, response: &Value) -> String {
-        if CONFIG.debug_logging {
-            debug!("RAW GPT-5 RESPONSE: {}", serde_json::to_string_pretty(response).unwrap_or_else(|_| "Failed to serialize".to_string()));
-        }
-        
-        // Check for text content in output array
-        if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
-            for item in output_array {
-                if item.get("type").and_then(|t| t.as_str()) == Some("message") {
-                    if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
-                        for content in content_array {
-                            if content.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
-                                    debug!("Found JSON text output (length: {})", text.len());
-                                    return text.to_string();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        error!("Failed to extract text from GPT-5 response - no text content found");
-        String::new()
-    }
-    
-    /// Extract function calls from response
-    fn extract_function_calls(&self, response: &Value) -> Vec<FunctionCall> {
-        let mut calls = Vec::new();
-        
-        if let Some(output_array) = response.get("output").and_then(|o| o.as_array()) {
-            for item in output_array {
-                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                    if let (Some(id), Some(name), Some(args)) = (
-                        item.get("id").and_then(|i| i.as_str()),
-                        item.get("name").and_then(|n| n.as_str()),
-                        item.get("arguments"),
-                    ) {
-                        calls.push(FunctionCall {
-                            id: id.to_string(),
-                            name: name.to_string(),
-                            arguments: args.clone(),
-                        });
-                    }
-                }
-            }
-        }
-        
-        calls
-    }
-    
-    /// Extract token usage
-    fn extract_tokens(&self, response: &Value) -> TokenUsage {
-        let input = response
-            .pointer("/usage/input_tokens")
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0);
-        
-        let output = response
-            .pointer("/usage/output_tokens")
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0);
-        
-        let reasoning = response
-            .pointer("/usage/reasoning_tokens")
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0);
-        
-        if reasoning > 0 {
-            let reasoning_percent = (reasoning as f64 / output as f64) * 100.0;
-            debug!("GPT-5 reasoning: {} tokens ({:.1}% of output)", reasoning, reasoning_percent);
-        }
-        
-        TokenUsage {
-            input,
-            output,
-            reasoning,
-            cached: 0,
-        }
-    }
-    
-    /// Non-streaming tool calling (provider-specific method)
-    pub async fn chat_with_tools_internal(
-        &self,
-        messages: Vec<Message>,
-        system: String,
-        tools: Vec<Value>,
-        context: Option<ToolContext>,
-        reasoning_override: Option<&str>,
-        verbosity_override: Option<&str>,
-    ) -> Result<ToolResponse> {
+        previous_response_id: Option<String>,
+    ) -> Result<Gpt5ToolResponse> {
         let start = Instant::now();
-        
+
         let body = self.build_request(
             messages,
             system,
             tools,
-            context,
-            reasoning_override,
-            verbosity_override,
+            previous_response_id,
+            false, // non-streaming
         );
-        
-        let response = self.client
-            .post("https://api.openai.com/v1/responses")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await?;
-        
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
-        }
-        
-        let raw = response.json::<Value>().await?;
-        let latency = start.elapsed().as_millis() as i64;
-        let response_id = raw["id"].as_str().unwrap_or("").to_string();
-        
-        Ok(ToolResponse {
-            id: response_id,
-            text_output: self.extract_text(&raw),
-            function_calls: self.extract_function_calls(&raw),
-            tokens: self.extract_tokens(&raw),
-            latency_ms: latency,
-            raw_response: raw,
-        })
-    }
-    
-    /// Streaming tool calling (provider-specific method)
-    pub async fn chat_with_tools_streaming(
-        &self,
-        messages: Vec<Message>,
-        system: String,
-        tools: Vec<Value>,
-        context: Option<ToolContext>,
-        reasoning_override: Option<&str>,
-        verbosity_override: Option<&str>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-        let body = self.build_request(
-            messages,
-            system,
-            tools,
-            context,
-            reasoning_override,
-            verbosity_override,
-        );
-        
-        if CONFIG.debug_logging {
-            debug!("GPT-5 streaming request: {}", serde_json::to_string_pretty(&body)?);
-        }
-        
-        let response = self.client
+
+        debug!("GPT-5 request: {}", serde_json::to_string_pretty(&body)?);
+
+        let response = self
+            .client
             .post("https://api.openai.com/v1/responses")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await?;
-            error!("GPT-5 streaming API error {}: {}", status, error_text);
-            return Err(anyhow!("GPT-5 streaming API error {}: {}", status, error_text));
+            error!("GPT-5 API error {}: {}", status, error_text);
+            return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
         }
-        
-        let stream = response.bytes_stream();
-        let reader = stream.map(|r| {
-            r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-        });
-        let async_read = tokio_util::io::StreamReader::new(reader);
-        let buf_reader = BufReader::new(async_read);
-        let lines = buf_reader.lines();
-        
-        if CONFIG.debug_logging {
-            debug!("GPT-5 stream initialized");
+
+        let response_json: Value = response.json().await?;
+        debug!("GPT-5 response: {}", serde_json::to_string_pretty(&response_json)?);
+
+        // Extract response_id
+        let response_id = response_json
+            .get("id")
+            .and_then(|id| id.as_str())
+            .ok_or_else(|| anyhow!("Missing response_id in GPT-5 response"))?
+            .to_string();
+
+        // Extract text content
+        let text = self.extract_text(&response_json);
+
+        // Extract tool calls
+        let tool_calls = self.extract_tool_calls(&response_json);
+
+        // Extract token usage
+        let tokens = self.extract_tokens(&response_json);
+
+        let latency = start.elapsed().as_millis() as i64;
+
+        Ok(Gpt5ToolResponse {
+            response_id,
+            content: text,
+            tool_calls,
+            model: self.model.clone(),
+            tokens,
+            latency_ms: latency,
+        })
+    }
+
+    /// Create a streaming response with tools
+    /// Returns a stream of events + final response_id
+    pub async fn create_stream_with_tools(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        previous_response_id: Option<String>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Gpt5StreamEvent>> + Send>>> {
+        let body = self.build_request(
+            messages,
+            system,
+            tools,
+            previous_response_id,
+            true, // streaming
+        );
+
+        debug!("GPT-5 streaming request: {}", serde_json::to_string_pretty(&body)?);
+
+        let response = self
+            .client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await?;
+            error!("GPT-5 API streaming error {}: {}", status, error_text);
+            return Err(anyhow!("GPT-5 API streaming error {}: {}", status, error_text));
         }
-        
-        Ok(Box::pin(LinesStream::new(lines).filter_map(move |line| async move {
-            match line {
+
+        // Create buffered SSE stream that properly handles line boundaries
+        let stream = SseStream::new(response.bytes_stream());
+
+        Ok(Box::pin(stream.filter_map(|result| async move {
+            match result {
                 Ok(line) => {
-                    if line.is_empty() || line.starts_with(": ") {
+                    if line.is_empty() || !line.starts_with("data: ") {
                         return None;
                     }
-                    
-                    let data = line.strip_prefix("data: ")?;
+
+                    let data = &line[6..]; // Skip "data: "
+
                     if data == "[DONE]" {
-                        if CONFIG.debug_logging {
-                            debug!("GPT-5 SSE: Received [DONE] marker");
-                        }
-                        return Some(Ok(StreamEvent::Done {
-                            response_id: String::new(),
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            reasoning_tokens: 0,
-                            final_text: None,
-                        }));
+                        return None;
                     }
-                    
+
                     match serde_json::from_str::<Value>(data) {
-                        Ok(json) => parse_gpt5_streaming_event(&json),
+                        Ok(json) => parse_sse_event(&json),
                         Err(e) => {
-                            error!("Failed to parse GPT-5 SSE: {} - Line: {}", e, data);
+                            warn!("Failed to parse GPT-5 SSE: {} - Line: {}", e, data);
                             None
                         }
                     }
@@ -412,10 +267,223 @@ impl Gpt5Provider {
             }
         })))
     }
+
+    /// Build request body for Responses API
+    fn build_request(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        previous_response_id: Option<String>,
+        stream: bool,
+    ) -> Value {
+        // Format input messages
+        let mut input = vec![json!({
+            "role": "system",
+            "content": system
+        })];
+
+        for msg in messages {
+            input.push(json!({
+                "role": msg.role,
+                "content": msg.content
+            }));
+        }
+
+        let mut body = json!({
+            "model": self.model,
+            "input": input,
+            "max_output_tokens": self.max_tokens,
+            "text": {
+                "verbosity": self.verbosity
+            },
+            "reasoning": {
+                "effort": self.reasoning,
+                "summary": "auto"
+            },
+            "store": true, // Store responses for multi-turn tracking
+            "stream": stream,
+        });
+
+        // Add tools if present
+        if !tools.is_empty() {
+            body["tools"] = Value::Array(tools);
+            body["tool_choice"] = json!({"type": "auto"});
+        }
+
+        // Multi-turn: link to previous response
+        if let Some(prev_id) = previous_response_id {
+            body["previous_response_id"] = json!(prev_id);
+            debug!("GPT-5 multi-turn: continuing from {}", prev_id);
+        }
+
+        body
+    }
+
+    /// Extract text from response
+    fn extract_text(&self, response: &Value) -> String {
+        // Try output_text first (convenience field)
+        if let Some(text) = response.get("output_text").and_then(|t| t.as_str()) {
+            return text.to_string();
+        }
+
+        // Fall back to output array
+        if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
+            let mut text = String::new();
+            for item in output {
+                if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                    if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                        for part in content {
+                            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
+                                    text.push_str(t);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return text;
+        }
+
+        String::new()
+    }
+
+    /// Extract tool calls from response
+    fn extract_tool_calls(&self, response: &Value) -> Vec<ToolCall> {
+        let mut calls = Vec::new();
+
+        if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
+            for item in output {
+                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
+                    if let (Some(id), Some(name), Some(args)) = (
+                        item.get("call_id").and_then(|i| i.as_str()),
+                        item.get("name").and_then(|n| n.as_str()),
+                        item.get("arguments"),
+                    ) {
+                        calls.push(ToolCall {
+                            id: id.to_string(),
+                            name: name.to_string(),
+                            arguments: args.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        calls
+    }
+
+    /// Extract token usage
+    fn extract_tokens(&self, response: &Value) -> TokenUsage {
+        let usage = response.get("usage");
+        TokenUsage {
+            input: usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0),
+            output: usage
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0),
+            reasoning: usage
+                .and_then(|u| u.get("output_tokens_details"))
+                .and_then(|d| d.get("reasoning_tokens"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0),
+            cached: 0,
+        }
+    }
 }
 
-// Normalize verbosity values
-fn normalize_verbosity(v: &str) -> String {
+/// Response from GPT-5 with tool calling
+#[derive(Debug, Clone)]
+pub struct Gpt5ToolResponse {
+    pub response_id: String,
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub model: String,
+    pub tokens: TokenUsage,
+    pub latency_ms: i64,
+}
+
+/// Tool call from GPT-5
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+/// Parse SSE event from GPT-5
+fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
+    let event_type = json.get("type")?.as_str()?;
+
+    match event_type {
+        "response.output_text.delta" => {
+            let delta = json.get("delta")?.as_str()?.to_string();
+            Some(Ok(Gpt5StreamEvent::TextDelta { delta }))
+        }
+
+        "response.reasoning.delta" => {
+            let delta = json.get("delta")?.as_str()?.to_string();
+            Some(Ok(Gpt5StreamEvent::ReasoningDelta { delta }))
+        }
+
+        "response.function_call_arguments.delta" => {
+            let id = json.get("call_id")?.as_str()?.to_string();
+            let delta = json.get("delta")?.as_str()?.to_string();
+            Some(Ok(Gpt5StreamEvent::ToolCallArgumentsDelta { id, delta }))
+        }
+
+        "response.function_call_arguments.done" => {
+            let id = json.get("call_id")?.as_str()?.to_string();
+            let name = json.get("name")?.as_str()?.to_string();
+            let arguments = json.get("arguments")?.clone();
+            Some(Ok(Gpt5StreamEvent::ToolCallComplete {
+                id,
+                name,
+                arguments,
+            }))
+        }
+
+        "response.completed" | "response.done" => {
+            let response_id = json.get("id")?.as_str()?.to_string();
+            let usage = json.get("usage")?;
+
+            let input_tokens = usage.get("input_tokens")?.as_i64().unwrap_or(0);
+            let output_tokens = usage.get("output_tokens")?.as_i64().unwrap_or(0);
+            let reasoning_tokens = usage
+                .get("output_tokens_details")
+                .and_then(|d| d.get("reasoning_tokens"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0);
+
+            Some(Ok(Gpt5StreamEvent::Done {
+                response_id,
+                input_tokens,
+                output_tokens,
+                reasoning_tokens,
+            }))
+        }
+
+        "response.error" | "error" => {
+            let message = json
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown error")
+                .to_string();
+            Some(Ok(Gpt5StreamEvent::Error { message }))
+        }
+
+        // Ignore other event types
+        _ => None,
+    }
+}
+
+/// Normalize verbosity values (public for testing)
+pub fn normalize_verbosity(v: &str) -> String {
     match v.to_lowercase().as_str() {
         "low" | "minimal" | "concise" => "low".to_string(),
         "high" | "detailed" | "verbose" => "high".to_string(),
@@ -423,10 +491,10 @@ fn normalize_verbosity(v: &str) -> String {
     }
 }
 
-// Normalize reasoning values
-fn normalize_reasoning(r: &str) -> String {
+/// Normalize reasoning values (public for testing)
+pub fn normalize_reasoning(r: &str) -> String {
     match r.to_lowercase().as_str() {
-        "minimal" | "low" | "quick" => "low".to_string(),
+        "minimal" | "quick" => "low".to_string(),
         "high" | "thorough" | "deep" => "high".to_string(),
         _ => "medium".to_string(),
     }
@@ -437,188 +505,34 @@ impl LlmProvider for Gpt5Provider {
     fn name(&self) -> &'static str {
         "gpt-5"
     }
-    
+
     fn as_any(&self) -> &dyn Any {
         self
     }
-    
+
     async fn chat(&self, messages: Vec<Message>, system: String) -> Result<Response> {
-        let start = Instant::now();
-        
-        let body = self.build_request(
-            messages,
-            system,
-            vec![],
-            None,
-            None,
-            None,
-        );
-        
-        let response = self.client
-            .post("https://api.openai.com/v1/responses")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+        // Simple chat without tools
+        let response = self
+            .create_with_tools(messages, system, vec![], None)
             .await?;
-        
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await?;
-            error!("GPT-5 API error {}: {}", status, error_text);
-            return Err(anyhow!("GPT-5 API error {}: {}", status, error_text));
-        }
-        
-        let response_json: Value = response.json().await?;
-        let text = self.extract_text(&response_json);
-        let tokens = self.extract_tokens(&response_json);
-        let latency = start.elapsed().as_millis() as i64;
-        
+
         Ok(Response {
-            content: text,
-            model: self.model.clone(),
-            tokens,
-            latency_ms: latency,
+            content: response.content,
+            model: response.model,
+            tokens: response.tokens,
+            latency_ms: response.latency_ms,
         })
     }
-    
+
+    // Note: chat_with_tools is defined in the LlmProvider trait
+    // We don't implement it here since we have create_with_tools which is more specific
     async fn chat_with_tools(
         &self,
-        messages: Vec<Message>,
-        system: String,
-        tools: Vec<Value>,
-        context: Option<ToolContext>,
-    ) -> Result<ToolResponse> {
-        self.chat_with_tools_internal(messages, system, tools, context, None, None).await
-    }
-}
-
-fn parse_gpt5_streaming_event(json: &Value) -> Option<Result<StreamEvent>> {
-    let event_type = json.get("type")?.as_str()?;
-    
-    match event_type {
-        // Token-by-token streaming - THE ONLY PLACE WE ACCUMULATE TEXT
-        "response.output_text.delta" => {
-            let delta = json.get("delta")?.as_str()?.to_string();
-            Some(Ok(StreamEvent::TextDelta { delta }))
-        }
-        
-        // Reasoning token streaming
-        "response.reasoning.delta" => {
-            let delta = json.get("delta")?.as_str()?.to_string();
-            Some(Ok(StreamEvent::ReasoningDelta { delta }))
-        }
-        
-        // Text output done - ignore to avoid duplicate accumulation
-        "response.output_text.done" => {
-            if CONFIG.debug_logging {
-                debug!("Text output complete (ignoring to prevent duplication)");
-            }
-            None
-        }
-        
-        // Content part done - ignore to avoid duplicate accumulation
-        "response.content_part.done" => {
-            if CONFIG.debug_logging {
-                debug!("Content part complete (ignoring to prevent duplication)");
-            }
-            None
-        }
-        
-        // Tool call argument streaming
-        "response.function_call_arguments.delta" => {
-            let id = json.get("call_id")?.as_str()?.to_string();
-            let delta = json.get("delta")?.as_str()?.to_string();
-            Some(Ok(StreamEvent::ToolCallArgumentsDelta { id, delta }))
-        }
-        
-        // Tool call complete
-        "response.function_call_arguments.done" => {
-            let id = json.get("call_id")?.as_str()?.to_string();
-            let name = json.get("name")?.as_str()?.to_string();
-            let arguments = json.get("arguments")?.clone();
-            Some(Ok(StreamEvent::ToolCallComplete {
-                id,
-                name,
-                arguments,
-            }))
-        }
-        
-        // Output item done - extract function calls only, not text
-        "response.output_item.done" => {
-            if let Some(item) = json.get("item") {
-                // Extract function calls (GPT-5's wrapped structure)
-                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                    if let (Some(call_id), Some(name), Some(args)) = (
-                        item.get("call_id").and_then(|i| i.as_str()),
-                        item.get("name").and_then(|n| n.as_str()),
-                        item.get("arguments").and_then(|a| a.as_str()),
-                    ) {
-                        if CONFIG.debug_logging {
-                            debug!("Function call: {} ({})", name, call_id);
-                        }
-                        
-                        let arguments: Value = serde_json::from_str(args)
-                            .unwrap_or_else(|e| {
-                                warn!("Failed to parse tool arguments: {}", e);
-                                json!({})
-                            });
-                        
-                        return Some(Ok(StreamEvent::ToolCallComplete {
-                            id: call_id.to_string(),
-                            name: name.to_string(),
-                            arguments,
-                        }));
-                    }
-                }
-                
-                // Ignore text content - already accumulated via deltas
-                if CONFIG.debug_logging {
-                    debug!("Output item complete (ignoring text to prevent duplication)");
-                }
-            }
-            None
-        }
-        
-        // Stream completion with token stats
-        "response.completed" | "response.done" => {
-            let response_obj = json.get("response").unwrap_or(json);
-            
-            let response_id = response_obj.get("id")
-                .and_then(|id| id.as_str())
-                .unwrap_or("")
-                .to_string();
-            
-            let input_tokens = response_obj.pointer("/usage/input_tokens")
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0);
-            
-            let output_tokens = response_obj.pointer("/usage/output_tokens")
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0);
-            
-            let reasoning_tokens = response_obj.pointer("/usage/output_tokens_details/reasoning_tokens")
-                .or_else(|| response_obj.pointer("/usage/reasoning_tokens"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0);
-            
-            if CONFIG.debug_logging {
-                debug!("Stream complete: {} input, {} output, {} reasoning tokens", 
-                       input_tokens, output_tokens, reasoning_tokens);
-            }
-            
-            Some(Ok(StreamEvent::Done {
-                response_id,
-                input_tokens,
-                output_tokens,
-                reasoning_tokens,
-                final_text: None,
-            }))
-        }
-        
-        _ => {
-            debug!("Ignoring GPT-5 event: {}", event_type);
-            None
-        }
+        _messages: Vec<Message>,
+        _system: String,
+        _tools: Vec<Value>,
+        _context: Option<super::ToolContext>,
+    ) -> Result<super::ToolResponse> {
+        Err(anyhow!("Use create_with_tools or create_stream_with_tools instead"))
     }
 }
