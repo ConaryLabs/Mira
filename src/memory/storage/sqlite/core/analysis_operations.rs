@@ -22,6 +22,11 @@ pub struct MessageAnalysis {
     pub programming_lang: Option<String>,
     pub analysis_version: Option<String>,
     pub routed_to_heads: Option<Vec<String>>,
+    // Error tracking fields
+    pub contains_error: Option<bool>,
+    pub error_type: Option<String>,
+    pub error_severity: Option<String>,
+    pub error_file: Option<String>,
 }
 
 pub struct AnalysisOperations {
@@ -49,8 +54,10 @@ impl AnalysisOperations {
             INSERT INTO message_analysis (
                 message_id, mood, intensity, salience, original_salience, intent, topics, 
                 summary, relationship_impact, contains_code, language, 
-                programming_lang, analysis_version, routed_to_heads, analyzed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                programming_lang, analysis_version, routed_to_heads,
+                contains_error, error_type, error_severity, error_file,
+                analyzed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(message_id) DO UPDATE SET
                 mood = excluded.mood,
                 intensity = excluded.intensity,
@@ -65,6 +72,10 @@ impl AnalysisOperations {
                 programming_lang = excluded.programming_lang,
                 analysis_version = excluded.analysis_version,
                 routed_to_heads = excluded.routed_to_heads,
+                contains_error = excluded.contains_error,
+                error_type = excluded.error_type,
+                error_severity = excluded.error_severity,
+                error_file = excluded.error_file,
                 analyzed_at = CURRENT_TIMESTAMP
             "#,
         )
@@ -82,6 +93,10 @@ impl AnalysisOperations {
         .bind(&analysis.programming_lang)
         .bind(&analysis.analysis_version)
         .bind(routed_to_heads_json)
+        .bind(analysis.contains_error.map(|e| e as i64))
+        .bind(&analysis.error_type)
+        .bind(&analysis.error_severity)
+        .bind(&analysis.error_file)
         .execute(&self.pool)
         .await?;
 
@@ -98,6 +113,7 @@ impl AnalysisOperations {
                 a.mood, a.intensity, a.salience, a.original_salience, a.intent, a.topics, a.summary,
                 a.relationship_impact, a.contains_code, a.language, a.programming_lang,
                 a.analysis_version, a.routed_to_heads, a.analyzed_at,
+                a.contains_error, a.error_type, a.error_severity, a.error_file,
                 a.last_recalled, a.recall_count
             FROM memory_entries m
             LEFT JOIN message_analysis a ON m.id = a.message_id
@@ -137,6 +153,10 @@ impl AnalysisOperations {
             let analyzed_at: Option<NaiveDateTime> = row.try_get("analyzed_at")?;
             let analysis_version: Option<String> = row.try_get("analysis_version")?;
             let routed_to_heads: Option<String> = row.try_get("routed_to_heads")?;
+            let contains_error: Option<i64> = row.try_get("contains_error")?;
+            let error_type: Option<String> = row.try_get("error_type")?;
+            let error_severity: Option<String> = row.try_get("error_severity")?;
+            let error_file: Option<String> = row.try_get("error_file")?;
             let last_recalled: Option<NaiveDateTime> = row.try_get("last_recalled")?;
             let recall_count: Option<i64> = row.try_get("recall_count")?;
 
@@ -175,6 +195,10 @@ impl AnalysisOperations {
                 analyzed_at: analyzed_at.map(|dt| TimeZone::from_utc_datetime(&Utc, &dt)),
                 analysis_version,
                 routed_to_heads: routed_to_heads_vec,
+                contains_error: contains_error.map(|e| e != 0),
+                error_type,
+                error_severity,
+                error_file,
                 last_recalled: last_recalled.map(|dt| TimeZone::from_utc_datetime(&Utc, &dt)),
                 recall_count,
                 model_version: None,

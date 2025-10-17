@@ -6,7 +6,7 @@ use crate::memory::{
     storage::sqlite::store::SqliteMemoryStore,
     storage::qdrant::multi_store::QdrantMultiStore,
     core::types::MemoryEntry,
-    core::traits::MemoryStore,  // FIXED: Import trait to use its methods
+    core::traits::MemoryStore,
 };
 
 pub struct MemoryCoreService {
@@ -57,6 +57,10 @@ impl MemoryCoreService {
             routed_to_heads: None,
             last_recalled: None,
             recall_count: None,
+            contains_error: None,
+            error_type: None,
+            error_severity: None,
+            error_file: None,
             model_version: None,
             prompt_tokens: None,
             completion_tokens: None,
@@ -109,6 +113,10 @@ impl MemoryCoreService {
             routed_to_heads: None,
             last_recalled: None,
             recall_count: None,
+            contains_error: None,
+            error_type: None,
+            error_severity: None,
+            error_file: None,
             model_version: None,
             prompt_tokens: None,
             completion_tokens: None,

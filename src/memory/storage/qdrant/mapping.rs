@@ -35,6 +35,12 @@ pub fn memory_entry_to_payload(entry: &MemoryEntry) -> Value {
         "last_recalled": entry.last_recalled.map(|t| t.timestamp_millis()),
         "recall_count": entry.recall_count,
         
+        // Error tracking fields
+        "contains_error": entry.contains_error,
+        "error_type": entry.error_type,
+        "error_severity": entry.error_severity,
+        "error_file": entry.error_file,
+        
         // LLM metadata fields
         "model_version": entry.model_version,
         "prompt_tokens": entry.prompt_tokens,
@@ -165,29 +171,42 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
         last_recalled,
         recall_count: payload
             .get("recall_count")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
+        contains_error: payload.get("contains_error").and_then(|v| v.as_bool()),
+        error_type: payload
+            .get("error_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        error_severity: payload
+            .get("error_severity")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        error_file: payload
+            .get("error_file")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         model_version: payload
             .get("model_version")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         prompt_tokens: payload
             .get("prompt_tokens")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         completion_tokens: payload
             .get("completion_tokens")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         reasoning_tokens: payload
             .get("reasoning_tokens")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         total_tokens: payload
             .get("total_tokens")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         latency_ms: payload
             .get("latency_ms")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         generation_time_ms: payload
             .get("generation_time_ms")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         finish_reason: payload
             .get("finish_reason")
             .and_then(|v| v.as_str())
@@ -206,7 +225,7 @@ pub fn payload_to_memory_entry(payload: &Value, vector: &[f32], id: Option<i64>)
             .map(|f| f as f32),
         max_tokens: payload
             .get("max_tokens")
-            .and_then(|v| v.as_i64()),  // No cast - i64 -> i64 direct assignment
+            .and_then(|v| v.as_i64()),
         embedding: Some(vector.to_vec()),
         embedding_heads: payload
             .get("embedding_heads")

@@ -21,7 +21,7 @@ use crate::git::store::GitStore;
 use crate::git::client::GitClient;
 use crate::operations::OperationEngine;
 use crate::api::ws::chat::routing::MessageRouter;
-use crate::relationship::{RelationshipService, FactsService};  // NEW: Import relationship services
+use crate::relationship::{RelationshipService, FactsService};
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -50,8 +50,8 @@ pub struct AppState {
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
     pub operation_engine: Arc<OperationEngine>,
     pub message_router: Arc<MessageRouter>,
-    pub relationship_service: Arc<RelationshipService>,  // NEW: Relationship service
-    pub facts_service: Arc<FactsService>,                 // NEW: Facts service
+    pub relationship_service: Arc<RelationshipService>,
+    pub facts_service: Arc<FactsService>,
 }
 
 impl AppState {
@@ -121,15 +121,13 @@ impl AppState {
         info!("Initializing FactsService");
         let facts_service = Arc::new(FactsService::new(pool.clone()));
         
-        // PHASE 8: Initialize OperationEngine WITH MemoryService AND Relationship Services
-        info!("Initializing OperationEngine with memory and relationship integration");
+        // FIXED: OperationEngine::new only takes 4 parameters
+        info!("Initializing OperationEngine with memory integration");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
             (*gpt5_provider).clone(),
             (*deepseek_provider).clone(),
             memory_service.clone(),
-            relationship_service.clone(),  // NEW: Pass relationship service
-            facts_service.clone(),          // NEW: Pass facts service
         ));
         
         // Initialize MessageRouter
@@ -151,8 +149,8 @@ impl AppState {
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),
             operation_engine,
             message_router,
-            relationship_service,  // NEW: Add to struct
-            facts_service,          // NEW: Add to struct
+            relationship_service,
+            facts_service,
         })
     }
 }

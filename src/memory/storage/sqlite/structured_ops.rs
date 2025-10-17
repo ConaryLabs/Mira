@@ -338,6 +338,10 @@ fn create_qdrant_entry(
         routed_to_heads: Some(response.analysis.routed_to_heads.clone()),
         last_recalled: Some(Utc::now()),
         recall_count: Some(0),
+        contains_error: Some(response.analysis.contains_error),
+        error_type: response.analysis.error_type.clone(),
+        error_severity: response.analysis.error_severity.clone(),
+        error_file: response.analysis.error_file.clone(),
         model_version: None,
         prompt_tokens: None,
         completion_tokens: None,
@@ -422,8 +426,9 @@ async fn insert_message_analysis(
         INSERT INTO message_analysis (
             message_id, mood, intensity, salience, original_salience, intent, topics, summary,
             relationship_impact, contains_code, language, programming_lang,
+            contains_error, error_type, error_severity, error_file,
             analyzed_at, analysis_version, routed_to_heads, recall_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'structured_v1', ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'structured_v1', ?, 0)
         "#,
         message_id,
         analysis.mood,
@@ -437,6 +442,10 @@ async fn insert_message_analysis(
         analysis.contains_code,
         analysis.language,
         db_lang,
+        analysis.contains_error,
+        analysis.error_type,
+        analysis.error_severity,
+        analysis.error_file,
         heads_json
     )
     .execute(&mut **tx)
@@ -464,7 +473,8 @@ pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Res
     let analysis_row = match sqlx::query!(
         r#"
         SELECT mood, intensity, salience, original_salience, intent, topics, summary,
-               relationship_impact, contains_code, language, programming_lang, routed_to_heads
+               relationship_impact, contains_code, language, programming_lang, routed_to_heads,
+               contains_error, error_type, error_severity, error_file
         FROM message_analysis
         WHERE message_id = ?
         "#,
@@ -493,10 +503,10 @@ pub async fn load_structured_response(pool: &SqlitePool, message_id: i64) -> Res
             summary: analysis_row.summary,
             relationship_impact: analysis_row.relationship_impact,
             programming_lang: analysis_row.programming_lang,
-            contains_error: false,
-            error_type: None,
-            error_severity: None,
-            error_file: None,
+            contains_error: analysis_row.contains_error.unwrap_or(false),
+            error_type: analysis_row.error_type,
+            error_severity: analysis_row.error_severity,
+            error_file: analysis_row.error_file,
         },
         reasoning: None,
         schema_name: Some("retrieved".to_string()),

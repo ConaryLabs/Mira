@@ -123,6 +123,11 @@ impl MessagePipelineResult {
             language: self.analysis.programming_lang.clone(),
             programming_lang: self.analysis.programming_lang.clone(),
             routed_to_heads: None, // GPT-5's routed_to_heads used directly from structured response
+            // Error tracking fields from analysis
+            contains_error: Some(self.analysis.contains_error),
+            error_type: self.analysis.error_type.clone(),
+            error_severity: self.analysis.error_severity.clone(),
+            error_file: self.analysis.error_file.clone(),
         }
     }
     
@@ -130,6 +135,7 @@ impl MessagePipelineResult {
     pub fn is_high_value(&self) -> bool {
         self.analysis.salience > 0.7 || 
         self.analysis.is_code ||
+        self.analysis.contains_error || // Errors are high value
         self.analysis.topics.iter().any(|t| {
             matches!(t.to_lowercase().as_str(), 
                     "architecture" | "design" | "bug" | "error" | "important")

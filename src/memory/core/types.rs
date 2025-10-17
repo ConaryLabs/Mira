@@ -31,20 +31,26 @@ pub struct MemoryEntry {
     pub analysis_version: Option<String>,
     pub routed_to_heads: Option<Vec<String>>,
     pub last_recalled: Option<DateTime<Utc>>,
-    pub recall_count: Option<i64>,      // Changed from Option<i32> - matches SQLite INTEGER
+    pub recall_count: Option<i64>,
+    
+    // Error tracking fields
+    pub contains_error: Option<bool>,
+    pub error_type: Option<String>,
+    pub error_severity: Option<String>,
+    pub error_file: Option<String>,
     
     // Fields from llm_metadata table
     pub model_version: Option<String>,
-    pub prompt_tokens: Option<i64>,     // Changed from Option<i32> - matches SQLite INTEGER
-    pub completion_tokens: Option<i64>, // Changed from Option<i32> - matches SQLite INTEGER
-    pub reasoning_tokens: Option<i64>,  // Changed from Option<i32> - matches SQLite INTEGER
-    pub total_tokens: Option<i64>,      // Changed from Option<i32> - matches SQLite INTEGER
-    pub latency_ms: Option<i64>,        // Changed from Option<i32> - matches SQLite INTEGER
-    pub generation_time_ms: Option<i64>,// Changed from Option<i32> - matches SQLite INTEGER
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub latency_ms: Option<i64>,
+    pub generation_time_ms: Option<i64>,
     pub finish_reason: Option<String>,
     pub tool_calls: Option<Vec<String>>,
     pub temperature: Option<f32>,
-    pub max_tokens: Option<i64>,        // Changed from Option<i32> - matches SQLite INTEGER
+    pub max_tokens: Option<i64>,
     
     // Embedding info
     pub embedding: Option<Vec<f32>>,
@@ -79,6 +85,10 @@ impl MemoryEntry {
             routed_to_heads: None,
             last_recalled: None,
             recall_count: None,
+            contains_error: None,
+            error_type: None,
+            error_severity: None,
+            error_file: None,
             model_version: None,
             prompt_tokens: None,
             completion_tokens: None,
@@ -126,5 +136,19 @@ impl MemoryEntry {
     pub fn has_code(&self) -> bool {
         self.contains_code.unwrap_or(false) || 
         self.programming_lang.is_some()
+    }
+
+    /// Check if this entry contains an error
+    pub fn has_error(&self) -> bool {
+        self.contains_error.unwrap_or(false)
+    }
+
+    /// Check if this is a high-severity error
+    pub fn is_critical_error(&self) -> bool {
+        self.contains_error.unwrap_or(false) && 
+        self.error_severity
+            .as_ref()
+            .map(|s| matches!(s.to_lowercase().as_str(), "critical" | "high"))
+            .unwrap_or(false)
     }
 }
