@@ -67,12 +67,12 @@ pub struct Operation {
 /// Maps directly to `operation_events` table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OperationEvent {
-    pub id: String,
+    pub id: i64, // Changed from String to i64 to match INTEGER PRIMARY KEY AUTOINCREMENT
     pub operation_id: String,
     pub event_type: String, // e.g., "started", "analysis", "delegated", "completed"
     pub created_at: i64,
     pub sequence_number: i64,
-    pub payload: Option<String>, // JSON
+    pub event_data: Option<String>, // JSON
 }
 
 /// Artifacts generated during operations (code files, documents, etc.)
@@ -127,20 +127,20 @@ impl Operation {
 }
 
 impl OperationEvent {
-    /// Create a new event
+    /// Create a new event - DB will auto-generate the ID
     pub fn new(
         operation_id: String,
         event_type: String,
         sequence_number: i64,
-        payload: Option<String>,
+        event_data: Option<String>,
     ) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: 0, // Placeholder - DB will auto-increment this
             operation_id,
             event_type,
             created_at: chrono::Utc::now().timestamp(),
             sequence_number,
-            payload,
+            event_data,
         }
     }
 }
