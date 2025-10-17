@@ -42,13 +42,13 @@ pub struct AppState {
     pub git_store: GitStore,
     pub git_client: GitClient,
     pub gpt5_provider: Arc<Gpt5Provider>,
-    pub deepseek_provider: Arc<DeepSeekProvider>,  // NEW
+    pub deepseek_provider: Arc<DeepSeekProvider>,
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
-    pub operation_engine: Arc<OperationEngine>,  // NEW
-    pub message_router: Arc<MessageRouter>,  // NEW
+    pub operation_engine: Arc<OperationEngine>,
+    pub message_router: Arc<MessageRouter>,
 }
 
 impl AppState {
@@ -109,12 +109,13 @@ impl AppState {
             embedding_client.clone(),
         ));
         
-        // Initialize OperationEngine
-        info!("Initializing OperationEngine");
+        // PHASE 8: Initialize OperationEngine WITH MemoryService
+        info!("Initializing OperationEngine with memory integration");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
             (*gpt5_provider).clone(),
             (*deepseek_provider).clone(),
+            memory_service.clone(), // ADDED: Pass memory service
         ));
         
         // Initialize MessageRouter

@@ -1,10 +1,11 @@
 // src/api/ws/operations/mod.rs
 // WebSocket handlers for operation lifecycle
+// PHASE 8: Updated to pass session_id and user_content to run_operation
 
 pub mod stream;
 
 use crate::operations::{OperationEngine, OperationEngineEvent};
-use crate::llm::provider::Message;
+use crate::config::CONFIG;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
@@ -26,6 +27,7 @@ impl OperationManager {
     }
     
     /// Start a new operation with cancellation support
+    /// PHASE 8: Now calls run_operation with session_id and user_content
     pub async fn start_operation(
         &self,
         session_id: String,
@@ -54,29 +56,23 @@ impl OperationManager {
             }
         });
         
-        // 5. Build context - just current message for now
-        // TODO: Add memory/history loading from session
-        let messages = vec![Message::user(message)];
-        let system = r#"You are Mira, a sharp-tongued but loyal AI assistant who helps with code and technical tasks.
-
-You have access to code generation tools. When the user requests code, file creation, or technical implementation:
-1. Analyze their request thoroughly
-2. Use the appropriate tool (generate_code, refactor_code, or debug_code)
-3. Provide context and explanation along with the code
-
-Be direct, technical when needed, and prioritize working solutions."#.to_string();
-        
-        // 6. Spawn operation task
+        // 5. Spawn operation task
+        // PHASE 8: Call new run_operation signature with session_id and user_content
         let engine = self.engine.clone();
         let op_id = op.id.clone();
+        let session = session_id.clone();
+        let user_message = message.clone();
         let cancel = cancel_token.clone();
         let active_ops = self.active_operations.clone();
         
         tokio::spawn(async move {
+            // PHASE 8: New signature - passes session_id, user_content directly
+            // Engine will handle context loading and message storage internally
             let result = engine.run_operation(
                 &op_id,
-                messages,
-                system,
+                &session,
+                &user_message,
+                None, // No project_id for now
                 Some(cancel),
                 &event_tx,
             ).await;

@@ -4,13 +4,19 @@ use crate::operations::{Artifact, Operation, OperationEvent, get_delegation_tool
 use crate::llm::provider::gpt5::{Gpt5Provider, Gpt5StreamEvent};
 use crate::llm::provider::deepseek::DeepSeekProvider;
 use crate::llm::provider::Message;
-use anyhow::{Context, Result};
+use crate::memory::service::MemoryService;
+use crate::memory::RecallContext;
+use crate::prompt::UnifiedPromptBuilder;
+use crate::persona::PersonaOverlay;
+use crate::config::CONFIG;
+use anyhm::{Context, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use sha2::{Sha256, Digest};
+use tracing::{info, warn, debug};
 
 /// Events emitted during operation lifecycle
 /// These get sent via channel for WebSocket streaming
@@ -64,16 +70,29 @@ pub enum OperationEngineEvent {
 /// Core orchestrator for operation lifecycle
 /// Manages: create → run → complete
 /// Handles: GPT-5 streaming, DeepSeek delegation, event emission, DB tracking
+/// PHASE 8: Now with memory storage and context loading
 pub struct OperationEngine {
     db: Arc<SqlitePool>,
     gpt5: Gpt5Provider,
     deepseek: DeepSeekProvider,
+    memory_service: Arc<MemoryService>,
 }
 
 impl OperationEngine {
     /// Create a new operation engine
-    pub fn new(db: Arc<SqlitePool>, gpt5: Gpt5Provider, deepseek: DeepSeekProvider) -> Self {
-        Self { db, gpt5, deepseek }
+    /// PHASE 8: Now requires MemoryService for context/storage
+    pub fn new(
+        db: Arc<SqlitePool>,
+        gpt5: Gpt5Provider,
+        deepseek: DeepSeekProvider,
+        memory_service: Arc<MemoryService>,
+    ) -> Self {
+        Self { 
+            db, 
+            gpt5, 
+            deepseek,
+            memory_service,
+        }
     }
 
     /// Create a new operation in the database
@@ -163,9 +182,11 @@ impl OperationEngine {
     }
 
     /// Complete an operation successfully
+    /// PHASE 8: Now stores result in memory
     pub async fn complete_operation(
         &self,
         operation_id: &str,
+        session_id: &str,
         result: Option<String>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
@@ -187,6 +208,23 @@ impl OperationEngine {
         .execute(&*self.db)
         .await
         .context("Failed to complete operation")?;
+
+        // PHASE 8: Store assistant response in memory
+        if let Some(ref response_content) = result {
+            match self.memory_service.save_assistant_message(
+                session_id,
+                response_content,
+                None, // No parent for now
+            ).await {
+                Ok(msg_id) => {
+                    info!("Stored operation result in memory: message_id={}", msg_id);
+                    // TODO PHASE 8.5: Background embedding job
+                }
+                Err(e) => {
+                    warn!("Failed to store operation result in memory: {}", e);
+                }
+            }
+        }
 
         // Emit event
         self.emit_event(
@@ -276,12 +314,13 @@ impl OperationEngine {
     }
 
     /// Run an operation with full orchestration
-    /// UPDATED: Added cancel_token parameter for cancellation support
+    /// PHASE 8: Now loads context and stores messages
     pub async fn run_operation(
         &self,
         operation_id: &str,
-        messages: Vec<Message>,
-        system_prompt: String,
+        session_id: &str,
+        user_content: &str,
+        project_id: Option<&str>,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
@@ -291,6 +330,30 @@ impl OperationEngine {
                 return Err(anyhow::anyhow!("Operation cancelled before start"));
             }
         }
+
+        // PHASE 8 STEP 1: Store user message in memory
+        let user_msg_id = self.memory_service.save_user_message(
+            session_id,
+            user_content,
+            project_id,
+        ).await?;
+        
+        info!("Stored user message in memory: message_id={}", user_msg_id);
+
+        // TODO PHASE 8.5: Background job for embedding
+        // For now, just store in SQLite. Embedding can happen:
+        // 1. Via a background worker that processes recent messages
+        // 2. Lazily when messages are first queried
+        // 3. Via a separate API endpoint that triggers embedding
+
+        // PHASE 8 STEP 2: Load memory context
+        let recall_context = self.load_memory_context(session_id, user_content).await?;
+        
+        // PHASE 8 STEP 3: Build system prompt with context
+        let system_prompt = self.build_system_prompt_with_context(&recall_context);
+        
+        // Build messages
+        let mut messages = vec![Message::user(user_content.to_string())];
 
         // Start the operation
         self.start_operation(operation_id, event_tx).await?;
@@ -386,7 +449,7 @@ impl OperationEngine {
                     &parsed_name,
                     parsed_args,
                     event_tx,
-                    cancel_token.clone(), // Pass cancel token to delegation
+                    cancel_token.clone(),
                 ).await?;
 
                 if let Some(artifact_data) = result.get("artifact") {
@@ -397,20 +460,93 @@ impl OperationEngine {
             self.update_operation_status(operation_id, "generating", event_tx).await?;
         }
 
-        // Complete the operation
-        self.complete_operation(operation_id, Some(accumulated_text), event_tx).await?;
+        // Complete the operation (now stores in memory)
+        self.complete_operation(operation_id, session_id, Some(accumulated_text), event_tx).await?;
 
         Ok(())
     }
 
+    /// PHASE 8: Load memory context for operation
+    /// Combines recent messages, semantic search, and summaries
+    async fn load_memory_context(
+        &self,
+        session_id: &str,
+        query: &str,
+    ) -> Result<RecallContext> {
+        debug!("Loading memory context for session: {}", session_id);
+        
+        // Use configured recall counts
+        let recent_count = CONFIG.context_recent_messages as usize;
+        let semantic_count = CONFIG.context_semantic_matches as usize;
+        
+        match self.memory_service.parallel_recall_context(
+            session_id,
+            query,
+            recent_count,
+            semantic_count,
+        ).await {
+            Ok(mut context) => {
+                info!(
+                    "Loaded context: {} recent, {} semantic memories",
+                    context.recent.len(),
+                    context.semantic.len()
+                );
+                
+                // Load summaries if enabled
+                if CONFIG.use_rolling_summaries_in_context {
+                    context.rolling_summary = self.memory_service
+                        .get_rolling_summary(session_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    
+                    context.session_summary = self.memory_service
+                        .get_session_summary(session_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    
+                    if context.rolling_summary.is_some() || context.session_summary.is_some() {
+                        info!("Loaded summaries for context");
+                    }
+                }
+                
+                Ok(context)
+            }
+            Err(e) => {
+                warn!("Failed to load memory context: {}, using empty context", e);
+                Ok(RecallContext {
+                    recent: vec![],
+                    semantic: vec![],
+                    rolling_summary: None,
+                    session_summary: None,
+                })
+            }
+        }
+    }
+
+    /// PHASE 8: Build system prompt with memory context using existing UnifiedPromptBuilder
+    fn build_system_prompt_with_context(&self, context: &RecallContext) -> String {
+        // Use the existing UnifiedPromptBuilder instead of duplicating
+        let persona = PersonaOverlay::default(); // Use default Mira persona
+        let tools = Some(get_delegation_tools());
+        
+        UnifiedPromptBuilder::build_system_prompt(
+            &persona,
+            context,
+            Some(&tools),
+            None, // No metadata for now
+            None, // No project_id for now
+        )
+    }
+
     /// Delegate to DeepSeek with the given tool call
-    /// UPDATED: Added cancel_token parameter
     async fn delegate_to_deepseek(
         &self,
         operation_id: &str,
         tool_name: &str,
         tool_args: serde_json::Value,
-        event_tx: &mpsc::Sender<OperationEngineEvent>,
+        _event_tx: &mpsc::Sender<OperationEngineEvent>,
         cancel_token: Option<CancellationToken>,
     ) -> Result<serde_json::Value> {
         // Check cancellation before DeepSeek call
@@ -521,7 +657,6 @@ impl OperationEngine {
         // Call DeepSeek
         let response = self.deepseek.generate_code(request).await?;
 
-        // FIX: Changed .code to .content
         // Return artifact data
         Ok(serde_json::json!({
             "artifact": {
@@ -555,7 +690,6 @@ impl OperationEngine {
         hasher.update(content.as_bytes());
         let content_hash = format!("{:x}", hasher.finalize());
 
-        // FIX: Corrected Artifact::new() parameters (7 params, proper order)
         // Create artifact
         let artifact = Artifact::new(
             operation_id.to_string(),
@@ -701,7 +835,6 @@ impl OperationEngine {
     }
 
     /// Get an operation by ID
-    /// FIX: Return all 26 fields required by Operation struct
     pub async fn get_operation(&self, operation_id: &str) -> Result<Operation> {
         let row = sqlx::query!(
             r#"
@@ -748,7 +881,6 @@ impl OperationEngine {
     }
 
     /// Get all events for an operation
-    /// FIX: Include id and operation_id fields in OperationEvent
     pub async fn get_operation_events(&self, operation_id: &str) -> Result<Vec<OperationEvent>> {
         let rows = sqlx::query!(
             r#"
