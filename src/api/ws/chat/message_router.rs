@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
-use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence};
+use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence, documents};
 use crate::state::AppState;
 use crate::config::CONFIG;
 
@@ -168,7 +168,7 @@ impl MessageRouter {
         method: String,
         params: Value,
     ) -> Result<()> {
-        let result = git::handle_git_operation(  // FIXED: was handle_git_command
+        let result = git::handle_git_operation(
             &method,
             params,
             self.app_state.clone(),
@@ -270,14 +270,41 @@ impl MessageRouter {
     async fn handle_document_command(
         &self,
         method: String,
-        _params: Value,  // FIXED: prefixed with underscore
+        params: Value,
     ) -> Result<()> {
-        // Documents module doesn't exist yet, stub it
-        error!("Document commands not yet implemented: {}", method);
-        self.connection.send_message(WsServerMessage::Error {
-            message: "Document commands not yet implemented".to_string(),
-            code: "NOT_IMPLEMENTED".to_string(),
-        }).await?;
+        use documents::{DocumentHandler, DocumentCommand};
+        
+        let handler = DocumentHandler::new(self.app_state.clone());
+        
+        let command = DocumentCommand {
+            method: method.clone(),
+            params,
+        };
+        
+        // Create progress channel for upload operations with progress tracking
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+        let connection = self.connection.clone();
+        
+        // Spawn task to forward progress updates to WebSocket
+        tokio::spawn(async move {
+            while let Some(msg) = progress_rx.recv().await {
+                let _ = connection.send_message(msg).await;
+            }
+        });
+        
+        match handler.handle_command(command, Some(progress_tx)).await {
+            Ok(response) => {
+                self.connection.send_message(response).await?;
+            }
+            Err(e) => {
+                error!("Document command '{}' failed: {}", method, e);
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "DOCUMENT_ERROR".to_string(),
+                }).await?;
+            }
+        }
+        
         Ok(())
     }
 }
