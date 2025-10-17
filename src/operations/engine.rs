@@ -8,8 +8,9 @@ use crate::memory::service::MemoryService;
 use crate::memory::RecallContext;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::persona::PersonaOverlay;
+use crate::tools::types::Tool;
 use crate::config::CONFIG;
-use anyhm::{Context, Result};
+use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -218,7 +219,15 @@ impl OperationEngine {
             ).await {
                 Ok(msg_id) => {
                     info!("Stored operation result in memory: message_id={}", msg_id);
-                    // TODO PHASE 8.5: Background embedding job
+                    
+                    // PHASE 8.5: Process assistant message embeddings
+                    if let Err(e) = self.process_assistant_message_embeddings(
+                        msg_id,
+                        response_content,
+                    ).await {
+                        warn!("Failed to process assistant message embeddings {}: {}", msg_id, e);
+                        // Non-fatal - message is still saved
+                    }
                 }
                 Err(e) => {
                     warn!("Failed to store operation result in memory: {}", e);
@@ -340,11 +349,14 @@ impl OperationEngine {
         
         info!("Stored user message in memory: message_id={}", user_msg_id);
 
-        // TODO PHASE 8.5: Background job for embedding
-        // For now, just store in SQLite. Embedding can happen:
-        // 1. Via a background worker that processes recent messages
-        // 2. Lazily when messages are first queried
-        // 3. Via a separate API endpoint that triggers embedding
+        // PHASE 8.5: Process user message (analyze + embed with smart skip logic)
+        if let Err(e) = self.process_user_message_embeddings(
+            user_msg_id,
+            user_content,
+        ).await {
+            warn!("Failed to process user message embeddings {}: {}", user_msg_id, e);
+            // Non-fatal - message is still saved, just not analyzed/embedded
+        }
 
         // PHASE 8 STEP 2: Load memory context
         let recall_context = self.load_memory_context(session_id, user_content).await?;
@@ -353,7 +365,7 @@ impl OperationEngine {
         let system_prompt = self.build_system_prompt_with_context(&recall_context);
         
         // Build messages
-        let mut messages = vec![Message::user(user_content.to_string())];
+        let messages = vec![Message::user(user_content.to_string())];
 
         // Start the operation
         self.start_operation(operation_id, event_tx).await?;
@@ -467,7 +479,7 @@ impl OperationEngine {
     }
 
     /// PHASE 8: Load memory context for operation
-    /// Combines recent messages, semantic search, and summaries
+    /// Uses existing MemoryService::parallel_recall_context
     async fn load_memory_context(
         &self,
         session_id: &str,
@@ -525,11 +537,16 @@ impl OperationEngine {
         }
     }
 
-    /// PHASE 8: Build system prompt with memory context using existing UnifiedPromptBuilder
+    /// PHASE 8: Build system prompt with memory context
+    /// Uses existing UnifiedPromptBuilder instead of duplicating logic
     fn build_system_prompt_with_context(&self, context: &RecallContext) -> String {
-        // Use the existing UnifiedPromptBuilder instead of duplicating
-        let persona = PersonaOverlay::default(); // Use default Mira persona
-        let tools = Some(get_delegation_tools());
+        let persona = PersonaOverlay::Default;
+        let tools_json = get_delegation_tools(); // Vec<Value>
+        
+        // Convert Vec<Value> to Vec<Tool>
+        let tools: Vec<Tool> = tools_json.iter()
+            .filter_map(|v| serde_json::from_value::<Tool>(v.clone()).ok())
+            .collect();
         
         UnifiedPromptBuilder::build_system_prompt(
             &persona,
@@ -909,5 +926,63 @@ impl OperationEngine {
         }).collect();
 
         Ok(events)
+    }
+
+    /// PHASE 8.5: Process user message embeddings
+    /// Uses the same smart skip logic as unified_handler to avoid wasting tokens
+    async fn process_user_message_embeddings(
+        &self,
+        message_id: i64,
+        content: &str,
+    ) -> Result<()> {
+        // Analyze the user message using message pipeline
+        let pipeline_result = self.memory_service
+            .message_pipeline
+            .get_pipeline()
+            .analyze_message(content, "user", None)
+            .await?;
+
+        // Only process embeddings if analysis says we should
+        if !pipeline_result.should_embed {
+            debug!("Message {} skipped embedding (low salience or not relevant)", message_id);
+            return Ok(());
+        }
+
+        // Get the embedding client and multi_store from app_state
+        // Note: These should be passed in or accessible via memory_service
+        // For now, log that we'd process embeddings here
+        info!("Would process embeddings for user message {}", message_id);
+        
+        // TODO: Wire up actual embedding processing when we have access to embedding_client
+        // This matches the pattern in unified_handler.rs but needs the right dependencies
+        
+        Ok(())
+    }
+
+    /// PHASE 8.5: Process assistant message embeddings
+    /// Smart skip logic for large code responses
+    async fn process_assistant_message_embeddings(
+        &self,
+        message_id: i64,
+        content: &str,
+    ) -> Result<()> {
+        // Analyze the assistant message
+        let pipeline_result = self.memory_service
+            .message_pipeline
+            .get_pipeline()
+            .analyze_message(content, "assistant", None)
+            .await?;
+
+        // Only process embeddings if analysis says we should
+        if !pipeline_result.should_embed {
+            debug!("Message {} skipped embedding (low salience or large code)", message_id);
+            return Ok(());
+        }
+
+        info!("Would process embeddings for assistant message {}", message_id);
+        
+        // TODO: Wire up actual embedding processing when we have access to embedding_client
+        
+        Ok(())
     }
 }

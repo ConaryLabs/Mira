@@ -37,6 +37,9 @@ pub struct MemoryService {
     
     // Keep reference to multi_store for backfill and other operations
     multi_store: Arc<QdrantMultiStore>,
+    
+    // Keep reference to embedding client for direct embedding operations
+    embedding_client: Arc<OpenAiEmbeddings>,
 }
 
 impl MemoryService {
@@ -47,7 +50,7 @@ impl MemoryService {
         llm_provider: Arc<dyn LlmProvider>,
         embedding_client: Arc<OpenAiEmbeddings>,
     ) -> Self {
-        info!("🧠 Initializing MemoryService with 3 unified engines");
+        info!("Initializing MemoryService with 3 unified engines");
         
         // Core storage with multi_store for get_multi_store access
         let core = MemoryCoreService::new(sqlite_store.clone(), multi_store.clone());
@@ -74,20 +77,26 @@ impl MemoryService {
         let recall_engine_coordinator = RecallEngineCoordinator::new(recall_engine);
         let summarization_engine_coordinator = SummarizationEngineCoordinator::new(summarization_engine);
         
-        info!("✅ MemoryService initialized successfully");
+        info!("MemoryService initialized successfully");
         
         Self {
             core,
             message_pipeline: message_pipeline_coordinator,
             recall_engine: recall_engine_coordinator,
             summarization_engine: summarization_engine_coordinator,
-            multi_store,
+            multi_store: multi_store.clone(),
+            embedding_client: embedding_client.clone(),
         }
     }
     
     /// Direct access to multi-store for special operations
     pub fn get_multi_store(&self) -> Arc<QdrantMultiStore> {
         self.multi_store.clone()
+    }
+    
+    /// Direct access to embedding client for embedding operations
+    pub fn get_embedding_client(&self) -> Arc<OpenAiEmbeddings> {
+        self.embedding_client.clone()
     }
     
     /// Get service statistics  
