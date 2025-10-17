@@ -1,7 +1,7 @@
 // src/api/ws/chat/mod.rs
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use axum::{
     extract::{ConnectInfo, State, WebSocketUpgrade},
@@ -9,18 +9,19 @@ use axum::{
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures::StreamExt;
+use futures_util::SinkExt;  // ADDED: For .send() method
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub mod connection;
 pub mod message_router;
-pub mod heartbeat;
 pub mod unified_handler;
+pub mod routing;
 
 pub use connection::WebSocketConnection;
 pub use message_router::MessageRouter;
-pub use heartbeat::HeartbeatManager;
 pub use unified_handler::{UnifiedChatHandler, ChatRequest};
+pub use routing::MessageRouter as LlmMessageRouter;
 
 use crate::api::ws::message::WsClientMessage;
 use crate::state::AppState;
@@ -61,58 +62,78 @@ async fn handle_socket(
         return;
     }
 
-    // Bridge: HeartbeatManager expects a non-async Fn(&str). We wrap our async send
-    // in a spawned task that calls connection.send_status with a heartbeat label.
-    let status_sender = {
-        let c = connection.clone();
-        Arc::new(move |payload: &str| {
-            let c = c.clone();
-            let payload_owned = payload.to_string();
-            tokio::spawn(async move {
-                // Ignore send errors if the connection closed mid-flight
-                let _ = c.send_status("heartbeat", Some(payload_owned)).await;
-            });
-        })
-    };
+    // Create message router
+    let router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
 
-    let heartbeat_manager = Arc::new(HeartbeatManager::new(status_sender));
-    heartbeat_manager.start(Duration::from_secs(4));
-
-    let message_router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
-
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                connection.update_activity().await;
+    // Receive loop
+    while let Some(result) = receiver.next().await {
+        match result {
+            Ok(msg) => {
+                *last_activity.lock().await = Instant::now();
                 
-                match serde_json::from_str::<WsClientMessage>(&text) {
-                    Ok(client_msg) => {
-                        if let Err(e) = message_router.route_message(client_msg, None).await {
-                            error!("Error routing message: {}", e);
-                            let _ = connection.send_error(&e.to_string(), "ROUTING_ERROR".to_string()).await;
+                match msg {
+                    Message::Text(text) => {
+                        match serde_json::from_str::<WsClientMessage>(&text) {
+                            Ok(client_msg) => {
+                                let request_id = match &client_msg {
+                                    WsClientMessage::ProjectCommand { method: _, params } => {
+                                        params.get("request_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    }
+                                    WsClientMessage::MemoryCommand { method: _, params } => {
+                                        params.get("request_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    }
+                                    WsClientMessage::GitCommand { method: _, params } => {
+                                        params.get("request_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    }
+                                    WsClientMessage::FileSystemCommand { method: _, params } => {
+                                        params.get("request_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    }
+                                    WsClientMessage::CodeIntelligenceCommand { method: _, params } => {
+                                        params.get("request_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    }
+                                    WsClientMessage::DocumentCommand { method: _, params } => {
+                                        params.get("request_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                    }
+                                    _ => None,
+                                };
+
+                                *is_processing.lock().await = true;
+                                
+                                if let Err(e) = router.route_message(client_msg, request_id).await {
+                                    error!("Error routing message: {}", e);
+                                }
+                                
+                                *is_processing.lock().await = false;
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse message: {}", e);
+                            }
                         }
                     }
-                    Err(e) => {
-                        warn!("Failed to parse WebSocket message: {} - Error: {}", text, e);
-                        let _ = connection.send_error("Invalid message format", "PARSE_ERROR".to_string()).await;
+                    Message::Ping(data) => {
+                        if let Err(e) = sender.lock().await.send(Message::Pong(data)).await {
+                            error!("Failed to send pong: {}", e);
+                            break;
+                        }
                     }
+                    Message::Close(_) => {
+                        info!("Client initiated close");
+                        break;
+                    }
+                    _ => {}
                 }
-            }
-            Ok(Message::Binary(_)) => {
-                warn!("Received binary message, ignoring");
-            }
-            Ok(Message::Ping(payload)) => {
-                if let Err(e) = connection.send_pong(payload).await {
-                    error!("Failed to send pong: {}", e);
-                    break;
-                }
-            }
-            Ok(Message::Pong(_)) => {
-                connection.update_activity().await;
-            }
-            Ok(Message::Close(_)) => {
-                info!("WebSocket connection closed by client");
-                break;
             }
             Err(e) => {
                 error!("WebSocket error: {}", e);
@@ -121,9 +142,13 @@ async fn handle_socket(
         }
     }
 
-    // Clean shutdown of heartbeat task
-    heartbeat_manager.stop();
-    
-    let connection_duration = connection_start.elapsed();
-    info!("WebSocket client {} disconnected after {:?}", addr, connection_duration);
+    // Mark connection as closed
+    connection.mark_closed().await;
+
+    let duration = connection_start.elapsed();
+    info!(
+        "WebSocket client disconnected from {} after {:.2}s",
+        addr,
+        duration.as_secs_f64()
+    );
 }

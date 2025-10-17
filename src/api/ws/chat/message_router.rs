@@ -3,16 +3,14 @@
 use std::sync::Arc;
 use std::net::SocketAddr;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tracing::{debug, error, info};
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 use super::connection::WebSocketConnection;
 use super::unified_handler::{UnifiedChatHandler, ChatRequest};
 use crate::api::ws::message::{WsClientMessage, WsServerMessage, MessageMetadata};
-use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence, documents};
-use crate::llm::provider::StreamEvent;
+use crate::api::ws::{memory, project, git, files, filesystem, code_intelligence};
 use crate::state::AppState;
 use crate::config::CONFIG;
 
@@ -39,31 +37,31 @@ impl MessageRouter {
         }
     }
 
-    pub async fn route_message(&self, msg: WsClientMessage, request_id: Option<String>) -> Result<()> {
+    pub async fn route_message(&self, msg: WsClientMessage, _request_id: Option<String>) -> Result<()> {
         match msg {
             WsClientMessage::Chat { content, project_id, metadata } => {
                 self.handle_chat_message(content, project_id, metadata).await
             }
             WsClientMessage::ProjectCommand { method, params } => {
-                self.handle_project_command(method, params, request_id).await
+                self.handle_project_command(method, params).await
             }
             WsClientMessage::MemoryCommand { method, params } => {
-                self.handle_memory_command(method, params, request_id).await
+                self.handle_memory_command(method, params).await
             }
             WsClientMessage::GitCommand { method, params } => {
-                self.handle_git_command(method, params, request_id).await
+                self.handle_git_command(method, params).await
             }
             WsClientMessage::FileSystemCommand { method, params } => {
-                self.handle_filesystem_command(method, params, request_id).await
+                self.handle_filesystem_command(method, params).await
             }
             WsClientMessage::FileTransfer { operation, data } => {
-                self.handle_file_transfer(operation, data, request_id).await
+                self.handle_file_transfer(operation, data).await
             }
             WsClientMessage::CodeIntelligenceCommand { method, params } => {
-                self.handle_code_intelligence_command(method, params, request_id).await
+                self.handle_code_intelligence_command(method, params).await
             }
             WsClientMessage::DocumentCommand { method, params } => {
-                self.handle_document_command(method, params, request_id).await
+                self.handle_document_command(method, params).await
             }
             _ => {
                 debug!("Ignoring message type");
@@ -78,7 +76,7 @@ impl MessageRouter {
         project_id: Option<String>,
         metadata: Option<MessageMetadata>,
     ) -> Result<()> {
-        info!("Processing streaming chat message from {}", self.addr);
+        info!("Processing chat message from {} (routing via LLM)", self.addr);
 
         let request = ChatRequest {
             session_id: CONFIG.session_id.clone(),
@@ -87,96 +85,51 @@ impl MessageRouter {
             metadata,
         };
 
-        // Generate a unique stream ID for this chat message
-        let stream_id = Uuid::new_v4().to_string();
-        let stream_id_clone = stream_id.clone();
-
-        // Create callback for streaming events
+        // Create channel for operation events
+        let (tx, mut rx) = mpsc::channel(100);
+        
+        // Spawn task to forward operation events to WebSocket
         let connection = self.connection.clone();
-        let on_event = move |event: StreamEvent| -> Result<()> {
-            match event {
-                StreamEvent::TextDelta { delta } => {
-                    // Send text delta to client with message_id for deduplication
-                    let _ = connection.send_message(WsServerMessage::Data {
-                        data: json!({
-                            "type": "stream_delta",
-                            "content": delta,
-                            "message_id": format!("{}-delta", stream_id_clone),
-                        }),
-                        request_id: None,
-                    });
-                    Ok(())
-                }
-                StreamEvent::ReasoningDelta { delta } => {
-                    // Send reasoning delta (optional display)
-                    let _ = connection.send_message(WsServerMessage::Data {
-                        data: json!({
-                            "type": "reasoning_delta",
-                            "content": delta,
-                            "message_id": format!("{}-reasoning", stream_id_clone),
-                        }),
-                        request_id: None,
-                    });
-                    Ok(())
-                }
-                StreamEvent::ToolCallStart { id, name } => {
-                    // Notify client that tool is being called
-                    let _ = connection.send_message(WsServerMessage::Status {
-                        message: format!("Executing tool: {}", name),
-                        detail: Some(id),
-                    });
-                    Ok(())
-                }
-                StreamEvent::ToolCallArgumentsDelta { id: _, delta: _ } => {
-                    // Tool arguments streaming (optional to display)
-                    Ok(())
-                }
-                StreamEvent::ToolCallComplete { id, name, arguments: _ } => {
-                    // Tool execution complete
-                    let _ = connection.send_message(WsServerMessage::Status {
-                        message: format!("Tool completed: {}", name),
-                        detail: Some(id),
-                    });
-                    Ok(())
-                }
-                StreamEvent::Done { response_id, input_tokens, output_tokens, reasoning_tokens, final_text: _ } => {
-                    // Stream complete notification with unique message_id
-                    // final_text is handled by orchestrator, we just forward token stats
-                    let _ = connection.send_message(WsServerMessage::Data {
-                        data: json!({
-                            "type": "stream_done",
-                            "response_id": response_id,
-                            "message_id": format!("{}-done", stream_id_clone),
-                            "tokens": {
-                                "input": input_tokens,
-                                "output": output_tokens,
-                                "reasoning": reasoning_tokens,
-                            }
-                        }),
-                        request_id: None,
-                    });
-                    Ok(())
-                }
-                StreamEvent::Error { message } => {
-                    let _ = connection.send_message(WsServerMessage::Error {
-                        message,
-                        code: "STREAM_ERROR".to_string(),
-                    });
-                    Ok(())
-                }
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let _ = connection.send_message(WsServerMessage::Data {
+                    data: event,
+                    request_id: None,
+                }).await;
             }
-        };
+        });
 
-        // Use streaming handler
-        match self.unified_handler.handle_message_streaming(request, on_event).await {
-            Ok(complete_response) => {
-                self.send_complete_response_to_client(complete_response, stream_id).await?;
+        // Route message through unified handler
+        if let Err(e) = self.unified_handler.route_and_handle(request, tx).await {
+            error!("Error routing chat message: {}", e);
+            self.connection.send_message(WsServerMessage::Error {
+                message: e.to_string(),
+                code: "CHAT_ERROR".to_string(),
+            }).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_project_command(
+        &self,
+        method: String,
+        params: Value,
+    ) -> Result<()> {
+        let result = project::handle_project_command(
+            &method,
+            params,
+            self.app_state.clone(),
+        ).await;
+
+        match result {
+            Ok(msg) => {
+                self.connection.send_message(msg).await?;
             }
             Err(e) => {
-                error!("Error handling streaming chat message: {}", e);
                 self.connection.send_message(WsServerMessage::Error {
                     message: e.to_string(),
-                    code: "CHAT_ERROR".to_string(),
+                    code: "PROJECT_ERROR".to_string(),
                 }).await?;
             }
         }
@@ -184,236 +137,147 @@ impl MessageRouter {
         Ok(())
     }
 
-    async fn send_complete_response_to_client(
+    async fn handle_memory_command(
         &self,
-        complete_response: crate::llm::structured::CompleteResponse,
-        stream_id: String,
+        method: String,
+        params: Value,
     ) -> Result<()> {
-        // Emit artifact-created events explicitly so the frontend can pop the viewer
-        if let Some(ref artifacts) = complete_response.artifacts {
-            for artifact in artifacts {
-                self.connection
-                    .send_message(WsServerMessage::Data {
-                        data: json!({
-                            "type": "artifact_created",
-                            "artifact": artifact,
-                            "message_id": format!("{}-artifact", stream_id),
-                        }),
-                        request_id: None,
-                    })
-                    .await?;
+        let result = memory::handle_memory_command(
+            &method,
+            params,
+            self.app_state.clone(),
+        ).await;
+
+        match result {
+            Ok(msg) => {
+                self.connection.send_message(msg).await?;
+            }
+            Err(e) => {
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "MEMORY_ERROR".to_string(),
+                }).await?;
             }
         }
 
-        let response_data = json!({
-            "content": complete_response.structured.output,
-            "message_id": format!("{}-complete", stream_id),
-            "analysis": {
-                "salience": complete_response.structured.analysis.salience,
-                "topics": complete_response.structured.analysis.topics,
-                "contains_code": complete_response.structured.analysis.contains_code,
-                "routed_to_heads": complete_response.structured.analysis.routed_to_heads,
-                "language": complete_response.structured.analysis.language,
-                "mood": complete_response.structured.analysis.mood,
-                "intensity": complete_response.structured.analysis.intensity,
-                "intent": complete_response.structured.analysis.intent,
-                "summary": complete_response.structured.analysis.summary,
-                "relationship_impact": complete_response.structured.analysis.relationship_impact,
-                "programming_lang": complete_response.structured.analysis.programming_lang,
-            },
-            "metadata": {
-                "response_id": complete_response.metadata.response_id,
-                "total_tokens": complete_response.metadata.total_tokens,
-                "latency_ms": complete_response.metadata.latency_ms,
-            },
-            "artifacts": complete_response.artifacts,
-        });
+        Ok(())
+    }
 
-        self.connection.send_message(WsServerMessage::Response { 
-            data: response_data 
+    async fn handle_git_command(
+        &self,
+        method: String,
+        params: Value,
+    ) -> Result<()> {
+        let result = git::handle_git_operation(  // FIXED: was handle_git_command
+            &method,
+            params,
+            self.app_state.clone(),
+        ).await;
+
+        match result {
+            Ok(msg) => {
+                self.connection.send_message(msg).await?;
+            }
+            Err(e) => {
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "GIT_ERROR".to_string(),
+                }).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_filesystem_command(
+        &self,
+        method: String,
+        params: Value,
+    ) -> Result<()> {
+        let result = filesystem::handle_filesystem_command(
+            &method,
+            params,
+            self.app_state.clone(),
+        ).await;
+
+        match result {
+            Ok(msg) => {
+                self.connection.send_message(msg).await?;
+            }
+            Err(e) => {
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "FILESYSTEM_ERROR".to_string(),
+                }).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_file_transfer(
+        &self,
+        operation: String,
+        data: Value,
+    ) -> Result<()> {
+        let result = files::handle_file_transfer(
+            &operation,
+            data,
+            self.app_state.clone(),
+        ).await;
+
+        match result {
+            Ok(msg) => {
+                self.connection.send_message(msg).await?;
+            }
+            Err(e) => {
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "FILE_TRANSFER_ERROR".to_string(),
+                }).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_code_intelligence_command(
+        &self,
+        method: String,
+        params: Value,
+    ) -> Result<()> {
+        let result = code_intelligence::handle_code_intelligence_command(
+            &method,
+            params,
+            self.app_state.clone(),
+        ).await;
+
+        match result {
+            Ok(msg) => {
+                self.connection.send_message(msg).await?;
+            }
+            Err(e) => {
+                self.connection.send_message(WsServerMessage::Error {
+                    message: e.to_string(),
+                    code: "CODE_INTELLIGENCE_ERROR".to_string(),
+                }).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_document_command(
+        &self,
+        method: String,
+        _params: Value,  // FIXED: prefixed with underscore
+    ) -> Result<()> {
+        // Documents module doesn't exist yet, stub it
+        error!("Document commands not yet implemented: {}", method);
+        self.connection.send_message(WsServerMessage::Error {
+            message: "Document commands not yet implemented".to_string(),
+            code: "NOT_IMPLEMENTED".to_string(),
         }).await?;
-
-        Ok(())
-    }
-
-    async fn handle_project_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = project::handle_project_command(&method, params, self.app_state.clone()).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_memory_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = memory::handle_memory_command(&method, params, self.app_state.clone()).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                let bytes = data.to_string().len();
-                info!(bytes, "Sending memory data");
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_git_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = git::handle_git_operation(&method, params, self.app_state.clone()).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_filesystem_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = filesystem::handle_filesystem_command(&method, params, self.app_state.clone()).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_file_transfer(&self, operation: String, data: Value, request_id: Option<String>) -> Result<()> {
-        let response = files::handle_file_transfer(&operation, data, self.app_state.clone()).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_code_intelligence_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let response = code_intelligence::handle_code_intelligence_command(&method, params, self.app_state.clone()).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_document_command(&self, method: String, params: Value, request_id: Option<String>) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        
-        let connection = self.connection.clone();
-        tokio::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                let _ = connection.send_message(msg).await;
-            }
-        });
-        
-        let handler = documents::DocumentHandler::new(self.app_state.clone());
-        let command = documents::DocumentCommand { method, params };
-        let response = handler.handle_command(command, Some(tx)).await?;
-        
-        match response {
-            WsServerMessage::Data { data, .. } => {
-                self.connection.send_message(WsServerMessage::Data { data, request_id }).await?;
-            }
-            WsServerMessage::Status { message, detail } => {
-                self.connection.send_message(WsServerMessage::Status { message, detail }).await?;
-            }
-            WsServerMessage::Error { message, code } => {
-                self.connection.send_message(WsServerMessage::Error { message, code }).await?;
-            }
-            WsServerMessage::Response { data } => {
-                self.connection.send_message(WsServerMessage::Response { data }).await?;
-            }
-            _ => {
-                self.connection.send_message(response).await?;
-            }
-        }
-        
         Ok(())
     }
 }

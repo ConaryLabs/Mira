@@ -20,7 +20,8 @@ pub mod git;
 pub mod files;
 pub mod filesystem;
 pub mod code_intelligence;
-pub mod documents;  // NEW: Document processing module
+pub mod documents;
+pub mod operations;  // NEW: Operations module
 
 // Re-export key components
 pub use chat::ws_chat_handler;

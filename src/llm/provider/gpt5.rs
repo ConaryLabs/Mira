@@ -109,6 +109,7 @@ pub enum Gpt5StreamEvent {
     Error { message: String },
 }
 
+#[derive(Clone)]
 pub struct Gpt5Provider {
     client: Client,
     api_key: String,

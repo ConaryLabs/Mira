@@ -23,6 +23,29 @@ pub struct Message {
     pub content: String,
 }
 
+impl Message {
+    pub fn user(content: String) -> Self {
+        Self {
+            role: "user".to_string(),
+            content,
+        }
+    }
+    
+    pub fn assistant(content: String) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content,
+        }
+    }
+    
+    pub fn system(content: String) -> Self {
+        Self {
+            role: "system".to_string(),
+            content,
+        }
+    }
+}
+
 /// Token usage tracking across all providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {

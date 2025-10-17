@@ -10,6 +10,7 @@ use crate::config::CONFIG;
 use crate::llm::provider::{
     OpenAiEmbeddings,
     gpt5::Gpt5Provider,
+    deepseek::DeepSeekProvider,
 };
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -18,6 +19,8 @@ use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::project::store::ProjectStore;
 use crate::git::store::GitStore;
 use crate::git::client::GitClient;
+use crate::operations::OperationEngine;
+use crate::api::ws::chat::routing::MessageRouter;
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -38,11 +41,14 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub gpt5_provider: Arc<Gpt5Provider>,  // Direct provider - no router
+    pub gpt5_provider: Arc<Gpt5Provider>,
+    pub deepseek_provider: Arc<DeepSeekProvider>,  // NEW
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
+    pub operation_engine: Arc<OperationEngine>,  // NEW
+    pub message_router: Arc<MessageRouter>,  // NEW
 }
 
 impl AppState {
@@ -67,7 +73,7 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
         
-        // Initialize GPT-5 provider directly
+        // Initialize GPT-5 provider
         info!("Initializing GPT-5 provider: {}", CONFIG.gpt5_model);
         let gpt5_provider = Arc::new(Gpt5Provider::new(
             CONFIG.gpt5_api_key.clone(),
@@ -75,6 +81,12 @@ impl AppState {
             CONFIG.gpt5_max_tokens,
             CONFIG.gpt5_verbosity.clone(),
             CONFIG.gpt5_reasoning.clone(),
+        ));
+        
+        // Initialize DeepSeek provider
+        info!("Initializing DeepSeek provider for code generation");
+        let deepseek_provider = Arc::new(DeepSeekProvider::new(
+            CONFIG.deepseek_api_key.clone(),
         ));
         
         // Initialize OpenAI embeddings client
@@ -97,6 +109,17 @@ impl AppState {
             embedding_client.clone(),
         ));
         
+        // Initialize OperationEngine
+        info!("Initializing OperationEngine");
+        let operation_engine = Arc::new(OperationEngine::new(
+            Arc::new(pool.clone()),
+            (*gpt5_provider).clone(),
+            (*deepseek_provider).clone(),
+        ));
+        
+        // Initialize MessageRouter
+        let message_router = Arc::new(MessageRouter::new((*gpt5_provider).clone()));
+        
         info!("Application state initialized successfully");
         
         Ok(Self {
@@ -105,11 +128,14 @@ impl AppState {
             project_store,
             git_store,
             git_client,
-            gpt5_provider,  // Store provider directly
+            gpt5_provider,
+            deepseek_provider,
             embedding_client,
             memory_service,
             code_intelligence,
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),
+            operation_engine,
+            message_router,
         })
     }
 }

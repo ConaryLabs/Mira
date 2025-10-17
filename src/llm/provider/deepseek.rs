@@ -10,6 +10,7 @@ use tracing::{debug, error, info};
 use crate::config::CONFIG;
 
 /// DeepSeek provider for code generation
+#[derive(Clone)]
 pub struct DeepSeekProvider {
     client: Client,
     api_key: String,
