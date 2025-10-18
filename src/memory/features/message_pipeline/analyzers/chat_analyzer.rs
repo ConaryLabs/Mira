@@ -1,11 +1,11 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 // Chat message analyzer - extracts sentiment, intent, topics, code, and error detection
-// FIXED: Handles both structured JSON responses and text-embedded JSON
+// FIXED: Uses GPT-5 json_schema for structured outputs with fallback extraction
 
 use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::{debug, info, error};
 
 use crate::llm::provider::{LlmProvider, Message};
@@ -47,12 +47,31 @@ impl ChatAnalyzer {
         debug!("Analyzing {} message: {} chars", role, content.len());
         
         let prompt = self.build_analysis_prompt(content, role, context);
-        
         let messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
         
+        // Use GPT-5 structured output if available
+        if let Some(gpt5) = self.llm_provider.as_any().downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>() {
+            let schema = Self::get_analysis_schema();
+            let provider_response = gpt5
+                .chat_with_schema(
+                    messages,
+                    "You are a precise message analyzer. Output only valid JSON matching the schema.".to_string(),
+                    "chat_analysis",
+                    schema,
+                )
+                .await
+                .map_err(|e| {
+                    error!("GPT-5 structured analysis failed: {}", e);
+                    e
+                })?;
+            
+            return self.parse_analysis_response(&provider_response.content, content).await;
+        }
+        
+        // Fallback for other providers
         let provider_response = self.llm_provider
             .chat(
                 messages,
@@ -78,12 +97,31 @@ impl ChatAnalyzer {
         info!("Batch analyzing {} messages", messages.len());
         
         let prompt = self.build_batch_prompt(messages);
-        
         let llm_messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
         
+        // Use GPT-5 structured output if available
+        if let Some(gpt5) = self.llm_provider.as_any().downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>() {
+            let schema = Self::get_batch_analysis_schema();
+            let provider_response = gpt5
+                .chat_with_schema(
+                    llm_messages,
+                    "You are a precise message analyzer. Output only valid JSON matching the schema.".to_string(),
+                    "batch_chat_analysis",
+                    schema,
+                )
+                .await
+                .map_err(|e| {
+                    error!("GPT-5 batch structured analysis failed: {}", e);
+                    e
+                })?;
+            
+            return self.parse_batch_response(&provider_response.content, messages).await;
+        }
+        
+        // Fallback for other providers
         let provider_response = self.llm_provider
             .chat(
                 llm_messages,
@@ -95,49 +133,29 @@ impl ChatAnalyzer {
     }
     
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
-        let context_section = context
-            .map(|ctx| format!("**Context:** {}\n\n", ctx))
+        let context_str = context
+            .map(|c| format!("\n\nContext:\n{}", c))
             .unwrap_or_default();
         
         format!(
-            r#"{context_section}**Message to analyze:**
-Role: {role}  
-Content: "{content}"
+            r#"Analyze this {} message:
+Content: "{}"{}
 
-Analyze this message and provide:
-
-1. **Salience** (0.0-1.0): How important is this for memory storage?
-2. **Topics** (list): Main topics/themes discussed  
-3. **Contains Code** (boolean): Actual code blocks/snippets? NOT just technical terms.
-4. **Programming Language** (string or null): If contains_code=true, ONE of: 'rust', 'typescript', 'javascript', 'python', 'go', 'java'. Otherwise null.
-5. **Contains Error** (boolean): Actual error needing fixing? NOT just discussing errors.
-6. **Error Type** (string or null): If contains_error=true, ONE of: 'compiler', 'runtime', 'test_failure', 'build_failure', 'linter', 'type_error'. Otherwise null.
-7. **Error File** (string or null): If contains_error=true and file path mentioned, extract it. Otherwise null.
-8. **Error Severity** (string or null): If contains_error=true, rate as 'critical', 'warning', or 'info'. Otherwise null.
-9. **Mood** (optional): Overall emotional tone
-10. **Intensity** (0.0-1.0): Emotional intensity level
-11. **Intent** (optional): What the user is trying to accomplish
-12. **Summary** (1-2 sentences): Key content summary
-13. **Relationship Impact** (optional): How this affects user-assistant relationship
-
-Respond with valid JSON:
-```json
-{{
-  "salience": 0.75,
-  "topics": ["topic1", "topic2"],
-  "contains_code": false,
-  "programming_lang": null,
-  "contains_error": false,
-  "error_type": null,
-  "error_file": null,
-  "error_severity": null,
-  "mood": "neutral",
-  "intensity": 0.5,
-  "intent": "inform",
-  "summary": "brief summary",
-  "relationship_impact": null
-}}
-```"#
+Return JSON with:
+- salience: 0.0-1.0 (how important/memorable)
+- topics: array of main topics
+- contains_code: bool (if message has code)
+- programming_lang: language if code present
+- contains_error: bool (if discussing an error)
+- error_type: compiler/runtime/test_failure/build_failure/linter/type_error
+- error_file: filename if mentioned
+- error_severity: low/medium/high/critical
+- mood: emotional tone (excited/frustrated/neutral/curious/etc)
+- intensity: 0.0-1.0 emotional intensity
+- intent: what user wants (question/statement/request/etc)
+- summary: brief summary if notable
+- relationship_impact: how this affects user-assistant relationship"#,
+            role, content, context_str
         )
     }
     
@@ -158,6 +176,107 @@ For each message, provide analysis as JSON array."#,
             messages.len(),
             message_list
         )
+    }
+    
+    fn get_analysis_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "salience": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "contains_code": {"type": ["boolean", "null"]},
+                "programming_lang": {"type": ["string", "null"]},
+                "contains_error": {"type": ["boolean", "null"]},
+                "error_type": {"type": ["string", "null"]},
+                "error_file": {"type": ["string", "null"]},
+                "error_severity": {"type": ["string", "null"]},
+                "mood": {"type": ["string", "null"]},
+                "intensity": {
+                    "type": ["number", "null"],
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "intent": {"type": ["string", "null"]},
+                "summary": {"type": ["string", "null"]},
+                "relationship_impact": {"type": ["string", "null"]}
+            },
+            "required": [
+                "salience",
+                "topics",
+                "contains_code",
+                "programming_lang",
+                "contains_error",
+                "error_type",
+                "error_file",
+                "error_severity",
+                "mood",
+                "intensity",
+                "intent",
+                "summary",
+                "relationship_impact"
+            ],
+            "additionalProperties": false
+        })
+    }
+    
+    fn get_batch_analysis_schema() -> Value {
+        json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "message_index": {"type": "integer", "minimum": 1},
+                    "salience": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "topics": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "contains_code": {"type": ["boolean", "null"]},
+                    "programming_lang": {"type": ["string", "null"]},
+                    "contains_error": {"type": ["boolean", "null"]},
+                    "error_type": {"type": ["string", "null"]},
+                    "error_file": {"type": ["string", "null"]},
+                    "error_severity": {"type": ["string", "null"]},
+                    "mood": {"type": ["string", "null"]},
+                    "intensity": {
+                        "type": ["number", "null"],
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "intent": {"type": ["string", "null"]},
+                    "summary": {"type": ["string", "null"]},
+                    "relationship_impact": {"type": ["string", "null"]}
+                },
+                "required": [
+                    "message_index",
+                    "salience",
+                    "topics",
+                    "contains_code",
+                    "programming_lang",
+                    "contains_error",
+                    "error_type",
+                    "error_file",
+                    "error_severity",
+                    "mood",
+                    "intensity",
+                    "intent",
+                    "summary",
+                    "relationship_impact"
+                ],
+                "additionalProperties": false
+            }
+        })
     }
     
     async fn parse_analysis_response(
@@ -246,6 +365,7 @@ For each message, provide analysis as JSON array."#,
         response: &str,
         original_messages: &[(String, String)],
     ) -> Result<Vec<ChatAnalysisResult>> {
+        let json_str = self.extract_json_from_response(response)?;
         
         #[derive(Deserialize)]
         struct BatchItem {
@@ -265,7 +385,6 @@ For each message, provide analysis as JSON array."#,
             relationship_impact: Option<String>,
         }
         
-        let json_str = self.extract_json_from_response(response)?;
         let analyses: Vec<BatchItem> = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse batch response: {}", e))?;
         

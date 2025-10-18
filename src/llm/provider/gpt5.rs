@@ -1,5 +1,5 @@
 // src/llm/provider/gpt5.rs
-// GPT-5 Responses API implementation with streaming + tool calling
+// GPT-5 Responses API implementation with streaming + tool calling + structured outputs
 
 use super::{LlmProvider, Message, Response, TokenUsage};
 use anyhow::{Result, anyhow};
@@ -154,6 +154,7 @@ impl Gpt5Provider {
             tools,
             previous_response_id,
             false, // non-streaming
+            None,  // no response_format
         );
 
         debug!("GPT-5 request: {}", serde_json::to_string_pretty(&body)?);
@@ -205,6 +206,113 @@ impl Gpt5Provider {
         })
     }
 
+    /// Chat with strict JSON schema enforcement (for analyzers and structured outputs)
+    /// This uses GPT-5's json_schema response_format with strict validation
+    pub async fn chat_with_schema(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        schema_name: &str,
+        schema: Value,
+    ) -> Result<Response> {
+        let start = Instant::now();
+        
+        // Build input array
+        let mut input = vec![];
+        for msg in messages {
+            input.push(json!({
+                "role": msg.role,
+                "content": msg.content
+            }));
+        }
+        
+        let body = json!({
+            "model": self.model,
+            "input": input,
+            "instructions": system,
+            "max_output_tokens": self.max_tokens,
+            "text": {
+                "verbosity": self.verbosity,
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "schema": schema,
+                    "strict": true
+                }
+            },
+            "reasoning": {
+                "effort": self.reasoning,
+                "summary": "auto"
+            },
+            "store": false
+        });
+        
+        debug!("GPT-5 structured request: {}", serde_json::to_string_pretty(&body)?);
+        
+        let response = self
+            .client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+        
+        let status = response.status();
+        let body_text = response.text().await?;
+        
+        if !status.is_success() {
+            error!("GPT-5 schema error {}: {}", status, body_text);
+            return Err(anyhow!("GPT-5 error {}: {}", status, body_text));
+        }
+        
+        let json: Value = serde_json::from_str(&body_text)?;
+        
+        // Log the full response for debugging
+        eprintln!("=== GPT-5 STRUCTURED RESPONSE ===");
+        eprintln!("{}", serde_json::to_string_pretty(&json)?);
+        eprintln!("=================================");
+        
+        // Try multiple extraction paths
+        let content = if let Some(text) = json.get("output_text").and_then(|t| t.as_str()) {
+            debug!("Extracted from output_text field");
+            text.to_string()
+        } else if let Some(output) = json.get("output").and_then(|o| o.as_array()) {
+            debug!("Extracting from output array");
+            let mut extracted = String::new();
+            for item in output {
+                if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                    if let Some(content_arr) = item.get("content").and_then(|c| c.as_array()) {
+                        for part in content_arr {
+                            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
+                                    extracted.push_str(t);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            extracted
+        } else {
+            String::new()
+        };
+        
+        if content.is_empty() {
+            error!("Failed to extract content from response");
+            return Err(anyhow!("No content in structured response"));
+        }
+        
+        let latency = start.elapsed().as_millis() as i64;
+        
+        Ok(Response {
+            content,
+            model: self.model.clone(),
+            tokens: self.extract_tokens(&json),
+            latency_ms: latency,
+        })
+    }
+
     /// Create a streaming response with tools
     /// Returns a stream of events + final response_id
     pub async fn create_stream_with_tools(
@@ -220,6 +328,7 @@ impl Gpt5Provider {
             tools,
             previous_response_id,
             true, // streaming
+            None, // no response_format
         );
 
         debug!("GPT-5 streaming request: {}", serde_json::to_string_pretty(&body)?);
@@ -277,6 +386,7 @@ impl Gpt5Provider {
         tools: Vec<Value>,
         previous_response_id: Option<String>,
         stream: bool,
+        response_format: Option<Value>,
     ) -> Value {
         // Format input messages
         let mut input = vec![json!({
@@ -306,6 +416,11 @@ impl Gpt5Provider {
             "stream": stream,
         });
 
+        // Add response_format if provided
+        if let Some(format) = response_format {
+            body["response_format"] = format;
+        }
+
         // Add tools if present
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools);
@@ -329,13 +444,14 @@ impl Gpt5Provider {
         }
 
         // Fall back to output array
+        // Structure: output[].type="message" -> content[].type="output_text" -> text
         if let Some(output) = response.get("output").and_then(|o| o.as_array()) {
             let mut text = String::new();
             for item in output {
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
                     if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
                         for part in content {
-                            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                            if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                                 if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                                     text.push_str(t);
                                 }
