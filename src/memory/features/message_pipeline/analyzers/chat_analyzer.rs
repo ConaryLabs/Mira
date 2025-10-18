@@ -1,6 +1,6 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 // Chat message analyzer - extracts sentiment, intent, topics, code, and error detection
-// FIXED: Uses GPT-5 json_schema for structured outputs with fallback extraction
+// FIXED: Handles GPT-5 structured response format (output array -> content -> text)
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -52,7 +52,7 @@ impl ChatAnalyzer {
             content: prompt,
         }];
         
-        // Use GPT-5 structured output if available
+        // Use GPT-5 structured output
         if let Some(gpt5) = self.llm_provider.as_any().downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>() {
             let schema = Self::get_analysis_schema();
             let provider_response = gpt5
@@ -71,19 +71,8 @@ impl ChatAnalyzer {
             return self.parse_analysis_response(&provider_response.content, content).await;
         }
         
-        // Fallback for other providers
-        let provider_response = self.llm_provider
-            .chat(
-                messages,
-                "You are a message analyzer. Return JSON only.".to_string(),
-            )
-            .await
-            .map_err(|e| {
-                error!("LLM analysis failed: {}", e);
-                e
-            })?;
-        
-        self.parse_analysis_response(&provider_response.content, content).await
+        error!("ChatAnalyzer requires GPT-5 provider");
+        Err(anyhow::anyhow!("ChatAnalyzer only supports GPT-5"))
     }
     
     pub async fn analyze_batch(
@@ -102,7 +91,7 @@ impl ChatAnalyzer {
             content: prompt,
         }];
         
-        // Use GPT-5 structured output if available
+        // Use GPT-5 structured output
         if let Some(gpt5) = self.llm_provider.as_any().downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>() {
             let schema = Self::get_batch_analysis_schema();
             let provider_response = gpt5
@@ -121,15 +110,8 @@ impl ChatAnalyzer {
             return self.parse_batch_response(&provider_response.content, messages).await;
         }
         
-        // Fallback for other providers
-        let provider_response = self.llm_provider
-            .chat(
-                llm_messages,
-                "You are a message analyzer. Return JSON only.".to_string(),
-            )
-            .await?;
-        
-        self.parse_batch_response(&provider_response.content, messages).await
+        error!("ChatAnalyzer requires GPT-5 provider");
+        Err(anyhow::anyhow!("ChatAnalyzer only supports GPT-5"))
     }
     
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
@@ -315,13 +297,17 @@ For each message, provide analysis as JSON array."#,
         };
         
         let programming_lang = parsed.programming_lang.as_ref()
-            .filter(|lang| {
-                matches!(
-                    lang.to_lowercase().as_str(),
+            .and_then(|lang| {
+                let lower = lang.to_lowercase();
+                if matches!(
+                    lower.as_str(),
                     "rust" | "typescript" | "javascript" | "python" | "go" | "java"
-                )
-            })
-            .cloned();
+                ) {
+                    Some(lower)
+                } else {
+                    None
+                }
+            });
         
         let error_type = parsed.error_type.as_ref()
             .filter(|t| {
@@ -423,9 +409,35 @@ For each message, provide analysis as JSON array."#,
     }
     
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
-        // STRATEGY 0: Try parsing entire response as JSON first (for structured responses like GPT-5 json_schema)
-        if let Ok(_) = serde_json::from_str::<Value>(response) {
-            debug!("Response is already valid JSON (structured response)");
+        // STRATEGY 0: Handle GPT-5 structured output format
+        // GPT-5 returns: {"output": [{"type": "reasoning", ...}, {"type": "message", "content": [{"type": "output_text", "text": "..."}]}]}
+        if let Ok(value) = serde_json::from_str::<Value>(response) {
+            // Check for GPT-5 output array format
+            if let Some(output_array) = value.get("output").and_then(|o| o.as_array()) {
+                debug!("Detected GPT-5 structured response format");
+                
+                // Find the message object in the output array
+                for item in output_array {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                        // Navigate to content array
+                        if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                            // Find output_text
+                            for content_item in content_array {
+                                if content_item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                                    if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
+                                        debug!("Extracted JSON from GPT-5 output.content.text: {} chars", text.len());
+                                        return Ok(text.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return Err(anyhow::anyhow!("No content in structured response"));
+            }
+            
+            // If not GPT-5 format but valid JSON, assume it's already the analysis
+            debug!("Response is already valid JSON (non-GPT-5 structured response)");
             return Ok(response.to_string());
         }
         

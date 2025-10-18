@@ -273,18 +273,17 @@ impl Gpt5Provider {
         eprintln!("{}", serde_json::to_string_pretty(&json)?);
         eprintln!("=================================");
         
-        // Try multiple extraction paths
-        let content = if let Some(text) = json.get("output_text").and_then(|t| t.as_str()) {
-            debug!("Extracted from output_text field");
-            text.to_string()
-        } else if let Some(output) = json.get("output").and_then(|o| o.as_array()) {
+        // Extract content from GPT-5 response
+        // Structure: output[] -> type="message" -> content[] -> type="output_text" -> text
+        let content = if let Some(output) = json.get("output").and_then(|o| o.as_array()) {
             debug!("Extracting from output array");
             let mut extracted = String::new();
             for item in output {
                 if item.get("type").and_then(|t| t.as_str()) == Some("message") {
                     if let Some(content_arr) = item.get("content").and_then(|c| c.as_array()) {
                         for part in content_arr {
-                            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                            // FIX: Changed from "text" to "output_text"
+                            if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                                 if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                                     extracted.push_str(t);
                                 }
