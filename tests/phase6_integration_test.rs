@@ -6,6 +6,12 @@
 use mira_backend::operations::{OperationEngine, OperationEngineEvent};
 use mira_backend::llm::provider::gpt5::Gpt5Provider;
 use mira_backend::llm::provider::deepseek::DeepSeekProvider;
+use mira_backend::llm::provider::{LlmProvider, OpenAiEmbeddings};
+use mira_backend::memory::service::MemoryService;
+use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
+use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use mira_backend::relationship::service::RelationshipService;
+use mira_backend::relationship::facts_service::FactsService;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -40,11 +46,57 @@ fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
     (gpt5, deepseek)
 }
 
+/// Setup test services
+async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>, Arc<FactsService>) {
+    let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
+    
+    let qdrant_url = "http://localhost:6333";
+    let multi_store = Arc::new(
+        QdrantMultiStore::new(qdrant_url, "test_phase6")
+            .await
+            .unwrap_or_else(|_| panic!("Qdrant not available"))
+    );
+    
+    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+        "test-key".to_string(),
+        "text-embedding-3-large".to_string(),
+    ));
+    
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
+        "test-key".to_string(),
+        "gpt-5-preview".to_string(),
+        4000,
+        "medium".to_string(),
+        "medium".to_string(),
+    ));
+    
+    let memory_service = Arc::new(MemoryService::new(
+        sqlite_store,
+        multi_store,
+        llm_provider,
+        embedding_client,
+    ));
+    
+    let relationship_service = Arc::new(RelationshipService::new(pool.clone()));
+    let facts_service = Arc::new(FactsService::new((*pool).clone()));
+    
+    (memory_service, relationship_service, facts_service)
+}
+
 #[tokio::test]
 async fn test_operation_engine_with_providers() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let engine = OperationEngine::new(db.clone(), gpt5, deepseek);
+    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    
+    let engine = OperationEngine::new(
+        db.clone(),
+        gpt5,
+        deepseek,
+        memory_service,
+        relationship_service,
+        facts_service,
+    );
 
     // Create event channel
     let (tx, mut rx) = mpsc::channel(100);
@@ -120,14 +172,24 @@ async fn test_operation_engine_with_providers() {
 async fn test_operation_lifecycle_complete() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let engine = OperationEngine::new(db.clone(), gpt5, deepseek);
+    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    
+    let engine = OperationEngine::new(
+        db.clone(),
+        gpt5,
+        deepseek,
+        memory_service,
+        relationship_service,
+        facts_service,
+    );
 
     let (tx, mut rx) = mpsc::channel(100);
+    let session_id = "test-session";
 
     // Create and start operation
     let op = engine
         .create_operation(
-            "test-session".to_string(),
+            session_id.to_string(),
             "code_generation".to_string(),
             "Test operation".to_string(),
         )
@@ -145,7 +207,7 @@ async fn test_operation_lifecycle_complete() {
 
     // Complete operation
     engine
-        .complete_operation(&op.id, Some("Success!".to_string()), &tx)
+        .complete_operation(&op.id, session_id, Some("Success!".to_string()), &tx)
         .await
         .expect("Failed to complete operation");
 
@@ -186,7 +248,16 @@ async fn test_operation_lifecycle_complete() {
 async fn test_operation_failure_handling() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let engine = OperationEngine::new(db.clone(), gpt5, deepseek);
+    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    
+    let engine = OperationEngine::new(
+        db.clone(),
+        gpt5,
+        deepseek,
+        memory_service,
+        relationship_service,
+        facts_service,
+    );
 
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -252,7 +323,16 @@ async fn test_operation_failure_handling() {
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let engine = Arc::new(OperationEngine::new(db.clone(), gpt5, deepseek));
+    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    
+    let engine = Arc::new(OperationEngine::new(
+        db.clone(),
+        gpt5,
+        deepseek,
+        memory_service,
+        relationship_service,
+        facts_service,
+    ));
 
     let mut handles = vec![];
 
@@ -261,10 +341,11 @@ async fn test_multiple_operations_concurrency() {
         let engine_clone = engine.clone();
         let handle = tokio::spawn(async move {
             let (tx, _rx) = mpsc::channel(100);
+            let session_id = format!("session-{}", i);
 
             let op = engine_clone
                 .create_operation(
-                    format!("session-{}", i),
+                    session_id.clone(),
                     "code_generation".to_string(),
                     format!("Operation {}", i),
                 )
@@ -277,7 +358,7 @@ async fn test_multiple_operations_concurrency() {
                 .expect("Failed to start operation");
 
             engine_clone
-                .complete_operation(&op.id, Some(format!("Result {}", i)), &tx)
+                .complete_operation(&op.id, &session_id, Some(format!("Result {}", i)), &tx)
                 .await
                 .expect("Failed to complete operation");
 
