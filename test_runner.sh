@@ -114,6 +114,7 @@ OPTIONS:
     phase5              Run phase 5 provider tests only
     phase6              Run phase 6 integration tests only
     phase7              Run phase 7 routing tests only
+    deepseek            Run DeepSeek live API tests only
     quick               Run quick smoke test (complete message flow)
     cleanup             Clean up Qdrant test collections
     list                List all available tests
@@ -123,6 +124,7 @@ EXAMPLES:
     ./test_runner.sh                    # Run all tests
     ./test_runner.sh pipeline           # Run pipeline tests only
     ./test_runner.sh operations         # Run operation engine tests
+    ./test_runner.sh deepseek           # Run DeepSeek live API tests
     ./test_runner.sh quick              # Quick smoke test
     ./test_runner.sh cleanup            # Clean up test data
 
@@ -164,6 +166,10 @@ list_tests() {
     
     echo -e "${YELLOW}Phase 7 Routing Tests (phase7_routing_test):${NC}"
     cargo test --test phase7_routing_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}DeepSeek Live Tests (deepseek_live_test):${NC}"
+    cargo test --test deepseek_live_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
 }
 
@@ -260,6 +266,15 @@ main() {
             exit $?
             ;;
         
+        deepseek)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "deepseek_live_test" "$test_flags"
+            exit $?
+            ;;
+        
         quick)
             check_prerequisites
             if [ -z "$NO_CLEANUP" ]; then
@@ -290,6 +305,7 @@ main() {
             run_test "phase5_providers_test" "$test_flags" || failed=$((failed + 1))
             run_test "phase6_integration_test" "$test_flags" || failed=$((failed + 1))
             run_test "phase7_routing_test" "$test_flags" || failed=$((failed + 1))
+            run_test "deepseek_live_test" "$test_flags" || failed=$((failed + 1))
             
             # Summary
             echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
