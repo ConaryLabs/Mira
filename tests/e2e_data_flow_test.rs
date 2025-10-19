@@ -528,37 +528,50 @@ async fn setup_test_db() -> SqlitePool {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL,
             response_id TEXT,
-            parent_id INTEGER,
-            role TEXT NOT NULL,
+            parent_id INTEGER REFERENCES memory_entries(id) ON DELETE CASCADE,
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'code', 'document')),
             content TEXT NOT NULL,
-            timestamp INTEGER NOT NULL,
-            tags TEXT,
-            mood TEXT,
-            intensity REAL,
-            salience REAL,
-            original_salience REAL,
-            intent TEXT,
-            topics TEXT,
-            summary TEXT,
-            relationship_impact TEXT,
-            contains_code INTEGER,
-            language TEXT,
-            programming_lang TEXT,
-            analyzed_at INTEGER,
-            analysis_version TEXT,
-            routed_to_heads TEXT,
-            contains_error INTEGER,
-            error_type TEXT,
-            error_severity TEXT,
-            error_file TEXT,
-            last_recalled INTEGER,
-            recall_count INTEGER
+            timestamp INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            tags TEXT
         )
         "#
     )
     .execute(&pool)
     .await
-    .expect("Failed to create table");
+    .expect("Failed to create memory_entries table");
+    
+    // Create message_analysis table
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS message_analysis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL UNIQUE REFERENCES memory_entries(id) ON DELETE CASCADE,
+            mood TEXT,
+            intensity REAL CHECK(intensity >= 0 AND intensity <= 1),
+            salience REAL CHECK(salience >= 0 AND salience <= 1),
+            original_salience REAL,
+            intent TEXT,
+            topics TEXT NOT NULL DEFAULT '[]',
+            summary TEXT,
+            relationship_impact TEXT,
+            contains_code BOOLEAN DEFAULT FALSE,
+            language TEXT DEFAULT 'en',
+            programming_lang TEXT,
+            contains_error BOOLEAN DEFAULT FALSE,
+            error_type TEXT,
+            error_severity TEXT,
+            error_file TEXT,
+            analyzed_at INTEGER DEFAULT (strftime('%s','now')),
+            analysis_version TEXT,
+            routed_to_heads TEXT NOT NULL DEFAULT '[]',
+            last_recalled INTEGER,
+            recall_count INTEGER DEFAULT 0
+        )
+        "#
+    )
+    .execute(&pool)
+    .await
+    .expect("Failed to create message_analysis table");
     
     pool
 }

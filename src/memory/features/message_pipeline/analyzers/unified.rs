@@ -3,7 +3,7 @@
 //! Unified analyzer that coordinates message analysis
 //! Code and error detection handled by LLM - no regex heuristics
 //!
-//! Phase 4.2: Lowered min_salience_threshold from 0.2 to 0.1 to trust the model's judgment more
+//! Phase 4.3: Raised min_salience_threshold to 0.5 to avoid embedding trivial messages
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -70,8 +70,13 @@ pub struct AnalyzerConfig {
 impl Default for AnalyzerConfig {
     fn default() -> Self {
         Self {
-            // PHASE 4.2: Lowered from 0.2 to 0.1 - trust the model more, filter less
-            min_salience_threshold: 0.1,
+            // PHASE 4.3: Raised to 0.5 to filter out trivial messages
+            // Salience scale:
+            //   0.0-0.3: Trivial (ok, thanks, got it) - not embedded
+            //   0.3-0.5: Low value - not embedded
+            //   0.5-0.7: Medium value - embedded
+            //   0.7-1.0: High value - embedded
+            min_salience_threshold: 0.5,
             analysis_version: "2.0".to_string(),
         }
     }
@@ -197,7 +202,7 @@ impl UnifiedAnalyzer {
                 should_embed: false,
                 embedding_heads: vec![],
                 skip_reason: Some(format!(
-                    "Salience {} below threshold {}", 
+                    "Salience {:.2} below threshold {:.2}", 
                     chat_result.salience, 
                     self.config.min_salience_threshold
                 )),

@@ -17,6 +17,7 @@ impl MemoryOperations {
     }
 
     /// Core MemoryStore::save implementation
+    /// FIXED: Now also saves analysis metadata to message_analysis table
     pub async fn save_memory_entry(&self, entry: &MemoryEntry) -> Result<MemoryEntry> {
         let tags_json = entry
             .tags
@@ -46,6 +47,7 @@ impl MemoryOperations {
             None
         };
 
+        // Insert into memory_entries
         let row = sqlx::query(
             r#"
             INSERT INTO memory_entries (
@@ -65,6 +67,12 @@ impl MemoryOperations {
         .await?;
 
         let new_id: i64 = row.get("id");
+        
+        // FIXED: If entry has analysis metadata, save it to message_analysis table
+        if Self::has_analysis_metadata(entry) {
+            self.save_analysis_metadata(new_id, entry).await?;
+        }
+        
         let mut saved_entry = entry.clone();
         saved_entry.id = Some(new_id);
         saved_entry.response_id = response_id.clone();
@@ -72,6 +80,86 @@ impl MemoryOperations {
         debug!("Saved memory entry {} for session {} (parent: {:?})", 
                new_id, entry.session_id, parent_id);
         Ok(saved_entry)
+    }
+
+    /// Check if entry has any analysis metadata worth saving
+    fn has_analysis_metadata(entry: &MemoryEntry) -> bool {
+        entry.salience.is_some() ||
+        entry.topics.is_some() ||
+        entry.mood.is_some() ||
+        entry.intent.is_some() ||
+        entry.contains_code.is_some() ||
+        entry.programming_lang.is_some() ||
+        entry.contains_error.is_some() ||
+        entry.routed_to_heads.is_some()
+    }
+
+    /// Save analysis metadata to message_analysis table
+    async fn save_analysis_metadata(&self, message_id: i64, entry: &MemoryEntry) -> Result<()> {
+        // Serialize topics and routed_to_heads arrays
+        let topics_json = entry.topics
+            .as_ref()
+            .map(|t| serde_json::to_string(t).unwrap_or_else(|_| "[]".to_string()))
+            .unwrap_or_else(|| "[]".to_string());
+        
+        let routed_to_heads_json = entry.routed_to_heads
+            .as_ref()
+            .map(|h| serde_json::to_string(h).unwrap_or_else(|_| "[]".to_string()))
+            .unwrap_or_else(|| "[]".to_string());
+
+        sqlx::query(
+            r#"
+            INSERT INTO message_analysis (
+                message_id, mood, intensity, salience, original_salience, intent, topics,
+                summary, relationship_impact, contains_code, language, programming_lang,
+                contains_error, error_type, error_severity, error_file,
+                analyzed_at, analysis_version, routed_to_heads, recall_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+                mood = excluded.mood,
+                intensity = excluded.intensity,
+                salience = excluded.salience,
+                original_salience = COALESCE(message_analysis.original_salience, excluded.original_salience),
+                intent = excluded.intent,
+                topics = excluded.topics,
+                summary = excluded.summary,
+                relationship_impact = excluded.relationship_impact,
+                contains_code = excluded.contains_code,
+                language = excluded.language,
+                programming_lang = excluded.programming_lang,
+                contains_error = excluded.contains_error,
+                error_type = excluded.error_type,
+                error_severity = excluded.error_severity,
+                error_file = excluded.error_file,
+                analysis_version = excluded.analysis_version,
+                routed_to_heads = excluded.routed_to_heads
+            "#,
+        )
+        .bind(message_id)
+        .bind(&entry.mood)
+        .bind(entry.intensity.map(|i| i as f64))
+        .bind(entry.salience.map(|s| s as f64))
+        .bind(entry.original_salience.map(|s| s as f64).or(entry.salience.map(|s| s as f64)))
+        .bind(&entry.intent)
+        .bind(topics_json)
+        .bind(&entry.summary)
+        .bind(&entry.relationship_impact)
+        .bind(entry.contains_code.unwrap_or(false))
+        .bind(entry.language.as_deref().unwrap_or("en"))
+        .bind(&entry.programming_lang)
+        .bind(entry.contains_error.unwrap_or(false))
+        .bind(&entry.error_type)
+        .bind(&entry.error_severity)
+        .bind(&entry.error_file)
+        .bind(entry.analyzed_at.map(|dt| dt.timestamp()))
+        .bind(&entry.analysis_version)
+        .bind(routed_to_heads_json)
+        .bind(0) // recall_count starts at 0
+        .execute(&self.pool)
+        .await?;
+
+        debug!("Saved analysis metadata for message {}", message_id);
+        Ok(())
     }
 
     /// Core MemoryStore::load_recent implementation
@@ -255,6 +343,7 @@ impl MemoryOperations {
     }
 
     /// Save memory with explicit parent relationship
+    /// FIXED: Also saves analysis metadata
     pub async fn save_with_parent(&self, entry: &MemoryEntry, parent_id: Option<i64>) -> Result<MemoryEntry> {
         let tags_json = entry
             .tags
@@ -286,6 +375,12 @@ impl MemoryOperations {
         .await?;
 
         let new_id: i64 = row.get("id");
+        
+        // FIXED: If entry has analysis metadata, save it to message_analysis table
+        if Self::has_analysis_metadata(entry) {
+            self.save_analysis_metadata(new_id, entry).await?;
+        }
+        
         let mut saved_entry = entry.clone();
         saved_entry.id = Some(new_id);
         saved_entry.response_id = response_id;

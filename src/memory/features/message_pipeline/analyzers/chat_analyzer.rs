@@ -1,6 +1,6 @@
 // src/memory/features/message_pipeline/analyzers/chat_analyzer.rs
 // Chat message analyzer - extracts sentiment, intent, topics, code, and error detection
-// FIXED: Handles GPT-5 structured response format (output array -> content -> text)
+// FIXED: More explicit prompts for consistent LLM behavior
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -116,27 +116,55 @@ impl ChatAnalyzer {
     
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
         let context_str = context
-            .map(|c| format!("\n\nContext:\n{}", c))
+            .map(|c| format!("\n\nPrevious Context:\n{}", c))
             .unwrap_or_default();
         
         format!(
-            r#"Analyze this {} message:
-Content: "{}"{}
+            r#"Analyze this {} message and extract metadata:
 
-Return JSON with:
-- salience: 0.0-1.0 (how important/memorable)
-- topics: array of main topics
-- contains_code: bool (if message has code)
-- programming_lang: language if code present
-- contains_error: bool (if discussing an error)
-- error_type: compiler/runtime/test_failure/build_failure/linter/type_error
-- error_file: filename if mentioned
-- error_severity: low/medium/high/critical
-- mood: emotional tone (excited/frustrated/neutral/curious/etc)
-- intensity: 0.0-1.0 emotional intensity
-- intent: what user wants (question/statement/request/etc)
-- summary: brief summary if notable
-- relationship_impact: how this affects user-assistant relationship"#,
+Message: "{}"{}
+
+Return JSON with these fields:
+
+1. salience (0.0-1.0): How important/memorable this message is
+   - CRITICAL: Trivial acknowledgments like "ok", "thanks", "got it", "👍", "k" MUST have salience < 0.3
+   - Low value (0.0-0.3): Simple acknowledgments, greetings, filler
+   - Medium value (0.4-0.6): Questions, casual discussion
+   - High value (0.7-0.9): Technical content, decisions, bugs, errors
+   - Critical (0.9-1.0): Security issues, production problems, major decisions
+
+2. topics: Array of main topics discussed (2-5 topics)
+
+3. contains_code: true if message contains actual code OR discusses programming/code
+   - IMPORTANT: Messages like "Here's a bug fix in Rust" or "I need to implement OAuth" should have contains_code=true
+   - Both code blocks AND discussions about code should be marked as code-related
+
+4. programming_lang: Language name if code-related (rust/python/javascript/typescript/go/java/sql/etc)
+
+5. contains_error: true if discussing an error, bug, or failure
+
+6. error_type: Type if error present (compiler/runtime/test_failure/build_failure/linter/type_error)
+
+7. error_file: Filename if mentioned in error context
+
+8. error_severity: Severity if error (low/medium/high/critical)
+
+9. mood: Emotional tone (excited/frustrated/neutral/curious/confused/etc)
+
+10. intensity: Emotional intensity 0.0-1.0
+
+11. intent: What user wants (question/statement/request/complaint/instruction/etc)
+
+12. summary: Brief 1-sentence summary if notable (null for trivial messages)
+
+13. relationship_impact: How this affects user-assistant relationship (null for trivial messages)
+
+Examples:
+- "ok" → salience: 0.1, topics: ["acknowledgment"], contains_code: false
+- "Here's a bug fix in Rust" → salience: 0.8, topics: ["bug fix", "rust"], contains_code: true, programming_lang: "rust"
+- "Critical auth bug in production" → salience: 0.95, contains_error: true, error_severity: "critical"
+
+Be precise and consistent."#,
             role, content, context_str
         )
     }
@@ -154,7 +182,12 @@ Return JSON with:
 
 {}
 
-For each message, provide analysis as JSON array."#,
+For each message, provide analysis as JSON array with same fields as single analysis.
+
+CRITICAL RULES:
+- Trivial messages ("ok", "thanks", "got it") MUST have salience < 0.3
+- Messages about code (not just code blocks) should have contains_code=true
+- Be consistent with salience scoring across all messages"#,
             messages.len(),
             message_list
         )
