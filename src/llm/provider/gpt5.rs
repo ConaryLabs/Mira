@@ -268,11 +268,6 @@ impl Gpt5Provider {
         
         let json: Value = serde_json::from_str(&body_text)?;
         
-        // Log the full response for debugging
-        eprintln!("=== GPT-5 STRUCTURED RESPONSE ===");
-        eprintln!("{}", serde_json::to_string_pretty(&json)?);
-        eprintln!("=================================");
-        
         // Extract content from GPT-5 response
         // Structure: output[] -> type="message" -> content[] -> type="output_text" -> text
         let content = if let Some(output) = json.get("output").and_then(|o| o.as_array()) {

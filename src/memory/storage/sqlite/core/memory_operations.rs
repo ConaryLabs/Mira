@@ -75,13 +75,20 @@ impl MemoryOperations {
     }
 
     /// Core MemoryStore::load_recent implementation
+    /// FIXED: Now joins with message_analysis to load all analysis metadata
     pub async fn load_recent_memories(&self, session_id: &str, n: usize) -> Result<Vec<MemoryEntry>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, role, content, timestamp, tags, response_id, parent_id
-            FROM memory_entries
-            WHERE session_id = ?
-            ORDER BY timestamp DESC
+            SELECT 
+                m.id, m.session_id, m.role, m.content, m.timestamp, m.tags, m.response_id, m.parent_id,
+                a.mood, a.intensity, a.salience, a.original_salience, a.intent, a.topics,
+                a.summary, a.relationship_impact, a.contains_code, a.language, a.programming_lang,
+                a.contains_error, a.error_type, a.error_severity, a.error_file,
+                a.analyzed_at, a.analysis_version, a.routed_to_heads, a.last_recalled, a.recall_count
+            FROM memory_entries m
+            LEFT JOIN message_analysis a ON m.id = a.message_id
+            WHERE m.session_id = ?
+            ORDER BY m.timestamp DESC
             LIMIT ?
             "#,
         )
@@ -93,6 +100,7 @@ impl MemoryOperations {
         let mut entries = Vec::with_capacity(rows.len());
 
         for row in rows {
+            // Core fields
             let id: i64 = row.get("id");
             let session_id: String = row.get("session_id");
             let role: String = row.get("role");
@@ -102,9 +110,46 @@ impl MemoryOperations {
             let response_id: Option<String> = row.get("response_id");
             let parent_id: Option<i64> = row.get("parent_id");
 
+            // Parse tags JSON
             let tags_vec = tags
                 .as_ref()
                 .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+
+            // Analysis fields from message_analysis table
+            let mood: Option<String> = row.get("mood");
+            let intensity: Option<f64> = row.get("intensity");
+            let salience: Option<f64> = row.get("salience");
+            let original_salience: Option<f64> = row.get("original_salience");
+            let intent: Option<String> = row.get("intent");
+            let topics_json: Option<String> = row.get("topics");
+            let summary: Option<String> = row.get("summary");
+            let relationship_impact: Option<String> = row.get("relationship_impact");
+            let contains_code: Option<bool> = row.get("contains_code");
+            let language: Option<String> = row.get("language");
+            let programming_lang: Option<String> = row.get("programming_lang");
+            let contains_error: Option<bool> = row.get("contains_error");
+            let error_type: Option<String> = row.get("error_type");
+            let error_severity: Option<String> = row.get("error_severity");
+            let error_file: Option<String> = row.get("error_file");
+            let analyzed_at: Option<i64> = row.get("analyzed_at");
+            let analysis_version: Option<String> = row.get("analysis_version");
+            let routed_to_heads_json: Option<String> = row.get("routed_to_heads");
+            let last_recalled: Option<i64> = row.get("last_recalled");
+            let recall_count: Option<i64> = row.get("recall_count");
+
+            // Parse topics JSON array
+            let topics_vec = topics_json
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+
+            // Parse routed_to_heads JSON array
+            let routed_to_heads_vec = routed_to_heads_json
+                .as_ref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+
+            // Convert timestamps to DateTime
+            let analyzed_at_dt = analyzed_at.map(|ts| Utc.timestamp_opt(ts, 0).single().unwrap());
+            let last_recalled_dt = last_recalled.map(|ts| Utc.timestamp_opt(ts, 0).single().unwrap());
 
             let entry = MemoryEntry {
                 id: Some(id),
@@ -115,26 +160,32 @@ impl MemoryOperations {
                 content,
                 timestamp: Utc.from_utc_datetime(&timestamp),
                 tags: tags_vec,
-                mood: None,
-                intensity: None,
-                salience: None,
-                original_salience: None,
-                intent: None,
-                topics: None,
-                summary: None,
-                relationship_impact: None,
-                contains_code: None,
-                language: None,
-                programming_lang: None,
-                analyzed_at: None,
-                analysis_version: None,
-                routed_to_heads: None,
-                last_recalled: None,
-                recall_count: None,
-                contains_error: None,
-                error_type: None,
-                error_severity: None,
-                error_file: None,
+                
+                // Analysis fields - now properly populated from message_analysis table
+                mood,
+                intensity: intensity.map(|i| i as f32),
+                salience: salience.map(|s| s as f32),
+                original_salience: original_salience.map(|s| s as f32),
+                intent,
+                topics: topics_vec,
+                summary,
+                relationship_impact,
+                contains_code,
+                language,
+                programming_lang,
+                analyzed_at: analyzed_at_dt,
+                analysis_version,
+                routed_to_heads: routed_to_heads_vec,
+                last_recalled: last_recalled_dt,
+                recall_count: recall_count,
+                
+                // Error fields
+                contains_error,
+                error_type,
+                error_severity,
+                error_file,
+                
+                // LLM metadata fields (not stored in message_analysis)
                 model_version: None,
                 prompt_tokens: None,
                 completion_tokens: None,
@@ -146,6 +197,8 @@ impl MemoryOperations {
                 tool_calls: None,
                 temperature: None,
                 max_tokens: None,
+                
+                // Embedding fields (not stored in message_analysis)
                 embedding: None,
                 embedding_heads: None,
                 qdrant_point_ids: None,
