@@ -106,10 +106,14 @@ show_usage() {
 Usage: ./test_runner.sh [OPTIONS]
 
 OPTIONS:
-    all                 Run all data flow tests (default)
+    all                 Run all tests (default)
     pipeline            Run message pipeline tests only
     storage             Run storage & embedding tests only
     e2e                 Run end-to-end integration tests only
+    operations          Run operation engine tests only
+    phase5              Run phase 5 provider tests only
+    phase6              Run phase 6 integration tests only
+    phase7              Run phase 7 routing tests only
     quick               Run quick smoke test (complete message flow)
     cleanup             Clean up Qdrant test collections
     list                List all available tests
@@ -118,6 +122,7 @@ OPTIONS:
 EXAMPLES:
     ./test_runner.sh                    # Run all tests
     ./test_runner.sh pipeline           # Run pipeline tests only
+    ./test_runner.sh operations         # Run operation engine tests
     ./test_runner.sh quick              # Quick smoke test
     ./test_runner.sh cleanup            # Clean up test data
 
@@ -134,15 +139,31 @@ list_tests() {
     echo -e "${BLUE}Available Tests:${NC}\n"
     
     echo -e "${YELLOW}Message Pipeline Tests (message_pipeline_flow_test):${NC}"
-    cargo test --test message_pipeline_flow_test -- --list | grep "test_" | sed 's/^/  /'
+    cargo test --test message_pipeline_flow_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
     
     echo -e "${YELLOW}Storage & Embedding Tests (storage_embedding_flow_test):${NC}"
-    cargo test --test storage_embedding_flow_test -- --list | grep "test_" | sed 's/^/  /'
+    cargo test --test storage_embedding_flow_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
     
     echo -e "${YELLOW}End-to-End Tests (e2e_data_flow_test):${NC}"
-    cargo test --test e2e_data_flow_test -- --list | grep "test_" | sed 's/^/  /'
+    cargo test --test e2e_data_flow_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Operation Engine Tests (operation_engine_test):${NC}"
+    cargo test --test operation_engine_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Phase 5 Provider Tests (phase5_providers_test):${NC}"
+    cargo test --test phase5_providers_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Phase 6 Integration Tests (phase6_integration_test):${NC}"
+    cargo test --test phase6_integration_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Phase 7 Routing Tests (phase7_routing_test):${NC}"
+    cargo test --test phase7_routing_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
 }
 
@@ -203,6 +224,42 @@ main() {
             exit $?
             ;;
         
+        operations)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "operation_engine_test" "$test_flags"
+            exit $?
+            ;;
+        
+        phase5)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "phase5_providers_test" "$test_flags"
+            exit $?
+            ;;
+        
+        phase6)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "phase6_integration_test" "$test_flags"
+            exit $?
+            ;;
+        
+        phase7)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "phase7_routing_test" "$test_flags"
+            exit $?
+            ;;
+        
         quick)
             check_prerequisites
             if [ -z "$NO_CLEANUP" ]; then
@@ -220,19 +277,19 @@ main() {
             fi
             
             echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${BLUE}║          DATA FLOW TEST SUITE                          ║${NC}"
+            echo -e "${BLUE}║          FULL TEST SUITE                               ║${NC}"
             echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}\n"
             
             local failed=0
             
-            # Run pipeline tests
+            # Run all test suites
             run_test "message_pipeline_flow_test" "$test_flags" || failed=$((failed + 1))
-            
-            # Run storage tests
             run_test "storage_embedding_flow_test" "$test_flags" || failed=$((failed + 1))
-            
-            # Run e2e tests
             run_test "e2e_data_flow_test" "$test_flags" || failed=$((failed + 1))
+            run_test "operation_engine_test" "$test_flags" || failed=$((failed + 1))
+            run_test "phase5_providers_test" "$test_flags" || failed=$((failed + 1))
+            run_test "phase6_integration_test" "$test_flags" || failed=$((failed + 1))
+            run_test "phase7_routing_test" "$test_flags" || failed=$((failed + 1))
             
             # Summary
             echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"

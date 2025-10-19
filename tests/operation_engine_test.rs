@@ -11,7 +11,6 @@ use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use mira_backend::relationship::service::RelationshipService;
-use mira_backend::relationship::storage::RelationshipStorage;
 use mira_backend::relationship::facts_service::FactsService;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
@@ -74,8 +73,8 @@ async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc
     // Create RelationshipService (takes Arc<SqlitePool> directly)
     let relationship_service = Arc::new(RelationshipService::new(pool.clone()));
     
-    // Create FactsService
-    let facts_service = Arc::new(FactsService::new(pool.clone()));
+    // Create FactsService (takes SqlitePool, so dereference the Arc)
+    let facts_service = Arc::new(FactsService::new((*pool).clone()));
     
     (memory_service, relationship_service, facts_service)
 }
