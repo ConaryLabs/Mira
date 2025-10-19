@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use sqlx::{SqlitePool, Row};
-use tracing::{debug, info, warn};
+use sqlx::SqlitePool;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use super::MemoryFact;

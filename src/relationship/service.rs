@@ -7,6 +7,7 @@ use crate::relationship::{
     storage::RelationshipStorage,
     pattern_engine::PatternEngine,
     context_loader::ContextLoader,
+    facts_service::FactsService,
 };
 
 /// Main relationship service - coordinates all relationship functionality
@@ -14,12 +15,13 @@ pub struct RelationshipService {
     pub storage: Arc<RelationshipStorage>,
     pub pattern_engine: Arc<PatternEngine>,
     pub context_loader: Arc<ContextLoader>,
+    pub facts_service: Arc<FactsService>,
 }
 
 impl RelationshipService {
-    /// Create a new relationship service
-    pub fn new(pool: Arc<SqlitePool>) -> Self {
-        info!("Initializing RelationshipService");
+    /// Create a new relationship service with FactsService integration
+    pub fn new(pool: Arc<SqlitePool>, facts_service: Arc<FactsService>) -> Self {
+        info!("Initializing RelationshipService with FactsService");
         
         let storage = Arc::new(RelationshipStorage::new(pool));
         let pattern_engine = Arc::new(PatternEngine::new(storage.clone()));
@@ -32,6 +34,7 @@ impl RelationshipService {
             storage,
             pattern_engine,
             context_loader,
+            facts_service,
         }
     }
     
@@ -48,6 +51,11 @@ impl RelationshipService {
     /// Get context loader
     pub fn context_loader(&self) -> Arc<ContextLoader> {
         self.context_loader.clone()
+    }
+    
+    /// Get facts service
+    pub fn facts_service(&self) -> Arc<FactsService> {
+        self.facts_service.clone()
     }
     
     /// Process relationship updates from LLM response
@@ -88,7 +96,7 @@ impl RelationshipService {
             self.process_new_patterns(user_id, patterns_arr).await?;
         }
         
-        // Process new facts
+        // Process new facts (NOW USES FactsService!)
         if let Some(facts_arr) = impact_json.get("new_facts").and_then(|v| v.as_array()) {
             self.process_new_facts(user_id, facts_arr).await?;
         }
@@ -193,7 +201,7 @@ impl RelationshipService {
         Ok(())
     }
     
-    /// Process new facts from LLM
+    /// Process new facts from LLM - NOW USES FactsService!
     async fn process_new_facts(
         &self,
         user_id: &str,
@@ -215,22 +223,15 @@ impl RelationshipService {
             let context = fact_val.get("context")
                 .and_then(|v| v.as_str());
             
-            // Create MemoryFact struct
-            let now = chrono::Utc::now().timestamp();
-            let fact = crate::relationship::MemoryFact {
-                id: uuid::Uuid::new_v4().to_string(),
-                user_id: user_id.to_string(),
-                fact_key: fact_key.to_string(),
-                fact_value: fact_value.to_string(),
-                fact_category: fact_category.to_string(),
+            // Use FactsService instead of going to storage directly
+            match self.facts_service.upsert_fact(
+                user_id,
+                fact_key,
+                fact_value,
+                fact_category,
+                context,
                 confidence,
-                source: context.map(|s| s.to_string()),
-                learned_at: now,
-                last_confirmed: Some(now),
-                times_referenced: 0,
-            };
-            
-            match self.storage.upsert_fact(&fact).await {
+            ).await {
                 Ok(_) => info!("Stored fact '{}' for user {}", fact_key, user_id),
                 Err(e) => warn!("Failed to store fact '{}': {}", fact_key, e),
             }

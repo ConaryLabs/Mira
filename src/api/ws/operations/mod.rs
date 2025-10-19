@@ -5,7 +5,6 @@
 pub mod stream;
 
 use crate::operations::{OperationEngine, OperationEngineEvent};
-use crate::config::CONFIG;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;

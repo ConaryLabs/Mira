@@ -112,16 +112,18 @@ impl AppState {
             embedding_client.clone(),
         ));
         
-        // NEW: Initialize relationship services
-        info!("Initializing RelationshipService");
-        let relationship_service = Arc::new(RelationshipService::new(
-            Arc::new(pool.clone())
-        ));
-        
+        // Initialize FactsService FIRST
         info!("Initializing FactsService");
         let facts_service = Arc::new(FactsService::new(pool.clone()));
         
-        // STEP 5: OperationEngine requires all 6 parameters including relationship services
+        // Initialize RelationshipService WITH FactsService
+        info!("Initializing RelationshipService with FactsService");
+        let relationship_service = Arc::new(RelationshipService::new(
+            Arc::new(pool.clone()),
+            facts_service.clone(),
+        ));
+        
+        // OperationEngine requires all 6 parameters including relationship services
         info!("Initializing OperationEngine with memory and relationship integration");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
