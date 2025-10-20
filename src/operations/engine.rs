@@ -10,7 +10,7 @@ use crate::prompt::UnifiedPromptBuilder;
 use crate::persona::PersonaOverlay;
 use crate::tools::types::Tool;
 use crate::config::CONFIG;
-use crate::relationship::{RelationshipService, FactsService};
+use crate::relationship::RelationshipService;
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -80,20 +80,18 @@ pub struct OperationEngine {
     deepseek: DeepSeekProvider,
     memory_service: Arc<MemoryService>,
     relationship_service: Arc<RelationshipService>,
-    facts_service: Arc<FactsService>,
 }
 
 impl OperationEngine {
     /// Create a new operation engine
     /// PHASE 8: Requires MemoryService for context/storage
-    /// STEP 5: Requires RelationshipService and FactsService
+    /// STEP 5: Requires RelationshipService
     pub fn new(
         db: Arc<SqlitePool>,
         gpt5: Gpt5Provider,
         deepseek: DeepSeekProvider,
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
-        facts_service: Arc<FactsService>,
     ) -> Self {
         Self { 
             db, 
@@ -101,7 +99,6 @@ impl OperationEngine {
             deepseek,
             memory_service,
             relationship_service,
-            facts_service,
         }
     }
 

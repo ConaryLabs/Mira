@@ -220,7 +220,6 @@ impl RelationshipStorage {
     /// Create new pattern
     async fn create_pattern(&self, pattern: &LearnedPattern) -> Result<String> {
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
             r#"
@@ -258,8 +257,6 @@ impl RelationshipStorage {
 
     /// Update existing pattern
     async fn update_pattern_with_id(&self, id: &str, pattern: &LearnedPattern) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-
         sqlx::query(
             r#"
             UPDATE learned_patterns SET
@@ -282,7 +279,7 @@ impl RelationshipStorage {
         .bind(&pattern.times_applied)
         .bind(&pattern.applies_when)
         .bind(pattern.deprecated)
-        .bind(now)
+        .bind(chrono::Utc::now().timestamp())
         .bind(pattern.last_applied)
         .bind(id)
         .execute(&*self.pool)
@@ -294,12 +291,10 @@ impl RelationshipStorage {
 
     /// Increment times_observed for a pattern
     pub async fn increment_pattern_observed(&self, pattern_id: &str) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-        
         sqlx::query(
             "UPDATE learned_patterns SET times_observed = times_observed + 1, last_observed = ? WHERE id = ?"
         )
-        .bind(now)
+        .bind(chrono::Utc::now().timestamp())
         .bind(pattern_id)
         .execute(&*self.pool)
         .await?;
@@ -309,12 +304,10 @@ impl RelationshipStorage {
 
     /// Increment times_applied for a pattern
     pub async fn increment_pattern_applied(&self, pattern_id: &str) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-        
         sqlx::query(
             "UPDATE learned_patterns SET times_applied = times_applied + 1, last_applied = ? WHERE id = ?"
         )
-        .bind(now)
+        .bind(chrono::Utc::now().timestamp())
         .bind(pattern_id)
         .execute(&*self.pool)
         .await?;
@@ -403,7 +396,6 @@ impl RelationshipStorage {
     /// Create new fact
     async fn create_fact(&self, fact: &MemoryFact) -> Result<String> {
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
             r#"
@@ -436,8 +428,6 @@ impl RelationshipStorage {
 
     /// Update existing fact
     async fn update_fact_with_id(&self, id: &str, fact: &MemoryFact) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-
         sqlx::query(
             r#"
             UPDATE memory_facts SET
@@ -453,7 +443,7 @@ impl RelationshipStorage {
         .bind(&fact.fact_category)
         .bind(fact.confidence)
         .bind(&fact.source)
-        .bind(now)
+        .bind(chrono::Utc::now().timestamp())
         .bind(id)
         .execute(&*self.pool)
         .await?;

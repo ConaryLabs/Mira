@@ -123,7 +123,7 @@ impl AppState {
             facts_service.clone(),
         ));
         
-        // OperationEngine requires all 6 parameters including relationship services
+        // OperationEngine requires 5 parameters (NO facts_service - it goes through relationship_service)
         info!("Initializing OperationEngine with memory and relationship integration");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
@@ -131,7 +131,6 @@ impl AppState {
             (*deepseek_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
-            facts_service.clone(),
         ));
         
         // Initialize MessageRouter

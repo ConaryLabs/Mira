@@ -47,7 +47,7 @@ fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
 }
 
 /// Setup test services
-async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>, Arc<FactsService>) {
+async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>) {
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
     
     let qdrant_url = "http://localhost:6333";
@@ -77,17 +77,23 @@ async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc
         embedding_client,
     ));
     
-    let relationship_service = Arc::new(RelationshipService::new(pool.clone()));
+    // Create FactsService FIRST
     let facts_service = Arc::new(FactsService::new((*pool).clone()));
     
-    (memory_service, relationship_service, facts_service)
+    // Create RelationshipService WITH FactsService
+    let relationship_service = Arc::new(RelationshipService::new(
+        pool.clone(),
+        facts_service.clone(),
+    ));
+    
+    (memory_service, relationship_service)
 }
 
 #[tokio::test]
 async fn test_operation_engine_with_providers() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = OperationEngine::new(
         db.clone(),
@@ -95,7 +101,6 @@ async fn test_operation_engine_with_providers() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     );
 
     // Create event channel
@@ -172,7 +177,7 @@ async fn test_operation_engine_with_providers() {
 async fn test_operation_lifecycle_complete() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = OperationEngine::new(
         db.clone(),
@@ -180,7 +185,6 @@ async fn test_operation_lifecycle_complete() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -248,7 +252,7 @@ async fn test_operation_lifecycle_complete() {
 async fn test_operation_failure_handling() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = OperationEngine::new(
         db.clone(),
@@ -256,7 +260,6 @@ async fn test_operation_failure_handling() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -323,7 +326,7 @@ async fn test_operation_failure_handling() {
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = Arc::new(OperationEngine::new(
         db.clone(),
@@ -331,7 +334,6 @@ async fn test_multiple_operations_concurrency() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     ));
 
     let mut handles = vec![];

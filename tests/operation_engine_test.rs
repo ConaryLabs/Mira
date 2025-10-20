@@ -32,7 +32,7 @@ fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
 }
 
 /// Setup test services
-async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>, Arc<FactsService>) {
+async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>) {
     // Create SQLite store
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
     
@@ -70,13 +70,16 @@ async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc
         embedding_client,
     ));
     
-    // Create RelationshipService (takes Arc<SqlitePool> directly)
-    let relationship_service = Arc::new(RelationshipService::new(pool.clone()));
-    
-    // Create FactsService (takes SqlitePool, so dereference the Arc)
+    // Create FactsService FIRST
     let facts_service = Arc::new(FactsService::new((*pool).clone()));
     
-    (memory_service, relationship_service, facts_service)
+    // Create RelationshipService WITH FactsService
+    let relationship_service = Arc::new(RelationshipService::new(
+        pool.clone(),
+        facts_service.clone(),
+    ));
+    
+    (memory_service, relationship_service)
 }
 
 #[tokio::test]
@@ -97,7 +100,7 @@ async fn test_operation_engine_lifecycle() {
     let (gpt5, deepseek) = create_test_providers();
     
     // Setup services
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = OperationEngine::new(
         db.clone(),
@@ -105,7 +108,6 @@ async fn test_operation_engine_lifecycle() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     );
 
     // Create event channel
@@ -251,7 +253,7 @@ async fn test_operation_failure() {
     let (gpt5, deepseek) = create_test_providers();
     
     // Setup services
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = OperationEngine::new(
         db.clone(),
@@ -259,7 +261,6 @@ async fn test_operation_failure() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     );
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -357,7 +358,7 @@ async fn test_multiple_operations() {
     let (gpt5, deepseek) = create_test_providers();
     
     // Setup services
-    let (memory_service, relationship_service, facts_service) = setup_services(db.clone()).await;
+    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
     let engine = OperationEngine::new(
         db.clone(),
@@ -365,7 +366,6 @@ async fn test_multiple_operations() {
         deepseek,
         memory_service,
         relationship_service,
-        facts_service,
     );
     let (tx, _rx) = mpsc::channel(100);
 
