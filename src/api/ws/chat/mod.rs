@@ -9,11 +9,12 @@ use axum::{
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures::StreamExt;
-use futures_util::SinkExt;  // ADDED: For .send() method
+use futures_util::SinkExt;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub mod connection;
+pub mod heartbeat;
 pub mod message_router;
 pub mod unified_handler;
 pub mod routing;
@@ -142,7 +143,7 @@ async fn handle_socket(
         }
     }
 
-    // Mark connection as closed
+    // Mark connection as closed (this also stops the heartbeat)
     connection.mark_closed().await;
 
     let duration = connection_start.elapsed();

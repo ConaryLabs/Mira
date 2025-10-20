@@ -17,6 +17,7 @@ pub fn get_delegation_tools() -> Vec<Value> {
 fn generate_code_tool() -> Value {
     json!({
         "type": "function",
+        "name": "generate_code",
         "function": {
             "name": "generate_code",
             "description": "Generate a new code file from scratch. Use this when the user wants to create new functionality, components, or utilities.",
@@ -61,6 +62,7 @@ fn generate_code_tool() -> Value {
 fn refactor_code_tool() -> Value {
     json!({
         "type": "function",
+        "name": "refactor_code",
         "function": {
             "name": "refactor_code",
             "description": "Refactor or modify existing code. Use this when improving, optimizing, or restructuring code that already exists.",
@@ -101,6 +103,7 @@ fn refactor_code_tool() -> Value {
 fn debug_code_tool() -> Value {
     json!({
         "type": "function",
+        "name": "debug_code",
         "function": {
             "name": "debug_code",
             "description": "Debug and fix errors in code. Use this when there are specific bugs, errors, or issues that need resolution.",

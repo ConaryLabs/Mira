@@ -416,9 +416,9 @@ impl Gpt5Provider {
         }
 
         // Add tools if present
+        // Note: tool_choice is omitted - it defaults to "auto" behavior
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools);
-            body["tool_choice"] = json!({"type": "auto"});
         }
 
         // Multi-turn: link to previous response

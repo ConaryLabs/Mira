@@ -2,7 +2,7 @@
 // A wrapper around the WebSocket connection to manage state and message sending.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket};
@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::api::ws::message::WsServerMessage;
 use crate::config::CONFIG;
+use super::heartbeat::{HeartbeatManager, StatusSender};
 
 /// Manages the state and sending logic for a single WebSocket connection.
 pub struct WebSocketConnection {
@@ -20,19 +21,75 @@ pub struct WebSocketConnection {
     last_activity: Arc<Mutex<Instant>>,
     is_processing: Arc<Mutex<bool>>,
     last_any_send: Arc<Mutex<Instant>>,
-    is_closed: Arc<Mutex<bool>>, // NEW: Track if connection is closed
+    is_closed: Arc<Mutex<bool>>,
+    heartbeat: Arc<HeartbeatManager<WebSocketStatusSender>>,
+}
+
+/// Adapter to allow HeartbeatManager to send status messages through WebSocketConnection
+struct WebSocketStatusSender {
+    sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+    is_closed: Arc<Mutex<bool>>,
+    last_any_send: Arc<Mutex<Instant>>,
+}
+
+impl StatusSender for WebSocketStatusSender {
+    fn send_status(&self, message: &str) {
+        let sender = self.sender.clone();
+        let is_closed = self.is_closed.clone();
+        let last_any_send = self.last_any_send.clone();
+        let message = message.to_string();
+        
+        // Spawn async task for sending (heartbeat runs in background)
+        tokio::spawn(async move {
+            // Check if closed before sending
+            if *is_closed.lock().await {
+                return;
+            }
+            
+            let mut sender_guard = sender.lock().await;
+            
+            // Send ping frame
+            if let Err(e) = sender_guard.send(Message::Text(message)).await {
+                warn!("Heartbeat send failed (connection likely closed): {}", e);
+                return;
+            }
+            
+            // Flush immediately
+            if let Err(e) = sender_guard.flush().await {
+                warn!("Heartbeat flush failed: {}", e);
+                return;
+            }
+            
+            drop(sender_guard);
+            *last_any_send.lock().await = Instant::now();
+            debug!("Heartbeat sent successfully");
+        });
+    }
 }
 
 impl WebSocketConnection {
     /// Creates a new connection from a raw WebSocket socket.
     pub fn new(socket: WebSocket) -> Self {
         let (sender, _receiver) = socket.split();
+        let sender = Arc::new(Mutex::new(sender));
+        let is_closed = Arc::new(Mutex::new(false));
+        let last_any_send = Arc::new(Mutex::new(Instant::now()));
+        
+        // Create heartbeat manager with sender adapter
+        let status_sender = WebSocketStatusSender {
+            sender: sender.clone(),
+            is_closed: is_closed.clone(),
+            last_any_send: last_any_send.clone(),
+        };
+        let heartbeat = Arc::new(HeartbeatManager::new(Arc::new(status_sender)));
+        
         Self {
-            sender: Arc::new(Mutex::new(sender)),
+            sender,
             last_activity: Arc::new(Mutex::new(Instant::now())),
             is_processing: Arc::new(Mutex::new(false)),
-            last_any_send: Arc::new(Mutex::new(Instant::now())),
-            is_closed: Arc::new(Mutex::new(false)),
+            last_any_send,
+            is_closed,
+            heartbeat,
         }
     }
 
@@ -43,19 +100,34 @@ impl WebSocketConnection {
         is_processing: Arc<Mutex<bool>>,
         last_any_send: Arc<Mutex<Instant>>,
     ) -> Self {
+        let is_closed = Arc::new(Mutex::new(false));
+        
+        // Create heartbeat manager
+        let status_sender = WebSocketStatusSender {
+            sender: sender.clone(),
+            is_closed: is_closed.clone(),
+            last_any_send: last_any_send.clone(),
+        };
+        let heartbeat = Arc::new(HeartbeatManager::new(Arc::new(status_sender)));
+        
         Self { 
             sender, 
             last_activity, 
             is_processing, 
             last_any_send,
-            is_closed: Arc::new(Mutex::new(false)),
+            is_closed,
+            heartbeat,
         }
     }
 
     /// Mark this connection as closed to prevent further sends
     pub async fn mark_closed(&self) {
         *self.is_closed.lock().await = true;
-        debug!("Connection marked as closed");
+        
+        // Stop heartbeat to prevent sending after close
+        self.heartbeat.stop();
+        
+        debug!("Connection marked as closed, heartbeat stopped");
     }
 
     /// Check if connection is closed
@@ -64,22 +136,17 @@ impl WebSocketConnection {
     }
 
     /// Sends a structured `WsServerMessage` to the client with immediate flushing.
-    /// CRITICAL: The flush() ensures messages are sent immediately, preventing
-    /// message loss when streaming rapidly.
     pub async fn send_message(&self, msg: WsServerMessage) -> Result<()> {
-        // CRITICAL FIX: Check if connection is closed before sending
         if self.is_closed().await {
-            debug!("Skipping send on closed connection (prevents heartbeat race)");
-            return Ok(()); // Don't propagate error, just skip the send
+            debug!("Skipping send on closed connection");
+            return Ok(());
         }
 
         let json_str = serde_json::to_string(&msg)?;
         debug!("Sending WS message: {}", json_str);
         
-        // Lock the sender and send + flush in one go to ensure atomic operation
         let mut sender = self.sender.lock().await;
         
-        // Try to send, but if it fails due to closed connection, mark as closed
         if let Err(e) = sender.send(Message::Text(json_str)).await {
             warn!("Failed to send message (connection likely closed): {}", e);
             drop(sender);
@@ -87,8 +154,6 @@ impl WebSocketConnection {
             return Err(e.into());
         }
         
-        // CRITICAL: Force immediate transmission to prevent buffering/dropping
-        // Without this, rapid sends (like streaming) will buffer and lose messages
         if let Err(e) = sender.flush().await {
             warn!("Failed to flush message (connection likely closed): {}", e);
             drop(sender);
@@ -96,7 +161,7 @@ impl WebSocketConnection {
             return Err(e.into());
         }
         
-        drop(sender); // Explicitly drop to release lock faster
+        drop(sender);
         
         *self.last_any_send.lock().await = Instant::now();
         Ok(())
@@ -120,7 +185,7 @@ impl WebSocketConnection {
         }).await
     }
 
-    /// Sends initial messages to the client upon connection.
+    /// Sends initial messages to the client upon connection and starts heartbeat.
     pub async fn send_connection_ready(&self) -> Result<()> {
         let welcome_msg = format!("Connected to Mira v{}", env!("CARGO_PKG_VERSION"));
         let config_msg = format!(
@@ -142,13 +207,16 @@ impl WebSocketConnection {
         
         self.send_message(WsServerMessage::ConnectionReady).await?;
         
-        info!("WebSocket connection ready messages sent.");
+        // Start heartbeat with 30-second interval (conservative)
+        // This keeps the connection alive through proxies/load balancers
+        self.heartbeat.start(Duration::from_secs(30));
+        
+        info!("WebSocket connection ready messages sent, heartbeat started.");
         Ok(())
     }
 
     /// Sends a pong response to a client's ping with proper flushing.
     pub async fn send_pong(&self, data: Vec<u8>) -> Result<()> {
-        // Check if closed before sending pong
         if self.is_closed().await {
             debug!("Skipping pong on closed connection");
             return Ok(());
@@ -156,7 +224,6 @@ impl WebSocketConnection {
 
         debug!("Received ping, sending pong.");
         
-        // Pong also needs flushing for reliability
         let mut sender = self.sender.lock().await;
         
         if let Err(e) = sender.send(Message::Pong(data)).await {
