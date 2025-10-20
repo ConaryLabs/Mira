@@ -1,28 +1,30 @@
 // src/operations/engine.rs
-// UPDATED: complete_operation now retrieves and includes artifacts
+// Operation Engine - orchestrates coding workflows with GPT-5 + DeepSeek delegation
 
-use crate::operations::{Artifact, Operation, OperationEvent, get_delegation_tools, parse_tool_call};
+use crate::config::CONFIG;
+use crate::llm::provider::Message;
 use crate::llm::provider::gpt5::{Gpt5Provider, Gpt5StreamEvent};
 use crate::llm::provider::deepseek::DeepSeekProvider;
-use crate::llm::provider::Message;
 use crate::memory::service::MemoryService;
-use crate::memory::RecallContext;
-use crate::prompt::UnifiedPromptBuilder;
+use crate::operations::{Operation, OperationEvent, Artifact};
+use crate::operations::delegation_tools::{get_delegation_tools, parse_tool_call};
 use crate::persona::PersonaOverlay;
 use crate::tools::types::Tool;
-use crate::config::CONFIG;
-use crate::relationship::RelationshipService;
+use crate::prompt::UnifiedPromptBuilder;
+use crate::memory::features::recall_engine::RecallContext;
+use crate::relationship::service::RelationshipService;
+
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
+use serde_json;
 use futures::StreamExt;
 use sha2::{Sha256, Digest};
-use tracing::{info, warn, debug};
 
-/// Events emitted during operation lifecycle
-/// UPDATED: Completed now includes artifacts array
+/// Events emitted by the operation engine
 #[derive(Debug, Clone)]
 pub enum OperationEngineEvent {
     Started {
@@ -52,11 +54,10 @@ pub enum OperationEngineEvent {
         operation_id: String,
         artifact: Artifact,
     },
-    /// UPDATED: Now includes artifacts
     Completed {
         operation_id: String,
         result: Option<String>,
-        artifacts: Vec<Artifact>,  // ← NEW: Artifacts attached to completion
+        artifacts: Vec<Artifact>,
     },
     Failed {
         operation_id: String,
@@ -65,11 +66,11 @@ pub enum OperationEngineEvent {
 }
 
 pub struct OperationEngine {
-    pub db: Arc<SqlitePool>,
-    pub gpt5: Gpt5Provider,
-    pub deepseek: DeepSeekProvider,
-    pub memory_service: Arc<MemoryService>,
-    pub relationship_service: Arc<RelationshipService>,
+    db: Arc<SqlitePool>,
+    gpt5: Gpt5Provider,
+    deepseek: DeepSeekProvider,
+    memory_service: Arc<MemoryService>,
+    relationship_service: Arc<RelationshipService>,
 }
 
 impl OperationEngine {
@@ -80,9 +81,9 @@ impl OperationEngine {
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
     ) -> Self {
-        Self {
-            db,
-            gpt5,
+        Self { 
+            db, 
+            gpt5, 
             deepseek,
             memory_service,
             relationship_service,
@@ -95,27 +96,28 @@ impl OperationEngine {
         kind: String,
         user_message: String,
     ) -> Result<Operation> {
-        let operation = Operation::new(session_id, kind, user_message);
-
+        let op = Operation::new(session_id, kind, user_message);
+        
         sqlx::query!(
             r#"
             INSERT INTO operations (
-                id, session_id, kind, status, created_at, user_message, delegate_calls
+                id, session_id, kind, status, created_at, user_message,
+                delegate_calls
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
-            operation.id,
-            operation.session_id,
-            operation.kind,
-            operation.status,
-            operation.created_at,
-            operation.user_message,
-            operation.delegate_calls,
+            op.id,
+            op.session_id,
+            op.kind,
+            op.status,
+            op.created_at,
+            op.user_message,
+            op.delegate_calls,
         )
         .execute(&*self.db)
         .await
         .context("Failed to create operation")?;
 
-        Ok(operation)
+        Ok(op)
     }
 
     pub async fn start_operation(
@@ -124,7 +126,7 @@ impl OperationEngine {
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
         let started_at = chrono::Utc::now().timestamp();
-        let old_status = self.get_operation_status(operation_id).await?;
+        let old_status = "pending";
         let new_status = "planning";
 
         sqlx::query!(
@@ -168,7 +170,6 @@ impl OperationEngine {
         Ok(())
     }
 
-    /// UPDATED: Now retrieves artifacts and includes them in Completed event
     pub async fn complete_operation(
         &self,
         operation_id: &str,
@@ -205,20 +206,7 @@ impl OperationEngine {
                 Ok(msg_id) => {
                     info!("Stored operation result in memory: message_id={}", msg_id);
                     
-                    if let Err(e) = self.process_assistant_message_embeddings(
-                        msg_id,
-                        response_content,
-                    ).await {
-                        warn!("Failed to process assistant message embeddings {}: {}", msg_id, e);
-                    }
-                    
-                    if let Err(e) = self.process_relationship_updates(
-                        session_id,
-                        response_content,
-                        None,
-                    ).await {
-                        warn!("Failed to process relationship updates: {}", e);
-                    }
+                    // Note: Embeddings are handled by MessagePipelineCoordinator automatically
                 }
                 Err(e) => {
                     warn!("Failed to store operation result in memory: {}", e);
@@ -226,17 +214,13 @@ impl OperationEngine {
             }
         }
 
-        // CRITICAL FIX: Retrieve artifacts for this operation
-        let artifacts = self.get_artifacts_for_operation(operation_id).await?;
-        
-        info!("Operation {} completed with {} artifacts", operation_id, artifacts.len());
-
         self.emit_event(
             operation_id,
-            "status_change",
+            "completed",
             Some(serde_json::json!({
                 "old_status": old_status,
                 "new_status": new_status,
+                "result": result,
             })),
         )
         .await?;
@@ -249,49 +233,17 @@ impl OperationEngine {
             })
             .await;
 
-        // CRITICAL FIX: Include artifacts in Completed event
+        // Retrieve artifacts and include them in the Completed event
+        let artifacts = self.get_artifacts_for_operation(operation_id).await?;
+
         let _ = event_tx
             .send(OperationEngineEvent::Completed {
                 operation_id: operation_id.to_string(),
                 result,
-                artifacts,  // ← NEW: Artifacts now included
+                artifacts,
             })
             .await;
 
-        Ok(())
-    }
-
-    /// NEW: Retrieve all artifacts for an operation
-    async fn get_artifacts_for_operation(&self, operation_id: &str) -> Result<Vec<Artifact>> {
-        let artifacts = sqlx::query_as!(
-            Artifact,
-            r#"
-            SELECT id, operation_id, kind, file_path, content, content_hash, language, diff, created_at
-            FROM artifacts
-            WHERE operation_id = ?
-            ORDER BY created_at ASC
-            "#,
-            operation_id
-        )
-        .fetch_all(&*self.db)
-        .await
-        .context("Failed to retrieve artifacts")?;
-
-        Ok(artifacts)
-    }
-
-    async fn process_relationship_updates(
-        &self,
-        session_id: &str,
-        _response_content: &str,
-        relationship_impact: Option<&str>,
-    ) -> Result<()> {
-        let user_id = session_id;
-        
-        self.relationship_service
-            .process_llm_updates(user_id, relationship_impact)
-            .await?;
-        
         Ok(())
     }
 
@@ -372,57 +324,37 @@ impl OperationEngine {
         
         info!("Stored user message in memory: message_id={}", user_msg_id);
 
-        if let Err(e) = self.process_user_message_embeddings(
-            user_msg_id,
-            user_content,
-        ).await {
-            warn!("Failed to process user message embeddings {}: {}", user_msg_id, e);
-        }
+        // Note: Embeddings are handled by MessagePipelineCoordinator automatically
 
         let recall_context = self.load_memory_context(session_id, user_content).await?;
-        
-        info!("Loaded context: {} recent, {} semantic memories", 
-              recall_context.recent_messages.len(), 
-              recall_context.semantic_matches.len());
+        let system_prompt = self.build_system_prompt_with_context(session_id, &recall_context).await;
+        let messages = vec![Message::user(user_content.to_string())];
 
-        let user_profile = self.relationship_service.get_user_profile(session_id).await;
-        
-        let mut prompt_builder = UnifiedPromptBuilder::new()
-            .with_content(user_content);
+        self.start_operation(operation_id, event_tx).await?;
 
-        if let Some(profile) = user_profile {
-            prompt_builder = prompt_builder.with_user_profile(&profile);
+        let tools = get_delegation_tools();
+        let previous_response_id = None;
+
+        if let Some(token) = &cancel_token {
+            if token.is_cancelled() {
+                let _ = self.fail_operation(operation_id, "Operation cancelled".to_string(), event_tx).await;
+                return Err(anyhow::anyhow!("Operation cancelled"));
+            }
         }
 
-        prompt_builder = prompt_builder.with_recall_context(recall_context);
-
-        let system_prompt = prompt_builder.build()?;
-        
-        let messages = vec![
-            Message {
-                role: "user".to_string(),
-                content: system_prompt,
-            }
-        ];
-
-        let delegation_tools = get_delegation_tools();
-
-        let stream = self.gpt5.create_chat_completion_stream(
-            messages,
-            Some(delegation_tools),
-            None,
-        ).await?;
+        let mut stream = self.gpt5
+            .create_stream_with_tools(messages, system_prompt, tools, previous_response_id)
+            .await
+            .context("Failed to create GPT-5 stream")?;
 
         let mut accumulated_text = String::new();
-        let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
-        let mut _final_response_id: Option<String> = None;
-
-        tokio::pin!(stream);
+        let mut tool_calls = Vec::new();
+        let mut _final_response_id = None;
 
         while let Some(event) = stream.next().await {
             if let Some(token) = &cancel_token {
                 if token.is_cancelled() {
-                    let _ = self.fail_operation(operation_id, "Operation cancelled".to_string(), event_tx).await;
+                    let _ = self.fail_operation(operation_id, "Operation cancelled during streaming".to_string(), event_tx).await;
                     return Err(anyhow::anyhow!("Operation cancelled"));
                 }
             }
@@ -499,46 +431,99 @@ impl OperationEngine {
         Ok(())
     }
 
-    async fn load_memory_context(&self, session_id: &str, user_content: &str) -> Result<RecallContext> {
-        self.memory_service.recall_engine.load_context(
+    async fn load_memory_context(
+        &self,
+        session_id: &str,
+        query: &str,
+    ) -> Result<RecallContext> {
+        debug!("Loading memory context for session: {}", session_id);
+        
+        let recent_count = CONFIG.context_recent_messages as usize;
+        let semantic_count = CONFIG.context_semantic_matches as usize;
+        
+        match self.memory_service.parallel_recall_context(
             session_id,
-            user_content,
+            query,
+            recent_count,
+            semantic_count,
+        ).await {
+            Ok(mut context) => {
+                info!(
+                    "Loaded context: {} recent, {} semantic memories",
+                    context.recent.len(),
+                    context.semantic.len()
+                );
+                
+                if CONFIG.use_rolling_summaries_in_context {
+                    context.rolling_summary = self.memory_service
+                        .get_rolling_summary(session_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    
+                    context.session_summary = self.memory_service
+                        .get_session_summary(session_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    
+                    if context.rolling_summary.is_some() || context.session_summary.is_some() {
+                        info!("Loaded summaries for context");
+                    }
+                }
+                
+                Ok(context)
+            }
+            Err(e) => {
+                warn!("Failed to load memory context: {}, using empty context", e);
+                Ok(RecallContext {
+                    recent: vec![],
+                    semantic: vec![],
+                    rolling_summary: None,
+                    session_summary: None,
+                })
+            }
+        }
+    }
+
+    async fn build_system_prompt_with_context(
+        &self,
+        session_id: &str,
+        context: &RecallContext,
+    ) -> String {
+        let persona = PersonaOverlay::Default;
+        let tools_json = get_delegation_tools();
+        
+        let tools: Vec<Tool> = tools_json.iter()
+            .filter_map(|v| serde_json::from_value::<Tool>(v.clone()).ok())
+            .collect();
+        
+        let user_id = session_id;
+        let profile_context = self.relationship_service
+            .context_loader()
+            .get_llm_context_string(user_id)
+            .await
+            .ok()
+            .filter(|s| !s.is_empty());
+        
+        if profile_context.is_some() {
+            info!("Loaded profile context for user {}", user_id);
+        }
+        
+        let mut base_prompt = UnifiedPromptBuilder::build_system_prompt(
+            &persona,
+            context,
+            Some(&tools),
             None,
-        ).await
-    }
-
-    async fn process_user_message_embeddings(&self, message_id: i64, content: &str) -> Result<()> {
-        let pipeline_result = self.memory_service
-            .message_pipeline
-            .get_pipeline()
-            .analyze_message(content, "user", None)
-            .await?;
-
-        if !pipeline_result.should_embed {
-            debug!("Message {} skipped embedding (low salience or not relevant)", message_id);
-            return Ok(());
-        }
-
-        info!("Would process embeddings for user message {}", message_id);
+            None,
+        );
         
-        Ok(())
-    }
-
-    async fn process_assistant_message_embeddings(&self, message_id: i64, content: &str) -> Result<()> {
-        let pipeline_result = self.memory_service
-            .message_pipeline
-            .get_pipeline()
-            .analyze_message(content, "assistant", None)
-            .await?;
-
-        if !pipeline_result.should_embed {
-            debug!("Message {} skipped embedding (low salience or large code)", message_id);
-            return Ok(());
+        if let Some(profile) = profile_context {
+            base_prompt.push_str("\n\n## User Context\n");
+            base_prompt.push_str(&profile);
         }
-
-        info!("Would process embeddings for assistant message {}", message_id);
         
-        Ok(())
+        base_prompt
     }
 
     async fn delegate_to_deepseek(
@@ -547,8 +532,14 @@ impl OperationEngine {
         tool_name: &str,
         tool_args: serde_json::Value,
         _event_tx: &mpsc::Sender<OperationEngineEvent>,
-        _cancel_token: Option<CancellationToken>,
+        cancel_token: Option<CancellationToken>,
     ) -> Result<serde_json::Value> {
+        if let Some(token) = &cancel_token {
+            if token.is_cancelled() {
+                return Err(anyhow::anyhow!("Operation cancelled before DeepSeek delegation"));
+            }
+        }
+
         let request = match tool_name {
             "generate_code" => {
                 let path = tool_args.get("path")
@@ -557,7 +548,7 @@ impl OperationEngine {
                     .to_string();
                 let description = tool_args.get("description")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
+                    .unwrap_or("Generate code")
                     .to_string();
 
                 crate::llm::provider::deepseek::CodeGenRequest {
@@ -567,7 +558,10 @@ impl OperationEngine {
                     framework: tool_args.get("framework").and_then(|v| v.as_str()).map(String::from),
                     dependencies: vec![],
                     style_guide: None,
-                    context: String::new(),
+                    context: tool_args.get("context")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 }
             }
             "refactor_code" => {
@@ -575,10 +569,12 @@ impl OperationEngine {
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let description = tool_args.get("refactor_description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Refactor code")
-                    .to_string();
+                let description = format!(
+                    "Refactor code: {}",
+                    tool_args.get("refactoring_goals")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("improve code")
+                );
 
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
@@ -713,6 +709,35 @@ impl OperationEngine {
         Ok(())
     }
 
+    async fn get_artifacts_for_operation(&self, operation_id: &str) -> Result<Vec<Artifact>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, operation_id, kind, file_path, content, content_hash, language, diff_from_previous, created_at
+            FROM artifacts
+            WHERE operation_id = ?
+            ORDER BY created_at
+            "#,
+            operation_id
+        )
+        .fetch_all(&*self.db)
+        .await
+        .context("Failed to fetch artifacts")?;
+
+        let artifacts = rows.into_iter().map(|row| Artifact {
+            id: row.id.unwrap_or_default(),
+            operation_id: row.operation_id,
+            kind: row.kind,
+            file_path: row.file_path,
+            content: row.content,
+            content_hash: row.content_hash.unwrap_or_default(),
+            language: row.language,
+            diff: row.diff_from_previous,
+            created_at: row.created_at,
+        }).collect();
+
+        Ok(artifacts)
+    }
+
     async fn update_operation_status(
         &self,
         operation_id: &str,
@@ -813,7 +838,7 @@ impl OperationEngine {
         .await?;
 
         Ok(Operation {
-            id: row.id,
+            id: row.id.unwrap_or_else(|| operation_id.to_string()),
             session_id: row.session_id,
             kind: row.kind,
             status: row.status,
@@ -839,16 +864,15 @@ impl OperationEngine {
             tokens_output: None,
             tokens_reasoning: None,
             cost_usd: None,
-            delegate_calls: row.delegate_calls,
+            delegate_calls: row.delegate_calls.unwrap_or(0),
             metadata: None,
         })
     }
 
     pub async fn get_operation_events(&self, operation_id: &str) -> Result<Vec<OperationEvent>> {
-        let rows = sqlx::query_as!(
-            OperationEvent,
+        let rows = sqlx::query!(
             r#"
-            SELECT id, operation_id, event_type, created_at, sequence_number, event_data
+            SELECT id, event_type, created_at, sequence_number, event_data
             FROM operation_events
             WHERE operation_id = ?
             ORDER BY sequence_number ASC
@@ -858,6 +882,17 @@ impl OperationEngine {
         .fetch_all(&*self.db)
         .await?;
 
-        Ok(rows)
+        let events = rows.into_iter().map(|row| {
+            OperationEvent {
+                id: row.id.unwrap_or(0),
+                operation_id: operation_id.to_string(),
+                event_type: row.event_type,
+                created_at: row.created_at,
+                sequence_number: row.sequence_number,
+                event_data: row.event_data,
+            }
+        }).collect();
+
+        Ok(events)
     }
 }
