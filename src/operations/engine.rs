@@ -638,7 +638,7 @@ impl OperationEngine {
         }))
     }
 
-    async fn create_artifact(
+    pub async fn create_artifact(
         &self,
         operation_id: &str,
         artifact_data: serde_json::Value,
@@ -654,9 +654,33 @@ impl OperationEngine {
             .and_then(|v| v.as_str())
             .unwrap_or("plaintext");
 
+        // Hash the content
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
         let content_hash = format!("{:x}", hasher.finalize());
+
+        // Check for previous artifact at this path in this operation
+        let previous_artifact = sqlx::query!(
+            r#"
+            SELECT id, content, content_hash
+            FROM artifacts
+            WHERE operation_id = ? AND file_path = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+            operation_id,
+            path
+        )
+        .fetch_optional(&*self.db)
+        .await?;
+
+        // Compute diff if there's a previous version
+        let (diff, previous_artifact_id) = if let Some(prev) = previous_artifact {
+            let diff_content = Self::compute_diff(&prev.content, content);
+            (Some(diff_content), Some(prev.id))
+        } else {
+            (None, None)
+        };
 
         let artifact = Artifact::new(
             operation_id.to_string(),
@@ -665,15 +689,15 @@ impl OperationEngine {
             content.to_string(),
             content_hash,
             Some(language.to_string()),
-            None,
+            diff.clone(),
         );
 
         sqlx::query!(
             r#"
             INSERT INTO artifacts (
                 id, operation_id, kind, file_path, content, language,
-                content_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                content_hash, diff_from_previous, previous_artifact_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             artifact.id,
             artifact.operation_id,
@@ -682,6 +706,8 @@ impl OperationEngine {
             artifact.content,
             artifact.language,
             artifact.content_hash,
+            artifact.diff,
+            previous_artifact_id,
             artifact.created_at,
         )
         .execute(&*self.db)
@@ -707,6 +733,52 @@ impl OperationEngine {
         }).await;
 
         Ok(())
+    }
+
+    /// Compute a simple unified diff between old and new content
+    fn compute_diff(old_content: &str, new_content: &str) -> String {
+        // Simple line-by-line diff
+        let old_lines: Vec<&str> = old_content.lines().collect();
+        let new_lines: Vec<&str> = new_content.lines().collect();
+        
+        let mut diff = String::new();
+        diff.push_str(&format!("--- old\n+++ new\n"));
+        
+        // Simple implementation: just show what changed
+        let max_lines = old_lines.len().max(new_lines.len());
+        let mut changes = Vec::new();
+        
+        for i in 0..max_lines {
+            let old_line = old_lines.get(i).copied();
+            let new_line = new_lines.get(i).copied();
+            
+            match (old_line, new_line) {
+                (Some(old), Some(new)) if old != new => {
+                    changes.push(format!("-{}", old));
+                    changes.push(format!("+{}", new));
+                }
+                (Some(old), None) => {
+                    changes.push(format!("-{}", old));
+                }
+                (None, Some(new)) => {
+                    changes.push(format!("+{}", new));
+                }
+                _ => {} // Lines are the same or both None
+            }
+        }
+        
+        if !changes.is_empty() {
+            diff.push_str(&format!("@@ -{},{} +{},{} @@\n", 
+                1, old_lines.len(), 
+                1, new_lines.len()
+            ));
+            for change in changes {
+                diff.push_str(&change);
+                diff.push('\n');
+            }
+        }
+        
+        diff
     }
 
     async fn get_artifacts_for_operation(&self, operation_id: &str) -> Result<Vec<Artifact>> {

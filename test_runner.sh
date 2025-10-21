@@ -74,7 +74,7 @@ cleanup_qdrant() {
     echo -e "${BLUE}Cleaning up Qdrant test collections...${NC}"
     
     local qdrant_host=${QDRANT_URL:-http://localhost:6333}
-    local collections=("test_collection" "test_search" "test_multihead" "test_deletion" "test_full_flow" "e2e_test")
+    local collections=("test_collection" "test_search" "test_multihead" "test_deletion" "test_full_flow" "e2e_test" "test_ops" "test_artifacts")
     
     for collection in "${collections[@]}"; do
         curl -s -X DELETE "${qdrant_host}/collections/${collection}" > /dev/null 2>&1
@@ -111,6 +111,7 @@ OPTIONS:
     storage             Run storage & embedding tests only
     e2e                 Run end-to-end integration tests only
     operations          Run operation engine tests only
+    artifacts           Run artifact flow tests only
     phase5              Run phase 5 provider tests only
     phase6              Run phase 6 integration tests only
     phase7              Run phase 7 routing tests only
@@ -124,6 +125,7 @@ EXAMPLES:
     ./test_runner.sh                    # Run all tests
     ./test_runner.sh pipeline           # Run pipeline tests only
     ./test_runner.sh operations         # Run operation engine tests
+    ./test_runner.sh artifacts          # Run artifact flow tests
     ./test_runner.sh deepseek           # Run DeepSeek live API tests
     ./test_runner.sh quick              # Quick smoke test
     ./test_runner.sh cleanup            # Clean up test data
@@ -154,6 +156,10 @@ list_tests() {
     
     echo -e "${YELLOW}Operation Engine Tests (operation_engine_test):${NC}"
     cargo test --test operation_engine_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Artifact Flow Tests (artifact_flow_test):${NC}"
+    cargo test --test artifact_flow_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
     
     echo -e "${YELLOW}Phase 5 Provider Tests (phase5_providers_test):${NC}"
@@ -239,6 +245,15 @@ main() {
             exit $?
             ;;
         
+        artifacts)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "artifact_flow_test" "$test_flags"
+            exit $?
+            ;;
+        
         phase5)
             check_prerequisites
             if [ -z "$NO_CLEANUP" ]; then
@@ -302,6 +317,7 @@ main() {
             run_test "storage_embedding_flow_test" "$test_flags" || failed=$((failed + 1))
             run_test "e2e_data_flow_test" "$test_flags" || failed=$((failed + 1))
             run_test "operation_engine_test" "$test_flags" || failed=$((failed + 1))
+            run_test "artifact_flow_test" "$test_flags" || failed=$((failed + 1))
             run_test "phase5_providers_test" "$test_flags" || failed=$((failed + 1))
             run_test "phase6_integration_test" "$test_flags" || failed=$((failed + 1))
             run_test "phase7_routing_test" "$test_flags" || failed=$((failed + 1))

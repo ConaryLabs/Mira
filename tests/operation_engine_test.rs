@@ -1,50 +1,52 @@
 // tests/operation_engine_test.rs
-//
-// Integration test for OperationEngine
-// Tests basic lifecycle: create → start → complete/fail
 
-use mira_backend::operations::{OperationEngine, OperationEngineEvent};
+use mira_backend::config::CONFIG;
+use mira_backend::llm::provider::OpenAiEmbeddings;
+use mira_backend::llm::provider::LlmProvider;
 use mira_backend::llm::provider::gpt5::Gpt5Provider;
 use mira_backend::llm::provider::deepseek::DeepSeekProvider;
-use mira_backend::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use mira_backend::operations::engine::{OperationEngine, OperationEngineEvent};
 use mira_backend::relationship::service::RelationshipService;
 use mira_backend::relationship::facts_service::FactsService;
+
+use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Helper to create test providers
 fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
     let gpt5 = Gpt5Provider::new(
-        "test-gpt5-key".to_string(),
+        "test-key".to_string(),
         "gpt-5-preview".to_string(),
         4000,
         "medium".to_string(),
         "medium".to_string(),
     );
 
-    let deepseek = DeepSeekProvider::new("test-deepseek-key".to_string());
+    let deepseek = DeepSeekProvider::new("test-key".to_string());
 
     (gpt5, deepseek)
 }
 
-/// Setup test services
-async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>) {
+async fn setup_services(
+    pool: Arc<SqlitePool>,
+) -> (Arc<MemoryService>, Arc<RelationshipService>) {
     // Create SQLite store
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
     
-    // Create a stub Qdrant store (won't actually connect in tests)
-    let qdrant_url = "http://localhost:6333";
+    // Create MultiHeadMemoryStore
     let multi_store = Arc::new(
-        QdrantMultiStore::new(qdrant_url, "test_ops")
-            .await
-            .unwrap_or_else(|_| {
-                // If Qdrant isn't available, that's fine for these tests
-                panic!("Qdrant not available - these tests don't actually need it")
-            })
+        QdrantMultiStore::new(
+            &CONFIG.qdrant_url,
+            "test_ops"
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!("Qdrant not available - these tests don't actually need it")
+        })
     );
     
     // Create embedding client (won't be used in these tests)
@@ -192,10 +194,12 @@ async fn test_operation_engine_lifecycle() {
         OperationEngineEvent::Completed {
             operation_id,
             result,
+            artifacts,  // ✅ FIXED: Include artifacts field
         } => {
             assert_eq!(operation_id, op.id);
             assert_eq!(result.unwrap(), "Success! Generated code.");
-            println!("✓ Received Completed event");
+            // Artifacts list might be empty in this test, that's fine
+            println!("✓ Received Completed event (with {} artifacts)", artifacts.len());
         }
         _ => panic!("Expected Completed event, got: {:?}", event),
     }
