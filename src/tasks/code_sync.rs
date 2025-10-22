@@ -1,5 +1,5 @@
 // src/tasks/code_sync.rs
-// Background task to keep code intelligence up-to-date (Layer 2: Safety net)
+// Background task to keep code intelligence up-to-date
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -40,10 +40,8 @@ impl CodeSyncTask {
         
         for attachment in attachments {
             let local_path = if attachment.attachment_type.as_deref() == Some("local_directory") {
-                // For local directories, use local_path directly
                 attachment.local_path
             } else {
-                // For git repos, use the local clone path
                 attachment.local_path
             };
             
@@ -133,7 +131,7 @@ impl CodeSyncTask {
                 continue;
             }
             
-            // File changed or is new - re-parse
+            // File changed or is new - re-parse and embed
             match self.upsert_and_parse(attachment_id, &relative_path, &content, &current_hash, project_id).await {
                 Ok(_) => {
                     synced += 1;
@@ -147,7 +145,7 @@ impl CodeSyncTask {
         Ok(synced)
     }
     
-    /// Upsert repository_files record and trigger AST parsing
+    /// Upsert repository_files record and trigger AST parsing + embedding
     async fn upsert_and_parse(
         &self,
         attachment_id: &str,
@@ -156,10 +154,8 @@ impl CodeSyncTask {
         content_hash: &str,
         project_id: &str,
     ) -> Result<()> {
-        // Detect language
         let language = detect_language_from_path(file_path);
         
-        // CRITICAL FIX: Use transaction to ensure atomicity and prevent FK violations
         let mut tx = self.pool.begin().await?;
         
         // Step 1: Upsert file record
@@ -181,7 +177,7 @@ impl CodeSyncTask {
         .fetch_one(&mut *tx)
         .await?;
         
-        // Step 2: Delete old code elements for this file (prevents UNIQUE constraint violations)
+        // Step 2: Delete old code elements for this file
         sqlx::query!(
             r#"
             DELETE FROM code_elements WHERE file_id = ?
@@ -191,13 +187,30 @@ impl CodeSyncTask {
         .execute(&mut *tx)
         .await?;
         
-        // Step 3: Commit transaction (ensures file_id exists and old elements are gone)
+        // Step 3: Commit transaction
         tx.commit().await?;
         
-        // Step 4: Parse AST and store new elements
+        // Step 4: Invalidate old embeddings
+        if let Err(e) = self.code_intelligence.invalidate_file(file_id).await {
+            warn!("Failed to invalidate embeddings for file {}: {}", file_id, e);
+        }
+        
+        // Step 5: Parse AST and store new elements
         self.code_intelligence
             .analyze_and_store_with_project(file_id, content, file_path, &language, project_id)
             .await?;
+        
+        // Step 6: Embed the code elements
+        match self.code_intelligence.embed_code_elements(file_id, project_id).await {
+            Ok(count) => {
+                if count > 0 {
+                    info!("Embedded {} code elements from {}", count, file_path);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to embed code elements for {}: {}", file_path, e);
+            }
+        }
         
         Ok(())
     }

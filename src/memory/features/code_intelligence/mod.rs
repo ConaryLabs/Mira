@@ -5,7 +5,7 @@ pub mod parser;
 pub mod storage;
 pub mod typescript_parser;
 pub mod javascript_parser;
-// REMOVED: websocket_storage and websocket_analyzer (Phase 1 - tables deleted)
+pub mod invalidation;
 
 pub use types::*;
 pub use parser::RustParser;
@@ -16,25 +16,186 @@ pub use storage::{CodeIntelligenceStorage, RepoStats};
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use tracing::{info, warn, debug};
+
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use crate::memory::core::types::MemoryEntry;
+use crate::llm::provider::OpenAiEmbeddings;
+use crate::llm::embeddings::EmbeddingHead;
 
 #[derive(Clone)]
 pub struct CodeIntelligenceService {
     storage: Arc<CodeIntelligenceStorage>,
+    multi_store: Arc<QdrantMultiStore>,
+    embedding_client: Arc<OpenAiEmbeddings>,
+    pool: SqlitePool,
     rust_parser: RustParser,
     typescript_parser: TypeScriptParser,
     javascript_parser: JavaScriptParser,
-    // REMOVED: websocket_storage (Phase 1 - tables deleted)
 }
 
 impl CodeIntelligenceService {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(
+        pool: SqlitePool,
+        multi_store: Arc<QdrantMultiStore>,
+        embedding_client: Arc<OpenAiEmbeddings>,
+    ) -> Self {
         Self {
             storage: Arc::new(CodeIntelligenceStorage::new(pool.clone())),
+            multi_store,
+            embedding_client,
+            pool,
             rust_parser: RustParser::new(),
             typescript_parser: TypeScriptParser::new(),
             javascript_parser: JavaScriptParser::new(),
-            // REMOVED: websocket_storage (Phase 1 - tables deleted)
         }
+    }
+
+    /// Invalidate all embeddings for a file before re-analyzing
+    pub async fn invalidate_file(&self, file_id: i64) -> Result<u64> {
+        invalidation::invalidate_file_embeddings(
+            &self.pool,
+            &self.multi_store,
+            file_id
+        ).await
+    }
+
+    /// Invalidate all embeddings for an entire project
+    pub async fn invalidate_project(&self, project_id: &str) -> Result<u64> {
+        invalidation::invalidate_project_embeddings(
+            &self.pool,
+            &self.multi_store,
+            project_id
+        ).await
+    }
+
+    /// Embed all code elements for a file into Qdrant
+    pub async fn embed_code_elements(&self, file_id: i64, project_id: &str) -> Result<usize> {
+        info!("Embedding code elements for file_id: {}", file_id);
+
+        // Query database for elements with their IDs
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, language, element_type, name, full_path, content, visibility
+            FROM code_elements
+            WHERE file_id = ?
+            ORDER BY start_line
+            "#,
+            file_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            debug!("No code elements to embed for file_id {}", file_id);
+            return Ok(0);
+        }
+
+        let mut embedded_count = 0;
+
+        for row in rows {
+            // Unwrap Option<i64> from query result
+            let element_id = match row.id {
+                Some(id) => id,
+                None => continue,
+            };
+            
+            let language = row.language;
+            let element_type = row.element_type;
+            let name = row.name;
+            let full_path = row.full_path;
+            let content = row.content;
+
+            // Create embedding content: "type name: content"
+            let embed_text = format!("{} {}: {}", element_type, name, content);
+
+            // Generate embedding
+            let embedding = match self.embedding_client.embed(&embed_text).await {
+                Ok(emb) => emb,
+                Err(e) => {
+                    warn!("Failed to embed code element {}: {}", element_id, e);
+                    continue;
+                }
+            };
+
+            // Create MemoryEntry for Qdrant storage
+            let entry = MemoryEntry {
+                id: Some(element_id),
+                session_id: format!("code:{}", project_id),
+                role: "code".to_string(),
+                content: content.clone(),
+                timestamp: chrono::Utc::now(),
+                embedding: Some(embedding),
+                
+                // Code-specific metadata
+                contains_code: Some(true),
+                programming_lang: Some(language.clone()),
+                
+                // Store file_id for invalidation
+                tags: Some(vec![
+                    format!("file_id:{}", file_id),
+                    format!("element_type:{}", element_type),
+                    format!("language:{}", language),
+                    format!("name:{}", name),
+                    format!("path:{}", full_path),
+                ]),
+                
+                // All other fields set to None
+                response_id: None,
+                parent_id: None,
+                mood: None,
+                intensity: None,
+                salience: None,
+                original_salience: None,
+                intent: None,
+                topics: None,
+                summary: None,
+                relationship_impact: None,
+                language: None,
+                analyzed_at: None,
+                analysis_version: None,
+                routed_to_heads: None,
+                last_recalled: None,
+                recall_count: None,
+                contains_error: None,
+                error_type: None,
+                error_severity: None,
+                error_file: None,
+                model_version: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+                reasoning_tokens: None,
+                total_tokens: None,
+                latency_ms: None,
+                generation_time_ms: None,
+                finish_reason: None,
+                tool_calls: None,
+                temperature: None,
+                max_tokens: None,
+                embedding_heads: None,
+                qdrant_point_ids: None,
+            };
+
+            // Store in code collection (element_id is used as point_id)
+            match self.multi_store.save(EmbeddingHead::Code, &entry).await {
+                Ok(_) => {
+                    embedded_count += 1;
+                    debug!(
+                        "Embedded code element {} ({}::{})",
+                        element_id, element_type, name
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to store embedding for element {}: {}", element_id, e);
+                }
+            }
+        }
+
+        if embedded_count > 0 {
+            info!("Embedded {} code elements for file_id {}", embedded_count, file_id);
+        }
+
+        Ok(embedded_count)
     }
 
     pub async fn analyze_and_store_file(
@@ -94,7 +255,7 @@ impl CodeIntelligenceService {
         content: &str,
         file_path: &str,
         language: &str,
-        _project_id: &str, // Keep parameter for compatibility but don't use
+        _project_id: &str,
     ) -> Result<FileAnalysisResult> {
         let analysis = match language {
             "rust" => {
@@ -124,8 +285,6 @@ impl CodeIntelligenceService {
         };
         
         self.storage.store_file_analysis(file_id, language, &analysis).await?;
-        
-        // REMOVED: WebSocket storage (Phase 1 - tables deleted)
         
         Ok(FileAnalysisResult {
             file_id,

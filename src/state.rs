@@ -62,17 +62,6 @@ impl AppState {
         // Initialize project store
         let project_store = Arc::new(ProjectStore::new(pool.clone()));
         
-        // Initialize code intelligence service FIRST (needed for git client)
-        let code_intelligence = Arc::new(CodeIntelligenceService::new(pool.clone()));
-        
-        // Initialize git store and client WITH code intelligence
-        let git_store = GitStore::new(pool.clone());
-        let git_client = GitClient::with_code_intelligence(
-            std::path::PathBuf::from("./repos"),
-            git_store.clone(),
-            (*code_intelligence).clone(),
-        );
-        
         // Validate config
         CONFIG.validate()?;
         
@@ -104,6 +93,21 @@ impl AppState {
             "mira",
         ).await?);
         
+        // Initialize code intelligence service with embedding support
+        let code_intelligence = Arc::new(CodeIntelligenceService::new(
+            pool.clone(),
+            multi_store.clone(),
+            embedding_client.clone(),
+        ));
+        
+        // Initialize git store and client with code intelligence
+        let git_store = GitStore::new(pool.clone());
+        let git_client = GitClient::with_code_intelligence(
+            std::path::PathBuf::from("./repos"),
+            git_store.clone(),
+            (*code_intelligence).clone(),
+        );
+        
         // Memory service uses GPT-5 directly
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
@@ -112,18 +116,18 @@ impl AppState {
             embedding_client.clone(),
         ));
         
-        // Initialize FactsService FIRST
+        // Initialize FactsService
         info!("Initializing FactsService");
         let facts_service = Arc::new(FactsService::new(pool.clone()));
         
-        // Initialize RelationshipService WITH FactsService
+        // Initialize RelationshipService with FactsService
         info!("Initializing RelationshipService with FactsService");
         let relationship_service = Arc::new(RelationshipService::new(
             Arc::new(pool.clone()),
             facts_service.clone(),
         ));
         
-        // OperationEngine requires 5 parameters (NO facts_service - it goes through relationship_service)
+        // OperationEngine requires memory and relationship integration
         info!("Initializing OperationEngine with memory and relationship integration");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
