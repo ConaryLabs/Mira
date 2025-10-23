@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::any::Any;
 use std::pin::Pin;
 use std::time::Instant;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, warn, info};
 
 /// SSE stream that properly buffers lines across byte chunks
 struct SseStream<S> {
@@ -360,7 +360,11 @@ impl Gpt5Provider {
                     }
 
                     match serde_json::from_str::<Value>(data) {
-                        Ok(json) => parse_sse_event(&json),
+                        Ok(json) => {
+                            // LOG EVERY EVENT TO DEBUG
+                            info!("[GPT-5 STREAM] Received event: {}", serde_json::to_string(&json).unwrap_or_else(|_| "invalid".to_string()));
+                            parse_sse_event(&json)
+                        }
                         Err(e) => {
                             warn!("Failed to parse GPT-5 SSE: {} - Line: {}", e, data);
                             None
@@ -528,50 +532,97 @@ pub struct ToolCall {
 
 /// Parse SSE event from GPT-5
 fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
-    let event_type = json.get("type")?.as_str()?;
+    // First, try to get event type
+    let event_type = json.get("type").and_then(|t| t.as_str());
+    
+    // If no type field, log the entire event for debugging
+    if event_type.is_none() {
+        warn!("[GPT-5 PARSE] Event missing 'type' field: {}", json);
+        return None;
+    }
+    
+    let event_type = event_type.unwrap();
+    info!("[GPT-5 PARSE] Event type: {}", event_type);
 
     match event_type {
         "response.output_text.delta" => {
-            let delta = json.get("delta")?.as_str()?.to_string();
-            Some(Ok(Gpt5StreamEvent::TextDelta { delta }))
+            let delta = json.get("delta").and_then(|d| d.as_str())?;
+            info!("[GPT-5 PARSE] Text delta: {}", delta);
+            Some(Ok(Gpt5StreamEvent::TextDelta { delta: delta.to_string() }))
         }
 
         "response.reasoning.delta" => {
-            let delta = json.get("delta")?.as_str()?.to_string();
-            Some(Ok(Gpt5StreamEvent::ReasoningDelta { delta }))
+            let delta = json.get("delta").and_then(|d| d.as_str())?;
+            info!("[GPT-5 PARSE] Reasoning delta: {}", delta);
+            Some(Ok(Gpt5StreamEvent::ReasoningDelta { delta: delta.to_string() }))
         }
 
         "response.function_call_arguments.delta" => {
-            let id = json.get("call_id")?.as_str()?.to_string();
-            let delta = json.get("delta")?.as_str()?.to_string();
-            Some(Ok(Gpt5StreamEvent::ToolCallArgumentsDelta { id, delta }))
+            let id = json.get("call_id").and_then(|i| i.as_str())?;
+            let delta = json.get("delta").and_then(|d| d.as_str())?;
+            info!("[GPT-5 PARSE] Tool call args delta: {} - {}", id, delta);
+            Some(Ok(Gpt5StreamEvent::ToolCallArgumentsDelta {
+                id: id.to_string(),
+                delta: delta.to_string(),
+            }))
         }
 
         "response.function_call_arguments.done" => {
-            let id = json.get("call_id")?.as_str()?.to_string();
-            let name = json.get("name")?.as_str()?.to_string();
+            let id = json.get("call_id").and_then(|i| i.as_str())?;
+            let name = json.get("name").and_then(|n| n.as_str())?;
             let arguments = json.get("arguments")?.clone();
+            info!("[GPT-5 PARSE] Tool call complete: {} - {}", name, id);
             Some(Ok(Gpt5StreamEvent::ToolCallComplete {
-                id,
-                name,
+                id: id.to_string(),
+                name: name.to_string(),
                 arguments,
             }))
         }
 
+        "response.output_item.done" => {
+            // Check if this is a completed function call
+            if let Some(item) = json.get("item") {
+                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
+                    let id = item.get("call_id").and_then(|i| i.as_str())?;
+                    let name = item.get("name").and_then(|n| n.as_str())?;
+                    let args_str = item.get("arguments").and_then(|a| a.as_str())?;
+                    
+                    // Parse arguments JSON string
+                    match serde_json::from_str::<serde_json::Value>(args_str) {
+                        Ok(arguments) => {
+                            info!("[GPT-5 PARSE] Tool call complete (output_item.done): {} - {}", name, id);
+                            return Some(Ok(Gpt5StreamEvent::ToolCallComplete {
+                                id: id.to_string(),
+                                name: name.to_string(),
+                                arguments,
+                            }));
+                        }
+                        Err(e) => {
+                            warn!("[GPT-5 PARSE] Failed to parse tool arguments: {}", e);
+                        }
+                    }
+                }
+            }
+            // Not a function call, ignore
+            info!("[GPT-5 PARSE] Ignoring non-function output_item.done");
+            None
+        }
+
         "response.completed" | "response.done" => {
-            let response_id = json.get("id")?.as_str()?.to_string();
+            let response_id = json.get("id").and_then(|i| i.as_str())?;
             let usage = json.get("usage")?;
 
-            let input_tokens = usage.get("input_tokens")?.as_i64().unwrap_or(0);
-            let output_tokens = usage.get("output_tokens")?.as_i64().unwrap_or(0);
+            let input_tokens = usage.get("input_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
+            let output_tokens = usage.get("output_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
             let reasoning_tokens = usage
                 .get("output_tokens_details")
                 .and_then(|d| d.get("reasoning_tokens"))
                 .and_then(|t| t.as_i64())
                 .unwrap_or(0);
 
+            info!("[GPT-5 PARSE] Response completed: {}", response_id);
             Some(Ok(Gpt5StreamEvent::Done {
-                response_id,
+                response_id: response_id.to_string(),
                 input_tokens,
                 output_tokens,
                 reasoning_tokens,
@@ -583,13 +634,16 @@ fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
                 .get("error")
                 .and_then(|e| e.get("message"))
                 .and_then(|m| m.as_str())
-                .unwrap_or("Unknown error")
-                .to_string();
-            Some(Ok(Gpt5StreamEvent::Error { message }))
+                .unwrap_or("Unknown error");
+            error!("[GPT-5 PARSE] Error event: {}", message);
+            Some(Ok(Gpt5StreamEvent::Error { message: message.to_string() }))
         }
 
-        // Ignore other event types
-        _ => None,
+        // Log but ignore other event types
+        _ => {
+            info!("[GPT-5 PARSE] Ignoring event type: {}", event_type);
+            None
+        }
     }
 }
 
