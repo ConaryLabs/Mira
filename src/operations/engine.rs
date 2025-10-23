@@ -1,10 +1,12 @@
 // src/operations/engine.rs
 // Operation Engine - orchestrates coding workflows with GPT-5 + DeepSeek delegation
+// FIXED: create_artifact tool calls are now handled immediately during streaming
 
 use crate::config::CONFIG;
 use crate::llm::provider::Message;
 use crate::llm::provider::gpt5::{Gpt5Provider, Gpt5StreamEvent};
 use crate::llm::provider::deepseek::DeepSeekProvider;
+use crate::llm::structured::tool_schema::get_create_artifact_tool_schema;
 use crate::memory::service::MemoryService;
 use crate::operations::{Operation, OperationEvent, Artifact};
 use crate::operations::delegation_tools::{get_delegation_tools, parse_tool_call};
@@ -332,7 +334,18 @@ impl OperationEngine {
 
         self.start_operation(operation_id, event_tx).await?;
 
-        let tools = get_delegation_tools();
+        // Build tools: delegation tools + create_artifact
+        let mut tools = get_delegation_tools();
+        tools.push(get_create_artifact_tool_schema());
+        
+        let tool_names: Vec<String> = tools.iter()
+            .filter_map(|t| t.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string()))
+            .collect();
+        info!("[ENGINE] Passing {} tools to GPT-5: {:?}", tools.len(), tool_names);
+        
         let previous_response_id = None;
 
         if let Some(token) = &cancel_token {
@@ -348,9 +361,10 @@ impl OperationEngine {
             .context("Failed to create GPT-5 stream")?;
 
         let mut accumulated_text = String::new();
-        let mut tool_calls = Vec::new();
+        let mut delegation_calls = Vec::new();
         let mut _final_response_id = None;
 
+        // FIX: Process tool calls during streaming
         while let Some(event) = stream.next().await {
             if let Some(token) = &cancel_token {
                 if token.is_cancelled() {
@@ -368,7 +382,19 @@ impl OperationEngine {
                     }).await;
                 }
                 Gpt5StreamEvent::ToolCallComplete { id, name, arguments } => {
-                    tool_calls.push((id, name, arguments));
+                    info!("[ENGINE] GPT-5 tool call: {} (id: {})", name, id);
+                    
+                    // FIX: Handle create_artifact immediately
+                    if name == "create_artifact" {
+                        info!("[ENGINE] GPT-5 called create_artifact, creating immediately");
+                        if let Err(e) = self.create_artifact(operation_id, arguments.clone(), event_tx).await {
+                            warn!("[ENGINE] Failed to create artifact: {}", e);
+                        }
+                    } else {
+                        // Queue other tools for DeepSeek delegation
+                        info!("[ENGINE] Queueing {} for DeepSeek delegation", name);
+                        delegation_calls.push((id, name, arguments));
+                    }
                 }
                 Gpt5StreamEvent::Done { response_id, .. } => {
                     _final_response_id = Some(response_id);
@@ -377,7 +403,8 @@ impl OperationEngine {
             }
         }
 
-        if !tool_calls.is_empty() {
+        // Handle delegation calls (everything except create_artifact)
+        if !delegation_calls.is_empty() {
             if let Some(token) = &cancel_token {
                 if token.is_cancelled() {
                     let _ = self.fail_operation(operation_id, "Operation cancelled before delegation".to_string(), event_tx).await;
@@ -387,7 +414,7 @@ impl OperationEngine {
 
             self.update_operation_status(operation_id, "delegating", event_tx).await?;
 
-            for (_tool_id, tool_name, tool_args) in tool_calls {
+            for (_tool_id, tool_name, tool_args) in delegation_calls {
                 if let Some(token) = &cancel_token {
                     if token.is_cancelled() {
                         let _ = self.fail_operation(operation_id, "Operation cancelled during delegation".to_string(), event_tx).await;
@@ -418,6 +445,7 @@ impl OperationEngine {
                     cancel_token.clone(),
                 ).await?;
 
+                // DeepSeek can also return artifacts
                 if let Some(artifact_data) = result.get("artifact") {
                     self.create_artifact(operation_id, artifact_data.clone(), event_tx).await?;
                 }
@@ -498,39 +526,26 @@ impl OperationEngine {
             .filter_map(|v| serde_json::from_value::<Tool>(v.clone()).ok())
             .collect();
         
-        let user_id = session_id;
-        let profile_context = self.relationship_service
+        let _relationship_ctx = self.relationship_service
             .context_loader()
-            .get_llm_context_string(user_id)
+            .load_context(session_id)
             .await
-            .ok()
-            .filter(|s| !s.is_empty());
+            .ok();
         
-        if profile_context.is_some() {
-            info!("Loaded profile context for user {}", user_id);
-        }
-        
-        let mut base_prompt = UnifiedPromptBuilder::build_system_prompt(
+        UnifiedPromptBuilder::build_system_prompt(
             &persona,
             context,
             Some(&tools),
             None,
             None,
-        );
-        
-        if let Some(profile) = profile_context {
-            base_prompt.push_str("\n\n## User Context\n");
-            base_prompt.push_str(&profile);
-        }
-        
-        base_prompt
+        )
     }
 
     async fn delegate_to_deepseek(
         &self,
-        operation_id: &str,
+        _operation_id: &str,
         tool_name: &str,
-        tool_args: serde_json::Value,
+        args: serde_json::Value,
         _event_tx: &mpsc::Sender<OperationEngineEvent>,
         cancel_token: Option<CancellationToken>,
     ) -> Result<serde_json::Value> {
@@ -540,78 +555,78 @@ impl OperationEngine {
             }
         }
 
+        info!("Delegating {} to DeepSeek", tool_name);
+
+        // Build CodeGenRequest based on tool type
         let request = match tool_name {
             "generate_code" => {
-                let path = tool_args.get("path")
+                let path = args.get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let description = tool_args.get("description")
+                let description = args.get("description")
                     .and_then(|v| v.as_str())
+                    .or_else(|| args.get("task").and_then(|v| v.as_str()))
                     .unwrap_or("Generate code")
                     .to_string();
 
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
                     description,
-                    language: tool_args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
-                    framework: tool_args.get("framework").and_then(|v| v.as_str()).map(String::from),
+                    language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
+                    framework: args.get("framework").and_then(|v| v.as_str()).map(String::from),
                     dependencies: vec![],
                     style_guide: None,
-                    context: tool_args.get("context")
+                    context: args.get("context")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
                 }
             }
-            "refactor_code" => {
-                let path = tool_args.get("path")
+            "modify_code" | "refactor_code" => {
+                let path = args.get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let description = format!(
-                    "Refactor code: {}",
-                    tool_args.get("refactoring_goals")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("improve code")
-                );
+                let instructions = args.get("instructions")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| args.get("refactoring_goals").and_then(|v| v.as_str()))
+                    .unwrap_or("Modify code")
+                    .to_string();
+                let existing = args.get("existing_code")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
-                    description,
-                    language: tool_args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
+                    description: format!("{}\n\nExisting code:\n{}", instructions, existing),
+                    language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
                     framework: None,
                     dependencies: vec![],
                     style_guide: None,
-                    context: tool_args.get("existing_code")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                    context: String::new(),
                 }
             }
             "debug_code" => {
-                let path = tool_args.get("path")
+                let path = args.get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let description = format!(
-                    "Debug and fix code. Error: {}",
-                    tool_args.get("error_description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown error")
-                );
+                let buggy_code = args.get("buggy_code")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let error_msg = args.get("error_message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Fix errors");
 
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
-                    description,
-                    language: tool_args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
+                    description: format!("Debug and fix:\n\nError: {}\n\nBuggy code:\n{}", error_msg, buggy_code),
+                    language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
                     framework: None,
                     dependencies: vec![],
                     style_guide: None,
-                    context: tool_args.get("problematic_code")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                    context: String::new(),
                 }
             }
             _ => {
@@ -619,21 +634,15 @@ impl OperationEngine {
             }
         };
 
-        sqlx::query!(
-            "UPDATE operations SET delegate_calls = delegate_calls + 1 WHERE id = ?",
-            operation_id
-        )
-        .execute(&*self.db)
-        .await?;
-
+        // Call DeepSeek's generate_code method
         let response = self.deepseek.generate_code(request).await?;
 
+        // Convert to the expected format
         Ok(serde_json::json!({
             "artifact": {
                 "path": response.artifact.path,
                 "content": response.artifact.content,
                 "language": response.artifact.language,
-                "explanation": response.artifact.explanation,
             }
         }))
     }
@@ -644,9 +653,13 @@ impl OperationEngine {
         artifact_data: serde_json::Value,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
+        info!("[ENGINE] Creating artifact from tool call: {:?}", artifact_data);
+        
+        // Handle both formats: {path, content, language} and {title, content, language, path?}
         let path = artifact_data.get("path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing artifact path"))?;
+            .or_else(|| artifact_data.get("title").and_then(|v| v.as_str()))
+            .ok_or_else(|| anyhow::anyhow!("Missing artifact path or title"))?;
         let content = artifact_data.get("content")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing artifact content"))?;
