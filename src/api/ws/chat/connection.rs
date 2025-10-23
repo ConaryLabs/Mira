@@ -207,9 +207,9 @@ impl WebSocketConnection {
         
         self.send_message(WsServerMessage::ConnectionReady).await?;
         
-        // Start heartbeat with 30-second interval (conservative)
+        // Start heartbeat with 15-second interval
         // This keeps the connection alive through proxies/load balancers
-        self.heartbeat.start(Duration::from_secs(30));
+        self.heartbeat.start(Duration::from_secs(15));
         
         info!("WebSocket connection ready messages sent, heartbeat started.");
         Ok(())
