@@ -1,4 +1,5 @@
 // src/api/ws/chat/message_router.rs
+// FIXED: Don't wrap stream/status/chat_complete in Data envelope
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -86,12 +87,78 @@ impl MessageRouter {
         };
 
         // Create channel for operation events
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::channel::<Value>(100);
         
-        // Spawn task to forward operation events to WebSocket
+        // FIXED: Spawn task to forward operation events WITHOUT double-wrapping
         let connection = self.connection.clone();
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
+                // Check if this is a streaming protocol message that should NOT be wrapped
+                if let Some(obj) = event.as_object() {
+                    if let Some(event_type) = obj.get("type").and_then(|v| v.as_str()) {
+                        match event_type {
+                            // These are top-level message types - send directly
+                            "status" | "stream" | "chat_complete" | "stream_end" => {
+                                // Convert to WsServerMessage enum variant
+                                let msg = match event_type {
+                                    "status" => {
+                                        let status = obj.get("status")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown");
+                                        WsServerMessage::Status {
+                                            message: status.to_string(),
+                                            detail: None,
+                                        }
+                                    }
+                                    "stream" => {
+                                        let delta = obj.get("delta")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        WsServerMessage::Stream {
+                                            delta: delta.to_string(),
+                                        }
+                                    }
+                                    "chat_complete" => {
+                                        WsServerMessage::ChatComplete {
+                                            user_message_id: obj.get("user_message_id")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            assistant_message_id: obj.get("assistant_message_id")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            content: obj.get("content")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            artifacts: obj.get("artifacts")
+                                                .and_then(|v| v.as_array())
+                                                .cloned()
+                                                .unwrap_or_default(),
+                                            thinking: obj.get("thinking")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string()),
+                                        }
+                                    }
+                                    "stream_end" => {
+                                        // Just ignore this for now, or map to something
+                                        continue;
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                
+                                let _ = connection.send_message(msg).await;
+                                continue;
+                            }
+                            _ => {
+                                // Everything else still gets wrapped in Data
+                            }
+                        }
+                    }
+                }
+                
+                // Wrap in Data envelope for non-streaming messages
                 let _ = connection.send_message(WsServerMessage::Data {
                     data: event,
                     request_id: None,
@@ -233,7 +300,7 @@ impl MessageRouter {
             Err(e) => {
                 self.connection.send_message(WsServerMessage::Error {
                     message: e.to_string(),
-                    code: "FILE_TRANSFER_ERROR".to_string(),
+                    code: "FILE_ERROR".to_string(),
                 }).await?;
             }
         }

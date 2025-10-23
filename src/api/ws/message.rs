@@ -1,5 +1,6 @@
 // src/api/ws/message.rs
 // Defines the data structures for WebSocket client and server messages.
+// FIXED: Added Stream and ChatComplete variants
 
 use serde::{Deserialize, Serialize};
 
@@ -124,5 +125,22 @@ pub enum WsServerMessage {
         data: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
+    },
+    
+    /// NEW: Streaming token delta (for real-time response)
+    #[serde(rename = "stream")]
+    Stream {
+        delta: String,
+    },
+    
+    /// NEW: Chat completion message with full response and artifacts
+    #[serde(rename = "chat_complete")]
+    ChatComplete {
+        user_message_id: String,
+        assistant_message_id: String,
+        content: String,
+        artifacts: Vec<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
     },
 }

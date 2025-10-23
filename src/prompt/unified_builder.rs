@@ -1,5 +1,5 @@
 // src/prompt/unified_builder.rs
-// FIXED: Removed ALL content truncation
+// FIXED: Enforce explanatory text with all tool calls
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
@@ -127,15 +127,27 @@ impl UnifiedPromptBuilder {
         prompt
     }
     
-    /// Light hints for Mira - she orchestrates, doesn't generate
+    /// Tool usage hints with mandatory conversational context
     fn add_tool_usage_hints(prompt: &mut String) {
         prompt.push_str("[CODE HANDLING]\n");
         prompt.push_str("For code-related tasks, use the appropriate tools:\n");
         prompt.push_str("- 'create_artifact' - For any code you write (examples, new files, fixes, etc)\n");
         prompt.push_str("- 'search_code' - For finding code elements in projects\n");
         prompt.push_str("- 'get_project_context' - For understanding project structure\n\n");
-        prompt.push_str("Artifacts display in a Monaco editor where users can edit and apply changes.\n");
-        prompt.push_str("If the user points you to code fix rules or guidelines, you can reference them.\n\n");
+        
+        prompt.push_str("CRITICAL CONVERSATION REQUIREMENTS:\n");
+        prompt.push_str("NEVER respond with ONLY a tool call and no explanatory text.\n");
+        prompt.push_str("Every response with a tool call MUST include conversational text that:\n");
+        prompt.push_str("- Explains what you're doing and why\n");
+        prompt.push_str("- Describes the approach or solution\n");
+        prompt.push_str("- Guides the user on what to expect or do next\n");
+        prompt.push_str("- Maintains your personality and connection with the user\n\n");
+        
+        prompt.push_str("Example BAD response: [creates artifact with zero text]\n");
+        prompt.push_str("Example GOOD response: \"Alright, here's a streamBuffer utility that'll batch those 3500 chunks...\"\n");
+        prompt.push_str("[then creates artifact]\n\n");
+        
+        prompt.push_str("Artifacts display in a Monaco editor where users can edit and apply changes.\n\n");
     }
     
     /// Full technical requirements for code generation
@@ -360,9 +372,8 @@ impl UnifiedPromptBuilder {
     }
     
     fn add_memory_context(prompt: &mut String, context: &RecallContext) {
-        // FIXED: Check config flag before adding summaries
+        // Add summaries if config enabled
         if CONFIG.use_rolling_summaries_in_context {
-            // Add summaries FIRST (only if config enabled)
             if let Some(session) = &context.session_summary {
                 prompt.push_str("\n## SESSION OVERVIEW (Entire Conversation)\n");
                 prompt.push_str("This is a comprehensive summary of your entire conversation history:\n\n");
@@ -386,7 +397,7 @@ impl UnifiedPromptBuilder {
         prompt.push_str("You have access to our conversation history and memories.\n");
         prompt.push_str("Use them naturally when relevant, but don't force references.\n\n");
         
-        // Recent messages - NO TRUNCATION
+        // Recent messages
         if !context.recent.is_empty() {
             prompt.push_str("Recent conversation:\n");
             
@@ -405,7 +416,7 @@ impl UnifiedPromptBuilder {
             prompt.push('\n');
         }
         
-        // Semantic memories - FIXED: Lower threshold to 0.6, use ALL that pass quality bar
+        // Semantic memories - filter by salience >= 0.6
         if !context.semantic.is_empty() {
             let important_memories: Vec<_> = context.semantic.iter()
                 .filter(|m| m.salience.unwrap_or(0.0) >= 0.6)
@@ -442,8 +453,9 @@ impl UnifiedPromptBuilder {
                 }
             }
             
-            prompt.push_str("Use tools as appropriate. You should integrate tool results naturally into the conversation.\n");
-            prompt.push('\n');
+            prompt.push_str("\nCRITICAL: Always provide conversational text explaining what you're doing when using tools.\n");
+            prompt.push_str("Never respond with only a tool call - the user needs context and explanation.\n");
+            prompt.push_str("Integrate tool usage naturally into your responses with proper setup and follow-through.\n\n");
         }
     }
     

@@ -173,7 +173,7 @@ impl UnifiedChatHandler {
                         "delta": delta,
                     }));
                 }
-                Gpt5StreamEvent::ToolCallComplete { id, name, arguments } => {
+                Gpt5StreamEvent::ToolCallComplete { id: _, name, arguments } => {
                     // Handle tool calls
                     if name == "create_artifact" {
                         debug!("Tool call: create_artifact with args: {}", arguments);
