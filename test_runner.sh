@@ -74,7 +74,7 @@ cleanup_qdrant() {
     echo -e "${BLUE}Cleaning up Qdrant test collections...${NC}"
     
     local qdrant_host=${QDRANT_URL:-http://localhost:6333}
-    local collections=("test_collection" "test_search" "test_multihead" "test_deletion" "test_full_flow" "e2e_test" "test_ops" "test_artifacts" "test_code_embedding")
+    local collections=("test_collection" "test_search" "test_multihead" "test_deletion" "test_full_flow" "e2e_test" "test_ops" "test_artifacts" "test_code_embedding" "test_cleanup")
     
     for collection in "${collections[@]}"; do
         curl -s -X DELETE "${qdrant_host}/collections/${collection}" > /dev/null 2>&1
@@ -117,6 +117,7 @@ OPTIONS:
     phase7              Run phase 7 routing tests only
     deepseek            Run DeepSeek live API tests only
     code-embedding      Run code embedding and search tests only
+    embedding-cleanup   Run embedding cleanup (orphan removal) tests only
     quick               Run quick smoke test (complete message flow)
     cleanup             Clean up Qdrant test collections
     list                List all available tests
@@ -129,6 +130,7 @@ EXAMPLES:
     ./test_runner.sh artifacts          # Run artifact flow tests
     ./test_runner.sh deepseek           # Run DeepSeek live API tests
     ./test_runner.sh code-embedding     # Run code embedding tests
+    ./test_runner.sh embedding-cleanup  # Run embedding cleanup tests
     ./test_runner.sh quick              # Quick smoke test
     ./test_runner.sh cleanup            # Clean up test data
 
@@ -182,6 +184,10 @@ list_tests() {
     
     echo -e "${YELLOW}Code Embedding Tests (code_embedding_test):${NC}"
     cargo test --test code_embedding_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Embedding Cleanup Tests (embedding_cleanup_test):${NC}"
+    cargo test --test embedding_cleanup_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
 }
 
@@ -305,6 +311,15 @@ main() {
             exit $?
             ;;
         
+        embedding-cleanup)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "embedding_cleanup_test" "$test_flags"
+            exit $?
+            ;;
+        
         quick)
             check_prerequisites
             if [ -z "$NO_CLEANUP" ]; then
@@ -338,6 +353,7 @@ main() {
             run_test "phase7_routing_test" "$test_flags" || failed=$((failed + 1))
             run_test "deepseek_live_test" "$test_flags" || failed=$((failed + 1))
             run_test "code_embedding_test" "$test_flags" || failed=$((failed + 1))
+            run_test "embedding_cleanup_test" "$test_flags" || failed=$((failed + 1))
             
             # Summary
             echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"

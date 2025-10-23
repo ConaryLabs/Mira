@@ -25,6 +25,10 @@ pub struct TaskConfig {
     pub code_sync_enabled: bool,
     pub code_sync_interval: Duration,
     
+    // Embedding cleanup (orphaned Qdrant entries)
+    pub embedding_cleanup_enabled: bool,
+    pub embedding_cleanup_interval: Duration,
+    
     // Active session processing limit
     pub active_session_limit: i64,
 }
@@ -94,6 +98,18 @@ impl TaskConfig {
                     .unwrap_or_else(|_| "300".to_string())  // 5 minutes
                     .parse()
                     .unwrap_or(300)
+            ),
+            
+            // Embedding cleanup every 7 days (weekly orphan removal)
+            embedding_cleanup_enabled: std::env::var("TASK_EMBEDDING_CLEANUP_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
+            embedding_cleanup_interval: Duration::from_secs(
+                std::env::var("TASK_EMBEDDING_CLEANUP_INTERVAL")
+                    .unwrap_or_else(|_| "604800".to_string())  // 7 days
+                    .parse()
+                    .unwrap_or(604800)
             ),
             
             // Limit active sessions to avoid overload

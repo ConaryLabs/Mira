@@ -204,6 +204,91 @@ impl QdrantMemoryStore {
         
         Ok(count)
     }
+
+    /// Scroll through points in the collection
+    /// 
+    /// Returns a list of point IDs (as u64 integers)
+    /// 
+    /// # Arguments
+    /// * `offset` - Optional offset to start from (for pagination)
+    /// * `limit` - How many points to return per scroll
+    pub async fn scroll_points(
+        &self,
+        offset: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<u64>> {
+        let scroll_url = format!(
+            "{}/collections/{}/points/scroll",
+            self.base_url, self.collection_name
+        );
+
+        let mut scroll_body = json!({
+            "limit": limit,
+            "with_payload": false,
+            "with_vector": false,
+        });
+
+        // Add offset if provided
+        if let Some(offset_id) = offset {
+            scroll_body["offset"] = json!(offset_id);
+        }
+
+        let response = self.client
+            .post(&scroll_url)
+            .json(&scroll_body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Qdrant scroll failed: {}",
+                response.text().await.unwrap_or_default()
+            ));
+        }
+
+        let result: Value = response.json().await?;
+        
+        // Extract point IDs from response
+        let point_ids: Vec<u64> = result["result"]["points"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|point| {
+                point["id"].as_u64()
+            })
+            .collect();
+
+        Ok(point_ids)
+    }
+
+    /// Scroll through ALL points in the collection (handles pagination automatically)
+    pub async fn scroll_all_points(&self) -> Result<Vec<u64>> {
+        let mut all_points = Vec::new();
+        let mut offset: Option<u64> = None;
+        let batch_size = 100;
+
+        loop {
+            let batch = self.scroll_points(offset, batch_size).await?;
+            
+            if batch.is_empty() {
+                break;
+            }
+
+            // Use the last point ID as the next offset
+            offset = batch.last().copied();
+            
+            // Add batch to results
+            let current_len = all_points.len();
+            all_points.extend(batch);
+
+            // If we got fewer results than the batch size, we're done
+            if all_points.len() - current_len < batch_size {
+                break;
+            }
+        }
+
+        Ok(all_points)
+    }
 }
 
 #[async_trait]

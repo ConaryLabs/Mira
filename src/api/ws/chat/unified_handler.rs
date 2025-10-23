@@ -1,16 +1,17 @@
 // src/api/ws/chat/unified_handler.rs
-// Updated with operation routing support and regular chat handling
+// FIXED: Pass tools to GPT-5 and handle tool calls for artifacts
 
 use std::sync::Arc;
 use anyhow::Result;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::api::ws::operations::OperationManager;
 use crate::llm::provider::{Message, gpt5::Gpt5StreamEvent};
+use crate::llm::structured::tool_schema::get_create_artifact_tool_schema;
 use crate::persona::PersonaOverlay;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::state::AppState;
@@ -71,14 +72,7 @@ impl UnifiedChatHandler {
         }
     }
     
-    /// Handle regular conversational chat (non-operation messages)
-    /// 
-    /// This leverages the full Mira stack:
-    /// - Message pipeline (analysis, topics, salience, mood, intent)
-    /// - Relationship engine (user traits, preferences, patterns)
-    /// - Memory system (semantic recall, context retrieval)
-    /// - Facts service (automatic fact extraction)
-    /// - Quality scoring (response relevance)
+    /// Handle regular conversational chat with tool support for artifacts
     async fn handle_regular_chat(
         &self,
         request: ChatRequest,
@@ -144,7 +138,11 @@ impl UnifiedChatHandler {
         // Build messages for GPT-5
         let messages = vec![Message::user(content.clone())];
         
-        // 5. Generate response with streaming (no tools for regular chat)
+        // 5. Get tools for artifact creation
+        let tools = vec![get_create_artifact_tool_schema()];
+        debug!("Passing {} tools to GPT-5", tools.len());
+        
+        // 6. Generate response with streaming and tool support
         debug!("Generating response with GPT-5 streaming");
         
         let mut stream = self.app_state
@@ -152,7 +150,7 @@ impl UnifiedChatHandler {
             .create_stream_with_tools(
                 messages,
                 system_prompt,
-                vec![], // no tools for regular chat
+                tools,  // FIXED: Pass actual tools!
                 None,   // no previous response
             )
             .await
@@ -162,6 +160,7 @@ impl UnifiedChatHandler {
             })?;
         
         let mut full_response = String::new();
+        let mut artifacts_created = Vec::new();
         let tx_clone = ws_tx.clone();
         
         // Process stream events
@@ -174,6 +173,60 @@ impl UnifiedChatHandler {
                         "delta": delta,
                     }));
                 }
+                Gpt5StreamEvent::ToolCallComplete { id, name, arguments } => {
+                    // Handle tool calls
+                    if name == "create_artifact" {
+                        debug!("Tool call: create_artifact with args: {}", arguments);
+                        
+                        // Extract artifact data
+                        let title = arguments.get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("untitled");
+                        let content = arguments.get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let language = arguments.get("language")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("text");
+                        let path = arguments.get("path")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| title.to_string());
+                        
+                        // Generate artifact ID
+                        let artifact_id = format!("artifact-{}-{}", 
+                            chrono::Utc::now().timestamp(),
+                            uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("xxx")
+                        );
+                        
+                        // Send artifact event immediately
+                        let artifact_event = json!({
+                            "type": "data",
+                            "data": {
+                                "type": "artifact_created",
+                                "artifact": {
+                                    "id": artifact_id,
+                                    "path": path,
+                                    "content": content,
+                                    "language": language,
+                                }
+                            }
+                        });
+                        
+                        let _ = tx_clone.send(artifact_event).await;
+                        
+                        artifacts_created.push(json!({
+                            "id": artifact_id,
+                            "path": path,
+                            "content": content,
+                            "language": language,
+                        }));
+                        
+                        info!("Created artifact: {} ({})", path, language);
+                    } else {
+                        warn!("Unknown tool call: {}", name);
+                    }
+                }
                 Gpt5StreamEvent::Done { .. } => {
                     let _ = tx_clone.try_send(json!({
                         "type": "stream_end"
@@ -184,14 +237,16 @@ impl UnifiedChatHandler {
                     return Err(anyhow::anyhow!("Stream error: {}", message));
                 }
                 _ => {
-                    // Ignore tool calls and other events in regular chat
+                    // Ignore other events
                 }
             }
         }
         
-        debug!("Response generated: {} chars", full_response.len());
+        debug!("Response generated: {} chars, {} artifacts created", 
+               full_response.len(), 
+               artifacts_created.len());
         
-        // 6. Store assistant response (this also goes through full pipeline)
+        // 7. Store assistant response (this also goes through full pipeline)
         let assistant_id = self.app_state
             .memory_service
             .save_assistant_message(&session_id, &full_response, Some(user_id))
@@ -203,15 +258,16 @@ impl UnifiedChatHandler {
         
         debug!("Assistant message stored with ID: {} (pipeline complete)", assistant_id);
         
-        // 7. Send completion message
+        // 8. Send completion message
         let _ = ws_tx.send(json!({
             "type": "chat_complete",
             "user_message_id": user_id,
             "assistant_message_id": assistant_id,
             "content": full_response,
+            "artifacts": artifacts_created,
         })).await;
         
-        info!("Regular chat completed successfully");
+        info!("Regular chat completed successfully with {} artifacts", artifacts_created.len());
         
         Ok(())
     }

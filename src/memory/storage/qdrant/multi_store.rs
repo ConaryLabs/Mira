@@ -215,6 +215,48 @@ impl QdrantMultiStore {
         Ok(results.into_iter().collect())
     }
 
+    /// Scroll through all points in a collection
+    /// 
+    /// Returns a list of point IDs as strings (message_ids)
+    /// 
+    /// # Arguments
+    /// * `head` - Which collection to scroll
+    /// * `offset` - Optional offset to start from (for pagination)
+    /// * `limit` - How many points to return per scroll
+    pub async fn scroll_collection(
+        &self,
+        head: EmbeddingHead,
+        offset: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let store = self.stores.get(&head)
+            .ok_or_else(|| anyhow!("Collection for {} not initialized", head.as_str()))?;
+
+        // Call the store's scroll method
+        let point_ids = store.scroll_points(offset, limit).await?;
+        
+        // Convert u64 IDs to strings
+        Ok(point_ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
+    /// Scroll through ALL points in a collection (handles pagination automatically)
+    /// 
+    /// This is a convenience wrapper that scrolls through the entire collection
+    /// by automatically handling pagination.
+    pub async fn scroll_all_points(
+        &self,
+        head: EmbeddingHead,
+    ) -> Result<Vec<String>> {
+        let store = self.stores.get(&head)
+            .ok_or_else(|| anyhow!("Collection for {} not initialized", head.as_str()))?;
+
+        // Call the store's scroll_all method
+        let point_ids = store.scroll_all_points().await?;
+        
+        // Convert u64 IDs to strings
+        Ok(point_ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
     /// Get list of enabled embedding heads
     pub fn get_enabled_heads(&self) -> Vec<EmbeddingHead> {
         self.stores.keys().cloned().collect()

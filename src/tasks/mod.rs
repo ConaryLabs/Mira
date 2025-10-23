@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use sqlx::Row;
 
 use crate::memory::features::decay;
@@ -18,11 +18,13 @@ pub mod config;
 pub mod metrics;
 pub mod backfill;
 pub mod code_sync;
+pub mod embedding_cleanup;
 
 use config::TaskConfig;
 use metrics::TaskMetrics;
 use backfill::BackfillTask;
 use code_sync::CodeSyncTask;
+use embedding_cleanup::EmbeddingCleanupTask;
 
 /// Manages all background tasks for the memory system
 pub struct TaskManager {
@@ -80,6 +82,12 @@ impl TaskManager {
             self.handles.push(handle);
         }
 
+        // Start embedding cleanup task (weekly orphan removal)
+        if self.config.embedding_cleanup_enabled {
+            let handle = self.spawn_embedding_cleanup();
+            self.handles.push(handle);
+        }
+
         // Start metrics reporter
         let handle = self.spawn_metrics_reporter();
         self.handles.push(handle);
@@ -101,6 +109,52 @@ impl TaskManager {
                 error!("Embedding backfill failed: {}", e);
             }
         }
+    }
+
+    /// Spawns the embedding cleanup task
+    fn spawn_embedding_cleanup(&self) -> JoinHandle<()> {
+        let pool = Arc::new(self.app_state.sqlite_pool.clone());
+        let multi_store = self.app_state.memory_service.get_multi_store();
+        let interval = self.config.embedding_cleanup_interval;
+        let metrics = self.metrics.clone();
+
+        tokio::spawn(async move {
+            info!("Embedding cleanup task started (interval: {:?})", interval);
+            
+            let cleanup = EmbeddingCleanupTask::new(pool, multi_store);
+            let mut interval_timer = time::interval(interval);
+            interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+
+            loop {
+                interval_timer.tick().await;
+                
+                let start = std::time::Instant::now();
+                
+                match cleanup.run(false).await {  // false = actually delete orphans
+                    Ok(report) => {
+                        let duration = start.elapsed();
+                        metrics.record_task_duration("embedding_cleanup", duration);
+                        
+                        info!(
+                            "Embedding cleanup complete: checked {}, found {} orphans, deleted {}",
+                            report.total_checked,
+                            report.orphans_found,
+                            report.orphans_deleted
+                        );
+                        
+                        if !report.errors.is_empty() {
+                            warn!("Cleanup had {} errors: {:?}", report.errors.len(), report.errors);
+                        }
+                        
+                        metrics.add_processed_items("embedding_cleanup", report.orphans_deleted);
+                    }
+                    Err(e) => {
+                        error!("Embedding cleanup failed: {}", e);
+                        metrics.record_error("embedding_cleanup");
+                    }
+                }
+            }
+        })
     }
 
     /// Spawns the code sync task (Layer 2: Background safety net)

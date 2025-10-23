@@ -1,242 +1,179 @@
 // src/tasks/embedding_cleanup.rs
-// Finds and removes orphaned embeddings in Qdrant that have no SQLite backing
+//
+// Finds and removes orphaned Qdrant entries that no longer have corresponding SQLite records.
+// This handles the case where messages get deleted from SQLite but their embeddings remain in Qdrant.
 
-use anyhow::Result;
-use sqlx::SqlitePool;
 use std::sync::Arc;
-use std::collections::HashSet;
-use tracing::{info, warn, debug};
-use serde::Serialize;
+use std::collections::HashMap;
+use anyhow::{Result, Context};
+use tracing::{info, warn, error};
+use sqlx::SqlitePool;
 
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::embeddings::EmbeddingHead;
 
-/// Report of what was found and cleaned
-#[derive(Debug, Clone, Serialize)]
+/// Report of cleanup operation
+#[derive(Debug, Clone)]
 pub struct CleanupReport {
-    pub semantic_orphans: u64,
-    pub code_orphans: u64,
-    pub summary_orphans: u64,
-    pub documents_orphans: u64,
-    pub relationship_orphans: u64,
-    pub total_orphans: u64,
-    pub total_deleted: u64,
-    pub scan_duration_ms: u64,
+    pub total_checked: usize,
+    pub orphans_found: usize,
+    pub orphans_deleted: usize,
+    pub errors: Vec<String>,
+    pub by_collection: HashMap<String, CollectionReport>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CollectionReport {
+    pub checked: usize,
+    pub orphans: usize,
+    pub deleted: usize,
+}
+
+impl CleanupReport {
+    pub fn new() -> Self {
+        Self {
+            total_checked: 0,
+            orphans_found: 0,
+            orphans_deleted: 0,
+            errors: Vec::new(),
+            by_collection: HashMap::new(),
+        }
+    }
+
+    pub fn add_collection(&mut self, collection: String, report: CollectionReport) {
+        self.total_checked += report.checked;
+        self.orphans_found += report.orphans;
+        self.orphans_deleted += report.deleted;
+        self.by_collection.insert(collection, report);
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "Checked: {} | Found: {} orphans | Deleted: {} | Errors: {}",
+            self.total_checked,
+            self.orphans_found,
+            self.orphans_deleted,
+            self.errors.len()
+        )
+    }
+}
+
+/// Task for cleaning up orphaned embeddings
 pub struct EmbeddingCleanupTask {
-    pool: SqlitePool,
+    pool: Arc<SqlitePool>,
     multi_store: Arc<QdrantMultiStore>,
 }
 
 impl EmbeddingCleanupTask {
-    pub fn new(pool: SqlitePool, multi_store: Arc<QdrantMultiStore>) -> Self {
+    pub fn new(pool: Arc<SqlitePool>, multi_store: Arc<QdrantMultiStore>) -> Self {
         Self { pool, multi_store }
     }
-    
-    /// Run full cleanup across all collections
+
+    /// Run the cleanup task
+    /// 
+    /// # Arguments
+    /// * `dry_run` - If true, only reports orphans without deleting them
     pub async fn run(&self, dry_run: bool) -> Result<CleanupReport> {
-        let start = std::time::Instant::now();
-        
         info!("Starting embedding cleanup task (dry_run: {})", dry_run);
         
-        let mut report = CleanupReport {
-            semantic_orphans: 0,
-            code_orphans: 0,
-            summary_orphans: 0,
-            documents_orphans: 0,
-            relationship_orphans: 0,
-            total_orphans: 0,
-            total_deleted: 0,
-            scan_duration_ms: 0,
-        };
+        let mut report = CleanupReport::new();
         
-        // Get all valid message IDs from SQLite
-        let valid_message_ids = self.get_valid_message_ids().await?;
-        info!("Found {} valid message IDs in SQLite", valid_message_ids.len());
+        // Get all enabled embedding heads
+        let heads = self.multi_store.get_enabled_heads();
         
-        // Get all valid code element IDs from SQLite
-        let valid_code_element_ids = self.get_valid_code_element_ids().await?;
-        info!("Found {} valid code element IDs in SQLite", valid_code_element_ids.len());
-        
-        // Clean each collection
-        report.semantic_orphans = self.clean_collection(
-            EmbeddingHead::Semantic,
-            &valid_message_ids,
-            dry_run
-        ).await?;
-        
-        report.code_orphans = self.clean_collection(
-            EmbeddingHead::Code,
-            &valid_code_element_ids,
-            dry_run
-        ).await?;
-        
-        report.summary_orphans = self.clean_collection(
-            EmbeddingHead::Summary,
-            &valid_message_ids,
-            dry_run
-        ).await?;
-        
-        report.documents_orphans = self.clean_collection(
-            EmbeddingHead::Documents,
-            &valid_message_ids,
-            dry_run
-        ).await?;
-        
-        report.relationship_orphans = self.clean_collection(
-            EmbeddingHead::Relationship,
-            &valid_message_ids,
-            dry_run
-        ).await?;
-        
-        report.total_orphans = report.semantic_orphans 
-            + report.code_orphans 
-            + report.summary_orphans 
-            + report.documents_orphans
-            + report.relationship_orphans;
-        
-        report.total_deleted = if dry_run { 0 } else { report.total_orphans };
-        report.scan_duration_ms = start.elapsed().as_millis() as u64;
-        
-        info!(
-            "Cleanup complete: {} orphans found, {} deleted (took {}ms)",
-            report.total_orphans,
-            report.total_deleted,
-            report.scan_duration_ms
-        );
-        
-        Ok(report)
-    }
-    
-    /// Get all valid message IDs from memory_entries
-    async fn get_valid_message_ids(&self) -> Result<HashSet<i64>> {
-        let rows = sqlx::query!(
-            r#"
-            SELECT id FROM memory_entries
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        
-        Ok(rows.into_iter().filter_map(|r| r.id).collect())
-    }
-    
-    /// Get all valid code element IDs from code_elements
-    async fn get_valid_code_element_ids(&self) -> Result<HashSet<i64>> {
-        let rows = sqlx::query!(
-            r#"
-            SELECT id FROM code_elements
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        
-        Ok(rows.into_iter().filter_map(|r| r.id).collect())
-    }
-    
-    /// Clean a specific collection, returning count of orphans found
-    async fn clean_collection(
-        &self,
-        head: EmbeddingHead,
-        valid_ids: &HashSet<i64>,
-        dry_run: bool,
-    ) -> Result<u64> {
-        info!("Scanning {} collection for orphans...", head.as_str());
-        
-        // Get all point IDs from this Qdrant collection
-        let collection_name = self.multi_store.get_collection_name(head)
-            .unwrap_or_else(|| format!("mira_{}", head.as_str()));
-        
-        // Use Qdrant scroll API to get all point IDs
-        let qdrant_point_ids = self.get_all_point_ids(&collection_name).await?;
-        
-        debug!(
-            "Found {} points in {} collection",
-            qdrant_point_ids.len(),
-            collection_name
-        );
-        
-        // Find orphans (points in Qdrant but not in SQLite)
-        let mut orphan_count = 0u64;
-        
-        for point_id in &qdrant_point_ids {
-            if !valid_ids.contains(point_id) {
-                orphan_count += 1;
-                
-                if dry_run {
-                    debug!("Found orphan in {}: {}", collection_name, point_id);
-                } else {
-                    // Delete the orphan
-                    match self.multi_store.delete(head, *point_id).await {
-                        Ok(_) => {
-                            debug!("Deleted orphan from {}: {}", collection_name, point_id);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to delete orphan {} from {}: {}",
-                                point_id, collection_name, e
-                            );
-                        }
-                    }
+        for head in heads {
+            info!("Checking {} collection for orphans", head.as_str());
+            
+            match self.clean_collection(head, dry_run).await {
+                Ok(collection_report) => {
+                    info!(
+                        "{} collection: {} orphans found",
+                        head.as_str(),
+                        collection_report.orphans
+                    );
+                    report.add_collection(head.as_str().to_string(), collection_report);
+                }
+                Err(e) => {
+                    error!("Failed to clean {} collection: {}", head.as_str(), e);
+                    report.errors.push(format!("{}: {}", head.as_str(), e));
                 }
             }
         }
         
-        if orphan_count > 0 {
-            if dry_run {
-                info!(
-                    "Found {} orphans in {} (dry run - not deleted)",
-                    orphan_count, collection_name
-                );
-            } else {
-                info!(
-                    "Deleted {} orphans from {}",
-                    orphan_count, collection_name
-                );
-            }
-        } else {
-            info!("No orphans found in {}", collection_name);
-        }
-        
-        Ok(orphan_count)
+        info!("Cleanup task complete: {}", report.summary());
+        Ok(report)
     }
-    
-    /// Get all point IDs from a Qdrant collection using scroll API
-    async fn get_all_point_ids(&self, _collection_name: &str) -> Result<Vec<i64>> {
-        // Use the multi_store's scroll method to get all point IDs
-        // Note: This will be added to multi_store.rs
-        
-        // For now, return empty - implementation depends on which collection
-        // This will be properly implemented once the scroll method is added to multi_store
-        
-        warn!(
-            "Getting all point IDs from {} - using multi_store scroll (needs implementation)",
-            _collection_name
-        );
-        
-        Ok(Vec::new())
-    }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_cleanup_report_structure() {
-        let report = CleanupReport {
-            semantic_orphans: 10,
-            code_orphans: 5,
-            summary_orphans: 2,
-            documents_orphans: 0,
-            relationship_orphans: 3,
-            total_orphans: 20,
-            total_deleted: 20,
-            scan_duration_ms: 1500,
+    /// Clean a specific collection
+    async fn clean_collection(
+        &self,
+        head: EmbeddingHead,
+        dry_run: bool,
+    ) -> Result<CollectionReport> {
+        let mut report = CollectionReport {
+            checked: 0,
+            orphans: 0,
+            deleted: 0,
         };
+
+        // Scroll through all points in this collection
+        let all_points = self.multi_store
+            .scroll_all_points(head)
+            .await
+            .context("Failed to scroll collection")?;
+
+        report.checked = all_points.len();
+
+        // Check each point against SQLite
+        let mut orphan_ids = Vec::new();
         
-        assert_eq!(report.total_orphans, 20);
-        assert_eq!(report.total_deleted, 20);
+        for point_id in all_points {
+            // Point ID should be the message_id as a string
+            let message_id: i64 = match point_id.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    warn!("Invalid point ID format: {}", point_id);
+                    continue;
+                }
+            };
+
+            // Check if this message_id exists in SQLite
+            let exists = self.check_message_exists(message_id).await?;
+            
+            if !exists {
+                orphan_ids.push(message_id);
+                report.orphans += 1;
+            }
+        }
+
+        // Delete orphans if not a dry run
+        if !dry_run && !orphan_ids.is_empty() {
+            info!("Deleting {} orphans from {} collection", orphan_ids.len(), head.as_str());
+            
+            for message_id in orphan_ids {
+                match self.multi_store.delete(head, message_id).await {
+                    Ok(_) => {
+                        report.deleted += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to delete point {}: {}", message_id, e);
+                    }
+                }
+            }
+        }
+
+        Ok(report)
+    }
+
+    /// Check if a message exists in SQLite
+    async fn check_message_exists(&self, message_id: i64) -> Result<bool> {
+        let result = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM memory_entries WHERE id = ?"
+        )
+        .bind(message_id)
+        .fetch_one(&*self.pool)
+        .await?;
+
+        Ok(result > 0)
     }
 }

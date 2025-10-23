@@ -1,111 +1,138 @@
 #!/bin/bash
 # scripts/reset_embeddings.sh
-# Nuclear option: Reset all embeddings in Qdrant and SQLite tracking
+#
+# Nuclear option: Completely resets all embeddings by deleting Qdrant collections
+# and clearing embedding columns in SQLite. Use when things are truly fucked.
 
 set -e
 
+# Colors for output
 RED='\033[0;31m'
-GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
 
-# Load .env if it exists
-if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
-fi
-
-QDRANT_URL=${QDRANT_URL:-http://localhost:6333}
-DATABASE_URL=${DATABASE_URL:-sqlite:./mira.db}
-
-echo -e "${RED}╔════════════════════════════════════════════════════════╗${NC}"
-echo -e "${RED}║  WARNING: EMBEDDING RESET                              ║${NC}"
-echo -e "${RED}║  This will delete ALL embeddings from Qdrant          ║${NC}"
-echo -e "${RED}║  and clear tracking tables in SQLite                  ║${NC}"
-echo -e "${RED}╚════════════════════════════════════════════════════════╝${NC}\n"
-
-echo -e "${YELLOW}Collections to be deleted:${NC}"
-echo "  - semantic (conversation embeddings)"
-echo "  - code (code element embeddings)"
-echo "  - summary (rolling summaries)"
-echo "  - documents (uploaded docs)"
-echo "  - relationship (relationship facts)"
+echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${RED}║           NUCLEAR EMBEDDING RESET                          ║${NC}"
+echo -e "${RED}║                                                            ║${NC}"
+echo -e "${RED}║  This will DELETE ALL EMBEDDINGS. This includes:          ║${NC}"
+echo -e "${RED}║  • All Qdrant collections                                  ║${NC}"
+echo -e "${RED}║  • All embedding data in SQLite                            ║${NC}"
+echo -e "${RED}║  • All vector tracking metadata                            ║${NC}"
+echo -e "${RED}║                                                            ║${NC}"
+echo -e "${RED}║  Your message content will be preserved.                   ║${NC}"
+echo -e "${RED}║  Embeddings will be regenerated on next use.               ║${NC}"
+echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-
-echo -e "${YELLOW}SQLite tables to be cleared:${NC}"
-echo "  - message_embeddings (embedding tracking)"
+echo -e "${YELLOW}This action CANNOT be undone.${NC}"
 echo ""
+read -p "Type 'NUKE' to confirm: " confirm
 
-read -p "Are you sure you want to continue? (type 'yes' to confirm): " -r
-echo
-if [[ ! $REPLY == "yes" ]]; then
-    echo -e "${GREEN}Aborted. No changes made.${NC}"
+if [ "$confirm" != "NUKE" ]; then
+    echo "Aborted."
     exit 0
 fi
 
 echo ""
-echo -e "${BLUE}Starting reset...${NC}\n"
+echo -e "${YELLOW}Starting nuclear reset...${NC}"
 
-# Check Qdrant connectivity
-if ! curl -s ${QDRANT_URL}/health > /dev/null 2>&1; then
-    echo -e "${RED}✗ Cannot connect to Qdrant at ${QDRANT_URL}${NC}"
-    exit 1
-fi
+# Get configuration from environment or use defaults
+QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
+SQLITE_DB="${SQLITE_DB:-mira.db}"
+COLLECTION_PREFIX="${QDRANT_COLLECTION_PREFIX:-mira}"
 
-# Delete Qdrant collections
-COLLECTIONS=("mira_semantic" "mira_code" "mira_summary" "mira_documents" "mira_relationship")
+echo ""
+echo "Configuration:"
+echo "  Qdrant URL: $QDRANT_URL"
+echo "  SQLite DB: $SQLITE_DB"
+echo "  Collection Prefix: $COLLECTION_PREFIX"
+echo ""
+
+# Step 1: Delete Qdrant collections
+echo -e "${YELLOW}Step 1/3: Deleting Qdrant collections...${NC}"
+
+COLLECTIONS=(
+    "${COLLECTION_PREFIX}-semantic"
+    "${COLLECTION_PREFIX}-code"
+    "${COLLECTION_PREFIX}-summary"
+    "${COLLECTION_PREFIX}-documents"
+    "${COLLECTION_PREFIX}-relationship"
+)
+
+deleted=0
+not_found=0
 
 for collection in "${COLLECTIONS[@]}"; do
-    echo -e "${BLUE}Deleting collection: ${collection}${NC}"
+    response=$(curl -s -w "\n%{http_code}" -X DELETE "$QDRANT_URL/collections/$collection" 2>/dev/null)
+    http_code=$(echo "$response" | tail -n1)
     
-    response=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${QDRANT_URL}/collections/${collection}")
-    
-    if [ "$response" == "200" ] || [ "$response" == "404" ]; then
-        echo -e "${GREEN}✓ Deleted ${collection}${NC}"
+    if [ "$http_code" = "200" ]; then
+        echo "  ✓ Deleted: $collection"
+        ((deleted++))
+    elif [ "$http_code" = "404" ]; then
+        echo "  - Not found: $collection (already deleted or never existed)"
+        ((not_found++))
     else
-        echo -e "${YELLOW}⚠ Failed to delete ${collection} (HTTP ${response})${NC}"
+        echo "  ✗ Failed to delete: $collection (HTTP $http_code)"
     fi
 done
 
 echo ""
+echo "  Collections deleted: $deleted"
+echo "  Collections not found: $not_found"
 
-# Clear SQLite tracking tables
-echo -e "${BLUE}Clearing SQLite tracking tables...${NC}"
+# Step 2: Clear SQLite embedding columns
+echo ""
+echo -e "${YELLOW}Step 2/3: Clearing SQLite embedding data...${NC}"
 
-# Extract database path from DATABASE_URL
-DB_PATH=$(echo $DATABASE_URL | sed 's/sqlite://')
-
-if [ ! -f "$DB_PATH" ]; then
-    echo -e "${YELLOW}⚠ Database not found at ${DB_PATH}${NC}"
+if [ ! -f "$SQLITE_DB" ]; then
+    echo -e "${RED}  ✗ Database not found: $SQLITE_DB${NC}"
+    echo "  Skipping SQLite cleanup."
 else
-    sqlite3 "$DB_PATH" <<EOF
-DELETE FROM message_embeddings;
+    sqlite3 "$SQLITE_DB" <<EOF
+-- Clear embedding vector data
+UPDATE memory_entries SET embedding = NULL WHERE embedding IS NOT NULL;
+
+-- Clear Qdrant point tracking
+UPDATE memory_entries SET qdrant_point_id = NULL WHERE qdrant_point_id IS NOT NULL;
+
+-- Clear embedding metadata
+UPDATE memory_entries 
+SET metadata = json_remove(metadata, '$.embedding_model', '$.embedding_head')
+WHERE metadata IS NOT NULL;
+
+-- Report changes
+SELECT 
+    'Cleared ' || COUNT(*) || ' embedding vectors' as result 
+FROM memory_entries;
 EOF
-    
-    count=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM message_embeddings;")
-    
-    if [ "$count" == "0" ]; then
-        echo -e "${GREEN}✓ Cleared message_embeddings table${NC}"
-    else
-        echo -e "${RED}✗ Failed to clear message_embeddings table${NC}"
-        exit 1
-    fi
+
+    echo "  ✓ SQLite cleanup complete"
+fi
+
+# Step 3: Verify cleanup
+echo ""
+echo -e "${YELLOW}Step 3/3: Verifying cleanup...${NC}"
+
+# Check Qdrant collections
+response=$(curl -s "$QDRANT_URL/collections" 2>/dev/null || echo "{}")
+collection_count=$(echo "$response" | grep -o "\"$COLLECTION_PREFIX-" | wc -l || echo "0")
+
+echo "  Remaining Qdrant collections with prefix '$COLLECTION_PREFIX': $collection_count"
+
+# Check SQLite
+if [ -f "$SQLITE_DB" ]; then
+    remaining=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM memory_entries WHERE embedding IS NOT NULL;" 2>/dev/null || echo "?")
+    echo "  Remaining SQLite embeddings: $remaining"
 fi
 
 echo ""
-echo -e "${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  RESET COMPLETE                                        ║${NC}"
-echo -e "${GREEN}║  All embeddings have been deleted                     ║${NC}"
-echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}\n"
-
-echo -e "${BLUE}Next steps:${NC}"
-echo "  1. Embeddings will be regenerated automatically as:"
-echo "     - New messages are sent"
-echo "     - Code files are analyzed"
-echo "     - Documents are uploaded"
-echo "  2. Or run a backfill task to re-embed existing content"
+echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║                  RESET COMPLETE                            ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-
-exit 0
+echo "Next steps:"
+echo "  1. Restart your Mira backend"
+echo "  2. Embeddings will be regenerated automatically as messages are processed"
+echo "  3. Use the backfill task if you want to regenerate all embeddings immediately"
+echo ""
