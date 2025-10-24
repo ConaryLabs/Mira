@@ -178,8 +178,8 @@ impl UnifiedChatHandler {
             None, // tools
             request.metadata.as_ref(),
             request.project_id.as_deref(),
-            code_context.as_ref(),     // NEW: Pass code intelligence results
-            file_tree.as_ref(),         // NEW: Pass file tree
+            code_context.as_ref().map(|v| &**v),     // NEW: Pass code intelligence results
+            file_tree.as_ref().map(|v| &**v),         // NEW: Pass file tree
         );
         
         // Build messages for GPT-5
