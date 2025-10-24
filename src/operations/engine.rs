@@ -538,6 +538,8 @@ impl OperationEngine {
             Some(&tools),
             None,
             None,
+            None,  // code_context - not used in operations engine
+            None,  // file_tree - not used in operations engine
         )
     }
 

@@ -198,6 +198,125 @@ impl CodeIntelligenceService {
         Ok(embedded_count)
     }
 
+    /// Semantic search for code elements
+    /// Returns MemoryEntry objects formatted for context inclusion
+    pub async fn search_code(
+        &self,
+        query: &str,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>> {
+        debug!("Searching code for project {} with query: {}", project_id, query);
+        
+        // Embed the query
+        let query_embedding = self.embedding_client
+            .embed(query)
+            .await?;
+        
+        // Search Qdrant code collection with project filter
+        let namespace = format!("code:{}", project_id);
+        let results = self.multi_store
+            .search(
+                EmbeddingHead::Code,
+                &namespace,
+                &query_embedding,
+                limit,
+            )
+            .await?;
+        
+        if results.is_empty() {
+            debug!("No code elements found for query: {}", query);
+            return Ok(Vec::new());
+        }
+        
+        // Convert scored results to MemoryEntry format for context
+        // Extract file path and element info from tags for better formatting
+        let entries: Vec<MemoryEntry> = results
+            .into_iter()
+            .map(|scored| {
+                // Parse tags to get structured info
+                let tags = scored.entry.tags.as_ref();
+                let element_type = tags
+                    .and_then(|t| t.iter().find(|tag| tag.starts_with("element_type:")))
+                    .map(|t| t.strip_prefix("element_type:").unwrap_or("unknown"))
+                    .unwrap_or("unknown");
+                
+                let name = tags
+                    .and_then(|t| t.iter().find(|tag| tag.starts_with("name:")))
+                    .map(|t| t.strip_prefix("name:").unwrap_or(""))
+                    .unwrap_or("");
+                
+                let path = tags
+                    .and_then(|t| t.iter().find(|tag| tag.starts_with("path:")))
+                    .map(|t| t.strip_prefix("path:").unwrap_or(""))
+                    .unwrap_or("");
+                
+                // Format content as "file_path: element_name (type)"
+                // This is what the prompt builder expects
+                let formatted_content = if !path.is_empty() && !name.is_empty() {
+                    format!("{}: {} ({})", path, name, element_type)
+                } else {
+                    // Fallback to original content
+                    scored.entry.content.clone()
+                };
+                
+                MemoryEntry {
+                    id: scored.entry.id,
+                    session_id: project_id.to_string(),
+                    response_id: None,
+                    parent_id: None,
+                    role: "code".to_string(),
+                    content: formatted_content,
+                    timestamp: chrono::Utc::now(),
+                    tags: scored.entry.tags.clone(),
+                    
+                    // Relevance scoring
+                    salience: Some(scored.composite_score),
+                    
+                    // Code-specific fields
+                    contains_code: Some(true),
+                    programming_lang: scored.entry.programming_lang.clone(),
+                    
+                    // All other fields None
+                    mood: None,
+                    intensity: None,
+                    original_salience: None,
+                    intent: None,
+                    topics: None,
+                    summary: None,
+                    relationship_impact: None,
+                    language: None,
+                    analyzed_at: None,
+                    analysis_version: None,
+                    routed_to_heads: Some(vec!["code".to_string()]),
+                    last_recalled: None,
+                    recall_count: None,
+                    contains_error: None,
+                    error_type: None,
+                    error_severity: None,
+                    error_file: None,
+                    model_version: None,
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    reasoning_tokens: None,
+                    total_tokens: None,
+                    latency_ms: None,
+                    generation_time_ms: None,
+                    finish_reason: None,
+                    tool_calls: None,
+                    temperature: None,
+                    max_tokens: None,
+                    embedding: None,
+                    embedding_heads: Some(vec!["code".to_string()]),
+                    qdrant_point_ids: None,
+                }
+            })
+            .collect();
+        
+        debug!("Found {} relevant code elements", entries.len());
+        Ok(entries)
+    }
+
     pub async fn analyze_and_store_file(
         &self,
         file_id: i64,

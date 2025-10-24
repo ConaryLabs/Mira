@@ -1,8 +1,11 @@
 // src/prompt/unified_builder.rs
 // FIXED: Enforce explanatory text with all tool calls
+// UPDATED: Added code intelligence context AND repository structure to prevent file path hallucinations
 
 use crate::api::ws::message::MessageMetadata;
 use crate::memory::features::recall_engine::RecallContext;
+use crate::memory::core::types::MemoryEntry;  // FIXED: Correct import path
+use crate::git::client::tree_builder::{FileNode, FileNodeType};  // NEW: For repo structure
 use crate::tools::types::Tool;
 use crate::persona::PersonaOverlay;
 use crate::config::CONFIG;
@@ -51,6 +54,8 @@ impl UnifiedPromptBuilder {
         tools: Option<&[Tool]>,
         metadata: Option<&MessageMetadata>,
         project_id: Option<&str>,
+        code_context: Option<&[MemoryEntry]>,  // Code intelligence semantic search results
+        file_tree: Option<&[FileNode]>,         // Repository structure
     ) -> String {
         let mut prompt = String::new();
         
@@ -61,6 +66,8 @@ impl UnifiedPromptBuilder {
         // 2. Context only - no system architecture notes
         Self::add_project_context(&mut prompt, metadata, project_id);
         Self::add_memory_context(&mut prompt, context);
+        Self::add_code_intelligence_context(&mut prompt, code_context);  // Code elements
+        Self::add_repository_structure(&mut prompt, file_tree);  // Repo structure
         Self::add_tool_context(&mut prompt, tools);
         Self::add_file_context(&mut prompt, metadata);
         
@@ -196,137 +203,93 @@ impl UnifiedPromptBuilder {
                 "py" => "python",
                 "go" => "go",
                 "java" => "java",
-                "cpp" | "cc" => "cpp",
-                "c" => "c",
-                _ => "text"
+                "cpp" | "cc" | "cxx" => "cpp",
+                "c" | "h" => "c",
+                _ => ext,
             })
-            .unwrap_or("text");
+            .unwrap_or("unknown");
         
         prompt.push_str(&format!("- Language: {}\n", language));
-        prompt.push_str("\n");
+        prompt.push_str(&format!("- Error Type: {}\n", error_context.error_type));
+        prompt.push_str(&format!("- Error: {}\n\n", error_context.error_message));
         
-        prompt.push_str("ERROR MESSAGE:\n");
+        // Add code elements if available
+        if let Some(elements) = code_elements {
+            prompt.push_str("CODE STRUCTURE:\n");
+            
+            for element in elements {
+                let visibility = if element.is_public == Some(true) { "public" } else { "private" };
+                let async_marker = if element.is_async == Some(true) { " async" } else { "" };
+                
+                prompt.push_str(&format!(
+                    "- {} {}{}: '{}' (lines {}-{}",
+                    visibility,
+                    element.element_type,
+                    async_marker,
+                    element.name,
+                    element.start_line,
+                    element.end_line
+                ));
+                
+                if let Some(complexity) = element.complexity {
+                    prompt.push_str(&format!(", complexity: {}", complexity));
+                }
+                
+                prompt.push_str(")\n");
+                
+                if let Some(doc) = &element.documentation {
+                    if !doc.is_empty() {
+                        prompt.push_str(&format!("  Doc: {}\n", doc));
+                    }
+                }
+            }
+            
+            prompt.push_str("\n");
+        }
+        
+        // Add quality issues if available
+        if let Some(issues) = quality_issues {
+            prompt.push_str("QUALITY CONCERNS:\n");
+            
+            for issue in issues {
+                let severity_prefix = match issue.severity.as_str() {
+                    "critical" => "[CRITICAL]",
+                    "warning" => "[WARNING]",
+                    _ => "[INFO]",
+                };
+                
+                prompt.push_str(&format!(
+                    "{} [{}]: {}\n",
+                    severity_prefix,
+                    issue.category,
+                    issue.description
+                ));
+                
+                if let Some(element) = &issue.element_name {
+                    prompt.push_str(&format!("  Affects: {}\n", element));
+                }
+                
+                if let Some(suggestion) = &issue.suggestion {
+                    prompt.push_str(&format!("  Suggestion: {}\n", suggestion));
+                }
+            }
+            
+            prompt.push_str("\n");
+        }
+        
+        prompt.push_str("ORIGINAL FILE CONTENT:\n");
         prompt.push_str("```\n");
-        prompt.push_str(&error_context.error_message);
-        prompt.push_str("\n```\n\n");
-        
-        // Add code intelligence context if available
-        Self::add_code_intelligence_context(prompt, &code_elements, &quality_issues);
-        
-        prompt.push_str("COMPLETE ORIGINAL FILE CONTENT:\n");
-        prompt.push_str("```");
-        prompt.push_str(language);
-        prompt.push_str("\n");
         prompt.push_str(file_content);
         prompt.push_str("\n```\n\n");
         
-        prompt.push_str("VALIDATION:\n");
-        prompt.push_str("- Count the lines in your response before submitting.\n");
-        prompt.push_str(&format!("- Your fixed file should have approximately {} lines.\n", line_count));
-        prompt.push_str("- If your output is significantly shorter, you have omitted code.\n");
-        prompt.push_str("- The system will reject responses with ellipsis or incomplete code.\n\n");
-        
-        prompt.push_str("MULTI-FILE FIXES:\n");
-        prompt.push_str("If fixing this error requires changes to other files:\n");
-        prompt.push_str("1. Include ALL affected files as COMPLETE files.\n");
-        prompt.push_str("2. Mark the primary file (with the error) as change_type: 'primary'.\n");
-        prompt.push_str("3. Mark import updates as change_type: 'import'.\n");
-        prompt.push_str("4. Mark type definition updates as change_type: 'type'.\n");
-        prompt.push_str("5. Mark other cascading changes as change_type: 'cascade'.\n\n");
-        
-        prompt.push_str("Remember: Users cannot merge partial code. Provide complete, working files.\n");
-        prompt.push_str("=========================================\n\n");
+        prompt.push_str("OUTPUT FORMAT:\n");
+        prompt.push_str("Return the COMPLETE fixed file content.\n");
+        prompt.push_str("Start from line 1 and include every single line to the end.\n");
+        prompt.push_str("Do not wrap in code blocks or add any markdown formatting.\n");
+        prompt.push_str("Just the raw file content, ready to write to disk.\n");
     }
     
-    fn add_code_intelligence_context(
-        prompt: &mut String,
-        code_elements: &Option<Vec<CodeElement>>,
-        quality_issues: &Option<Vec<QualityIssue>>,
-    ) {
-        let has_elements = code_elements.as_ref().map_or(false, |e| !e.is_empty());
-        let has_issues = quality_issues.as_ref().map_or(false, |i| !i.is_empty());
-        
-        if !has_elements && !has_issues {
-            return;
-        }
-        
-        prompt.push_str("==== CODE STRUCTURE ANALYSIS ====\n\n");
-        
-        // Format code elements
-        if let Some(elements) = code_elements {
-            if !elements.is_empty() {
-                prompt.push_str("Code Elements Found:\n");
-                
-                for element in elements {
-                    // Basic element info
-                    prompt.push_str(&format!(
-                        "  - {} `{}` (lines {}-{})",
-                        element.element_type,
-                        element.name,
-                        element.start_line,
-                        element.end_line
-                    ));
-                    
-                    // Add complexity if available
-                    if let Some(complexity) = element.complexity {
-                        prompt.push_str(&format!(" [complexity: {}]", complexity));
-                    }
-                    
-                    // Add async/public flags
-                    let mut flags = Vec::new();
-                    if element.is_async == Some(true) {
-                        flags.push("async");
-                    }
-                    if element.is_public == Some(true) {
-                        flags.push("pub");
-                    }
-                    if !flags.is_empty() {
-                        prompt.push_str(&format!(" [{}]", flags.join(", ")));
-                    }
-                    
-                    prompt.push('\n');
-                    
-                    // Add full documentation - NO TRUNCATION
-                    if let Some(doc) = &element.documentation {
-                        prompt.push_str(&format!("    Doc: {}\n", doc));
-                    }
-                }
-                
-                prompt.push('\n');
-            }
-        }
-        
-        // Format quality issues
-        if let Some(issues) = quality_issues {
-            if !issues.is_empty() {
-                prompt.push_str("Detected Quality Issues:\n");
-                
-                for issue in issues {
-                    prompt.push_str(&format!(
-                        "  - [{}] {}: {}\n",
-                        issue.severity.to_uppercase(),
-                        issue.category,
-                        issue.description
-                    ));
-                    
-                    if let Some(element) = &issue.element_name {
-                        prompt.push_str(&format!("    In: {}\n", element));
-                    }
-                    
-                    if let Some(suggestion) = &issue.suggestion {
-                        prompt.push_str(&format!("    Suggested: {}\n", suggestion));
-                    }
-                }
-                
-                prompt.push('\n');
-            }
-        }
-        
-        prompt.push_str("Use this structural understanding when generating your fix.\n");
-        prompt.push_str("====================================\n\n");
-    }
-    
-    pub fn is_code_related(metadata: Option<&MessageMetadata>) -> bool {
+    fn is_code_related(metadata: Option<&MessageMetadata>) -> bool {
         if let Some(meta) = metadata {
             if meta.file_path.is_some() || meta.file_content.is_some() {
                 return true;
@@ -439,6 +402,86 @@ impl UnifiedPromptBuilder {
         }
     }
     
+    /// Add code intelligence context from semantic search
+    /// This prevents file path hallucinations by showing real project structure
+    fn add_code_intelligence_context(prompt: &mut String, code_context: Option<&[MemoryEntry]>) {
+        if let Some(entries) = code_context {
+            if entries.is_empty() {
+                return;
+            }
+            
+            prompt.push_str("[PROJECT CODE CONTEXT]\n");
+            prompt.push_str("Here are relevant code elements from the project based on semantic search.\n");
+            prompt.push_str("These are REAL files and functions - use these paths and names exactly.\n\n");
+            
+            for entry in entries {
+                // Parse the content which should be in format: "file_path: element_name - signature"
+                let content = &entry.content;
+                
+                // Try to extract file path and element info
+                if let Some((file_part, element_part)) = content.split_once(':') {
+                    let file_path = file_part.trim();
+                    let element_info = element_part.trim();
+                    
+                    prompt.push_str(&format!("- {}\n", file_path));
+                    prompt.push_str(&format!("  {}\n", element_info));
+                } else {
+                    // Fallback: just print the content as-is
+                    prompt.push_str(&format!("- {}\n", content));
+                }
+                
+                prompt.push('\n');
+            }
+            
+            prompt.push_str("Use these actual file paths when referencing project files.\n");
+            prompt.push_str("Don't invent or hallucinate file paths - if you need more files, use the search_code tool.\n\n");
+        }
+    }
+    
+    /// Add repository structure context
+    /// Shows high-level file tree to prevent path hallucinations
+    fn add_repository_structure(prompt: &mut String, file_tree: Option<&[FileNode]>) {
+        if let Some(tree) = file_tree {
+            if tree.is_empty() {
+                return;
+            }
+            
+            prompt.push_str("[REPOSITORY STRUCTURE]\n");
+            prompt.push_str("Here is the high-level structure of the repository.\n");
+            prompt.push_str("These are REAL paths - use them when referencing project files.\n\n");
+            
+            // Show top-level structure (directories and key files)
+            let dirs: Vec<_> = tree.iter()
+                .filter(|n| matches!(n.node_type, FileNodeType::Directory))
+                .take(20)  // Limit to avoid context bloat
+                .collect();
+            
+            let files: Vec<_> = tree.iter()
+                .filter(|n| matches!(n.node_type, FileNodeType::File))
+                .take(30)  // Show more files than dirs
+                .collect();
+            
+            if !dirs.is_empty() {
+                prompt.push_str("Key directories:\n");
+                for dir in dirs {
+                    prompt.push_str(&format!("  [DIR] {}/\n", dir.path));
+                }
+                prompt.push('\n');
+            }
+            
+            if !files.is_empty() {
+                prompt.push_str("Key files:\n");
+                for file in files {
+                    prompt.push_str(&format!("  [FILE] {}\n", file.path));
+                }
+                prompt.push('\n');
+            }
+            
+            prompt.push_str("Use these actual paths when referencing files.\n");
+            prompt.push_str("For more details, use the get_project_context or search_code tools.\n\n");
+        }
+    }
+    
     fn add_tool_context(prompt: &mut String, tools: Option<&[Tool]>) {
         if let Some(tool_list) = tools {
             if tool_list.is_empty() {
@@ -520,6 +563,8 @@ impl UnifiedPromptBuilder {
             None,
             None,
             project_id,
+            None,  // No code context for simple prompts
+            None,  // No file tree for simple prompts
         )
     }
 }

@@ -1,5 +1,6 @@
 // src/api/ws/chat/unified_handler.rs
 // FIXED: Pass tools to GPT-5 and handle tool calls for artifacts
+// UPDATED: Inject code intelligence context automatically
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -15,6 +16,7 @@ use crate::llm::structured::tool_schema::get_create_artifact_tool_schema;
 use crate::persona::PersonaOverlay;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::state::AppState;
+use crate::git::client::project_ops::ProjectOps;
 
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
@@ -125,7 +127,50 @@ impl UnifiedChatHandler {
                recall_context.recent.len(), 
                recall_context.semantic.len());
         
-        // 4. Build system prompt with full context
+        // 4. Query code intelligence if project selected
+        let code_context = if let Some(pid) = request.project_id.as_deref() {
+            debug!("Querying code intelligence for project {}", pid);
+            
+            match self.app_state.code_intelligence
+                .search_code(&content, pid, 10)
+                .await
+            {
+                Ok(results) if !results.is_empty() => {
+                    debug!("Found {} relevant code elements", results.len());
+                    Some(results)
+                }
+                Ok(_) => {
+                    debug!("No relevant code elements found");
+                    None
+                }
+                Err(e) => {
+                    warn!("Code intelligence search failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        // 5. Get file tree if project selected (lightweight - just paths)
+        let file_tree = if let Some(pid) = request.project_id.as_deref() {
+            debug!("Loading file tree for project {}", pid);
+            
+            match self.app_state.git_client.get_project_tree(pid).await {
+                Ok(tree) => {
+                    debug!("Loaded file tree with {} items", tree.len());
+                    Some(tree)
+                }
+                Err(e) => {
+                    warn!("Failed to load file tree: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        // 6. Build system prompt with full context
         let persona = PersonaOverlay::Default;
         let system_prompt = UnifiedPromptBuilder::build_system_prompt(
             &persona,
@@ -133,16 +178,18 @@ impl UnifiedChatHandler {
             None, // tools
             request.metadata.as_ref(),
             request.project_id.as_deref(),
+            code_context.as_ref(),     // NEW: Pass code intelligence results
+            file_tree.as_ref(),         // NEW: Pass file tree
         );
         
         // Build messages for GPT-5
         let messages = vec![Message::user(content.clone())];
         
-        // 5. Get tools for artifact creation
+        // 7. Get tools for artifact creation
         let tools = vec![get_create_artifact_tool_schema()];
         debug!("Passing {} tools to GPT-5", tools.len());
         
-        // 6. Generate response with streaming and tool support
+        // 8. Generate response with streaming and tool support
         debug!("Generating response with GPT-5 streaming");
         
         let mut stream = self.app_state
@@ -246,7 +293,7 @@ impl UnifiedChatHandler {
                full_response.len(), 
                artifacts_created.len());
         
-        // 7. Store assistant response (this also goes through full pipeline)
+        // 9. Store assistant response (this also goes through full pipeline)
         let assistant_id = self.app_state
             .memory_service
             .save_assistant_message(&session_id, &full_response, Some(user_id))
@@ -258,7 +305,7 @@ impl UnifiedChatHandler {
         
         debug!("Assistant message stored with ID: {} (pipeline complete)", assistant_id);
         
-        // 8. Send completion message
+        // 10. Send completion message
         let _ = ws_tx.send(json!({
             "type": "chat_complete",
             "user_message_id": user_id,
