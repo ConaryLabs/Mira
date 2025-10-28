@@ -135,6 +135,8 @@ impl AppState {
             (*deepseek_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
+            git_client.clone(),           // FIXED: Added git_client
+            code_intelligence.clone(),    // FIXED: Added code_intelligence
         ));
         
         // Initialize MessageRouter

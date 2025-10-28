@@ -78,6 +78,7 @@ pub struct OperationEngine {
     memory_service: Arc<MemoryService>,
     relationship_service: Arc<RelationshipService>,
     git_client: GitClient,  // NEW: For loading file trees
+    code_intelligence: Arc<crate::memory::features::code_intelligence::CodeIntelligenceService>,  // NEW: For code search
 }
 
 impl OperationEngine {
@@ -88,6 +89,7 @@ impl OperationEngine {
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
         git_client: GitClient,  // NEW: Pass in git client
+        code_intelligence: Arc<crate::memory::features::code_intelligence::CodeIntelligenceService>,  // NEW: Pass in code intelligence
     ) -> Self {
         Self { 
             db, 
@@ -96,6 +98,7 @@ impl OperationEngine {
             memory_service,
             relationship_service,
             git_client,  // NEW: Store it
+            code_intelligence,  // NEW: Store it
         }
     }
 
@@ -356,9 +359,9 @@ impl OperationEngine {
         };
         
         // NEW: Load code intelligence context (semantic search on code)
-        let code_context = if project_id.is_some() {
+        let code_context = if let Some(pid) = project_id {
             debug!("Loading code intelligence context for operation");
-            match self.memory_service.search_code_semantically(user_content, 10).await {
+            match self.code_intelligence.search_code(user_content, pid, 10).await {
                 Ok(entries) => {
                     if !entries.is_empty() {
                         debug!("Loaded {} code intelligence entries", entries.len());
@@ -772,7 +775,7 @@ impl OperationEngine {
             id: uuid::Uuid::new_v4().to_string(),
             operation_id: operation_id.to_string(),
             kind: "code".to_string(),
-            file_path: path.clone(),
+            file_path: Some(path.clone()),  // FIX: Wrap in Some since it's Option<String>
             content: content.clone(),
             content_hash: hash,
             language,
