@@ -1,6 +1,7 @@
 // src/operations/engine.rs
 // Operation Engine - orchestrates coding workflows with GPT-5 + DeepSeek delegation
 // FIXED: create_artifact tool calls are now handled immediately during streaming
+// UPDATED: Now loads file tree and code intelligence context for operations
 
 use crate::config::CONFIG;
 use crate::llm::provider::Message;
@@ -14,7 +15,10 @@ use crate::persona::PersonaOverlay;
 use crate::tools::types::Tool;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::memory::features::recall_engine::RecallContext;
+use crate::memory::core::types::MemoryEntry;
 use crate::relationship::service::RelationshipService;
+use crate::git::client::{GitClient, FileNode};
+use crate::git::client::project_ops::ProjectOps;
 
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
@@ -73,6 +77,7 @@ pub struct OperationEngine {
     deepseek: DeepSeekProvider,
     memory_service: Arc<MemoryService>,
     relationship_service: Arc<RelationshipService>,
+    git_client: GitClient,  // NEW: For loading file trees
 }
 
 impl OperationEngine {
@@ -82,6 +87,7 @@ impl OperationEngine {
         deepseek: DeepSeekProvider,
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
+        git_client: GitClient,  // NEW: Pass in git client
     ) -> Self {
         Self { 
             db, 
@@ -89,6 +95,7 @@ impl OperationEngine {
             deepseek,
             memory_service,
             relationship_service,
+            git_client,  // NEW: Store it
         }
     }
 
@@ -328,8 +335,55 @@ impl OperationEngine {
 
         // Note: Embeddings are handled by MessagePipelineCoordinator automatically
 
+        // Load memory context
         let recall_context = self.load_memory_context(session_id, user_content).await?;
-        let system_prompt = self.build_system_prompt_with_context(session_id, &recall_context).await;
+        
+        // NEW: Load file tree if project is selected
+        let file_tree = if let Some(pid) = project_id {
+            debug!("Loading file tree for project {}", pid);
+            match self.git_client.get_project_tree(pid).await {
+                Ok(tree) => {
+                    debug!("Loaded file tree with {} items", tree.len());
+                    Some(tree)
+                }
+                Err(e) => {
+                    warn!("Failed to load file tree: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        // NEW: Load code intelligence context (semantic search on code)
+        let code_context = if project_id.is_some() {
+            debug!("Loading code intelligence context for operation");
+            match self.memory_service.search_code_semantically(user_content, 10).await {
+                Ok(entries) => {
+                    if !entries.is_empty() {
+                        debug!("Loaded {} code intelligence entries", entries.len());
+                        Some(entries)
+                    } else {
+                        None
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load code context: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        // Build system prompt with full context
+        let system_prompt = self.build_system_prompt_with_context(
+            session_id, 
+            &recall_context,
+            code_context.as_ref(),
+            file_tree.as_ref(),
+        ).await;
+        
         let messages = vec![Message::user(user_content.to_string())];
 
         self.start_operation(operation_id, event_tx).await?;
@@ -518,6 +572,8 @@ impl OperationEngine {
         &self,
         session_id: &str,
         context: &RecallContext,
+        code_context: Option<&Vec<MemoryEntry>>,  // NEW: Code intelligence context
+        file_tree: Option<&Vec<FileNode>>,         // NEW: Repository structure
     ) -> String {
         let persona = PersonaOverlay::Default;
         let tools_json = get_delegation_tools();
@@ -532,14 +588,15 @@ impl OperationEngine {
             .await
             .ok();
         
+        // NEW: Pass code context and file tree to builder
         UnifiedPromptBuilder::build_system_prompt(
             &persona,
             context,
             Some(&tools),
-            None,
-            None,
-            None,  // code_context - not used in operations engine
-            None,  // file_tree - not used in operations engine
+            None,  // metadata
+            None,  // project_id
+            code_context.map(|v| &**v),  // NEW: Pass code intelligence
+            file_tree.map(|v| &**v),      // NEW: Pass file tree
         )
     }
 
@@ -599,33 +656,44 @@ impl OperationEngine {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
+                let description = if existing.is_empty() {
+                    instructions
+                } else {
+                    format!("{}\n\nExisting code:\n{}", instructions, existing)
+                };
+
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
-                    description: format!("{}\n\nExisting code:\n{}", instructions, existing),
+                    description,
                     language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
-                    framework: None,
+                    framework: args.get("framework").and_then(|v| v.as_str()).map(String::from),
                     dependencies: vec![],
                     style_guide: None,
-                    context: String::new(),
+                    context: args.get("context")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 }
             }
-            "debug_code" => {
+            "fix_code" => {
                 let path = args.get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let buggy_code = args.get("buggy_code")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
                 let error_msg = args.get("error_message")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("Fix errors");
+                    .unwrap_or("Fix error");
+                let code = args.get("code")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                let description = format!("Fix the following error:\n{}\n\nExisting code:\n{}", error_msg, code);
 
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
-                    description: format!("Debug and fix:\n\nError: {}\n\nBuggy code:\n{}", error_msg, buggy_code),
+                    description,
                     language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
-                    framework: None,
+                    framework: args.get("framework").and_then(|v| v.as_str()).map(String::from),
                     dependencies: vec![],
                     style_guide: None,
                     context: String::new(),
@@ -636,93 +704,97 @@ impl OperationEngine {
             }
         };
 
-        // Call DeepSeek's generate_code method
+        if let Some(token) = &cancel_token {
+            if token.is_cancelled() {
+                return Err(anyhow::anyhow!("Operation cancelled during DeepSeek request"));
+            }
+        }
+
         let response = self.deepseek.generate_code(request).await?;
 
-        // Convert to the expected format
         Ok(serde_json::json!({
             "artifact": {
                 "path": response.artifact.path,
                 "content": response.artifact.content,
                 "language": response.artifact.language,
+                "explanation": response.artifact.explanation,
             }
         }))
     }
 
-    pub async fn create_artifact(
+    async fn create_artifact(
         &self,
         operation_id: &str,
-        artifact_data: serde_json::Value,
+        args: serde_json::Value,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
-        info!("[ENGINE] Creating artifact from tool call: {:?}", artifact_data);
-        
-        // Handle both formats: {path, content, language} and {title, content, language, path?}
-        let path = artifact_data.get("path")
+        let path = args.get("path")
             .and_then(|v| v.as_str())
-            .or_else(|| artifact_data.get("title").and_then(|v| v.as_str()))
-            .ok_or_else(|| anyhow::anyhow!("Missing artifact path or title"))?;
-        let content = artifact_data.get("content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing artifact content"))?;
-        let language = artifact_data.get("language")
-            .and_then(|v| v.as_str())
-            .unwrap_or("plaintext");
+            .context("Missing 'path' in create_artifact")?
+            .to_string();
 
-        // Hash the content
+        let content = args.get("content")
+            .and_then(|v| v.as_str())
+            .context("Missing 'content' in create_artifact")?
+            .to_string();
+
+        let language = args.get("language")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let explanation = args.get("explanation")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        info!("[ENGINE] Creating artifact: {} ({} bytes)", path, content.len());
+
+        // Generate content hash
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
-        let content_hash = format!("{:x}", hasher.finalize());
+        let hash = format!("{:x}", hasher.finalize());
 
-        // Check for previous artifact at this path in this operation
-        let previous_artifact = sqlx::query!(
-            r#"
-            SELECT id, content, content_hash
-            FROM artifacts
-            WHERE operation_id = ? AND file_path = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-            "#,
+        // Check if previous artifact exists
+        let previous = sqlx::query!(
+            "SELECT content FROM artifacts WHERE operation_id = ? AND file_path = ? ORDER BY created_at DESC LIMIT 1",
             operation_id,
             path
         )
         .fetch_optional(&*self.db)
         .await?;
 
-        // Compute diff if there's a previous version
-        let (diff, previous_artifact_id) = if let Some(prev) = previous_artifact {
-            let diff_content = Self::compute_diff(&prev.content, content);
-            (Some(diff_content), Some(prev.id))
+        let diff = if let Some(prev) = previous {
+            Some(Self::compute_diff(&prev.content, &content))
         } else {
-            (None, None)
+            None
         };
 
-        let artifact = Artifact::new(
-            operation_id.to_string(),
-            "code".to_string(),
-            Some(path.to_string()),
-            content.to_string(),
-            content_hash,
-            Some(language.to_string()),
-            diff.clone(),
-        );
+        let artifact = Artifact {
+            id: uuid::Uuid::new_v4().to_string(),
+            operation_id: operation_id.to_string(),
+            kind: "code".to_string(),
+            file_path: path.clone(),
+            content: content.clone(),
+            content_hash: hash,
+            language,
+            diff,
+            created_at: chrono::Utc::now().timestamp(),
+        };
 
         sqlx::query!(
             r#"
             INSERT INTO artifacts (
-                id, operation_id, kind, file_path, content, language,
-                content_hash, diff_from_previous, previous_artifact_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, operation_id, kind, file_path, content, content_hash,
+                language, diff_from_previous, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             artifact.id,
             artifact.operation_id,
             artifact.kind,
             artifact.file_path,
             artifact.content,
-            artifact.language,
             artifact.content_hash,
+            artifact.language,
             artifact.diff,
-            previous_artifact_id,
             artifact.created_at,
         )
         .execute(&*self.db)
@@ -746,6 +818,10 @@ impl OperationEngine {
             operation_id: operation_id.to_string(),
             artifact,
         }).await;
+
+        if let Some(expl) = explanation {
+            info!("[ENGINE] Artifact explanation: {}", expl);
+        }
 
         Ok(())
     }
