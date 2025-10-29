@@ -771,17 +771,16 @@ impl OperationEngine {
             None
         };
 
-        let artifact = Artifact {
-            id: uuid::Uuid::new_v4().to_string(),
-            operation_id: operation_id.to_string(),
-            kind: "code".to_string(),
-            file_path: Some(path.clone()),  // FIX: Wrap in Some since it's Option<String>
-            content: content.clone(),
-            content_hash: hash,
+        // FIXED: Use Artifact::new() constructor instead of direct struct initialization
+        let artifact = Artifact::new(
+            operation_id.to_string(),
+            "code".to_string(),
+            Some(path.clone()),
+            content.clone(),
+            hash,
             language,
             diff,
-            created_at: chrono::Utc::now().timestamp(),
-        };
+        );
 
         sqlx::query!(
             r#"
@@ -889,16 +888,21 @@ impl OperationEngine {
         .await
         .context("Failed to fetch artifacts")?;
 
-        let artifacts = rows.into_iter().map(|row| Artifact {
-            id: row.id.unwrap_or_default(),
-            operation_id: row.operation_id,
-            kind: row.kind,
-            file_path: row.file_path,
-            content: row.content,
-            content_hash: row.content_hash.unwrap_or_default(),
-            language: row.language,
-            diff: row.diff_from_previous,
-            created_at: row.created_at,
+        // FIXED: Properly construct Artifact with all 24 fields
+        let artifacts = rows.into_iter().map(|row| {
+            let mut artifact = Artifact::new(
+                row.operation_id,
+                row.kind,
+                row.file_path,
+                row.content,
+                row.content_hash.unwrap_or_default(),
+                row.language,
+                row.diff_from_previous,
+            );
+            // Override the auto-generated id and created_at with values from DB
+            artifact.id = row.id.unwrap_or_default();
+            artifact.created_at = row.created_at;
+            artifact
         }).collect();
 
         Ok(artifacts)
