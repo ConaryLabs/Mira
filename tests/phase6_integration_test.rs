@@ -1,7 +1,8 @@
 // tests/phase6_integration_test.rs
+// FIXED: Updated for OperationEngine 7-parameter constructor
 //
 // Phase 6: Operation Engine Integration Tests
-// Tests full orchestration: GPT-5 → DeepSeek delegation → Artifact creation
+// Tests full orchestration: GPT-5 -> DeepSeek delegation -> Artifact creation
 
 use mira_backend::operations::{OperationEngine, OperationEngineEvent};
 use mira_backend::llm::provider::gpt5::Gpt5Provider;
@@ -10,10 +11,14 @@ use mira_backend::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::relationship::service::RelationshipService;
 use mira_backend::relationship::facts_service::FactsService;
+use mira_backend::git::store::GitStore;
+use mira_backend::git::client::GitClient;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 /// Helper to create test database
@@ -47,7 +52,14 @@ fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
 }
 
 /// Setup test services
-async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc<RelationshipService>) {
+async fn setup_services(
+    pool: Arc<sqlx::SqlitePool>
+) -> (
+    Arc<MemoryService>,
+    Arc<RelationshipService>,
+    GitClient,
+    Arc<CodeIntelligenceService>,
+) {
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
     
     let qdrant_url = "http://localhost:6333";
@@ -72,9 +84,9 @@ async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc
     
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
-        multi_store,
+        multi_store.clone(),
         llm_provider,
-        embedding_client,
+        embedding_client.clone(),
     ));
     
     // Create FactsService FIRST
@@ -86,21 +98,41 @@ async fn setup_services(pool: Arc<sqlx::SqlitePool>) -> (Arc<MemoryService>, Arc
         facts_service.clone(),
     ));
     
-    (memory_service, relationship_service)
+    // NEW: Create GitClient
+    let git_store = GitStore::new((*pool).clone());
+    let git_client = GitClient::new(
+        PathBuf::from("./test_repos"),
+        git_store,
+    );
+    
+    // NEW: Create CodeIntelligenceService
+    let code_intelligence = Arc::new(CodeIntelligenceService::new(
+        pool.clone(),
+        multi_store.clone(),
+        embedding_client.clone(),
+    ));
+    
+    (memory_service, relationship_service, git_client, code_intelligence)
 }
 
 #[tokio::test]
 async fn test_operation_engine_with_providers() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
+    // FIXED: Now returns 4 services
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
+    
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     );
 
     // Create event channel
@@ -116,7 +148,7 @@ async fn test_operation_engine_with_providers() {
         .await
         .expect("Failed to create operation");
 
-    println!("✓ Created operation: {}", op.id);
+    println!("+ Created operation: {}", op.id);
 
     // Start operation
     engine
@@ -124,19 +156,19 @@ async fn test_operation_engine_with_providers() {
         .await
         .expect("Failed to start operation");
 
-    println!("✓ Started operation");
+    println!("+ Started operation");
 
     // Verify Started event
     let event = rx.recv().await.expect("No Started event received");
     match event {
         OperationEngineEvent::Started { operation_id } => {
             assert_eq!(operation_id, op.id);
-            println!("✓ Received Started event");
+            println!("+ Received Started event");
         }
         _ => panic!("Expected Started event, got: {:?}", event),
     }
 
-    // Verify StatusChanged event (pending → planning)
+    // Verify StatusChanged event (pending -> planning)
     let event = rx.recv().await.expect("No StatusChanged event received");
     match event {
         OperationEngineEvent::StatusChanged {
@@ -146,7 +178,7 @@ async fn test_operation_engine_with_providers() {
         } => {
             assert_eq!(old_status, "pending");
             assert_eq!(new_status, "planning");
-            println!("✓ Received StatusChanged event (pending → planning)");
+            println!("+ Received StatusChanged event (pending -> planning)");
         }
         _ => panic!("Expected StatusChanged event, got: {:?}", event),
     }
@@ -159,7 +191,7 @@ async fn test_operation_engine_with_providers() {
 
     assert_eq!(updated_op.status, "planning");
     assert!(updated_op.started_at.is_some());
-    println!("✓ Database state verified");
+    println!("+ Database state verified");
 
     // Verify events in database
     let events = engine
@@ -168,23 +200,29 @@ async fn test_operation_engine_with_providers() {
         .expect("Failed to get events");
 
     assert!(!events.is_empty(), "Should have at least 1 event");
-    println!("✓ Events stored in database: {} events", events.len());
+    println!("+ Events stored in database: {} events", events.len());
 
-    println!("\n✅ Provider integration test passed!");
+    println!("\n[PASS] Provider integration test passed!");
 }
 
 #[tokio::test]
 async fn test_operation_lifecycle_complete() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
+    // FIXED: Now returns 4 services
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
+    
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -215,7 +253,7 @@ async fn test_operation_lifecycle_complete() {
         .await
         .expect("Failed to complete operation");
 
-    println!("✓ Completed operation");
+    println!("+ Completed operation");
 
     // Verify completion events
     let event = rx.recv().await.expect("No StatusChanged event");
@@ -245,21 +283,27 @@ async fn test_operation_lifecycle_complete() {
     assert!(final_op.completed_at.is_some());
     assert_eq!(final_op.result.unwrap(), "Success!");
 
-    println!("✅ Lifecycle completion test passed!");
+    println!("[PASS] Lifecycle completion test passed!");
 }
 
 #[tokio::test]
 async fn test_operation_failure_handling() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
+    // FIXED: Now returns 4 services
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
+    
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -289,7 +333,7 @@ async fn test_operation_failure_handling() {
         .await
         .expect("Failed to fail operation");
 
-    println!("✓ Failed operation");
+    println!("+ Failed operation");
 
     // Verify failure events
     let event = rx.recv().await.expect("No StatusChanged event");
@@ -319,21 +363,27 @@ async fn test_operation_failure_handling() {
     assert!(final_op.completed_at.is_some());
     assert_eq!(final_op.error.unwrap(), "Test error");
 
-    println!("✅ Failure handling test passed!");
+    println!("[PASS] Failure handling test passed!");
 }
 
 #[tokio::test]
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
     let (gpt5, deepseek) = create_test_providers();
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
     
+    // FIXED: Now returns 4 services
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
+    
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = Arc::new(OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     ));
 
     let mut handles = vec![];
@@ -375,8 +425,8 @@ async fn test_multiple_operations_concurrency() {
         let op_id = handle.await.expect("Task panicked");
         let op = engine.get_operation(&op_id).await.expect("Failed to get operation");
         assert_eq!(op.status, "completed");
-        println!("✓ Operation {} completed", op_id);
+        println!("+ Operation {} completed", op_id);
     }
 
-    println!("✅ Concurrency test passed!");
+    println!("[PASS] Concurrency test passed!");
 }

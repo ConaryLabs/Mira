@@ -1,4 +1,5 @@
 // src/memory/features/message_pipeline/analyzers/unified.rs
+// FIXED: Added Relationship head routing based on relationship_impact
 
 //! Unified analyzer that coordinates message analysis
 //! Code and error detection handled by LLM - no regex heuristics
@@ -189,6 +190,11 @@ impl UnifiedAnalyzer {
     }
     
     /// Build routing decision based on analysis results
+    /// 
+    /// Routes messages to appropriate embedding heads:
+    /// - Semantic: ALL non-code content (conversation, analysis, anything not code)
+    /// - Code: Programming/code-related content
+    /// - Relationship: User preferences, patterns, or relationship facts detected by LLM
     async fn build_routing_decision(
         &self,
         chat_result: &super::chat_analyzer::ChatAnalysisResult,
@@ -224,6 +230,16 @@ impl UnifiedAnalyzer {
             }
         }
         
+        // FIXED: Add Relationship head routing for user preferences/patterns/facts
+        // This is triggered when LLM detects relationship-relevant information
+        // Examples: "I prefer tabs", "I work at X", "Call me Y", etc.
+        if let Some(ref impact) = chat_result.relationship_impact {
+            if !impact.is_empty() {
+                heads.push(EmbeddingHead::Relationship);
+                debug!("Routing to Relationship head due to impact: {}", impact);
+            }
+        }
+        
         // Add topic-specific routing
         for topic in &chat_result.topics {
             match topic.to_lowercase().as_str() {
@@ -239,6 +255,13 @@ impl UnifiedAnalyzer {
         
         // Remove duplicates
         heads.dedup();
+        
+        debug!(
+            "Routing decision: should_embed=true, heads={:?}, is_code={}, has_relationship_impact={}",
+            heads.iter().map(|h| h.as_str()).collect::<Vec<_>>(),
+            is_code,
+            chat_result.relationship_impact.is_some()
+        );
         
         Ok(RoutingDecision {
             should_embed: true,

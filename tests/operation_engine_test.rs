@@ -1,4 +1,5 @@
 // tests/operation_engine_test.rs
+// FIXED: Updated for OperationEngine 7-parameter constructor
 
 use mira_backend::config::CONFIG;
 use mira_backend::llm::provider::OpenAiEmbeddings;
@@ -8,13 +9,17 @@ use mira_backend::llm::provider::deepseek::DeepSeekProvider;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::operations::engine::{OperationEngine, OperationEngineEvent};
 use mira_backend::relationship::service::RelationshipService;
 use mira_backend::relationship::facts_service::FactsService;
+use mira_backend::git::store::GitStore;
+use mira_backend::git::client::GitClient;
 
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
@@ -33,7 +38,12 @@ fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
 
 async fn setup_services(
     pool: Arc<SqlitePool>,
-) -> (Arc<MemoryService>, Arc<RelationshipService>) {
+) -> (
+    Arc<MemoryService>,
+    Arc<RelationshipService>,
+    GitClient,
+    Arc<CodeIntelligenceService>,
+) {
     // Create SQLite store
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
     
@@ -67,9 +77,9 @@ async fn setup_services(
     // Create MemoryService
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
-        multi_store,
+        multi_store.clone(),
         llm_provider.clone(),
-        embedding_client,
+        embedding_client.clone(),
     ));
     
     // Create FactsService FIRST
@@ -81,7 +91,21 @@ async fn setup_services(
         facts_service.clone(),
     ));
     
-    (memory_service, relationship_service)
+    // NEW: Create GitClient
+    let git_store = GitStore::new((*pool).clone());
+    let git_client = GitClient::new(
+        PathBuf::from("./test_repos"),
+        git_store,
+    );
+    
+    // NEW: Create CodeIntelligenceService
+    let code_intelligence = Arc::new(CodeIntelligenceService::new(
+        pool.clone(),
+        multi_store.clone(),
+        embedding_client.clone(),
+    ));
+    
+    (memory_service, relationship_service, git_client, code_intelligence)
 }
 
 #[tokio::test]
@@ -101,15 +125,19 @@ async fn test_operation_engine_lifecycle() {
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
     
-    // Setup services
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
+    // Setup services - NOW RETURNS 4 SERVICES
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
     
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     );
 
     // Create event channel
@@ -125,7 +153,7 @@ async fn test_operation_engine_lifecycle() {
         .await
         .expect("Failed to create operation");
 
-    println!("✓ Created operation: {}", op.id);
+    println!("+ Created operation: {}", op.id);
     assert_eq!(op.session_id, "test-session-123");
     assert_eq!(op.kind, "code_generation");
     assert_eq!(op.status, "pending");
@@ -138,14 +166,14 @@ async fn test_operation_engine_lifecycle() {
         .await
         .expect("Failed to start operation");
 
-    println!("✓ Started operation");
+    println!("+ Started operation");
 
     // Check events
     let event = rx.recv().await.expect("No Started event received");
     match event {
         OperationEngineEvent::Started { operation_id } => {
             assert_eq!(operation_id, op.id);
-            println!("✓ Received Started event");
+            println!("+ Received Started event");
         }
         _ => panic!("Expected Started event, got: {:?}", event),
     }
@@ -160,7 +188,7 @@ async fn test_operation_engine_lifecycle() {
             assert_eq!(operation_id, op.id);
             assert_eq!(old_status, "pending");
             assert_eq!(new_status, "planning");
-            println!("✓ Received StatusChanged event (pending → planning)");
+            println!("+ Received StatusChanged event (pending -> planning)");
         }
         _ => panic!("Expected StatusChanged event, got: {:?}", event),
     }
@@ -171,7 +199,7 @@ async fn test_operation_engine_lifecycle() {
         .await
         .expect("Failed to complete operation");
 
-    println!("✓ Completed operation");
+    println!("+ Completed operation");
 
     // Check completion events
     let event = rx.recv().await.expect("No StatusChanged event received");
@@ -184,7 +212,7 @@ async fn test_operation_engine_lifecycle() {
             assert_eq!(operation_id, op.id);
             assert_eq!(old_status, "planning");
             assert_eq!(new_status, "completed");
-            println!("✓ Received StatusChanged event (planning → completed)");
+            println!("+ Received StatusChanged event (planning -> completed)");
         }
         _ => panic!("Expected StatusChanged event, got: {:?}", event),
     }
@@ -194,12 +222,11 @@ async fn test_operation_engine_lifecycle() {
         OperationEngineEvent::Completed {
             operation_id,
             result,
-            artifacts,  // ✅ FIXED: Include artifacts field
+            artifacts,
         } => {
             assert_eq!(operation_id, op.id);
             assert_eq!(result.unwrap(), "Success! Generated code.");
-            // Artifacts list might be empty in this test, that's fine
-            println!("✓ Received Completed event (with {} artifacts)", artifacts.len());
+            println!("+ Received Completed event (with {} artifacts)", artifacts.len());
         }
         _ => panic!("Expected Completed event, got: {:?}", event),
     }
@@ -217,7 +244,7 @@ async fn test_operation_engine_lifecycle() {
         updated_op.result.unwrap(),
         "Success! Generated code."
     );
-    println!("✓ Database state verified");
+    println!("+ Database state verified");
 
     // Check events in database
     let events = engine
@@ -226,7 +253,7 @@ async fn test_operation_engine_lifecycle() {
         .expect("Failed to get events");
 
     assert!(events.len() >= 2, "Should have at least 2 events");
-    println!("✓ Events stored in database: {} events", events.len());
+    println!("+ Events stored in database: {} events", events.len());
 
     // Verify sequence numbers
     for (i, event) in events.iter().enumerate() {
@@ -236,9 +263,9 @@ async fn test_operation_engine_lifecycle() {
             "Event sequence numbers should be sequential starting from 0"
         );
     }
-    println!("✓ Event sequence numbers are correct");
+    println!("+ Event sequence numbers are correct");
 
-    println!("\n✅ All tests passed!");
+    println!("\n[PASS] All tests passed!");
 }
 
 #[tokio::test]
@@ -256,15 +283,19 @@ async fn test_operation_failure() {
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
     
-    // Setup services
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
+    // Setup services - NOW RETURNS 4 SERVICES
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
     
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     );
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -297,7 +328,7 @@ async fn test_operation_failure() {
         .await
         .expect("Failed to fail operation");
 
-    println!("✓ Failed operation");
+    println!("+ Failed operation");
 
     // Check events
     let event = rx.recv().await.expect("No StatusChanged event received");
@@ -310,7 +341,7 @@ async fn test_operation_failure() {
             assert_eq!(operation_id, op.id);
             assert_eq!(old_status, "planning");
             assert_eq!(new_status, "failed");
-            println!("✓ Received StatusChanged event (planning → failed)");
+            println!("+ Received StatusChanged event (planning -> failed)");
         }
         _ => panic!("Expected StatusChanged event, got: {:?}", event),
     }
@@ -323,7 +354,7 @@ async fn test_operation_failure() {
         } => {
             assert_eq!(operation_id, op.id);
             assert_eq!(error, "DeepSeek API error: timeout");
-            println!("✓ Received Failed event");
+            println!("+ Received Failed event");
         }
         _ => panic!("Expected Failed event, got: {:?}", event),
     }
@@ -341,9 +372,9 @@ async fn test_operation_failure() {
         updated_op.error.unwrap(),
         "DeepSeek API error: timeout"
     );
-    println!("✓ Database state verified");
+    println!("+ Database state verified");
 
-    println!("\n✅ Failure test passed!");
+    println!("\n[PASS] Failure test passed!");
 }
 
 #[tokio::test]
@@ -361,15 +392,19 @@ async fn test_multiple_operations() {
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
     
-    // Setup services
-    let (memory_service, relationship_service) = setup_services(db.clone()).await;
+    // Setup services - NOW RETURNS 4 SERVICES
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
     
+    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
         deepseek,
         memory_service,
         relationship_service,
+        git_client,
+        code_intelligence,
     );
     let (tx, _rx) = mpsc::channel(100);
 
@@ -395,8 +430,8 @@ async fn test_multiple_operations() {
             .await
             .expect("Failed to complete operation");
 
-        println!("✓ Completed operation {}", i);
+        println!("+ Completed operation {}", i);
     }
 
-    println!("\n✅ Multiple operations test passed!");
+    println!("\n[PASS] Multiple operations test passed!");
 }
