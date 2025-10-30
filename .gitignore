@@ -152,6 +152,7 @@ checkpoint/
 checkpoints/
 mira.db
 data/
+test_repos/
 
 # Document storage (runtime data)
 storage/
