@@ -1,5 +1,8 @@
 // tests/operation_engine_test.rs
-// FIXED: Updated for OperationEngine 7-parameter constructor
+// UPDATED: Rewritten to test operation engine through public API
+//
+// Tests operation lifecycle, event emission, and database state tracking
+// without relying on internal lifecycle methods.
 
 use mira_backend::config::CONFIG;
 use mira_backend::llm::provider::OpenAiEmbeddings;
@@ -91,16 +94,16 @@ async fn setup_services(
         facts_service.clone(),
     ));
     
-    // NEW: Create GitClient
+    // Create GitClient
     let git_store = GitStore::new((*pool).clone());
     let git_client = GitClient::new(
         PathBuf::from("./test_repos"),
         git_store,
     );
     
-    // NEW: Create CodeIntelligenceService
+    // FIXED: CodeIntelligenceService needs Pool, not Arc<Pool>
     let code_intelligence = Arc::new(CodeIntelligenceService::new(
-        pool.clone(),
+        (*pool).clone(),
         multi_store.clone(),
         embedding_client.clone(),
     ));
@@ -110,6 +113,8 @@ async fn setup_services(
 
 #[tokio::test]
 async fn test_operation_engine_lifecycle() {
+    println!("\n=== Testing Operation Engine Lifecycle ===\n");
+    
     // Setup in-memory database
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
@@ -125,11 +130,9 @@ async fn test_operation_engine_lifecycle() {
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
     
-    // Setup services - NOW RETURNS 4 SERVICES
     let (memory_service, relationship_service, git_client, code_intelligence) = 
         setup_services(db.clone()).await;
     
-    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -153,83 +156,60 @@ async fn test_operation_engine_lifecycle() {
         .await
         .expect("Failed to create operation");
 
-    println!("+ Created operation: {}", op.id);
+    println!("✓ Created operation: {}", op.id);
     assert_eq!(op.session_id, "test-session-123");
     assert_eq!(op.kind, "code_generation");
     assert_eq!(op.status, "pending");
     assert!(op.started_at.is_none());
     assert!(op.completed_at.is_none());
 
-    // Start operation
-    engine
-        .start_operation(&op.id, &tx)
-        .await
-        .expect("Failed to start operation");
+    // Run operation (will fail with fake keys, but lifecycle will be tracked)
+    let _result = engine
+        .run_operation(
+            &op.id,
+            "test-session-123",
+            "Create a hello world function",
+            None, // no project
+            None, // no cancel token
+            &tx,
+        )
+        .await;
 
-    println!("+ Started operation");
+    println!("✓ Operation executed");
 
-    // Check events
-    let event = rx.recv().await.expect("No Started event received");
-    match event {
-        OperationEngineEvent::Started { operation_id } => {
-            assert_eq!(operation_id, op.id);
-            println!("+ Received Started event");
+    // Drain and verify events
+    let mut got_started = false;
+    let mut got_status_change = false;
+    let mut got_failed = false;
+
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            OperationEngineEvent::Started { operation_id } => {
+                assert_eq!(operation_id, op.id);
+                got_started = true;
+                println!("✓ Received Started event");
+            }
+            OperationEngineEvent::StatusChanged {
+                operation_id,
+                old_status,
+                new_status,
+            } => {
+                assert_eq!(operation_id, op.id);
+                got_status_change = true;
+                println!("✓ Status change: {} -> {}", old_status, new_status);
+            }
+            OperationEngineEvent::Failed { operation_id, error } => {
+                assert_eq!(operation_id, op.id);
+                got_failed = true;
+                println!("✓ Received Failed event: {}", error);
+            }
+            _ => {}
         }
-        _ => panic!("Expected Started event, got: {:?}", event),
     }
 
-    let event = rx.recv().await.expect("No StatusChanged event received");
-    match event {
-        OperationEngineEvent::StatusChanged {
-            operation_id,
-            old_status,
-            new_status,
-        } => {
-            assert_eq!(operation_id, op.id);
-            assert_eq!(old_status, "pending");
-            assert_eq!(new_status, "planning");
-            println!("+ Received StatusChanged event (pending -> planning)");
-        }
-        _ => panic!("Expected StatusChanged event, got: {:?}", event),
-    }
-
-    // Complete operation
-    engine
-        .complete_operation(&op.id, "test-session-123", Some("Success! Generated code.".to_string()), &tx)
-        .await
-        .expect("Failed to complete operation");
-
-    println!("+ Completed operation");
-
-    // Check completion events
-    let event = rx.recv().await.expect("No StatusChanged event received");
-    match event {
-        OperationEngineEvent::StatusChanged {
-            operation_id,
-            old_status,
-            new_status,
-        } => {
-            assert_eq!(operation_id, op.id);
-            assert_eq!(old_status, "planning");
-            assert_eq!(new_status, "completed");
-            println!("+ Received StatusChanged event (planning -> completed)");
-        }
-        _ => panic!("Expected StatusChanged event, got: {:?}", event),
-    }
-
-    let event = rx.recv().await.expect("No Completed event received");
-    match event {
-        OperationEngineEvent::Completed {
-            operation_id,
-            result,
-            artifacts,
-        } => {
-            assert_eq!(operation_id, op.id);
-            assert_eq!(result.unwrap(), "Success! Generated code.");
-            println!("+ Received Completed event (with {} artifacts)", artifacts.len());
-        }
-        _ => panic!("Expected Completed event, got: {:?}", event),
-    }
+    assert!(got_started, "Should have received Started event");
+    assert!(got_status_change, "Should have received StatusChanged event");
+    assert!(got_failed, "Should have failed with fake API keys");
 
     // Verify database state
     let updated_op = engine
@@ -237,14 +217,10 @@ async fn test_operation_engine_lifecycle() {
         .await
         .expect("Failed to get operation");
 
-    assert_eq!(updated_op.status, "completed");
-    assert!(updated_op.started_at.is_some());
-    assert!(updated_op.completed_at.is_some());
-    assert_eq!(
-        updated_op.result.unwrap(),
-        "Success! Generated code."
-    );
-    println!("+ Database state verified");
+    assert_ne!(updated_op.status, "pending", "Status should have changed");
+    assert!(updated_op.started_at.is_some(), "Should have started_at timestamp");
+    assert!(updated_op.completed_at.is_some(), "Should have completed_at timestamp");
+    println!("✓ Database state verified: status = {}", updated_op.status);
 
     // Check events in database
     let events = engine
@@ -252,10 +228,10 @@ async fn test_operation_engine_lifecycle() {
         .await
         .expect("Failed to get events");
 
-    assert!(events.len() >= 2, "Should have at least 2 events");
-    println!("+ Events stored in database: {} events", events.len());
+    assert!(!events.is_empty(), "Should have events in database");
+    println!("✓ Events stored in database: {} events", events.len());
 
-    // Verify sequence numbers
+    // Verify sequence numbers are sequential
     for (i, event) in events.iter().enumerate() {
         assert_eq!(
             event.sequence_number,
@@ -263,13 +239,15 @@ async fn test_operation_engine_lifecycle() {
             "Event sequence numbers should be sequential starting from 0"
         );
     }
-    println!("+ Event sequence numbers are correct");
+    println!("✓ Event sequence numbers are correct");
 
-    println!("\n[PASS] All tests passed!");
+    println!("\n✅ Operation lifecycle test passed!\n");
 }
 
 #[tokio::test]
-async fn test_operation_failure() {
+async fn test_operation_cancellation() {
+    println!("\n=== Testing Operation Cancellation ===\n");
+    
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
         .await
@@ -283,11 +261,9 @@ async fn test_operation_failure() {
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
     
-    // Setup services - NOW RETURNS 4 SERVICES
     let (memory_service, relationship_service, git_client, code_intelligence) = 
         setup_services(db.clone()).await;
     
-    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -297,88 +273,70 @@ async fn test_operation_failure() {
         git_client,
         code_intelligence,
     );
+    
     let (tx, mut rx) = mpsc::channel(100);
 
-    // Create and start operation
+    // Create operation
     let op = engine
         .create_operation(
             "test-session-456".to_string(),
             "code_generation".to_string(),
-            "This will fail".to_string(),
+            "This will be cancelled".to_string(),
         )
         .await
         .expect("Failed to create operation");
 
-    engine
-        .start_operation(&op.id, &tx)
-        .await
-        .expect("Failed to start operation");
+    println!("✓ Created operation: {}", op.id);
 
-    // Drain started events
-    let _ = rx.recv().await;
-    let _ = rx.recv().await;
+    // Create a pre-cancelled token
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    cancel_token.cancel();
 
-    // Fail the operation
-    engine
-        .fail_operation(
+    // Run with cancelled token
+    let result = engine
+        .run_operation(
             &op.id,
-            "DeepSeek API error: timeout".to_string(),
+            "test-session-456",
+            "This will be cancelled",
+            None,
+            Some(cancel_token),
             &tx,
         )
-        .await
-        .expect("Failed to fail operation");
+        .await;
 
-    println!("+ Failed operation");
+    assert!(result.is_err(), "Should fail due to cancellation");
+    println!("✓ Operation cancelled as expected");
 
-    // Check events
-    let event = rx.recv().await.expect("No StatusChanged event received");
-    match event {
-        OperationEngineEvent::StatusChanged {
-            operation_id,
-            old_status,
-            new_status,
-        } => {
-            assert_eq!(operation_id, op.id);
-            assert_eq!(old_status, "planning");
-            assert_eq!(new_status, "failed");
-            println!("+ Received StatusChanged event (planning -> failed)");
+    // Verify we got a failure event with cancellation message
+    let mut got_cancelled_error = false;
+    while let Ok(event) = rx.try_recv() {
+        if let OperationEngineEvent::Failed { error, .. } = event {
+            if error.contains("cancel") {
+                got_cancelled_error = true;
+                println!("✓ Cancellation error: {}", error);
+            }
         }
-        _ => panic!("Expected StatusChanged event, got: {:?}", event),
     }
 
-    let event = rx.recv().await.expect("No Failed event received");
-    match event {
-        OperationEngineEvent::Failed {
-            operation_id,
-            error,
-        } => {
-            assert_eq!(operation_id, op.id);
-            assert_eq!(error, "DeepSeek API error: timeout");
-            println!("+ Received Failed event");
-        }
-        _ => panic!("Expected Failed event, got: {:?}", event),
-    }
+    assert!(got_cancelled_error, "Should have received cancellation error");
 
-    // Verify database
+    // Verify database state shows failure
     let updated_op = engine
         .get_operation(&op.id)
         .await
         .expect("Failed to get operation");
 
     assert_eq!(updated_op.status, "failed");
-    assert!(updated_op.started_at.is_some());
-    assert!(updated_op.completed_at.is_some());
-    assert_eq!(
-        updated_op.error.unwrap(),
-        "DeepSeek API error: timeout"
-    );
-    println!("+ Database state verified");
+    assert!(updated_op.error.is_some());
+    println!("✓ Database shows failed status");
 
-    println!("\n[PASS] Failure test passed!");
+    println!("\n✅ Cancellation test passed!\n");
 }
 
 #[tokio::test]
 async fn test_multiple_operations() {
+    println!("\n=== Testing Multiple Operations ===\n");
+    
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
         .await
@@ -392,11 +350,9 @@ async fn test_multiple_operations() {
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
     
-    // Setup services - NOW RETURNS 4 SERVICES
     let (memory_service, relationship_service, git_client, code_intelligence) = 
         setup_services(db.clone()).await;
     
-    // FIXED: Add git_client and code_intelligence parameters
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -406,11 +362,14 @@ async fn test_multiple_operations() {
         git_client,
         code_intelligence,
     );
-    let (tx, _rx) = mpsc::channel(100);
 
     // Create multiple operations
+    let mut operation_ids = Vec::new();
+    
     for i in 0..5 {
+        let (tx, _rx) = mpsc::channel(100);
         let session_id = format!("session-{}", i);
+        
         let op = engine
             .create_operation(
                 session_id.clone(),
@@ -420,18 +379,179 @@ async fn test_multiple_operations() {
             .await
             .expect("Failed to create operation");
 
-        engine
-            .start_operation(&op.id, &tx)
-            .await
-            .expect("Failed to start operation");
+        operation_ids.push(op.id.clone());
 
-        engine
-            .complete_operation(&op.id, &session_id, Some(format!("Result {}", i)), &tx)
-            .await
-            .expect("Failed to complete operation");
+        // Run operation (will fail with fake keys)
+        let _ = engine
+            .run_operation(
+                &op.id,
+                &session_id,
+                &format!("Operation {}", i),
+                None,
+                None,
+                &tx,
+            )
+            .await;
 
-        println!("+ Completed operation {}", i);
+        println!("✓ Completed operation {}", i);
     }
 
-    println!("\n[PASS] Multiple operations test passed!");
+    // Verify all operations were tracked
+    for (i, op_id) in operation_ids.iter().enumerate() {
+        let op = engine
+            .get_operation(op_id)
+            .await
+            .expect("Failed to get operation");
+
+        assert_ne!(op.status, "pending", "Operation {} should have run", i);
+        assert!(op.started_at.is_some(), "Operation {} should have started", i);
+        println!("✓ Operation {} verified: status = {}", i, op.status);
+    }
+
+    println!("\n✅ Multiple operations test passed!\n");
+}
+
+#[tokio::test]
+async fn test_operation_event_ordering() {
+    println!("\n=== Testing Operation Event Ordering ===\n");
+    
+    let pool = SqlitePoolOptions::new()
+        .connect(":memory:")
+        .await
+        .expect("Failed to create in-memory database");
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+
+    let db = Arc::new(pool);
+    let (gpt5, deepseek) = create_test_providers();
+    
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
+    
+    let engine = OperationEngine::new(
+        db.clone(),
+        gpt5,
+        deepseek,
+        memory_service,
+        relationship_service,
+        git_client,
+        code_intelligence,
+    );
+
+    let (tx, _rx) = mpsc::channel(100);
+
+    let op = engine
+        .create_operation(
+            "test-session".to_string(),
+            "code_generation".to_string(),
+            "Test event ordering".to_string(),
+        )
+        .await
+        .expect("Failed to create operation");
+
+    // Run operation
+    let _ = engine
+        .run_operation(
+            &op.id,
+            "test-session",
+            "Test event ordering",
+            None,
+            None,
+            &tx,
+        )
+        .await;
+
+    println!("✓ Operation executed");
+
+    // Get events from database
+    let events = engine
+        .get_operation_events(&op.id)
+        .await
+        .expect("Failed to get events");
+
+    assert!(!events.is_empty(), "Should have events");
+    println!("✓ Found {} events", events.len());
+
+    // Verify events are ordered by sequence number
+    for i in 0..events.len() - 1 {
+        assert!(
+            events[i].sequence_number < events[i + 1].sequence_number,
+            "Events should be ordered by sequence number"
+        );
+    }
+    println!("✓ Events are properly ordered");
+
+    // Verify sequence numbers start at 0 and are contiguous
+    for (i, event) in events.iter().enumerate() {
+        assert_eq!(
+            event.sequence_number,
+            i as i64,
+            "Sequence numbers should be contiguous starting from 0"
+        );
+    }
+    println!("✓ Sequence numbers are contiguous");
+
+    println!("\n✅ Event ordering test passed!\n");
+}
+
+#[tokio::test]
+async fn test_operation_retrieval() {
+    println!("\n=== Testing Operation Retrieval ===\n");
+    
+    let pool = SqlitePoolOptions::new()
+        .connect(":memory:")
+        .await
+        .expect("Failed to create in-memory database");
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+
+    let db = Arc::new(pool);
+    let (gpt5, deepseek) = create_test_providers();
+    
+    let (memory_service, relationship_service, git_client, code_intelligence) = 
+        setup_services(db.clone()).await;
+    
+    let engine = OperationEngine::new(
+        db.clone(),
+        gpt5,
+        deepseek,
+        memory_service,
+        relationship_service,
+        git_client,
+        code_intelligence,
+    );
+
+    // Create operation with specific fields
+    let op = engine
+        .create_operation(
+            "session-abc".to_string(),
+            "refactoring".to_string(),
+            "Refactor authentication module".to_string(),
+        )
+        .await
+        .expect("Failed to create operation");
+
+    println!("✓ Created operation: {}", op.id);
+
+    // Retrieve operation
+    let retrieved = engine
+        .get_operation(&op.id)
+        .await
+        .expect("Failed to retrieve operation");
+
+    // Verify all fields match
+    assert_eq!(retrieved.id, op.id);
+    assert_eq!(retrieved.session_id, "session-abc");
+    assert_eq!(retrieved.kind, "refactoring");
+    assert_eq!(retrieved.user_message, "Refactor authentication module");
+    assert_eq!(retrieved.status, "pending");
+    println!("✓ Retrieved operation matches created operation");
+
+    println!("\n✅ Operation retrieval test passed!\n");
 }
