@@ -1,5 +1,6 @@
 // src/operations/engine/orchestration.rs
 // Main operation orchestration: run_operation method
+// FIXED: Added error handling wrapper to emit Failed events on any error
 
 use crate::llm::provider::Message;
 use crate::llm::provider::gpt5::{Gpt5Provider, Gpt5StreamEvent};
@@ -58,8 +59,47 @@ impl Orchestrator {
         }
     }
 
-    /// Main operation orchestration
+    /// Main operation orchestration with error handling wrapper
+    /// 
+    /// This wrapper ensures that ANY error (cancellation, API failures, etc.)
+    /// properly emits a Failed event before propagating the error.
     pub async fn run_operation(
+        &self,
+        operation_id: &str,
+        session_id: &str,
+        user_content: &str,
+        project_id: Option<&str>,
+        cancel_token: Option<CancellationToken>,
+        event_tx: &mpsc::Sender<OperationEngineEvent>,
+    ) -> Result<()> {
+        // Run the inner operation logic
+        let result = self.run_operation_inner(
+            operation_id,
+            session_id,
+            user_content,
+            project_id,
+            cancel_token,
+            event_tx,
+        ).await;
+
+        // If ANY error occurred, emit Failed event
+        if let Err(e) = &result {
+            let error_msg = e.to_string();
+            warn!("[ENGINE] Operation {} failed: {}", operation_id, error_msg);
+            
+            // Emit failed event (ignore errors from this since we're already failing)
+            let _ = self.lifecycle_manager.fail_operation(
+                operation_id,
+                error_msg,
+                event_tx,
+            ).await;
+        }
+
+        result
+    }
+
+    /// Internal operation orchestration logic
+    async fn run_operation_inner(
         &self,
         operation_id: &str,
         session_id: &str,
@@ -120,7 +160,6 @@ impl Orchestrator {
 
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
-                let _ = self.lifecycle_manager.fail_operation(operation_id, "Operation cancelled".to_string(), event_tx).await;
                 return Err(anyhow::anyhow!("Operation cancelled"));
             }
         }
@@ -139,7 +178,6 @@ impl Orchestrator {
         while let Some(event) = stream.next().await {
             if let Some(token) = &cancel_token {
                 if token.is_cancelled() {
-                    let _ = self.lifecycle_manager.fail_operation(operation_id, "Operation cancelled during streaming".to_string(), event_tx).await;
                     return Err(anyhow::anyhow!("Operation cancelled"));
                 }
             }
@@ -178,7 +216,6 @@ impl Orchestrator {
         if !delegation_calls.is_empty() {
             if let Some(token) = &cancel_token {
                 if token.is_cancelled() {
-                    let _ = self.lifecycle_manager.fail_operation(operation_id, "Operation cancelled before delegation".to_string(), event_tx).await;
                     return Err(anyhow::anyhow!("Operation cancelled"));
                 }
             }
@@ -188,7 +225,6 @@ impl Orchestrator {
             for (_tool_id, tool_name, tool_args) in delegation_calls {
                 if let Some(token) = &cancel_token {
                     if token.is_cancelled() {
-                        let _ = self.lifecycle_manager.fail_operation(operation_id, "Operation cancelled during delegation".to_string(), event_tx).await;
                         return Err(anyhow::anyhow!("Operation cancelled"));
                     }
                 }

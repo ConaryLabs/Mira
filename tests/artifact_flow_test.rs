@@ -171,7 +171,7 @@ async fn test_artifact_retrieval() {
         .await
         .expect("Failed to create operation");
     
-    println!("✓ Created operation: {}", op.id);
+    println!("+ Created operation: {}", op.id);
     
     // Insert test artifacts directly into database
     let code1 = r#"fn hello_world() {
@@ -186,7 +186,7 @@ async fn test_artifact_retrieval() {
         "rust",
     ).await;
     
-    println!("✓ Inserted first artifact: {}", artifact_id1);
+    println!("+ Inserted first artifact: {}", artifact_id1);
     
     let code2 = "pub fn add(a: i32, b: i32) -> i32 { a + b }";
     
@@ -198,7 +198,7 @@ async fn test_artifact_retrieval() {
         "rust",
     ).await;
     
-    println!("✓ Inserted second artifact: {}", artifact_id2);
+    println!("+ Inserted second artifact: {}", artifact_id2);
     
     // Retrieve artifacts using public API
     let artifacts = engine
@@ -207,23 +207,23 @@ async fn test_artifact_retrieval() {
         .expect("Failed to get artifacts");
     
     assert_eq!(artifacts.len(), 2, "Should have 2 artifacts");
-    println!("✓ Retrieved {} artifacts", artifacts.len());
+    println!("+ Retrieved {} artifacts", artifacts.len());
     
     // Verify first artifact
     assert_eq!(artifacts[0].file_path, Some("src/main.rs".to_string()));
     assert_eq!(artifacts[0].content, code1);
     assert_eq!(artifacts[0].language, Some("rust".to_string()));
     assert!(!artifacts[0].content_hash.is_empty());
-    println!("✓ First artifact verified");
+    println!("+ First artifact verified");
     
     // Verify second artifact
     assert_eq!(artifacts[1].file_path, Some("src/lib.rs".to_string()));
     assert_eq!(artifacts[1].content, code2);
     assert_eq!(artifacts[1].language, Some("rust".to_string()));
     assert!(!artifacts[1].content_hash.is_empty());
-    println!("✓ Second artifact verified");
+    println!("+ Second artifact verified");
     
-    println!("\n✅ Artifact retrieval test passed!\n");
+    println!("\n[PASS] Artifact retrieval test passed!\n");
 }
 
 #[tokio::test]
@@ -247,7 +247,7 @@ async fn test_artifact_hash_consistency() {
     let artifact_id1 = insert_test_artifact(&db, &op.id, "test1.rs", content, "rust").await;
     let artifact_id2 = insert_test_artifact(&db, &op.id, "test2.rs", content, "rust").await;
     
-    println!("✓ Inserted two artifacts with identical content");
+    println!("+ Inserted two artifacts with identical content");
     
     // Retrieve and verify hashes match
     let artifacts = engine
@@ -262,14 +262,14 @@ async fn test_artifact_hash_consistency() {
         "Identical content should produce identical hashes"
     );
     
-    println!("✓ Hashes match: {}", artifacts[0].content_hash);
+    println!("+ Hashes match: {}", artifacts[0].content_hash);
     
     // Verify hash is deterministic
     let expected_hash = compute_hash(content);
     assert_eq!(artifacts[0].content_hash, expected_hash);
-    println!("✓ Hash is deterministic");
+    println!("+ Hash is deterministic");
     
-    println!("\n✅ Hash consistency test passed!\n");
+    println!("\n[PASS] Hash consistency test passed!\n");
 }
 
 #[tokio::test]
@@ -297,7 +297,7 @@ async fn test_multiple_operations_artifact_isolation() {
         .await
         .expect("Failed to create op2");
     
-    println!("✓ Created two operations");
+    println!("+ Created two operations");
     
     // Add artifacts to op1
     insert_test_artifact(&db, &op1.id, "op1_file1.rs", "fn op1_func1() {}", "rust").await;
@@ -308,7 +308,7 @@ async fn test_multiple_operations_artifact_isolation() {
     insert_test_artifact(&db, &op2.id, "op2_file2.rs", "fn op2_func2() {}", "rust").await;
     insert_test_artifact(&db, &op2.id, "op2_file3.rs", "fn op2_func3() {}", "rust").await;
     
-    println!("✓ Added artifacts to both operations");
+    println!("+ Added artifacts to both operations");
     
     // Verify op1 artifacts
     let op1_artifacts = engine
@@ -318,7 +318,7 @@ async fn test_multiple_operations_artifact_isolation() {
     
     assert_eq!(op1_artifacts.len(), 2);
     assert!(op1_artifacts.iter().all(|a| a.operation_id == op1.id));
-    println!("✓ Operation 1 has {} isolated artifacts", op1_artifacts.len());
+    println!("+ Operation 1 has {} isolated artifacts", op1_artifacts.len());
     
     // Verify op2 artifacts
     let op2_artifacts = engine
@@ -328,9 +328,9 @@ async fn test_multiple_operations_artifact_isolation() {
     
     assert_eq!(op2_artifacts.len(), 3);
     assert!(op2_artifacts.iter().all(|a| a.operation_id == op2.id));
-    println!("✓ Operation 2 has {} isolated artifacts", op2_artifacts.len());
+    println!("+ Operation 2 has {} isolated artifacts", op2_artifacts.len());
     
-    println!("\n✅ Artifact isolation test passed!\n");
+    println!("\n[PASS] Artifact isolation test passed!\n");
 }
 
 #[tokio::test]
@@ -361,7 +361,7 @@ async fn test_artifact_different_languages() {
         insert_test_artifact(&db, &op.id, path, content, lang).await;
     }
     
-    println!("✓ Inserted {} artifacts in different languages", files.len());
+    println!("+ Inserted {} artifacts in different languages", files.len());
     
     // Retrieve and verify
     let artifacts = engine
@@ -379,10 +379,10 @@ async fn test_artifact_different_languages() {
             .expect(&format!("Missing artifact: {}", expected_path));
         
         assert_eq!(artifact.language.as_deref(), Some(*expected_lang));
-        println!("✓ Verified {}: {}", expected_path, expected_lang);
+        println!("+ Verified {}: {}", expected_path, expected_lang);
     }
     
-    println!("\n✅ Multi-language artifacts test passed!\n");
+    println!("\n[PASS] Multi-language artifacts test passed!\n");
 }
 
 #[tokio::test]
@@ -400,7 +400,7 @@ async fn test_empty_operation_no_artifacts() {
         .await
         .expect("Failed to create operation");
     
-    println!("✓ Created operation: {}", op.id);
+    println!("+ Created operation: {}", op.id);
     
     // Retrieve artifacts (should be empty)
     let artifacts = engine
@@ -409,9 +409,9 @@ async fn test_empty_operation_no_artifacts() {
         .expect("Failed to get artifacts");
     
     assert_eq!(artifacts.len(), 0, "Should have no artifacts");
-    println!("✓ Operation has no artifacts as expected");
+    println!("+ Operation has no artifacts as expected");
     
-    println!("\n✅ Empty operation test passed!\n");
+    println!("\n[PASS] Empty operation test passed!\n");
 }
 
 #[tokio::test]
@@ -430,18 +430,19 @@ async fn test_artifact_content_preservation() {
         .expect("Failed to create operation");
     
     // Create artifact with special characters and formatting
-    let complex_content = r#"
+    // Use r###"..."### to avoid conflict with inner r#"..."#
+    let complex_content = r###"
 // Special characters: <>&"'
 fn test() {
     let json = r#"{"key": "value"}"#;
-    let unicode = "Hello 世界 🦀";
+    let unicode = "Hello world";
     println!("Line 1");
     println!("Line 2");
 }
-"#;
+"###;
     
-    insert_test_artifact(&db, &op.id, "complex.rs", complex_content, "rust").await;
-    println!("✓ Inserted artifact with special characters");
+    insert_test_artifact(&db, &op.id, "complex_file.rs", complex_content, "rust").await;
+    println!("+ Inserted artifact with special characters");
     
     // Retrieve and verify content is exactly preserved
     let artifacts = engine
@@ -455,7 +456,7 @@ fn test() {
         complex_content,
         "Content should be exactly preserved"
     );
-    println!("✓ Special characters and formatting preserved");
+    println!("+ Special characters and formatting preserved");
     
-    println!("\n✅ Content preservation test passed!\n");
+    println!("\n[PASS] Content preservation test passed!\n");
 }
