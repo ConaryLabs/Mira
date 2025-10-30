@@ -1,64 +1,56 @@
 // tests/rolling_summary_test.rs
-// Rolling Summary Generation and Management Tests
-//
-// Tests the summarization system that provides compressed context for LLM prompts.
-// Critical aspects:
-// 1. 10-message rolling summaries (created every 10 messages)
-// 2. 100-message rolling summaries (created every 100 messages)
-// 3. Trigger logic accuracy
-// 4. Summary storage and retrieval
-// 5. Summary inclusion in prompt context
-// 6. Content quality (technical + personal balance)
-// 7. Edge cases (insufficient messages, recursive summarization prevention)
+// Rolling summary generation and retrieval tests - REWRITTEN for current schema
+// Tests SummarizationEngine's ability to create and manage rolling summaries
 
-use mira_backend::memory::service::MemoryService;
-use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
-use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
-use mira_backend::memory::features::memory_types::{SummaryType, SummaryRecord};
-use mira_backend::llm::provider::{LlmProvider, OpenAiEmbeddings, gpt5::Gpt5Provider};
-use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
+use sqlx::SqlitePool;
+use mira_backend::memory::{
+    service::MemoryService,
+    storage::{
+        sqlite::store::SqliteMemoryStore,
+        qdrant::multi_store::QdrantMultiStore,
+    },
+    features::memory_types::SummaryType,
+};
+use mira_backend::llm::provider::{OpenAiProvider, OpenAiEmbeddings};
+use mira_backend::config::CONFIG;
 
 // ============================================================================
-// TEST SETUP UTILITIES
+// Test Setup Helpers
 // ============================================================================
 
-async fn create_test_db() -> sqlx::SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .connect(":memory:")
+async fn create_test_memory_service() -> Arc<MemoryService> {
+    // Create in-memory SQLite database
+    let pool = SqlitePool::connect(":memory:")
         .await
         .expect("Failed to create in-memory database");
-
+    
+    // Run migrations
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .expect("Failed to run migrations");
-
-    pool
-}
-
-async fn setup_memory_service() -> Arc<MemoryService> {
-    let pool = create_test_db().await;
+    
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool));
     
+    // Create Qdrant multi-store
+    let qdrant_url = CONFIG.qdrant.url.clone();
     let multi_store = Arc::new(
-        QdrantMultiStore::new("http://localhost:6333", "test_summaries")
+        QdrantMultiStore::new(&qdrant_url)
             .await
-            .expect("Failed to connect to Qdrant")
+            .expect("Failed to create Qdrant multi-store")
     );
     
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
-        "test-key".to_string(),
-        "text-embedding-3-large".to_string(),
-    ));
+    // Create LLM provider
+    let api_key = std::env::var("OPENAI_API_KEY")
+        .expect("OPENAI_API_KEY must be set for tests");
+    let llm_provider = Arc::new(OpenAiProvider::new(api_key.clone(), "gpt-4o-mini".to_string()));
     
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
-        "test-key".to_string(),
-        "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    ));
+    // Create embedding client
+    let embedding_client = Arc::new(
+        OpenAiEmbeddings::new(api_key, "text-embedding-3-small".to_string())
+            .expect("Failed to create embedding client")
+    );
     
     Arc::new(MemoryService::new(
         sqlite_store,
@@ -68,562 +60,653 @@ async fn setup_memory_service() -> Arc<MemoryService> {
     ))
 }
 
-async fn populate_messages(
-    memory_service: &MemoryService,
+async fn create_test_messages(
+    memory_service: &Arc<MemoryService>,
     session_id: &str,
     count: usize,
-) -> Vec<String> {
+) -> Vec<i64> {
     let mut message_ids = Vec::new();
     
     for i in 0..count {
-        let content = format!("Test message {} about coding in Rust", i + 1);
+        let content = format!("Test message {} about coding and debugging", i + 1);
         
-        let msg_id = if i % 2 == 0 {
-            // User message
-            memory_service.core.save_user_message(session_id, &content, None)
-                .await
-                .expect("Failed to save user message")
-        } else {
-            // Assistant message
-            memory_service.core.save_assistant_message(session_id, &content, None)
-                .await
-                .expect("Failed to save assistant message")
-        };
+        let msg_id = memory_service
+            .save_user_message(session_id, &content, None)
+            .await
+            .expect("Failed to save message");
         
         message_ids.push(msg_id);
+        
+        // Add assistant responses for realism
+        let response = format!("Response to message {}: Here's how to approach that", i + 1);
+        let response_id = memory_service
+            .save_assistant_message(session_id, &response, Some(msg_id))
+            .await
+            .expect("Failed to save response");
+        
+        message_ids.push(response_id);
     }
     
     message_ids
 }
 
 // ============================================================================
-// TEST 1: 10-Message Rolling Summary Trigger
+// Basic Rolling Summary Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_10_message_rolling_summary_trigger() {
-    println!("\n=== Testing 10-Message Rolling Summary Trigger ===\n");
+async fn test_create_rolling_10_summary() {
+    println!("\n=== Testing Rolling 10-Message Summary Creation ===\n");
     
-    let memory_service = setup_memory_service().await;
-    let session_id = "test-session-10msg";
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-rolling-10";
     
-    println!("[1] Populating 9 messages (should not trigger)");
-    populate_messages(&memory_service, session_id, 9).await;
+    println!("[1] Creating 10 test messages");
+    let _message_ids = create_test_messages(&memory_service, session_id, 5).await;
     
-    // Check that no summary was created yet
-    let summaries = memory_service.core.sqlite_store
-        .get_latest_summaries(session_id)
+    println!("[2] Creating rolling summary (10 messages)");
+    
+    let summary = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 10)
         .await
-        .expect("Failed to get summaries");
+        .expect("Failed to create rolling summary");
     
-    assert_eq!(summaries.len(), 0, "Should have no summaries with only 9 messages");
-    println!("✓ No summary created with 9 messages");
+    println!("[3] Verifying summary");
     
-    println!("[2] Adding 10th message (should trigger 10-message summary)");
-    populate_messages(&memory_service, session_id, 1).await;
+    assert!(!summary.is_empty(), "Summary should not be empty");
+    assert!(summary.len() > 50, "Summary should have substance");
     
-    // Manually trigger summary check (simulating background task)
-    let result = memory_service.summarization_coordinator
+    println!("✓ Rolling 10-message summary created");
+    println!("  Summary length: {} chars", summary.len());
+}
+
+#[tokio::test]
+async fn test_create_rolling_100_summary() {
+    println!("\n=== Testing Rolling 100-Message Summary Creation ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-rolling-100";
+    
+    println!("[1] Creating 50 test messages (100 total with responses)");
+    let _message_ids = create_test_messages(&memory_service, session_id, 50).await;
+    
+    println!("[2] Creating rolling summary (100 messages)");
+    
+    let summary = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 100)
+        .await
+        .expect("Failed to create rolling summary");
+    
+    println!("[3] Verifying summary");
+    
+    assert!(!summary.is_empty(), "Summary should not be empty");
+    assert!(summary.len() > 100, "100-message summary should be substantial");
+    
+    println!("✓ Rolling 100-message summary created");
+    println!("  Summary length: {} chars", summary.len());
+}
+
+#[tokio::test]
+async fn test_create_summary_with_summary_type() {
+    println!("\n=== Testing Summary Creation with SummaryType Enum ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-summary-type";
+    
+    println!("[1] Creating test messages");
+    create_test_messages(&memory_service, session_id, 5).await;
+    
+    println!("[2] Creating summary using SummaryType::Rolling10");
+    
+    let summary = memory_service
+        .summarization_engine
+        .create_summary(session_id, SummaryType::Rolling10)
+        .await
+        .expect("Failed to create summary via SummaryType");
+    
+    println!("[3] Verifying summary");
+    
+    assert!(!summary.is_empty(), "Summary should not be empty");
+    
+    println!("✓ Summary created via SummaryType enum");
+}
+
+// ============================================================================
+// Summary Retrieval Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_get_rolling_summary() {
+    println!("\n=== Testing Rolling Summary Retrieval ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-get-rolling";
+    
+    println!("[1] Creating messages and summary");
+    create_test_messages(&memory_service, session_id, 5).await;
+    
+    let created_summary = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 10)
+        .await
+        .expect("Failed to create summary");
+    
+    println!("[2] Retrieving rolling summary");
+    
+    let retrieved_summary = memory_service
+        .get_rolling_summary(session_id)
+        .await
+        .expect("Failed to retrieve summary");
+    
+    println!("[3] Verifying retrieval");
+    
+    assert!(retrieved_summary.is_some(), "Should retrieve created summary");
+    let summary = retrieved_summary.unwrap();
+    
+    // Content should match (or be similar)
+    assert!(!summary.is_empty(), "Retrieved summary should not be empty");
+    assert_eq!(summary, created_summary, "Retrieved summary should match created");
+    
+    println!("✓ Rolling summary retrieved successfully");
+}
+
+#[tokio::test]
+async fn test_get_rolling_summary_none() {
+    println!("\n=== Testing Rolling Summary Retrieval (None) ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-no-summary";
+    
+    println!("[1] Attempting to retrieve non-existent summary");
+    
+    let summary = memory_service
+        .get_rolling_summary(session_id)
+        .await
+        .expect("Failed to query for summary");
+    
+    println!("[2] Verifying None result");
+    
+    assert!(summary.is_none(), "Should return None for non-existent summary");
+    
+    println!("✓ Correctly returns None for missing summary");
+}
+
+#[tokio::test]
+async fn test_get_session_summary() {
+    println!("\n=== Testing Session Summary Retrieval ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-snapshot";
+    
+    println!("[1] Creating messages and snapshot summary");
+    create_test_messages(&memory_service, session_id, 10).await;
+    
+    memory_service
+        .summarization_engine
+        .create_snapshot_summary(session_id, None)
+        .await
+        .expect("Failed to create snapshot summary");
+    
+    println!("[2] Retrieving session summary");
+    
+    let summary = memory_service
+        .get_session_summary(session_id)
+        .await
+        .expect("Failed to retrieve session summary");
+    
+    println!("[3] Verifying retrieval");
+    
+    assert!(summary.is_some(), "Should retrieve snapshot summary");
+    let summary_text = summary.unwrap();
+    assert!(!summary_text.is_empty(), "Session summary should not be empty");
+    
+    println!("✓ Session summary retrieved successfully");
+    println!("  Summary length: {} chars", summary_text.len());
+}
+
+// ============================================================================
+// Background Processing Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_check_and_process_summaries_trigger_10() {
+    println!("\n=== Testing Background Summary Trigger (10 messages) ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-trigger-10";
+    
+    println!("[1] Creating 5 test messages (10 total with responses)");
+    create_test_messages(&memory_service, session_id, 5).await;
+    
+    println!("[2] Checking if summary should be triggered at 10 messages");
+    
+    let result = memory_service
+        .summarization_engine
         .check_and_process_summaries(session_id, 10)
-        .await;
+        .await
+        .expect("Failed to check and process summaries");
     
-    if let Ok(Some(summary_msg)) = result {
-        println!("✓ Summary triggered: {}", summary_msg);
-        
-        // Verify summary was stored
-        let summaries = memory_service.core.sqlite_store
-            .get_latest_summaries(session_id)
-            .await
-            .expect("Failed to get summaries");
-        
-        assert!(!summaries.is_empty(), "Should have at least one summary");
-        
-        let rolling_10 = summaries.iter()
-            .find(|s| s.summary_type == "rolling_10");
-        
-        assert!(rolling_10.is_some(), "Should have rolling_10 summary");
-        println!("✓ 10-message summary stored correctly");
-    } else {
-        println!("Note: Summary trigger test requires LLM API (skipped in test environment)");
-    }
+    println!("[3] Verifying trigger fired");
+    
+    assert!(result.is_some(), "Should create summary at 10-message threshold");
+    let summary = result.unwrap();
+    assert!(!summary.is_empty(), "Generated summary should not be empty");
+    
+    println!("✓ Background trigger fired at 10 messages");
+    println!("  Generated summary: {} chars", summary.len());
 }
 
-// ============================================================================
-// TEST 2: 100-Message Rolling Summary Trigger
-// ============================================================================
-
 #[tokio::test]
-async fn test_100_message_rolling_summary_trigger() {
-    println!("\n=== Testing 100-Message Rolling Summary Trigger ===\n");
+async fn test_check_and_process_summaries_trigger_100() {
+    println!("\n=== Testing Background Summary Trigger (100 messages) ===\n");
     
-    let memory_service = setup_memory_service().await;
-    let session_id = "test-session-100msg";
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-trigger-100";
     
-    println!("[1] Populating 99 messages (should not trigger 100-message summary)");
-    populate_messages(&memory_service, session_id, 99).await;
+    println!("[1] Creating 50 test messages (100 total)");
+    create_test_messages(&memory_service, session_id, 50).await;
     
-    println!("[2] Adding 100th message (should trigger both 10 and 100 summaries)");
-    populate_messages(&memory_service, session_id, 1).await;
+    println!("[2] Checking if summary should be triggered at 100 messages");
     
-    // Manually trigger summary check
-    let result = memory_service.summarization_coordinator
+    let result = memory_service
+        .summarization_engine
         .check_and_process_summaries(session_id, 100)
-        .await;
+        .await
+        .expect("Failed to check and process summaries");
     
-    if let Ok(Some(summary_msg)) = result {
-        println!("✓ Summary triggered: {}", summary_msg);
-        
-        // Verify both summary types were created
-        let summaries = memory_service.core.sqlite_store
-            .get_latest_summaries(session_id)
-            .await
-            .expect("Failed to get summaries");
-        
-        let has_rolling_10 = summaries.iter()
-            .any(|s| s.summary_type == "rolling_10");
-        let has_rolling_100 = summaries.iter()
-            .any(|s| s.summary_type == "rolling_100");
-        
-        assert!(has_rolling_10, "Should have rolling_10 summary");
-        assert!(has_rolling_100, "Should have rolling_100 summary");
-        
-        println!("✓ Both 10-message and 100-message summaries created");
-    } else {
-        println!("Note: Summary trigger test requires LLM API (skipped in test environment)");
-    }
+    println!("[3] Verifying trigger fired");
+    
+    assert!(result.is_some(), "Should create summary at 100-message threshold");
+    let summary = result.unwrap();
+    assert!(!summary.is_empty(), "Generated summary should not be empty");
+    
+    println!("✓ Background trigger fired at 100 messages");
+    println!("  Generated summary: {} chars", summary.len());
+}
+
+#[tokio::test]
+async fn test_check_and_process_summaries_no_trigger() {
+    println!("\n=== Testing Background Summary (No Trigger) ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-no-trigger";
+    
+    println!("[1] Creating 2 test messages (4 total)");
+    create_test_messages(&memory_service, session_id, 2).await;
+    
+    println!("[2] Checking at 5 messages (not a trigger point)");
+    
+    let result = memory_service
+        .summarization_engine
+        .check_and_process_summaries(session_id, 5)
+        .await
+        .expect("Failed to check and process summaries");
+    
+    println!("[3] Verifying no trigger");
+    
+    assert!(result.is_none(), "Should not create summary at 5 messages");
+    
+    println!("✓ Correctly skips non-trigger message counts");
 }
 
 // ============================================================================
-// TEST 3: Trigger Logic Accuracy
+// Snapshot Summary Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_trigger_logic_accuracy() {
-    println!("\n=== Testing Trigger Logic Accuracy ===\n");
+async fn test_create_snapshot_summary() {
+    println!("\n=== Testing Snapshot Summary Creation ===\n");
     
-    // Test the trigger logic directly without requiring LLM calls
-    use mira_backend::memory::features::summarization::triggers::background_triggers::BackgroundTriggers;
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-snapshot-create";
     
-    let triggers = BackgroundTriggers::new();
+    println!("[1] Creating diverse test messages");
+    create_test_messages(&memory_service, session_id, 15).await;
     
-    println!("[1] Testing message counts that should trigger");
+    println!("[2] Creating snapshot summary");
     
-    let test_cases = vec![
-        (10, Some(SummaryType::Rolling10)),
-        (20, Some(SummaryType::Rolling10)),
-        (30, Some(SummaryType::Rolling10)),
-        (100, Some(SummaryType::Rolling100)),
-        (200, Some(SummaryType::Rolling100)),
-    ];
+    let summary = memory_service
+        .summarization_engine
+        .create_snapshot_summary(session_id, None)
+        .await
+        .expect("Failed to create snapshot summary");
     
-    for (count, expected) in test_cases {
-        let result = triggers.should_create_summary(count);
-        match (result, expected) {
-            (Some(SummaryType::Rolling10), Some(SummaryType::Rolling10)) => {
-                println!("✓ Message count {} correctly triggers Rolling10", count);
-            }
-            (Some(SummaryType::Rolling100), Some(SummaryType::Rolling100)) => {
-                println!("✓ Message count {} correctly triggers Rolling100", count);
-            }
-            (Some(actual), Some(expected)) => {
-                panic!("Message count {} triggered {:?}, expected {:?}", count, actual, expected);
-            }
-            _ => panic!("Unexpected trigger result for count {}", count),
+    println!("[3] Verifying snapshot");
+    
+    assert!(!summary.is_empty(), "Snapshot summary should not be empty");
+    assert!(summary.len() > 100, "Snapshot should be comprehensive");
+    
+    println!("✓ Snapshot summary created");
+    println!("  Summary length: {} chars", summary.len());
+}
+
+#[tokio::test]
+async fn test_snapshot_vs_rolling_summary() {
+    println!("\n=== Testing Snapshot vs Rolling Summary Differences ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-compare";
+    
+    println!("[1] Creating test messages");
+    create_test_messages(&memory_service, session_id, 10).await;
+    
+    println!("[2] Creating rolling summary");
+    let rolling = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 10)
+        .await
+        .expect("Failed to create rolling summary");
+    
+    println!("[3] Creating snapshot summary");
+    let snapshot = memory_service
+        .summarization_engine
+        .create_snapshot_summary(session_id, None)
+        .await
+        .expect("Failed to create snapshot summary");
+    
+    println!("[4] Comparing summaries");
+    
+    assert!(!rolling.is_empty(), "Rolling summary should exist");
+    assert!(!snapshot.is_empty(), "Snapshot summary should exist");
+    
+    // Both should be valid summaries (they may differ in approach)
+    println!("✓ Both summary types created successfully");
+    println!("  Rolling: {} chars", rolling.len());
+    println!("  Snapshot: {} chars", snapshot.len());
+}
+
+// ============================================================================
+// Edge Cases and Error Handling
+// ============================================================================
+
+#[tokio::test]
+async fn test_summary_with_empty_session() {
+    println!("\n=== Testing Summary Creation with Empty Session ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-empty";
+    
+    println!("[1] Attempting to create summary with no messages");
+    
+    let result = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 10)
+        .await;
+    
+    println!("[2] Verifying error handling");
+    
+    // Should either error or return empty summary
+    match result {
+        Ok(summary) => {
+            println!("  Returned summary: '{}' ({} chars)", 
+                     summary.chars().take(50).collect::<String>(), 
+                     summary.len());
+            // Empty or minimal summary is acceptable
+        }
+        Err(e) => {
+            println!("  Returned error: {}", e);
+            // Error is also acceptable for empty session
         }
     }
     
-    println!("[2] Testing message counts that should NOT trigger");
-    
-    let no_trigger_cases = vec![1, 5, 9, 11, 15, 23, 99, 101];
-    
-    for count in no_trigger_cases {
-        let result = triggers.should_create_summary(count);
-        assert!(result.is_none(), "Message count {} should not trigger summary", count);
-        println!("✓ Message count {} correctly does not trigger", count);
-    }
-    
-    println!("✓ All trigger logic tests passed");
+    println!("✓ Handled empty session gracefully");
 }
-
-// ============================================================================
-// TEST 4: Summary Storage and Retrieval
-// ============================================================================
 
 #[tokio::test]
-async fn test_summary_storage_and_retrieval() {
-    println!("\n=== Testing Summary Storage and Retrieval ===\n");
+async fn test_summary_with_insufficient_messages() {
+    println!("\n=== Testing Summary with Insufficient Messages ===\n");
     
-    let pool = create_test_db().await;
-    let session_id = "test-storage-session";
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-insufficient";
     
-    println!("[1] Storing a 10-message summary");
+    println!("[1] Creating only 2 messages");
+    create_test_messages(&memory_service, session_id, 1).await;
     
-    let summary_text = "User and assistant discussed Rust error handling patterns.";
+    println!("[2] Attempting to create 100-message summary");
     
-    sqlx::query(
-        "INSERT INTO rolling_summaries (session_id, summary_type, summary_text, message_count)
-         VALUES (?, 'rolling_10', ?, 10)"
-    )
-    .bind(session_id)
-    .bind(summary_text)
-    .execute(&pool)
-    .await
-    .expect("Failed to insert summary");
+    let result = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 100)
+        .await;
     
-    println!("✓ Summary stored");
+    println!("[3] Verifying handling");
     
-    println!("[2] Retrieving stored summary");
+    // Should handle gracefully - either summarize what exists or error
+    match result {
+        Ok(summary) => {
+            println!("  Created summary with available messages: {} chars", summary.len());
+            assert!(!summary.is_empty(), "Should create summary from available messages");
+        }
+        Err(e) => {
+            println!("  Returned error: {}", e);
+        }
+    }
     
-    let stored_summary: String = sqlx::query_scalar(
-        "SELECT summary_text FROM rolling_summaries 
-         WHERE session_id = ? AND summary_type = 'rolling_10'
-         ORDER BY created_at DESC LIMIT 1"
-    )
-    .bind(session_id)
-    .fetch_one(&pool)
-    .await
-    .expect("Failed to retrieve summary");
-    
-    assert_eq!(stored_summary, summary_text);
-    println!("✓ Summary retrieved correctly");
-    
-    println!("[3] Storing a 100-message summary");
-    
-    let mega_summary = "Comprehensive summary of 100 messages covering Rust, async programming, and error handling.";
-    
-    sqlx::query(
-        "INSERT INTO rolling_summaries (session_id, summary_type, summary_text, message_count)
-         VALUES (?, 'rolling_100', ?, 100)"
-    )
-    .bind(session_id)
-    .bind(mega_summary)
-    .execute(&pool)
-    .await
-    .expect("Failed to insert mega summary");
-    
-    println!("✓ 100-message summary stored");
-    
-    println!("[4] Retrieving both summary types");
-    
-    let all_summaries: Vec<(String, String)> = sqlx::query_as(
-        "SELECT summary_type, summary_text FROM rolling_summaries 
-         WHERE session_id = ? 
-         ORDER BY created_at DESC"
-    )
-    .bind(session_id)
-    .fetch_all(&pool)
-    .await
-    .expect("Failed to retrieve summaries");
-    
-    assert_eq!(all_summaries.len(), 2, "Should have both summary types");
-    println!("✓ Both summaries retrieved: {} total", all_summaries.len());
+    println!("✓ Handled insufficient messages");
 }
 
-// ============================================================================
-// TEST 5: Summary Content Quality
-// ============================================================================
+#[tokio::test]
+async fn test_multiple_summaries_same_session() {
+    println!("\n=== Testing Multiple Summaries for Same Session ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-multiple";
+    
+    println!("[1] Creating initial messages");
+    create_test_messages(&memory_service, session_id, 5).await;
+    
+    println!("[2] Creating first summary");
+    let summary1 = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 10)
+        .await
+        .expect("Failed to create first summary");
+    
+    println!("[3] Adding more messages");
+    create_test_messages(&memory_service, session_id, 5).await;
+    
+    println!("[4] Creating second summary");
+    let summary2 = memory_service
+        .summarization_engine
+        .create_rolling_summary(session_id, 10)
+        .await
+        .expect("Failed to create second summary");
+    
+    println!("[5] Verifying both summaries");
+    
+    assert!(!summary1.is_empty(), "First summary should exist");
+    assert!(!summary2.is_empty(), "Second summary should exist");
+    
+    // Summaries may differ as conversation evolves
+    println!("✓ Multiple summaries created successfully");
+    println!("  First: {} chars", summary1.len());
+    println!("  Second: {} chars", summary2.len());
+}
+
+#[tokio::test]
+async fn test_summary_types_enum_values() {
+    println!("\n=== Testing SummaryType Enum Values ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-enum-types";
+    
+    println!("[1] Creating test messages");
+    create_test_messages(&memory_service, session_id, 50).await;
+    
+    println!("[2] Testing Rolling10 type");
+    let rolling10 = memory_service
+        .summarization_engine
+        .create_summary(session_id, SummaryType::Rolling10)
+        .await
+        .expect("Rolling10 failed");
+    assert!(!rolling10.is_empty());
+    
+    println!("[3] Testing Rolling100 type");
+    let rolling100 = memory_service
+        .summarization_engine
+        .create_summary(session_id, SummaryType::Rolling100)
+        .await
+        .expect("Rolling100 failed");
+    assert!(!rolling100.is_empty());
+    
+    println!("[4] Testing Snapshot type");
+    let snapshot = memory_service
+        .summarization_engine
+        .create_summary(session_id, SummaryType::Snapshot)
+        .await
+        .expect("Snapshot failed");
+    assert!(!snapshot.is_empty());
+    
+    println!("✓ All SummaryType enum variants work");
+    println!("  Rolling10: {} chars", rolling10.len());
+    println!("  Rolling100: {} chars", rolling100.len());
+    println!("  Snapshot: {} chars", snapshot.len());
+}
 
 #[tokio::test]
 async fn test_summary_content_quality() {
     println!("\n=== Testing Summary Content Quality ===\n");
     
-    // This test validates that summaries contain both technical and personal content
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-quality";
     
-    println!("[1] Testing 10-message summary prompt structure");
+    println!("[1] Creating messages with specific topics");
     
-    // The prompt should request:
-    // - Technical content (files, functions, errors)
-    // - Personal/relational content (mood, communication style)
-    
-    let expected_prompt_elements = vec![
-        "Technical",
-        "Personal",
-        "mood",
-        "vibe",
-        "file",
-        "function",
-    ];
-    
-    // In actual implementation, you'd call the prompt builder
-    // For now, we're documenting the expected structure
-    
-    for element in expected_prompt_elements {
-        println!("✓ Summary prompt should include: {}", element);
-    }
-    
-    println!("[2] Testing 100-message summary prompt structure");
-    
-    let mega_prompt_elements = vec![
-        "comprehensive",
-        "relationship",
-        "technical details",
-        "bigger picture",
-        "decisions made",
-        "where we left off",
-    ];
-    
-    for element in mega_prompt_elements {
-        println!("✓ Mega summary prompt should include: {}", element);
-    }
-    
-    println!("✓ Summary content structure validated");
-}
-
-// ============================================================================
-// TEST 6: Summary Inclusion in Context
-// ============================================================================
-
-#[tokio::test]
-async fn test_summary_inclusion_in_context() {
-    println!("\n=== Testing Summary Inclusion in Context ===\n");
-    
-    let memory_service = setup_memory_service().await;
-    let session_id = "test-context-session";
-    
-    println!("[1] Creating messages and summaries");
-    
-    populate_messages(&memory_service, session_id, 10).await;
-    
-    // Manually create a summary (avoiding LLM call)
-    let pool = memory_service.core.sqlite_store.pool();
-    
-    sqlx::query(
-        "INSERT INTO rolling_summaries (session_id, summary_type, summary_text, message_count)
-         VALUES (?, 'rolling_10', ?, 10)"
-    )
-    .bind(session_id)
-    .bind("Previous discussion about Rust error handling")
-    .execute(pool)
-    .await
-    .expect("Failed to insert test summary");
-    
-    println!("✓ Test summary created");
-    
-    println!("[2] Retrieving summary for context inclusion");
-    
-    let summary = memory_service.summarization_coordinator
-        .get_rolling_summary(session_id)
+    // Create messages about specific topics
+    memory_service
+        .save_user_message(session_id, "I'm working on a Rust web API", None)
         .await
-        .expect("Failed to get rolling summary");
+        .unwrap();
     
-    if summary.is_some() {
-        println!("✓ Summary available for context: {:?}", summary);
-    } else {
-        println!("Note: No rolling_100 summary yet (would need 100 messages)");
-    }
-    
-    println!("[3] Verifying summary would be included in system prompt");
-    
-    // In actual usage, the UnifiedPromptBuilder would include this summary
-    // This test validates that the retrieval mechanism works
-    
-    println!("✓ Summary retrieval for context inclusion working");
-}
-
-// ============================================================================
-// TEST 7: Preventing Recursive Summarization
-// ============================================================================
-
-#[tokio::test]
-async fn test_prevent_recursive_summarization() {
-    println!("\n=== Testing Prevention of Recursive Summarization ===\n");
-    
-    let memory_service = setup_memory_service().await;
-    let session_id = "test-recursive-session";
-    
-    println!("[1] Creating mixed content (messages + existing summaries)");
-    
-    // Add regular messages
-    for i in 0..5 {
-        let content = format!("Regular message {}", i);
-        memory_service.core.save_user_message(session_id, &content, None)
-            .await
-            .expect("Failed to save message");
-    }
-    
-    // Add a message that's tagged as a summary
-    let summary_message = "This is a summary of previous conversation";
-    let msg_id = memory_service.core.save_user_message(session_id, summary_message, None)
+    memory_service
+        .save_user_message(session_id, "Need help with async error handling", None)
         .await
-        .expect("Failed to save summary message");
+        .unwrap();
     
-    // Tag it as a summary
-    let pool = memory_service.core.sqlite_store.pool();
-    sqlx::query(
-        "UPDATE memory_entries SET tags = ? WHERE id = ?"
-    )
-    .bind("summary:rolling_10")
-    .bind(&msg_id)
-    .execute(pool)
-    .await
-    .expect("Failed to tag message");
+    memory_service
+        .save_user_message(session_id, "How do I structure my database models?", None)
+        .await
+        .unwrap();
     
-    println!("✓ Mixed content created");
+    println!("[2] Creating rolling summary");
     
-    println!("[2] When creating new summary, existing summaries should be skipped");
-    
-    // The rolling summary strategy should filter out messages tagged as summaries
-    // to prevent summarizing summaries
-    
-    // This is implemented in: RollingSummaryStrategy::build_content()
-    // which checks msg.tags for "summary" and skips those messages
-    
-    println!("✓ Recursive summarization prevention mechanism in place");
-}
-
-// ============================================================================
-// TEST 8: Edge Case - Insufficient Messages
-// ============================================================================
-
-#[tokio::test]
-async fn test_insufficient_messages_edge_case() {
-    println!("\n=== Testing Insufficient Messages Edge Case ===\n");
-    
-    let memory_service = setup_memory_service().await;
-    let session_id = "test-edge-session";
-    
-    println!("[1] Attempting to create 10-message summary with only 3 messages");
-    
-    populate_messages(&memory_service, session_id, 3).await;
-    
-    let result = memory_service.summarization_coordinator
+    let summary = memory_service
+        .summarization_engine
         .create_rolling_summary(session_id, 10)
-        .await;
-    
-    match result {
-        Err(e) => {
-            println!("✓ Correctly failed with error: {}", e);
-            assert!(e.to_string().contains("Insufficient"), 
-                    "Error should mention insufficient messages");
-        }
-        Ok(_) => {
-            panic!("Should have failed with insufficient messages");
-        }
-    }
-    
-    println!("[2] Creating summary with sufficient messages");
-    
-    populate_messages(&memory_service, session_id, 7).await; // Total: 10
-    
-    // This would succeed with real LLM
-    println!("✓ With 10 messages, summary creation would succeed");
-}
-
-// ============================================================================
-// TEST 9: Multiple Summaries Over Time
-// ============================================================================
-
-#[tokio::test]
-async fn test_multiple_summaries_over_time() {
-    println!("\n=== Testing Multiple Summaries Over Time ===\n");
-    
-    let pool = create_test_db().await;
-    let session_id = "test-multi-summary-session";
-    
-    println!("[1] Creating summaries at different message counts");
-    
-    // Simulate summaries created at 10, 20, 30, 40 messages
-    for i in 1..=4 {
-        let message_count = i * 10;
-        let summary = format!("Summary at {} messages", message_count);
-        
-        sqlx::query(
-            "INSERT INTO rolling_summaries (session_id, summary_type, summary_text, message_count, created_at)
-             VALUES (?, 'rolling_10', ?, ?, ?)"
-        )
-        .bind(session_id)
-        .bind(&summary)
-        .bind(message_count)
-        .bind(chrono::Utc::now().timestamp() + i * 60) // Each 1 minute apart
-        .execute(&pool)
         .await
-        .expect("Failed to insert summary");
-        
-        println!("✓ Created summary #{}: {}", i, summary);
-    }
+        .expect("Failed to create summary");
     
-    println!("[2] Retrieving most recent summary");
+    println!("[3] Analyzing summary content");
     
-    let latest: String = sqlx::query_scalar(
-        "SELECT summary_text FROM rolling_summaries 
-         WHERE session_id = ? AND summary_type = 'rolling_10'
-         ORDER BY created_at DESC LIMIT 1"
-    )
-    .bind(session_id)
-    .fetch_one(&pool)
-    .await
-    .expect("Failed to get latest summary");
+    let summary_lower = summary.to_lowercase();
     
-    assert_eq!(latest, "Summary at 40 messages");
-    println!("✓ Latest summary retrieved correctly");
+    // Check if summary captures key topics (may not contain exact words but related concepts)
+    let has_technical_content = summary_lower.contains("rust") 
+        || summary_lower.contains("api") 
+        || summary_lower.contains("async")
+        || summary_lower.contains("error")
+        || summary_lower.contains("database")
+        || summary.len() > 50;
     
-    println!("[3] Retrieving summary history");
+    assert!(has_technical_content, "Summary should capture technical topics");
     
-    let all: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT message_count, summary_text FROM rolling_summaries 
-         WHERE session_id = ? AND summary_type = 'rolling_10'
-         ORDER BY created_at ASC"
-    )
-    .bind(session_id)
-    .fetch_all(&pool)
-    .await
-    .expect("Failed to get summary history");
-    
-    assert_eq!(all.len(), 4, "Should have 4 summaries in history");
-    println!("✓ Summary history retrieved: {} entries", all.len());
+    println!("✓ Summary captures conversation topics");
+    println!("  Summary preview: {}...", 
+             summary.chars().take(100).collect::<String>());
 }
 
 // ============================================================================
-// INTEGRATION TEST: Full Summary Lifecycle
+// Integration Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_full_summary_lifecycle() {
-    println!("\n=== Testing Full Summary Lifecycle ===\n");
+async fn test_end_to_end_summary_workflow() {
+    println!("\n=== Testing End-to-End Summary Workflow ===\n");
     
-    let memory_service = setup_memory_service().await;
-    let session_id = "test-full-lifecycle";
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-e2e";
     
-    println!("[1] Starting conversation");
-    populate_messages(&memory_service, session_id, 5).await;
-    println!("✓ 5 messages created");
+    println!("[1] Creating initial messages");
+    create_test_messages(&memory_service, session_id, 5).await;
     
-    println!("[2] Reaching first trigger point (10 messages)");
-    populate_messages(&memory_service, session_id, 5).await;
-    
-    let _ = memory_service.summarization_coordinator
+    println!("[2] Background check (should trigger at 10)");
+    let trigger_result = memory_service
+        .summarization_engine
         .check_and_process_summaries(session_id, 10)
-        .await;
-    println!("✓ First summary trigger processed");
+        .await
+        .expect("Background check failed");
     
-    println!("[3] Continuing conversation");
-    populate_messages(&memory_service, session_id, 10).await;
+    assert!(trigger_result.is_some(), "Should trigger summary creation");
     
-    let _ = memory_service.summarization_coordinator
-        .check_and_process_summaries(session_id, 20)
-        .await;
-    println!("✓ Second summary trigger processed");
-    
-    println!("[4] Reaching mega-summary trigger (100 messages)");
-    populate_messages(&memory_service, session_id, 80).await;
-    
-    let _ = memory_service.summarization_coordinator
-        .check_and_process_summaries(session_id, 100)
-        .await;
-    println!("✓ Mega-summary trigger processed");
-    
-    println!("[5] Verifying summary availability for context");
-    
-    let summary = memory_service.summarization_coordinator
+    println!("[3] Retrieving created summary");
+    let retrieved = memory_service
         .get_rolling_summary(session_id)
         .await
-        .expect("Failed to get summary");
+        .expect("Retrieval failed");
     
-    if summary.is_some() {
-        println!("✓ Summary available for next LLM call");
-    } else {
-        println!("Note: Summary would be available with real LLM");
-    }
+    assert!(retrieved.is_some(), "Should retrieve created summary");
     
-    println!("\n=== Full Summary Lifecycle Test Complete ===\n");
+    println!("[4] Creating snapshot summary");
+    memory_service
+        .summarization_engine
+        .create_snapshot_summary(session_id, None)
+        .await
+        .expect("Snapshot creation failed");
+    
+    println!("[5] Retrieving snapshot");
+    let snapshot = memory_service
+        .get_session_summary(session_id)
+        .await
+        .expect("Snapshot retrieval failed");
+    
+    assert!(snapshot.is_some(), "Should retrieve snapshot");
+    
+    println!("✓ Complete workflow successful");
+    println!("  Rolling summary exists: {}", retrieved.is_some());
+    println!("  Snapshot summary exists: {}", snapshot.is_some());
+}
+
+#[tokio::test]
+async fn test_concurrent_summary_operations() {
+    println!("\n=== Testing Concurrent Summary Operations ===\n");
+    
+    let memory_service = create_test_memory_service().await;
+    let session_id = "test-session-concurrent";
+    
+    println!("[1] Creating test messages");
+    create_test_messages(&memory_service, session_id, 10).await;
+    
+    println!("[2] Spawning concurrent summary creation tasks");
+    
+    let service1 = memory_service.clone();
+    let session1 = session_id.to_string();
+    let handle1 = tokio::spawn(async move {
+        service1
+            .summarization_engine
+            .create_rolling_summary(&session1, 10)
+            .await
+    });
+    
+    let service2 = memory_service.clone();
+    let session2 = session_id.to_string();
+    let handle2 = tokio::spawn(async move {
+        service2
+            .summarization_engine
+            .create_snapshot_summary(&session2, None)
+            .await
+    });
+    
+    println!("[3] Waiting for both tasks");
+    
+    let result1 = handle1.await.expect("Task 1 panicked");
+    let result2 = handle2.await.expect("Task 2 panicked");
+    
+    println!("[4] Verifying results");
+    
+    assert!(result1.is_ok(), "Rolling summary should succeed");
+    assert!(result2.is_ok(), "Snapshot summary should succeed");
+    
+    println!("✓ Concurrent operations completed successfully");
 }

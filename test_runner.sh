@@ -118,6 +118,10 @@ OPTIONS:
     deepseek            Run DeepSeek live API tests only
     code-embedding      Run code embedding and search tests only
     embedding-cleanup   Run embedding cleanup (orphan removal) tests only
+    context-builder     Run context builder & prompt assembly tests only
+    rolling-summary     Run rolling summary generation tests only
+    websocket-conn      Run WebSocket connection tests only
+    websocket-routing   Run WebSocket message routing tests only
     quick               Run quick smoke test (complete message flow)
     cleanup             Clean up Qdrant test collections
     list                List all available tests
@@ -131,6 +135,10 @@ EXAMPLES:
     ./test_runner.sh deepseek           # Run DeepSeek live API tests
     ./test_runner.sh code-embedding     # Run code embedding tests
     ./test_runner.sh embedding-cleanup  # Run embedding cleanup tests
+    ./test_runner.sh context-builder    # Run context builder tests
+    ./test_runner.sh rolling-summary    # Run rolling summary tests
+    ./test_runner.sh websocket-conn     # Run WebSocket connection tests
+    ./test_runner.sh websocket-routing  # Run WebSocket routing tests
     ./test_runner.sh quick              # Quick smoke test
     ./test_runner.sh cleanup            # Clean up test data
 
@@ -188,6 +196,22 @@ list_tests() {
     
     echo -e "${YELLOW}Embedding Cleanup Tests (embedding_cleanup_test):${NC}"
     cargo test --test embedding_cleanup_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Context Builder & Prompt Assembly Tests (context_builder_prompt_assembly_test):${NC}"
+    cargo test --test context_builder_prompt_assembly_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Rolling Summary Tests (rolling_summary_test):${NC}"
+    cargo test --test rolling_summary_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}WebSocket Connection Tests (websocket_connection_test):${NC}"
+    cargo test --test websocket_connection_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}WebSocket Message Routing Tests (websocket_message_routing_test):${NC}"
+    cargo test --test websocket_message_routing_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
 }
 
@@ -320,6 +344,42 @@ main() {
             exit $?
             ;;
         
+        context-builder)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "context_builder_prompt_assembly_test" "$test_flags"
+            exit $?
+            ;;
+        
+        rolling-summary)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "rolling_summary_test" "$test_flags"
+            exit $?
+            ;;
+        
+        websocket-conn)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "websocket_connection_test" "$test_flags"
+            exit $?
+            ;;
+        
+        websocket-routing)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "websocket_message_routing_test" "$test_flags"
+            exit $?
+            ;;
+        
         quick)
             check_prerequisites
             if [ -z "$NO_CLEANUP" ]; then
@@ -354,6 +414,10 @@ main() {
             run_test "deepseek_live_test" "$test_flags" || failed=$((failed + 1))
             run_test "code_embedding_test" "$test_flags" || failed=$((failed + 1))
             run_test "embedding_cleanup_test" "$test_flags" || failed=$((failed + 1))
+            run_test "context_builder_prompt_assembly_test" "$test_flags" || failed=$((failed + 1))
+            run_test "rolling_summary_test" "$test_flags" || failed=$((failed + 1))
+            run_test "websocket_connection_test" "$test_flags" || failed=$((failed + 1))
+            run_test "websocket_message_routing_test" "$test_flags" || failed=$((failed + 1))
             
             # Summary
             echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
