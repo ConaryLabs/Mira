@@ -1792,6 +1792,7 @@ dependencies = [
  "swc_ecma_parser",
  "swc_ecma_visit",
  "syn 2.0.108",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

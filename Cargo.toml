@@ -2,27 +2,21 @@
 name = "mira-backend"
 version = "0.9.0"
 edition = "2024"
-
 [lib]
 name = "mira_backend"
 path = "src/lib.rs"
-
 [dependencies]
 # Web framework - WebSocket only
 axum = { version = "0.7", features = ["macros", "ws"] }
 tokio = { version = "1.38", features = ["full"] }
-
 # Serialization
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-
 # HTTP client for external APIs (OpenAI, etc)
 reqwest = { version = "0.12.4", features = ["json", "rustls-tls", "stream", "multipart"] }
-
 # Database
 sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
 libsqlite3-sys = { version = "0.27", features = ["bundled"] }
-
 # Core utilities
 dotenv = "0.15.0"
 tracing = "0.1.40"
@@ -36,19 +30,15 @@ async-stream = "0.3"
 clap = { version = "4.5", features = ["derive"] }
 thiserror = "1.0"
 lazy_static = "1.5.0"
-
 # Git integration
 git2 = "0.18.3"
-
 # File and data handling
 base64 = "0.22"
 bytes = "1.5"
-
 # Streaming and async - UPDATED FOR STREAMING SUPPORT
 tokio-stream = { version = "0.1", features = ["net", "io-util"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3.31"
-
 # Rate limiting and retry logic
 governor = "0.6"
 parking_lot = "0.12.4"
@@ -57,10 +47,8 @@ sha2 = "0.10.9"
 syn = { version = "2.0.106", features = ["full", "extra-traits", "visit"] }
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
 regex = "1.11.2"
-
 # Vector database
 qdrant-client = "1.12"
-
 # Document processing
 pdf-extract = "0.7"
 lopdf = "0.34"
@@ -73,8 +61,8 @@ swc_ecma_ast = "15.0.0"
 swc_common = "14.0.4"
 swc_ecma_visit = "15.0.0"
 walkdir = "2.5.0"
-
 [dev-dependencies]
+tempfile = "3.8"
 tokio-tungstenite = "0.27.0"
 url = "2.5.0"
 uuid = { version = "1.8", features = ["v4"] }
