@@ -79,7 +79,8 @@ impl SummarizationEngine {
                 .store_summary(session_id, &summary, summary_type, messages.len())
                 .await?;
             
-            Ok(Some(format!("Created {}-message summary", window_size)))
+            // FIXED: Return actual summary text, not status message
+            Ok(Some(summary))
         } else {
             Ok(None)
         }
@@ -109,7 +110,8 @@ impl SummarizationEngine {
             .store_summary(session_id, &summary, summary_type, messages.len())
             .await?;
         
-        Ok(format!("Created {}-message rolling summary", window_size))
+        // FIXED: Return actual summary text, not status message
+        Ok(summary)
     }
     
     /// Manual trigger for snapshot summary (API/WebSocket calls)  
@@ -142,9 +144,10 @@ impl SummarizationEngine {
             .get_latest_summaries(session_id)
             .await?;
         
-        // Find the rolling_100 summary
+        // FIXED: Look for rolling_100 first, fallback to rolling_10
         let rolling_summary = summaries.iter()
             .find(|s| s.summary_type == "rolling_100")
+            .or_else(|| summaries.iter().find(|s| s.summary_type == "rolling_10"))
             .map(|s| s.summary_text.clone());
         
         Ok(rolling_summary)

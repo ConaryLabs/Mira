@@ -28,7 +28,7 @@ async fn test_legacy_chat_protocol_flow() {
     // Simulate the full legacy protocol flow:
     // 1. status: "thinking"
     // 2. Multiple stream deltas
-    // 3. chat_complete with full content and artifacts
+    // 3. chat_complete with bundled artifacts (legacy protocol bundles artifacts in completion message)
     
     let (tx, mut rx) = mpsc::channel::<Value>(100);
     
@@ -76,7 +76,7 @@ async fn test_legacy_chat_protocol_flow() {
         received_messages.push(msg);
     }
     
-    assert_eq!(received_messages.len(), 9, "Should receive 9 messages (1 status + 6 streams + 1 complete + 1 artifact)");
+    assert_eq!(received_messages.len(), 8, "Should receive 8 messages (1 status + 6 streams + 1 complete with bundled artifacts)");
     
     // Verify first message is status
     assert_eq!(received_messages[0]["type"], "status");

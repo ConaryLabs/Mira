@@ -12,7 +12,8 @@ use mira_backend::memory::{
     },
     features::memory_types::SummaryType,
 };
-use mira_backend::llm::provider::{OpenAiProvider, OpenAiEmbeddings};
+use mira_backend::llm::provider::OpenAiEmbeddings;
+use mira_backend::llm::provider::gpt5::Gpt5Provider;
 use mira_backend::config::CONFIG;
 
 // ============================================================================
@@ -34,22 +35,30 @@ async fn create_test_memory_service() -> Arc<MemoryService> {
     let sqlite_store = Arc::new(SqliteMemoryStore::new(pool));
     
     // Create Qdrant multi-store
-    let qdrant_url = CONFIG.qdrant.url.clone();
+    let qdrant_url = &CONFIG.qdrant_url;
+    let collection_base = &CONFIG.qdrant_collection;
     let multi_store = Arc::new(
-        QdrantMultiStore::new(&qdrant_url)
+        QdrantMultiStore::new(qdrant_url, collection_base)
             .await
             .expect("Failed to create Qdrant multi-store")
     );
     
-    // Create LLM provider
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY must be set for tests");
-    let llm_provider = Arc::new(OpenAiProvider::new(api_key.clone(), "gpt-4o-mini".to_string()));
+    // Create LLM provider - use Gpt5Provider with CONFIG settings
+    let api_key = CONFIG.gpt5_api_key.clone();
+    let llm_provider = Arc::new(Gpt5Provider::new(
+        api_key.clone(),
+        CONFIG.gpt5_model.clone(),
+        CONFIG.gpt5_max_tokens,
+        CONFIG.gpt5_verbosity.clone(),
+        CONFIG.gpt5_reasoning.clone(),
+    ));
     
-    // Create embedding client
+    // Create embedding client - use CONFIG settings
     let embedding_client = Arc::new(
-        OpenAiEmbeddings::new(api_key, "text-embedding-3-small".to_string())
-            .expect("Failed to create embedding client")
+        OpenAiEmbeddings::new(
+            CONFIG.openai_api_key.clone(),
+            CONFIG.openai_embedding_model.clone()
+        )
     );
     
     Arc::new(MemoryService::new(
@@ -574,9 +583,14 @@ async fn test_summary_content_quality() {
     
     println!("[1] Creating messages with specific topics");
     
-    // Create messages about specific topics
+    // Create messages about specific topics - need at least 10 for rolling summary
     memory_service
         .save_user_message(session_id, "I'm working on a Rust web API", None)
+        .await
+        .unwrap();
+    
+    memory_service
+        .save_assistant_message(session_id, "Great! What specifically are you building?", None)
         .await
         .unwrap();
     
@@ -586,7 +600,38 @@ async fn test_summary_content_quality() {
         .unwrap();
     
     memory_service
+        .save_assistant_message(session_id, "Let me explain async error patterns in Rust", None)
+        .await
+        .unwrap();
+    
+    memory_service
         .save_user_message(session_id, "How do I structure my database models?", None)
+        .await
+        .unwrap();
+    
+    memory_service
+        .save_assistant_message(session_id, "Here are some best practices for database models", None)
+        .await
+        .unwrap();
+    
+    // Add a few more to reach 10 messages
+    memory_service
+        .save_user_message(session_id, "What about connection pooling?", None)
+        .await
+        .unwrap();
+    
+    memory_service
+        .save_assistant_message(session_id, "Connection pools are important for performance", None)
+        .await
+        .unwrap();
+    
+    memory_service
+        .save_user_message(session_id, "Should I use SQLx or Diesel?", None)
+        .await
+        .unwrap();
+    
+    memory_service
+        .save_assistant_message(session_id, "Both are good choices, here's the tradeoff", None)
         .await
         .unwrap();
     
