@@ -10,7 +10,7 @@ Mira orchestrates specialized LLMs (GPT-5 for reasoning, DeepSeek for code gener
 
 ### Prerequisites
 
-- **Rust 1.75+** (`rustup`)
+- **Rust 1.88+** (`rustup`)
 - **SQLite 3.35+**
 - **Qdrant** (vector database) running on `localhost:6333`
 - **API Keys**: OpenAI (GPT-5 + embeddings), DeepSeek
