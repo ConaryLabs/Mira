@@ -10,7 +10,7 @@ Mira orchestrates specialized LLMs (GPT-5 for reasoning, DeepSeek for code gener
 
 ### Prerequisites
 
-- **Rust 1.88+** (`rustup`)
+- **Rust 1.75+** (`rustup`)
 - **SQLite 3.35+**
 - **Qdrant** (vector database) running on `localhost:6333`
 - **API Keys**: OpenAI (GPT-5 + embeddings), DeepSeek
@@ -49,11 +49,11 @@ Server starts on `ws://localhost:8080/ws`
 │         WebSocket Layer (Bidirectional)         │
 └───────────────────┬─────────────────────────────┘
                     │
-┌───────────────────▼─────────────────────────────┐
+┌───────────────────▼─────────────────────────────────┐
 │         Unified Chat Handler (Router)            │
 │  • Simple chat → GPT-5 direct                   │
 │  • Complex ops → Operation Engine               │
-└───────────────────┬─────────────────────────────┘
+└───────────────────┬─────────────────────────────────┘
                     │
         ┌───────────┴───────────┐
         │                       │
@@ -64,12 +64,12 @@ Server starts on `ws://localhost:8080/ws`
          │                     │
          └──────────┬──────────┘
                     │
-┌───────────────────▼─────────────────────────────┐
+┌───────────────────▼─────────────────────────────────┐
 │              Storage Layer                       │
 │  • SQLite (structured data)                     │
 │  • Qdrant (vector embeddings)                   │
 │  • Git (code context)                           │
-└─────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────┘
 ```
 
 ### Key Components
@@ -284,18 +284,24 @@ mira-backend/
 │       ├── code_sync.rs           # Code synchronization
 │       ├── embedding_cleanup.rs   # Embedding maintenance
 │       └── metrics.rs             # Metrics collection
-└── tests/                         # Integration tests
-    ├── operation_engine_test.rs
-    ├── phase6_integration_test.rs
-    ├── phase7_routing_test.rs
-    ├── e2e_data_flow_test.rs
-    ├── artifact_flow_test.rs
-    ├── message_pipeline_flow_test.rs
-    ├── storage_embedding_flow_test.rs
-    ├── code_embedding_test.rs
-    ├── embedding_cleanup_test.rs
-    ├── deepseek_live_test.rs
-    └── phase5_providers_test.rs
+└── tests/                         # Integration tests (17 suites, 127+ tests)
+    ├── artifact_flow_test.rs                     # Artifact CRUD & isolation
+    ├── code_embedding_test.rs                    # Code parsing & semantic search
+    ├── context_builder_prompt_assembly_test.rs   # Context gathering & prompts
+    ├── deepseek_live_test.rs                     # DeepSeek live API integration
+    ├── e2e_data_flow_test.rs                     # End-to-end data flows
+    ├── embedding_cleanup_test.rs                 # Orphan embedding removal
+    ├── git_operations_test.rs                    # Git clone/import/sync
+    ├── message_pipeline_flow_test.rs             # Message analysis pipeline
+    ├── operation_engine_test.rs                  # Operation orchestration
+    ├── phase5_providers_test.rs                  # Provider implementations
+    ├── phase6_integration_test.rs                # Provider integration
+    ├── phase7_routing_test.rs                    # Message routing logic
+    ├── relationship_facts_test.rs                # Relationship tracking
+    ├── rolling_summary_test.rs                   # Summary generation
+    ├── storage_embedding_flow_test.rs            # Storage & embedding flows
+    ├── websocket_connection_test.rs              # WebSocket connection mgmt
+    └── websocket_message_routing_test.rs         # WebSocket message routing
 ```
 
 ---
