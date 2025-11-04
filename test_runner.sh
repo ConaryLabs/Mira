@@ -120,8 +120,10 @@ OPTIONS:
     embedding-cleanup   Run embedding cleanup (orphan removal) tests only
     context-builder     Run context builder & prompt assembly tests only
     rolling-summary     Run rolling summary generation tests only
+    relationship-facts  Run relationship facts extraction tests only
     websocket-conn      Run WebSocket connection tests only
     websocket-routing   Run WebSocket message routing tests only
+    git-operations      Run git operations (clone, import, sync) tests only
     quick               Run quick smoke test (complete message flow)
     cleanup             Clean up Qdrant test collections
     list                List all available tests
@@ -137,8 +139,10 @@ EXAMPLES:
     ./test_runner.sh embedding-cleanup  # Run embedding cleanup tests
     ./test_runner.sh context-builder    # Run context builder tests
     ./test_runner.sh rolling-summary    # Run rolling summary tests
+    ./test_runner.sh relationship-facts # Run relationship facts tests
     ./test_runner.sh websocket-conn     # Run WebSocket connection tests
     ./test_runner.sh websocket-routing  # Run WebSocket routing tests
+    ./test_runner.sh git-operations     # Run git operations tests
     ./test_runner.sh quick              # Quick smoke test
     ./test_runner.sh cleanup            # Clean up test data
 
@@ -206,12 +210,20 @@ list_tests() {
     cargo test --test rolling_summary_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
     
+    echo -e "${YELLOW}Relationship Facts Tests (relationship_facts_test):${NC}"
+    cargo test --test relationship_facts_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
     echo -e "${YELLOW}WebSocket Connection Tests (websocket_connection_test):${NC}"
     cargo test --test websocket_connection_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
     
     echo -e "${YELLOW}WebSocket Message Routing Tests (websocket_message_routing_test):${NC}"
     cargo test --test websocket_message_routing_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
+    echo ""
+    
+    echo -e "${YELLOW}Git Operations Tests (git_operations_test):${NC}"
+    cargo test --test git_operations_test -- --list 2>/dev/null | grep "test_" | sed 's/^/  /' || echo "  (test file not found)"
     echo ""
 }
 
@@ -362,6 +374,15 @@ main() {
             exit $?
             ;;
         
+        relationship-facts)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "relationship_facts_test" "$test_flags"
+            exit $?
+            ;;
+        
         websocket-conn)
             check_prerequisites
             if [ -z "$NO_CLEANUP" ]; then
@@ -377,6 +398,15 @@ main() {
                 cleanup_qdrant
             fi
             run_test "websocket_message_routing_test" "$test_flags"
+            exit $?
+            ;;
+        
+        git-operations|git)
+            check_prerequisites
+            if [ -z "$NO_CLEANUP" ]; then
+                cleanup_qdrant
+            fi
+            run_test "git_operations_test" "$test_flags"
             exit $?
             ;;
         
@@ -416,8 +446,10 @@ main() {
             run_test "embedding_cleanup_test" "$test_flags" || failed=$((failed + 1))
             run_test "context_builder_prompt_assembly_test" "$test_flags" || failed=$((failed + 1))
             run_test "rolling_summary_test" "$test_flags" || failed=$((failed + 1))
+            run_test "relationship_facts_test" "$test_flags" || failed=$((failed + 1))
             run_test "websocket_connection_test" "$test_flags" || failed=$((failed + 1))
             run_test "websocket_message_routing_test" "$test_flags" || failed=$((failed + 1))
+            run_test "git_operations_test" "$test_flags" || failed=$((failed + 1))
             
             # Summary
             echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"

@@ -156,6 +156,10 @@ impl GitOperations {
             .await
             .into_api_error("Failed to update import status")?;
 
+        self.store.update_last_imported(&attachment.id, Utc::now())
+            .await
+            .into_api_error("Failed to update last imported time")?;
+
         self.store.update_last_sync(&attachment.id, Utc::now())
             .await
             .into_api_error("Failed to update last sync time")?;
