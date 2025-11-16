@@ -24,7 +24,12 @@ export const useWebSocketMessageHandler = () => {
     startStreaming,
     appendStreamContent,
     endStreaming,
-    addMessage
+    addMessage,
+    updateMessagePlan,
+    addMessageTask,
+    updateTaskStatus,
+    setMessageOperationId,
+    streamingMessageId
   } = useChatStore();
 
   useEffect(() => {
@@ -137,6 +142,72 @@ export const useWebSocketMessageHandler = () => {
       case 'operation.status_changed': {
         // Status update - log it
         console.log('[WS-Global] Operation status:', data.status);
+        return;
+      }
+
+      // PLANNING MODE & TASK TRACKING
+      case 'operation.plan_generated': {
+        // Plan was generated for the operation
+        console.log('[WS-Global] Plan generated:', data.operation_id);
+
+        if (streamingMessageId) {
+          // Set operation ID on the streaming message
+          setMessageOperationId(streamingMessageId, data.operation_id);
+
+          // Update message with plan
+          updateMessagePlan(streamingMessageId, {
+            plan_text: data.plan_text,
+            reasoning_tokens: data.reasoning_tokens,
+            timestamp: data.timestamp
+          });
+        }
+        return;
+      }
+
+      case 'operation.task_created': {
+        // Task was created for tracking
+        console.log('[WS-Global] Task created:', data.task_id, data.description);
+
+        if (streamingMessageId) {
+          addMessageTask(streamingMessageId, {
+            task_id: data.task_id,
+            sequence: data.sequence,
+            description: data.description,
+            active_form: data.active_form,
+            status: 'pending',
+            timestamp: data.timestamp
+          });
+        }
+        return;
+      }
+
+      case 'operation.task_started': {
+        // Task execution started
+        console.log('[WS-Global] Task started:', data.task_id);
+
+        if (streamingMessageId) {
+          updateTaskStatus(streamingMessageId, data.task_id, 'running');
+        }
+        return;
+      }
+
+      case 'operation.task_completed': {
+        // Task finished successfully
+        console.log('[WS-Global] Task completed:', data.task_id);
+
+        if (streamingMessageId) {
+          updateTaskStatus(streamingMessageId, data.task_id, 'completed');
+        }
+        return;
+      }
+
+      case 'operation.task_failed': {
+        // Task failed
+        console.log('[WS-Global] Task failed:', data.task_id, data.error);
+
+        if (streamingMessageId) {
+          updateTaskStatus(streamingMessageId, data.task_id, 'failed', data.error);
+        }
         return;
       }
 

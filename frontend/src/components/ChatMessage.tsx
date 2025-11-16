@@ -9,6 +9,8 @@ import { ChatMessage as ChatMessageType, Artifact } from '../stores/useChatStore
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useAppState } from '../stores/useAppState';
 import { Check, FileCode, User, Bot } from 'lucide-react';
+import { PlanDisplay } from './PlanDisplay';
+import { TaskTracker } from './TaskTracker';
 
 interface ChatMessageProps {
   message: ChatMessageType & { isStreaming?: boolean };
@@ -196,7 +198,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               <span className="inline-block w-2 h-4 ml-1 bg-blue-500 animate-pulse" />
             )}
           </div>
-          
+
+          {/* Plan Display Section */}
+          {message.plan && (
+            <PlanDisplay plan={message.plan} />
+          )}
+
+          {/* Task Tracker Section */}
+          {message.tasks && message.tasks.length > 0 && (
+            <TaskTracker tasks={message.tasks} operationId={message.operationId} />
+          )}
+
           {/* Artifacts Section */}
           {messageArtifacts.length > 0 && (
             <div className="mt-4 space-y-2 border-t border-gray-700 pt-3">

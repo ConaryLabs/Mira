@@ -18,6 +18,24 @@ export interface Artifact {
   origin?: 'llm' | 'user';
 }
 
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export interface Plan {
+  plan_text: string;
+  reasoning_tokens: number;
+  timestamp: number;
+}
+
+export interface Task {
+  task_id: string;
+  sequence: number;
+  description: string;
+  active_form: string;
+  status: TaskStatus;
+  error?: string;
+  timestamp: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'error'; // ADDED: error role
@@ -26,6 +44,9 @@ export interface ChatMessage {
   timestamp: number;
   isStreaming?: boolean;
   isIncomplete?: boolean; // NEW: Mark messages that were cut off
+  operationId?: string; // NEW: Track which operation this belongs to
+  plan?: Plan; // NEW: Plan generated for this operation
+  tasks?: Task[]; // NEW: Tasks for this operation
   metadata?: {
     session_id?: string;
     project_id?: string;
@@ -42,7 +63,7 @@ interface ChatStore {
   streamingContent: string;
   streamingMessageId: string | null;
   currentStreamingMessageId: string | null; // Alias for compatibility
-  
+
   addMessage: (message: ChatMessage) => void;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   setMessages: (messages: ChatMessage[]) => void;
@@ -55,6 +76,12 @@ interface ChatStore {
   clearStreaming: () => void;
   setStreaming: (streaming: boolean) => void; // NEW: Direct streaming control
   reset: () => void; // NEW: Reset store state
+
+  // NEW: Planning mode and task tracking methods
+  updateMessagePlan: (messageId: string, plan: Plan) => void;
+  addMessageTask: (messageId: string, task: Task) => void;
+  updateTaskStatus: (messageId: string, taskId: string, status: TaskStatus, error?: string) => void;
+  setMessageOperationId: (messageId: string, operationId: string) => void;
 }
 
 const initialState = {
@@ -165,6 +192,59 @@ export const useChatStore = create<ChatStore>()(
           ...initialState,
           messages: [], // Explicitly clear messages
         });
+      },
+
+      // NEW: Planning mode and task tracking implementations
+      updateMessagePlan: (messageId, plan) => {
+        set(state => ({
+          messages: state.messages.map(msg =>
+            msg.id === messageId ? { ...msg, plan } : msg
+          )
+        }));
+      },
+
+      addMessageTask: (messageId, task) => {
+        set(state => ({
+          messages: state.messages.map(msg => {
+            if (msg.id === messageId) {
+              const existingTasks = msg.tasks || [];
+              // Check if task already exists (avoid duplicates)
+              if (existingTasks.some(t => t.task_id === task.task_id)) {
+                return msg;
+              }
+              // Insert task in correct sequence order
+              const updatedTasks = [...existingTasks, task].sort((a, b) => a.sequence - b.sequence);
+              return { ...msg, tasks: updatedTasks };
+            }
+            return msg;
+          })
+        }));
+      },
+
+      updateTaskStatus: (messageId, taskId, status, error) => {
+        set(state => ({
+          messages: state.messages.map(msg => {
+            if (msg.id === messageId && msg.tasks) {
+              return {
+                ...msg,
+                tasks: msg.tasks.map(task =>
+                  task.task_id === taskId
+                    ? { ...task, status, ...(error && { error }) }
+                    : task
+                )
+              };
+            }
+            return msg;
+          })
+        }));
+      },
+
+      setMessageOperationId: (messageId, operationId) => {
+        set(state => ({
+          messages: state.messages.map(msg =>
+            msg.id === messageId ? { ...msg, operationId } : msg
+          )
+        }));
       },
     }),
     {
