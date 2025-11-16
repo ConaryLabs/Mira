@@ -65,6 +65,7 @@ impl ChatAnalyzer {
                     "You are a precise message analyzer. Output only valid JSON matching the schema.".to_string(),
                     "chat_analysis",
                     schema,
+                    None, // Use default reasoning for analysis
                 )
                 .await
                 .map_err(|e| {
@@ -110,6 +111,7 @@ impl ChatAnalyzer {
                     "You are a precise message analyzer. Output only valid JSON matching the schema.".to_string(),
                     "batch_chat_analysis",
                     schema,
+                    None,
                 )
                 .await
                 .map_err(|e| {

@@ -214,7 +214,7 @@ impl Orchestrator {
         // Stream GPT-5 responses and handle tool calls
         let mut stream = self
             .gpt5
-            .create_stream_with_tools(messages, system_prompt, tools, previous_response_id)
+            .create_stream_with_tools(messages, system_prompt, tools, previous_response_id, None) // Use default reasoning
             .await
             .context("Failed to create GPT-5 stream")?;
 
@@ -490,9 +490,10 @@ impl Orchestrator {
         let messages = vec![Message::user(plan_prompt)];
 
         // Stream the plan generation (with empty tools array to get reasoning)
+        // Use HIGH reasoning for better planning quality
         let mut stream = self
             .gpt5
-            .create_stream_with_tools(messages, system_prompt, vec![], None) // Empty tools, no previous_response_id
+            .create_stream_with_tools(messages, system_prompt, vec![], None, Some("high".to_string()))
             .await
             .context("Failed to create GPT-5 planning stream")?;
 

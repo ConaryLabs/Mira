@@ -130,10 +130,10 @@ impl SimpleModeExecutor {
 
         let messages = vec![Message::user(user_content.to_string())];
 
-        // Simple chat - no tools
+        // Simple chat - no tools, use low reasoning for cost savings
         let response = self
             .gpt5
-            .create_with_tools(messages, system_prompt, vec![], None)
+            .create_with_tools(messages, system_prompt, vec![], None, Some("low".to_string()))
             .await?;
 
         Ok(response.content)
@@ -154,10 +154,10 @@ impl SimpleModeExecutor {
 
         let messages = vec![Message::user(user_content.to_string())];
 
-        // Chat with minimal tools
+        // Chat with minimal tools, use low reasoning for cost savings
         let response = self
             .gpt5
-            .create_with_tools(messages, system_prompt, tools, None)
+            .create_with_tools(messages, system_prompt, tools, None, Some("low".to_string()))
             .await?;
 
         Ok(response.content)

@@ -221,7 +221,7 @@ impl UnifiedChatHandler {
         let mut stream = self
             .app_state
             .gpt5_provider
-            .create_stream_with_tools(messages, system_prompt, tools, None)
+            .create_stream_with_tools(messages, system_prompt, tools, None, None)
             .await
             .map_err(|e| {
                 error!("Failed to create stream: {}", e);

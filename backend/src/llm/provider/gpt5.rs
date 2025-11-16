@@ -145,6 +145,7 @@ impl Gpt5Provider {
         system: String,
         tools: Vec<Value>,
         previous_response_id: Option<String>,
+        reasoning_override: Option<String>,
     ) -> Result<Gpt5ToolResponse> {
         let start = Instant::now();
 
@@ -155,6 +156,7 @@ impl Gpt5Provider {
             previous_response_id,
             false, // non-streaming
             None,  // no response_format
+            reasoning_override,
         );
 
         debug!("GPT-5 request: {}", serde_json::to_string_pretty(&body)?);
@@ -217,6 +219,7 @@ impl Gpt5Provider {
         system: String,
         schema_name: &str,
         schema: Value,
+        reasoning_override: Option<String>,
     ) -> Result<Response> {
         let start = Instant::now();
 
@@ -228,6 +231,11 @@ impl Gpt5Provider {
                 "content": msg.content
             }));
         }
+
+        // Use override if provided, otherwise use default
+        let reasoning_level = reasoning_override
+            .map(|r| normalize_reasoning(&r))
+            .unwrap_or_else(|| self.reasoning.clone());
 
         let body = json!({
             "model": self.model,
@@ -244,7 +252,7 @@ impl Gpt5Provider {
                 }
             },
             "reasoning": {
-                "effort": self.reasoning,
+                "effort": reasoning_level,
                 "summary": "auto"
             },
             "store": false
@@ -321,6 +329,7 @@ impl Gpt5Provider {
         system: String,
         tools: Vec<Value>,
         previous_response_id: Option<String>,
+        reasoning_override: Option<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Gpt5StreamEvent>> + Send>>> {
         let body = self.build_request(
             messages,
@@ -329,6 +338,7 @@ impl Gpt5Provider {
             previous_response_id,
             true, // streaming
             None, // no response_format
+            reasoning_override,
         );
 
         debug!(
@@ -402,6 +412,7 @@ impl Gpt5Provider {
         previous_response_id: Option<String>,
         stream: bool,
         response_format: Option<Value>,
+        reasoning_override: Option<String>,
     ) -> Value {
         // Format input messages
         let mut input = vec![json!({
@@ -416,6 +427,11 @@ impl Gpt5Provider {
             }));
         }
 
+        // Use override if provided, otherwise use default
+        let reasoning_level = reasoning_override
+            .map(|r| normalize_reasoning(&r))
+            .unwrap_or_else(|| self.reasoning.clone());
+
         let mut body = json!({
             "model": self.model,
             "input": input,
@@ -424,7 +440,7 @@ impl Gpt5Provider {
                 "verbosity": self.verbosity
             },
             "reasoning": {
-                "effort": self.reasoning,
+                "effort": reasoning_level,
                 "summary": "auto"
             },
             "store": true, // Store responses for multi-turn tracking
@@ -710,7 +726,7 @@ impl LlmProvider for Gpt5Provider {
     async fn chat(&self, messages: Vec<Message>, system: String) -> Result<Response> {
         // Simple chat without tools
         let response = self
-            .create_with_tools(messages, system, vec![], None)
+            .create_with_tools(messages, system, vec![], None, None)
             .await?;
 
         Ok(Response {
