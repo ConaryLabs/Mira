@@ -127,20 +127,20 @@ export const useChatPersistence = (connectionState: string) => {
   // Handle incoming memory data from backend
   const handleMemoryData = useCallback((data: any) => {
     console.log('[ChatPersistence] Processing memory data:', data);
-    
+
     if (!data) return;
-    
+
     // Handle memory stats response
     if (data.stats) {
       console.log('[ChatPersistence] Memory stats:', data.stats);
       return;
     }
-    
+
     // Handle recent memories response
     if (data.memories) {
       const loadedMessages = convertMemoryToMessages(data.memories);
       console.log('[ChatPersistence] Loaded', loadedMessages.length, 'messages from backend');
-      
+
       // Only set messages if we haven't loaded history yet
       if (!hasLoadedHistory.current) {
         setMessages(loadedMessages);
@@ -150,7 +150,7 @@ export const useChatPersistence = (connectionState: string) => {
         const currentMessages = useChatStore.getState().messages;
         const existingIds = new Set(currentMessages.map(m => m.id));
         const newMessages = loadedMessages.filter(m => !existingIds.has(m.id));
-        
+
         if (newMessages.length > 0) {
           console.log(`[ChatPersistence] Adding ${newMessages.length} new historical messages`);
           const merged = [...newMessages, ...currentMessages].sort((a, b) => a.timestamp - b.timestamp);
@@ -159,20 +159,27 @@ export const useChatPersistence = (connectionState: string) => {
       }
       return;
     }
-    
+
     // Handle success/status
-    if (data.status === 'success') {
+    if (data.status === 'success' || data.success === true) {
       console.log('[ChatPersistence] Memory command completed successfully');
       return;
     }
-    
+
+    // Ignore terminal-related messages (handled by terminal handler)
+    const terminalIndicators = ['working_directory', 'terminal_id'];
+    if (terminalIndicators.some(key => key in data)) {
+      // Silently ignore - terminal handler will process
+      return;
+    }
+
     // FIXED: Ignore document-related messages (handled by document components)
     const documentTypes = ['document_list', 'document_search_results', 'document_content'];
     if (data.type && documentTypes.includes(data.type)) {
       console.log(`[ChatPersistence] Ignoring document message: ${data.type}`);
       return;
     }
-    
+
     console.log('[ChatPersistence] Unhandled memory data:', data);
   }, [convertMemoryToMessages, setMessages]);
 

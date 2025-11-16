@@ -54,6 +54,11 @@ const KNOWN_MESSAGE_TYPES = new Set([
   'response',
   'data',
   'error',
+  // Terminal events (top-level)
+  'terminal_output',
+  'terminal_command_complete',
+  'terminal_closed',
+  'terminal_error',
   // Operation engine events (can be top-level)
   'operation.started',
   'operation.streaming',
@@ -121,6 +126,7 @@ const KNOWN_DATA_TYPES = new Set([
 const SILENT_TYPES = new Set([
   'heartbeat',
   'stream',  // Too many deltas to log
+  'terminal_output',  // Terminal output chunks can be frequent
   'document_processing_progress',
 ]);
 

@@ -1,30 +1,25 @@
 // src/hooks/useTerminalMessageHandler.ts
-// Hook to handle terminal WebSocket messages
+// Hook to handle terminal WebSocket messages and route to command blocks
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useTerminalStore } from '../stores/useTerminalStore';
 
-// Terminal message handlers registry
-// Maps session_id to xterm instance for writing output
-const terminalInstances = new Map<string, any>();
-
-export function registerTerminalInstance(sessionId: string, xtermInstance: any) {
-  terminalInstances.set(sessionId, xtermInstance);
-}
-
-export function unregisterTerminalInstance(sessionId: string) {
-  terminalInstances.delete(sessionId);
-}
-
 export function useTerminalMessageHandler() {
-  const { addSession, updateSession, removeSession } = useTerminalStore();
-  const unsubscribeRef = useRef<(() => void) | null>(null);
-
   useEffect(() => {
     const subscribe = useWebSocketStore.getState().subscribe;
 
     const unsubscribe = subscribe('terminal-handler', (message) => {
+      // Get fresh state from store to avoid stale closures
+      const store = useTerminalStore.getState();
+      const {
+        addSession,
+        updateSession,
+        appendCommandOutput,
+        completeCommand,
+        sessions,
+      } = store;
+
       // Handle data envelope
       if (message.type === 'data' && message.data) {
         const data = message.data;
@@ -37,8 +32,6 @@ export function useTerminalMessageHandler() {
             workingDirectory: data.working_directory,
             isActive: true,
             createdAt: new Date().toISOString(),
-            cols: data.cols || 80,
-            rows: data.rows || 24,
           });
           return;
         }
@@ -53,16 +46,46 @@ export function useTerminalMessageHandler() {
 
       // Terminal output (if sent as dedicated message type)
       if (message.type === 'terminal_output' && message.session_id && message.data) {
-        const xterm = terminalInstances.get(message.session_id);
-        if (xterm) {
-          // Decode base64 data
+        const sessionId = message.session_id;
+        const session = sessions[sessionId];
+
+        if (!session) {
+          // Session not found - might arrive before session is registered
+          // Log once per session to debug without spam
+          if (!window.__missingTerminalSessions) {
+            window.__missingTerminalSessions = new Set();
+          }
+          if (!window.__missingTerminalSessions.has(sessionId)) {
+            console.debug('[Terminal] Output received for unregistered session:', sessionId);
+            window.__missingTerminalSessions.add(sessionId);
+          }
+          return;
+        }
+
+        // Find the most recent running command block
+        const runningBlock = session.commandBlocks
+          .slice()
+          .reverse()
+          .find(block => block.isRunning);
+
+        if (runningBlock) {
           try {
+            // Decode base64 data
             const decoded = atob(message.data);
-            xterm.write(decoded);
+
+            // Append output to the running command block
+            appendCommandOutput(sessionId, runningBlock.id, decoded);
           } catch (e) {
             console.error('[Terminal] Failed to decode output:', e);
           }
         }
+        // No running block is normal - shell echoes, prompts, etc.
+      }
+
+      // Terminal command completed (if backend sends this)
+      if (message.type === 'terminal_command_complete' && message.session_id && message.block_id) {
+        const exitCode = message.exit_code ?? 0;
+        completeCommand(message.session_id, message.block_id, exitCode);
       }
 
       // Terminal closed
@@ -72,19 +95,24 @@ export function useTerminalMessageHandler() {
 
       // Terminal error
       if (message.type === 'terminal_error' && message.session_id && message.error) {
-        const xterm = terminalInstances.get(message.session_id);
-        if (xterm) {
-          xterm.writeln(`\r\n\x1b[1;31mError: ${message.error}\x1b[0m`);
+        const session = sessions[message.session_id];
+        if (session) {
+          // Find the most recent running command block
+          const runningBlock = session.commandBlocks
+            .slice()
+            .reverse()
+            .find(block => block.isRunning);
+
+          if (runningBlock) {
+            appendCommandOutput(message.session_id, runningBlock.id, `\nError: ${message.error}\n`);
+            completeCommand(message.session_id, runningBlock.id, 1);
+          }
         }
       }
     });
 
-    unsubscribeRef.current = unsubscribe;
-
     return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-      }
+      unsubscribe();
     };
-  }, [addSession, updateSession, removeSession]);
+  }, []); // Empty deps - we get fresh state inside the callback
 }

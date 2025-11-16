@@ -1,143 +1,79 @@
 // src/components/Terminal.tsx
-// Terminal component using xterm.js with themed styling
+// Traditional terminal with xterm.js
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import '@xterm/xterm/css/xterm.css';
-import { useTerminalStore } from '../stores/useTerminalStore';
 import { useBackendCommands } from '../services/BackendCommands';
-import { registerTerminalInstance, unregisterTerminalInstance } from '../hooks/useTerminalMessageHandler';
-import { X, Maximize2, Minimize2 } from 'lucide-react';
+import { useWebSocketStore } from '../stores/useWebSocketStore';
+import '@xterm/xterm/css/xterm.css';
 
 interface TerminalProps {
-  sessionId?: string;
   projectId: string;
   workingDirectory?: string;
-  onClose?: () => void;
 }
 
 export const Terminal: React.FC<TerminalProps> = ({
-  sessionId: initialSessionId,
   projectId,
   workingDirectory,
-  onClose,
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const sessionStartedRef = useRef<boolean>(false);
-  const sessionIdRef = useRef<string | null>(initialSessionId || null);
-  const [sessionId, setSessionId] = useState<string | null>(initialSessionId || null);
-  const [isMaximized, setIsMaximized] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const backendCommands = useBackendCommands();
+  const subscribe = useWebSocketStore(state => state.subscribe);
 
-  const { updateSession, removeSession } = useTerminalStore();
-
-  // Sync sessionId state with prop when it changes
-  useEffect(() => {
-    if (initialSessionId && initialSessionId !== sessionId) {
-      setSessionId(initialSessionId);
-      sessionIdRef.current = initialSessionId;
-    }
-  }, [initialSessionId]);
-
-  // Register terminal instance when sessionId becomes available
-  useEffect(() => {
-    if (sessionId && xtermRef.current) {
-      registerTerminalInstance(sessionId, xtermRef.current);
-    }
-  }, [sessionId]);
-
+  // Initialize xterm
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    // Don't create a new xterm if we already have one for this session
-    if (sessionId && xtermRef.current) {
-      return;
-    }
-    // Create xterm instance with themed styling
-    const xterm = new XTerm({
+    // Create terminal instance
+    const term = new XTerm({
       cursorBlink: true,
       fontSize: 14,
-      fontFamily: '"Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: {
-        background: '#0f172a',      // slate-900
-        foreground: '#f1f5f9',      // slate-100
-        cursor: '#3b82f6',          // blue-500
-        cursorAccent: '#0f172a',    // slate-900
-        selectionBackground: '#334155',  // slate-700
-        black: '#1e293b',           // slate-800
-        red: '#ef4444',             // red-500
-        green: '#22c55e',           // green-500
-        yellow: '#eab308',          // yellow-500
-        blue: '#3b82f6',            // blue-500
-        magenta: '#a855f7',         // purple-500
-        cyan: '#06b6d4',            // cyan-500
-        white: '#cbd5e1',           // slate-300
-        brightBlack: '#475569',     // slate-600
-        brightRed: '#f87171',       // red-400
-        brightGreen: '#4ade80',     // green-400
-        brightYellow: '#facc15',    // yellow-400
-        brightBlue: '#60a5fa',      // blue-400
-        brightMagenta: '#c084fc',   // purple-400
-        brightCyan: '#22d3ee',      // cyan-400
-        brightWhite: '#f1f5f9',     // slate-100
+        background: '#0f172a', // slate-900
+        foreground: '#e2e8f0', // slate-200
+        cursor: '#60a5fa', // blue-400
+        black: '#1e293b',
+        red: '#ef4444',
+        green: '#10b981',
+        yellow: '#f59e0b',
+        blue: '#3b82f6',
+        magenta: '#a855f7',
+        cyan: '#06b6d4',
+        white: '#cbd5e1',
+        brightBlack: '#475569',
+        brightRed: '#f87171',
+        brightGreen: '#34d399',
+        brightYellow: '#fbbf24',
+        brightBlue: '#60a5fa',
+        brightMagenta: '#c084fc',
+        brightCyan: '#22d3ee',
+        brightWhite: '#f1f5f9',
       },
-      scrollback: 10000,
-      convertEol: true,
+      allowProposedApi: true,
     });
 
+    // Create fit addon
     const fitAddon = new FitAddon();
-    xterm.loadAddon(fitAddon);
+    term.loadAddon(fitAddon);
 
-    xterm.open(terminalRef.current);
+    // Open terminal in DOM
+    term.open(terminalRef.current);
     fitAddon.fit();
 
-    xtermRef.current = xterm;
+    // Store refs
+    xtermRef.current = term;
     fitAddonRef.current = fitAddon;
-
-    // Register terminal instance for message handling
-    if (sessionId) {
-      registerTerminalInstance(sessionId, xterm);
-    }
-
-    // Handle terminal input (user typing)
-    xterm.onData((data) => {
-      const currentSessionId = sessionIdRef.current;
-      if (currentSessionId) {
-        // Encode data to base64 for transmission
-        const base64Data = btoa(data);
-        backendCommands.sendTerminalInput(currentSessionId, base64Data);
-      }
-    });
-
-    // Start terminal session if not already started
-    if (!sessionId && !sessionStartedRef.current) {
-      sessionStartedRef.current = true;
-      const dims = fitAddon.proposeDimensions();
-      backendCommands
-        .startTerminal(
-          projectId,
-          workingDirectory,
-          dims?.cols || 80,
-          dims?.rows || 24
-        )
-        .catch((err) => {
-          xterm.writeln(`\x1b[1;31mFailed to start terminal: ${err}\x1b[0m`);
-        });
-    }
 
     // Handle resize
     const handleResize = () => {
       fitAddon.fit();
-      const currentSessionId = sessionIdRef.current;
-      if (currentSessionId) {
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          backendCommands.resizeTerminal(currentSessionId, dims.cols, dims.rows);
-          updateSession(currentSessionId, { cols: dims.cols, rows: dims.rows });
-        }
+      if (sessionId) {
+        backendCommands.resizeTerminal(sessionId, term.cols, term.rows);
       }
     };
 
@@ -146,70 +82,122 @@ export const Terminal: React.FC<TerminalProps> = ({
     // Cleanup
     return () => {
       window.removeEventListener('resize', handleResize);
-      const currentSessionId = sessionIdRef.current;
-      if (currentSessionId) {
-        unregisterTerminalInstance(currentSessionId);
-        backendCommands.closeTerminal(currentSessionId);
-      }
-      xterm.dispose();
+      term.dispose();
     };
-  }, [projectId, workingDirectory]);
+  }, []);
 
-  const handleClose = () => {
-    const currentSessionId = sessionIdRef.current;
-    if (currentSessionId) {
-      backendCommands.closeTerminal(currentSessionId);
-      removeSession(currentSessionId);
-    }
-    onClose?.();
-  };
+  // Start backend terminal session
+  useEffect(() => {
+    if (!xtermRef.current || sessionId) return;
 
-  const handleMaximize = () => {
-    setIsMaximized(!isMaximized);
-    // Trigger resize after maximizing
-    setTimeout(() => {
-      fitAddonRef.current?.fit();
-    }, 100);
-  };
+    const term = xtermRef.current;
+
+    const startSession = async () => {
+      try {
+        const cols = term.cols;
+        const rows = term.rows;
+
+        term.write('Connecting to terminal...\r\n');
+        await backendCommands.startTerminal(projectId, workingDirectory, cols, rows);
+      } catch (err) {
+        console.error('[Terminal] Failed to start session:', err);
+        term.write('\x1b[31mFailed to start terminal session\x1b[0m\r\n');
+      }
+    };
+
+    startSession();
+  }, [projectId, workingDirectory, sessionId, backendCommands]);
+
+  // Handle terminal input
+  useEffect(() => {
+    if (!xtermRef.current) return;
+
+    const term = xtermRef.current;
+
+    const handleData = (data: string) => {
+      if (sessionId) {
+        // Send input to backend (base64 encoded)
+        const base64Data = btoa(data);
+        backendCommands.sendTerminalInput(sessionId, base64Data);
+      }
+    };
+
+    const disposable = term.onData(handleData);
+
+    return () => {
+      disposable.dispose();
+    };
+  }, [sessionId, backendCommands]);
+
+  // Subscribe to WebSocket messages
+  useEffect(() => {
+    if (!xtermRef.current) return;
+
+    const term = xtermRef.current;
+
+    const unsubscribe = subscribe('terminal-xterm', (message) => {
+      // Handle terminal session started
+      if (message.type === 'data' && message.data) {
+        const data = message.data;
+
+        // Terminal session started
+        if (data.session_id && data.project_id && data.working_directory) {
+          if (data.project_id === projectId && !sessionId) {
+            setSessionId(data.session_id);
+            term.clear();
+            console.log('[Terminal] Session started:', data.session_id);
+          }
+          return;
+        }
+      }
+
+      // Handle terminal output
+      if (message.type === 'terminal_output' && message.session_id && message.data) {
+        if (message.session_id === sessionId) {
+          try {
+            // Decode base64 data
+            const decoded = atob(message.data);
+            term.write(decoded);
+          } catch (e) {
+            console.error('[Terminal] Failed to decode output:', e);
+          }
+        }
+        return;
+      }
+
+      // Handle terminal closed
+      if (message.type === 'terminal_closed' && message.session_id === sessionId) {
+        term.write('\r\n\x1b[33mTerminal session closed\x1b[0m\r\n');
+        setSessionId(null);
+      }
+
+      // Handle terminal error
+      if (message.type === 'terminal_error' && message.session_id === sessionId) {
+        term.write(`\r\n\x1b[31mError: ${message.error}\x1b[0m\r\n`);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [subscribe, sessionId, projectId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (sessionId) {
+        try {
+          backendCommands.closeTerminal(sessionId);
+        } catch (err) {
+          console.error('[Terminal] Error closing terminal:', err);
+        }
+      }
+    };
+  }, [sessionId, backendCommands]);
 
   return (
-    <div
-      className={`flex flex-col bg-slate-900 border border-slate-700 rounded-lg shadow-lg ${
-        isMaximized ? 'fixed inset-4 z-50' : 'h-full'
-      }`}
-    >
-      {/* Terminal header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 rounded-t-lg">
-        <div className="flex items-center gap-2 text-sm text-slate-300">
-          <span className="font-mono">Terminal</span>
-          {sessionId && (
-            <span className="text-xs text-slate-500">({sessionId.substring(0, 8)})</span>
-          )}
-          {workingDirectory && (
-            <span className="text-xs text-slate-400">@ {workingDirectory}</span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleMaximize}
-            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors"
-            title={isMaximized ? 'Restore' : 'Maximize'}
-          >
-            {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          </button>
-          <button
-            onClick={handleClose}
-            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition-colors"
-            title="Close terminal"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      </div>
-
-      {/* Terminal body */}
-      <div ref={terminalRef} className="flex-1 p-2 overflow-hidden" />
+    <div className="flex flex-col h-full bg-slate-900">
+      <div ref={terminalRef} className="flex-1 p-2" />
     </div>
   );
 };

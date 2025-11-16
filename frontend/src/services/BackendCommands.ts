@@ -1,6 +1,7 @@
 // src/services/BackendCommands.ts
 // FIXED: Uses centralized config for session ID
 
+import { useMemo } from 'react';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { getSessionId } from '../config/app';
 
@@ -454,5 +455,6 @@ export class BackendCommands {
 
 // Hook to use backend commands
 export const useBackendCommands = () => {
-  return new BackendCommands();
+  // Use useMemo to create instance only once per component mount
+  return useMemo(() => new BackendCommands(), []);
 };

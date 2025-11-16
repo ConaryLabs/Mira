@@ -3,14 +3,24 @@
 
 import { create } from 'zustand';
 
+export interface CommandBlock {
+  id: string;
+  command: string;
+  output: string;
+  timestamp: string;
+  exitCode: number | null;
+  isRunning: boolean;
+  isCollapsed: boolean;
+}
+
 export interface TerminalSession {
   id: string;
   projectId: string;
   workingDirectory: string;
   isActive: boolean;
   createdAt: string;
-  cols: number;
-  rows: number;
+  commandBlocks: CommandBlock[];
+  commandHistory: string[];
 }
 
 interface TerminalState {
@@ -27,7 +37,7 @@ interface TerminalState {
   terminalWidth: number;
 
   // Actions
-  addSession: (session: TerminalSession) => void;
+  addSession: (session: Omit<TerminalSession, 'commandBlocks' | 'commandHistory'>) => void;
   removeSession: (sessionId: string) => void;
   setActiveSession: (sessionId: string | null) => void;
   updateSession: (sessionId: string, updates: Partial<TerminalSession>) => void;
@@ -36,6 +46,13 @@ interface TerminalState {
   hideTerminal: () => void;
   setTerminalWidth: (width: number) => void;
   clearSessions: () => void;
+
+  // Command block actions
+  addCommandBlock: (sessionId: string, command: string) => string;
+  appendCommandOutput: (sessionId: string, blockId: string, output: string) => void;
+  completeCommand: (sessionId: string, blockId: string, exitCode: number) => void;
+  toggleCommandCollapse: (sessionId: string, blockId: string) => void;
+  addToHistory: (sessionId: string, command: string) => void;
 }
 
 export const useTerminalStore = create<TerminalState>((set) => ({
@@ -48,7 +65,11 @@ export const useTerminalStore = create<TerminalState>((set) => ({
     set((state) => ({
       sessions: {
         ...state.sessions,
-        [session.id]: session,
+        [session.id]: {
+          ...session,
+          commandBlocks: [],
+          commandHistory: [],
+        },
       },
       activeSessionId: session.id,
       isTerminalVisible: true,
@@ -111,5 +132,112 @@ export const useTerminalStore = create<TerminalState>((set) => ({
       sessions: {},
       activeSessionId: null,
       isTerminalVisible: false,
+    }),
+
+  // Command block actions
+  addCommandBlock: (sessionId, command) => {
+    const blockId = `cmd-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            commandBlocks: [
+              ...session.commandBlocks,
+              {
+                id: blockId,
+                command,
+                output: '',
+                timestamp: new Date().toISOString(),
+                exitCode: null,
+                isRunning: true,
+                isCollapsed: false,
+              },
+            ],
+          },
+        },
+      };
+    });
+    return blockId;
+  },
+
+  appendCommandOutput: (sessionId, blockId, output) =>
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            commandBlocks: session.commandBlocks.map((block) =>
+              block.id === blockId
+                ? { ...block, output: block.output + output }
+                : block
+            ),
+          },
+        },
+      };
+    }),
+
+  completeCommand: (sessionId, blockId, exitCode) =>
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            commandBlocks: session.commandBlocks.map((block) =>
+              block.id === blockId
+                ? { ...block, isRunning: false, exitCode }
+                : block
+            ),
+          },
+        },
+      };
+    }),
+
+  toggleCommandCollapse: (sessionId, blockId) =>
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            commandBlocks: session.commandBlocks.map((block) =>
+              block.id === blockId
+                ? { ...block, isCollapsed: !block.isCollapsed }
+                : block
+            ),
+          },
+        },
+      };
+    }),
+
+  addToHistory: (sessionId, command) =>
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            commandHistory: [...session.commandHistory, command],
+          },
+        },
+      };
     }),
 }));

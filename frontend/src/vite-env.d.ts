@@ -10,3 +10,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+// Augment Window interface for debug tracking
+interface Window {
+  __missingTerminalSessions?: Set<string>;
+}
