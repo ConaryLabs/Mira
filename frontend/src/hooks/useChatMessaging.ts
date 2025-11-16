@@ -1,12 +1,12 @@
 // src/hooks/useChatMessaging.ts
 // Enhanced with waiting state for batch responses
-// FIXED: Uses centralized config for session ID
+// Uses user ID from auth store for session ID
 
 import { useCallback } from 'react';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useAppState, useArtifactState } from '../stores/useAppState';
-import { getSessionId } from '../config/app';
+import { useCurrentUser } from '../stores/useAuthStore';
 import { detectLanguage } from '../utils/language';
 
 export const useChatMessaging = () => {
@@ -15,6 +15,7 @@ export const useChatMessaging = () => {
   const setWaitingForResponse = useChatStore(state => state.setWaitingForResponse);
   const { currentProject, modifiedFiles, currentBranch } = useAppState();
   const { activeArtifact } = useArtifactState();
+  const user = useCurrentUser();
 
   const handleSend = useCallback(async (content: string) => {
     // Add user message immediately
@@ -36,7 +37,7 @@ export const useChatMessaging = () => {
       content,
       project_id: currentProject?.id || null,
       metadata: {
-        session_id: getSessionId(), // FIXED: Use centralized config
+        session_id: user?.id || 'anonymous',
         timestamp: Date.now(),
         
         // FILE CONTEXT (use path instead of linkedFile)

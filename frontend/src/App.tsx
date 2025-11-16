@@ -1,101 +1,55 @@
 // src/App.tsx
-import React, { useEffect } from 'react';
-import { Header } from './components/Header';
-import { ChatArea } from './components/ChatArea';
-import { ArtifactPanel } from './components/ArtifactPanel';
-import { ToastContainer } from './components/ToastContainer';
-import { TerminalPanel } from './components/TerminalPanel';
-import { useAppState } from './stores/useAppState';
-import { useWebSocketStore } from './stores/useWebSocketStore';
-import { useTerminalStore } from './stores/useTerminalStore';
-import { useWebSocketMessageHandler } from './hooks/useWebSocketMessageHandler';
-import { useMessageHandler } from './hooks/useMessageHandler';
-import { useChatPersistence } from './hooks/useChatPersistence';
-import { useArtifactFileContentWire } from './hooks/useArtifactFileContentWire';
-import { useToolResultArtifactBridge } from './hooks/useToolResultArtifactBridge';
-import { useErrorHandler } from './hooks/useErrorHandler';
-import { useConnectionTracking } from './hooks/useConnectionTracking';
-import { useTerminalMessageHandler } from './hooks/useTerminalMessageHandler';
+import { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Login } from './pages/Login';
+import { Home } from './Home';
+import { PrivateRoute } from './components/PrivateRoute';
+import { useAuthStore } from './stores/useAuthStore';
 import './App.css';
 
 function App() {
-  const { showArtifacts } = useAppState();
-  const connect = useWebSocketStore(state => state.connect);
-  const disconnect = useWebSocketStore(state => state.disconnect);
-  const connectionState = useWebSocketStore(state => state.connectionState);
+  const [isVerifying, setIsVerifying] = useState(true);
+  const { verifyToken, isAuthenticated } = useAuthStore();
 
-  // Initialize WebSocket connection
+  // Verify token on app load
   useEffect(() => {
-    connect();
-
-    // Cleanup on unmount
-    return () => {
-      disconnect();
-    };
-  }, [connect, disconnect]);
-
-  // Handle all WebSocket messages
-  useWebSocketMessageHandler(); // Handles data messages (projects, files, git)
-  useMessageHandler();           // Handles response messages (chat)
-  useChatPersistence(connectionState); // Handles chat history loading from backend + localStorage
-  useArtifactFileContentWire();  // Belt-and-suspenders: ensure file_content opens artifacts
-  useToolResultArtifactBridge(); // Tool_result → Artifact Viewer bridge
-  useErrorHandler();             // WebSocket error → Chat messages + Toasts
-  useConnectionTracking();       // Sync WebSocket state → AppState connection tracking
-  useTerminalMessageHandler();   // Handle terminal WebSocket messages
-
-  // Terminal toggle handler (Ctrl+`)
-  const { toggleTerminalVisibility } = useTerminalStore();
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+` or Cmd+` to toggle terminal
-      if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-        e.preventDefault();
-        toggleTerminalVisibility();
+    const verify = async () => {
+      if (isAuthenticated) {
+        await verifyToken();
       }
+      setIsVerifying(false);
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggleTerminalVisibility]);
+    verify();
+  }, []);
+
+  // Show loading screen while verifying token
+  if (isVerifying) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-slate-100">
-      <Header />
-
-      {/* Main content area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Main content (chat area) */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* Chat Area - Centered when no artifacts, 50% when artifacts shown */}
-          <div className={`
-            min-w-0 flex overflow-hidden transition-all duration-300
-            ${showArtifacts ? 'w-1/2' : 'flex-1'}
-          `}>
-            <div className={`
-              flex flex-col w-full
-              ${!showArtifacts ? 'max-w-4xl mx-auto' : ''}
-            `}>
-              <ChatArea />
-            </div>
-          </div>
-
-          {/* Artifact Panel - Slides in from right */}
-          {showArtifacts && (
-            <div className="w-1/2 border-l border-slate-700">
-              <ArtifactPanel />
-            </div>
-          )}
-        </div>
-
-        {/* Terminal panel - right side */}
-        <TerminalPanel />
-      </div>
-
-      {/* Toast notifications - bottom right corner */}
-      <ToastContainer />
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/"
+          element={
+            <PrivateRoute>
+              <Home />
+            </PrivateRoute>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

@@ -1,12 +1,12 @@
 // src/hooks/useChatPersistence.ts
 // Backend-driven chat persistence with artifact restoration
-// FIXED: Uses centralized config for session ID
+// Uses user ID from auth store for session ID
 
 import { useEffect, useCallback, useRef } from 'react';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useArtifactState, useAppState } from '../stores/useAppState';
-import { getSessionId } from '../config/app';
+import { useCurrentUser } from '../stores/useAuthStore';
 import type { ChatMessage } from '../stores/useChatStore';
 import type { Artifact } from '../stores/useChatStore';
 
@@ -15,6 +15,7 @@ export const useChatPersistence = (connectionState: string) => {
   const subscribe = useWebSocketStore(state => state.subscribe);
   const setMessages = useChatStore(state => state.setMessages);
   const { addArtifact } = useArtifactState();
+  const user = useCurrentUser();
   const hasLoadedHistory = useRef(false);
 
   // Convert backend memory entries to frontend messages
@@ -185,13 +186,13 @@ export const useChatPersistence = (connectionState: string) => {
 
   // Load chat history from backend - only once per connection
   const loadChatHistory = useCallback(async () => {
-    if (connectionState !== 'connected' || hasLoadedHistory.current) return;
+    if (connectionState !== 'connected' || hasLoadedHistory.current || !user) return;
 
-    const sessionId = getSessionId(); // FIXED: Use centralized config
-    
+    const sessionId = user.id;
+
     try {
       console.log('[ChatPersistence] Loading chat history for session:', sessionId);
-      
+
       await send({
         type: 'memory_command',
         method: 'memory.get_recent',
@@ -200,13 +201,13 @@ export const useChatPersistence = (connectionState: string) => {
           count: 100
         }
       });
-      
+
       console.log('[ChatPersistence] History request sent');
     } catch (error) {
       console.error('[ChatPersistence] Failed to load chat history:', error);
       hasLoadedHistory.current = true; // Don't retry on error
     }
-  }, [connectionState, send]);
+  }, [connectionState, send, user]);
 
   // Subscribe to memory data messages (FIXED: removed duplicate)
   useEffect(() => {
@@ -239,7 +240,6 @@ export const useChatPersistence = (connectionState: string) => {
   }, [connectionState]);
 
   return {
-    getSessionId, // Export for compatibility (now references the centralized function)
     loadChatHistory,
     handleMemoryData,
   };

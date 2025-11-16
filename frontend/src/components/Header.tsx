@@ -1,10 +1,12 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Folder, Terminal, X } from 'lucide-react';
+import { Folder, Terminal, X, LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useTerminalStore } from '../stores/useTerminalStore';
+import { useAuthStore, useCurrentUser } from '../stores/useAuthStore';
 
 export const Header: React.FC = () => {
   const {
@@ -16,9 +18,17 @@ export const Header: React.FC = () => {
   const { artifacts } = useArtifactState();
   const { toggleTerminalVisibility, isTerminalVisible } = useTerminalStore();
   const [showProjects, setShowProjects] = useState(false);
+  const { logout } = useAuthStore();
+  const user = useCurrentUser();
+  const navigate = useNavigate();
 
   const handleTerminalClick = () => {
     toggleTerminalVisibility();
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
   };
   
   return (
@@ -40,8 +50,15 @@ export const Header: React.FC = () => {
 
         <div className="flex-1" />
 
-      {/* Right: Action buttons - only show if project exists */}
+      {/* Right: Action buttons */}
       <div className="flex items-center gap-2 ml-auto">
+        {/* User info */}
+        {user && (
+          <div className="px-3 py-1 text-sm text-gray-400">
+            {user.displayName || user.username}
+          </div>
+        )}
+
         {currentProject && (
           <>
             {/* Terminal Toggle */}
@@ -69,6 +86,16 @@ export const Header: React.FC = () => {
             isDark={true}
           />
         )}
+
+        {/* Logout button */}
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="p-2 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-md transition-colors"
+          title="Logout"
+        >
+          <LogOut size={16} />
+        </button>
       </div>
     </header>
 
