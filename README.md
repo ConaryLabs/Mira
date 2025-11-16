@@ -80,31 +80,41 @@ mira/
 - **Code Intelligence** - Function/class extraction, semantic code search, project structure analysis
 - **Operation Tracking** - Complex multi-step workflows with lifecycle management (PENDING → STARTED → DELEGATING → COMPLETED)
 - **Artifact Management** - Code blocks from LLM can be saved/applied to files via Monaco editor
+- **Integrated Terminal** - Full xterm.js terminal emulator with real-time PTY-based shell execution, multiple sessions, project-scoped working directories
 
 ## Recent Improvements (November 2025)
 
-Completed comprehensive codebase housecleaning with **25 refactoring tasks**:
+### Session 2: Integrated Terminal
+- **Full terminal emulator** - xterm.js with themed styling and real-time I/O
+- **PTY-based execution** - portable-pty for native shell support
+- **WebSocket streaming** - bidirectional communication with base64 encoding
+- **Multiple sessions** - tab-based switching, project-scoped directories
+- **Right-side panel** - drag-to-resize, traditional IDE layout
+- **Session persistence** - SQLite storage, proper cleanup on close
+- **React fixes** - resolved Hooks violation, stale closure issues
 
-### Code Quality
-- ✅ **Eliminated 700+ lines** of duplicated code
-- ✅ **Created 14 new focused modules** for better organization
-- ✅ **Refactored config system** from 445-line monolith to 7 domain-specific configs
-- ✅ **Split prompt builder** from 612 lines into 5 focused modules
-- ✅ **Consolidated frontend message handlers** with shared artifact utilities
+### Session 1: Comprehensive Codebase Housecleaning (25 tasks)
 
-### Testing & Documentation
-- ✅ **Added 62 new tests** (45 frontend + 17 backend) - all passing
-- ✅ **Created STATE_BOUNDARIES.md** - frontend architecture documentation
-- ✅ **Created test helpers** for cleaner test configuration
-- ✅ **Catalogued 20 technical debt items** in ISSUES_TO_CREATE.md
+**Code Quality:**
+- **Eliminated 700+ lines** of duplicated code
+- **Created 14 new focused modules** for better organization
+- **Refactored config system** from 445-line monolith to 7 domain-specific configs
+- **Split prompt builder** from 612 lines into 5 focused modules
+- **Consolidated frontend message handlers** with shared artifact utilities
 
-### Architecture
-- ✅ **Improved message router** - extracted common patterns, reduced duplication
-- ✅ **Better error handling** - proper logging instead of silent failures
-- ✅ **Simplified state management** - removed unused state, clearer boundaries
-- ✅ **Tool builder pattern** - DRY code for LLM tool definitions
+**Testing & Documentation:**
+- **Added 62 new tests** (45 frontend + 17 backend) - all passing
+- **Created STATE_BOUNDARIES.md** - frontend architecture documentation
+- **Created test helpers** for cleaner test configuration
+- **Catalogued 20 technical debt items** in ISSUES_TO_CREATE.md
 
-See **[HOUSECLEANING_SUMMARY.md](./HOUSECLEANING_SUMMARY.md)** for complete details.
+**Architecture:**
+- **Improved message router** - extracted common patterns, reduced duplication
+- **Better error handling** - proper logging instead of silent failures
+- **Simplified state management** - removed unused state, clearer boundaries
+- **Tool builder pattern** - DRY code for LLM tool definitions
+
+See **[HOUSECLEANING_SUMMARY.md](./HOUSECLEANING_SUMMARY.md)** for Session 1 details and **[PROGRESS.md](./PROGRESS.md)** for complete session history.
 
 ## Prerequisites
 

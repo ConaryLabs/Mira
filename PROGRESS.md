@@ -172,6 +172,132 @@ Frontend:
 
 ---
 
+### Session 2: 2025-11-15
+
+**Goals:**
+- Implement fully functional integrated terminal with WebSocket I/O
+- Support real-time command execution with live output streaming
+- Add project-scoped terminal sessions with persistence
+- Integrate xterm.js for terminal emulation
+- Support multiple concurrent terminal sessions
+
+**Outcomes:**
+- Complete terminal implementation with bidirectional WebSocket communication
+- Real-time PTY-based shell execution with live output streaming
+- Right-side panel layout with drag-to-resize functionality
+- Multiple terminal sessions with tab-based switching
+- Session persistence in SQLite database
+- Fixed critical React Hooks violation causing app crashes
+- Clean terminal cleanup on close with proper lifecycle management
+
+**Files Created:**
+Backend:
+- No new files (extended existing terminal module)
+
+Frontend:
+- No new files (extended existing terminal components)
+
+**Files Modified:**
+Backend (3 files):
+- `backend/src/api/ws/message.rs` - Added TerminalOutput, TerminalClosed, TerminalError message types
+- `backend/src/api/ws/terminal.rs` - Implemented WebSocket output forwarding from PTY to clients with base64 encoding
+- `backend/src/api/ws/chat/message_router.rs` - Added channel-based terminal output routing
+
+Frontend (4 files):
+- `frontend/src/components/Terminal.tsx` - Fixed sessionId synchronization, added ref-based event handlers
+- `frontend/src/components/TerminalPanel.tsx` - Converted from bottom to right-side layout, fixed React Hooks violation
+- `frontend/src/components/Header.tsx` - Cleaned up debug logging
+- `frontend/src/stores/useTerminalStore.ts` - Changed from terminalHeight to terminalWidth for right-side panel
+
+**Git Commits:**
+- `78c630d` - Fix: add frontend as regular directory, not submodule
+- `bf903d6` - Restructure: monorepo with backend/ and frontend/ subdirectories
+- `1ffe71f` - Updated README.md
+- `87ce7ae` - Complete git operations integration with full test coverage
+- `69e19a9` - feat: Add fully functional integrated terminal with WebSocket I/O
+
+**Technical Decisions:**
+
+1. **Terminal Panel Placement:**
+   - Decision: Right-side panel instead of bottom panel
+   - Rationale: Better use of screen real estate, more traditional IDE layout
+   - Implementation: Changed from height-based to width-based resizing
+
+2. **WebSocket Output Architecture:**
+   - Decision: Channel-based forwarding from PTY to WebSocket
+   - Rationale: Decouples terminal session from WebSocket connection lifecycle
+   - Implementation: UnboundedSender/Receiver for terminal output streaming
+   - Benefit: Terminal continues running even if WebSocket disconnects temporarily
+
+3. **Session ID Management:**
+   - Problem: useState only initializes once, causing stale session IDs
+   - Solution: Added sessionIdRef alongside sessionId state
+   - Rationale: Event handlers (onData) capture ref values, avoiding stale closures
+   - Implementation: useEffect to sync state with prop changes
+
+4. **React Hooks Compliance:**
+   - Problem: useEffect called after conditional return violated Rules of Hooks
+   - Impact: App crashed when terminal visibility toggled
+   - Solution: Moved all hooks before conditional returns
+   - Learning: All hooks must be called in the same order on every render
+
+5. **Terminal Registration:**
+   - Challenge: Terminal instance created before session ID available
+   - Solution: Late registration via useEffect when sessionId becomes available
+   - Implementation: Two registration points - initial mount and prop update
+
+6. **Base64 Encoding:**
+   - Decision: Use base64 for terminal I/O over WebSocket
+   - Rationale: Binary-safe transmission, handles special characters correctly
+   - Implementation: btoa() in frontend, base64 crate in backend
+
+**Issues/Blockers:**
+
+1. **React Hooks Violation:**
+   - Problem: useEffect after conditional return caused app crashes
+   - Symptom: All WebSocket subscriptions unsubscribed, page went blank
+   - Root Cause: React detected inconsistent hook count between renders
+   - Solution: Moved useEffect and handlers before early return
+   - Resolution: App stable, no more crashes
+
+2. **Import/Export Mismatch:**
+   - Problem: TerminalPanel used default import, Terminal had named export
+   - Initially thought: This was the crash cause
+   - Reality: Terminal.tsx had both named AND default export, so imports worked
+   - Actual Issue: React Hooks violation was the real cause
+   - Resolution: Cleaned up to use named imports for consistency
+
+3. **Session ID Stale Closure:**
+   - Problem: Terminal input handler always saw null sessionId
+   - Root Cause: useState only initializes once on mount
+   - When: Component remounted with new sessionId prop, state stayed null
+   - Solution: Added sessionIdRef and useEffect to sync with prop
+   - Result: Input handler now always sees current session ID
+
+4. **Terminal Output Not Appearing:**
+   - Problem: Terminal showed cursor but no output from commands
+   - Root Cause: Backend received PTY output but only logged it (TODO comment)
+   - Discovery: Line 308 in terminal.rs had "// TODO: Send to WebSocket connection"
+   - Solution: Implemented channel-based output forwarding to WebSocket
+   - Result: Full bidirectional I/O working correctly
+
+5. **Multiple Terminal Sessions Created:**
+   - Problem: Two terminal sessions started on single button click
+   - Cause: Component mounted twice (React 18 StrictMode + state changes)
+   - Solution: Added sessionStartedRef to track if session already initiated
+   - Result: Only one session created per terminal instance
+
+**Notes:**
+- Terminal implementation took significant debugging effort due to React lifecycle complexities
+- React Hooks violation was particularly tricky - symptom (blank page) seemed unrelated to cause
+- Base64 encoding/decoding working perfectly for terminal I/O
+- PTY backend using portable-pty crate provides full shell functionality
+- Terminal sessions properly cleaned up on close (no orphaned processes)
+- Supports all standard terminal features: colors, cursor movement, line editing
+- Future enhancement: Could add terminal session reconnection on WebSocket reconnect
+
+---
+
 ## Phase: [Future Phases]
 
 Future milestones will be added here as the project evolves.
