@@ -5,12 +5,12 @@ import userEvent from '@testing-library/user-event';
 import { DeleteConfirmModal } from '../DeleteConfirmModal';
 
 describe('DeleteConfirmModal', () => {
-  let mockOnClose: ReturnType<typeof vi.fn>;
-  let mockOnConfirm: ReturnType<typeof vi.fn>;
+  let mockOnClose: ReturnType<typeof vi.fn<[], void>>;
+  let mockOnConfirm: ReturnType<typeof vi.fn<[], Promise<void> | void>>;
 
   beforeEach(() => {
-    mockOnClose = vi.fn();
-    mockOnConfirm = vi.fn();
+    mockOnClose = vi.fn<[], void>();
+    mockOnConfirm = vi.fn<[], Promise<void>>().mockResolvedValue(undefined);
   });
 
   describe('rendering', () => {

@@ -5,11 +5,12 @@ use std::time::Instant;
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::{
-    extract::{ConnectInfo, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Query, State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use futures::StreamExt;
 use futures_util::SinkExt;
+use serde::Deserialize;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -25,22 +26,46 @@ pub use routing::MessageRouter as LlmMessageRouter;
 pub use unified_handler::{ChatRequest, UnifiedChatHandler};
 
 use crate::api::ws::message::WsClientMessage;
+use crate::auth::verify_token;
 use crate::state::AppState;
+
+#[derive(Deserialize)]
+pub struct WsQuery {
+    token: Option<String>,
+}
 
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    Query(query): Query<WsQuery>,
 ) -> impl IntoResponse {
-    info!("WebSocket upgrade request from {}", addr);
-    ws.on_upgrade(move |socket| handle_socket(socket, app_state, addr))
+    // Extract user_id from JWT token (optional for now)
+    let user_id = if let Some(token) = query.token {
+        match verify_token(&token) {
+            Ok(claims) => {
+                info!("WebSocket upgrade request from {} with user: {}", addr, claims.username);
+                Some(claims.sub)
+            }
+            Err(e) => {
+                warn!("Invalid token from {}: {}", addr, e);
+                None
+            }
+        }
+    } else {
+        warn!("WebSocket upgrade request from {} without token (using fallback)", addr);
+        None
+    };
+
+    ws.on_upgrade(move |socket| handle_socket(socket, app_state, addr, user_id))
 }
 
-async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>, addr: std::net::SocketAddr) {
+async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>, addr: std::net::SocketAddr, user_id: Option<String>) {
     let connection_start = Instant::now();
     let (sender, mut receiver) = socket.split();
 
-    info!("WebSocket client connected from {}", addr);
+    let session_id = user_id.clone().unwrap_or_else(|| "peter-eternal".to_string());
+    info!("WebSocket client connected from {} with session_id: {}", addr, session_id);
 
     let last_activity = Arc::new(Mutex::new(Instant::now()));
     let last_any_send = Arc::new(Mutex::new(Instant::now()));
@@ -59,8 +84,8 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>, addr: std::n
         return;
     }
 
-    // Create message router
-    let router = MessageRouter::new(app_state.clone(), connection.clone(), addr);
+    // Create message router with session_id
+    let router = MessageRouter::new(app_state.clone(), connection.clone(), addr, session_id);
 
     // Receive loop
     while let Some(result) = receiver.next().await {

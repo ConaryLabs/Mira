@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::api::ws::chat::routing::MessageRouter;
+use crate::auth::AuthService;
 use crate::config::CONFIG;
 use crate::git::client::GitClient;
 use crate::git::store::GitStore;
@@ -53,6 +54,7 @@ pub struct AppState {
     pub facts_service: Arc<FactsService>,
     pub sudo_service: Arc<SudoPermissionService>,
     pub terminal_store: Arc<TerminalStore>,
+    pub auth_service: Arc<AuthService>,
 }
 
 impl AppState {
@@ -154,6 +156,10 @@ impl AppState {
         info!("Initializing terminal services");
         let terminal_store = Arc::new(TerminalStore::new(Arc::new(pool.clone())));
 
+        // Initialize authentication service
+        info!("Initializing authentication service");
+        let auth_service = Arc::new(AuthService::new(pool.clone()));
+
         info!("Application state initialized successfully");
 
         Ok(Self {
@@ -175,6 +181,7 @@ impl AppState {
             facts_service,
             sudo_service,
             terminal_store,
+            auth_service,
         })
     }
 }

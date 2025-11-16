@@ -1,6 +1,7 @@
 // src/lib.rs
 
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod file_system;
 pub mod git;

@@ -7,10 +7,12 @@ use std::sync::Arc;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
+use mira_backend::api::http::create_auth_router;
 use mira_backend::api::ws::ws_chat_handler;
 use mira_backend::config::CONFIG;
 use mira_backend::state::AppState;
 use mira_backend::tasks::TaskManager;
+use tower_http::cors::{CorsLayer, Any};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -57,9 +59,14 @@ async fn main() -> anyhow::Result<()> {
     let mut task_manager = TaskManager::new(app_state.clone());
     task_manager.start().await;
 
-    // Build router with WebSocket endpoint
+    // Build router with WebSocket and HTTP endpoints
     let app = Router::new()
         .route("/ws", get(ws_chat_handler))
+        .nest("/api/auth", create_auth_router())
+        .layer(CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any))
         .with_state(app_state);
 
     let bind_address = format!("{}:{}", CONFIG.host, CONFIG.port);

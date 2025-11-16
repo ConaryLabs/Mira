@@ -20,6 +20,7 @@ pub struct MessageRouter {
     app_state: Arc<AppState>,
     connection: Arc<WebSocketConnection>,
     addr: SocketAddr,
+    session_id: String,
     unified_handler: UnifiedChatHandler,
 }
 
@@ -28,6 +29,7 @@ impl MessageRouter {
         app_state: Arc<AppState>,
         connection: Arc<WebSocketConnection>,
         addr: SocketAddr,
+        session_id: String,
     ) -> Self {
         let unified_handler = UnifiedChatHandler::new(app_state.clone());
 
@@ -35,6 +37,7 @@ impl MessageRouter {
             app_state,
             connection,
             addr,
+            session_id,
             unified_handler,
         }
     }
@@ -84,12 +87,12 @@ impl MessageRouter {
         metadata: Option<MessageMetadata>,
     ) -> Result<()> {
         info!(
-            "Processing chat message from {} (routing via LLM)",
-            self.addr
+            "Processing chat message from {} (routing via LLM) with session_id: {}",
+            self.addr, self.session_id
         );
 
         let request = ChatRequest {
-            session_id: CONFIG.session_id.clone(),
+            session_id: self.session_id.clone(),
             content,
             project_id,
             metadata,

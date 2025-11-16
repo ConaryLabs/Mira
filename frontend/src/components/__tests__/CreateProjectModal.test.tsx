@@ -5,12 +5,12 @@ import userEvent from '@testing-library/user-event';
 import { CreateProjectModal } from '../CreateProjectModal';
 
 describe('CreateProjectModal', () => {
-  let mockOnClose: ReturnType<typeof vi.fn>;
-  let mockOnCreate: ReturnType<typeof vi.fn>;
+  let mockOnClose: ReturnType<typeof vi.fn<[], void>>;
+  let mockOnCreate: ReturnType<typeof vi.fn<[string, string?], Promise<boolean>>>;
 
   beforeEach(() => {
-    mockOnClose = vi.fn();
-    mockOnCreate = vi.fn();
+    mockOnClose = vi.fn<[], void>();
+    mockOnCreate = vi.fn<[string, string?], Promise<boolean>>().mockResolvedValue(true);
   });
 
   describe('rendering', () => {

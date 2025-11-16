@@ -44,6 +44,25 @@ interface WebSocketStore {
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001/ws';
 
+// Helper to build WebSocket URL with authentication token
+function buildWsUrl(baseUrl: string): string {
+  // Lazy import to avoid circular dependency
+  const authStore = (window as any).__authStore;
+  if (!authStore) {
+    // First time - store not initialized yet
+    return baseUrl;
+  }
+
+  const token = authStore.getState?.().token;
+  if (token) {
+    const url = new URL(baseUrl, window.location.origin);
+    url.searchParams.set('token', token);
+    return url.toString().replace(/^http/, 'ws');
+  }
+
+  return baseUrl;
+}
+
 // Message types we explicitly handle
 const KNOWN_MESSAGE_TYPES = new Set([
   'status',
@@ -148,20 +167,21 @@ export const useWebSocketStore = create<WebSocketStore>()(
     ...initialState,
     
     connect: (url?: string) => {
-      const wsUrl = url || WS_URL;
+      const baseUrl = url || WS_URL;
+      const wsUrl = buildWsUrl(baseUrl);
       const { socket, connectionState, reconnectAttempts } = get();
-      
+
       if (socket?.readyState === WebSocket.OPEN || connectionState === 'connecting') {
         return;
       }
-      
+
       // FIXED: Use 'reconnecting' state if this is a retry
       const isReconnecting = reconnectAttempts > 0;
-      set({ 
+      set({
         connectionState: isReconnecting ? 'reconnecting' : 'connecting',
         isConnected: false,
       });
-      
+
       try {
         const ws = new WebSocket(wsUrl);
         

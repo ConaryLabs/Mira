@@ -1,7 +1,8 @@
 // src/api/mod.rs
-// WebSocket-only API module
+// API module - WebSocket and HTTP endpoints
 
 pub mod error;
+pub mod http;
 pub mod types;
 pub mod ws;
 
