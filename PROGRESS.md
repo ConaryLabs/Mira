@@ -430,6 +430,151 @@ Frontend:
 
 ---
 
+### Session 4: 2025-11-15
+
+**Goals:**
+- Expose git operations to GPT-5 for code history analysis
+- Implement AST-powered code intelligence tools
+- Enable semantic code search and complexity analysis
+- Integrate with existing CodeIntelligenceService infrastructure
+
+**Outcomes:**
+- Implemented 10 git analysis tools with full command execution
+- Implemented 12 AST-powered code intelligence tools
+- Integrated with Qdrant vector search for semantic code analysis
+- Exposed sophisticated code intelligence infrastructure to LLM
+- Strategic dual-model architecture now includes tool delegation
+
+**Files Created:**
+Backend:
+- `backend/src/operations/git_tools.rs` - Git tool schemas for DeepSeek (150 lines)
+- `backend/src/operations/engine/git_handlers.rs` - Git operations via CLI (500+ lines)
+- `backend/src/operations/code_tools.rs` - Code intelligence tool schemas (323 lines)
+- `backend/src/operations/engine/code_handlers.rs` - CodeIntelligence integration (760 lines)
+
+**Files Modified:**
+Backend (5 files):
+- `backend/src/operations/delegation_tools.rs` - Added 22 new meta-tools (+542 lines):
+  - 10 git analysis tools (history, blame, diff, branches, contributors, status, etc.)
+  - 12 code intelligence tools (find function, semantic search, complexity, quality, etc.)
+- `backend/src/operations/engine/tool_router.rs` - Added git and code routing (+224 lines)
+  - GitHandlers integration with project directory
+  - CodeHandlers integration with CodeIntelligenceService
+  - 22 new routing methods for meta-tools
+- `backend/src/operations/engine/orchestration.rs` - Updated tool matching patterns (+7 lines)
+- `backend/src/operations/engine/mod.rs` - Added git_handlers and code_handlers modules (+2 lines)
+- `backend/src/operations/mod.rs` - Exported get_git_tools and get_code_tools (+2 lines)
+
+**Git Commits:**
+- `cab2b6c` - Feat: Add git analysis tools (10 operations) to dual-model architecture
+  - 7 files changed: +1,168 insertions, -3 deletions
+- `e732023` - Feat: Add AST-powered code intelligence tools (12 operations)
+  - 7 files changed: +1,609 insertions, -5 deletions
+
+**Technical Decisions:**
+
+1. **Git Tool Implementation:**
+   - Decision: Direct git CLI execution via tokio::process::Command
+   - Rationale: Simpler than using existing BranchManager/DiffParser, follows external_handlers pattern
+   - Implementation: Structured JSON responses from parsed git output
+   - Benefits: Read-only operations, safe, full git functionality exposed
+
+2. **Code Intelligence Integration:**
+   - Decision: Integrate with existing CodeIntelligenceService rather than rebuild
+   - Rationale: Leverage sophisticated AST parsing infrastructure already in place
+   - Infrastructure: Rust (syn), TypeScript/JavaScript (swc), Qdrant embeddings
+   - Benefits: Semantic search, complexity analysis, quality issues, test coverage
+
+3. **Tool Router Architecture:**
+   - Decision: Pass CodeIntelligenceService Arc to ToolRouter constructor
+   - Rationale: Enables code handlers to access existing service without duplication
+   - Challenge: Updated OperationEngine::new signature to provide code_intelligence
+   - Result: Clean dependency injection, maintains separation of concerns
+
+4. **Semantic Search Strategy:**
+   - Decision: Use existing search_code() method with vector embeddings
+   - Rationale: Qdrant + OpenAI embeddings already production-ready
+   - Simplification: Return MemoryEntry objects rather than parsing tags
+   - Benefits: Natural language queries like "authentication middleware" work
+
+5. **Type Safety for Limits:**
+   - Problem: search_elements_for_project expects Option<i32>, tools used usize
+   - Solution: Parse limits as Option<i32> directly, wrap literals in Some()
+   - Learning: Match database API signatures exactly to avoid type mismatches
+
+6. **Error Handling:**
+   - Decision: Return JSON success/failure rather than throwing errors
+   - Rationale: LLM can understand JSON responses and retry with different parameters
+   - Implementation: All handlers return Ok(json!({...})) with success boolean
+   - Benefits: Graceful degradation, informative error messages for LLM
+
+**Git Tools Implemented (10 total):**
+1. `git_history` - Commit history with filtering by branch, author, file, date range
+2. `git_blame` - Line-by-line attribution with commit hash, author, date
+3. `git_diff` - Compare commits, branches, or working tree with structured diffs
+4. `git_file_history` - Track file evolution with rename detection
+5. `git_branches` - List branches with ahead/behind counts relative to main
+6. `git_show_commit` - Detailed commit info with full diff
+7. `git_file_at_commit` - Historical file content retrieval
+8. `git_recent_changes` - Hot spot analysis (frequently changed files)
+9. `git_contributors` - Contribution analysis by author and area of expertise
+10. `git_status` - Working tree status (staged, unstaged, untracked files)
+
+**Code Intelligence Tools Implemented (12 total):**
+1. `find_function` - Find functions by name/pattern with complexity scores
+2. `find_class_or_struct` - Find type definitions (class, struct, enum)
+3. `search_code_semantic` - Natural language semantic search via embeddings
+4. `find_imports` - Find where symbols are imported/used
+5. `analyze_dependencies` - Analyze npm packages, local imports, std lib
+6. `get_complexity_hotspots` - Find high-complexity functions (>10 cyclomatic)
+7. `get_quality_issues` - Get code quality problems with auto-fix suggestions
+8. `get_file_symbols` - Get all symbols in a file organized by type
+9. `find_tests_for_code` - Find tests for a code element
+10. `get_codebase_stats` - Comprehensive codebase statistics and metrics
+11. `find_callers` - Find where a function is called (impact analysis)
+12. `get_element_definition` - Get full definition of a code element
+
+**Issues/Blockers:**
+
+1. **Git Handler Borrow Checker Errors:**
+   - Problem: Temporary format!() strings freed before git command execution
+   - Symptoms: limit_arg and line_range lifetime issues
+   - Solution: Bind format!() results to variables before passing to vec![]
+   - Resolution: All lifetimes properly managed, builds successful
+
+2. **Type Mismatches with CodeIntelligenceService:**
+   - Problem: search_elements_for_project expects Option<i32>, not usize or int literals
+   - Root Cause: Database API uses Option<i32> for nullable limits
+   - Solution: Parse limits as Option<i32>, wrap literals in Some(10)
+   - Impact: 17 compilation errors initially, all fixed systematically
+
+3. **MemoryEntry Tags Structure:**
+   - Problem: Assumed tags was HashMap, actually Option<Vec<String>>
+   - Impact: Multiple .get() call errors on tags field
+   - Solution: Simplified to return full tags vector instead of parsing
+   - Learning: Check actual type definitions rather than assuming structure
+
+4. **Module Export Updates:**
+   - Challenge: Adding code_intelligence parameter to ToolRouter::new
+   - Impact: Required updating OperationEngine to pass through the service
+   - Solution: Changed signature from (deepseek, project_dir) to include code_intelligence
+   - Result: Clean dependency injection, all modules properly exported
+
+**Notes:**
+- Total of 22 new tools added to GPT-5's capabilities (10 git + 12 code intelligence)
+- Strategic dual-model architecture now fully operational with tool delegation
+- Git tools provide full repository history and collaboration insights
+- Code intelligence tools leverage existing AST parsers (syn for Rust, swc for TS/JS)
+- Semantic search uses Qdrant vector DB with OpenAI text-embedding-3-large
+- All tools follow read-only pattern for safety (no destructive git operations)
+- Code intelligence integrates with existing code_elements, code_quality_issues tables
+- Supports Rust, TypeScript, JavaScript with extensible parser architecture
+- Total implementation: 2,777 new lines of code (1,168 git + 1,609 code intelligence)
+- All builds passing, all tools ready for production use
+- GPT-5 can now deeply understand codebases through AST analysis and semantic search
+
+---
+
 ## Phase: [Future Phases]
 
 Future milestones will be added here as the project evolves.

@@ -26,31 +26,45 @@ Mira will become the ultimate AI-powered development companion by combining:
 **Strengths:**
 - Dual LLM orchestration (GPT-5 for reasoning, DeepSeek for code generation)
 - Hybrid memory system (SQLite + Qdrant with 5-head embeddings)
-- Code intelligence service (function/class extraction, semantic analysis)
-- Git integration (clone, import, sync, branch management)
+- Code intelligence service (AST parsing for Rust/TypeScript, semantic analysis, complexity tracking)
+- Git integration (clone, import, sync, branch management + **10 analysis tools**)
 - Real-time WebSocket streaming architecture
 - Artifact system (code blocks from LLM saved/applied to files)
+- **Integrated terminal** (xterm.js with PTY, multiple sessions, split-view layout)
 - React + TypeScript frontend with Monaco editor
 - Rust backend with proven performance
+- **Comprehensive tool suite** (35+ tools: file ops, git analysis, code intelligence, external tools)
 
 **Capabilities:**
 - Intelligent conversation with context retention
 - Code generation with delegation to specialized models
 - Semantic search across conversations and code
-- Project-aware responses with file tree context
+- Project-aware responses with file tree context and code intelligence
 - Multi-head embeddings for different content types
+- **GPT-5 can read files** (read, search, list, get summaries/structure - write/edit not yet exposed)
+- **GPT-5 can analyze git history** (history, blame, diff, branches, contributors, status)
+- **GPT-5 can search code semantically** (find functions/classes, analyze dependencies, complexity)
+- **GPT-5 can use external tools** (web search, URL fetch, command execution)
+- **Real-time terminal access** (command execution, multiple sessions, project-scoped)
 
 ### What's Missing for the Vision
 
-**Critical Gaps:**
-1. **Remote Machine Connectivity** - No SSH connection to VPS/dev machines
-2. **File Operations UI** - No visual file browser or direct file access
-3. **Terminal Integration** - No embedded terminal for command execution
-4. **Tool Execution** - LLM cannot directly read/write files or run commands
-5. **Split-View Interface** - Current UI doesn't show real-time work visualization
-6. **Direct Manipulation** - All changes must be manually copied from artifacts
+**Completed (Sessions 2-4):**
+- ✅ **Terminal Integration** - Embedded terminal with xterm.js, PTY-based shell execution, multiple sessions
+- ✅ **Split-View Interface** - Right-side panel with terminal, resizable, traditional IDE layout
+- ✅ **Tool Execution** - GPT-5 can read files, search codebase, analyze git history, search web, execute commands
+- ✅ **Code Intelligence Tools** - 12 AST-powered tools for semantic search, complexity analysis, quality issues
+- ✅ **Git Analysis Tools** - 10 comprehensive tools for history, blame, diff, branches, contributors
 
-**The Problem**: Mira can generate great code and have intelligent conversations, but cannot autonomously manipulate the actual development environment like Claude Code can.
+**Remaining Gaps:**
+1. **File Write/Edit Tools** - GPT-5 can read files but cannot write/edit (write_file handler exists but not exposed as meta-tool)
+2. **File Browser UI** - No visual file tree browser in the interface (terminal exists, file tree doesn't)
+3. **Enhanced Terminal Control** - execute_command exists but could be more powerful for LLM-driven operations
+
+**Explicitly NOT Pursuing (for now):**
+- ❌ **SSH/Remote Connectivity** - Decided to focus on local development first, defer remote machine support
+
+**The Gap**: Mira can read and analyze code deeply, but GPT-5 needs write/edit meta-tools exposed to autonomously modify files. The infrastructure exists, just needs to be wired up.
 
 ---
 
@@ -688,5 +702,14 @@ Let's build the future of AI-assisted development.
 ---
 
 **Last Updated**: 2025-11-15
-**Status**: Vision Document (Pre-Implementation)
+**Status**: Partial Implementation (Terminal + Read-Only Tools Complete, Write Tools Pending)
 **Owner**: Peter (Founder)
+
+**Recent Progress (Nov 2025):**
+- Session 2: Integrated terminal with xterm.js + PTY (✅ Complete)
+- Session 3: External tools - web search, URL fetch, command execution (✅ Complete)
+- Session 4: Git analysis (10 tools) + Code intelligence (12 tools) (✅ Complete)
+- **Next Priorities**:
+  1. Expose file write/edit meta-tools to GPT-5 (handlers exist, need delegation_tools wiring)
+  2. Add file tree browser UI component
+  3. SSH/remote connectivity explicitly deferred

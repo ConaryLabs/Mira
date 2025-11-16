@@ -76,13 +76,28 @@ mira/
 - **Hybrid Memory System** - SQLite + Qdrant with multi-head embeddings (semantic, code, summary, documents, relationships)
 - **Real-time Streaming** - WebSocket-based bidirectional communication with cancellation support
 - **Context-Aware** - Gathers recent messages, semantic search results, file trees, and code intelligence
-- **Git Integration** - Clone, import, sync repositories; file tree navigation; diff parsing
-- **Code Intelligence** - Function/class extraction, semantic code search, project structure analysis
+- **Git Integration** - Clone, import, sync repositories; file tree navigation; diff parsing; **10 analysis tools** (history, blame, diff, branches, contributors, status, commit inspection)
+- **Code Intelligence** - AST-based parsing (Rust/TypeScript); **12 intelligence tools** (find functions/classes, semantic search, complexity analysis, quality issues, dependency tracking, test discovery)
 - **Operation Tracking** - Complex multi-step workflows with lifecycle management (PENDING → STARTED → DELEGATING → COMPLETED)
 - **Artifact Management** - Code blocks from LLM can be saved/applied to files via Monaco editor
 - **Integrated Terminal** - Full xterm.js terminal emulator with real-time PTY-based shell execution, multiple sessions, project-scoped working directories
 
 ## Recent Improvements (November 2025)
+
+### Session 4: Git Analysis & Code Intelligence Tools (22 new tools)
+- **10 Git Analysis Tools** - Expose git operations to GPT-5: history, blame, diff, file history, branches, commit inspection, contributors, status, recent changes
+- **12 Code Intelligence Tools** - AST-powered code analysis: find functions/classes, semantic search, imports, dependencies, complexity hotspots, quality issues, file symbols, test discovery, codebase stats, caller analysis, element definitions
+- **Tool Router Architecture** - Unified routing for file operations, external tools, git, and code intelligence
+- **Direct Execution** - Git commands via tokio::process, code intelligence via existing AST service
+- **Type-Safe Integration** - Proper Option<i32> handling, Arc<CodeIntelligenceService> injection
+- **2,777 lines added** - 4 new modules, 5 modified files, comprehensive tool schemas
+
+### Session 3: External Tools Integration (3 new tools)
+- **Web Search** - DuckDuckGo API integration with structured results
+- **URL Fetch** - HTTP client with content extraction and markdown conversion
+- **Command Execution** - Sandboxed shell commands with timeout and output capture
+- **External Handlers** - Dedicated module for non-file, non-git tools
+- **Tool Router Pattern** - Extended routing architecture for scalability
 
 ### Session 2: Integrated Terminal
 - **Full terminal emulator** - xterm.js with themed styling and real-time I/O
