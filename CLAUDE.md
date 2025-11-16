@@ -274,16 +274,31 @@ curl http://localhost:6333/collections
 
 ## Code Style
 
+### General Rules (All Code)
+
+**File Headers:**
+- Every code file must start with a comment containing the file path/filename
+- Example (Rust): `// backend/src/operations/engine/mod.rs`
+- Example (TypeScript): `// frontend/src/hooks/useMessageHandler.ts`
+
+**Comments:**
+- No emojis anywhere - not in documentation, code, or comments
+- No phased comments (e.g., "Phase 1:", "Phase 2:", "Step 1:", etc.)
+- Code comments should only explain what that section of code does
+- Keep comments concise and focused on the "what" and "why", not the "how"
+
 **Backend (Rust):**
 - Run `cargo fmt` before committing
 - Run `cargo clippy` and address warnings
 - Follow Rust naming conventions (snake_case for functions, PascalCase for types)
 - Add inline comments for complex logic
+- File header format: `// backend/src/path/to/file.rs`
 
 **Frontend (TypeScript):**
 - ESLint configured with React rules
 - Use TypeScript strict mode
 - Functional components with hooks (no class components)
+- File header format: `// frontend/src/path/to/file.ts` or `.tsx`
 
 ## Important Files
 
@@ -307,3 +322,7 @@ curl http://localhost:6333/collections
 - `backend/README.md` - Comprehensive backend documentation
 - `backend/WHITEPAPER.md` - Detailed architectural reference
 - `backend/.env.example` - Environment variable template
+- `PROGRESS.md` - **Session progress log (UPDATE AT END OF EACH SESSION)** - Tracks detailed technical progress by milestone/phase including goals, outcomes, files changed, git commits, and technical decisions
+- `HOUSECLEANING_SUMMARY.md` - Complete report of November 2025 refactoring effort
+- `ISSUES_TO_CREATE.md` - Catalogued technical debt items for future work
+- `frontend/docs/STATE_BOUNDARIES.md` - Frontend state management architecture
