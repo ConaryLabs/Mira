@@ -11,6 +11,7 @@ export interface Project {
   
   // Backend sends these as snake_case (matching Rust serialization)
   has_repository?: boolean;
+  has_codebase?: boolean;
   repository_url?: string;
   import_status?: string;
   last_sync_at?: string | null;
