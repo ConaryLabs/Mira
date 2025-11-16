@@ -6,6 +6,7 @@ pub mod delegation_tools;
 pub mod engine;
 pub mod external_tools;
 pub mod file_tools;
+pub mod git_tools;
 pub mod tool_builder;
 pub mod types;
 
@@ -14,6 +15,7 @@ pub use delegation_tools::{get_delegation_tools, parse_tool_call};
 pub use engine::{OperationEngine, OperationEngineEvent};
 pub use external_tools::get_external_tools;
 pub use file_tools::get_file_operation_tools;
+pub use git_tools::get_git_tools;
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

@@ -10,13 +10,14 @@ use tracing::{info, warn};
 use crate::llm::provider::deepseek::DeepSeekProvider;
 use crate::llm::provider::Message;
 use crate::operations::get_file_operation_tools;
-use super::{external_handlers::ExternalHandlers, file_handlers::FileHandlers};
+use super::{external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
 
 /// Routes GPT-5 meta-tool calls to DeepSeek file operation execution
 pub struct ToolRouter {
     deepseek: DeepSeekProvider,
     file_handlers: FileHandlers,
     external_handlers: ExternalHandlers,
+    git_handlers: GitHandlers,
 }
 
 impl ToolRouter {
@@ -25,7 +26,8 @@ impl ToolRouter {
         Self {
             deepseek,
             file_handlers: FileHandlers::new(project_dir.clone()),
-            external_handlers: ExternalHandlers::new(project_dir),
+            external_handlers: ExternalHandlers::new(project_dir.clone()),
+            git_handlers: GitHandlers::new(project_dir),
         }
     }
 
@@ -46,6 +48,18 @@ impl ToolRouter {
             "list_project_files" => self.route_list_files(arguments).await,
             "get_file_summary" => self.route_file_summary(arguments).await,
             "get_file_structure" => self.route_file_structure(arguments).await,
+
+            // Git operations
+            "git_history" => self.route_git_history(arguments).await,
+            "git_blame" => self.route_git_blame(arguments).await,
+            "git_diff" => self.route_git_diff(arguments).await,
+            "git_file_history" => self.route_git_file_history(arguments).await,
+            "git_branches" => self.route_git_branches(arguments).await,
+            "git_show_commit" => self.route_git_show_commit(arguments).await,
+            "git_file_at_commit" => self.route_git_file_at_commit(arguments).await,
+            "git_recent_changes" => self.route_git_recent_changes(arguments).await,
+            "git_contributors" => self.route_git_contributors(arguments).await,
+            "git_status" => self.route_git_status(arguments).await,
 
             // External operations
             "web_search" => self.route_web_search(arguments).await,
@@ -431,6 +445,90 @@ impl ToolRouter {
         // Execute command directly
         self.external_handlers
             .execute_tool("execute_command_internal", args)
+            .await
+    }
+
+    // ========================================================================
+    // Git Operations Routing
+    // ========================================================================
+
+    /// Route git_history to git handler
+    async fn route_git_history(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_history");
+        self.git_handlers
+            .execute_tool("git_history_internal", args)
+            .await
+    }
+
+    /// Route git_blame to git handler
+    async fn route_git_blame(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_blame");
+        self.git_handlers
+            .execute_tool("git_blame_internal", args)
+            .await
+    }
+
+    /// Route git_diff to git handler
+    async fn route_git_diff(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_diff");
+        self.git_handlers
+            .execute_tool("git_diff_internal", args)
+            .await
+    }
+
+    /// Route git_file_history to git handler
+    async fn route_git_file_history(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_file_history");
+        self.git_handlers
+            .execute_tool("git_file_history_internal", args)
+            .await
+    }
+
+    /// Route git_branches to git handler
+    async fn route_git_branches(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_branches");
+        self.git_handlers
+            .execute_tool("git_branches_internal", args)
+            .await
+    }
+
+    /// Route git_show_commit to git handler
+    async fn route_git_show_commit(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_show_commit");
+        self.git_handlers
+            .execute_tool("git_show_commit_internal", args)
+            .await
+    }
+
+    /// Route git_file_at_commit to git handler
+    async fn route_git_file_at_commit(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_file_at_commit");
+        self.git_handlers
+            .execute_tool("git_file_at_commit_internal", args)
+            .await
+    }
+
+    /// Route git_recent_changes to git handler
+    async fn route_git_recent_changes(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_recent_changes");
+        self.git_handlers
+            .execute_tool("git_recent_changes_internal", args)
+            .await
+    }
+
+    /// Route git_contributors to git handler
+    async fn route_git_contributors(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_contributors");
+        self.git_handlers
+            .execute_tool("git_contributors_internal", args)
+            .await
+    }
+
+    /// Route git_status to git handler
+    async fn route_git_status(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing git_status");
+        self.git_handlers
+            .execute_tool("git_status_internal", args)
             .await
     }
 }

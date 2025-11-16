@@ -29,6 +29,18 @@ pub fn get_delegation_tools() -> Vec<Value> {
         fetch_url_tool(),
         execute_command_tool(),
 
+        // Git analysis tools - code history and collaboration
+        git_history_tool(),
+        git_blame_tool(),
+        git_diff_tool(),
+        git_file_history_tool(),
+        git_branches_tool(),
+        git_show_commit_tool(),
+        git_file_at_commit_tool(),
+        git_recent_changes_tool(),
+        git_contributors_tool(),
+        git_status_tool(),
+
         // Skills system - specialized task handling
         activate_skill_tool(),
     ]
@@ -357,6 +369,205 @@ fn execute_command_tool() -> Value {
             "description": "Optional environment variables to set (e.g., {\"NODE_ENV\": \"development\"})"
         }),
         false
+    )
+    .build()
+}
+
+// ============================================================================
+// Git Analysis Tools - Code History and Collaboration
+// ============================================================================
+
+/// Tool: git_history
+fn git_history_tool() -> Value {
+    ToolBuilder::new(
+        "git_history",
+        "Get commit history with author, date, and message. Filter by branch, author, file, or date range. Useful for understanding code evolution and finding when changes were made."
+    )
+    .property(
+        "branch",
+        properties::optional_string("Branch name (default: current branch)"),
+        false
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum commits to return (default: 20)"),
+        false
+    )
+    .property(
+        "author",
+        properties::optional_string("Filter by author name or email"),
+        false
+    )
+    .property(
+        "file_path",
+        properties::optional_string("Show only commits affecting this file"),
+        false
+    )
+    .property(
+        "since",
+        properties::optional_string("Show commits since date (e.g., '2024-01-01', '1 week ago')"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_blame
+fn git_blame_tool() -> Value {
+    ToolBuilder::new(
+        "git_blame",
+        "Show who last modified each line of a file with commit hash, author, and date. Perfect for understanding why code was changed and who to ask about it."
+    )
+    .property(
+        "file_path",
+        properties::path("Path to the file to blame"),
+        true
+    )
+    .property(
+        "start_line",
+        properties::optional_string("Start line number (optional)"),
+        false
+    )
+    .property(
+        "end_line",
+        properties::optional_string("End line number (optional)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_diff
+fn git_diff_tool() -> Value {
+    ToolBuilder::new(
+        "git_diff",
+        "Show differences between commits, branches, or working tree. Returns added/removed/modified lines. Useful for code review and understanding changes."
+    )
+    .property(
+        "from",
+        properties::optional_string("Commit hash or branch name to compare from"),
+        false
+    )
+    .property(
+        "to",
+        properties::optional_string("Commit hash or branch to compare to (default: working tree)"),
+        false
+    )
+    .property(
+        "file_path",
+        properties::optional_string("Show diff for specific file only"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_file_history
+fn git_file_history_tool() -> Value {
+    ToolBuilder::new(
+        "git_file_history",
+        "Show all commits that modified a specific file, tracking renames and moves. Useful for understanding file evolution and finding when bugs were introduced."
+    )
+    .property(
+        "file_path",
+        properties::path("Path to the file"),
+        true
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum commits to return (default: 20)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_branches
+fn git_branches_tool() -> Value {
+    ToolBuilder::new(
+        "git_branches",
+        "List all branches with last commit info and ahead/behind counts. Useful for understanding branch status and finding stale branches."
+    )
+    .property(
+        "include_remote",
+        properties::optional_string("Include remote branches (default: false)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_show_commit
+fn git_show_commit_tool() -> Value {
+    ToolBuilder::new(
+        "git_show_commit",
+        "Show detailed information about a specific commit including full diff and all files changed. Useful for understanding what a commit did."
+    )
+    .property(
+        "commit_hash",
+        properties::description("Commit hash (full or short)"),
+        true
+    )
+    .build()
+}
+
+/// Tool: git_file_at_commit
+fn git_file_at_commit_tool() -> Value {
+    ToolBuilder::new(
+        "git_file_at_commit",
+        "Get the content of a file as it existed at a specific commit. Compare with current version to see how it changed. Useful for debugging when code broke."
+    )
+    .property(
+        "file_path",
+        properties::path("Path to the file"),
+        true
+    )
+    .property(
+        "commit_hash",
+        properties::description("Commit hash or branch name"),
+        true
+    )
+    .build()
+}
+
+/// Tool: git_recent_changes
+fn git_recent_changes_tool() -> Value {
+    ToolBuilder::new(
+        "git_recent_changes",
+        "Show files modified in the last N commits or days. Highlights frequently changed files (hot spots) that may need attention. Useful for finding volatile code."
+    )
+    .property(
+        "days",
+        properties::optional_string("Number of days to look back (default: 7)"),
+        false
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum commits to analyze (default: 50)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_contributors
+fn git_contributors_tool() -> Value {
+    ToolBuilder::new(
+        "git_contributors",
+        "Show who has contributed to the codebase with commit counts. Optionally filter by file/directory or date range. Useful for finding domain experts."
+    )
+    .property(
+        "file_path",
+        properties::optional_string("Show contributors for specific file or directory"),
+        false
+    )
+    .property(
+        "since",
+        properties::optional_string("Show contributions since date (e.g., '1 month ago')"),
+        false
+    )
+    .build()
+}
+
+/// Tool: git_status
+fn git_status_tool() -> Value {
+    ToolBuilder::new(
+        "git_status",
+        "Show current working tree status: staged, unstaged, and untracked files. Also shows current branch and sync status with remote. Essential for understanding current repository state."
     )
     .build()
 }

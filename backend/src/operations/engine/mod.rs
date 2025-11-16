@@ -8,6 +8,7 @@ pub mod delegation;
 pub mod events;
 pub mod external_handlers;
 pub mod file_handlers;
+pub mod git_handlers;
 pub mod lifecycle;
 pub mod orchestration;
 pub mod simple_mode;
