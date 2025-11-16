@@ -19,6 +19,7 @@ use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::operations::{ContextLoader, OperationEngine};
 use crate::project::store::ProjectStore;
 use crate::relationship::{FactsService, RelationshipService};
+use crate::sudo::SudoPermissionService;
 use crate::terminal::TerminalStore;
 
 /// Session data for file uploads
@@ -51,6 +52,7 @@ pub struct AppState {
     pub message_router: Arc<MessageRouter>,
     pub relationship_service: Arc<RelationshipService>,
     pub facts_service: Arc<FactsService>,
+    pub sudo_service: Arc<SudoPermissionService>,
     pub terminal_store: Arc<TerminalStore>,
     pub terminal_session_manager: Arc<TerminalSessionManager>,
 }
@@ -130,6 +132,10 @@ impl AppState {
             code_intelligence.clone(),
         ));
 
+        // Initialize sudo permission service
+        info!("Initializing sudo permission service");
+        let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
+
         // OperationEngine requires memory and relationship integration
         info!("Initializing OperationEngine with memory and relationship integration");
         let operation_engine = Arc::new(OperationEngine::new(
@@ -138,8 +144,9 @@ impl AppState {
             (*deepseek_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
-            git_client.clone(),        // FIXED: Added git_client
-            code_intelligence.clone(), // FIXED: Added code_intelligence
+            git_client.clone(),
+            code_intelligence.clone(),
+            Some(sudo_service.clone()), // Sudo permissions for system administration
         ));
 
         // Initialize MessageRouter
@@ -169,6 +176,7 @@ impl AppState {
             message_router,
             relationship_service,
             facts_service,
+            sudo_service,
             terminal_store,
             terminal_session_manager,
         })

@@ -4,15 +4,19 @@
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
+use crate::sudo::{AuthorizationDecision, SudoAuditEntry, SudoPermissionService};
+
 /// Handles external operations (web, commands)
 pub struct ExternalHandlers {
     project_dir: PathBuf,
     http_client: reqwest::Client,
+    sudo_service: Option<Arc<SudoPermissionService>>,
 }
 
 impl ExternalHandlers {
@@ -26,7 +30,14 @@ impl ExternalHandlers {
         Self {
             project_dir,
             http_client,
+            sudo_service: None,
         }
+    }
+
+    /// Set the sudo permission service for command authorization
+    pub fn with_sudo_service(mut self, sudo_service: Arc<SudoPermissionService>) -> Self {
+        self.sudo_service = Some(sudo_service);
+        self
     }
 
     /// Execute an external tool call
@@ -297,6 +308,23 @@ impl ExternalHandlers {
             .and_then(|v| v.as_str())
             .context("Missing command parameter")?;
 
+        let use_sudo = args
+            .get("use_sudo")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let operation_id = args
+            .get("operation_id")
+            .and_then(|v| v.as_str());
+
+        let session_id = args
+            .get("session_id")
+            .and_then(|v| v.as_str());
+
+        let reason = args
+            .get("reason")
+            .and_then(|v| v.as_str());
+
         let working_dir = args
             .get("working_directory")
             .and_then(|v| v.as_str())
@@ -310,9 +338,67 @@ impl ExternalHandlers {
             .unwrap_or(30)
             .min(300); // Max 5 minutes
 
+        // Handle sudo commands
+        if use_sudo {
+            if let Some(ref sudo_service) = self.sudo_service {
+                info!("[EXTERNAL] Checking sudo authorization for: '{}'", command);
+
+                match sudo_service
+                    .check_authorization(command, operation_id, session_id, reason)
+                    .await?
+                {
+                    AuthorizationDecision::Allowed { permission_id } => {
+                        info!("[EXTERNAL] Sudo command auto-allowed (permission: {})", permission_id);
+                        // Execute with sudo
+                        return self
+                            .execute_sudo_command(
+                                command,
+                                &working_dir,
+                                timeout_secs,
+                                operation_id,
+                                session_id,
+                                Some(permission_id),
+                                None,
+                            )
+                            .await;
+                    }
+                    AuthorizationDecision::RequiresApproval {
+                        approval_request_id,
+                    } => {
+                        info!("[EXTERNAL] Sudo command requires approval: {}", approval_request_id);
+                        // Return special response indicating approval needed
+                        return Ok(json!({
+                            "success": false,
+                            "requires_approval": true,
+                            "approval_request_id": approval_request_id,
+                            "command": command,
+                            "message": "This command requires user approval before execution"
+                        }));
+                    }
+                    AuthorizationDecision::Denied { reason } => {
+                        warn!("[EXTERNAL] Sudo command denied: {}", reason);
+                        return Ok(json!({
+                            "success": false,
+                            "error": format!("Permission denied: {}", reason),
+                            "output": "",
+                            "exit_code": -1
+                        }));
+                    }
+                }
+            } else {
+                return Ok(json!({
+                    "success": false,
+                    "error": "Sudo permissions system not configured",
+                    "output": "",
+                    "exit_code": -1
+                }));
+            }
+        }
+
+        // Regular (non-sudo) command execution
         info!("[EXTERNAL] Executing command: '{}' in {:?}", command, working_dir);
 
-        // Safety check: block dangerous commands
+        // Safety check: block dangerous commands (for non-sudo)
         let dangerous_patterns = [
             "rm -rf /",
             "dd if=",
@@ -335,6 +421,18 @@ impl ExternalHandlers {
             }
         }
 
+        // Execute regular command
+        self.execute_regular_command(command, &working_dir, timeout_secs)
+            .await
+    }
+
+    /// Execute a regular (non-sudo) command
+    async fn execute_regular_command(
+        &self,
+        command: &str,
+        working_dir: &std::path::Path,
+        timeout_secs: u64,
+    ) -> Result<Value> {
         // Parse command (simple space-split for now)
         let parts: Vec<&str> = command.split_whitespace().collect();
         if parts.is_empty() {
@@ -352,7 +450,7 @@ impl ExternalHandlers {
         // Execute with timeout
         let command_future = Command::new(program)
             .args(args_list)
-            .current_dir(&working_dir)
+            .current_dir(working_dir)
             .output();
 
         match timeout(Duration::from_secs(timeout_secs), command_future).await {
@@ -387,5 +485,157 @@ impl ExternalHandlers {
                 }))
             }
         }
+    }
+
+    /// Execute a sudo command and log to audit trail
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_sudo_command(
+        &self,
+        command: &str,
+        working_dir: &std::path::Path,
+        timeout_secs: u64,
+        operation_id: Option<&str>,
+        session_id: Option<&str>,
+        permission_id: Option<i64>,
+        approval_request_id: Option<String>,
+    ) -> Result<Value> {
+        info!("[EXTERNAL] Executing sudo command: '{}'", command);
+
+        // Execute with sudo prefix
+        let sudo_command = format!("sudo {}", command);
+        let parts: Vec<&str> = sudo_command.split_whitespace().collect();
+
+        if parts.is_empty() {
+            return Ok(json!({
+                "success": false,
+                "error": "Empty command",
+                "output": "",
+                "exit_code": -1
+            }));
+        }
+
+        let program = parts[0];
+        let args_list = &parts[1..];
+
+        // Execute with timeout
+        let command_future = Command::new(program)
+            .args(args_list)
+            .current_dir(working_dir)
+            .output();
+
+        let result = match timeout(Duration::from_secs(timeout_secs), command_future).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let exit_code = output.status.code().unwrap_or(-1);
+                let success = output.status.success();
+
+                // Log to audit trail
+                if let Some(ref sudo_service) = self.sudo_service {
+                    let audit_entry = SudoAuditEntry {
+                        command: command.to_string(),
+                        working_dir: Some(working_dir.display().to_string()),
+                        permission_id,
+                        approval_request_id: approval_request_id.clone(),
+                        authorization_type: if permission_id.is_some() {
+                            "whitelist".to_string()
+                        } else {
+                            "approval".to_string()
+                        },
+                        operation_id: operation_id.map(|s| s.to_string()),
+                        session_id: session_id.map(|s| s.to_string()),
+                        executed_by: "gpt5".to_string(),
+                        exit_code: Some(exit_code),
+                        stdout: Some(stdout.clone()),
+                        stderr: Some(stderr.clone()),
+                        success,
+                        error_message: if success { None } else { Some(stderr.clone()) },
+                    };
+
+                    if let Err(e) = sudo_service.log_execution(audit_entry).await {
+                        warn!("[EXTERNAL] Failed to log sudo execution: {}", e);
+                    }
+                }
+
+                json!({
+                    "success": success,
+                    "output": stdout,
+                    "error": stderr,
+                    "exit_code": exit_code
+                })
+            }
+            Ok(Err(e)) => {
+                warn!("[EXTERNAL] Sudo command execution failed: {}", e);
+
+                // Log failure
+                if let Some(ref sudo_service) = self.sudo_service {
+                    let audit_entry = SudoAuditEntry {
+                        command: command.to_string(),
+                        working_dir: Some(working_dir.display().to_string()),
+                        permission_id,
+                        approval_request_id: approval_request_id.clone(),
+                        authorization_type: if permission_id.is_some() {
+                            "whitelist".to_string()
+                        } else {
+                            "approval".to_string()
+                        },
+                        operation_id: operation_id.map(|s| s.to_string()),
+                        session_id: session_id.map(|s| s.to_string()),
+                        executed_by: "gpt5".to_string(),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        success: false,
+                        error_message: Some(e.to_string()),
+                    };
+
+                    let _ = sudo_service.log_execution(audit_entry).await;
+                }
+
+                json!({
+                    "success": false,
+                    "error": format!("Execution failed: {}", e),
+                    "output": "",
+                    "exit_code": -1
+                })
+            }
+            Err(_) => {
+                warn!("[EXTERNAL] Sudo command timed out after {}s", timeout_secs);
+
+                // Log timeout
+                if let Some(ref sudo_service) = self.sudo_service {
+                    let audit_entry = SudoAuditEntry {
+                        command: command.to_string(),
+                        working_dir: Some(working_dir.display().to_string()),
+                        permission_id,
+                        approval_request_id,
+                        authorization_type: if permission_id.is_some() {
+                            "whitelist".to_string()
+                        } else {
+                            "approval".to_string()
+                        },
+                        operation_id: operation_id.map(|s| s.to_string()),
+                        session_id: session_id.map(|s| s.to_string()),
+                        executed_by: "gpt5".to_string(),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        success: false,
+                        error_message: Some(format!("Command timed out after {} seconds", timeout_secs)),
+                    };
+
+                    let _ = sudo_service.log_execution(audit_entry).await;
+                }
+
+                json!({
+                    "success": false,
+                    "error": format!("Command timed out after {} seconds", timeout_secs),
+                    "output": "",
+                    "exit_code": -1
+                })
+            }
+        };
+
+        Ok(result)
     }
 }

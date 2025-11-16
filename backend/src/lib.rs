@@ -11,6 +11,7 @@ pub mod persona;
 pub mod project;
 pub mod prompt;
 pub mod state;
+pub mod sudo;
 pub mod tasks;
 pub mod tools;
 pub mod utils;

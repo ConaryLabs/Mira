@@ -11,6 +11,7 @@ use crate::llm::provider::deepseek::DeepSeekProvider;
 use crate::llm::provider::Message;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
+use crate::sudo::SudoPermissionService;
 use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
 use std::sync::Arc;
 
@@ -25,11 +26,23 @@ pub struct ToolRouter {
 
 impl ToolRouter {
     /// Create a new tool router
-    pub fn new(deepseek: DeepSeekProvider, project_dir: PathBuf, code_intelligence: Arc<CodeIntelligenceService>) -> Self {
+    pub fn new(
+        deepseek: DeepSeekProvider,
+        project_dir: PathBuf,
+        code_intelligence: Arc<CodeIntelligenceService>,
+        sudo_service: Option<Arc<SudoPermissionService>>,
+    ) -> Self {
+        // Create external handlers with optional sudo service
+        let external_handlers = if let Some(sudo) = sudo_service {
+            ExternalHandlers::new(project_dir.clone()).with_sudo_service(sudo)
+        } else {
+            ExternalHandlers::new(project_dir.clone())
+        };
+
         Self {
             deepseek,
             file_handlers: FileHandlers::new(project_dir.clone()),
-            external_handlers: ExternalHandlers::new(project_dir.clone()),
+            external_handlers,
             git_handlers: GitHandlers::new(project_dir),
             code_handlers: CodeHandlers::new(code_intelligence),
         }

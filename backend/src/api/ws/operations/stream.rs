@@ -123,5 +123,48 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::SudoApprovalRequired {
+            operation_id,
+            approval_request_id,
+            command,
+            reason,
+        } => {
+            serde_json::json!({
+                "type": "operation.sudo_approval_required",
+                "operation_id": operation_id,
+                "approval_request_id": approval_request_id,
+                "command": command,
+                "reason": reason,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::SudoApproved {
+            operation_id,
+            approval_request_id,
+            approved_by,
+        } => {
+            serde_json::json!({
+                "type": "operation.sudo_approved",
+                "operation_id": operation_id,
+                "approval_request_id": approval_request_id,
+                "approved_by": approved_by,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::SudoDenied {
+            operation_id,
+            approval_request_id,
+            denied_by,
+            reason,
+        } => {
+            serde_json::json!({
+                "type": "operation.sudo_denied",
+                "operation_id": operation_id,
+                "approval_request_id": approval_request_id,
+                "denied_by": denied_by,
+                "reason": reason,
+                "timestamp": timestamp
+            })
+        }
     }
 }

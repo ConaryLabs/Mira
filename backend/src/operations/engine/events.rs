@@ -42,4 +42,24 @@ pub enum OperationEngineEvent {
         operation_id: String,
         error: String,
     },
+    /// Sudo command requires user approval
+    SudoApprovalRequired {
+        operation_id: String,
+        approval_request_id: String,
+        command: String,
+        reason: Option<String>,
+    },
+    /// Sudo approval was granted
+    SudoApproved {
+        operation_id: String,
+        approval_request_id: String,
+        approved_by: String,
+    },
+    /// Sudo approval was denied
+    SudoDenied {
+        operation_id: String,
+        approval_request_id: String,
+        denied_by: String,
+        reason: Option<String>,
+    },
 }
