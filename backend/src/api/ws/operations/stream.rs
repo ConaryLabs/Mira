@@ -27,6 +27,19 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::PlanGenerated {
+            operation_id,
+            plan_text,
+            reasoning_tokens,
+        } => {
+            serde_json::json!({
+                "type": "operation.plan_generated",
+                "operation_id": operation_id,
+                "plan_text": plan_text,
+                "reasoning_tokens": reasoning_tokens,
+                "timestamp": timestamp
+            })
+        }
         OperationEngineEvent::Delegated {
             operation_id,
             delegated_to,
@@ -106,6 +119,58 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
             serde_json::json!({
                 "type": "operation.failed",
                 "operation_id": operation_id,
+                "error": error,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::TaskCreated {
+            operation_id,
+            task_id,
+            sequence,
+            description,
+            active_form,
+        } => {
+            serde_json::json!({
+                "type": "operation.task_created",
+                "operation_id": operation_id,
+                "task_id": task_id,
+                "sequence": sequence,
+                "description": description,
+                "active_form": active_form,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::TaskStarted {
+            operation_id,
+            task_id,
+        } => {
+            serde_json::json!({
+                "type": "operation.task_started",
+                "operation_id": operation_id,
+                "task_id": task_id,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::TaskCompleted {
+            operation_id,
+            task_id,
+        } => {
+            serde_json::json!({
+                "type": "operation.task_completed",
+                "operation_id": operation_id,
+                "task_id": task_id,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::TaskFailed {
+            operation_id,
+            task_id,
+            error,
+        } => {
+            serde_json::json!({
+                "type": "operation.task_failed",
+                "operation_id": operation_id,
+                "task_id": task_id,
                 "error": error,
                 "timestamp": timestamp
             })

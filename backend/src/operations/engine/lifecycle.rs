@@ -103,6 +103,52 @@ impl LifecycleManager {
         Ok(())
     }
 
+    /// Record plan generated for an operation
+    pub async fn record_plan(
+        &self,
+        operation_id: &str,
+        plan_text: String,
+        reasoning_tokens: Option<i32>,
+        event_tx: &mpsc::Sender<OperationEngineEvent>,
+    ) -> Result<()> {
+        let plan_generated_at = chrono::Utc::now().timestamp();
+
+        sqlx::query!(
+            r#"
+            UPDATE operations
+            SET plan_text = ?, plan_generated_at = ?, planning_tokens_reasoning = ?
+            WHERE id = ?
+            "#,
+            plan_text,
+            plan_generated_at,
+            reasoning_tokens,
+            operation_id,
+        )
+        .execute(&*self.db)
+        .await
+        .context("Failed to record plan")?;
+
+        self.emit_event(
+            operation_id,
+            "plan_generated",
+            Some(serde_json::json!({
+                "plan_text": plan_text,
+                "reasoning_tokens": reasoning_tokens,
+            })),
+        )
+        .await?;
+
+        let _ = event_tx
+            .send(OperationEngineEvent::PlanGenerated {
+                operation_id: operation_id.to_string(),
+                plan_text,
+                reasoning_tokens,
+            })
+            .await;
+
+        Ok(())
+    }
+
     /// Complete an operation
     pub async fn complete_operation(
         &self,

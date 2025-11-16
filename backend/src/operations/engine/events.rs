@@ -18,6 +18,12 @@ pub enum OperationEngineEvent {
         operation_id: String,
         content: String,
     },
+    /// Plan was generated for a complex operation
+    PlanGenerated {
+        operation_id: String,
+        plan_text: String,
+        reasoning_tokens: Option<i32>,
+    },
     Delegated {
         operation_id: String,
         delegated_to: String,
@@ -40,6 +46,30 @@ pub enum OperationEngineEvent {
     },
     Failed {
         operation_id: String,
+        error: String,
+    },
+    /// Task was created for tracking operation progress
+    TaskCreated {
+        operation_id: String,
+        task_id: String,
+        sequence: i32,
+        description: String,
+        active_form: String,
+    },
+    /// Task execution started
+    TaskStarted {
+        operation_id: String,
+        task_id: String,
+    },
+    /// Task completed successfully
+    TaskCompleted {
+        operation_id: String,
+        task_id: String,
+    },
+    /// Task failed with error
+    TaskFailed {
+        operation_id: String,
+        task_id: String,
         error: String,
     },
     /// Sudo command requires user approval
