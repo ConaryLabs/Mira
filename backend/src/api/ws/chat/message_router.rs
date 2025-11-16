@@ -12,7 +12,7 @@ use super::connection::WebSocketConnection;
 use super::unified_handler::{ChatRequest, UnifiedChatHandler};
 use crate::api::error::ApiError;
 use crate::api::ws::message::{MessageMetadata, WsClientMessage, WsServerMessage};
-use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project, terminal};
+use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project};
 use crate::config::CONFIG;
 use crate::state::AppState;
 
@@ -69,9 +69,6 @@ impl MessageRouter {
             }
             WsClientMessage::DocumentCommand { method, params } => {
                 self.handle_document_command(method, params).await
-            }
-            WsClientMessage::TerminalCommand { method, params } => {
-                self.handle_terminal_command(method, params).await
             }
             _ => {
                 debug!("Ignoring message type");
@@ -305,33 +302,4 @@ impl MessageRouter {
         Ok(())
     }
 
-    /// Terminal command handler
-    async fn handle_terminal_command(&self, method: String, params: Value) -> Result<()> {
-        let manager = self.app_state.terminal_session_manager.clone();
-        let app_state = self.app_state.clone();
-
-        let result = match method.as_str() {
-            "start_session" => {
-                // Create channel for terminal output
-                let (output_tx, mut output_rx) = mpsc::unbounded_channel();
-                let connection = self.connection.clone();
-
-                // Spawn task to forward terminal output to WebSocket
-                tokio::spawn(async move {
-                    while let Some(msg) = output_rx.recv().await {
-                        let _ = connection.send_message(msg).await;
-                    }
-                });
-
-                terminal::handle_start_session(params, manager, app_state, Some(output_tx)).await
-            }
-            "send_input" => terminal::handle_send_input(params, manager).await,
-            "resize" => terminal::handle_resize(params, manager).await,
-            "close_session" => terminal::handle_close_session(params, manager, app_state).await,
-            "list_sessions" => terminal::handle_list_sessions(params, manager, app_state).await,
-            _ => Err(ApiError::bad_request(format!("Unknown terminal method: {}", method))),
-        };
-
-        self.send_result(result, "TERMINAL").await
-    }
 }

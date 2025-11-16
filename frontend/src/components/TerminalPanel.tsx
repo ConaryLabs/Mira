@@ -1,10 +1,10 @@
 // src/components/TerminalPanel.tsx
 // Terminal panel container with resize handle
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTerminalStore } from '../stores/useTerminalStore';
 import { useAppState } from '../stores/useAppState';
-import { Terminal } from './Terminal';
+import { CommandOutputViewer } from './CommandOutputViewer';
 import { ChevronRight } from 'lucide-react';
 
 export const TerminalPanel: React.FC = () => {
@@ -13,6 +13,7 @@ export const TerminalPanel: React.FC = () => {
     terminalWidth,
     hideTerminal,
     setTerminalWidth,
+    activeSessionId,
   } = useTerminalStore();
 
   const { currentProject } = useAppState();
@@ -96,14 +97,11 @@ export const TerminalPanel: React.FC = () => {
 
         {/* Terminal content */}
         <div className="flex-1 overflow-hidden relative">
-          {currentProject ? (
-            <Terminal
-              projectId={currentProject.id}
-              workingDirectory={undefined}
-            />
+          {activeSessionId ? (
+            <CommandOutputViewer sessionId={activeSessionId} />
           ) : (
             <div className="flex items-center justify-center h-full text-slate-400">
-              <p>Select a project to open a terminal</p>
+              <p>No active terminal session</p>
             </div>
           )}
         </div>

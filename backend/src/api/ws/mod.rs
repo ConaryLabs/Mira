@@ -22,7 +22,6 @@ pub mod memory;
 pub mod message;
 pub mod operations;
 pub mod project;
-pub mod terminal;
 
 // Re-export key components
 pub use chat::ws_chat_handler;
