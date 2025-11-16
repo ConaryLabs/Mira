@@ -30,17 +30,17 @@ function App() {
   const connect = useWebSocketStore(state => state.connect);
   const disconnect = useWebSocketStore(state => state.disconnect);
   const connectionState = useWebSocketStore(state => state.connectionState);
-  
+
   // Initialize WebSocket connection
   useEffect(() => {
     connect();
-    
+
     // Cleanup on unmount
     return () => {
       disconnect();
     };
   }, [connect, disconnect]);
-  
+
   // Handle all WebSocket messages
   useWebSocketMessageHandler(); // Handles data messages (projects, files, git)
   useMessageHandler();           // Handles response messages (chat)
@@ -50,12 +50,12 @@ function App() {
   useErrorHandler();             // WebSocket error → Chat messages + Toasts
   useConnectionTracking();       // Sync WebSocket state → AppState connection tracking
   useTerminalMessageHandler();   // Handle terminal WebSocket messages
-  
+
   // Quick file open handler
   const quickFileOpen = useQuickFileOpen();
 
   // Terminal toggle handler (Ctrl+`)
-  const { toggleTerminalVisibility } = useTerminalStore();
+  const { toggleTerminalVisibility, isTerminalVisible } = useTerminalStore();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -103,40 +103,45 @@ function App() {
       
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
-        {activeTab === 'chat' && (
-          <>
-            {/* Chat Area - Centered when no artifacts, 50% when artifacts shown */}
-            <div className={`
-              min-w-0 flex overflow-hidden transition-all duration-300
-              ${showArtifacts ? 'w-1/2' : 'flex-1'}
-            `}>
+        {/* Main content (chat or projects) */}
+        <div className={`flex-1 flex overflow-hidden transition-all duration-300 ${
+          isTerminalVisible ? 'mr-0' : ''
+        }`}>
+          {activeTab === 'chat' && (
+            <>
+              {/* Chat Area - Centered when no artifacts, 50% when artifacts shown */}
               <div className={`
-                flex flex-col w-full
-                ${!showArtifacts ? 'max-w-4xl mx-auto' : ''}
+                min-w-0 flex overflow-hidden transition-all duration-300
+                ${showArtifacts ? 'w-1/2' : 'flex-1'}
               `}>
-                <ChatArea />
+                <div className={`
+                  flex flex-col w-full
+                  ${!showArtifacts ? 'max-w-4xl mx-auto' : ''}
+                `}>
+                  <ChatArea />
+                </div>
               </div>
-            </div>
-            
-            {/* Artifact Panel - Slides in from right */}
-            {showArtifacts && (
-              <div className="w-1/2 border-l border-slate-700">
-                <ArtifactPanel />
-              </div>
-            )}
-          </>
-        )}
-        
-        {activeTab === 'projects' && <ProjectsView />}
+
+              {/* Artifact Panel - Slides in from right */}
+              {showArtifacts && (
+                <div className="w-1/2 border-l border-slate-700">
+                  <ArtifactPanel />
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'projects' && <ProjectsView />}
+        </div>
+
+        {/* Terminal panel - right side */}
+        <TerminalPanel />
       </div>
-      
+
       <QuickFileOpen
         isOpen={quickFileOpen.isOpen}
         onClose={quickFileOpen.close}
       />
-
-      {/* Terminal panel - bottom overlay */}
-      <TerminalPanel />
 
       {/* Toast notifications - bottom right corner */}
       <ToastContainer />

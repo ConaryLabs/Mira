@@ -56,44 +56,19 @@ export const TerminalPanel: React.FC = () => {
     };
   }, [isResizing, resizeStartX, resizeStartWidth, setTerminalWidth]);
 
-  if (!isTerminalVisible) {
-    return null;
-  }
-
   const sessionList = Object.values(sessions);
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
-
-  // Determine which terminal content to render
-  let terminalContent;
-  if (activeSession) {
-    terminalContent = (
-      <Terminal
-        sessionId={activeSession.id}
-        projectId={activeSession.projectId}
-        workingDirectory={activeSession.workingDirectory}
-        onClose={() => setActiveSession(null)}
-      />
-    );
-  } else if (sessionList.length === 0 && currentProject) {
-    terminalContent = (
-      <Terminal
-        projectId={currentProject.id}
-        workingDirectory={undefined}
-        onClose={hideTerminal}
-      />
-    );
-  } else {
-    terminalContent = (
-      <div className="flex items-center justify-center h-full text-slate-400">
-        <p>Select a project to open a terminal</p>
-      </div>
-    );
-  }
+  const showNewTerminal = sessionList.length === 0 && currentProject && isTerminalVisible;
 
   return (
     <div
-      className="fixed top-0 right-0 bottom-0 flex flex-row bg-slate-900 border-l border-slate-700 shadow-2xl z-40"
-      style={{ width: `${terminalWidth}vw` }}
+      className={`flex flex-row bg-slate-900 border-l border-slate-700 shadow-2xl transition-all duration-300 ${
+        isTerminalVisible ? '' : 'w-0 border-l-0'
+      }`}
+      style={{
+        width: isTerminalVisible ? `${terminalWidth}vw` : '0',
+        overflow: isTerminalVisible ? 'visible' : 'hidden'
+      }}
     >
       {/* Resize handle */}
       <div
@@ -103,7 +78,9 @@ export const TerminalPanel: React.FC = () => {
         onMouseDown={handleResizeStart}
       />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className={`flex-1 flex flex-col overflow-hidden ${
+        isTerminalVisible ? '' : 'hidden'
+      }`}>
         {/* Terminal tabs */}
         <div className="flex items-center gap-2 px-3 py-2 bg-slate-800 border-b border-slate-700 overflow-x-auto">
         {sessionList.map((session) => (
@@ -148,8 +125,39 @@ export const TerminalPanel: React.FC = () => {
         </div>
 
         {/* Terminal content */}
-        <div className="flex-1 overflow-hidden">
-          {terminalContent}
+        <div className="flex-1 overflow-hidden relative">
+          {/* Render all terminal sessions (keep them mounted) */}
+          {sessionList.map((session) => (
+            <div
+              key={session.id}
+              className={`absolute inset-0 ${
+                session.id === activeSessionId ? '' : 'hidden'
+              }`}
+            >
+              <Terminal
+                sessionId={session.id}
+                projectId={session.projectId}
+                workingDirectory={session.workingDirectory}
+                onClose={() => setActiveSession(null)}
+              />
+            </div>
+          ))}
+
+          {/* New terminal when no sessions exist */}
+          {showNewTerminal && (
+            <Terminal
+              projectId={currentProject.id}
+              workingDirectory={undefined}
+              onClose={hideTerminal}
+            />
+          )}
+
+          {/* Placeholder when no project */}
+          {sessionList.length === 0 && !currentProject && (
+            <div className="flex items-center justify-center h-full text-slate-400">
+              <p>Select a project to open a terminal</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
