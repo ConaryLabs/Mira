@@ -649,8 +649,10 @@ fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
         }
 
         "response.completed" | "response.done" => {
-            let response_id = json.get("id").and_then(|i| i.as_str())?;
-            let usage = json.get("usage")?;
+            // Extract the nested 'response' object from the event
+            let response = json.get("response")?;
+            let response_id = response.get("id").and_then(|i| i.as_str())?;
+            let usage = response.get("usage")?;
 
             let input_tokens = usage
                 .get("input_tokens")

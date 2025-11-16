@@ -231,5 +231,24 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::ToolExecuted {
+            operation_id,
+            tool_name,
+            tool_type,
+            summary,
+            success,
+            details,
+        } => {
+            serde_json::json!({
+                "type": "operation.tool_executed",
+                "operation_id": operation_id,
+                "tool_name": tool_name,
+                "tool_type": tool_type,
+                "summary": summary,
+                "success": success,
+                "details": details,
+                "timestamp": timestamp
+            })
+        }
     }
 }

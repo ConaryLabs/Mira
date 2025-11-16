@@ -157,7 +157,7 @@ impl Orchestrator {
 
         // Check complexity and generate plan for complex operations
         let simplicity = SimpleModeDetector::simplicity_score(user_content);
-        let _task_ids: Vec<String> = if simplicity <= 0.7 {
+        let (plan_text, _task_ids): (Option<String>, Vec<String>) = if simplicity <= 0.7 {
             info!(
                 "[ENGINE] Complex operation detected (score: {:.2}), generating plan",
                 simplicity
@@ -175,13 +175,15 @@ impl Orchestrator {
 
             // Get task IDs for tracking
             let task_records = self.task_manager.get_tasks(operation_id).await?;
-            task_records.into_iter().map(|t| t.id).collect()
+            let task_ids = task_records.into_iter().map(|t| t.id).collect();
+
+            (Some(plan), task_ids)
         } else {
             info!(
                 "[ENGINE] Simple operation detected (score: {:.2}), skipping planning",
                 simplicity
             );
-            Vec::new()
+            (None, Vec::new())
         };
 
         // Build tools: delegation tools + create_artifact
@@ -191,8 +193,7 @@ impl Orchestrator {
         let tool_names: Vec<String> = tools
             .iter()
             .filter_map(|t| {
-                t.get("function")
-                    .and_then(|f| f.get("name"))
+                t.get("name")
                     .and_then(|n| n.as_str())
                     .map(|s| s.to_string())
             })
@@ -211,19 +212,57 @@ impl Orchestrator {
             }
         }
 
-        // Stream GPT-5 responses and handle tool calls
-        let mut stream = self
-            .gpt5
-            .create_stream_with_tools(messages, system_prompt, tools, previous_response_id, None) // Use default reasoning
-            .await
-            .context("Failed to create GPT-5 stream")?;
+        // Build execution message: if we have a plan, tell GPT-5 to execute it
+        let execution_message = if let Some(ref plan) = plan_text {
+            info!("[ENGINE] Transitioning to execution phase with plan");
+            self.lifecycle_manager
+                .update_status(operation_id, "executing", event_tx)
+                .await?;
 
+            Message::user(format!(
+                "Original request: {}\n\n\
+                Execution Plan:\n{}\n\n\
+                Now execute this plan using the available tools. Complete each step of the plan. \
+                Make the necessary tool calls to accomplish the tasks. Do not just provide instructions - actually execute the plan.",
+                user_content, plan
+            ))
+        } else {
+            messages[0].clone()
+        };
+
+        let final_messages = vec![execution_message];
+
+        // Tool use loop: continue calling GPT-5 until no more tool calls are made
         let mut accumulated_text = String::new();
         let mut delegation_calls = Vec::new();
-        let mut _final_response_id = None;
+        let mut current_response_id = previous_response_id;
+        let max_tool_iterations = 10; // Safety limit to prevent infinite loops
+        let mut iteration = 0;
 
-        // Process tool calls during streaming
-        while let Some(event) = stream.next().await {
+        loop {
+            iteration += 1;
+            if iteration > max_tool_iterations {
+                warn!("[ENGINE] Max tool iterations ({}) reached, stopping", max_tool_iterations);
+                break;
+            }
+
+            info!("[ENGINE] Tool use iteration {}/{}", iteration, max_tool_iterations);
+
+            // Track tool calls in this iteration
+            let mut tool_calls_in_iteration = Vec::new();
+
+            // Stream GPT-5 responses and handle tool calls
+            let mut stream = self
+                .gpt5
+                .create_stream_with_tools(final_messages.clone(), system_prompt.clone(), tools.clone(), current_response_id.clone(), None)
+                .await
+                .context("Failed to create GPT-5 stream")?;
+
+            let mut iteration_text = String::new();
+            let mut iteration_response_id = None;
+
+            // Process tool calls during streaming
+            while let Some(event) = stream.next().await {
             if let Some(token) = &cancel_token {
                 if token.is_cancelled() {
                     return Err(anyhow::anyhow!("Operation cancelled"));
@@ -232,7 +271,7 @@ impl Orchestrator {
 
             match event? {
                 Gpt5StreamEvent::TextDelta { delta } => {
-                    accumulated_text.push_str(&delta);
+                    iteration_text.push_str(&delta);
                     let _ = event_tx
                         .send(OperationEngineEvent::Streaming {
                             operation_id: operation_id.to_string(),
@@ -246,6 +285,9 @@ impl Orchestrator {
                     arguments,
                 } => {
                     info!("[ENGINE] GPT-5 tool call: {} (id: {})", name, id);
+
+                    // Track this tool call for loop continuation
+                    tool_calls_in_iteration.push((id.clone(), name.clone(), arguments.clone()));
 
                     // Handle create_artifact immediately
                     if name == "create_artifact" {
@@ -280,6 +322,41 @@ impl Orchestrator {
                                         "[ENGINE] File operation completed: {}",
                                         serde_json::to_string(&result).unwrap_or_default()
                                     );
+
+                                    // Determine tool type and build summary
+                                    let (tool_type, summary) = match name.as_str() {
+                                        "write_project_file" => {
+                                            let path = result.get("path").and_then(|p| p.as_str()).unwrap_or("unknown");
+                                            let lines = result.get("lines_written").and_then(|l| l.as_u64()).unwrap_or(0);
+                                            ("file_write", format!("Wrote {} ({} lines)", path, lines))
+                                        },
+                                        "edit_project_file" => {
+                                            let path = result.get("path").and_then(|p| p.as_str()).unwrap_or("unknown");
+                                            let replacements = result.get("replacements_made").and_then(|r| r.as_u64()).unwrap_or(0);
+                                            ("file_edit", format!("Edited {} ({} replacements)", path, replacements))
+                                        },
+                                        "read_project_file" => {
+                                            let file_count = result.get("files_read").and_then(|c| c.as_u64()).unwrap_or(1);
+                                            ("file_read", format!("Read {} file(s)", file_count))
+                                        },
+                                        tool if tool.starts_with("git_") => {
+                                            ("git", format!("Executed {}", name))
+                                        },
+                                        _ => ("other", format!("Executed {}", name))
+                                    };
+
+                                    // Emit ToolExecuted event
+                                    let _ = event_tx
+                                        .send(OperationEngineEvent::ToolExecuted {
+                                            operation_id: operation_id.to_string(),
+                                            tool_name: name.clone(),
+                                            tool_type: tool_type.to_string(),
+                                            summary,
+                                            success: true,
+                                            details: Some(result.clone()),
+                                        })
+                                        .await;
+
                                     // Send result as streaming content
                                     let _ = event_tx
                                         .send(OperationEngineEvent::Streaming {
@@ -295,6 +372,29 @@ impl Orchestrator {
                                 }
                                 Err(e) => {
                                     warn!("[ENGINE] File operation failed: {}", e);
+
+                                    // Emit failed ToolExecuted event
+                                    let tool_type = if name.starts_with("write_") {
+                                        "file_write"
+                                    } else if name.starts_with("edit_") {
+                                        "file_edit"
+                                    } else if name.starts_with("git_") {
+                                        "git"
+                                    } else {
+                                        "other"
+                                    };
+
+                                    let _ = event_tx
+                                        .send(OperationEngineEvent::ToolExecuted {
+                                            operation_id: operation_id.to_string(),
+                                            tool_name: name.clone(),
+                                            tool_type: tool_type.to_string(),
+                                            summary: format!("Failed to execute {}: {}", name, e),
+                                            success: false,
+                                            details: None,
+                                        })
+                                        .await;
+
                                     let _ = event_tx
                                         .send(OperationEngineEvent::Streaming {
                                             operation_id: operation_id.to_string(),
@@ -379,11 +479,32 @@ impl Orchestrator {
                     }
                 }
                 Gpt5StreamEvent::Done { response_id, .. } => {
-                    _final_response_id = Some(response_id);
+                    iteration_response_id = Some(response_id);
                 }
                 _ => {}
             }
         }
+
+        // After stream ends: accumulate text and check if we should continue loop
+        accumulated_text.push_str(&iteration_text);
+
+        info!("[ENGINE] Iteration {} complete: {} tool calls made", iteration, tool_calls_in_iteration.len());
+
+        // If no tool calls were made, we're done - break the loop
+        if tool_calls_in_iteration.is_empty() {
+            info!("[ENGINE] No tool calls in iteration, execution complete");
+            break;
+        }
+
+        // Update response_id for next iteration
+        if let Some(response_id) = iteration_response_id {
+            info!("[ENGINE] Continuing to iteration {} with response_id: {}", iteration + 1, response_id);
+            current_response_id = Some(response_id);
+        } else {
+            warn!("[ENGINE] No response_id captured, cannot continue loop");
+            break;
+        }
+    } // End of tool use loop
 
         // Handle delegation calls (everything except create_artifact)
         if !delegation_calls.is_empty() {

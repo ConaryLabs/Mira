@@ -33,6 +33,7 @@ impl ToolBuilder {
     }
 
     /// Build the final tool schema
+    /// GPT-5 Responses API format (flattened, not nested like Chat Completions)
     pub fn build(self) -> Value {
         let mut properties_obj = serde_json::Map::new();
         for (name, schema) in self.properties {
@@ -40,15 +41,13 @@ impl ToolBuilder {
         }
 
         json!({
+            "name": self.name,
             "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": properties_obj,
-                    "required": self.required
-                }
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": properties_obj,
+                "required": self.required
             }
         })
     }

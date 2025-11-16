@@ -38,7 +38,7 @@ export const useAuthStore = create<AuthState>()(
 
       login: async (username: string, password: string) => {
         try {
-          const response = await fetch(`${APP_CONFIG.API_URL}/api/auth/login`, {
+          const response = await fetch('/api/auth/login', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -69,7 +69,7 @@ export const useAuthStore = create<AuthState>()(
 
       register: async (username: string, password: string, email?: string, displayName?: string) => {
         try {
-          const response = await fetch(`${APP_CONFIG.API_URL}/api/auth/register`, {
+          const response = await fetch('/api/auth/register', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -103,7 +103,7 @@ export const useAuthStore = create<AuthState>()(
         if (!token) return false;
 
         try {
-          const response = await fetch(`${APP_CONFIG.API_URL}/api/auth/verify`, {
+          const response = await fetch('/api/auth/verify', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

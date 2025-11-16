@@ -36,6 +36,15 @@ export interface Task {
   timestamp: number;
 }
 
+export interface ToolExecution {
+  toolName: string;
+  toolType: string;
+  summary: string;
+  success: boolean;
+  details?: any;
+  timestamp: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'error'; // ADDED: error role
@@ -47,6 +56,7 @@ export interface ChatMessage {
   operationId?: string; // NEW: Track which operation this belongs to
   plan?: Plan; // NEW: Plan generated for this operation
   tasks?: Task[]; // NEW: Tasks for this operation
+  toolExecutions?: ToolExecution[]; // NEW: Tool executions for this operation
   metadata?: {
     session_id?: string;
     project_id?: string;
@@ -82,6 +92,9 @@ interface ChatStore {
   addMessageTask: (messageId: string, task: Task) => void;
   updateTaskStatus: (messageId: string, taskId: string, status: TaskStatus, error?: string) => void;
   setMessageOperationId: (messageId: string, operationId: string) => void;
+
+  // NEW: Tool execution tracking methods
+  addToolExecution: (messageId: string, execution: ToolExecution) => void;
 }
 
 const initialState = {
@@ -244,6 +257,18 @@ export const useChatStore = create<ChatStore>()(
           messages: state.messages.map(msg =>
             msg.id === messageId ? { ...msg, operationId } : msg
           )
+        }));
+      },
+
+      addToolExecution: (messageId, execution) => {
+        set(state => ({
+          messages: state.messages.map(msg => {
+            if (msg.id === messageId) {
+              const existingExecutions = msg.toolExecutions || [];
+              return { ...msg, toolExecutions: [...existingExecutions, execution] };
+            }
+            return msg;
+          })
         }));
       },
     }),

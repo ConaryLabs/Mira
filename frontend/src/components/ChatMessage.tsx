@@ -8,7 +8,7 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ChatMessage as ChatMessageType, Artifact } from '../stores/useChatStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useAppState } from '../stores/useAppState';
-import { Check, FileCode, User, Bot } from 'lucide-react';
+import { Check, FileCode, User, Bot, Wrench, CheckCircle, XCircle } from 'lucide-react';
 import { PlanDisplay } from './PlanDisplay';
 import { TaskTracker } from './TaskTracker';
 
@@ -207,6 +207,35 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {/* Task Tracker Section */}
           {message.tasks && message.tasks.length > 0 && (
             <TaskTracker tasks={message.tasks} operationId={message.operationId} />
+          )}
+
+          {/* Tool Executions Section */}
+          {message.toolExecutions && message.toolExecutions.length > 0 && (
+            <div className="mt-4 space-y-2 border-t border-gray-700 pt-3">
+              <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
+                <Wrench className="w-4 h-4" />
+                <span>Tool Executions ({message.toolExecutions.length})</span>
+              </div>
+              {message.toolExecutions.map((execution, index) => (
+                <div
+                  key={`${execution.toolName}-${execution.timestamp}`}
+                  className="flex items-start gap-2 p-2 rounded bg-gray-800/50 border border-gray-700"
+                >
+                  {execution.success ? (
+                    <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs font-mono text-blue-400">{execution.toolName}</code>
+                      <span className="text-xs text-gray-500">({execution.toolType})</span>
+                    </div>
+                    <p className="text-sm text-gray-300 mt-1">{execution.summary}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
 
           {/* Artifacts Section */}

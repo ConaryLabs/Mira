@@ -433,9 +433,7 @@ impl ExternalHandlers {
         working_dir: &std::path::Path,
         timeout_secs: u64,
     ) -> Result<Value> {
-        // Parse command (simple space-split for now)
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.is_empty() {
+        if command.trim().is_empty() {
             return Ok(json!({
                 "success": false,
                 "error": "Empty command",
@@ -444,12 +442,10 @@ impl ExternalHandlers {
             }));
         }
 
-        let program = parts[0];
-        let args_list = &parts[1..];
-
-        // Execute with timeout
-        let command_future = Command::new(program)
-            .args(args_list)
+        // Execute through shell to properly handle quoting, redirection, pipes, etc.
+        let command_future = Command::new("sh")
+            .arg("-c")
+            .arg(command)
             .current_dir(working_dir)
             .output();
 
@@ -501,11 +497,7 @@ impl ExternalHandlers {
     ) -> Result<Value> {
         info!("[EXTERNAL] Executing sudo command: '{}'", command);
 
-        // Execute with sudo prefix
-        let sudo_command = format!("sudo {}", command);
-        let parts: Vec<&str> = sudo_command.split_whitespace().collect();
-
-        if parts.is_empty() {
+        if command.trim().is_empty() {
             return Ok(json!({
                 "success": false,
                 "error": "Empty command",
@@ -514,12 +506,11 @@ impl ExternalHandlers {
             }));
         }
 
-        let program = parts[0];
-        let args_list = &parts[1..];
-
-        // Execute with timeout
-        let command_future = Command::new(program)
-            .args(args_list)
+        // Execute through shell with sudo to properly handle quoting, redirection, pipes, etc.
+        let command_future = Command::new("sudo")
+            .arg("sh")
+            .arg("-c")
+            .arg(command)
             .current_dir(working_dir)
             .output();
 

@@ -1,4 +1,4 @@
-// src/hooks/useMessageHandler.ts
+// frontend/src/hooks/useMessageHandler.ts
 // REFACTORED: Use shared artifact utilities
 
 import { useEffect } from 'react';
@@ -9,7 +9,8 @@ import { extractArtifacts } from '../utils/artifact';
 
 export const useMessageHandler = () => {
   const subscribe = useWebSocketStore(state => state.subscribe);
-  const { addMessage, startStreaming, appendStreamContent, endStreaming } = useChatStore();
+  const { addMessage, startStreaming, appendStreamContent, endStreaming, addToolExecution } = useChatStore();
+  const addToast = useAppState(state => state.addToast);
 
   useEffect(() => {
     const unsubscribe = subscribe(
@@ -17,15 +18,19 @@ export const useMessageHandler = () => {
       (message) => {
         handleMessage(message);
       },
-      ['response', 'stream', 'status', 'chat_complete']  // Subscribe to all message types
+      ['response', 'stream', 'status', 'chat_complete', 'operation.tool_executed']  // Subscribe to all message types
     );
     return unsubscribe;
-  }, [subscribe, addMessage, startStreaming, appendStreamContent, endStreaming]);
+  }, [subscribe, addMessage, startStreaming, appendStreamContent, endStreaming, addToast]);
 
   function handleMessage(message: any) {
     console.log('[Handler] Message received:', message.type);
-    
-    switch (message.type) {
+
+    // Unwrap data envelope if present
+    const dataType = message.data?.type || message.dataType;
+    const messageType = dataType || message.type;
+
+    switch (messageType) {
       case 'status':
         handleStatus(message);
         break;
@@ -38,8 +43,13 @@ export const useMessageHandler = () => {
       case 'response':
         handleChatResponse(message);
         break;
+      case 'operation.tool_executed':
+        // Unwrap the data if it's wrapped
+        const toolData = message.data || message;
+        handleToolExecuted(toolData);
+        break;
       default:
-        console.log('[Handler] Unhandled message type:', message.type);
+        console.log('[Handler] Unhandled message type:', messageType);
     }
   }
 
@@ -128,5 +138,38 @@ export const useMessageHandler = () => {
       console.log('[Handler] Adding artifact:', artifact.path);
       addArtifact(artifact);
     });
+  }
+
+  function handleToolExecuted(message: any) {
+    console.log('[Handler] Tool executed:', message);
+
+    const { tool_type, tool_name, summary, success, details } = message;
+
+    // Show toast notification for file operations
+    if (tool_type === 'file_write' || tool_type === 'file_edit' || tool_type === 'file_read') {
+      addToast({
+        type: success ? 'success' : 'error',
+        message: summary,
+        duration: 4000,
+      });
+    }
+
+    // Add tool execution to the current streaming message or latest assistant message
+    const { streamingMessageId, messages } = useChatStore.getState();
+    const targetMessageId = streamingMessageId || messages.filter(m => m.role === 'assistant').pop()?.id;
+
+    if (targetMessageId) {
+      addToolExecution(targetMessageId, {
+        toolName: tool_name || 'unknown',
+        toolType: tool_type || 'unknown',
+        summary: summary || 'Tool executed',
+        success: success !== false, // Default to true if not specified
+        details,
+        timestamp: Date.now()
+      });
+      console.log('[Handler] Added tool execution to message:', targetMessageId);
+    } else {
+      console.warn('[Handler] No target message found for tool execution');
+    }
   }
 };

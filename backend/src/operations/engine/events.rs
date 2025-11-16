@@ -92,4 +92,13 @@ pub enum OperationEngineEvent {
         denied_by: String,
         reason: Option<String>,
     },
+    /// Tool was executed (file operations, git, code intelligence, etc.)
+    ToolExecuted {
+        operation_id: String,
+        tool_name: String,
+        tool_type: String, // 'file_write', 'file_edit', 'file_read', 'git', 'code_analysis', etc.
+        summary: String, // Human-readable summary like "Wrote file src/main.rs (245 lines)"
+        success: bool,
+        details: Option<serde_json::Value>, // Optional structured data
+    },
 }

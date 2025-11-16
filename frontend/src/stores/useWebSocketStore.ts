@@ -87,6 +87,7 @@ const KNOWN_MESSAGE_TYPES = new Set([
   'operation.completed',
   'operation.failed',
   'operation.status_changed',
+  'operation.tool_executed',
 ]);
 
 const KNOWN_DATA_TYPES = new Set([
@@ -360,12 +361,18 @@ export const useWebSocketStore = create<WebSocketStore>()(
       
       // Notify filtered listeners
       const { listeners } = get();
-      
+
       listeners.forEach((subscriber, id) => {
         const { callback, messageTypes } = subscriber;
-        
+
         // If no filter specified, or message type matches filter
-        if (!messageTypes || messageTypes.includes(message.type)) {
+        // Also check nested data.type for wrapped events
+        const dataType = message.data?.type || message.dataType;
+        const shouldNotify = !messageTypes ||
+                            messageTypes.includes(message.type) ||
+                            (dataType && messageTypes.includes(dataType));
+
+        if (shouldNotify) {
           try {
             callback(message);
           } catch (error) {
