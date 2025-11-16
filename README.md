@@ -73,16 +73,33 @@ mira/
 ## Key Features
 
 - **Intelligent LLM Orchestration** - GPT-5 for reasoning, DeepSeek for code generation
+- **Planning Mode** - Complex operations generate execution plans with task tracking; real-time WebSocket updates for transparent progress
+- **Dynamic Reasoning** - Context-aware GPT-5 reasoning levels (high for planning, low for simple queries, medium for normal execution)
 - **Hybrid Memory System** - SQLite + Qdrant with multi-head embeddings (semantic, code, summary, documents, relationships)
 - **Real-time Streaming** - WebSocket-based bidirectional communication with cancellation support
 - **Context-Aware** - Gathers recent messages, semantic search results, file trees, and code intelligence
 - **Git Integration** - Clone, import, sync repositories; file tree navigation; diff parsing; **10 analysis tools** (history, blame, diff, branches, contributors, status, commit inspection)
 - **Code Intelligence** - AST-based parsing (Rust/TypeScript); **12 intelligence tools** (find functions/classes, semantic search, complexity analysis, quality issues, dependency tracking, test discovery)
-- **Operation Tracking** - Complex multi-step workflows with lifecycle management (PENDING → STARTED → DELEGATING → COMPLETED)
+- **Operation Tracking** - Complex multi-step workflows with lifecycle management and task decomposition (PENDING → PLANNING → STARTED → DELEGATING → COMPLETED)
 - **Artifact Management** - Code blocks from LLM can be saved/applied to files via Monaco editor
 - **Integrated Terminal** - Full xterm.js terminal emulator with real-time PTY-based shell execution, multiple sessions, project-scoped working directories
 
 ## Recent Improvements (November 2025)
+
+### Session 6: Dynamic Reasoning Level Selection
+- **Context-Aware Reasoning** - Per-request GPT-5 reasoning effort override (low/medium/high)
+- **Strategic Cost Optimization** - High reasoning for planning (better quality), low for simple queries (30-40% cost savings)
+- **Backward Compatibility** - Optional reasoning_override parameter with fallback to configured default
+- **Implementation** - Updated all GPT-5 provider methods (create_with_tools, create_stream_with_tools, chat_with_schema)
+- **5 files modified** - gpt5.rs, orchestration.rs, simple_mode.rs, unified_handler.rs, chat_analyzer.rs
+
+### Session 5: Planning Mode & Task Tracking
+- **Two-Phase Execution** - Complex operations (simplicity ≤ 0.7) generate execution plans before tool usage
+- **Task Decomposition** - Plans parsed into numbered tasks, tracked through lifecycle (pending → in_progress → completed/failed)
+- **Real-Time Updates** - WebSocket events for PlanGenerated, TaskCreated, TaskStarted, TaskCompleted, TaskFailed
+- **Database Persistence** - New operation_tasks table and planning fields in operations table
+- **High Reasoning Planning** - Uses GPT-5 high reasoning for better plan quality
+- **3 new modules, 2 migrations, 6 files modified** - TaskManager, types, store, lifecycle, orchestration, events
 
 ### Session 4: Git Analysis & Code Intelligence Tools (22 new tools)
 - **10 Git Analysis Tools** - Expose git operations to GPT-5: history, blame, diff, file history, branches, commit inspection, contributors, status, recent changes
