@@ -1,6 +1,7 @@
 // src/operations/mod.rs
 // FIXED: Expanded Artifact struct to use all database fields
 
+pub mod code_tools;
 pub mod context_loader;
 pub mod delegation_tools;
 pub mod engine;
@@ -10,6 +11,7 @@ pub mod git_tools;
 pub mod tool_builder;
 pub mod types;
 
+pub use code_tools::get_code_tools;
 pub use context_loader::ContextLoader;
 pub use delegation_tools::{get_delegation_tools, parse_tool_call};
 pub use engine::{OperationEngine, OperationEngineEvent};

@@ -232,8 +232,12 @@ impl Orchestrator {
                         | "git_history" | "git_blame" | "git_diff" | "git_file_history"
                         | "git_branches" | "git_show_commit" | "git_file_at_commit"
                         | "git_recent_changes" | "git_contributors" | "git_status"
+                        | "find_function" | "find_class_or_struct" | "search_code_semantic"
+                        | "find_imports" | "analyze_dependencies" | "get_complexity_hotspots"
+                        | "get_quality_issues" | "get_file_symbols" | "find_tests_for_code"
+                        | "get_codebase_stats" | "find_callers" | "get_element_definition"
                     ) {
-                        // Handle file operation, external, and git meta-tools via ToolRouter
+                        // Handle file operation, external, git, and code intelligence meta-tools via ToolRouter
                         info!("[ENGINE] Routing {} via ToolRouter", name);
                         if let Some(ref router) = self.tool_router {
                             match router.route_tool_call(&name, arguments.clone()).await {

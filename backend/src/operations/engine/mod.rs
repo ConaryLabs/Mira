@@ -3,6 +3,7 @@
 // Refactored into focused modules for maintainability
 
 pub mod artifacts;
+pub mod code_handlers;
 pub mod context;
 pub mod delegation;
 pub mod events;
@@ -67,11 +68,11 @@ impl OperationEngine {
 
         let delegation_handler = DelegationHandler::new(deepseek.clone());
 
-        // Create tool router for file operations
+        // Create tool router for file operations and code intelligence
         // TODO: Get project directory from git_client or config
         // For now, use current working directory as fallback
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let tool_router = Some(ToolRouter::new(deepseek, project_dir));
+        let tool_router = Some(ToolRouter::new(deepseek, project_dir, code_intelligence));
 
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));

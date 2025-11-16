@@ -41,6 +41,20 @@ pub fn get_delegation_tools() -> Vec<Value> {
         git_contributors_tool(),
         git_status_tool(),
 
+        // Code intelligence tools - AST-powered code analysis
+        find_function_tool(),
+        find_class_or_struct_tool(),
+        search_code_semantic_tool(),
+        find_imports_tool(),
+        analyze_dependencies_tool(),
+        get_complexity_hotspots_tool(),
+        get_quality_issues_tool(),
+        get_file_symbols_tool(),
+        find_tests_for_code_tool(),
+        get_codebase_stats_tool(),
+        find_callers_tool(),
+        get_element_definition_tool(),
+
         // Skills system - specialized task handling
         activate_skill_tool(),
     ]
@@ -568,6 +582,323 @@ fn git_status_tool() -> Value {
     ToolBuilder::new(
         "git_status",
         "Show current working tree status: staged, unstaged, and untracked files. Also shows current branch and sync status with remote. Essential for understanding current repository state."
+    )
+    .build()
+}
+
+// ============================================================================
+// Code Intelligence Tools - AST-Powered Analysis
+// ============================================================================
+
+/// Tool: find_function
+fn find_function_tool() -> Value {
+    ToolBuilder::new(
+        "find_function",
+        "Find function or method definitions by name or pattern. Supports wildcards (%) for flexible matching. Returns functions with their signatures, locations, complexity scores, and documentation. Essential for exploring unknown codebases or finding specific implementations."
+    )
+    .property(
+        "name",
+        properties::description("Function name or pattern (use % as wildcard, e.g. 'handle%' finds handleClick, handleSubmit)"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to search within"),
+        true
+    )
+    .property(
+        "include_tests",
+        properties::optional_string("Include test functions in results (default: false)"),
+        false
+    )
+    .property(
+        "min_complexity",
+        properties::optional_string("Filter by minimum complexity score"),
+        false
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 20)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: find_class_or_struct
+fn find_class_or_struct_tool() -> Value {
+    ToolBuilder::new(
+        "find_class_or_struct",
+        "Find class, struct, or enum definitions by name. Returns type definitions with their methods, visibility, and documentation. Perfect for understanding data structures and object models."
+    )
+    .property(
+        "name",
+        properties::description("Type name or pattern (supports % wildcard)"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to search within"),
+        true
+    )
+    .property(
+        "include_private",
+        properties::optional_string("Include private/internal types (default: false)"),
+        false
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 20)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: search_code_semantic
+fn search_code_semantic_tool() -> Value {
+    ToolBuilder::new(
+        "search_code_semantic",
+        "Semantic search across codebase using natural language. Uses vector embeddings to find relevant code based on meaning, not just keywords. Ask questions like 'authentication middleware' or 'error handling utilities' and get semantically relevant results."
+    )
+    .property(
+        "query",
+        properties::description("Natural language description of what to find (e.g., 'authentication middleware', 'error handling utilities')"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to search within"),
+        true
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 10)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: find_imports
+fn find_imports_tool() -> Value {
+    ToolBuilder::new(
+        "find_imports",
+        "Find where a symbol is imported or used across the codebase. Shows all files that import a specific function, class, or module. Essential for impact analysis and understanding dependencies."
+    )
+    .property(
+        "symbol",
+        properties::description("Symbol to find (e.g., 'useState', 'HashMap', 'express')"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to search within"),
+        true
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 50)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: analyze_dependencies
+fn analyze_dependencies_tool() -> Value {
+    ToolBuilder::new(
+        "analyze_dependencies",
+        "Analyze external dependencies for a file or entire project. Shows npm packages, local imports, and standard library usage. Helps understand project structure and identify dependency issues."
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to analyze"),
+        true
+    )
+    .property(
+        "file_path",
+        properties::optional_string("Specific file to analyze (optional, omit for project-wide analysis)"),
+        false
+    )
+    .property(
+        "group_by",
+        properties::optional_string("How to group results: 'type' (npm/local/std) or 'frequency' (most used first). Default: 'type'"),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_complexity_hotspots
+fn get_complexity_hotspots_tool() -> Value {
+    ToolBuilder::new(
+        "get_complexity_hotspots",
+        "Find the most complex functions in the codebase. High complexity (cyclomatic complexity > 10) indicates code that may be hard to maintain and test. Use this to identify refactoring candidates."
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to analyze"),
+        true
+    )
+    .property(
+        "min_complexity",
+        properties::optional_string("Minimum complexity score to include (default: 10)"),
+        false
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 10)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_quality_issues
+fn get_quality_issues_tool() -> Value {
+    ToolBuilder::new(
+        "get_quality_issues",
+        "Get code quality issues for a file or project. Includes complexity problems, missing documentation, and potential bugs. Provides auto-fix suggestions when available."
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to analyze"),
+        true
+    )
+    .property(
+        "file_path",
+        properties::optional_string("Specific file to analyze (optional, omit for project-wide)"),
+        false
+    )
+    .property(
+        "severity",
+        properties::optional_string("Filter by severity: 'critical', 'high', 'medium', 'low', 'info'"),
+        false
+    )
+    .property(
+        "issue_type",
+        properties::optional_string("Filter by type: 'complexity', 'documentation', 'security'"),
+        false
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 50)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_file_symbols
+fn get_file_symbols_tool() -> Value {
+    ToolBuilder::new(
+        "get_file_symbols",
+        "Get all symbols (functions, classes, types) in a specific file. Returns structured overview of file contents, organized by symbol type. Essential for understanding file structure without reading full source."
+    )
+    .property(
+        "file_path",
+        properties::path("Path to file to analyze"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID"),
+        true
+    )
+    .property(
+        "include_private",
+        properties::optional_string("Include private/internal symbols (default: true)"),
+        false
+    )
+    .property(
+        "include_content",
+        properties::optional_string("Include full source code of elements (default: false, only signatures)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: find_tests_for_code
+fn find_tests_for_code_tool() -> Value {
+    ToolBuilder::new(
+        "find_tests_for_code",
+        "Find test files and test functions related to a code element. Helps verify test coverage and find relevant tests when modifying code."
+    )
+    .property(
+        "element_name",
+        properties::description("Function or class name to find tests for"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID"),
+        true
+    )
+    .property(
+        "file_path",
+        properties::optional_string("Source file path (optional, helps narrow search)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_codebase_stats
+fn get_codebase_stats_tool() -> Value {
+    ToolBuilder::new(
+        "get_codebase_stats",
+        "Get comprehensive statistics about the codebase. Includes file counts, element counts (functions, classes), complexity metrics, test coverage estimates, and quality summary. Perfect for codebase health overview."
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID to analyze"),
+        true
+    )
+    .property(
+        "breakdown_by",
+        properties::optional_string("How to break down stats: 'language', 'file_type', or 'complexity'. Default: 'language'"),
+        false
+    )
+    .build()
+}
+
+/// Tool: find_callers
+fn find_callers_tool() -> Value {
+    ToolBuilder::new(
+        "find_callers",
+        "Find all places where a function is called. Useful for impact analysis before refactoring - shows you everywhere that will be affected by changing a function's signature or behavior."
+    )
+    .property(
+        "function_name",
+        properties::description("Function name to find callers for"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID"),
+        true
+    )
+    .property(
+        "limit",
+        properties::optional_string("Maximum results to return (default: 50)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_element_definition
+fn get_element_definition_tool() -> Value {
+    ToolBuilder::new(
+        "get_element_definition",
+        "Get the full definition of a code element (function, class, type) including signature, full source code, documentation, complexity score, and metadata. Use this to deeply understand a specific piece of code."
+    )
+    .property(
+        "element_name",
+        properties::description("Name of element to get definition for"),
+        true
+    )
+    .property(
+        "project_id",
+        properties::description("Project ID"),
+        true
+    )
+    .property(
+        "file_path",
+        properties::optional_string("File path to narrow search (optional)"),
+        false
     )
     .build()
 }

@@ -9,8 +9,10 @@ use tracing::{info, warn};
 
 use crate::llm::provider::deepseek::DeepSeekProvider;
 use crate::llm::provider::Message;
+use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
-use super::{external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
+use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
+use std::sync::Arc;
 
 /// Routes GPT-5 meta-tool calls to DeepSeek file operation execution
 pub struct ToolRouter {
@@ -18,16 +20,18 @@ pub struct ToolRouter {
     file_handlers: FileHandlers,
     external_handlers: ExternalHandlers,
     git_handlers: GitHandlers,
+    code_handlers: CodeHandlers,
 }
 
 impl ToolRouter {
     /// Create a new tool router
-    pub fn new(deepseek: DeepSeekProvider, project_dir: PathBuf) -> Self {
+    pub fn new(deepseek: DeepSeekProvider, project_dir: PathBuf, code_intelligence: Arc<CodeIntelligenceService>) -> Self {
         Self {
             deepseek,
             file_handlers: FileHandlers::new(project_dir.clone()),
             external_handlers: ExternalHandlers::new(project_dir.clone()),
             git_handlers: GitHandlers::new(project_dir),
+            code_handlers: CodeHandlers::new(code_intelligence),
         }
     }
 
@@ -60,6 +64,20 @@ impl ToolRouter {
             "git_recent_changes" => self.route_git_recent_changes(arguments).await,
             "git_contributors" => self.route_git_contributors(arguments).await,
             "git_status" => self.route_git_status(arguments).await,
+
+            // Code intelligence operations
+            "find_function" => self.route_find_function(arguments).await,
+            "find_class_or_struct" => self.route_find_class_or_struct(arguments).await,
+            "search_code_semantic" => self.route_search_code_semantic(arguments).await,
+            "find_imports" => self.route_find_imports(arguments).await,
+            "analyze_dependencies" => self.route_analyze_dependencies(arguments).await,
+            "get_complexity_hotspots" => self.route_get_complexity_hotspots(arguments).await,
+            "get_quality_issues" => self.route_get_quality_issues(arguments).await,
+            "get_file_symbols" => self.route_get_file_symbols(arguments).await,
+            "find_tests_for_code" => self.route_find_tests_for_code(arguments).await,
+            "get_codebase_stats" => self.route_get_codebase_stats(arguments).await,
+            "find_callers" => self.route_find_callers(arguments).await,
+            "get_element_definition" => self.route_get_element_definition(arguments).await,
 
             // External operations
             "web_search" => self.route_web_search(arguments).await,
@@ -529,6 +547,106 @@ impl ToolRouter {
         info!("[ROUTER] Routing git_status");
         self.git_handlers
             .execute_tool("git_status_internal", args)
+            .await
+    }
+
+    // ========================================================================
+    // Code Intelligence Operations Routing
+    // ========================================================================
+
+    /// Route find_function to code handler
+    async fn route_find_function(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing find_function");
+        self.code_handlers
+            .execute_tool("find_function_internal", args)
+            .await
+    }
+
+    /// Route find_class_or_struct to code handler
+    async fn route_find_class_or_struct(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing find_class_or_struct");
+        self.code_handlers
+            .execute_tool("find_class_or_struct_internal", args)
+            .await
+    }
+
+    /// Route search_code_semantic to code handler
+    async fn route_search_code_semantic(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing search_code_semantic");
+        self.code_handlers
+            .execute_tool("search_code_semantic_internal", args)
+            .await
+    }
+
+    /// Route find_imports to code handler
+    async fn route_find_imports(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing find_imports");
+        self.code_handlers
+            .execute_tool("find_imports_internal", args)
+            .await
+    }
+
+    /// Route analyze_dependencies to code handler
+    async fn route_analyze_dependencies(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing analyze_dependencies");
+        self.code_handlers
+            .execute_tool("analyze_dependencies_internal", args)
+            .await
+    }
+
+    /// Route get_complexity_hotspots to code handler
+    async fn route_get_complexity_hotspots(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing get_complexity_hotspots");
+        self.code_handlers
+            .execute_tool("get_complexity_hotspots_internal", args)
+            .await
+    }
+
+    /// Route get_quality_issues to code handler
+    async fn route_get_quality_issues(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing get_quality_issues");
+        self.code_handlers
+            .execute_tool("get_quality_issues_internal", args)
+            .await
+    }
+
+    /// Route get_file_symbols to code handler
+    async fn route_get_file_symbols(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing get_file_symbols");
+        self.code_handlers
+            .execute_tool("get_file_symbols_internal", args)
+            .await
+    }
+
+    /// Route find_tests_for_code to code handler
+    async fn route_find_tests_for_code(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing find_tests_for_code");
+        self.code_handlers
+            .execute_tool("find_tests_for_code_internal", args)
+            .await
+    }
+
+    /// Route get_codebase_stats to code handler
+    async fn route_get_codebase_stats(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing get_codebase_stats");
+        self.code_handlers
+            .execute_tool("get_codebase_stats_internal", args)
+            .await
+    }
+
+    /// Route find_callers to code handler
+    async fn route_find_callers(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing find_callers");
+        self.code_handlers
+            .execute_tool("find_callers_internal", args)
+            .await
+    }
+
+    /// Route get_element_definition to code handler
+    async fn route_get_element_definition(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing get_element_definition");
+        self.code_handlers
+            .execute_tool("get_element_definition_internal", args)
             .await
     }
 }
