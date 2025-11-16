@@ -10,7 +10,8 @@ use crate::operations::ContextLoader;
 use crate::operations::delegation_tools::{get_delegation_tools, parse_tool_call};
 use crate::operations::engine::{
     artifacts::ArtifactManager, context::ContextBuilder, delegation::DelegationHandler,
-    events::OperationEngineEvent, lifecycle::LifecycleManager,
+    events::OperationEngineEvent, lifecycle::LifecycleManager, tool_router::ToolRouter,
+    skills::SkillRegistry,
 };
 
 use anyhow::{Context, Result};
@@ -26,6 +27,8 @@ pub struct Orchestrator {
     context_builder: ContextBuilder,
     context_loader: ContextLoader,
     delegation_handler: DelegationHandler,
+    tool_router: Option<ToolRouter>, // File operation routing
+    skill_registry: Arc<SkillRegistry>, // Skills system for specialized tasks
     artifact_manager: ArtifactManager,
     lifecycle_manager: LifecycleManager,
 }
@@ -37,6 +40,8 @@ impl Orchestrator {
         context_builder: ContextBuilder,
         context_loader: ContextLoader,
         delegation_handler: DelegationHandler,
+        tool_router: Option<ToolRouter>,
+        skill_registry: Arc<SkillRegistry>,
         artifact_manager: ArtifactManager,
         lifecycle_manager: LifecycleManager,
     ) -> Self {
@@ -46,6 +51,8 @@ impl Orchestrator {
             context_builder,
             context_loader,
             delegation_handler,
+            tool_router,
+            skill_registry,
             artifact_manager,
             lifecycle_manager,
         }
@@ -216,6 +223,112 @@ impl Orchestrator {
                             .await
                         {
                             warn!("[ENGINE] Failed to create artifact: {}", e);
+                        }
+                    } else if matches!(
+                        name.as_str(),
+                        "read_project_file" | "search_codebase" | "list_project_files"
+                        | "get_file_summary" | "get_file_structure"
+                    ) {
+                        // Handle file operation meta-tools via ToolRouter
+                        info!("[ENGINE] Routing {} to DeepSeek file operations", name);
+                        if let Some(ref router) = self.tool_router {
+                            match router.route_tool_call(&name, arguments.clone()).await {
+                                Ok(result) => {
+                                    info!(
+                                        "[ENGINE] File operation completed: {}",
+                                        serde_json::to_string(&result).unwrap_or_default()
+                                    );
+                                    // Send result as streaming content
+                                    let _ = event_tx
+                                        .send(OperationEngineEvent::Streaming {
+                                            operation_id: operation_id.to_string(),
+                                            content: format!(
+                                                "\n[File Operation Result: {}]\n{}\n",
+                                                name,
+                                                serde_json::to_string_pretty(&result)
+                                                    .unwrap_or_default()
+                                            ),
+                                        })
+                                        .await;
+                                }
+                                Err(e) => {
+                                    warn!("[ENGINE] File operation failed: {}", e);
+                                    let _ = event_tx
+                                        .send(OperationEngineEvent::Streaming {
+                                            operation_id: operation_id.to_string(),
+                                            content: format!("\n[File Operation Error: {}]\n", e),
+                                        })
+                                        .await;
+                                }
+                            }
+                        } else {
+                            warn!("[ENGINE] ToolRouter not available for {}", name);
+                        }
+                    } else if name == "activate_skill" {
+                        // Handle skill activation
+                        info!("[ENGINE] Activating skill with arguments: {:?}", arguments);
+
+                        let skill_name = arguments
+                            .get("skill_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+
+                        let task_description = arguments
+                            .get("task_description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        let context = arguments
+                            .get("context")
+                            .and_then(|v| v.as_str());
+
+                        // Load the skill
+                        match self.skill_registry.get(skill_name) {
+                            Some(skill) => {
+                                info!(
+                                    "[ENGINE] Skill '{}' activated (preferred model: {:?})",
+                                    skill_name, skill.preferred_model
+                                );
+
+                                // Build the skill prompt
+                                let skill_prompt = skill.build_prompt(task_description, context);
+
+                                // Stream the skill activation notice
+                                let _ = event_tx
+                                    .send(OperationEngineEvent::Streaming {
+                                        operation_id: operation_id.to_string(),
+                                        content: format!(
+                                            "\n**Activating {} skill...**\n\n",
+                                            skill_name
+                                        ),
+                                    })
+                                    .await;
+
+                                // Queue for delegation (skill will be passed in args)
+                                delegation_calls.push((
+                                    id.clone(),
+                                    "activate_skill_internal".to_string(),
+                                    serde_json::json!({
+                                        "skill_name": skill_name,
+                                        "skill_prompt": skill_prompt,
+                                        "task_description": task_description,
+                                        "preferred_model": format!("{:?}", skill.preferred_model),
+                                        "allowed_tools": skill.allowed_tools,
+                                    }),
+                                ));
+                            }
+                            None => {
+                                warn!("[ENGINE] Skill '{}' not found", skill_name);
+                                let _ = event_tx
+                                    .send(OperationEngineEvent::Streaming {
+                                        operation_id: operation_id.to_string(),
+                                        content: format!(
+                                            "\n**Error: Skill '{}' not found**\n",
+                                            skill_name
+                                        ),
+                                    })
+                                    .await;
+                            }
                         }
                     } else {
                         // Queue other tools for DeepSeek delegation

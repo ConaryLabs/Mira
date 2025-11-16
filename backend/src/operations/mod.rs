@@ -4,12 +4,14 @@
 pub mod context_loader;
 pub mod delegation_tools;
 pub mod engine;
+pub mod file_tools;
 pub mod tool_builder;
 pub mod types;
 
 pub use context_loader::ContextLoader;
 pub use delegation_tools::{get_delegation_tools, parse_tool_call};
 pub use engine::{OperationEngine, OperationEngineEvent};
+pub use file_tools::get_file_operation_tools;
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

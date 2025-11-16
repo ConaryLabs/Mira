@@ -7,11 +7,25 @@ use serde_json::Value;
 use super::tool_builder::{ToolBuilder, properties};
 
 /// Get all delegation tool schemas for GPT-5
+/// Includes both code generation tools and file operation meta-tools
 pub fn get_delegation_tools() -> Vec<Value> {
     vec![
+        // Code generation delegation tools
         generate_code_tool(),
         refactor_code_tool(),
         debug_code_tool(),
+
+        // File operation meta-tools (delegate to DeepSeek)
+        read_project_file_tool(),
+        search_codebase_tool(),
+        list_project_files_tool(),
+
+        // Token-optimized file operations (cheap alternatives)
+        get_file_summary_tool(),
+        get_file_structure_tool(),
+
+        // Skills system - specialized task handling
+        activate_skill_tool(),
     ]
 }
 
@@ -132,6 +146,154 @@ pub fn parse_tool_call(tool_call: &Value) -> anyhow::Result<(String, Value)> {
     let args: Value = serde_json::from_str(args_str)?;
 
     Ok((tool_name, args))
+}
+
+// ============================================================================
+// File Operation Meta-Tools
+// These tools are seen by GPT-5 but delegate to DeepSeek for execution
+// ============================================================================
+
+/// Tool: read_project_file
+/// Meta-tool that delegates file reading to DeepSeek
+fn read_project_file_tool() -> Value {
+    ToolBuilder::new(
+        "read_project_file",
+        "Read the content of one or more files from the project. Use this when you need to examine existing code, configuration, or documentation before generating new code or answering questions."
+    )
+    .property(
+        "paths",
+        properties::string_array("List of file paths to read (e.g., ['src/main.rs', 'Cargo.toml'])"),
+        true
+    )
+    .property(
+        "purpose",
+        properties::description("Why you need to read these files (helps with context optimization)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: search_codebase
+/// Meta-tool that delegates code searching to DeepSeek
+fn search_codebase_tool() -> Value {
+    ToolBuilder::new(
+        "search_codebase",
+        "Search for code patterns, function definitions, imports, or specific text across the project. Use this to find where functionality is defined or how APIs are used."
+    )
+    .property(
+        "query",
+        properties::description("Search query - can be a regex pattern, function name, or plain text"),
+        true
+    )
+    .property(
+        "file_pattern",
+        properties::optional_string("Optional glob pattern to limit search (e.g., '*.rs', 'src/**/*.ts')"),
+        false
+    )
+    .property(
+        "case_sensitive",
+        properties::boolean("Whether search should be case-sensitive", true),
+        false
+    )
+    .build()
+}
+
+/// Tool: list_project_files
+/// Meta-tool that delegates file listing to DeepSeek
+fn list_project_files_tool() -> Value {
+    ToolBuilder::new(
+        "list_project_files",
+        "List files in the project directory, optionally filtered by pattern. Use this to understand project structure or find specific file types."
+    )
+    .property(
+        "directory",
+        properties::path("Directory to list (e.g., 'src', 'src/components'). Use '.' for project root."),
+        false
+    )
+    .property(
+        "pattern",
+        properties::optional_string("Optional glob pattern to filter files (e.g., '*.ts', '**/*.rs')"),
+        false
+    )
+    .property(
+        "recursive",
+        properties::boolean("Whether to recursively list subdirectories", false),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_file_summary
+/// Meta-tool for cheap file overview (uses summarize_file + count_lines)
+fn get_file_summary_tool() -> Value {
+    ToolBuilder::new(
+        "get_file_summary",
+        "Get a quick overview of files without reading full content. Returns first/last 10 lines, file stats, and detected patterns. Use this instead of read_project_file when you only need to understand what files do, not read all the code. Saves 80-90% tokens compared to full read."
+    )
+    .property(
+        "paths",
+        properties::string_array("List of file paths to summarize (e.g., ['src/main.rs', 'lib/utils.ts'])"),
+        true
+    )
+    .property(
+        "preview_lines",
+        properties::optional_string("Number of lines to preview from start/end of each file (default: 10)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: get_file_structure
+/// Meta-tool for extracting symbols (uses extract_symbols)
+fn get_file_structure_tool() -> Value {
+    ToolBuilder::new(
+        "get_file_structure",
+        "Extract the structure (functions, classes, types, etc.) from files without reading full content. Returns a list of symbol definitions. Use this to understand code organization or find specific functions without loading entire files. Saves 70-80% tokens compared to full read."
+    )
+    .property(
+        "paths",
+        properties::string_array("List of file paths to extract structure from"),
+        true
+    )
+    .property(
+        "include_private",
+        properties::boolean("Whether to include private/internal symbols (default: false)", false),
+        false
+    )
+    .build()
+}
+
+// ============================================================================
+// Skills System - Specialized Task Handling
+// ============================================================================
+
+/// Tool: activate_skill
+/// Activates a specialized skill for complex tasks
+fn activate_skill_tool() -> Value {
+    ToolBuilder::new(
+        "activate_skill",
+        "Activate a specialized skill for complex tasks like refactoring, testing, debugging, or documentation. Skills provide expert guidance, best practices, and restrict available tools to what's relevant for the task. Use this when you need systematic, step-by-step guidance for non-trivial tasks."
+    )
+    .property(
+        "skill_name",
+        serde_json::json!({
+            "type": "string",
+            "enum": ["refactoring", "testing", "debugging", "documentation"],
+            "description": "Which specialized skill to activate:\n- refactoring: Systematic code improvement while preserving behavior\n- testing: Comprehensive test generation with best practices\n- debugging: Root cause analysis and systematic bug fixing\n- documentation: Clear, comprehensive documentation generation"
+        }),
+        true
+    )
+    .property(
+        "task_description",
+        properties::description("Detailed description of what you want to accomplish with this skill"),
+        true
+    )
+    .property(
+        "context",
+        properties::optional_string("Additional context about the code, project, or requirements that the skill should know about"),
+        false
+    )
+    .build()
 }
 
 // Tests in tests/phase5_providers_test.rs

@@ -116,7 +116,7 @@ impl DelegationHandler {
                     context: enriched_context,
                 }
             }
-            "fix_code" => {
+            "fix_code" | "debug_code" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -126,7 +126,10 @@ impl DelegationHandler {
                     .get("error_message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Fix error");
-                let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let code = args.get("code")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| args.get("buggy_code").and_then(|v| v.as_str()))
+                    .unwrap_or("");
 
                 let description = format!(
                     "Fix the following error:\n{}\n\nExisting code:\n{}",
@@ -148,6 +151,41 @@ impl DelegationHandler {
                     dependencies: vec![],
                     style_guide: None,
                     context: enriched_context,
+                }
+            }
+            "activate_skill_internal" => {
+                // Skill activation - use skill's prompt as the description
+                let skill_name = args
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+
+                let skill_prompt = args
+                    .get("skill_prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Execute task");
+
+                let task_description = args
+                    .get("task_description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                // Combine skill prompt with enriched context
+                let full_description = format!(
+                    "{}\n\nTask: {}\n\nContext: {}",
+                    skill_prompt, task_description, enriched_context
+                );
+
+                info!("[DELEGATION] Executing '{}' skill via DeepSeek", skill_name);
+
+                crate::llm::provider::deepseek::CodeGenRequest {
+                    path: "skill_output.md".to_string(), // Skills might not produce code
+                    description: full_description,
+                    language: "markdown".to_string(), // Default to markdown for skills
+                    framework: None,
+                    dependencies: vec![],
+                    style_guide: None,
+                    context: String::new(), // Already included in description
                 }
             }
             _ => {

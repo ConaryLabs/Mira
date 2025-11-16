@@ -5,9 +5,10 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::config::CONFIG;
+use super::Message;
 
 /// DeepSeek provider for code generation
 #[derive(Clone)]
@@ -201,6 +202,187 @@ pub fn build_user_prompt(request: &CodeGenRequest) -> String {
     prompt.push_str("Remember: Output ONLY the JSON object, no other text.");
 
     prompt
+}
+
+/// Response from DeepSeek tool calling API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallResponse {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+    pub finish_reason: String,
+    pub tokens_input: i64,
+    pub tokens_output: i64,
+}
+
+/// Individual tool call from DeepSeek
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+impl DeepSeekProvider {
+    /// Call DeepSeek with tool calling support
+    ///
+    /// Uses `deepseek-chat` model (NOT `deepseek-reasoner`) for function calling.
+    /// Handles tool_calls in response format.
+    pub async fn call_with_tools(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+    ) -> Result<ToolCallResponse> {
+        info!(
+            "DeepSeek: Calling with {} tools, {} messages",
+            tools.len(),
+            messages.len()
+        );
+
+        // Convert our Message format to DeepSeek API format
+        let api_messages: Vec<Value> = messages
+            .iter()
+            .map(|msg| json!({
+                "role": msg.role,
+                "content": msg.content
+            }))
+            .collect();
+
+        let request_body = json!({
+            "model": "deepseek-chat",  // Use chat model for tool calling
+            "messages": api_messages,
+            "tools": tools,
+            "temperature": 0.7,
+            "max_tokens": 16000,
+        });
+
+        debug!(
+            "DeepSeek tool calling request:\n{}",
+            serde_json::to_string_pretty(&request_body).unwrap_or_default()
+        );
+
+        let response = self
+            .client
+            .post("https://api.deepseek.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .context("DeepSeek API request failed")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            error!("DeepSeek API error {}: {}", status, error_text);
+            return Err(anyhow::anyhow!(
+                "DeepSeek API error {}: {}",
+                status,
+                error_text
+            ));
+        }
+
+        let response_json: Value = response
+            .json()
+            .await
+            .context("Failed to parse DeepSeek response")?;
+
+        debug!(
+            "DeepSeek tool calling response:\n{}",
+            serde_json::to_string_pretty(&response_json).unwrap_or_default()
+        );
+
+        // Extract usage information
+        let usage = response_json.get("usage");
+        let tokens_input = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let tokens_output = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+
+        // Extract the choice
+        let choice = response_json
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .ok_or_else(|| anyhow::anyhow!("No choices in DeepSeek response"))?;
+
+        let message = choice
+            .get("message")
+            .ok_or_else(|| anyhow::anyhow!("No message in DeepSeek choice"))?;
+
+        let finish_reason = choice
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Extract content (may be null if tool calls are present)
+        let content = message
+            .get("content")
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string());
+
+        // Extract tool calls if present
+        let mut tool_calls = Vec::new();
+        if let Some(calls) = message.get("tool_calls").and_then(|t| t.as_array()) {
+            for call in calls {
+                let id = call
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing tool call id"))?
+                    .to_string();
+
+                let function = call
+                    .get("function")
+                    .ok_or_else(|| anyhow::anyhow!("Missing function in tool call"))?;
+
+                let name = function
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing function name"))?
+                    .to_string();
+
+                let arguments_str = function
+                    .get("arguments")
+                    .and_then(|a| a.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing function arguments"))?;
+
+                let arguments: Value = serde_json::from_str(arguments_str)
+                    .with_context(|| format!("Failed to parse tool arguments: {}", arguments_str))?;
+
+                tool_calls.push(ToolCall {
+                    id,
+                    name,
+                    arguments,
+                });
+            }
+        }
+
+        if !tool_calls.is_empty() {
+            info!(
+                "DeepSeek returned {} tool call(s): {:?}",
+                tool_calls.len(),
+                tool_calls.iter().map(|tc| &tc.name).collect::<Vec<_>>()
+            );
+        } else if let Some(ref text) = content {
+            info!("DeepSeek returned text response: {} chars", text.len());
+        } else {
+            warn!("DeepSeek returned neither tool calls nor content");
+        }
+
+        Ok(ToolCallResponse {
+            content,
+            tool_calls,
+            finish_reason,
+            tokens_input,
+            tokens_output,
+        })
+    }
 }
 
 // Tests in tests/phase5_providers_test.rs
