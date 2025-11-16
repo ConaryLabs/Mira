@@ -298,6 +298,138 @@ Frontend (4 files):
 
 ---
 
+### Session 3: 2025-11-15
+
+**Goals:**
+- Simplify UI by removing tab navigation
+- Restore xterm.js terminal for traditional terminal emulation
+- Clean up console warnings from WebSocket messages
+- Remove unused frontend components
+- Maintain project management functionality
+
+**Outcomes:**
+- Complete UI restructure: removed tab navigation, main area is just chat
+- Restored xterm.js terminal with proper terminal emulation (replaced chat-like interface)
+- Fixed all WebSocket console warnings for terminal messages
+- Removed Quick Open (Cmd+P) functionality - use terminal instead
+- Cleaned up header: removed redundant project labels
+- Deleted 815 lines of unused code (CommandBlock, CommandInput, QuickFileOpen)
+- Made ProjectsView accessible via modal from header folder icon
+- Bundle size slightly reduced (1,341 kB)
+
+**Files Deleted:**
+Frontend:
+- `frontend/src/components/CommandBlock.tsx` - Chat-like terminal command display
+- `frontend/src/components/CommandInput.tsx` - Chat-like terminal input
+- `frontend/src/components/QuickFileOpen.tsx` - File picker modal (no longer needed)
+
+**Files Modified:**
+Frontend (10 files):
+- `frontend/src/App.tsx` - Removed tab navigation, simplified to chat + artifacts + terminal
+- `frontend/src/components/Header.tsx` - Made project folder clickable, added ProjectsView modal, removed Quick Open button
+- `frontend/src/components/Terminal.tsx` - Complete rewrite using xterm.js with direct WebSocket integration
+- `frontend/src/components/TerminalPanel.tsx` - Simplified to single terminal (removed session tabs)
+- `frontend/src/stores/useUIStore.ts` - Removed tab navigation state (activeTab, setActiveTab)
+- `frontend/src/stores/useWebSocketStore.ts` - Added terminal message types to KNOWN_MESSAGE_TYPES, silenced terminal_output logs
+- `frontend/src/hooks/useChatPersistence.ts` - Added filtering to ignore terminal messages
+- `frontend/src/hooks/useTerminalMessageHandler.ts` - Updated for new message handling
+- `frontend/src/services/BackendCommands.ts` - Terminal command improvements
+- `frontend/src/vite-env.d.ts` - Window interface updates
+
+**Files Restored:**
+Frontend:
+- `frontend/src/components/ProjectsView.tsx` - Restored after accidental deletion, now accessible via modal
+
+**Git Commits:**
+- `8264a83` - Refactor: Simplify UI and restore xterm.js terminal
+  - 10 files changed, 420 insertions(+), 393 deletions(-)
+- `2f56906` - Clean up unused frontend components and code
+  - 3 files changed, 4 insertions(+), 815 deletions(-)
+- `f493e4f` - Restore ProjectsView as modal accessible from header
+  - 2 files changed, 527 insertions(+), 12 deletions(-)
+
+**Technical Decisions:**
+
+1. **Terminal Architecture:**
+   - Decision: Replace CommandBlock/CommandInput with xterm.js
+   - Rationale: Traditional terminal emulation provides better UX for developers
+   - Implementation: Direct WebSocket subscription in Terminal component
+   - Benefits: Proper cursor, colors, terminal emulation, resize support
+   - Removed: Chat-like command history interface (CommandBlock pattern)
+
+2. **Tab Navigation Removal:**
+   - Decision: Remove Chat/Projects tab switching
+   - Rationale: Simpler UX with chat as main focus, projects accessible via modal
+   - Impact: Cleaner interface, fewer UI state transitions
+   - Trade-off: Projects require one extra click (folder icon) but modal is more focused
+
+3. **Quick Open Removal:**
+   - Decision: Remove Quick Open (Cmd+P) file picker
+   - Rationale: Terminal provides full file system access (ls, cd, vim, etc.)
+   - Impact: Reduced bundle size, simpler codebase
+   - User benefit: Terminal is more powerful and flexible
+
+4. **WebSocket Message Handling:**
+   - Problem: Console warnings for "Unknown message type: terminal_output"
+   - Solution: Added terminal types to KNOWN_MESSAGE_TYPES in WebSocket store
+   - Added filtering: Chat persistence ignores terminal/success messages
+   - Result: Clean console with no spurious warnings
+
+5. **Projects Access:**
+   - Decision: Modal overlay instead of full-page tab
+   - Rationale: Maintains focus on chat while providing full project management
+   - Implementation: Click folder icon in header → modal with ProjectsView
+   - Benefits: All project features available (create, delete, docs, import)
+
+6. **Terminal Output Flow:**
+   - Architecture: Terminal subscribes directly to WebSocket messages
+   - Messages: terminal_output, terminal_closed, terminal_error, terminal_command_complete
+   - Encoding: Base64 for binary-safe transmission
+   - Display: xterm.js writes directly to terminal (no intermediate state)
+
+**Issues/Blockers:**
+
+1. **Terminal Close Crash:**
+   - Problem: Clicking X to close terminal caused blank page, all WebSocket handlers unsubscribed
+   - Symptom: Console showed all subscriptions being removed, then reconnection
+   - Investigation: Added debug logging to track handleClose execution
+   - Root Cause: Double cleanup - removeSession() unmounted component, triggered cleanup effect
+   - Attempted Fix: hasClosedRef to prevent double cleanup (didn't work)
+   - Resolution: Decided to restructure UI instead (remove tabs, simplify terminal)
+   - Outcome: Issue became moot with new architecture
+
+2. **TypeScript Build Error:**
+   - Problem: `currentProject.path` does not exist on Project type
+   - Root Cause: Project interface doesn't have a `path` field
+   - Solution: Pass `undefined` for workingDirectory, let backend determine path
+   - Resolution: Build successful
+
+3. **Accidental Deletion:**
+   - Problem: Deleted ProjectsView.tsx thinking it was unused
+   - User feedback: "nooo" - projects still needed for management
+   - Solution: Restored from git history (git checkout HEAD~1)
+   - Lesson: Confirm before deleting major UI components
+   - New implementation: Modal overlay accessible from header
+
+4. **Console Warnings Cleanup:**
+   - Problem: "[ChatPersistence] Unhandled memory data" for terminal messages
+   - Cause: Chat persistence handler processed all 'data' messages
+   - Solution: Added filters for terminal indicators (working_directory, terminal_id, success)
+   - Result: Clean console output
+
+**Notes:**
+- UI is now significantly simpler and more focused
+- Terminal provides full shell access, eliminating need for Quick Open
+- xterm.js provides professional terminal experience with proper emulation
+- Bundle size reduced by ~7kB despite adding xterm.js (removed code offset cost)
+- Projects modal provides full management features without cluttering main UI
+- All TypeScript builds passing
+- No React Hooks violations in new architecture
+- Terminal properly handles: colors, cursor, line editing, resize, cleanup
+- Architecture is more maintainable with fewer UI state transitions
+
+---
+
 ## Phase: [Future Phases]
 
 Future milestones will be added here as the project evolves.
