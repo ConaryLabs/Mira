@@ -82,7 +82,7 @@ mira/
 - **Code Intelligence** - AST-based parsing (Rust/TypeScript); **12 intelligence tools** (find functions/classes, semantic search, complexity analysis, quality issues, dependency tracking, test discovery)
 - **Operation Tracking** - Complex multi-step workflows with lifecycle management and task decomposition (PENDING → PLANNING → STARTED → DELEGATING → COMPLETED)
 - **Artifact Management** - Code blocks from LLM can be saved/applied to files via Monaco editor
-- **Integrated Terminal** - Full xterm.js terminal emulator with real-time PTY-based shell execution, multiple sessions, project-scoped working directories
+- **Integrated Terminal** - xterm.js terminal emulator with real-time PTY-based shell execution in right-side panel
 
 ## Recent Improvements (November 2025)
 
@@ -127,13 +127,12 @@ mira/
 - **Tool Router Pattern** - Extended routing architecture for scalability
 
 ### Session 2: Integrated Terminal
-- **Full terminal emulator** - xterm.js with themed styling and real-time I/O
+- **Terminal emulator** - xterm.js with real-time I/O and proper VT100 emulation
 - **PTY-based execution** - portable-pty for native shell support
 - **WebSocket streaming** - bidirectional communication with base64 encoding
-- **Multiple sessions** - tab-based switching, project-scoped directories
-- **Right-side panel** - drag-to-resize, traditional IDE layout
-- **Session persistence** - SQLite storage, proper cleanup on close
+- **Right-side panel** - resizable panel with traditional IDE layout
 - **React fixes** - resolved Hooks violation, stale closure issues
+- Note: Session 3 simplified to single terminal (removed multi-session tabs)
 
 ### Session 1: Comprehensive Codebase Housecleaning (25 tasks)
 
