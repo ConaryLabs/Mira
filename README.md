@@ -284,10 +284,10 @@ See `backend/.env.example` for complete configuration options.
 
 ## Documentation
 
-### Architecture & Development
-- **[backend/README.md](./backend/README.md)** - Comprehensive backend documentation
-- **[backend/WHITEPAPER.md](./backend/WHITEPAPER.md)** - Detailed architectural reference
+### Development & Architecture
 - **[CLAUDE.md](./CLAUDE.md)** - Guide for AI assistants working with this codebase
+- **[PROGRESS.md](./PROGRESS.md)** - Detailed session-by-session development progress with technical decisions
+- **[ROADMAP.md](./ROADMAP.md)** - Project roadmap and planned features
 - **[frontend/docs/STATE_BOUNDARIES.md](./frontend/docs/STATE_BOUNDARIES.md)** - Frontend state management architecture
 
 ### Project Management
@@ -387,6 +387,6 @@ Proprietary
 ## Support
 
 For issues or questions:
-1. Check the troubleshooting sections in backend/README.md
-2. Review architecture documentation in backend/WHITEPAPER.md
+1. Review [PROGRESS.md](./PROGRESS.md) for technical decisions and troubleshooting notes
+2. Check [ISSUES_TO_CREATE.md](./ISSUES_TO_CREATE.md) for known technical debt
 3. Open an issue with detailed reproduction steps
