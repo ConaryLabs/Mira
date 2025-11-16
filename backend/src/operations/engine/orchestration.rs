@@ -11,8 +11,9 @@ use crate::operations::delegation_tools::{get_delegation_tools, parse_tool_call}
 use crate::operations::engine::{
     artifacts::ArtifactManager, context::ContextBuilder, delegation::DelegationHandler,
     events::OperationEngineEvent, lifecycle::LifecycleManager, tool_router::ToolRouter,
-    skills::SkillRegistry,
+    skills::SkillRegistry, simple_mode::SimpleModeDetector,
 };
+use crate::operations::TaskManager;
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
@@ -31,6 +32,7 @@ pub struct Orchestrator {
     skill_registry: Arc<SkillRegistry>, // Skills system for specialized tasks
     artifact_manager: ArtifactManager,
     lifecycle_manager: LifecycleManager,
+    task_manager: TaskManager,
 }
 
 impl Orchestrator {
@@ -44,6 +46,7 @@ impl Orchestrator {
         skill_registry: Arc<SkillRegistry>,
         artifact_manager: ArtifactManager,
         lifecycle_manager: LifecycleManager,
+        task_manager: TaskManager,
     ) -> Self {
         Self {
             gpt5,
@@ -55,6 +58,7 @@ impl Orchestrator {
             skill_registry,
             artifact_manager,
             lifecycle_manager,
+            task_manager,
         }
     }
 
@@ -150,6 +154,35 @@ impl Orchestrator {
         self.lifecycle_manager
             .start_operation(operation_id, event_tx)
             .await?;
+
+        // Check complexity and generate plan for complex operations
+        let simplicity = SimpleModeDetector::simplicity_score(user_content);
+        let _task_ids: Vec<String> = if simplicity <= 0.7 {
+            info!(
+                "[ENGINE] Complex operation detected (score: {:.2}), generating plan",
+                simplicity
+            );
+
+            // Generate execution plan
+            let plan = self
+                .generate_plan(operation_id, user_content, system_prompt.clone(), event_tx)
+                .await?;
+
+            // Parse plan into tasks
+            let _tasks = self
+                .parse_plan_into_tasks(operation_id, &plan, event_tx)
+                .await?;
+
+            // Get task IDs for tracking
+            let task_records = self.task_manager.get_tasks(operation_id).await?;
+            task_records.into_iter().map(|t| t.id).collect()
+        } else {
+            info!(
+                "[ENGINE] Simple operation detected (score: {:.2}), skipping planning",
+                simplicity
+            );
+            Vec::new()
+        };
 
         // Build tools: delegation tools + create_artifact
         let mut tools = get_delegation_tools();
@@ -430,5 +463,143 @@ impl Orchestrator {
             .await?;
 
         Ok(())
+    }
+
+    /// Generate execution plan for complex operations using GPT-5 reasoning
+    async fn generate_plan(
+        &self,
+        operation_id: &str,
+        user_content: &str,
+        system_prompt: String,
+        event_tx: &mpsc::Sender<OperationEngineEvent>,
+    ) -> Result<String> {
+        info!("[ENGINE] Generating execution plan for complex operation");
+
+        // Call GPT-5 with reasoning enabled, NO tools
+        let plan_prompt = format!(
+            "You are planning how to accomplish this task:\n\n{}\n\n\
+            Generate a step-by-step execution plan. Be specific and break down the work into clear, actionable tasks.\n\
+            Format your plan as a numbered list of tasks. Each task should be a single, focused action.\n\n\
+            Example format:\n\
+            1. Task description here\n\
+            2. Another task description\n\
+            3. Final task description",
+            user_content
+        );
+
+        let messages = vec![Message::user(plan_prompt)];
+
+        // Stream the plan generation (with empty tools array to get reasoning)
+        let mut stream = self
+            .gpt5
+            .create_stream_with_tools(messages, system_prompt, vec![], None) // Empty tools, no previous_response_id
+            .await
+            .context("Failed to create GPT-5 planning stream")?;
+
+        let mut plan_text = String::new();
+        let mut reasoning_tokens: Option<i32> = None;
+
+        while let Some(event) = stream.next().await {
+            match event? {
+                Gpt5StreamEvent::TextDelta { delta } => {
+                    plan_text.push_str(&delta);
+                    // Stream plan as it's being generated
+                    let _ = event_tx
+                        .send(OperationEngineEvent::Streaming {
+                            operation_id: operation_id.to_string(),
+                            content: delta,
+                        })
+                        .await;
+                }
+                Gpt5StreamEvent::Done {
+                    reasoning_tokens: rt,
+                    ..
+                } => {
+                    reasoning_tokens = Some(rt as i32);
+                }
+                _ => {}
+            }
+        }
+
+        if plan_text.is_empty() {
+            return Err(anyhow::anyhow!("Generated plan was empty"));
+        }
+
+        // Record plan in database and emit event
+        self.lifecycle_manager
+            .record_plan(operation_id, plan_text.clone(), reasoning_tokens, event_tx)
+            .await?;
+
+        Ok(plan_text)
+    }
+
+    /// Parse plan text into individual tasks
+    async fn parse_plan_into_tasks(
+        &self,
+        operation_id: &str,
+        plan_text: &str,
+        event_tx: &mpsc::Sender<OperationEngineEvent>,
+    ) -> Result<Vec<String>> {
+        info!("[ENGINE] Parsing plan into trackable tasks");
+
+        let mut tasks = Vec::new();
+
+        // Parse numbered list format: "1. Task description"
+        for line in plan_text.lines() {
+            let trimmed = line.trim();
+
+            // Match patterns like "1. ", "2. ", "1) ", etc.
+            if let Some(task_desc) = trimmed
+                .strip_prefix(|c: char| c.is_numeric())
+                .and_then(|s| s.strip_prefix('.').or(s.strip_prefix(')')))
+                .map(|s| s.trim())
+            {
+                if !task_desc.is_empty() {
+                    tasks.push(task_desc.to_string());
+                }
+            }
+        }
+
+        // Fallback: if no numbered tasks found, treat each non-empty line as a task
+        if tasks.is_empty() {
+            tasks = plan_text
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && l.len() > 3)
+                .map(|l| l.to_string())
+                .collect();
+        }
+
+        if tasks.is_empty() {
+            warn!("[ENGINE] No tasks extracted from plan, creating single task");
+            tasks.push("Execute the planned operation".to_string());
+        }
+
+        info!("[ENGINE] Extracted {} tasks from plan", tasks.len());
+
+        // Create task records and emit events
+        for (i, task_desc) in tasks.iter().enumerate() {
+            let active_form = if task_desc.starts_with(char::is_uppercase) {
+                // "Analyze code" → "Analyzing code"
+                let mut chars = task_desc.chars();
+                let first = chars.next().unwrap();
+                let rest: String = chars.collect();
+                format!("{}ing {}", first, rest.to_lowercase())
+            } else {
+                format!("Working on: {}", task_desc)
+            };
+
+            self.task_manager
+                .create_task(
+                    operation_id,
+                    i as i32,
+                    task_desc.clone(),
+                    active_form,
+                    event_tx,
+                )
+                .await?;
+        }
+
+        Ok(tasks)
     }
 }

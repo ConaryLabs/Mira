@@ -31,7 +31,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::operations::ContextLoader;
+use crate::operations::{ContextLoader, TaskManager};
 use artifacts::ArtifactManager;
 use context::ContextBuilder;
 use delegation::DelegationHandler;
@@ -98,6 +98,8 @@ impl OperationEngine {
             }
         });
 
+        let task_manager = TaskManager::new(Arc::clone(&db));
+
         let orchestrator = Orchestrator::new(
             gpt5,
             memory_service,
@@ -108,6 +110,7 @@ impl OperationEngine {
             skill_registry,
             artifact_manager.clone(),
             lifecycle_manager.clone(),
+            task_manager,
         );
 
         Self {
