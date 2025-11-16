@@ -702,7 +702,7 @@ Let's build the future of AI-assisted development.
 ---
 
 **Last Updated**: 2025-11-16
-**Status**: Partial Implementation (Terminal + Read-Only Tools Complete, Write Tools Pending)
+**Status**: Partial Implementation (File Operations Complete, File Browser UI Pending)
 **Owner**: Peter (Founder)
 
 **Recent Progress (Nov 2025):**
@@ -712,7 +712,9 @@ Let's build the future of AI-assisted development.
 - Session 5: Planning mode with task tracking and real-time WebSocket events (✅ Complete)
 - Session 6: Dynamic reasoning level selection for cost/quality optimization (✅ Complete)
 - Session 7: Frontend simplification - removed 1,220 lines, refactored ProjectsView with hooks (✅ Complete)
+- Session 8: Implemented JWT authentication with user-based eternal sessions (✅ Complete)
+- **File Write/Edit Tools**: ALREADY IMPLEMENTED - GPT-5 has full read/write/edit access via delegation_tools.rs (✅ Verified)
 - **Next Priorities**:
-  1. Expose file write/edit meta-tools to GPT-5 (handlers exist, need delegation_tools wiring)
-  2. Add file tree browser UI component
+  1. Add file tree browser UI component
+  2. Improve file operation feedback in the UI (show when GPT-5 writes/edits files)
   3. SSH/remote connectivity explicitly deferred
