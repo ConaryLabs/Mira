@@ -1,9 +1,7 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Play, Folder, Terminal, X } from 'lucide-react';
+import { Folder, Terminal, X } from 'lucide-react';
 import ArtifactToggle from './ArtifactToggle';
-import { CommitPushButton } from './CommitPushButton';
-import { GitSyncButton } from './GitSyncButton';
 import { ProjectsView } from './ProjectsView';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useTerminalStore } from '../stores/useTerminalStore';
@@ -46,20 +44,6 @@ export const Header: React.FC = () => {
       <div className="flex items-center gap-2 ml-auto">
         {currentProject && (
           <>
-            <button
-              className="p-2 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-md"
-              title="Run project"
-            >
-              <Play size={16} />
-            </button>
-            
-            {/* Git sync button - only show if project has repo */}
-            {currentProject.has_repository && (
-              <GitSyncButton />
-            )}
-            
-            <CommitPushButton />
-
             {/* Terminal Toggle */}
             <button
               type="button"
@@ -82,7 +66,6 @@ export const Header: React.FC = () => {
             isOpen={showArtifacts}
             onClick={() => setShowArtifacts(!showArtifacts)}
             artifactCount={artifacts.length}
-            hasGitRepos={currentProject?.has_repository || false}
             isDark={true}
           />
         )}

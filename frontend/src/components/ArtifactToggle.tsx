@@ -1,12 +1,11 @@
 // src/components/ArtifactToggle.tsx
 import React from 'react';
-import { FileText, GitBranch } from 'lucide-react';
+import { FileText } from 'lucide-react';
 
 interface ArtifactToggleProps {
   isOpen: boolean;
   onClick: () => void;
   artifactCount: number;
-  hasGitRepos?: boolean;
   isDark: boolean;
 }
 
@@ -14,7 +13,6 @@ const ArtifactToggle: React.FC<ArtifactToggleProps> = ({
   isOpen,
   onClick,
   artifactCount,
-  hasGitRepos = true, // Default to true if project is selected
   isDark,
 }) => {
   return (
@@ -31,22 +29,18 @@ const ArtifactToggle: React.FC<ArtifactToggleProps> = ({
       `}
       title={isOpen ? 'Close resources' : 'Open project resources'}
     >
-      {hasGitRepos ? (
-        <GitBranch className="w-6 h-6" />
-      ) : (
-        <FileText className="w-6 h-6" />
-      )}
-      
-      {(artifactCount > 0 || hasGitRepos) && (
+      <FileText className="w-6 h-6" />
+
+      {artifactCount > 0 && (
         <span className={`
-          absolute -top-1 -right-1 min-w-[20px] h-5 px-1 
+          absolute -top-1 -right-1 min-w-[20px] h-5 px-1
           flex items-center justify-center rounded-full text-xs font-bold
-          ${isDark 
-            ? 'bg-blue-600 text-white' 
+          ${isDark
+            ? 'bg-blue-600 text-white'
             : 'bg-blue-500 text-white'
           }
         `}>
-          {artifactCount > 0 ? artifactCount : <GitBranch className="w-3 h-3" />}
+          {artifactCount}
         </span>
       )}
     </button>
