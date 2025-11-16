@@ -228,9 +228,10 @@ impl Orchestrator {
                         name.as_str(),
                         "read_project_file" | "search_codebase" | "list_project_files"
                         | "get_file_summary" | "get_file_structure"
+                        | "web_search" | "fetch_url" | "execute_command"
                     ) {
-                        // Handle file operation meta-tools via ToolRouter
-                        info!("[ENGINE] Routing {} to DeepSeek file operations", name);
+                        // Handle file operation and external meta-tools via ToolRouter
+                        info!("[ENGINE] Routing {} via ToolRouter", name);
                         if let Some(ref router) = self.tool_router {
                             match router.route_tool_call(&name, arguments.clone()).await {
                                 Ok(result) => {

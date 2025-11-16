@@ -10,12 +10,13 @@ use tracing::{info, warn};
 use crate::llm::provider::deepseek::DeepSeekProvider;
 use crate::llm::provider::Message;
 use crate::operations::get_file_operation_tools;
-use super::file_handlers::FileHandlers;
+use super::{external_handlers::ExternalHandlers, file_handlers::FileHandlers};
 
 /// Routes GPT-5 meta-tool calls to DeepSeek file operation execution
 pub struct ToolRouter {
     deepseek: DeepSeekProvider,
     file_handlers: FileHandlers,
+    external_handlers: ExternalHandlers,
 }
 
 impl ToolRouter {
@@ -23,7 +24,8 @@ impl ToolRouter {
     pub fn new(deepseek: DeepSeekProvider, project_dir: PathBuf) -> Self {
         Self {
             deepseek,
-            file_handlers: FileHandlers::new(project_dir),
+            file_handlers: FileHandlers::new(project_dir.clone()),
+            external_handlers: ExternalHandlers::new(project_dir),
         }
     }
 
@@ -38,11 +40,18 @@ impl ToolRouter {
         info!("[ROUTER] Routing GPT-5 meta-tool: {}", tool_name);
 
         match tool_name {
+            // File operations
             "read_project_file" => self.route_read_file(arguments).await,
             "search_codebase" => self.route_search(arguments).await,
             "list_project_files" => self.route_list_files(arguments).await,
             "get_file_summary" => self.route_file_summary(arguments).await,
             "get_file_structure" => self.route_file_structure(arguments).await,
+
+            // External operations
+            "web_search" => self.route_web_search(arguments).await,
+            "fetch_url" => self.route_fetch_url(arguments).await,
+            "execute_command" => self.route_execute_command(arguments).await,
+
             _ => Err(anyhow::anyhow!("Unknown meta-tool: {}", tool_name)),
         }
     }
@@ -386,5 +395,42 @@ impl ToolRouter {
             "file_count": structures.len(),
             "structures": structures
         }))
+    }
+
+    // ========================================================================
+    // External Operations Routing (Web, Commands)
+    // ========================================================================
+
+    /// Route web_search to DeepSeek + external handler
+    ///
+    /// Unlike file operations, web search is executed directly (not via DeepSeek)
+    /// for better reliability and speed
+    async fn route_web_search(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing web_search");
+
+        // Execute web search directly via external handler
+        self.external_handlers
+            .execute_tool("web_search_internal", args)
+            .await
+    }
+
+    /// Route fetch_url to external handler
+    async fn route_fetch_url(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing fetch_url");
+
+        // Execute URL fetch directly
+        self.external_handlers
+            .execute_tool("fetch_url_internal", args)
+            .await
+    }
+
+    /// Route execute_command to external handler
+    async fn route_execute_command(&self, args: Value) -> Result<Value> {
+        info!("[ROUTER] Routing execute_command");
+
+        // Execute command directly
+        self.external_handlers
+            .execute_tool("execute_command_internal", args)
+            .await
     }
 }

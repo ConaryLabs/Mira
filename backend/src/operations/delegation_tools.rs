@@ -24,6 +24,11 @@ pub fn get_delegation_tools() -> Vec<Value> {
         get_file_summary_tool(),
         get_file_structure_tool(),
 
+        // External tools - web and command execution
+        web_search_tool(),
+        fetch_url_tool(),
+        execute_command_tool(),
+
         // Skills system - specialized task handling
         activate_skill_tool(),
     ]
@@ -258,6 +263,99 @@ fn get_file_structure_tool() -> Value {
     .property(
         "include_private",
         properties::boolean("Whether to include private/internal symbols (default: false)", false),
+        false
+    )
+    .build()
+}
+
+// ============================================================================
+// External Tools - Web Search and Command Execution
+// ============================================================================
+
+/// Tool: web_search
+/// Search the web for documentation, examples, error messages, etc.
+fn web_search_tool() -> Value {
+    ToolBuilder::new(
+        "web_search",
+        "Search the web for documentation, API references, error messages, code examples, or any other information needed for coding tasks. Useful for finding latest library documentation, troubleshooting errors, or discovering best practices."
+    )
+    .property(
+        "query",
+        properties::description("Search query - be specific and include relevant keywords (e.g., 'rust tokio spawn error', 'react hooks useEffect cleanup')"),
+        true
+    )
+    .property(
+        "num_results",
+        properties::optional_string("Number of results to return (default: 5, max: 10)"),
+        false
+    )
+    .property(
+        "search_type",
+        serde_json::json!({
+            "type": "string",
+            "enum": ["general", "documentation", "stackoverflow", "github"],
+            "description": "Type of search:\n- general: Broad web search\n- documentation: Focus on official docs\n- stackoverflow: Focus on Stack Overflow\n- github: Focus on GitHub repos and issues"
+        }),
+        false
+    )
+    .build()
+}
+
+/// Tool: fetch_url
+/// Fetch and parse content from a specific URL
+fn fetch_url_tool() -> Value {
+    ToolBuilder::new(
+        "fetch_url",
+        "Fetch and extract content from a specific URL. Useful for reading documentation pages, GitHub files, API references, or any web content. Returns extracted text content, removing HTML/CSS/JS noise."
+    )
+    .property(
+        "url",
+        serde_json::json!({
+            "type": "string",
+            "description": "Full URL to fetch (must start with http:// or https://)"
+        }),
+        true
+    )
+    .property(
+        "extract_mode",
+        serde_json::json!({
+            "type": "string",
+            "enum": ["full", "main_content", "code_blocks"],
+            "description": "What to extract:\n- full: All text content\n- main_content: Just the main article/doc content\n- code_blocks: Only code examples"
+        }),
+        false
+    )
+    .build()
+}
+
+/// Tool: execute_command
+/// Execute shell commands (with safety restrictions)
+fn execute_command_tool() -> Value {
+    ToolBuilder::new(
+        "execute_command",
+        "Execute a shell command in the project directory. Use this for build commands (npm install, cargo build), running tests, checking versions, or any other command-line operations. Commands are executed in a restricted environment for safety."
+    )
+    .property(
+        "command",
+        properties::description("Shell command to execute (e.g., 'npm install lodash', 'cargo test', 'git status')"),
+        true
+    )
+    .property(
+        "working_directory",
+        properties::optional_string("Working directory for command execution (relative to project root, defaults to project root)"),
+        false
+    )
+    .property(
+        "timeout_seconds",
+        properties::optional_string("Maximum execution time in seconds (default: 30, max: 300)"),
+        false
+    )
+    .property(
+        "environment",
+        serde_json::json!({
+            "type": "object",
+            "description": "Optional environment variables to set (e.g., {\"NODE_ENV\": \"development\"})"
+        }),
         false
     )
     .build()

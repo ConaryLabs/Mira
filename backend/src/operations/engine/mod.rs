@@ -6,6 +6,7 @@ pub mod artifacts;
 pub mod context;
 pub mod delegation;
 pub mod events;
+pub mod external_handlers;
 pub mod file_handlers;
 pub mod lifecycle;
 pub mod orchestration;
