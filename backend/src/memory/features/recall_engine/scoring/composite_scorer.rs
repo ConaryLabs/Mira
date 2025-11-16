@@ -1,13 +1,13 @@
 // src/memory/features/recall_engine/scoring/composite_scorer.rs
 
 //! Composite scoring - unified scoring algorithms for all search types.
-//! 
+//!
 //! Single responsibility: calculate relevance scores using multiple factors.
 
 use chrono::{DateTime, Utc};
 
+use super::super::{RecallConfig, ScoredMemory};
 use crate::memory::core::types::MemoryEntry;
-use super::super::{ScoredMemory, RecallConfig};
 
 #[derive(Clone)]
 pub struct CompositeScorer;
@@ -32,13 +32,12 @@ impl CompositeScorer {
                 let recency_score = self.calculate_recency_score(&entry, now);
                 let similarity_score = self.calculate_similarity_score(&entry, query_embedding);
                 let salience_score = entry.salience.unwrap_or(0.0);
-                
+
                 // Weighted composite score
-                let combined_score = 
-                    config.recency_weight * recency_score +
-                    config.similarity_weight * similarity_score +
-                    config.salience_weight * salience_score;
-                
+                let combined_score = config.recency_weight * recency_score
+                    + config.similarity_weight * similarity_score
+                    + config.salience_weight * salience_score;
+
                 ScoredMemory {
                     entry,
                     score: combined_score,
@@ -48,10 +47,10 @@ impl CompositeScorer {
                 }
             })
             .collect();
-        
+
         // Sort by combined score (highest first)
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        
+
         scored
     }
 
@@ -75,11 +74,11 @@ impl CompositeScorer {
         if a.len() != b.len() {
             return 0.0;
         }
-        
+
         let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a == 0.0 || norm_b == 0.0 {
             0.0
         } else {

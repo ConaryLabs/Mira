@@ -1,11 +1,11 @@
 // src/hooks/useWebSocketMessageHandler.ts
-// FIXED: Handle operation.streaming, operation.artifact_completed, operation.completed
+// REFACTORED: Use shared artifact utilities
 
 import { useEffect } from 'react';
 import { useAppState } from '../stores/useAppState';
 import { useChatStore } from '../stores/useChatStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
-import type { Artifact } from '../stores/useChatStore';
+import { createArtifact, extractArtifacts } from '../utils/artifact';
 
 export const useWebSocketMessageHandler = () => {
   const subscribe = useWebSocketStore(state => state.subscribe);
@@ -78,31 +78,6 @@ export const useWebSocketMessageHandler = () => {
     }
   };
 
-  const detectLanguage = (filePath: string): string => {
-    if (!filePath) return 'plaintext';
-    
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    switch (ext) {
-      case 'rs': return 'rust';
-      case 'js': case 'jsx': return 'javascript';
-      case 'ts': case 'tsx': return 'typescript';
-      case 'py': return 'python';
-      case 'json': return 'json';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'md': return 'markdown';
-      case 'toml': return 'toml';
-      case 'yaml': case 'yml': return 'yaml';
-      case 'sh': case 'bash': return 'shell';
-      case 'go': return 'go';
-      case 'java': return 'java';
-      case 'cpp': return 'cpp';
-      case 'c': return 'c';
-      case 'sql': return 'sql';
-      default: return 'plaintext';
-    }
-  };
-
   const handleDataMessage = (data: any) => {
     const dtype = data?.type;
     if (!dtype) return;
@@ -122,58 +97,33 @@ export const useWebSocketMessageHandler = () => {
       case 'operation.artifact_completed': {
         // Artifact completed - add it immediately
         console.log('[WS-Global] Artifact completed:', data.artifact);
-        
-        if (!data.artifact || !data.artifact.content) {
+
+        const artifact = createArtifact(data.artifact);
+        if (!artifact) {
           console.warn('[WS-Global] Invalid artifact:', data.artifact);
           return;
         }
 
-        const artifact = data.artifact;
-        const newArtifact: Artifact = {
-          id: artifact.id || `artifact-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-          path: artifact.path || 'untitled',
-          content: artifact.content,
-          language: artifact.language || detectLanguage(artifact.path),
-          status: 'draft',
-          origin: 'llm',
-          timestamp: Date.now()
-        };
-
-        console.log('[WS-Global] Adding artifact:', newArtifact.path);
-        addArtifact(newArtifact);
+        console.log('[WS-Global] Adding artifact:', artifact.path);
+        addArtifact(artifact);
         return;
       }
 
       case 'operation.completed': {
         // Operation done - finalize streaming and add message
         console.log('[WS-Global] Operation completed');
-        
-        // Get the final content from streaming buffer
-        const streamingContent = useChatStore.getState().streamingContent;
-        
+
         // End streaming (this adds the message)
         endStreaming();
-        
+
         // Artifacts should already be added via operation.artifact_completed
         // But if they're in the final message, add them too
-        if (data.artifacts && data.artifacts.length > 0) {
-          console.log('[WS-Global] Processing artifacts from completed:', data.artifacts.length);
-          data.artifacts.forEach((artifact: any) => {
-            if (artifact && artifact.content) {
-              const newArtifact: Artifact = {
-                id: artifact.id || `artifact-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                path: artifact.path || 'untitled',
-                content: artifact.content,
-                language: artifact.language || detectLanguage(artifact.path),
-                status: 'draft',
-                origin: 'llm',
-                timestamp: Date.now()
-              };
-              addArtifact(newArtifact);
-            }
-          });
+        const artifacts = extractArtifacts(data);
+        if (artifacts.length > 0) {
+          console.log('[WS-Global] Processing artifacts from completed:', artifacts.length);
+          artifacts.forEach(artifact => addArtifact(artifact));
         }
-        
+
         return;
       }
 
@@ -193,47 +143,32 @@ export const useWebSocketMessageHandler = () => {
       // LEGACY: Old artifact_created format
       case 'artifact_created': {
         console.log('[WS-Global] Legacy artifact created:', data.artifact);
-        
-        const artifactData = data.artifact;
-        if (!artifactData || !artifactData.content) {
+
+        const artifact = createArtifact(data.artifact);
+        if (!artifact) {
           console.warn('[WS-Global] artifact_created missing content:', data);
           return;
         }
 
-        const path = artifactData.path || artifactData.title || 'untitled';
-        const newArtifact: Artifact = {
-          id: artifactData.id || `artifact-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-          path,
-          content: artifactData.content,
-          language: artifactData.language || detectLanguage(path),
-          changeType: artifactData.change_type,
-          status: 'draft',
-          origin: 'llm',
-          timestamp: Date.now()
-        };
-
-        addArtifact(newArtifact);
+        addArtifact(artifact);
         return;
       }
 
       // FILE OPERATIONS
       case 'file_content': {
-        const rawPath = data.path || data.file_path || data.name || 'untitled';
-        const path = String(rawPath).replace(/\/+/, '/').replace(/\/+/g, '/');
-        const content = data.content ?? data.file_content ?? data.text ?? data.body ?? '// No content';
-
-        const newArtifact: Artifact = {
-          id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-          path,
-          content,
-          language: detectLanguage(path),
+        const artifact = createArtifact(data, {
+          idPrefix: 'file',
           status: 'saved',
-          origin: 'user',
-          timestamp: Date.now()
-        };
+          origin: 'user'
+        });
 
-        console.log('[WS-Global] File content artifact:', newArtifact.path);
-        addArtifact(newArtifact);
+        if (!artifact) {
+          console.warn('[WS-Global] Invalid file_content:', data);
+          return;
+        }
+
+        console.log('[WS-Global] File content artifact:', artifact.path);
+        addArtifact(artifact);
         setShowFileExplorer(true);
         return;
       }

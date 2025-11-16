@@ -4,8 +4,8 @@
 // Tests: Message helpers, provider routing, LLM message flow, cloning
 
 use mira_backend::llm::provider::Message;
-use mira_backend::llm::provider::gpt5::Gpt5Provider;
 use mira_backend::llm::provider::deepseek::DeepSeekProvider;
+use mira_backend::llm::provider::gpt5::Gpt5Provider;
 
 // ============================================================================
 // Message Helper Tests
@@ -14,7 +14,7 @@ use mira_backend::llm::provider::deepseek::DeepSeekProvider;
 #[test]
 fn test_message_user_helper() {
     let msg = Message::user("Hello, world!".to_string());
-    
+
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content, "Hello, world!");
 }
@@ -22,7 +22,7 @@ fn test_message_user_helper() {
 #[test]
 fn test_message_assistant_helper() {
     let msg = Message::assistant("Sure, I can help!".to_string());
-    
+
     assert_eq!(msg.role, "assistant");
     assert_eq!(msg.content, "Sure, I can help!");
 }
@@ -34,7 +34,7 @@ fn test_message_conversation_flow() {
         Message::assistant("It's sunny today!".to_string()),
         Message::user("Thanks!".to_string()),
     ];
-    
+
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[1].role, "assistant");
@@ -54,10 +54,10 @@ fn test_gpt5_provider_clone() {
         "medium".to_string(),
         "medium".to_string(),
     );
-    
+
     // Should compile and clone successfully (compile-time test)
     let _cloned = provider.clone();
-    
+
     // Clone derive works - this test passes if it compiles
     assert!(true);
 }
@@ -65,10 +65,10 @@ fn test_gpt5_provider_clone() {
 #[test]
 fn test_deepseek_provider_clone() {
     let provider = DeepSeekProvider::new("test-key".to_string());
-    
+
     // Should compile and clone successfully (compile-time test)
     let _cloned = provider.clone();
-    
+
     // Clone derive works - this test passes if it compiles
     assert!(true);
 }
@@ -82,12 +82,12 @@ fn test_provider_clone_independence() {
         "medium".to_string(),
         "medium".to_string(),
     );
-    
+
     let cloned = original.clone();
-    
+
     // Clones should be usable independently
     drop(original);
-    
+
     // If this compiles and runs, Clone works correctly
     drop(cloned);
     assert!(true);
@@ -106,7 +106,7 @@ fn test_create_gpt5_provider() {
         "high".to_string(),
         "high".to_string(),
     );
-    
+
     // If this compiles, provider construction works
     drop(provider);
     assert!(true);
@@ -115,7 +115,7 @@ fn test_create_gpt5_provider() {
 #[test]
 fn test_create_deepseek_provider() {
     let provider = DeepSeekProvider::new("test-key".to_string());
-    
+
     // If this compiles, provider construction works
     drop(provider);
     assert!(true);
@@ -130,7 +130,7 @@ fn test_provider_with_different_configs() {
         "low".to_string(),
         "low".to_string(),
     );
-    
+
     let maximal = Gpt5Provider::new(
         "key2".to_string(),
         "gpt-5-preview".to_string(),
@@ -138,7 +138,7 @@ fn test_provider_with_different_configs() {
         "high".to_string(),
         "high".to_string(),
     );
-    
+
     // Both should construct successfully
     drop(minimal);
     drop(maximal);
@@ -154,8 +154,11 @@ fn test_simple_task_routing() {
     // Simulate routing logic: simple tasks should go to GPT-5
     let task_complexity = "simple";
     let should_delegate = matches!(task_complexity, "complex" | "very_complex");
-    
-    assert!(!should_delegate, "Simple tasks should NOT delegate to DeepSeek");
+
+    assert!(
+        !should_delegate,
+        "Simple tasks should NOT delegate to DeepSeek"
+    );
 }
 
 #[test]
@@ -163,7 +166,7 @@ fn test_complex_task_routing() {
     // Simulate routing logic: complex tasks should delegate
     let task_complexity = "complex";
     let should_delegate = matches!(task_complexity, "complex" | "very_complex");
-    
+
     assert!(should_delegate, "Complex tasks SHOULD delegate to DeepSeek");
 }
 
@@ -175,15 +178,13 @@ fn test_routing_decision_matrix() {
         ("complex", true),
         ("very_complex", true),
     ];
-    
+
     for (complexity, expected_delegation) in test_cases {
         let should_delegate = matches!(complexity, "complex" | "very_complex");
         assert_eq!(
-            should_delegate, 
-            expected_delegation,
+            should_delegate, expected_delegation,
             "Routing decision for '{}' should be: delegate={}",
-            complexity,
-            expected_delegation
+            complexity, expected_delegation
         );
     }
 }
@@ -195,17 +196,17 @@ fn test_routing_decision_matrix() {
 #[test]
 fn test_context_message_building() {
     let mut context: Vec<Message> = Vec::new();
-    
+
     // Build conversation context
     context.push(Message::user("Create a function".to_string()));
     context.push(Message::assistant("I'll help with that".to_string()));
     context.push(Message::user("Make it handle errors".to_string()));
-    
+
     assert_eq!(context.len(), 3);
-    
+
     // Last message should be user
     assert_eq!(context.last().unwrap().role, "user");
-    
+
     // Should alternate user/assistant
     assert_eq!(context[0].role, "user");
     assert_eq!(context[1].role, "assistant");
@@ -215,7 +216,7 @@ fn test_context_message_building() {
 #[test]
 fn test_empty_context_handling() {
     let context: Vec<Message> = Vec::new();
-    
+
     assert!(context.is_empty());
     assert_eq!(context.len(), 0);
 }
@@ -223,7 +224,7 @@ fn test_empty_context_handling() {
 #[test]
 fn test_context_with_system_message() {
     let mut context: Vec<Message> = Vec::new();
-    
+
     // System message (using user constructor since we don't have system helper)
     context.push(Message {
         role: "system".to_string(),
@@ -231,7 +232,7 @@ fn test_context_with_system_message() {
     });
     context.push(Message::user("Hello".to_string()));
     context.push(Message::assistant("Hi there!".to_string()));
-    
+
     assert_eq!(context.len(), 3);
     assert_eq!(context[0].role, "system");
     assert_eq!(context[1].role, "user");
@@ -250,7 +251,7 @@ fn test_context_with_system_message() {
 fn test_message_to_json() {
     let msg = Message::user("Test content".to_string());
     let json = serde_json::to_value(&msg).expect("Should serialize");
-    
+
     assert_eq!(json["role"], "user");
     assert_eq!(json["content"], "Test content");
 }
@@ -261,9 +262,9 @@ fn test_message_from_json() {
         "role": "assistant",
         "content": "Test response"
     });
-    
+
     let msg: Message = serde_json::from_value(json).expect("Should deserialize");
-    
+
     assert_eq!(msg.role, "assistant");
     assert_eq!(msg.content, "Test response");
 }
@@ -275,10 +276,11 @@ fn test_message_array_serialization() {
         Message::assistant("Second".to_string()),
         Message::user("Third".to_string()),
     ];
-    
+
     let json = serde_json::to_value(&messages).expect("Should serialize array");
-    let deserialized: Vec<Message> = serde_json::from_value(json).expect("Should deserialize array");
-    
+    let deserialized: Vec<Message> =
+        serde_json::from_value(json).expect("Should deserialize array");
+
     assert_eq!(deserialized.len(), 3);
     assert_eq!(deserialized[0].role, "user");
     assert_eq!(deserialized[1].role, "assistant");
@@ -292,7 +294,7 @@ fn test_message_array_serialization() {
 #[test]
 fn test_empty_message_content() {
     let msg = Message::user("".to_string());
-    
+
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content, "");
     assert!(msg.content.is_empty());
@@ -302,7 +304,7 @@ fn test_empty_message_content() {
 fn test_large_message_content() {
     let large_content = "x".repeat(10_000);
     let msg = Message::user(large_content.clone());
-    
+
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content.len(), 10_000);
     assert_eq!(msg.content, large_content);
@@ -311,7 +313,7 @@ fn test_large_message_content() {
 #[test]
 fn test_unicode_message_content() {
     let unicode_msg = Message::user("Hello 世界 🌍".to_string());
-    
+
     assert_eq!(unicode_msg.role, "user");
     assert_eq!(unicode_msg.content, "Hello 世界 🌍");
 }
@@ -320,7 +322,7 @@ fn test_unicode_message_content() {
 fn test_multiline_message_content() {
     let multiline = "Line 1\nLine 2\nLine 3".to_string();
     let msg = Message::assistant(multiline.clone());
-    
+
     assert_eq!(msg.role, "assistant");
     assert_eq!(msg.content, multiline);
     assert!(msg.content.contains('\n'));

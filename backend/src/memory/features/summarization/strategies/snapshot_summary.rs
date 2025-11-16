@@ -1,10 +1,10 @@
 // src/memory/features/summarization/strategies/snapshot_summary.rs
 
-use std::sync::Arc;
-use anyhow::Result;
-use tracing::info;
 use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
+use anyhow::Result;
+use std::sync::Arc;
+use tracing::info;
 
 /// Handles on-demand snapshot summary operations
 pub struct SnapshotSummaryStrategy {
@@ -30,13 +30,17 @@ impl SnapshotSummaryStrategy {
         let content = self.build_content(messages)?;
         let prompt = self.build_prompt(&content, messages.len());
 
-        info!("Creating snapshot summary for session {} with {} messages", session_id, messages.len());
-        
+        info!(
+            "Creating snapshot summary for session {} with {} messages",
+            session_id,
+            messages.len()
+        );
+
         let chat_messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
-        
+
         // FIXED: Remove None argument - .chat() now takes only 2 args
         let response = self.llm_provider
             .chat(
@@ -50,12 +54,12 @@ impl SnapshotSummaryStrategy {
 
     fn build_content(&self, messages: &[MemoryEntry]) -> Result<String> {
         let mut content = String::new();
-        
+
         for msg in messages.iter().rev() {
             // Include ALL messages for comprehensive snapshot
             content.push_str(&format!("{}: {}\n", msg.role, msg.content));
         }
-        
+
         Ok(content)
     }
 

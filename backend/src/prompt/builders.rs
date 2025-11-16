@@ -1,0 +1,120 @@
+// src/prompt/builders.rs
+// Main prompt building functions
+
+use crate::api::ws::message::MessageMetadata;
+use crate::git::client::tree_builder::FileNode;
+use crate::memory::core::types::MemoryEntry;
+use crate::memory::features::recall_engine::RecallContext;
+use crate::persona::PersonaOverlay;
+use crate::prompt::context::*;
+use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
+use crate::prompt::utils::is_code_related;
+use crate::tools::types::Tool;
+
+/// Main prompt builder for the system
+pub struct UnifiedPromptBuilder;
+
+impl UnifiedPromptBuilder {
+    /// Build system prompt for Mira (conversational AI)
+    /// Pure personality from persona/default.rs - no system meta-info
+    pub fn build_system_prompt(
+        persona: &PersonaOverlay,
+        context: &RecallContext,
+        tools: Option<&[Tool]>,
+        metadata: Option<&MessageMetadata>,
+        project_id: Option<&str>,
+        code_context: Option<&[MemoryEntry]>, // Code intelligence semantic search results
+        file_tree: Option<&[FileNode]>,       // Repository structure
+    ) -> String {
+        let mut prompt = String::new();
+
+        // 1. Core personality - pure, unmodified
+        prompt.push_str(persona.prompt());
+        prompt.push_str("\n\n");
+
+        // 2. Context only - no system architecture notes
+        add_project_context(&mut prompt, metadata, project_id);
+        add_memory_context(&mut prompt, context);
+        add_code_intelligence_context(&mut prompt, code_context); // Code elements
+        add_repository_structure(&mut prompt, file_tree); // Repo structure
+        add_tool_context(&mut prompt, tools);
+        add_file_context(&mut prompt, metadata);
+
+        // 3. Light tool usage hints (if code-related)
+        if is_code_related(metadata) {
+            add_tool_usage_hints(&mut prompt);
+        }
+
+        prompt
+    }
+
+    /// Build prompt for code fixes with personality intact
+    /// Used when Mira needs to provide technical fixes
+    pub fn build_code_fix_prompt(
+        persona: &PersonaOverlay,
+        context: &RecallContext,
+        error_context: &ErrorContext,
+        file_content: &str,
+        metadata: Option<&MessageMetadata>,
+        project_id: Option<&str>,
+        code_elements: Option<Vec<CodeElement>>,
+        quality_issues: Option<Vec<QualityIssue>>,
+    ) -> String {
+        let mut prompt = String::new();
+
+        // Keep persona for Mira's direct code fixes
+        prompt.push_str(persona.prompt());
+        prompt.push_str("\n\n");
+
+        add_project_context(&mut prompt, metadata, project_id);
+        add_memory_context(&mut prompt, context);
+        add_code_fix_requirements(
+            &mut prompt,
+            error_context,
+            file_content,
+            code_elements,
+            quality_issues,
+        );
+
+        prompt
+    }
+
+    /// Build prompt for pure technical code operations (no personality)
+    /// Only used when personality would interfere with technical accuracy
+    pub fn build_technical_code_prompt(
+        error_context: &ErrorContext,
+        file_content: &str,
+        code_elements: Option<Vec<CodeElement>>,
+        quality_issues: Option<Vec<QualityIssue>>,
+    ) -> String {
+        let mut prompt = String::new();
+
+        prompt.push_str("You are a code fix specialist.\n");
+        prompt.push_str(
+            "Generate complete, working file fixes with no personality or commentary.\n\n",
+        );
+
+        add_code_fix_requirements(
+            &mut prompt,
+            error_context,
+            file_content,
+            code_elements,
+            quality_issues,
+        );
+
+        prompt
+    }
+
+    /// Build a simple prompt with just persona and memory context
+    pub fn build_simple_prompt(
+        persona: &PersonaOverlay,
+        context: &RecallContext,
+        project_id: Option<&str>,
+    ) -> String {
+        Self::build_system_prompt(
+            persona, context, None, None, project_id,
+            None, // No code context for simple prompts
+            None, // No file tree for simple prompts
+        )
+    }
+}

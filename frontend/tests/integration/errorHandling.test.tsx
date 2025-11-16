@@ -65,7 +65,7 @@ describe('Error Handling & Recovery', () => {
       
       // Connect WebSocket
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Simulate 500 error response
@@ -126,7 +126,7 @@ describe('Error Handling & Recovery', () => {
       }) as any;
       
       act(() => {
-        result.current.connect('ws://localhost:8080');
+        result.current.connect('ws://localhost:3001');
       });
       
       // First attempt fails
@@ -184,7 +184,7 @@ describe('Error Handling & Recovery', () => {
       }) as any;
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Fast-forward through all retry attempts
@@ -217,7 +217,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Clear previous console calls
@@ -253,7 +253,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Clear previous console calls
@@ -287,7 +287,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.connect('ws://localhost:8080');
+        result.current.connect('ws://localhost:3001');
       });
       
       vi.mocked(console.warn).mockClear();
@@ -325,7 +325,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
         result.current.chat.startStreaming();
       });
       
@@ -350,7 +350,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.connect('ws://localhost:8080');
+        result.current.connect('ws://localhost:3001');
       });
       
       // Disconnect
@@ -381,7 +381,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Start streaming
@@ -419,7 +419,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Start streaming
@@ -477,7 +477,7 @@ describe('Error Handling & Recovery', () => {
       }) as any;
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Simulate 5 failed reconnection attempts
@@ -509,7 +509,7 @@ describe('Error Handling & Recovery', () => {
       })) as any;
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Fail first attempt
@@ -538,7 +538,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.connect('ws://localhost:8080');
+        result.current.connect('ws://localhost:3001');
       });
       
       // Disconnect
@@ -589,7 +589,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       vi.mocked(console.warn).mockClear();
@@ -624,7 +624,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       vi.mocked(console.warn).mockClear();
@@ -660,7 +660,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       const artifact = {
@@ -695,7 +695,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Start stream
@@ -731,7 +731,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       const message = {
@@ -765,7 +765,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       // Simulate rate limit response
@@ -805,7 +805,7 @@ describe('Error Handling & Recovery', () => {
       );
       
       act(() => {
-        result.current.ws.connect('ws://localhost:8080');
+        result.current.ws.connect('ws://localhost:3001');
       });
       
       const rateLimitError = {

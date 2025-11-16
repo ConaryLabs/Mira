@@ -14,7 +14,7 @@ pub struct MemoryEntry {
     pub content: String,
     pub timestamp: DateTime<Utc>,
     pub tags: Option<Vec<String>>,
-    
+
     // Fields from message_analysis table
     pub mood: Option<String>,
     pub intensity: Option<f32>,
@@ -32,13 +32,13 @@ pub struct MemoryEntry {
     pub routed_to_heads: Option<Vec<String>>,
     pub last_recalled: Option<DateTime<Utc>>,
     pub recall_count: Option<i64>,
-    
+
     // Error tracking fields
     pub contains_error: Option<bool>,
     pub error_type: Option<String>,
     pub error_severity: Option<String>,
     pub error_file: Option<String>,
-    
+
     // Fields from llm_metadata table
     pub model_version: Option<String>,
     pub prompt_tokens: Option<i64>,
@@ -51,7 +51,7 @@ pub struct MemoryEntry {
     pub tool_calls: Option<Vec<String>>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<i64>,
-    
+
     // Embedding info
     pub embedding: Option<Vec<f32>>,
     pub embedding_heads: Option<Vec<String>>,
@@ -105,20 +105,17 @@ impl MemoryEntry {
             qdrant_point_ids: None,
         }
     }
-    
+
     pub fn assistant_message(session_id: String, content: String) -> Self {
         let mut entry = Self::user_message(session_id, content);
         entry.role = "assistant".to_string();
         entry
     }
-    
+
     pub fn document(session_id: String, content: String, file_path: &str) -> Self {
         let mut entry = Self::user_message(session_id, content);
         entry.role = "document".to_string();
-        entry.tags = Some(vec![
-            "document".to_string(),
-            format!("file:{}", file_path),
-        ]);
+        entry.tags = Some(vec!["document".to_string(), format!("file:{}", file_path)]);
         entry
     }
 
@@ -134,8 +131,7 @@ impl MemoryEntry {
 
     /// Check if this entry contains code
     pub fn has_code(&self) -> bool {
-        self.contains_code.unwrap_or(false) || 
-        self.programming_lang.is_some()
+        self.contains_code.unwrap_or(false) || self.programming_lang.is_some()
     }
 
     /// Check if this entry contains an error
@@ -145,10 +141,11 @@ impl MemoryEntry {
 
     /// Check if this is a high-severity error
     pub fn is_critical_error(&self) -> bool {
-        self.contains_error.unwrap_or(false) && 
-        self.error_severity
-            .as_ref()
-            .map(|s| matches!(s.to_lowercase().as_str(), "critical" | "high"))
-            .unwrap_or(false)
+        self.contains_error.unwrap_or(false)
+            && self
+                .error_severity
+                .as_ref()
+                .map(|s| matches!(s.to_lowercase().as_str(), "critical" | "high"))
+                .unwrap_or(false)
     }
 }

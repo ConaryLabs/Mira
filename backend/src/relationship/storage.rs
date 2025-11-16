@@ -1,12 +1,12 @@
 // src/relationship/storage.rs
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use crate::relationship::{UserProfile, LearnedPattern, MemoryFact};
+use crate::relationship::{LearnedPattern, MemoryFact, UserProfile};
 
 /// Storage layer for relationship data (profiles, patterns, facts)
 #[derive(Clone)]
@@ -57,12 +57,11 @@ impl RelationshipStorage {
 
     /// Get user profile
     pub async fn get_profile(&self, user_id: &str) -> Result<Option<UserProfile>> {
-        let result = sqlx::query_as::<_, UserProfile>(
-            "SELECT * FROM user_profile WHERE user_id = ?"
-        )
-        .bind(user_id)
-        .fetch_optional(&*self.pool)
-        .await?;
+        let result =
+            sqlx::query_as::<_, UserProfile>("SELECT * FROM user_profile WHERE user_id = ?")
+                .bind(user_id)
+                .fetch_optional(&*self.pool)
+                .await?;
 
         Ok(result)
     }
@@ -77,7 +76,7 @@ impl RelationshipStorage {
                 conversation_style, profanity_comfort, tech_stack, learning_goals,
                 relationship_started, last_active, total_sessions, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&profile.user_id)
         .bind(&profile.preferred_languages)
@@ -102,14 +101,15 @@ impl RelationshipStorage {
         info!("Created user profile for user_id: {}", profile.user_id);
 
         // Return the created profile with its ID
-        self.get_profile(&profile.user_id).await?
+        self.get_profile(&profile.user_id)
+            .await?
             .ok_or_else(|| anyhow!("Failed to retrieve created profile"))
     }
 
     /// Update user profile
     pub async fn update_profile(&self, profile: &UserProfile) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        
+
         sqlx::query(
             r#"
             UPDATE user_profile SET
@@ -127,7 +127,7 @@ impl RelationshipStorage {
                 total_sessions = ?,
                 updated_at = ?
             WHERE user_id = ?
-            "#
+            "#,
         )
         .bind(&profile.preferred_languages)
         .bind(&profile.coding_style)
@@ -185,12 +185,11 @@ impl RelationshipStorage {
 
     /// Get specific pattern
     pub async fn get_pattern(&self, pattern_id: &str) -> Result<Option<LearnedPattern>> {
-        let pattern = sqlx::query_as::<_, LearnedPattern>(
-            "SELECT * FROM learned_patterns WHERE id = ?"
-        )
-        .bind(pattern_id)
-        .fetch_optional(&*self.pool)
-        .await?;
+        let pattern =
+            sqlx::query_as::<_, LearnedPattern>("SELECT * FROM learned_patterns WHERE id = ?")
+                .bind(pattern_id)
+                .fetch_optional(&*self.pool)
+                .await?;
 
         Ok(pattern)
     }
@@ -228,7 +227,7 @@ impl RelationshipStorage {
                 examples, confidence, times_observed, times_applied,
                 applies_when, deprecated, first_observed, last_observed, last_applied
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&id)
         .bind(&pattern.user_id)
@@ -270,7 +269,7 @@ impl RelationshipStorage {
                 last_observed = ?,
                 last_applied = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&pattern.pattern_description)
         .bind(&pattern.examples)
@@ -285,7 +284,10 @@ impl RelationshipStorage {
         .execute(&*self.pool)
         .await?;
 
-        debug!("Updated pattern: {} (confidence: {:.2})", id, pattern.confidence);
+        debug!(
+            "Updated pattern: {} (confidence: {:.2})",
+            id, pattern.confidence
+        );
         Ok(())
     }
 
@@ -333,7 +335,7 @@ impl RelationshipStorage {
     /// Get all facts for a user
     pub async fn get_facts(&self, user_id: &str) -> Result<Vec<MemoryFact>> {
         let facts = sqlx::query_as::<_, MemoryFact>(
-            "SELECT * FROM memory_facts WHERE user_id = ? ORDER BY confidence DESC"
+            "SELECT * FROM memory_facts WHERE user_id = ? ORDER BY confidence DESC",
         )
         .bind(user_id)
         .fetch_all(&*self.pool)
@@ -362,7 +364,7 @@ impl RelationshipStorage {
     /// Get a specific fact
     pub async fn get_fact(&self, user_id: &str, fact_key: &str) -> Result<Option<MemoryFact>> {
         let fact = sqlx::query_as::<_, MemoryFact>(
-            "SELECT * FROM memory_facts WHERE user_id = ? AND fact_key = ?"
+            "SELECT * FROM memory_facts WHERE user_id = ? AND fact_key = ?",
         )
         .bind(user_id)
         .bind(fact_key)
@@ -376,7 +378,7 @@ impl RelationshipStorage {
     pub async fn upsert_fact(&self, fact: &MemoryFact) -> Result<String> {
         // Check if fact exists
         let existing = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM memory_facts WHERE user_id = ? AND fact_key = ?"
+            "SELECT id FROM memory_facts WHERE user_id = ? AND fact_key = ?",
         )
         .bind(&fact.user_id)
         .bind(&fact.fact_key)
@@ -403,7 +405,7 @@ impl RelationshipStorage {
                 id, user_id, fact_key, fact_value, fact_category,
                 confidence, source, learned_at, last_confirmed, times_referenced
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&id)
         .bind(&fact.user_id)
@@ -437,7 +439,7 @@ impl RelationshipStorage {
                 source = ?,
                 last_confirmed = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&fact.fact_value)
         .bind(&fact.fact_category)
@@ -454,12 +456,10 @@ impl RelationshipStorage {
 
     /// Increment times_referenced for a fact
     pub async fn increment_fact_referenced(&self, fact_id: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE memory_facts SET times_referenced = times_referenced + 1 WHERE id = ?"
-        )
-        .bind(fact_id)
-        .execute(&*self.pool)
-        .await?;
+        sqlx::query("UPDATE memory_facts SET times_referenced = times_referenced + 1 WHERE id = ?")
+            .bind(fact_id)
+            .execute(&*self.pool)
+            .await?;
 
         Ok(())
     }

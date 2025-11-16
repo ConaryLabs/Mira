@@ -18,29 +18,33 @@ pub async fn load_complete_file(pool: &SqlitePool, path: &str, project_id: &str)
     }
 
     // Fallback: Try backend working directory
-    info!("File not found in project repo, trying backend working directory: {}", normalized_path);
+    info!(
+        "File not found in project repo, trying backend working directory: {}",
+        normalized_path
+    );
     let backend_path = Path::new(&normalized_path);
-    
+
     match tokio::fs::read_to_string(&backend_path).await {
         Ok(content) => {
-            debug!("Successfully read from backend working directory: {}", normalized_path);
+            debug!(
+                "Successfully read from backend working directory: {}",
+                normalized_path
+            );
             Ok(content)
         }
-        Err(e) => {
-            Err(anyhow::anyhow!(
-                "Failed to read file '{}': not found in project repo or backend directory ({})", 
-                normalized_path, 
-                e
-            ))
-        }
+        Err(e) => Err(anyhow::anyhow!(
+            "Failed to read file '{}': not found in project repo or backend directory ({})",
+            normalized_path,
+            e
+        )),
     }
 }
 
 /// Try to read file from project's git repository
 async fn try_project_repo(
-    pool: &SqlitePool, 
-    normalized_path: &str, 
-    project_id: &str
+    pool: &SqlitePool,
+    normalized_path: &str,
+    project_id: &str,
 ) -> Result<Option<String>> {
     // Get git attachment for project (if exists)
     let attachment = match sqlx::query!(
@@ -48,25 +52,32 @@ async fn try_project_repo(
         project_id
     )
     .fetch_optional(pool)
-    .await? {
+    .await?
+    {
         Some(att) => att,
         None => {
-            debug!("No git attachment for project {}, will try backend directory", project_id);
+            debug!(
+                "No git attachment for project {}, will try backend directory",
+                project_id
+            );
             return Ok(None);
         }
     };
 
     // Try to read from project repo
     let full_path = Path::new(&attachment.local_path).join(normalized_path);
-    
+
     match tokio::fs::read_to_string(&full_path).await {
         Ok(content) => {
-            debug!("Successfully read from project repo: {}", full_path.display());
+            debug!(
+                "Successfully read from project repo: {}",
+                full_path.display()
+            );
             Ok(Some(content))
         }
         Err(e) => {
             debug!("File not in project repo {}: {}", full_path.display(), e);
-            Ok(None)  // Return None to trigger fallback
+            Ok(None) // Return None to trigger fallback
         }
     }
 }
@@ -79,7 +90,8 @@ pub async fn check_is_directory(pool: &SqlitePool, path: &str, project_id: &str)
         project_id
     )
     .fetch_optional(pool)
-    .await? {
+    .await?
+    {
         let full_path = Path::new(&attachment.local_path).join(path);
         if let Ok(metadata) = tokio::fs::metadata(&full_path).await {
             return Ok(metadata.is_dir());
@@ -95,7 +107,11 @@ pub async fn check_is_directory(pool: &SqlitePool, path: &str, project_id: &str)
 }
 
 /// List files in a directory - tries project repo first, then backend directory
-pub async fn list_project_files(pool: &SqlitePool, path: &str, project_id: &str) -> Result<Vec<String>> {
+pub async fn list_project_files(
+    pool: &SqlitePool,
+    path: &str,
+    project_id: &str,
+) -> Result<Vec<String>> {
     // Try project repo first
     if let Some(files) = try_list_project_repo(pool, path, project_id).await? {
         return Ok(files);
@@ -131,7 +147,7 @@ pub async fn list_project_files(pool: &SqlitePool, path: &str, project_id: &str)
 async fn try_list_project_repo(
     pool: &SqlitePool,
     path: &str,
-    project_id: &str
+    project_id: &str,
 ) -> Result<Option<Vec<String>>> {
     // Get git attachment
     let attachment = match sqlx::query!(
@@ -139,10 +155,14 @@ async fn try_list_project_repo(
         project_id
     )
     .fetch_optional(pool)
-    .await? {
+    .await?
+    {
         Some(att) => att,
         None => {
-            debug!("No git attachment for project {}, will list backend directory", project_id);
+            debug!(
+                "No git attachment for project {}, will list backend directory",
+                project_id
+            );
             return Ok(None);
         }
     };
@@ -158,8 +178,12 @@ async fn try_list_project_repo(
     let mut dir = match tokio::fs::read_dir(&dir_path).await {
         Ok(d) => d,
         Err(e) => {
-            debug!("Failed to list project repo directory {}: {}", dir_path.display(), e);
-            return Ok(None);  // Trigger fallback
+            debug!(
+                "Failed to list project repo directory {}: {}",
+                dir_path.display(),
+                e
+            );
+            return Ok(None); // Trigger fallback
         }
     };
 

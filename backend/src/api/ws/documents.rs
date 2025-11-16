@@ -1,17 +1,17 @@
 // src/api/ws/documents.rs
 
 use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use base64::{Engine as _, engine::general_purpose};
 
 use crate::{
     api::{error::ApiError, ws::message::WsServerMessage},
+    config::CONFIG,
     memory::features::document_processing::DocumentProcessor,
     state::AppState,
-    config::CONFIG,
 };
 
 #[derive(Debug, Deserialize)]
@@ -72,22 +72,19 @@ pub struct DocumentHandler {
 impl DocumentHandler {
     pub fn new(state: Arc<AppState>) -> Self {
         let qdrant_url = CONFIG.qdrant_url.clone();
-        
+
         let qdrant_client = qdrant_client::Qdrant::from_url(&qdrant_url)
             .build()
             .expect("Failed to create Qdrant client");
-        
+
         let processor = Arc::new(DocumentProcessor::new(
             state.sqlite_pool.clone(),
             qdrant_client,
         ));
-        
-        Self {
-            state,
-            processor,
-        }
+
+        Self { state, processor }
     }
-    
+
     pub async fn handle_command(
         &self,
         command: DocumentCommand,
@@ -114,24 +111,26 @@ impl DocumentHandler {
                 let params: DeleteParams = serde_json::from_value(command.params)?;
                 self.handle_delete(params).await
             }
-            _ => {
-                Err(ApiError::bad_request(format!("Unknown document method: {}", command.method)).into())
-            }
+            _ => Err(
+                ApiError::bad_request(format!("Unknown document method: {}", command.method))
+                    .into(),
+            ),
         }
     }
-    
+
     async fn handle_upload(
         &self,
         params: UploadParams,
         progress_tx: Option<mpsc::UnboundedSender<WsServerMessage>>,
     ) -> Result<WsServerMessage> {
-        let file_content = general_purpose::STANDARD.decode(&params.content)
+        let file_content = general_purpose::STANDARD
+            .decode(&params.content)
             .map_err(|e| ApiError::bad_request(format!("Invalid base64 content: {}", e)))?;
-        
+
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join(&params.file_name);
         tokio::fs::write(&temp_path, file_content).await?;
-        
+
         if let Some(ref tx) = progress_tx {
             let _ = tx.send(WsServerMessage::Data {
                 data: json!({
@@ -143,7 +142,7 @@ impl DocumentHandler {
                 request_id: None,
             });
         }
-        
+
         let progress_callback: Option<Box<dyn Fn(f32) + Send + Sync>> = progress_tx.map(|tx| {
             let file_name = params.file_name.clone();
             Box::new(move |progress: f32| {
@@ -158,15 +157,15 @@ impl DocumentHandler {
                 });
             }) as Box<dyn Fn(f32) + Send + Sync>
         });
-        
-        match self.processor.process_document(
-            &temp_path,
-            &params.project_id,
-            progress_callback
-        ).await {
+
+        match self
+            .processor
+            .process_document(&temp_path, &params.project_id, progress_callback)
+            .await
+        {
             Ok(processed) => {
                 let _ = tokio::fs::remove_file(&temp_path).await;
-                
+
                 Ok(WsServerMessage::Data {
                     data: json!({
                         "type": "document_processed",
@@ -185,7 +184,7 @@ impl DocumentHandler {
             }
             Err(e) => {
                 let _ = tokio::fs::remove_file(&temp_path).await;
-                
+
                 if e.to_string().contains("already exists") {
                     Err(ApiError::conflict(e.to_string()).into())
                 } else {
@@ -194,12 +193,13 @@ impl DocumentHandler {
             }
         }
     }
-    
+
     async fn handle_search(&self, params: SearchParams) -> Result<WsServerMessage> {
-        let results = self.processor
+        let results = self
+            .processor
             .search_documents(&params.project_id, &params.query, params.limit)
             .await?;
-        
+
         Ok(WsServerMessage::Data {
             data: json!({
                 "type": "search_results",
@@ -210,12 +210,16 @@ impl DocumentHandler {
             request_id: None,
         })
     }
-    
+
     async fn handle_retrieve(&self, params: RetrieveParams) -> Result<WsServerMessage> {
-        if let Some(document) = self.processor.retrieve_document(&params.document_id).await? {
+        if let Some(document) = self
+            .processor
+            .retrieve_document(&params.document_id)
+            .await?
+        {
             let file_content = tokio::fs::read(&document.file_path).await?;
             let encoded = general_purpose::STANDARD.encode(&file_content);
-            
+
             Ok(WsServerMessage::Data {
                 data: json!({
                     "type": "document_content",
@@ -231,19 +235,19 @@ impl DocumentHandler {
             Err(ApiError::not_found(format!("Document not found: {}", params.document_id)).into())
         }
     }
-    
+
     async fn handle_list(&self, params: ListParams) -> Result<WsServerMessage> {
         let qdrant_client = qdrant_client::Qdrant::from_url(&CONFIG.qdrant_url)
             .build()
             .expect("Failed to create Qdrant client");
-        
+
         let storage = crate::memory::features::document_processing::DocumentStorage::new(
             self.state.sqlite_pool.clone(),
             qdrant_client,
         );
-        
+
         let documents = storage.list_documents(&params.project_id).await?;
-        
+
         Ok(WsServerMessage::Data {
             data: json!({
                 "type": "document_list",
@@ -261,10 +265,10 @@ impl DocumentHandler {
             request_id: None,
         })
     }
-    
+
     async fn handle_delete(&self, params: DeleteParams) -> Result<WsServerMessage> {
         self.processor.delete_document(&params.document_id).await?;
-        
+
         Ok(WsServerMessage::Data {
             data: json!({
                 "type": "document_deleted",

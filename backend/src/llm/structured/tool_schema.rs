@@ -220,7 +220,7 @@ pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
         get_read_file_tool_schema(),
         get_list_files_tool_schema(),
         get_code_search_tool_schema(),
-        get_web_search_tool_schema(),           // ADDED: Step 2.3
+        get_web_search_tool_schema(), // ADDED: Step 2.3
         get_image_generation_tool_schema(),
         get_project_context_tool_schema(),
         get_read_files_tool_schema(),
@@ -232,6 +232,6 @@ pub fn get_all_chat_tools() -> Vec<serde_json::Value> {
 pub fn get_minimal_tools() -> Vec<serde_json::Value> {
     vec![
         get_create_artifact_tool_schema(),
-        get_web_search_tool_schema(),           // ADDED: Useful even without projects
+        get_web_search_tool_schema(), // ADDED: Useful even without projects
     ]
 }

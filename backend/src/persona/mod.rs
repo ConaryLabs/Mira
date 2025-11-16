@@ -12,9 +12,9 @@ pub use default::DEFAULT_PERSONA_PROMPT;
 /// added here if/when persona switching becomes a desired feature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PersonaOverlay {
-    Default,    // Primary persona - warm, grounded, sharp-tongued, loyal
-    // Future personas would be added here as variants
-    // Example: Professional, Creative, Technical, etc.
+    Default, // Primary persona - warm, grounded, sharp-tongued, loyal
+             // Future personas would be added here as variants
+             // Example: Professional, Creative, Technical, etc.
 }
 
 impl PersonaOverlay {
@@ -43,7 +43,7 @@ impl std::fmt::Display for PersonaOverlay {
 
 impl std::str::FromStr for PersonaOverlay {
     type Err = ();
-    
+
     /// Parse a persona name from string.
     /// Used for potential future command-based switching like "/persona [name]"
     fn from_str(s: &str) -> Result<Self, Self::Err> {

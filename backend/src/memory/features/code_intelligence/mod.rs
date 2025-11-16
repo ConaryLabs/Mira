@@ -1,27 +1,27 @@
 // src/memory/features/code_intelligence/mod.rs
 
-pub mod types;
+pub mod invalidation;
+pub mod javascript_parser;
 pub mod parser;
 pub mod storage;
+pub mod types;
 pub mod typescript_parser;
-pub mod javascript_parser;
-pub mod invalidation;
 
-pub use types::*;
-pub use parser::RustParser;
-pub use typescript_parser::TypeScriptParser;
 pub use javascript_parser::JavaScriptParser;
+pub use parser::RustParser;
 pub use storage::{CodeIntelligenceStorage, RepoStats};
+pub use types::*;
+pub use typescript_parser::TypeScriptParser;
 
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
-use crate::memory::core::types::MemoryEntry;
-use crate::llm::provider::OpenAiEmbeddings;
 use crate::llm::embeddings::EmbeddingHead;
+use crate::llm::provider::OpenAiEmbeddings;
+use crate::memory::core::types::MemoryEntry;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
 #[derive(Clone)]
 pub struct CodeIntelligenceService {
@@ -53,20 +53,12 @@ impl CodeIntelligenceService {
 
     /// Invalidate all embeddings for a file before re-analyzing
     pub async fn invalidate_file(&self, file_id: i64) -> Result<u64> {
-        invalidation::invalidate_file_embeddings(
-            &self.pool,
-            &self.multi_store,
-            file_id
-        ).await
+        invalidation::invalidate_file_embeddings(&self.pool, &self.multi_store, file_id).await
     }
 
     /// Invalidate all embeddings for an entire project
     pub async fn invalidate_project(&self, project_id: &str) -> Result<u64> {
-        invalidation::invalidate_project_embeddings(
-            &self.pool,
-            &self.multi_store,
-            project_id
-        ).await
+        invalidation::invalidate_project_embeddings(&self.pool, &self.multi_store, project_id).await
     }
 
     /// Embed all code elements for a file into Qdrant
@@ -99,7 +91,7 @@ impl CodeIntelligenceService {
                 Some(id) => id,
                 None => continue,
             };
-            
+
             let language = row.language;
             let element_type = row.element_type;
             let name = row.name;
@@ -126,11 +118,11 @@ impl CodeIntelligenceService {
                 content: content.clone(),
                 timestamp: chrono::Utc::now(),
                 embedding: Some(embedding),
-                
+
                 // Code-specific metadata
                 contains_code: Some(true),
                 programming_lang: Some(language.clone()),
-                
+
                 // Store file_id for invalidation
                 tags: Some(vec![
                     format!("file_id:{}", file_id),
@@ -139,7 +131,7 @@ impl CodeIntelligenceService {
                     format!("name:{}", name),
                     format!("path:{}", full_path),
                 ]),
-                
+
                 // All other fields set to None
                 response_id: None,
                 parent_id: None,
@@ -186,13 +178,19 @@ impl CodeIntelligenceService {
                     );
                 }
                 Err(e) => {
-                    warn!("Failed to store embedding for element {}: {}", element_id, e);
+                    warn!(
+                        "Failed to store embedding for element {}: {}",
+                        element_id, e
+                    );
                 }
             }
         }
 
         if embedded_count > 0 {
-            info!("Embedded {} code elements for file_id {}", embedded_count, file_id);
+            info!(
+                "Embedded {} code elements for file_id {}",
+                embedded_count, file_id
+            );
         }
 
         Ok(embedded_count)
@@ -206,46 +204,48 @@ impl CodeIntelligenceService {
         project_id: &str,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        debug!("Searching code for project {} with query: {}", project_id, query);
-        
+        debug!(
+            "Searching code for project {} with query: {}",
+            project_id, query
+        );
+
         // Embed the query
-        let query_embedding = self.embedding_client
-            .embed(query)
-            .await?;
-        
+        let query_embedding = self.embedding_client.embed(query).await?;
+
         // Search code collection - returns Vec<MemoryEntry> directly
         let session_id = format!("code:{}", project_id);
-        let results = self.multi_store
+        let results = self
+            .multi_store
             .search(EmbeddingHead::Code, &session_id, &query_embedding, limit)
             .await?;
-        
+
         debug!("Found {} code search results", results.len());
-        
+
         // Format entries for context display
         let entries: Vec<MemoryEntry> = results
             .into_iter()
             .filter_map(|mut entry| {
                 // Extract metadata from tags
                 let tags = entry.tags.as_ref()?;
-                
+
                 let element_type = tags
                     .iter()
                     .find(|t| t.starts_with("element_type:"))
                     .and_then(|t| t.strip_prefix("element_type:"))
                     .unwrap_or("");
-                
+
                 let name = tags
                     .iter()
                     .find(|t| t.starts_with("name:"))
                     .and_then(|t| t.strip_prefix("name:"))
                     .unwrap_or("");
-                
+
                 let path = tags
                     .iter()
                     .find(|t| t.starts_with("path:"))
                     .and_then(|t| t.strip_prefix("path:"))
                     .unwrap_or("");
-                
+
                 // Format content as "file_path: element_name (type)"
                 // This is what the prompt builder expects
                 let formatted_content = if !path.is_empty() && !name.is_empty() {
@@ -254,15 +254,15 @@ impl CodeIntelligenceService {
                     // Fallback to original content
                     entry.content.clone()
                 };
-                
+
                 // Update entry with formatted content
                 entry.content = formatted_content;
                 entry.session_id = project_id.to_string();
-                
+
                 Some(entry)
             })
             .collect();
-        
+
         debug!("Found {} relevant code elements", entries.len());
         Ok(entries)
     }
@@ -284,40 +284,52 @@ impl CodeIntelligenceService {
             }
             "typescript" => {
                 if self.typescript_parser.can_parse(content, Some(file_path)) {
-                    self.typescript_parser.parse_file(content, file_path).await?
+                    self.typescript_parser
+                        .parse_file(content, file_path)
+                        .await?
                 } else {
-                    return Err(anyhow::anyhow!("Cannot parse TypeScript file: {}", file_path));
+                    return Err(anyhow::anyhow!(
+                        "Cannot parse TypeScript file: {}",
+                        file_path
+                    ));
                 }
             }
             "javascript" => {
                 if self.javascript_parser.can_parse(content, Some(file_path)) {
-                    self.javascript_parser.parse_file(content, file_path).await?
+                    self.javascript_parser
+                        .parse_file(content, file_path)
+                        .await?
                 } else {
-                    return Err(anyhow::anyhow!("Cannot parse JavaScript file: {}", file_path));
+                    return Err(anyhow::anyhow!(
+                        "Cannot parse JavaScript file: {}",
+                        file_path
+                    ));
                 }
             }
             _ => {
                 return Err(anyhow::anyhow!("Unsupported language: {}", language));
             }
         };
-        
-        self.storage.store_file_analysis(file_id, language, &analysis).await?;
-        
+
+        self.storage
+            .store_file_analysis(file_id, language, &analysis)
+            .await?;
+
         Ok(FileAnalysisResult {
             file_id,
             language: language.to_string(),
             elements_count: analysis.elements.len(),
             complexity_score: analysis.complexity_score,
             quality_issues_count: analysis.quality_issues.len(),
-            test_coverage: if analysis.test_count > 0 { 
-                analysis.test_count as f64 / analysis.elements.len() as f64 
-            } else { 
-                0.0 
+            test_coverage: if analysis.test_count > 0 {
+                analysis.test_count as f64 / analysis.elements.len() as f64
+            } else {
+                0.0
             },
             doc_coverage: analysis.doc_coverage,
         })
     }
-    
+
     pub async fn analyze_and_store_with_project(
         &self,
         file_id: i64,
@@ -336,42 +348,61 @@ impl CodeIntelligenceService {
             }
             "typescript" => {
                 if self.typescript_parser.can_parse(content, Some(file_path)) {
-                    self.typescript_parser.parse_file(content, file_path).await?
+                    self.typescript_parser
+                        .parse_file(content, file_path)
+                        .await?
                 } else {
-                    return Err(anyhow::anyhow!("Cannot parse TypeScript file: {}", file_path));
+                    return Err(anyhow::anyhow!(
+                        "Cannot parse TypeScript file: {}",
+                        file_path
+                    ));
                 }
             }
             "javascript" => {
                 if self.javascript_parser.can_parse(content, Some(file_path)) {
-                    self.javascript_parser.parse_file(content, file_path).await?
+                    self.javascript_parser
+                        .parse_file(content, file_path)
+                        .await?
                 } else {
-                    return Err(anyhow::anyhow!("Cannot parse JavaScript file: {}", file_path));
+                    return Err(anyhow::anyhow!(
+                        "Cannot parse JavaScript file: {}",
+                        file_path
+                    ));
                 }
             }
             _ => {
                 return Err(anyhow::anyhow!("Unsupported language: {}", language));
             }
         };
-        
-        self.storage.store_file_analysis(file_id, language, &analysis).await?;
-        
+
+        self.storage
+            .store_file_analysis(file_id, language, &analysis)
+            .await?;
+
         Ok(FileAnalysisResult {
             file_id,
             language: language.to_string(),
             elements_count: analysis.elements.len(),
             complexity_score: analysis.complexity_score,
             quality_issues_count: analysis.quality_issues.len(),
-            test_coverage: if analysis.test_count > 0 { 
-                analysis.test_count as f64 / analysis.elements.len() as f64 
-            } else { 
-                0.0 
+            test_coverage: if analysis.test_count > 0 {
+                analysis.test_count as f64 / analysis.elements.len() as f64
+            } else {
+                0.0
             },
             doc_coverage: analysis.doc_coverage,
         })
     }
-    
-    pub async fn search_elements_for_project(&self, pattern: &str, project_id: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
-        self.storage.search_elements_for_project(pattern, project_id, limit.unwrap_or(20)).await
+
+    pub async fn search_elements_for_project(
+        &self,
+        pattern: &str,
+        project_id: &str,
+        limit: Option<i32>,
+    ) -> Result<Vec<CodeElement>> {
+        self.storage
+            .search_elements_for_project(pattern, project_id, limit.unwrap_or(20))
+            .await
     }
 
     pub async fn get_file_analysis(&self, file_id: i64) -> Result<Option<FileContext>> {
@@ -392,11 +423,21 @@ impl CodeIntelligenceService {
         self.storage.get_repo_stats(attachment_id).await
     }
 
-    pub async fn get_complexity_hotspots_for_project(&self, project_id: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
-        self.storage.get_complexity_hotspots_for_project(project_id, limit.unwrap_or(10)).await
+    pub async fn get_complexity_hotspots_for_project(
+        &self,
+        project_id: &str,
+        limit: Option<i32>,
+    ) -> Result<Vec<CodeElement>> {
+        self.storage
+            .get_complexity_hotspots_for_project(project_id, limit.unwrap_or(10))
+            .await
     }
 
-    pub async fn get_elements_by_type(&self, element_type: &str, limit: Option<i32>) -> Result<Vec<CodeElement>> {
+    pub async fn get_elements_by_type(
+        &self,
+        element_type: &str,
+        limit: Option<i32>,
+    ) -> Result<Vec<CodeElement>> {
         self.storage.get_elements_by_type(element_type, limit).await
     }
 

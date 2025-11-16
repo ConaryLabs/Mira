@@ -8,7 +8,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval};
 
 /// Trait abstraction for sending status/heartbeat messages.
 pub trait StatusSender: Send + Sync + 'static {
@@ -96,38 +96,3 @@ impl<S: StatusSender> Drop for HeartbeatManager<S> {
         let _ = self.stop_tx.send(true);
     }
 }
-
-/*
-Integration notes (pseudo code):
-
-// In your WebSocket connection setup (e.g., src/api/ws/chat/connection.rs):
-
-use std::sync::Arc;
-use crate::api::ws::chat::heartbeat::{HeartbeatManager, StatusSender};
-
-struct WsStatusSender { /* holds tx or connection handle */ }
-impl StatusSender for WsStatusSender {
-    fn send_status(&self, message: &str) {
-        // map to your existing status message send
-        // e.g., self.tx.send(ServerMessage::Status(message.to_owned()))
-        // make sure to ignore errors if connection is closed
-        let _ = self.send_status_frame(message);
-    }
-}
-
-pub struct ChatConnection {
-    heartbeat: HeartbeatManager<WsStatusSender>,
-    // ... rest of your fields
-}
-
-impl ChatConnection {
-    pub fn on_open(&mut self) {
-        self.heartbeat.start(std::time::Duration::from_secs(4));
-    }
-
-    pub fn on_close(&mut self) {
-        // Critical: stop heartbeat so it never sends after close
-        self.heartbeat.stop();
-    }
-}
-*/

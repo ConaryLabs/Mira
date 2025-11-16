@@ -1,10 +1,10 @@
 // src/operations/engine/delegation.rs
 // DeepSeek delegation for code generation tasks
 
-use crate::llm::provider::deepseek::DeepSeekProvider;
-use crate::memory::features::recall_engine::RecallContext;
-use crate::memory::core::types::MemoryEntry;
 use crate::git::client::FileNode;
+use crate::llm::provider::deepseek::DeepSeekProvider;
+use crate::memory::core::types::MemoryEntry;
+use crate::memory::features::recall_engine::RecallContext;
 use crate::operations::engine::context::ContextBuilder;
 
 use anyhow::Result;
@@ -32,28 +32,28 @@ impl DelegationHandler {
     ) -> Result<serde_json::Value> {
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
-                return Err(anyhow::anyhow!("Operation cancelled before DeepSeek delegation"));
+                return Err(anyhow::anyhow!(
+                    "Operation cancelled before DeepSeek delegation"
+                ));
             }
         }
 
         info!("Delegating {} to DeepSeek", tool_name);
 
         // Build enriched context from all sources
-        let enriched_context = ContextBuilder::build_enriched_context(
-            &args,
-            file_tree,
-            code_context,
-            recall_context,
-        );
+        let enriched_context =
+            ContextBuilder::build_enriched_context(&args, file_tree, code_context, recall_context);
 
         // Build CodeGenRequest based on tool type
         let request = match tool_name {
             "generate_code" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let description = args.get("description")
+                let description = args
+                    .get("description")
                     .and_then(|v| v.as_str())
                     .or_else(|| args.get("task").and_then(|v| v.as_str()))
                     .unwrap_or("Generate code")
@@ -62,24 +62,34 @@ impl DelegationHandler {
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
                     description,
-                    language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
-                    framework: args.get("framework").and_then(|v| v.as_str()).map(String::from),
+                    language: args
+                        .get("language")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("rust")
+                        .to_string(),
+                    framework: args
+                        .get("framework")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                     dependencies: vec![],
                     style_guide: None,
                     context: enriched_context,
                 }
             }
             "modify_code" | "refactor_code" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let instructions = args.get("instructions")
+                let instructions = args
+                    .get("instructions")
                     .and_then(|v| v.as_str())
                     .or_else(|| args.get("refactoring_goals").and_then(|v| v.as_str()))
                     .unwrap_or("Modify code")
                     .to_string();
-                let existing = args.get("existing_code")
+                let existing = args
+                    .get("existing_code")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
@@ -92,32 +102,49 @@ impl DelegationHandler {
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
                     description,
-                    language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
-                    framework: args.get("framework").and_then(|v| v.as_str()).map(String::from),
+                    language: args
+                        .get("language")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("rust")
+                        .to_string(),
+                    framework: args
+                        .get("framework")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                     dependencies: vec![],
                     style_guide: None,
                     context: enriched_context,
                 }
             }
             "fix_code" => {
-                let path = args.get("path")
+                let path = args
+                    .get("path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("untitled.rs")
                     .to_string();
-                let error_msg = args.get("error_message")
+                let error_msg = args
+                    .get("error_message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Fix error");
-                let code = args.get("code")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
 
-                let description = format!("Fix the following error:\n{}\n\nExisting code:\n{}", error_msg, code);
+                let description = format!(
+                    "Fix the following error:\n{}\n\nExisting code:\n{}",
+                    error_msg, code
+                );
 
                 crate::llm::provider::deepseek::CodeGenRequest {
                     path,
                     description,
-                    language: args.get("language").and_then(|v| v.as_str()).unwrap_or("rust").to_string(),
-                    framework: args.get("framework").and_then(|v| v.as_str()).map(String::from),
+                    language: args
+                        .get("language")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("rust")
+                        .to_string(),
+                    framework: args
+                        .get("framework")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                     dependencies: vec![],
                     style_guide: None,
                     context: enriched_context,
@@ -130,7 +157,9 @@ impl DelegationHandler {
 
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
-                return Err(anyhow::anyhow!("Operation cancelled during DeepSeek request"));
+                return Err(anyhow::anyhow!(
+                    "Operation cancelled during DeepSeek request"
+                ));
             }
         }
 

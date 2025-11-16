@@ -1,8 +1,10 @@
 // src/operations/delegation_tools.rs
 // Tool schema definitions for GPT-5 delegation to DeepSeek
-// FIXED: Added required "function" wrapper to match OpenAI API spec
+// Refactored to use ToolBuilder for cleaner, more maintainable code
 
-use serde_json::{json, Value};
+use serde_json::Value;
+
+use super::tool_builder::{ToolBuilder, properties};
 
 /// Get all delegation tool schemas for GPT-5
 pub fn get_delegation_tools() -> Vec<Value> {
@@ -16,124 +18,99 @@ pub fn get_delegation_tools() -> Vec<Value> {
 /// Tool: generate_code
 /// Creates a new code file from scratch
 fn generate_code_tool() -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "generate_code",
-            "description": "Generate a new code file from scratch. Use this when the user wants to create new functionality, components, or utilities.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path where the code should be created (e.g., 'src/components/Button.tsx')"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Clear description of what the code should do, including requirements, constraints, and expected behavior"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["typescript", "javascript", "rust", "python", "go", "java", "cpp"],
-                        "description": "Programming language for the generated code"
-                    },
-                    "framework": {
-                        "type": "string",
-                        "description": "Optional framework or library context (e.g., 'react', 'nextjs', 'axum', 'fastapi')"
-                    },
-                    "dependencies": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of external dependencies the code should use"
-                    },
-                    "style_guide": {
-                        "type": "string",
-                        "description": "Optional style preferences (e.g., 'functional', 'object-oriented', 'use async/await')"
-                    }
-                },
-                "required": ["path", "description", "language"]
-            }
-        }
-    })
+    ToolBuilder::new(
+        "generate_code",
+        "Generate a new code file from scratch. Use this when the user wants to create new functionality, components, or utilities."
+    )
+    .property(
+        "path",
+        properties::path("File path where the code should be created (e.g., 'src/components/Button.tsx')"),
+        true
+    )
+    .property(
+        "description",
+        properties::description("Clear description of what the code should do, including requirements, constraints, and expected behavior"),
+        true
+    )
+    .property("language", properties::language(), true)
+    .property(
+        "framework",
+        properties::optional_string("Optional framework or library context (e.g., 'react', 'nextjs', 'axum', 'fastapi')"),
+        false
+    )
+    .property(
+        "dependencies",
+        properties::string_array("List of external dependencies the code should use"),
+        false
+    )
+    .property(
+        "style_guide",
+        properties::optional_string("Optional style preferences (e.g., 'functional', 'object-oriented', 'use async/await')"),
+        false
+    )
+    .build()
 }
 
 /// Tool: refactor_code
 /// Modifies existing code
 fn refactor_code_tool() -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "refactor_code",
-            "description": "Refactor or modify existing code. Use this when improving, optimizing, or restructuring code that already exists.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path of the code to refactor"
-                    },
-                    "current_code": {
-                        "type": "string",
-                        "description": "The existing code that needs to be refactored"
-                    },
-                    "changes_requested": {
-                        "type": "string",
-                        "description": "Specific changes, improvements, or refactoring goals"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["typescript", "javascript", "rust", "python", "go", "java", "cpp"],
-                        "description": "Programming language of the code"
-                    },
-                    "preserve_behavior": {
-                        "type": "boolean",
-                        "description": "Whether to maintain exact same behavior (true) or allow behavioral improvements (false)",
-                        "default": true
-                    }
-                },
-                "required": ["path", "current_code", "changes_requested", "language"]
-            }
-        }
-    })
+    ToolBuilder::new(
+        "refactor_code",
+        "Refactor or modify existing code. Use this when improving, optimizing, or restructuring code that already exists."
+    )
+    .property(
+        "path",
+        properties::path("File path of the code to refactor"),
+        true
+    )
+    .property(
+        "current_code",
+        properties::description("The existing code that needs to be refactored"),
+        true
+    )
+    .property(
+        "changes_requested",
+        properties::description("Specific changes, improvements, or refactoring goals"),
+        true
+    )
+    .property("language", properties::language(), true)
+    .property(
+        "preserve_behavior",
+        properties::boolean("Whether to maintain exact same behavior (true) or allow behavioral improvements (false)", true),
+        false
+    )
+    .build()
 }
 
 /// Tool: debug_code
 /// Fixes bugs or errors in code
 fn debug_code_tool() -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "debug_code",
-            "description": "Debug and fix errors in code. Use this when there are specific bugs, errors, or issues that need resolution.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path of the buggy code"
-                    },
-                    "buggy_code": {
-                        "type": "string",
-                        "description": "The code that contains bugs or errors"
-                    },
-                    "error_message": {
-                        "type": "string",
-                        "description": "Error message, stack trace, or description of the bug"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["typescript", "javascript", "rust", "python", "go", "java", "cpp"],
-                        "description": "Programming language of the code"
-                    },
-                    "expected_behavior": {
-                        "type": "string",
-                        "description": "What the code should do when working correctly"
-                    }
-                },
-                "required": ["path", "buggy_code", "error_message", "language"]
-            }
-        }
-    })
+    ToolBuilder::new(
+        "debug_code",
+        "Debug and fix errors in code. Use this when there are specific bugs, errors, or issues that need resolution."
+    )
+    .property(
+        "path",
+        properties::path("File path of the buggy code"),
+        true
+    )
+    .property(
+        "buggy_code",
+        properties::description("The code that contains bugs or errors"),
+        true
+    )
+    .property(
+        "error_message",
+        properties::description("Error message, stack trace, or description of the bug"),
+        true
+    )
+    .property("language", properties::language(), true)
+    .property(
+        "expected_behavior",
+        properties::optional_string("What the code should do when working correctly"),
+        false
+    )
+    .build()
 }
 
 /// Parse tool call arguments from GPT-5 response

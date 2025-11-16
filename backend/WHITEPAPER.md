@@ -1499,7 +1499,7 @@ sqlx migrate run
 ```env
 # Server Configuration
 MIRA_HOST=0.0.0.0
-MIRA_PORT=8080
+MIRA_PORT=3001
 MIRA_ENV=production  # development, staging, production
 
 # Database
@@ -1561,7 +1561,7 @@ services:
   mira:
     build: .
     ports:
-      - "8080:8080"
+      - "3001:3001"
     environment:
       - DATABASE_URL=sqlite:///data/mira.db
       - QDRANT_URL=http://qdrant:6333
@@ -1812,7 +1812,7 @@ sqlite3 mira.db "PRAGMA integrity_check;"
 curl http://localhost:6333/health
 
 # Test WebSocket connection
-websocat ws://localhost:8080/ws
+websocat ws://localhost:3001/ws
 
 # View logs in real-time
 tail -f logs/mira.log | jq

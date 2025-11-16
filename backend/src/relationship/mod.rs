@@ -1,11 +1,11 @@
 // src/relationship/mod.rs
 
-pub mod types;
-pub mod storage;
-pub mod pattern_engine;
 pub mod context_loader;
+pub mod facts_service;
+pub mod pattern_engine;
 pub mod service;
-pub mod facts_service;  // NEW: Facts service
+pub mod storage;
+pub mod types; // NEW: Facts service
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -14,11 +14,11 @@ use sqlx::FromRow;
 pub use types::*;
 
 // Re-export service types
-pub use storage::RelationshipStorage;
-pub use pattern_engine::PatternEngine;
 pub use context_loader::ContextLoader;
+pub use facts_service::FactsService;
+pub use pattern_engine::PatternEngine;
 pub use service::RelationshipService;
-pub use facts_service::FactsService;  // NEW: Export facts service
+pub use storage::RelationshipStorage; // NEW: Export facts service
 
 /// User's profile and preferences
 /// Maps directly to `user_profile` table
@@ -27,30 +27,30 @@ pub struct UserProfile {
     #[sqlx(default)]
     pub id: i64,
     pub user_id: String,
-    
+
     // Coding Preferences
     pub preferred_languages: Option<String>, // JSON array
-    pub coding_style: Option<String>, // JSON object
-    pub code_verbosity: Option<String>, // "minimal", "moderate", "verbose"
-    pub testing_philosophy: Option<String>, // JSON object
+    pub coding_style: Option<String>,        // JSON object
+    pub code_verbosity: Option<String>,      // "minimal", "moderate", "verbose"
+    pub testing_philosophy: Option<String>,  // JSON object
     pub architecture_preferences: Option<String>, // JSON object
-    
+
     // Communication Style
     pub explanation_depth: Option<String>, // "concise", "moderate", "detailed"
     pub conversation_style: Option<String>, // "casual", "professional", "technical"
     pub profanity_comfort: Option<String>, // "none", "mild", "comfortable"
-    
+
     // Tech Context
-    pub tech_stack: Option<String>, // JSON array
+    pub tech_stack: Option<String>,     // JSON array
     pub learning_goals: Option<String>, // JSON array
-    
+
     // Metadata
     #[sqlx(default)]
     pub relationship_started: i64,
     pub last_active: Option<i64>,
     #[sqlx(default)]
     pub total_sessions: i64,
-    
+
     #[sqlx(default)]
     pub created_at: i64,
     #[sqlx(default)]
@@ -63,27 +63,27 @@ pub struct UserProfile {
 pub struct LearnedPattern {
     pub id: String,
     pub user_id: String,
-    
+
     // Pattern Identity
     pub pattern_type: String, // "coding_style", "work_pattern", "communication", etc.
     pub pattern_name: String,
     pub pattern_description: String,
-    
+
     // Evidence
     pub examples: Option<String>, // JSON array of example instances
-    
+
     // Confidence & Validation
     pub confidence: f64,
     #[sqlx(default)]
     pub times_observed: i64,
     #[sqlx(default)]
     pub times_applied: i64,
-    
+
     // Context
     pub applies_when: Option<String>, // When this pattern should be applied
     #[sqlx(default)]
     pub deprecated: i64, // SQLite boolean (0 or 1)
-    
+
     // Timing
     #[sqlx(default)]
     pub first_observed: i64,
@@ -98,21 +98,21 @@ pub struct LearnedPattern {
 pub struct MemoryFact {
     pub id: String,
     pub user_id: String,
-    
+
     // Fact Identity
     pub fact_key: String, // e.g., "wife_name", "daughter_birthday"
     pub fact_value: String,
     pub fact_category: String, // "personal", "professional", "technical", etc.
-    
+
     // Confidence
     #[sqlx(default)]
     pub confidence: f64,
     pub source: Option<String>, // Where this came from (maps to context in DB)
-    
+
     // Timing
     #[sqlx(default)]
-    pub learned_at: i64,  // Maps to created_at in DB
-    pub last_confirmed: Option<i64>,  // Maps to last_referenced in DB
+    pub learned_at: i64, // Maps to created_at in DB
+    pub last_confirmed: Option<i64>, // Maps to last_referenced in DB
     #[sqlx(default)]
-    pub times_referenced: i64,  // Maps to reference_count in DB
+    pub times_referenced: i64, // Maps to reference_count in DB
 }

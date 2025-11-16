@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseMetadata {
     #[serde(default)]
-    pub output: String,  // Optional preview/summary
+    pub output: String, // Optional preview/summary
     pub mood: String,
     pub salience: usize,
     pub memory_type: String,

@@ -1,8 +1,8 @@
 //! Core trait(s) for memory backends (SQLite, Qdrant, …).
 //! All storage and recall goes through this—no direct DB calls in business logic.
 
+use crate::memory::core::types::MemoryEntry;
 use async_trait::async_trait;
-use crate::memory::core::types::{MemoryEntry};
 
 /// Trait for any memory backend—store, recall, search, update, etc.
 #[async_trait]

@@ -4,9 +4,9 @@
 
 pub mod analyzers;
 
-use std::sync::Arc;
 use anyhow::Result;
-use tracing::{info, debug, error};
+use std::sync::Arc;
+use tracing::{debug, error, info};
 
 use crate::llm::provider::LlmProvider;
 use crate::memory::storage::sqlite::core::MessageAnalysis;
@@ -24,7 +24,7 @@ impl MessagePipeline {
         let analyzer = UnifiedAnalyzer::new(llm_provider);
         Self { analyzer }
     }
-    
+
     /// Create message pipeline with custom configuration
     pub fn with_config(
         llm_provider: Arc<dyn LlmProvider>,
@@ -33,7 +33,7 @@ impl MessagePipeline {
         let analyzer = UnifiedAnalyzer::with_config(llm_provider, analyzer_config);
         Self { analyzer }
     }
-    
+
     /// Main analysis entry point
     pub async fn analyze_message(
         &self,
@@ -42,29 +42,34 @@ impl MessagePipeline {
         context: Option<&str>,
     ) -> Result<MessagePipelineResult> {
         info!("Processing message through unified pipeline: role={}", role);
-        
-        let analysis_result = self.analyzer
+
+        let analysis_result = self
+            .analyzer
             .analyze_message(content, role, context)
             .await
             .map_err(|e| {
                 error!("Analysis failed: {}", e);
                 e
             })?;
-        
-        debug!("Analysis complete: salience={}, is_code={}", 
-               analysis_result.salience, analysis_result.is_code);
-        
+
+        debug!(
+            "Analysis complete: salience={}, is_code={}",
+            analysis_result.salience, analysis_result.is_code
+        );
+
         let pipeline_result = MessagePipelineResult {
             analysis: analysis_result.clone(),
             should_embed: analysis_result.routing.should_embed,
         };
-        
-        info!("Message processing complete: should_embed={}", 
-              pipeline_result.should_embed);
-        
+
+        info!(
+            "Message processing complete: should_embed={}",
+            pipeline_result.should_embed
+        );
+
         Ok(pipeline_result)
     }
-    
+
     /// Analyze message and return UnifiedAnalysisResult for coordinator compatibility
     pub async fn analyze_message_for_coordinator(
         &self,
@@ -75,23 +80,23 @@ impl MessagePipeline {
         let result = self.analyze_message(content, role, context).await?;
         Ok(result.analysis)
     }
-    
+
     /// Process pending messages in batch
     pub async fn process_pending_messages(&self, _session_id: &str) -> Result<usize> {
         // TODO: Implement batch processing once storage layer is integrated
         Ok(0)
     }
-    
+
     /// Quick content classification without full analysis
     pub fn classify_content(&self, content: &str) -> ContentClassification {
-        let estimated_complexity = if content.len() > 1000 { 
-            ContentComplexity::High 
-        } else if content.len() > 200 { 
-            ContentComplexity::Medium 
-        } else { 
-            ContentComplexity::Low 
+        let estimated_complexity = if content.len() > 1000 {
+            ContentComplexity::High
+        } else if content.len() > 200 {
+            ContentComplexity::Medium
+        } else {
+            ContentComplexity::Low
         };
-        
+
         ContentClassification {
             estimated_complexity,
             content_length: content.len(),
@@ -130,14 +135,14 @@ impl MessagePipelineResult {
             error_file: self.analysis.error_file.clone(),
         }
     }
-    
+
     /// Check if this message has high value for memory storage
     pub fn is_high_value(&self) -> bool {
-        self.analysis.salience > 0.7 || 
+        self.analysis.salience > 0.7 ||
         self.analysis.is_code ||
         self.analysis.contains_error || // Errors are high value
         self.analysis.topics.iter().any(|t| {
-            matches!(t.to_lowercase().as_str(), 
+            matches!(t.to_lowercase().as_str(),
                     "architecture" | "design" | "bug" | "error" | "important")
         })
     }
@@ -153,12 +158,12 @@ pub struct ContentClassification {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContentComplexity {
     Low,    // < 200 chars
-    Medium, // 200-1000 chars  
+    Medium, // 200-1000 chars
     High,   // > 1000 chars
 }
 
 // Re-export key types
-pub use analyzers::unified::{UnifiedAnalysisResult, AnalyzerConfig, RoutingDecision};
+pub use analyzers::unified::{AnalyzerConfig, RoutingDecision, UnifiedAnalysisResult};
 
 pub type UnifiedAnalysis = UnifiedAnalysisResult;
 pub type PipelineConfig = AnalyzerConfig;

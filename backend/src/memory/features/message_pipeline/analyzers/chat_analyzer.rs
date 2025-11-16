@@ -2,11 +2,11 @@
 // Chat message analyzer - extracts sentiment, intent, topics, code, and error detection
 // FIXED: More explicit prompts for consistent LLM behavior
 
-use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tracing::{debug, info, error};
+use serde_json::{Value, json};
+use std::sync::Arc;
+use tracing::{debug, error, info};
 
 use crate::llm::provider::{LlmProvider, Message};
 
@@ -23,7 +23,7 @@ pub struct ChatAnalysisResult {
     pub mood: Option<String>,
     pub intensity: Option<f32>,
     pub intent: Option<String>,
-    pub summary: Option<String>, 
+    pub summary: Option<String>,
     pub relationship_impact: Option<String>,
     pub content: String,
     pub processed_at: chrono::DateTime<chrono::Utc>,
@@ -37,7 +37,7 @@ impl ChatAnalyzer {
     pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
         Self { llm_provider }
     }
-    
+
     pub async fn analyze(
         &self,
         content: &str,
@@ -45,15 +45,19 @@ impl ChatAnalyzer {
         context: Option<&str>,
     ) -> Result<ChatAnalysisResult> {
         debug!("Analyzing {} message: {} chars", role, content.len());
-        
+
         let prompt = self.build_analysis_prompt(content, role, context);
         let messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
-        
+
         // Use GPT-5 structured output
-        if let Some(gpt5) = self.llm_provider.as_any().downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>() {
+        if let Some(gpt5) = self
+            .llm_provider
+            .as_any()
+            .downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>()
+        {
             let schema = Self::get_analysis_schema();
             let provider_response = gpt5
                 .chat_with_schema(
@@ -67,14 +71,16 @@ impl ChatAnalyzer {
                     error!("GPT-5 structured analysis failed: {}", e);
                     e
                 })?;
-            
-            return self.parse_analysis_response(&provider_response.content, content).await;
+
+            return self
+                .parse_analysis_response(&provider_response.content, content)
+                .await;
         }
-        
+
         error!("ChatAnalyzer requires GPT-5 provider");
         Err(anyhow::anyhow!("ChatAnalyzer only supports GPT-5"))
     }
-    
+
     pub async fn analyze_batch(
         &self,
         messages: &[(String, String)],
@@ -82,17 +88,21 @@ impl ChatAnalyzer {
         if messages.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         info!("Batch analyzing {} messages", messages.len());
-        
+
         let prompt = self.build_batch_prompt(messages);
         let llm_messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
-        
+
         // Use GPT-5 structured output
-        if let Some(gpt5) = self.llm_provider.as_any().downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>() {
+        if let Some(gpt5) = self
+            .llm_provider
+            .as_any()
+            .downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>()
+        {
             let schema = Self::get_batch_analysis_schema();
             let provider_response = gpt5
                 .chat_with_schema(
@@ -106,19 +116,21 @@ impl ChatAnalyzer {
                     error!("GPT-5 batch structured analysis failed: {}", e);
                     e
                 })?;
-            
-            return self.parse_batch_response(&provider_response.content, messages).await;
+
+            return self
+                .parse_batch_response(&provider_response.content, messages)
+                .await;
         }
-        
+
         error!("ChatAnalyzer requires GPT-5 provider");
         Err(anyhow::anyhow!("ChatAnalyzer only supports GPT-5"))
     }
-    
+
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {
         let context_str = context
             .map(|c| format!("\n\nPrevious Context:\n{}", c))
             .unwrap_or_default();
-        
+
         format!(
             r#"Analyze this {} message and extract metadata:
 
@@ -168,7 +180,7 @@ Be precise and consistent."#,
             role, content, context_str
         )
     }
-    
+
     fn build_batch_prompt(&self, messages: &[(String, String)]) -> String {
         let message_list = messages
             .iter()
@@ -176,7 +188,7 @@ Be precise and consistent."#,
             .map(|(i, (content, role))| format!("{}. [{}]: \"{}\"", i + 1, role, content))
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         format!(
             r#"Batch analyze these {} messages:
 
@@ -192,7 +204,7 @@ CRITICAL RULES:
             message_list
         )
     }
-    
+
     fn get_analysis_schema() -> Value {
         json!({
             "type": "object",
@@ -240,7 +252,7 @@ CRITICAL RULES:
             "additionalProperties": false
         })
     }
-    
+
     fn get_batch_analysis_schema() -> Value {
         json!({
             "type": "array",
@@ -293,15 +305,14 @@ CRITICAL RULES:
             }
         })
     }
-    
+
     async fn parse_analysis_response(
         &self,
         response: &str,
         original_content: &str,
     ) -> Result<ChatAnalysisResult> {
-        
         let json_str = self.extract_json_from_response(response)?;
-        
+
         #[derive(Deserialize)]
         struct LLMResponse {
             salience: f32,
@@ -318,48 +329,51 @@ CRITICAL RULES:
             summary: Option<String>,
             relationship_impact: Option<String>,
         }
-        
+
         let parsed: LLMResponse = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
-        
+
         let salience = parsed.salience.clamp(0.0, 1.0);
         let topics = if parsed.topics.is_empty() {
             vec!["general".to_string()]
         } else {
             parsed.topics
         };
-        
-        let programming_lang = parsed.programming_lang.as_ref()
-            .and_then(|lang| {
-                let lower = lang.to_lowercase();
-                if matches!(
-                    lower.as_str(),
-                    "rust" | "typescript" | "javascript" | "python" | "go" | "java"
-                ) {
-                    Some(lower)
-                } else {
-                    None
-                }
-            });
-        
-        let error_type = parsed.error_type.as_ref()
+
+        let programming_lang = parsed.programming_lang.as_ref().and_then(|lang| {
+            let lower = lang.to_lowercase();
+            if matches!(
+                lower.as_str(),
+                "rust" | "typescript" | "javascript" | "python" | "go" | "java"
+            ) {
+                Some(lower)
+            } else {
+                None
+            }
+        });
+
+        let error_type = parsed
+            .error_type
+            .as_ref()
             .filter(|t| {
                 matches!(
                     t.to_lowercase().as_str(),
-                    "compiler" | "runtime" | "test_failure" | "build_failure" | "linter" | "type_error"
+                    "compiler"
+                        | "runtime"
+                        | "test_failure"
+                        | "build_failure"
+                        | "linter"
+                        | "type_error"
                 )
             })
             .cloned();
-        
-        let error_severity = parsed.error_severity.as_ref()
-            .filter(|s| {
-                matches!(
-                    s.to_lowercase().as_str(),
-                    "critical" | "warning" | "info"
-                )
-            })
+
+        let error_severity = parsed
+            .error_severity
+            .as_ref()
+            .filter(|s| matches!(s.to_lowercase().as_str(), "critical" | "warning" | "info"))
             .cloned();
-        
+
         Ok(ChatAnalysisResult {
             salience,
             topics,
@@ -378,14 +392,14 @@ CRITICAL RULES:
             processed_at: chrono::Utc::now(),
         })
     }
-    
+
     async fn parse_batch_response(
         &self,
         response: &str,
         original_messages: &[(String, String)],
     ) -> Result<Vec<ChatAnalysisResult>> {
         let json_str = self.extract_json_from_response(response)?;
-        
+
         #[derive(Deserialize)]
         struct BatchItem {
             message_index: usize,
@@ -403,21 +417,23 @@ CRITICAL RULES:
             summary: Option<String>,
             relationship_impact: Option<String>,
         }
-        
+
         let analyses: Vec<BatchItem> = serde_json::from_str(&json_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse batch response: {}", e))?;
-        
+
         let mut results = Vec::new();
-        
+
         for analysis in analyses {
-            if let Some((content, _)) = original_messages.get(analysis.message_index.saturating_sub(1)) {
+            if let Some((content, _)) =
+                original_messages.get(analysis.message_index.saturating_sub(1))
+            {
                 let salience = analysis.salience.clamp(0.0, 1.0);
                 let topics = if analysis.topics.is_empty() {
                     vec!["general".to_string()]
                 } else {
                     analysis.topics
                 };
-                
+
                 results.push(ChatAnalysisResult {
                     salience,
                     topics,
@@ -437,10 +453,10 @@ CRITICAL RULES:
                 });
             }
         }
-        
+
         Ok(results)
     }
-    
+
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
         // STRATEGY 0: Handle GPT-5 structured output format
         // GPT-5 returns: {"output": [{"type": "reasoning", ...}, {"type": "message", "content": [{"type": "output_text", "text": "..."}]}]}
@@ -448,17 +464,25 @@ CRITICAL RULES:
             // Check for GPT-5 output array format
             if let Some(output_array) = value.get("output").and_then(|o| o.as_array()) {
                 debug!("Detected GPT-5 structured response format");
-                
+
                 // Find the message object in the output array
                 for item in output_array {
                     if item.get("type").and_then(|t| t.as_str()) == Some("message") {
                         // Navigate to content array
-                        if let Some(content_array) = item.get("content").and_then(|c| c.as_array()) {
+                        if let Some(content_array) = item.get("content").and_then(|c| c.as_array())
+                        {
                             // Find output_text
                             for content_item in content_array {
-                                if content_item.get("type").and_then(|t| t.as_str()) == Some("output_text") {
-                                    if let Some(text) = content_item.get("text").and_then(|t| t.as_str()) {
-                                        debug!("Extracted JSON from GPT-5 output.content.text: {} chars", text.len());
+                                if content_item.get("type").and_then(|t| t.as_str())
+                                    == Some("output_text")
+                                {
+                                    if let Some(text) =
+                                        content_item.get("text").and_then(|t| t.as_str())
+                                    {
+                                        debug!(
+                                            "Extracted JSON from GPT-5 output.content.text: {} chars",
+                                            text.len()
+                                        );
                                         return Ok(text.to_string());
                                     }
                                 }
@@ -468,29 +492,32 @@ CRITICAL RULES:
                 }
                 return Err(anyhow::anyhow!("No content in structured response"));
             }
-            
+
             // If not GPT-5 format but valid JSON, assume it's already the analysis
             debug!("Response is already valid JSON (non-GPT-5 structured response)");
             return Ok(response.to_string());
         }
-        
+
         // STRATEGY 1: Find JSON in markdown code blocks
         if let Some(opening_pos) = response.find("```") {
-            let backtick_count = response[opening_pos..].chars().take_while(|&c| c == '`').count();
+            let backtick_count = response[opening_pos..]
+                .chars()
+                .take_while(|&c| c == '`')
+                .count();
             let after_backticks = &response[opening_pos + backtick_count..];
-            
+
             if after_backticks.trim_start().starts_with("json") {
                 let json_keyword_end = after_backticks.find("json").map(|i| i + 4).unwrap_or(0);
                 let json_start = opening_pos + backtick_count + json_keyword_end;
                 let closing_marker = "`".repeat(backtick_count);
-                
+
                 if let Some(relative_closing) = response[json_start..].find(&closing_marker) {
                     let json_end = json_start + relative_closing;
-                    
+
                     if json_start < json_end && json_end <= response.len() {
                         let json_content = &response[json_start..json_end];
                         let trimmed = json_content.trim();
-                        
+
                         if !trimmed.is_empty() && serde_json::from_str::<Value>(trimmed).is_ok() {
                             debug!("Extracted JSON from {} backtick code block", backtick_count);
                             return Ok(trimmed.to_string());
@@ -499,7 +526,7 @@ CRITICAL RULES:
                 }
             }
         }
-        
+
         // STRATEGY 2: Look for raw JSON object
         if let Some(obj_start) = response.find('{') {
             if let Some(obj_end) = response.rfind('}') {
@@ -512,7 +539,7 @@ CRITICAL RULES:
                 }
             }
         }
-        
+
         // STRATEGY 3: Look for JSON array
         if let Some(arr_start) = response.find('[') {
             if let Some(arr_end) = response.rfind(']') {
@@ -525,10 +552,12 @@ CRITICAL RULES:
                 }
             }
         }
-        
-        error!("Failed to extract JSON from response. First 200 chars: {}", 
-               &response[..response.len().min(200)]);
-        
+
+        error!(
+            "Failed to extract JSON from response. First 200 chars: {}",
+            &response[..response.len().min(200)]
+        );
+
         Err(anyhow::anyhow!("No valid JSON found in LLM response"))
     }
 }

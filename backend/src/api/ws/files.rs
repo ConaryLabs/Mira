@@ -2,16 +2,16 @@
 // Handles file upload and download operations through WebSocket
 // Supports chunked transfers for large files (up to 500MB)
 
-use std::sync::Arc;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::Deserialize;
 use serde_json::Value;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use uuid::Uuid;
+use std::sync::Arc;
 use tracing::{debug, error, info};
+use uuid::Uuid;
 
-use crate::state::{AppState, UploadSession};
-use crate::api::ws::message::WsServerMessage;
 use crate::api::error::{ApiError, ApiResult};
+use crate::api::ws::message::WsServerMessage;
+use crate::state::{AppState, UploadSession};
 
 #[derive(Deserialize)]
 struct UploadStartRequest {
@@ -24,7 +24,7 @@ struct UploadStartRequest {
 #[derive(Deserialize)]
 struct UploadChunkRequest {
     session_id: String,
-    chunk: String,  // base64 encoded
+    chunk: String, // base64 encoded
     chunk_index: usize,
     is_final: bool,
 }
@@ -53,7 +53,7 @@ pub async fn handle_file_transfer(
     app_state: Arc<AppState>,
 ) -> ApiResult<WsServerMessage> {
     debug!("File transfer operation: {}", operation);
-    
+
     match operation {
         "upload_start" => start_upload(data, app_state).await,
         "upload_chunk" => receive_chunk(data, app_state).await,
@@ -62,7 +62,9 @@ pub async fn handle_file_transfer(
         "cleanup_session" => cleanup_session(data, app_state).await,
         _ => {
             error!("Unknown file operation: {}", operation);
-            Err(ApiError::bad_request(format!("Unknown file operation: {operation}")))
+            Err(ApiError::bad_request(format!(
+                "Unknown file operation: {operation}"
+            )))
         }
     }
 }
@@ -71,16 +73,20 @@ pub async fn handle_file_transfer(
 async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UploadStartRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid upload start request: {e}")))?;
-    
-    info!("Starting upload for file: {} ({}) - project: {:?}", 
-        request.filename, request.total_size, request.project_id);
-    
+
+    info!(
+        "Starting upload for file: {} ({}) - project: {:?}",
+        request.filename, request.total_size, request.project_id
+    );
+
     // Validate file size (500MB limit)
     const MAX_SIZE: usize = 500 * 1024 * 1024;
     if request.total_size > MAX_SIZE {
-        return Err(ApiError::bad_request("File too large. Maximum size is 500MB"));
+        return Err(ApiError::bad_request(
+            "File too large. Maximum size is 500MB",
+        ));
     }
-    
+
     // Create session
     let session_id = Uuid::new_v4().to_string();
     let session = UploadSession {
@@ -91,11 +97,15 @@ async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
         total_size: request.total_size,
         received_size: 0,
     };
-    
-    app_state.upload_sessions.write().await.insert(session_id.clone(), session);
-    
+
+    app_state
+        .upload_sessions
+        .write()
+        .await
+        .insert(session_id.clone(), session);
+
     info!("Upload session created: {}", session_id);
-    
+
     Ok(WsServerMessage::Data {
         data: serde_json::json!({
             "type": "upload_started",
@@ -111,46 +121,53 @@ async fn start_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServ
 async fn receive_chunk(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UploadChunkRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid chunk request: {e}")))?;
-    
-    debug!("Receiving chunk {} (final: {}) for session {}", 
-        request.chunk_index, request.is_final, request.session_id);
-    
+
+    debug!(
+        "Receiving chunk {} (final: {}) for session {}",
+        request.chunk_index, request.is_final, request.session_id
+    );
+
     // Decode base64 chunk
-    let chunk_data = BASE64.decode(&request.chunk)
+    let chunk_data = BASE64
+        .decode(&request.chunk)
         .map_err(|e| ApiError::bad_request(format!("Invalid base64 chunk: {e}")))?;
-    
+
     // Update session
     let mut sessions = app_state.upload_sessions.write().await;
-    let session = sessions.get_mut(&request.session_id)
+    let session = sessions
+        .get_mut(&request.session_id)
         .ok_or_else(|| ApiError::not_found("Upload session not found"))?;
-    
+
     // Store chunk
     while session.chunks.len() <= request.chunk_index {
         session.chunks.push(Vec::new());
     }
     session.chunks[request.chunk_index] = chunk_data.clone();
     session.received_size += chunk_data.len();
-    
+
     let progress = (session.received_size as f64 / session.total_size as f64 * 100.0) as u8;
-    
+
     debug!("Upload progress for {}: {}%", session.filename, progress);
-    
+
     // If this is the final chunk, validate we have everything
     if request.is_final {
         let missing_chunks: Vec<usize> = (0..session.chunks.len())
             .filter(|i| session.chunks[*i].is_empty())
             .collect();
-        
+
         if !missing_chunks.is_empty() {
             return Err(ApiError::bad_request(format!(
                 "Final chunk received but missing chunks: {:?}",
                 missing_chunks
             )));
         }
-        
-        debug!("Final chunk received and all chunks validated for {}", session.filename);
+
+        debug!(
+            "Final chunk received and all chunks validated for {}",
+            session.filename
+        );
     }
-    
+
     Ok(WsServerMessage::Data {
         data: serde_json::json!({
             "type": "chunk_received",
@@ -167,22 +184,23 @@ async fn receive_chunk(data: Value, app_state: Arc<AppState>) -> ApiResult<WsSer
 async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: UploadCompleteRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid complete request: {e}")))?;
-    
+
     info!("Completing upload for session {}", request.session_id);
-    
+
     // Get and remove session
     let session = {
         let mut sessions = app_state.upload_sessions.write().await;
-        sessions.remove(&request.session_id)
+        sessions
+            .remove(&request.session_id)
             .ok_or_else(|| ApiError::not_found("Upload session not found"))?
     };
-    
+
     // Combine chunks
     let mut file_content = Vec::new();
     for chunk in session.chunks {
         file_content.extend_from_slice(&chunk);
     }
-    
+
     // Verify size
     if file_content.len() != session.total_size {
         return Err(ApiError::bad_request(format!(
@@ -191,18 +209,18 @@ async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsS
             file_content.len()
         )));
     }
-    
+
     // Save to ./uploads
     let upload_dir = std::path::Path::new("./uploads");
     std::fs::create_dir_all(upload_dir)
         .map_err(|e| ApiError::internal(format!("Failed to create upload directory: {e}")))?;
-    
+
     let file_path = upload_dir.join(&session.filename);
     std::fs::write(&file_path, &file_content)
         .map_err(|e| ApiError::internal(format!("Failed to save file: {e}")))?;
-    
+
     info!("File saved successfully: {}", file_path.display());
-    
+
     Ok(WsServerMessage::Data {
         data: serde_json::json!({
             "type": "upload_complete",
@@ -218,9 +236,9 @@ async fn complete_upload(data: Value, app_state: Arc<AppState>) -> ApiResult<WsS
 async fn start_download(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: DownloadRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid download request: {e}")))?;
-    
+
     debug!("Starting download: {:?}", request);
-    
+
     // Determine what to download
     let file_content = if let Some(file_path) = request.file_path {
         // If project_id provided, scope to project upload directory
@@ -231,28 +249,32 @@ async fn start_download(data: Value, app_state: Arc<AppState>) -> ApiResult<WsSe
         } else {
             std::path::Path::new(&file_path).to_path_buf()
         };
-        
+
         // Download from file system
         std::fs::read(&full_path)
             .map_err(|e| ApiError::not_found(format!("File not found: {e}")))?
     } else if let Some(artifact_id) = request.artifact_id {
         // Download from artifact store
-        let artifact = app_state.project_store
+        let artifact = app_state
+            .project_store
             .get_artifact(&artifact_id)
             .await
             .map_err(|e| ApiError::internal(format!("Failed to get artifact: {e}")))?
             .ok_or_else(|| ApiError::not_found("Artifact not found"))?;
-        
-        artifact.content
+
+        artifact
+            .content
             .ok_or_else(|| ApiError::not_found("Artifact has no content"))?
             .into_bytes()
     } else {
-        return Err(ApiError::bad_request("Must specify either file_path or artifact_id"));
+        return Err(ApiError::bad_request(
+            "Must specify either file_path or artifact_id",
+        ));
     };
-    
+
     // Encode to base64 for transfer
     let encoded = BASE64.encode(&file_content);
-    
+
     Ok(WsServerMessage::Data {
         data: serde_json::json!({
             "type": "download_ready",
@@ -267,7 +289,7 @@ async fn start_download(data: Value, app_state: Arc<AppState>) -> ApiResult<WsSe
 async fn cleanup_session(data: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
     let request: CleanupSessionRequest = serde_json::from_value(data)
         .map_err(|e| ApiError::bad_request(format!("Invalid cleanup request: {e}")))?;
-    
+
     let mut sessions = app_state.upload_sessions.write().await;
     if sessions.remove(&request.session_id).is_some() {
         info!("Cleaned up upload session: {}", request.session_id);

@@ -1,9 +1,9 @@
 // src/memory/features/memory_types.rs
 // Shared types and structs for the memory service modules
 
-use serde::{Deserialize, Serialize};
 use crate::llm::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
+use serde::{Deserialize, Serialize};
 
 /// Scored memory entry with all scoring components
 #[derive(Debug, Clone)]
@@ -56,9 +56,9 @@ pub struct SummaryRequest {
 /// Types of summaries that can be generated
 #[derive(Debug, Clone, Copy)]
 pub enum SummaryType {
-    Rolling10,   // 10-message rolling summary
-    Rolling100,  // 100-message mega summary
-    Snapshot,    // On-demand snapshot summary
+    Rolling10,  // 10-message rolling summary
+    Rolling100, // 100-message mega summary
+    Snapshot,   // On-demand snapshot summary
 }
 
 /// Record structure for summary retrieval from rolling_summaries table
@@ -80,13 +80,15 @@ impl SummaryRecord {
             "snapshot" => "Snapshot",
             _ => &self.summary_type,
         };
-        
-        format!("[{} Summary] {} messages: {}", 
-                summary_type, 
-                self.message_count, 
-                self.summary_text.chars().take(100).collect::<String>())
+
+        format!(
+            "[{} Summary] {} messages: {}",
+            summary_type,
+            self.message_count,
+            self.summary_text.chars().take(100).collect::<String>()
+        )
     }
-    
+
     /// Get age in hours
     pub fn age_hours(&self) -> f64 {
         let now = chrono::Utc::now().timestamp();

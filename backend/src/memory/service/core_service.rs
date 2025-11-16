@@ -1,13 +1,11 @@
 // src/memory/service/core_service.rs
-use std::sync::Arc;
+use crate::memory::{
+    core::traits::MemoryStore, core::types::MemoryEntry,
+    storage::qdrant::multi_store::QdrantMultiStore, storage::sqlite::store::SqliteMemoryStore,
+};
 use anyhow::Result;
 use chrono::Utc;
-use crate::memory::{
-    storage::sqlite::store::SqliteMemoryStore,
-    storage::qdrant::multi_store::QdrantMultiStore,
-    core::types::MemoryEntry,
-    core::traits::MemoryStore,
-};
+use std::sync::Arc;
 
 pub struct MemoryCoreService {
     pub sqlite_store: Arc<SqliteMemoryStore>,
@@ -15,10 +13,7 @@ pub struct MemoryCoreService {
 }
 
 impl MemoryCoreService {
-    pub fn new(
-        sqlite_store: Arc<SqliteMemoryStore>,
-        multi_store: Arc<QdrantMultiStore>,
-    ) -> Self {
+    pub fn new(sqlite_store: Arc<SqliteMemoryStore>, multi_store: Arc<QdrantMultiStore>) -> Self {
         Self {
             sqlite_store,
             multi_store,

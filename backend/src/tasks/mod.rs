@@ -3,28 +3,28 @@
 //! Background task management for async operations.
 //! Handles analysis, decay, cleanup, and other periodic tasks.
 
+use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{error, info, warn};
-use sqlx::Row;
 
 use crate::memory::features::decay;
 use crate::memory::features::message_pipeline::MessagePipeline;
 use crate::state::AppState;
 
-pub mod config;
-pub mod metrics;
 pub mod backfill;
 pub mod code_sync;
+pub mod config;
 pub mod embedding_cleanup;
+pub mod metrics;
 
-use config::TaskConfig;
-use metrics::TaskMetrics;
 use backfill::BackfillTask;
 use code_sync::CodeSyncTask;
+use config::TaskConfig;
 use embedding_cleanup::EmbeddingCleanupTask;
+use metrics::TaskMetrics;
 
 /// Manages all background tasks for the memory system
 pub struct TaskManager {
@@ -98,9 +98,9 @@ impl TaskManager {
     /// Run one-time embedding backfill task
     async fn run_backfill(&self) {
         info!("Running one-time embedding backfill check");
-        
+
         let backfill = BackfillTask::new(self.app_state.clone());
-        
+
         match backfill.run().await {
             Ok(()) => {
                 info!("Embedding backfill completed successfully");
@@ -120,32 +120,35 @@ impl TaskManager {
 
         tokio::spawn(async move {
             info!("Embedding cleanup task started (interval: {:?})", interval);
-            
+
             let cleanup = EmbeddingCleanupTask::new(pool, multi_store);
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
             loop {
                 interval_timer.tick().await;
-                
+
                 let start = std::time::Instant::now();
-                
-                match cleanup.run(false).await {  // false = actually delete orphans
+
+                match cleanup.run(false).await {
+                    // false = actually delete orphans
                     Ok(report) => {
                         let duration = start.elapsed();
                         metrics.record_task_duration("embedding_cleanup", duration);
-                        
+
                         info!(
                             "Embedding cleanup complete: checked {}, found {} orphans, deleted {}",
-                            report.total_checked,
-                            report.orphans_found,
-                            report.orphans_deleted
+                            report.total_checked, report.orphans_found, report.orphans_deleted
                         );
-                        
+
                         if !report.errors.is_empty() {
-                            warn!("Cleanup had {} errors: {:?}", report.errors.len(), report.errors);
+                            warn!(
+                                "Cleanup had {} errors: {:?}",
+                                report.errors.len(),
+                                report.errors
+                            );
                         }
-                        
+
                         metrics.add_processed_items("embedding_cleanup", report.orphans_deleted);
                     }
                     Err(e) => {
@@ -166,16 +169,16 @@ impl TaskManager {
 
         tokio::spawn(async move {
             info!("Code sync task started (interval: {:?})", interval);
-            
+
             let sync_task = CodeSyncTask::new(pool, code_intelligence);
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
             loop {
                 interval_timer.tick().await;
-                
+
                 let start = std::time::Instant::now();
-                
+
                 match sync_task.run().await {
                     Ok(()) => {
                         let duration = start.elapsed();
@@ -199,7 +202,7 @@ impl TaskManager {
 
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
-            
+
             // Use GPT-5 provider directly - no router
             let gpt5_provider = app_state.gpt5_provider.clone();
             let message_pipeline = MessagePipeline::new(gpt5_provider);
@@ -209,7 +212,7 @@ impl TaskManager {
 
             loop {
                 interval_timer.tick().await;
-                
+
                 match get_active_sessions(&app_state).await {
                     Ok(sessions) => {
                         let start = std::time::Instant::now();
@@ -219,7 +222,10 @@ impl TaskManager {
                             match message_pipeline.process_pending_messages(&session_id).await {
                                 Ok(count) => {
                                     if count > 0 {
-                                        info!("Analyzed {} messages for session {}", count, session_id);
+                                        info!(
+                                            "Analyzed {} messages for session {}",
+                                            count, session_id
+                                        );
                                         total_processed += count;
                                     }
                                 }
@@ -234,7 +240,10 @@ impl TaskManager {
                             let duration = start.elapsed();
                             metrics.record_task_duration("analysis", duration);
                             metrics.add_processed_items("analysis", total_processed);
-                            info!("Analysis batch complete: {} messages in {:?}", total_processed, duration);
+                            info!(
+                                "Analysis batch complete: {} messages in {:?}",
+                                total_processed, duration
+                            );
                         }
                     }
                     Err(e) => {
@@ -254,15 +263,15 @@ impl TaskManager {
 
         tokio::spawn(async move {
             info!("Decay scheduler started (interval: {:?})", interval);
-            
+
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
             loop {
                 interval_timer.tick().await;
-                
+
                 let start = std::time::Instant::now();
-                
+
                 match decay::run_decay_cycle(app_state.clone()).await {
                     Ok(()) => {
                         let duration = start.elapsed();
@@ -286,14 +295,17 @@ impl TaskManager {
         let metrics = self.metrics.clone();
 
         tokio::spawn(async move {
-            info!("Session cleanup started (interval: {:?}, max_age: {}h)", interval, max_age);
-            
+            info!(
+                "Session cleanup started (interval: {:?}, max_age: {}h)",
+                interval, max_age
+            );
+
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
             loop {
                 interval_timer.tick().await;
-                
+
                 match cleanup_old_sessions(&pool, max_age).await {
                     Ok(count) => {
                         if count > 0 {
@@ -318,24 +330,28 @@ impl TaskManager {
 
         tokio::spawn(async move {
             info!("Summary processor started (interval: {:?})", interval);
-            
+
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
             loop {
                 interval_timer.tick().await;
-                
+
                 match check_summary_candidates(&app_state).await {
                     Ok(candidates) => {
                         for (session_id, message_count) in candidates {
-                            let summarization_engine = &app_state.memory_service.summarization_engine;
-                            
+                            let summarization_engine =
+                                &app_state.memory_service.summarization_engine;
+
                             match summarization_engine
                                 .check_and_process_summaries(&session_id, message_count as usize)
-                                .await 
+                                .await
                             {
                                 Ok(Some(summary_id)) => {
-                                    info!("Created summary {} for session {}", summary_id, session_id);
+                                    info!(
+                                        "Created summary {} for session {}",
+                                        summary_id, session_id
+                                    );
                                     metrics.add_processed_items("summary", 1);
                                 }
                                 Ok(None) => {}
@@ -358,11 +374,11 @@ impl TaskManager {
     /// Spawns the metrics reporter task
     fn spawn_metrics_reporter(&self) -> JoinHandle<()> {
         let metrics = self.metrics.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(300)); // 5 minutes
             interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-            
+
             loop {
                 interval.tick().await;
                 metrics.report();
@@ -373,11 +389,11 @@ impl TaskManager {
     /// Gracefully shutdown all background tasks
     pub async fn shutdown(self) {
         info!("Shutting down background tasks");
-        
+
         for handle in self.handles {
             handle.abort();
         }
-        
+
         info!("All background tasks stopped");
     }
 }
@@ -387,12 +403,13 @@ async fn get_active_sessions(app_state: &AppState) -> anyhow::Result<Vec<String>
     let sessions = sqlx::query(
         "SELECT DISTINCT session_id FROM memory_entries 
          WHERE timestamp > (strftime('%s', 'now') - 86400)
-         LIMIT 100"
+         LIMIT 100",
     )
     .fetch_all(&app_state.sqlite_pool)
     .await?;
-    
-    Ok(sessions.iter()
+
+    Ok(sessions
+        .iter()
         .filter_map(|row| row.try_get::<String, _>("session_id").ok())
         .collect())
 }
@@ -404,11 +421,11 @@ async fn check_summary_candidates(app_state: &AppState) -> anyhow::Result<Vec<(S
          FROM memory_entries 
          WHERE timestamp > (strftime('%s', 'now') - 604800)
          GROUP BY session_id
-         HAVING count >= 10"
+         HAVING count >= 10",
     )
     .fetch_all(&app_state.sqlite_pool)
     .await?;
-    
+
     Ok(candidates)
 }
 
@@ -416,11 +433,11 @@ async fn check_summary_candidates(app_state: &AppState) -> anyhow::Result<Vec<(S
 async fn cleanup_old_sessions(pool: &sqlx::SqlitePool, max_age_hours: i64) -> anyhow::Result<u64> {
     let result = sqlx::query(
         "DELETE FROM memory_entries 
-         WHERE timestamp < (strftime('%s', 'now') - ?1)"
+         WHERE timestamp < (strftime('%s', 'now') - ?1)",
     )
     .bind(max_age_hours * 3600)
     .execute(pool)
     .await?;
-    
+
     Ok(result.rows_affected())
 }

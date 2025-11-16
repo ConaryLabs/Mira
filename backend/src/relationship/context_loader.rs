@@ -4,8 +4,8 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::relationship::storage::RelationshipStorage;
 use crate::relationship::pattern_engine::PatternEngine;
+use crate::relationship::storage::RelationshipStorage;
 use crate::relationship::types::*;
 
 /// Context loader for pulling relationship data at session start
@@ -15,10 +15,7 @@ pub struct ContextLoader {
 }
 
 impl ContextLoader {
-    pub fn new(
-        storage: Arc<RelationshipStorage>,
-        pattern_engine: Arc<PatternEngine>,
-    ) -> Self {
+    pub fn new(storage: Arc<RelationshipStorage>, pattern_engine: Arc<PatternEngine>) -> Self {
         Self {
             storage,
             pattern_engine,
@@ -33,46 +30,43 @@ impl ContextLoader {
         let profile = self.storage.get_or_create_profile(user_id).await?;
 
         // Load patterns (coding style, work patterns, communication style)
-        let coding_patterns = self.pattern_engine
+        let coding_patterns = self
+            .pattern_engine
             .get_pattern_context(
                 user_id,
-                &[
-                    pattern_types::CODING_STYLE,
-                    pattern_types::PROBLEM_SOLVING,
-                ],
+                &[pattern_types::CODING_STYLE, pattern_types::PROBLEM_SOLVING],
             )
             .await?;
 
-        let communication_patterns = self.pattern_engine
+        let communication_patterns = self
+            .pattern_engine
             .get_pattern_context(
                 user_id,
-                &[
-                    pattern_types::COMMUNICATION,
-                    pattern_types::PREFERENCE,
-                ],
+                &[pattern_types::COMMUNICATION, pattern_types::PREFERENCE],
             )
             .await?;
 
-        let work_patterns = self.pattern_engine
+        let work_patterns = self
+            .pattern_engine
             .get_pattern_context(
                 user_id,
-                &[
-                    pattern_types::WORK_PATTERN,
-                    pattern_types::TOPIC_INTEREST,
-                ],
+                &[pattern_types::WORK_PATTERN, pattern_types::TOPIC_INTEREST],
             )
             .await?;
 
         // Load memory facts (personal, professional, technical)
-        let personal_facts = self.storage
+        let personal_facts = self
+            .storage
             .get_facts_by_category(user_id, fact_categories::PERSONAL)
             .await?;
 
-        let professional_facts = self.storage
+        let professional_facts = self
+            .storage
             .get_facts_by_category(user_id, fact_categories::PROFESSIONAL)
             .await?;
 
-        let technical_facts = self.storage
+        let technical_facts = self
+            .storage
             .get_facts_by_category(user_id, fact_categories::TECHNICAL)
             .await?;
 
@@ -91,7 +85,9 @@ impl ContextLoader {
         let context = RelationshipContext {
             profile: UserProfileContext {
                 user_id: profile.user_id.clone(),
-                preferred_languages: profile.preferred_languages.as_ref()
+                preferred_languages: profile
+                    .preferred_languages
+                    .as_ref()
                     .and_then(|s| serde_json::from_str(s).ok()),
                 conversation_style: profile.conversation_style.clone(),
                 code_verbosity: profile.code_verbosity.clone(),
@@ -119,7 +115,8 @@ impl ContextLoader {
         let profile = self.storage.get_or_create_profile(user_id).await?;
 
         // Get only high-confidence patterns
-        let top_patterns = self.pattern_engine
+        let top_patterns = self
+            .pattern_engine
             .get_applicable_patterns(
                 user_id,
                 &[
@@ -133,7 +130,8 @@ impl ContextLoader {
 
         // Get key facts
         let key_facts = self.storage.get_facts(user_id).await?;
-        let key_facts: Vec<_> = key_facts.iter()
+        let key_facts: Vec<_> = key_facts
+            .iter()
             .filter(|f| f.confidence >= 0.8)
             .take(10)
             .cloned()
@@ -150,7 +148,7 @@ impl ContextLoader {
     /// Get context formatted for LLM prompt
     pub async fn get_llm_context_string(&self, user_id: &str) -> Result<String> {
         let context = self.load_context(user_id).await?;
-        
+
         let mut parts = Vec::new();
 
         // Profile preferences
@@ -180,8 +178,7 @@ impl ContextLoader {
             for pattern in context.communication_patterns.iter().take(2) {
                 parts.push(format!(
                     "- {}: {}",
-                    pattern.pattern_name,
-                    pattern.pattern_description
+                    pattern.pattern_name, pattern.pattern_description
                 ));
             }
         }
@@ -200,13 +197,13 @@ impl ContextLoader {
     /// Update session metadata (last active, session count)
     pub async fn update_session_metadata(&self, user_id: &str) -> Result<()> {
         let mut profile = self.storage.get_or_create_profile(user_id).await?;
-        
+
         let now = chrono::Utc::now().timestamp();
         profile.last_active = Some(now);
         profile.total_sessions += 1;
-        
+
         self.storage.update_profile(&profile).await?;
-        
+
         debug!("Updated session metadata for user: {}", user_id);
         Ok(())
     }

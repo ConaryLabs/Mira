@@ -11,7 +11,10 @@ use std::path::Path;
 
 /// Write file to disk ensuring parent directories exist and using a temp-file + rename strategy
 /// for best-effort atomic replacement. Mirrors existing permissions on Unix.
-pub async fn write_file_with_dirs<P: AsRef<Path>>(path: P, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
+pub async fn write_file_with_dirs<P: AsRef<Path>>(
+    path: P,
+    bytes: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
     let path = path.as_ref();
 
     // Ensure parent directories exist
@@ -52,9 +55,11 @@ pub async fn write_file_with_dirs<P: AsRef<Path>>(path: P, bytes: impl AsRef<[u8
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = tokio::fs::metadata(&path).await {
             let mode = meta.permissions().mode();
-            let _ = tokio::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(mode)).await;
+            let _ =
+                tokio::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(mode)).await;
         } else {
-            let _ = tokio::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o644)).await;
+            let _ = tokio::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o644))
+                .await;
         }
     }
 

@@ -13,10 +13,10 @@ pub fn normalize_salience(raw: f32) -> f32 {
 
 /// Optionally, re-score an entry (could call LLM again or adjust with decay).
 pub fn rescore_salience(entry: &MemoryEntry, decay: Option<f32>) -> f32 {
-    let base = entry.salience.unwrap_or(0.5);  // FIXED: 0.5 instead of 5.0
+    let base = entry.salience.unwrap_or(0.5); // FIXED: 0.5 instead of 5.0
     if let Some(decay_factor) = decay {
         // Simple exponential decay—tweak as needed.
-        (base * decay_factor).max(0.0)  // FIXED: max(0.0) instead of max(1.0)
+        (base * decay_factor).max(0.0) // FIXED: max(0.0) instead of max(1.0)
     } else {
         base
     }

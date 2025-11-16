@@ -1,10 +1,7 @@
 // src/memory/service/summarization_engine/coordinator.rs
-use std::sync::Arc;
+use crate::memory::features::{memory_types::SummaryType, summarization::SummarizationEngine};
 use anyhow::Result;
-use crate::memory::features::{
-    summarization::SummarizationEngine,
-    memory_types::SummaryType,
-};
+use std::sync::Arc;
 
 pub struct SummarizationEngineCoordinator {
     engine: Arc<SummarizationEngine>,
@@ -15,7 +12,11 @@ impl SummarizationEngineCoordinator {
         Self { engine }
     }
 
-    pub async fn create_summary(&self, session_id: &str, summary_type: SummaryType) -> Result<String> {
+    pub async fn create_summary(
+        &self,
+        session_id: &str,
+        summary_type: SummaryType,
+    ) -> Result<String> {
         match summary_type {
             SummaryType::Rolling10 => self.engine.create_rolling_summary(session_id, 10).await,
             SummaryType::Rolling100 => self.engine.create_rolling_summary(session_id, 100).await,
@@ -23,11 +24,21 @@ impl SummarizationEngineCoordinator {
         }
     }
 
-    pub async fn create_rolling_summary(&self, session_id: &str, window_size: usize) -> Result<String> {
-        self.engine.create_rolling_summary(session_id, window_size).await
+    pub async fn create_rolling_summary(
+        &self,
+        session_id: &str,
+        window_size: usize,
+    ) -> Result<String> {
+        self.engine
+            .create_rolling_summary(session_id, window_size)
+            .await
     }
 
-    pub async fn create_snapshot_summary(&self, session_id: &str, _context: Option<&str>) -> Result<String> {
+    pub async fn create_snapshot_summary(
+        &self,
+        session_id: &str,
+        _context: Option<&str>,
+    ) -> Result<String> {
         // SummarizationEngine expects Option<usize> for max_tokens, not Option<&str>
         // For now, just pass None for max_tokens
         self.engine.create_snapshot_summary(session_id, None).await
@@ -47,9 +58,15 @@ impl SummarizationEngineCoordinator {
 
     /// Check and process summaries (for background tasks)
     /// FIXED: Now delegates to engine which has proper rolling_10/rolling_100 trigger logic
-    pub async fn check_and_process_summaries(&self, session_id: &str, message_count: usize) -> Result<Option<String>> {
+    pub async fn check_and_process_summaries(
+        &self,
+        session_id: &str,
+        message_count: usize,
+    ) -> Result<Option<String>> {
         // Delegate to engine's method which properly checks triggers
         // and creates both rolling_10 (every 10) and rolling_100 (every 100) as needed
-        self.engine.check_and_process_summaries(session_id, message_count).await
+        self.engine
+            .check_and_process_summaries(session_id, message_count)
+            .await
     }
 }

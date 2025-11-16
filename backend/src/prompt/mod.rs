@@ -1,8 +1,12 @@
 // src/prompt/mod.rs
-// Prompt building module with unified builder
+// Prompt building module - refactored into focused submodules
 
-pub mod unified_builder;
+pub mod builders;
+pub mod context;
+pub mod types;
+pub mod unified_builder; // Deprecated: kept for backward compatibility
+pub mod utils;
 
-// Primary export - the unified builder
-pub use unified_builder::UnifiedPromptBuilder;
-
+// Primary exports
+pub use builders::UnifiedPromptBuilder;
+pub use types::{CodeElement, ErrorContext, QualityIssue};

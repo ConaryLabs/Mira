@@ -1,10 +1,11 @@
 // src/hooks/useMessageHandler.ts
-// UPDATED: Handle stream, status, chat_complete message types properly
+// REFACTORED: Use shared artifact utilities
 
 import { useEffect } from 'react';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
-import { useChatStore, Artifact } from '../stores/useChatStore';
+import { useChatStore } from '../stores/useChatStore';
 import { useAppState } from '../stores/useAppState';
+import { extractArtifacts } from '../utils/artifact';
 
 export const useMessageHandler = () => {
   const subscribe = useWebSocketStore(state => state.subscribe);
@@ -119,49 +120,13 @@ export const useMessageHandler = () => {
     }
   }
   
-  function processArtifacts(artifacts: any[]) {
+  function processArtifacts(rawArtifacts: any[]) {
     const { addArtifact } = useAppState.getState();
-    
-    artifacts.forEach((artifact: any) => {
-      if (!artifact || !artifact.content) {
-        console.warn('[Handler] Skipping invalid artifact:', artifact);
-        return;
-      }
-      
-      const path = artifact.path || artifact.title || 'untitled';
-      const language = artifact.language || inferLanguage(path);
-      
-      const cleanArtifact: Artifact = {
-        id: artifact.id || `artifact-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-        path,
-        content: artifact.content,
-        language,
-        changeType: artifact.change_type,
-        status: 'draft',
-        origin: 'llm',
-        timestamp: Date.now()
-      };
-      
-      console.log('[Handler] Adding artifact:', cleanArtifact.path);
-      addArtifact(cleanArtifact);
+
+    const artifacts = extractArtifacts({ artifacts: rawArtifacts });
+    artifacts.forEach((artifact) => {
+      console.log('[Handler] Adding artifact:', artifact.path);
+      addArtifact(artifact);
     });
-  }
-  
-  function inferLanguage(path: string): string {
-    const ext = path.split('.').pop()?.toLowerCase();
-    switch (ext) {
-      case 'rs': return 'rust';
-      case 'js': case 'jsx': return 'javascript';
-      case 'ts': case 'tsx': return 'typescript';
-      case 'py': return 'python';
-      case 'json': return 'json';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'md': return 'markdown';
-      case 'toml': return 'toml';
-      case 'yaml': case 'yml': return 'yaml';
-      case 'sh': return 'shell';
-      default: return 'plaintext';
-    }
   }
 };

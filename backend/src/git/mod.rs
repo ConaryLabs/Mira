@@ -1,9 +1,9 @@
 // src/git/mod.rs
 
-pub mod types;
-pub mod store;
 pub mod client;
+pub mod store;
+pub mod types;
 
-pub use types::*;
-pub use store::*;
 pub use client::*;
+pub use store::*;
+pub use types::*;

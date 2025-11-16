@@ -1,9 +1,9 @@
 // src/git/types.rs
 
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use std::str::FromStr;
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i64)]
@@ -28,13 +28,13 @@ impl From<i64> for GitImportStatus {
 // Implement FromStr for parsing from database TEXT field
 impl FromStr for GitImportStatus {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Try to parse as integer first (for backward compatibility)
         if let Ok(num) = s.parse::<i64>() {
             return Ok(GitImportStatus::from(num));
         }
-        
+
         // Parse string representation
         match s.to_lowercase().as_str() {
             "pending" => Ok(GitImportStatus::Pending),

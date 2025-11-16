@@ -1,8 +1,8 @@
 // src/operations/engine/lifecycle.rs
 // Operation lifecycle management: start, complete, fail, status updates
 
-use crate::operations::{Operation, OperationEvent, engine::events::OperationEngineEvent};
 use crate::memory::service::MemoryService;
+use crate::operations::{Operation, OperationEvent, engine::events::OperationEngineEvent};
 
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
@@ -29,7 +29,7 @@ impl LifecycleManager {
         user_message: String,
     ) -> Result<Operation> {
         let op = Operation::new(session_id, kind, user_message);
-        
+
         sqlx::query!(
             r#"
             INSERT INTO operations (
@@ -133,11 +133,11 @@ impl LifecycleManager {
 
         // Store assistant response in memory
         if let Some(ref response_content) = result {
-            match self.memory_service.save_assistant_message(
-                session_id,
-                response_content,
-                None,
-            ).await {
+            match self
+                .memory_service
+                .save_assistant_message(session_id, response_content, None)
+                .await
+            {
                 Ok(msg_id) => {
                     info!("Stored operation result in memory: message_id={}", msg_id);
                 }
@@ -259,11 +259,13 @@ impl LifecycleManager {
         )
         .await?;
 
-        let _ = event_tx.send(OperationEngineEvent::StatusChanged {
-            operation_id: operation_id.to_string(),
-            old_status,
-            new_status: new_status.to_string(),
-        }).await;
+        let _ = event_tx
+            .send(OperationEngineEvent::StatusChanged {
+                operation_id: operation_id.to_string(),
+                old_status,
+                new_status: new_status.to_string(),
+            })
+            .await;
 
         Ok(())
     }
@@ -328,28 +330,26 @@ impl LifecycleManager {
         .fetch_all(&*self.db)
         .await?;
 
-        let events = rows.into_iter().map(|row| {
-            OperationEvent {
+        let events = rows
+            .into_iter()
+            .map(|row| OperationEvent {
                 id: row.id.unwrap_or(0),
                 operation_id: operation_id.to_string(),
                 event_type: row.event_type,
                 created_at: row.created_at,
                 sequence_number: row.sequence_number,
                 event_data: row.event_data,
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(events)
     }
 
     /// Get operation status
     async fn get_operation_status(&self, operation_id: &str) -> Result<String> {
-        let result = sqlx::query!(
-            "SELECT status FROM operations WHERE id = ?",
-            operation_id
-        )
-        .fetch_one(&*self.db)
-        .await?;
+        let result = sqlx::query!("SELECT status FROM operations WHERE id = ?", operation_id)
+            .fetch_one(&*self.db)
+            .await?;
 
         Ok(result.status)
     }

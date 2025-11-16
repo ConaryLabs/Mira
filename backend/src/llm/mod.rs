@@ -2,9 +2,9 @@
 
 pub mod embeddings;
 pub mod provider;
+pub mod reasoning_config;
 pub mod structured;
 pub mod types;
-pub mod reasoning_config;
 
 pub use reasoning_config::ReasoningConfig;
 

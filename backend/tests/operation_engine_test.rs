@@ -5,24 +5,24 @@
 // without relying on internal lifecycle methods.
 
 use mira_backend::config::CONFIG;
-use mira_backend::llm::provider::OpenAiEmbeddings;
-use mira_backend::llm::provider::LlmProvider;
-use mira_backend::llm::provider::gpt5::Gpt5Provider;
-use mira_backend::llm::provider::deepseek::DeepSeekProvider;
-use mira_backend::memory::service::MemoryService;
-use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
-use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
-use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
-use mira_backend::operations::engine::{OperationEngine, OperationEngineEvent};
-use mira_backend::relationship::service::RelationshipService;
-use mira_backend::relationship::facts_service::FactsService;
-use mira_backend::git::store::GitStore;
 use mira_backend::git::client::GitClient;
+use mira_backend::git::store::GitStore;
+use mira_backend::llm::provider::LlmProvider;
+use mira_backend::llm::provider::OpenAiEmbeddings;
+use mira_backend::llm::provider::deepseek::DeepSeekProvider;
+use mira_backend::llm::provider::gpt5::Gpt5Provider;
+use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
+use mira_backend::memory::service::MemoryService;
+use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
+use mira_backend::operations::engine::{OperationEngine, OperationEngineEvent};
+use mira_backend::relationship::facts_service::FactsService;
+use mira_backend::relationship::service::RelationshipService;
 
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
@@ -49,25 +49,22 @@ async fn setup_services(
 ) {
     // Create SQLite store
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
-    
+
     // Create MultiHeadMemoryStore
     let multi_store = Arc::new(
-        QdrantMultiStore::new(
-            &CONFIG.qdrant_url,
-            "test_ops"
-        )
-        .await
-        .unwrap_or_else(|_| {
-            panic!("Qdrant not available - these tests don't actually need it")
-        })
+        QdrantMultiStore::new(&CONFIG.qdrant_url, "test_ops")
+            .await
+            .unwrap_or_else(|_| {
+                panic!("Qdrant not available - these tests don't actually need it")
+            }),
     );
-    
+
     // Create embedding client (won't be used in these tests)
     let embedding_client = Arc::new(OpenAiEmbeddings::new(
         "test-key".to_string(),
         "text-embedding-3-large".to_string(),
     ));
-    
+
     // Create LLM provider for MemoryService
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
         "test-key".to_string(),
@@ -76,7 +73,7 @@ async fn setup_services(
         "medium".to_string(),
         "medium".to_string(),
     ));
-    
+
     // Create MemoryService
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
@@ -84,37 +81,39 @@ async fn setup_services(
         llm_provider.clone(),
         embedding_client.clone(),
     ));
-    
+
     // Create FactsService FIRST
     let facts_service = Arc::new(FactsService::new((*pool).clone()));
-    
+
     // Create RelationshipService WITH FactsService
     let relationship_service = Arc::new(RelationshipService::new(
         pool.clone(),
         facts_service.clone(),
     ));
-    
+
     // Create GitClient
     let git_store = GitStore::new((*pool).clone());
-    let git_client = GitClient::new(
-        PathBuf::from("./test_repos"),
-        git_store,
-    );
-    
+    let git_client = GitClient::new(PathBuf::from("./test_repos"), git_store);
+
     // FIXED: CodeIntelligenceService needs Pool, not Arc<Pool>
     let code_intelligence = Arc::new(CodeIntelligenceService::new(
         (*pool).clone(),
         multi_store.clone(),
         embedding_client.clone(),
     ));
-    
-    (memory_service, relationship_service, git_client, code_intelligence)
+
+    (
+        memory_service,
+        relationship_service,
+        git_client,
+        code_intelligence,
+    )
 }
 
 #[tokio::test]
 async fn test_operation_engine_lifecycle() {
     println!("\n=== Testing Operation Engine Lifecycle ===\n");
-    
+
     // Setup in-memory database
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
@@ -129,10 +128,10 @@ async fn test_operation_engine_lifecycle() {
 
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
-    
-    let (memory_service, relationship_service, git_client, code_intelligence) = 
+
+    let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
-    
+
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -198,7 +197,10 @@ async fn test_operation_engine_lifecycle() {
                 got_status_change = true;
                 println!("✓ Status change: {} -> {}", old_status, new_status);
             }
-            OperationEngineEvent::Failed { operation_id, error } => {
+            OperationEngineEvent::Failed {
+                operation_id,
+                error,
+            } => {
                 assert_eq!(operation_id, op.id);
                 got_failed = true;
                 println!("✓ Received Failed event: {}", error);
@@ -208,7 +210,10 @@ async fn test_operation_engine_lifecycle() {
     }
 
     assert!(got_started, "Should have received Started event");
-    assert!(got_status_change, "Should have received StatusChanged event");
+    assert!(
+        got_status_change,
+        "Should have received StatusChanged event"
+    );
     assert!(got_failed, "Should have failed with fake API keys");
 
     // Verify database state
@@ -218,8 +223,14 @@ async fn test_operation_engine_lifecycle() {
         .expect("Failed to get operation");
 
     assert_ne!(updated_op.status, "pending", "Status should have changed");
-    assert!(updated_op.started_at.is_some(), "Should have started_at timestamp");
-    assert!(updated_op.completed_at.is_some(), "Should have completed_at timestamp");
+    assert!(
+        updated_op.started_at.is_some(),
+        "Should have started_at timestamp"
+    );
+    assert!(
+        updated_op.completed_at.is_some(),
+        "Should have completed_at timestamp"
+    );
     println!("✓ Database state verified: status = {}", updated_op.status);
 
     // Check events in database
@@ -234,8 +245,7 @@ async fn test_operation_engine_lifecycle() {
     // Verify sequence numbers are sequential
     for (i, event) in events.iter().enumerate() {
         assert_eq!(
-            event.sequence_number,
-            i as i64,
+            event.sequence_number, i as i64,
             "Event sequence numbers should be sequential starting from 0"
         );
     }
@@ -247,7 +257,7 @@ async fn test_operation_engine_lifecycle() {
 #[tokio::test]
 async fn test_operation_cancellation() {
     println!("\n=== Testing Operation Cancellation ===\n");
-    
+
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
         .await
@@ -260,10 +270,10 @@ async fn test_operation_cancellation() {
 
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
-    
-    let (memory_service, relationship_service, git_client, code_intelligence) = 
+
+    let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
-    
+
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -273,7 +283,7 @@ async fn test_operation_cancellation() {
         git_client,
         code_intelligence,
     );
-    
+
     let (tx, mut rx) = mpsc::channel(100);
 
     // Create operation
@@ -318,7 +328,10 @@ async fn test_operation_cancellation() {
         }
     }
 
-    assert!(got_cancelled_error, "Should have received cancellation error");
+    assert!(
+        got_cancelled_error,
+        "Should have received cancellation error"
+    );
 
     // Verify database state shows failure
     let updated_op = engine
@@ -336,7 +349,7 @@ async fn test_operation_cancellation() {
 #[tokio::test]
 async fn test_multiple_operations() {
     println!("\n=== Testing Multiple Operations ===\n");
-    
+
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
         .await
@@ -349,10 +362,10 @@ async fn test_multiple_operations() {
 
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
-    
-    let (memory_service, relationship_service, git_client, code_intelligence) = 
+
+    let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
-    
+
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -365,11 +378,11 @@ async fn test_multiple_operations() {
 
     // Create multiple operations
     let mut operation_ids = Vec::new();
-    
+
     for i in 0..5 {
         let (tx, _rx) = mpsc::channel(100);
         let session_id = format!("session-{}", i);
-        
+
         let op = engine
             .create_operation(
                 session_id.clone(),
@@ -404,7 +417,11 @@ async fn test_multiple_operations() {
             .expect("Failed to get operation");
 
         assert_ne!(op.status, "pending", "Operation {} should have run", i);
-        assert!(op.started_at.is_some(), "Operation {} should have started", i);
+        assert!(
+            op.started_at.is_some(),
+            "Operation {} should have started",
+            i
+        );
         println!("✓ Operation {} verified: status = {}", i, op.status);
     }
 
@@ -414,7 +431,7 @@ async fn test_multiple_operations() {
 #[tokio::test]
 async fn test_operation_event_ordering() {
     println!("\n=== Testing Operation Event Ordering ===\n");
-    
+
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
         .await
@@ -427,10 +444,10 @@ async fn test_operation_event_ordering() {
 
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
-    
-    let (memory_service, relationship_service, git_client, code_intelligence) = 
+
+    let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
-    
+
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
@@ -487,8 +504,7 @@ async fn test_operation_event_ordering() {
     // Verify sequence numbers start at 0 and are contiguous
     for (i, event) in events.iter().enumerate() {
         assert_eq!(
-            event.sequence_number,
-            i as i64,
+            event.sequence_number, i as i64,
             "Sequence numbers should be contiguous starting from 0"
         );
     }
@@ -500,7 +516,7 @@ async fn test_operation_event_ordering() {
 #[tokio::test]
 async fn test_operation_retrieval() {
     println!("\n=== Testing Operation Retrieval ===\n");
-    
+
     let pool = SqlitePoolOptions::new()
         .connect(":memory:")
         .await
@@ -513,10 +529,10 @@ async fn test_operation_retrieval() {
 
     let db = Arc::new(pool);
     let (gpt5, deepseek) = create_test_providers();
-    
-    let (memory_service, relationship_service, git_client, code_intelligence) = 
+
+    let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
-    
+
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,

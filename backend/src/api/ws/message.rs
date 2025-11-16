@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 pub struct MessageMetadata {
     // File and selection context
     pub file_path: Option<String>,
-    pub file_content: Option<String>,  // ADDED: Critical field for actual file content
+    pub file_content: Option<String>, // ADDED: Critical field for actual file content
     pub repo_id: Option<String>,
     pub attachment_id: Option<String>,
     pub language: Option<String>,
     pub selection: Option<TextSelection>,
-    
+
     // Project context fields sent by frontend
     pub project_name: Option<String>,
     pub has_repository: Option<bool>,
@@ -86,39 +86,34 @@ pub enum WsClientMessage {
 pub enum WsServerMessage {
     /// A general response with data
     #[serde(rename = "response")]
-    Response {
-        data: serde_json::Value,
-    },
-    
+    Response { data: serde_json::Value },
+
     /// A general status update for the client UI
     #[serde(rename = "status")]
-    Status { 
+    Status {
         message: String,
         detail: Option<String>,
     },
-    
+
     /// An error message
     #[serde(rename = "error")]
-    Error { 
-        message: String, 
-        code: String,
-    },
-    
+    Error { message: String, code: String },
+
     /// Signals that the server is connected and ready
     #[serde(rename = "connection_ready")]
     ConnectionReady,
-    
+
     /// A pong response to a client's ping for heartbeats
     #[serde(rename = "pong")]
     Pong,
-    
+
     /// A message containing the result of an image generation tool
     #[serde(rename = "image_generated")]
     ImageGenerated {
         urls: Vec<String>,
         revised_prompt: Option<String>,
     },
-    
+
     /// A data response with optional request_id for matching
     #[serde(rename = "data")]
     Data {
@@ -126,13 +121,11 @@ pub enum WsServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
     },
-    
+
     /// NEW: Streaming token delta (for real-time response)
     #[serde(rename = "stream")]
-    Stream {
-        delta: String,
-    },
-    
+    Stream { delta: String },
+
     /// NEW: Chat completion message with full response and artifacts
     #[serde(rename = "chat_complete")]
     ChatComplete {

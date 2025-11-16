@@ -1,10 +1,10 @@
 // src/llm/provider/deepseek.rs
 // DeepSeek Reasoner 3.2 provider - specialized for code generation with structured output
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{debug, error, info};
 
 use crate::config::CONFIG;
@@ -30,10 +30,7 @@ impl DeepSeekProvider {
     }
 
     /// Generate code artifact using DeepSeek Reasoner 3.2 with structured output
-    pub async fn generate_code(
-        &self,
-        request: CodeGenRequest,
-    ) -> Result<CodeGenResponse> {
+    pub async fn generate_code(&self, request: CodeGenRequest) -> Result<CodeGenResponse> {
         info!(
             "DeepSeek: Generating {} code at {}",
             request.language, request.path
@@ -89,7 +86,11 @@ impl DeepSeekProvider {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             error!("DeepSeek API error {}: {}", status, error_text);
-            return Err(anyhow::anyhow!("DeepSeek API error {}: {}", status, error_text));
+            return Err(anyhow::anyhow!(
+                "DeepSeek API error {}: {}",
+                status,
+                error_text
+            ));
         }
 
         let response_json: Value = response
@@ -183,7 +184,10 @@ pub fn build_user_prompt(request: &CodeGenRequest) -> String {
     }
 
     if !request.dependencies.is_empty() {
-        prompt.push_str(&format!("Dependencies: {}\n\n", request.dependencies.join(", ")));
+        prompt.push_str(&format!(
+            "Dependencies: {}\n\n",
+            request.dependencies.join(", ")
+        ));
     }
 
     if let Some(style) = &request.style_guide {

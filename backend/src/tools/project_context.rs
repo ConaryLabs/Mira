@@ -3,19 +3,22 @@
 // Reduces 5-10 tool calls to 1 efficient operation
 // FIXED: Proper JOINs through repository_files → git_repo_attachments
 
-use anyhow::{Result, Context};
-use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use anyhow::{Context, Result};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tracing::info;
 use walkdir::WalkDir;
-use std::time::SystemTime;
 
 /// Get complete project overview in one call
 pub async fn get_project_context(project_id: &str, pool: &SqlitePool) -> Result<Value> {
-    info!("Building complete project context for project_id: {}", project_id);
-    
+    info!(
+        "Building complete project context for project_id: {}",
+        project_id
+    );
+
     // Get git attachment for local path
     let attachment = sqlx::query!(
         r#"SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1"#,
@@ -24,9 +27,9 @@ pub async fn get_project_context(project_id: &str, pool: &SqlitePool) -> Result<
     .fetch_one(pool)
     .await
     .context("Failed to find project git attachment")?;
-    
+
     let local_path = Path::new(&attachment.local_path);
-    
+
     // Build comprehensive context in parallel
     let (tree, recent_files, languages, code_elements) = tokio::try_join!(
         build_full_tree(local_path),
@@ -34,20 +37,26 @@ pub async fn get_project_context(project_id: &str, pool: &SqlitePool) -> Result<
         async { Ok::<_, anyhow::Error>(detect_languages(local_path).await) },
         count_code_elements(pool, project_id)
     )?;
-    
+
     // Count total files
     let total_files = if let Some(tree_array) = tree.as_array() {
-        tree_array.iter().filter(|item| {
-            item.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false) == false
-        }).count()
+        tree_array
+            .iter()
+            .filter(|item| {
+                item.get("is_dir")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    == false
+            })
+            .count()
     } else {
         0
     };
-    
+
     // Add total_files to code_stats
     let mut code_stats = code_elements.as_object().unwrap().clone();
     code_stats.insert("total_files".to_string(), json!(total_files));
-    
+
     Ok(json!({
         "project_id": project_id,
         "local_path": attachment.local_path,
@@ -62,23 +71,24 @@ pub async fn get_project_context(project_id: &str, pool: &SqlitePool) -> Result<
 /// Build complete file tree structure (no depth limit)
 async fn build_full_tree(path: &Path) -> Result<Value> {
     let mut tree = Vec::new();
-    
+
     for entry in WalkDir::new(path)
         .into_iter()
         .filter_entry(|e| !is_ignored(e.path()))
     {
         let entry = entry?;
         let entry_path = entry.path();
-        
+
         // Skip hidden files and common ignore patterns
-        if entry_path.file_name()
+        if entry_path
+            .file_name()
             .and_then(|n| n.to_str())
             .map(|n| n.starts_with('.'))
             .unwrap_or(false)
         {
             continue;
         }
-        
+
         let relative = entry_path.strip_prefix(path)?;
         tree.push(json!({
             "path": relative.display().to_string(),
@@ -86,14 +96,14 @@ async fn build_full_tree(path: &Path) -> Result<Value> {
             "name": entry_path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
         }));
     }
-    
+
     Ok(json!(tree))
 }
 
 /// Get recently modified files (last N files by mtime)
 async fn get_recently_modified(path: &Path, limit: usize) -> Result<Vec<Value>> {
     let mut files: Vec<(PathBuf, SystemTime)> = Vec::new();
-    
+
     for entry in WalkDir::new(path)
         .into_iter()
         .filter_entry(|e| !is_ignored(e.path()))
@@ -108,12 +118,13 @@ async fn get_recently_modified(path: &Path, limit: usize) -> Result<Vec<Value>> 
             }
         }
     }
-    
+
     // Sort by modification time (newest first)
     files.sort_by(|a, b| b.1.cmp(&a.1));
-    
+
     // Take top N
-    let recent: Vec<Value> = files.into_iter()
+    let recent: Vec<Value> = files
+        .into_iter()
         .take(limit)
         .map(|(path, _)| {
             json!({
@@ -122,14 +133,14 @@ async fn get_recently_modified(path: &Path, limit: usize) -> Result<Vec<Value>> 
             })
         })
         .collect();
-    
+
     Ok(recent)
 }
 
 /// Detect languages used in project
 async fn detect_languages(path: &Path) -> HashMap<String, usize> {
     let mut languages: HashMap<String, usize> = HashMap::new();
-    
+
     for entry in WalkDir::new(path)
         .into_iter()
         .filter_entry(|e| !is_ignored(e.path()))
@@ -164,12 +175,12 @@ async fn detect_languages(path: &Path) -> HashMap<String, usize> {
                     "css" | "scss" | "sass" => "CSS",
                     _ => continue,
                 };
-                
+
                 *languages.entry(language.to_string()).or_insert(0) += 1;
             }
         }
     }
-    
+
     languages
 }
 
@@ -191,12 +202,12 @@ async fn count_code_elements(pool: &SqlitePool, project_id: &str) -> Result<Valu
     )
     .fetch_all(pool)
     .await?;
-    
+
     let mut stats = HashMap::new();
     for row in counts {
         stats.insert(row.element_type, row.count);
     }
-    
+
     // FIXED: Use complexity_score (not cyclomatic_complexity) and proper JOINs
     let complexity: Option<f64> = sqlx::query_scalar!(
         r#"
@@ -211,7 +222,7 @@ async fn count_code_elements(pool: &SqlitePool, project_id: &str) -> Result<Valu
     .fetch_optional(pool)
     .await?
     .flatten();
-    
+
     // FIXED: Use proper JOINs for quality issues
     let issues_count: i64 = sqlx::query_scalar!(
         r#"
@@ -226,7 +237,7 @@ async fn count_code_elements(pool: &SqlitePool, project_id: &str) -> Result<Valu
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(json!({
         "elements": stats,
         "avg_complexity": complexity.unwrap_or(0.0),
@@ -247,7 +258,7 @@ fn is_ignored(path: &Path) -> bool {
         ".cache",
         "coverage",
     ];
-    
+
     path.components().any(|c| {
         if let Some(s) = c.as_os_str().to_str() {
             ignored_patterns.iter().any(|&pattern| s == pattern)

@@ -47,14 +47,6 @@ interface AppState {
   // Toast Notifications
   toasts: Toast[];
   
-  // Code Intelligence
-  codeAnalysis: any;
-  complexityHotspots: any[];
-  
-  // Memory & Context
-  relevantMemories: any[];
-  recentTopics: string[];
-  
   // Actions - UI
   setShowArtifacts: (show: boolean) => void;
   setShowFileExplorer: (show: boolean) => void;
@@ -178,17 +170,9 @@ const initialState = {
   // Rate Limiting
   canSendMessage: true,
   rateLimitUntil: null,
-  
+
   // Toasts
   toasts: [],
-  
-  // Code Intelligence
-  codeAnalysis: null,
-  complexityHotspots: [],
-  
-  // Memory & Context
-  relevantMemories: [],
-  recentTopics: [],
 };
 
 export const useAppState = create<AppState>()(

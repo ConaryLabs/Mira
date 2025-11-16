@@ -2,14 +2,14 @@
 // Complete decay system - algorithm and scheduling in one module
 // Handles both the decay calculations and database updates
 
-use std::sync::Arc;
-use std::time::Duration as StdDuration;
+use crate::state::AppState;
 use anyhow::Result;
 use chrono::{Duration, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool, Transaction, Sqlite};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use std::sync::Arc;
+use std::time::Duration as StdDuration;
 use tracing::{debug, info, warn};
-use crate::state::AppState;
 
 // ============================================================================
 // CONFIGURATION
@@ -29,9 +29,9 @@ pub struct DecayConfig {
 impl Default for DecayConfig {
     fn default() -> Self {
         Self {
-            floor: 2.0,         // 20% floor - memories never completely disappear
-            recall_boost: 1.3,  // 30% boost on recall
-            ceiling: 10.0,      // Maximum salience
+            floor: 2.0,        // 20% floor - memories never completely disappear
+            recall_boost: 1.3, // 30% boost on recall
+            ceiling: 10.0,     // Maximum salience
         }
     }
 }
@@ -44,35 +44,32 @@ impl Default for DecayConfig {
 /// This is the core decay algorithm
 pub fn calculate_decay(
     original_salience: f32,
-    age: Duration,  // This is chrono::Duration
+    age: Duration, // This is chrono::Duration
     config: &DecayConfig,
 ) -> f32 {
     // Superhuman stepped decay - memories fade very slowly
     let retention = if age.num_hours() < 24 {
-        1.0   // First 24 hours: Perfect recall
+        1.0 // First 24 hours: Perfect recall
     } else if age.num_days() < 7 {
-        0.95  // First week: 95% retention
+        0.95 // First week: 95% retention
     } else if age.num_days() < 30 {
-        0.90  // First month: 90% retention  
+        0.90 // First month: 90% retention  
     } else if age.num_days() < 90 {
-        0.80  // First 3 months: 80% retention
+        0.80 // First 3 months: 80% retention
     } else if age.num_days() < 365 {
-        0.70  // First year: 70% retention
+        0.70 // First year: 70% retention
     } else if age.num_days() < 730 {
-        0.50  // First 2 years: 50% retention
+        0.50 // First 2 years: 50% retention
     } else {
-        0.30  // Ancient history: 30% retention
+        0.30 // Ancient history: 30% retention
     };
-    
+
     // Apply retention and respect floor
     (original_salience * retention).max(config.floor)
 }
 
 /// Reinforce a memory when it's recalled
-pub fn reinforce_memory(
-    current_salience: f32,
-    config: &DecayConfig,
-) -> f32 {
+pub fn reinforce_memory(current_salience: f32, config: &DecayConfig) -> f32 {
     (current_salience * config.recall_boost).min(config.ceiling)
 }
 
@@ -102,7 +99,7 @@ pub async fn run_decay_cycle(app: Arc<AppState>) -> Result<()> {
     let pool: &SqlitePool = &app.sqlite_store.pool;
     let config = DecayConfig::default();
     let now = Utc::now();
-    
+
     // Get memories that need decay, excluding summaries
     let rows = sqlx::query(
         r#"
@@ -123,88 +120,84 @@ pub async fn run_decay_cycle(app: Arc<AppState>) -> Result<()> {
     .bind(config.floor)
     .fetch_all(pool)
     .await?;
-    
+
     if rows.is_empty() {
         debug!("No memories to decay");
         return Ok(());
     }
-    
+
     let mut tx: Transaction<'_, Sqlite> = pool.begin().await?;
     let mut updated = 0;
     let mut skipped = 0;
-    
+
     for row in &rows {
         let id: i64 = row.get("id");
         let current_salience: f32 = row.get("salience");
-        
+
         // Get timestamp and calculate age
         let created_dt = row.get::<NaiveDateTime, _>("timestamp");
         let created = Utc.from_utc_datetime(&created_dt);
         let age = now.signed_duration_since(created);
-        
+
         // Use original salience if available, otherwise use current
         let original = row
             .get::<Option<f32>, _>("original_salience")
             .unwrap_or(current_salience);
-        
+
         // Apply our decay algorithm
         let decayed = calculate_decay(original, age, &config);
-        
+
         // Skip if change is negligible
         if (current_salience - decayed).abs() < 0.01 {
             skipped += 1;
             continue;
         }
-        
+
         // Update salience
-        sqlx::query(
-            "UPDATE message_analysis SET salience = ? WHERE message_id = ?"
-        )
-        .bind(decayed)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-        
+        sqlx::query("UPDATE message_analysis SET salience = ? WHERE message_id = ?")
+            .bind(decayed)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
         updated += 1;
     }
-    
+
     tx.commit().await?;
-    
+
     if updated > 0 {
-        info!("Decay cycle complete: {} updated, {} skipped", updated, skipped);
+        info!(
+            "Decay cycle complete: {} updated, {} skipped",
+            updated, skipped
+        );
     } else {
         debug!("Decay cycle: no updates needed");
     }
-    
+
     Ok(())
 }
 
 /// Apply reinforcement when memories are recalled
-pub async fn reinforce_memories(
-    memory_ids: &[i64],
-    pool: &SqlitePool,
-) -> Result<()> {
+pub async fn reinforce_memories(memory_ids: &[i64], pool: &SqlitePool) -> Result<()> {
     if memory_ids.is_empty() {
         return Ok(());
     }
-    
+
     let config = DecayConfig::default();
     let now = Utc::now();
     let mut tx = pool.begin().await?;
-    
+
     for &id in memory_ids {
         // Get current salience
-        let row = sqlx::query(
-            "SELECT salience FROM message_analysis WHERE message_id = ?"
-        )
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        
+        let row = sqlx::query("SELECT salience FROM message_analysis WHERE message_id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
         if let Some(row) = row {
             let current: f32 = row.get("salience");
             let reinforced = reinforce_memory(current, &config);
-            
+
             // Update with reinforced value and recall tracking
             sqlx::query(
                 r#"
@@ -213,7 +206,7 @@ pub async fn reinforce_memories(
                     last_recalled = ?,
                     recall_count = recall_count + 1
                 WHERE message_id = ?
-                "#
+                "#,
             )
             .bind(reinforced)
             .bind(now)
@@ -222,9 +215,9 @@ pub async fn reinforce_memories(
             .await?;
         }
     }
-    
+
     tx.commit().await?;
-    
+
     debug!("Reinforced {} recalled memories", memory_ids.len());
     Ok(())
 }
@@ -236,7 +229,7 @@ pub async fn reinforce_memories(
 /// Get decay statistics for monitoring
 pub async fn get_decay_stats(pool: &SqlitePool) -> Result<DecayStats> {
     let config = DecayConfig::default();
-    
+
     let stats = sqlx::query_as::<_, DecayStats>(
         r#"
         SELECT
@@ -249,12 +242,12 @@ pub async fn get_decay_stats(pool: &SqlitePool) -> Result<DecayStats> {
         FROM memory_entries m
         INNER JOIN message_analysis a ON m.id = a.message_id
         WHERE a.salience IS NOT NULL
-        "#
+        "#,
     )
     .bind(config.floor)
     .fetch_one(pool)
     .await?;
-    
+
     Ok(stats)
 }
 

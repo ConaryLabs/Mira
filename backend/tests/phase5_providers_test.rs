@@ -11,10 +11,10 @@ use serde_json::json;
 #[test]
 fn test_get_delegation_tools() {
     let tools = get_delegation_tools();
-    
+
     // Should have at least the core delegation tools
     assert!(!tools.is_empty(), "Should have delegation tools");
-    
+
     // Verify tool names - get all available tool names
     let names: Vec<String> = tools
         .iter()
@@ -25,24 +25,30 @@ fn test_get_delegation_tools() {
                 .map(String::from)
         })
         .collect();
-    
+
     println!("Available delegation tools: {:?}", names);
-    
+
     // Should have code generation tools
     assert!(
-        names.iter().any(|n| n.contains("generate") || n.contains("create")),
+        names
+            .iter()
+            .any(|n| n.contains("generate") || n.contains("create")),
         "Should have code generation tool"
     );
-    
+
     // Should have code modification tools
     assert!(
-        names.iter().any(|n| n.contains("modify") || n.contains("refactor")),
+        names
+            .iter()
+            .any(|n| n.contains("modify") || n.contains("refactor")),
         "Should have code modification tool"
     );
-    
+
     // Should have code fixing tools
     assert!(
-        names.iter().any(|n| n.contains("fix") || n.contains("debug")),
+        names
+            .iter()
+            .any(|n| n.contains("fix") || n.contains("debug")),
         "Should have code fixing tool"
     );
 }
@@ -50,7 +56,7 @@ fn test_get_delegation_tools() {
 #[test]
 fn test_delegation_tools_structure() {
     let tools = get_delegation_tools();
-    
+
     for tool in tools {
         // Each tool should have type and function
         assert_eq!(
@@ -58,15 +64,13 @@ fn test_delegation_tools_structure() {
             Some("function"),
             "Tool should have type='function'"
         );
-        
-        let function = tool.get("function")
+
+        let function = tool
+            .get("function")
             .expect("Tool should have function field");
-        
+
         // Each function should have name, description, parameters
-        assert!(
-            function.get("name").is_some(),
-            "Function should have name"
-        );
+        assert!(function.get("name").is_some(), "Function should have name");
         assert!(
             function.get("description").is_some(),
             "Function should have description"
@@ -75,7 +79,7 @@ fn test_delegation_tools_structure() {
             function.get("parameters").is_some(),
             "Function should have parameters"
         );
-        
+
         // Parameters should have type and properties
         let params = function.get("parameters").unwrap();
         assert_eq!(
@@ -104,7 +108,7 @@ fn test_parse_tool_call_generate_code() {
     });
 
     let (name, args) = parse_tool_call(&tool_call).expect("Should parse tool call");
-    
+
     assert_eq!(name, "generate_code");
     assert_eq!(args["path"], "src/test.ts");
     assert_eq!(args["description"], "Test file");
@@ -121,7 +125,7 @@ fn test_parse_tool_call_refactor_code() {
     });
 
     let (name, args) = parse_tool_call(&tool_call).expect("Should parse tool call");
-    
+
     assert_eq!(name, "refactor_code");
     assert_eq!(args["path"], "src/old.rs");
     // Note: field names might vary (existing_code, current_code, etc.)
@@ -141,7 +145,7 @@ fn test_parse_tool_call_debug_code() {
     });
 
     let (name, args) = parse_tool_call(&tool_call).expect("Should parse tool call");
-    
+
     assert!(name == "fix_code" || name == "debug_code");
     assert_eq!(args["path"], "src/buggy.py");
     // Field name might be "code", "buggy_code", etc.
@@ -194,17 +198,17 @@ fn test_parse_tool_call_invalid_json_arguments() {
 #[test]
 fn test_normalize_verbosity() {
     use mira_backend::llm::provider::gpt5::normalize_verbosity;
-    
+
     assert_eq!(normalize_verbosity("low"), "low");
     assert_eq!(normalize_verbosity("LOW"), "low");
     assert_eq!(normalize_verbosity("minimal"), "low");
     assert_eq!(normalize_verbosity("concise"), "low");
-    
+
     assert_eq!(normalize_verbosity("high"), "high");
     assert_eq!(normalize_verbosity("HIGH"), "high");
     assert_eq!(normalize_verbosity("detailed"), "high");
     assert_eq!(normalize_verbosity("verbose"), "high");
-    
+
     assert_eq!(normalize_verbosity("medium"), "medium");
     assert_eq!(normalize_verbosity("MEDIUM"), "medium");
     assert_eq!(normalize_verbosity("invalid"), "medium");
@@ -214,16 +218,16 @@ fn test_normalize_verbosity() {
 #[test]
 fn test_normalize_reasoning() {
     use mira_backend::llm::provider::gpt5::normalize_reasoning;
-    
+
     assert_eq!(normalize_reasoning("minimal"), "low");
     assert_eq!(normalize_reasoning("low"), "medium"); // "low" is not in the match, goes to default
     assert_eq!(normalize_reasoning("quick"), "low");
-    
+
     assert_eq!(normalize_reasoning("high"), "high");
     assert_eq!(normalize_reasoning("HIGH"), "high");
     assert_eq!(normalize_reasoning("thorough"), "high");
     assert_eq!(normalize_reasoning("deep"), "high");
-    
+
     assert_eq!(normalize_reasoning("medium"), "medium");
     assert_eq!(normalize_reasoning("MEDIUM"), "medium");
     assert_eq!(normalize_reasoning("invalid"), "medium");
@@ -237,7 +241,7 @@ fn test_normalize_reasoning() {
 #[test]
 fn test_build_user_prompt() {
     use mira_backend::llm::provider::deepseek::{CodeGenRequest, build_user_prompt};
-    
+
     let request = CodeGenRequest {
         path: "src/components/Button.tsx".to_string(),
         description: "Create a reusable button component".to_string(),
@@ -263,7 +267,7 @@ fn test_build_user_prompt() {
 #[test]
 fn test_build_user_prompt_minimal() {
     use mira_backend::llm::provider::deepseek::{CodeGenRequest, build_user_prompt};
-    
+
     let request = CodeGenRequest {
         path: "test.rs".to_string(),
         description: "Simple test".to_string(),
@@ -287,7 +291,7 @@ fn test_build_user_prompt_minimal() {
 #[test]
 fn test_code_artifact_serialization() {
     use mira_backend::llm::provider::deepseek::CodeArtifact;
-    
+
     let artifact = CodeArtifact {
         path: "test.ts".to_string(),
         content: "console.log('test');".to_string(),
@@ -307,9 +311,10 @@ fn test_code_artifact_serialization() {
 #[test]
 fn test_code_artifact_without_explanation() {
     use mira_backend::llm::provider::deepseek::CodeArtifact;
-    
+
     let json = r#"{"path":"test.rs","content":"fn main() {}","language":"rust"}"#;
-    let artifact: CodeArtifact = serde_json::from_str(json).expect("Should deserialize without explanation");
+    let artifact: CodeArtifact =
+        serde_json::from_str(json).expect("Should deserialize without explanation");
 
     assert_eq!(artifact.path, "test.rs");
     assert_eq!(artifact.content, "fn main() {}");
@@ -320,7 +325,7 @@ fn test_code_artifact_without_explanation() {
 #[test]
 fn test_codegen_request_serialization() {
     use mira_backend::llm::provider::deepseek::CodeGenRequest;
-    
+
     let request = CodeGenRequest {
         path: "src/lib.rs".to_string(),
         description: "Main library file".to_string(),

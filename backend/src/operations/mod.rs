@@ -1,12 +1,15 @@
 // src/operations/mod.rs
 // FIXED: Expanded Artifact struct to use all database fields
 
-pub mod engine;
-pub mod types;
+pub mod context_loader;
 pub mod delegation_tools;
+pub mod engine;
+pub mod tool_builder;
+pub mod types;
 
-pub use engine::{OperationEngine, OperationEngineEvent};
+pub use context_loader::ContextLoader;
 pub use delegation_tools::{get_delegation_tools, parse_tool_call};
+pub use engine::{OperationEngine, OperationEngineEvent};
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,40 +21,40 @@ use uuid::Uuid;
 pub struct Operation {
     pub id: String,
     pub session_id: String,
-    pub kind: String, // e.g., "code_generation", "refactor", etc.
+    pub kind: String,   // e.g., "code_generation", "refactor", etc.
     pub status: String, // e.g., "pending", "completed", "failed"
-    
+
     // Timing
     #[sqlx(default)]
     pub created_at: i64,
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
-    
+
     // Input
     pub user_message: String,
     pub context_snapshot: Option<String>, // JSON snapshot of relevant context
-    
+
     // Analysis & Routing
     pub complexity_score: Option<f64>,
-    pub delegated_to: Option<String>, // e.g., "deepseek"
+    pub delegated_to: Option<String>,  // e.g., "deepseek"
     pub primary_model: Option<String>, // e.g., "gpt-5"
     pub delegation_reason: Option<String>,
-    
+
     // GPT-5 Responses API Tracking
     pub response_id: Option<String>,
     pub parent_response_id: Option<String>,
     pub parent_operation_id: Option<String>,
-    
+
     // Code-specific context
     pub target_language: Option<String>,
     pub target_framework: Option<String>,
     pub operation_intent: Option<String>,
     pub files_affected: Option<String>, // JSON array
-    
+
     // Results
     pub result: Option<String>,
     pub error: Option<String>,
-    
+
     // Cost Tracking
     pub tokens_input: Option<i64>,
     pub tokens_output: Option<i64>,
@@ -59,7 +62,7 @@ pub struct Operation {
     pub cost_usd: Option<f64>,
     #[sqlx(default)]
     pub delegate_calls: i64,
-    
+
     // Metadata
     pub metadata: Option<String>, // JSON
 }
@@ -77,10 +80,10 @@ pub struct OperationEvent {
 }
 
 /// Artifacts generated during operations (code files, documents, etc.)
-/// 
+///
 /// Database schema includes comprehensive metadata fields for tracking generation context,
 /// performance metrics, and relationships. This struct exposes all available fields.
-/// 
+///
 /// Maps to `artifacts` table (see migration 20251016_unified_baseline.sql)
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Artifact {
@@ -88,45 +91,45 @@ pub struct Artifact {
     pub id: String,
     pub operation_id: String,
     pub kind: String, // e.g., "code", "document", "diagram"
-    
+
     // Content fields
     pub file_path: Option<String>,
     pub content: String,
     pub content_hash: String, // SHA-256 for deduplication
     pub language: Option<String>,
-    
+
     // FIXED: Database column is 'diff_from_previous' but API uses 'diff'
     #[sqlx(rename = "diff_from_previous")]
     pub diff: Option<String>,
-    
+
     // Preview for quick display (first N lines)
     pub preview: Option<String>,
-    
+
     // Relationship tracking
     pub previous_artifact_id: Option<String>,
-    
+
     // FIXED: SQLite uses INTEGER for booleans (0/1)
     #[sqlx(rename = "is_new_file")]
     pub is_new_file: Option<i32>, // 0 = false, 1 = true
-    
+
     // Context JSON fields - stored as TEXT in SQLite
-    pub related_files: Option<String>,     // JSON array of file paths
-    pub dependencies: Option<String>,      // JSON array of dependencies
-    pub project_context: Option<String>,   // JSON object with project info
+    pub related_files: Option<String>,   // JSON array of file paths
+    pub dependencies: Option<String>,    // JSON array of dependencies
+    pub project_context: Option<String>, // JSON object with project info
     pub user_requirements: Option<String>, // JSON object with requirements
-    pub constraints: Option<String>,       // JSON array of constraints
-    
+    pub constraints: Option<String>,     // JSON array of constraints
+
     // Generation metadata
-    pub generated_by: Option<String>,      // e.g., "deepseek", "gpt5"
-    pub generation_time_ms: Option<i64>,   // How long generation took
-    pub context_tokens: Option<i64>,       // Tokens in context
-    pub output_tokens: Option<i64>,        // Tokens generated
-    
+    pub generated_by: Option<String>,    // e.g., "deepseek", "gpt5"
+    pub generation_time_ms: Option<i64>, // How long generation took
+    pub context_tokens: Option<i64>,     // Tokens in context
+    pub output_tokens: Option<i64>,      // Tokens generated
+
     // Lifecycle timestamps
     pub created_at: i64,
     pub completed_at: Option<i64>,
     pub applied_at: Option<i64>,
-    
+
     // Additional metadata
     pub metadata: Option<String>, // JSON object for extensibility
 }
@@ -207,7 +210,7 @@ impl Artifact {
             language,
             diff,
             created_at: chrono::Utc::now().timestamp(),
-            
+
             // Default all optional metadata fields to None
             preview: None,
             previous_artifact_id: None,
@@ -226,7 +229,7 @@ impl Artifact {
             metadata: None,
         }
     }
-    
+
     /// Create a new artifact with generation metadata
     #[allow(clippy::too_many_arguments)]
     pub fn with_metadata(
@@ -251,18 +254,19 @@ impl Artifact {
             language,
             diff,
         );
-        
+
         artifact.generated_by = generated_by;
         artifact.generation_time_ms = generation_time_ms;
         artifact.context_tokens = context_tokens;
         artifact.output_tokens = output_tokens;
-        
+
         artifact
     }
-    
+
     /// Set preview (first N lines of content)
     pub fn with_preview(mut self, lines: usize) -> Self {
-        let preview: String = self.content
+        let preview: String = self
+            .content
             .lines()
             .take(lines)
             .collect::<Vec<_>>()
@@ -270,31 +274,31 @@ impl Artifact {
         self.preview = Some(preview);
         self
     }
-    
+
     /// Mark as new file
     pub fn as_new_file(mut self) -> Self {
         self.is_new_file = Some(1);
         self
     }
-    
+
     /// Mark as existing file modification
     pub fn as_modification(mut self) -> Self {
         self.is_new_file = Some(0);
         self
     }
-    
+
     /// Set related files from Vec
     pub fn with_related_files(mut self, files: Vec<String>) -> Self {
         self.related_files = Some(serde_json::to_string(&files).unwrap_or_default());
         self
     }
-    
+
     /// Set dependencies from Vec
     pub fn with_dependencies(mut self, deps: Vec<String>) -> Self {
         self.dependencies = Some(serde_json::to_string(&deps).unwrap_or_default());
         self
     }
-    
+
     /// Get related files as Vec
     pub fn get_related_files(&self) -> Vec<String> {
         self.related_files
@@ -302,7 +306,7 @@ impl Artifact {
             .and_then(|json| serde_json::from_str(json).ok())
             .unwrap_or_default()
     }
-    
+
     /// Get dependencies as Vec
     pub fn get_dependencies(&self) -> Vec<String> {
         self.dependencies
@@ -310,18 +314,18 @@ impl Artifact {
             .and_then(|json| serde_json::from_str(json).ok())
             .unwrap_or_default()
     }
-    
+
     /// Check if this is a new file
     pub fn is_new(&self) -> bool {
         self.is_new_file == Some(1)
     }
-    
+
     /// Mark as completed
     pub fn mark_completed(mut self) -> Self {
         self.completed_at = Some(chrono::Utc::now().timestamp());
         self
     }
-    
+
     /// Mark as applied
     pub fn mark_applied(mut self) -> Self {
         self.applied_at = Some(chrono::Utc::now().timestamp());

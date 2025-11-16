@@ -1,12 +1,12 @@
 // src/project/store.rs
 
-use crate::project::types::{Project, Artifact, ArtifactType};
-use sqlx::{SqlitePool, Row};
-use chrono::{Utc, NaiveDateTime, TimeZone};
+use crate::project::types::{Artifact, ArtifactType, Project};
 use anyhow::Result;
-use uuid::Uuid;
+use chrono::{NaiveDateTime, TimeZone, Utc};
+use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 pub struct ProjectStore {
     pub pool: SqlitePool,
@@ -28,7 +28,9 @@ impl ProjectStore {
     ) -> Result<Project> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
-        let tags_json = tags.as_ref().map(|t| serde_json::to_string(t).unwrap_or("[]".to_string()));
+        let tags_json = tags
+            .as_ref()
+            .map(|t| serde_json::to_string(t).unwrap_or("[]".to_string()));
 
         sqlx::query(
             r#"
@@ -105,7 +107,7 @@ impl ProjectStore {
         }
 
         let mut project = existing.unwrap();
-        
+
         // Update fields if provided
         if let Some(n) = name {
             project.name = n;
@@ -116,10 +118,13 @@ impl ProjectStore {
         if tags.is_some() {
             project.tags = tags;
         }
-        
+
         project.updated_at = Utc::now();
-        
-        let tags_json = project.tags.as_ref().map(|t| serde_json::to_string(t).unwrap_or("[]".to_string()));
+
+        let tags_json = project
+            .tags
+            .as_ref()
+            .map(|t| serde_json::to_string(t).unwrap_or("[]".to_string()));
 
         sqlx::query(
             r#"
@@ -157,13 +162,16 @@ impl ProjectStore {
         for row in &repo_paths {
             let local_path: String = row.get("local_path");
             let attachment_type: Option<String> = row.get("attachment_type");
-            
+
             // CRITICAL FIX: Skip local directories - they're user source code!
             if attachment_type.as_deref() == Some("local_directory") {
-                info!("Skipping local directory (not deleting user source): {}", local_path);
+                info!(
+                    "Skipping local directory (not deleting user source): {}",
+                    local_path
+                );
                 continue;
             }
-            
+
             // Only delete sandboxed git clones
             let path = Path::new(&local_path);
             if path.exists() {
@@ -190,9 +198,12 @@ impl ProjectStore {
             .await?;
 
         let deleted = result.rows_affected() > 0;
-        
+
         if deleted {
-            info!("Deleted project {} and cleaned up {} git clone directories", id, deleted_count);
+            info!(
+                "Deleted project {} and cleaned up {} git clone directories",
+                id, deleted_count
+            );
         }
 
         Ok(deleted)
@@ -288,7 +299,7 @@ impl ProjectStore {
         }
 
         let mut artifact = existing.unwrap();
-        
+
         // Update fields if provided
         if let Some(n) = name {
             artifact.name = n;
@@ -297,7 +308,7 @@ impl ProjectStore {
             artifact.content = content;
             artifact.version += 1; // Increment version on content change
         }
-        
+
         artifact.updated_at = Utc::now();
 
         sqlx::query(
@@ -363,7 +374,8 @@ impl ProjectStore {
         let created_at: NaiveDateTime = row.get("created_at");
         let updated_at: NaiveDateTime = row.get("updated_at");
 
-        let artifact_type = artifact_type_str.parse::<ArtifactType>()
+        let artifact_type = artifact_type_str
+            .parse::<ArtifactType>()
             .map_err(|e| anyhow::anyhow!(e))?;
 
         Ok(Artifact {

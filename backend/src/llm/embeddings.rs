@@ -97,7 +97,7 @@ impl EmbeddingHead {
             EmbeddingHead::Relationship => "relationship",
         }
     }
-    
+
     pub fn all() -> Vec<EmbeddingHead> {
         vec![
             EmbeddingHead::Semantic,

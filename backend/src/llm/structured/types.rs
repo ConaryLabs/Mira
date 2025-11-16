@@ -45,7 +45,7 @@ impl MessageAnalysis {
         if self.salience > 1.0 {
             self.salience = self.salience / 10.0;
         }
-        
+
         // Normalize intensity if > 1.0 (assume 0-10 scale)
         if let Some(intensity) = self.intensity {
             if intensity > 1.0 {
@@ -64,7 +64,7 @@ pub struct LLMMetadata {
     pub response_id: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
-    pub thinking_tokens: Option<i64>,  // Claude's extended thinking
+    pub thinking_tokens: Option<i64>, // Claude's extended thinking
     pub total_tokens: Option<i64>,
     pub finish_reason: Option<String>,
     pub latency_ms: i64,
@@ -78,5 +78,5 @@ pub struct CompleteResponse {
     pub structured: StructuredLLMResponse,
     pub metadata: LLMMetadata,
     pub raw_response: Value,
-    pub artifacts: Option<Vec<Value>>,  // For code fixes - contains file updates
+    pub artifacts: Option<Vec<Value>>, // For code fixes - contains file updates
 }

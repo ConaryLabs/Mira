@@ -3,9 +3,9 @@
 // Eliminates ~20+ instances of duplicated error handling across the codebase
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use std::fmt;

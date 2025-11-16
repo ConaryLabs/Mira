@@ -3,14 +3,14 @@
 // Finds and removes orphaned Qdrant entries that no longer have corresponding SQLite records.
 // This handles the case where messages get deleted from SQLite but their embeddings remain in Qdrant.
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use anyhow::{Result, Context};
-use tracing::{info, warn, error};
+use anyhow::{Context, Result};
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
-use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::embeddings::EmbeddingHead;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
 /// Report of cleanup operation
 #[derive(Debug, Clone)]
@@ -70,20 +70,20 @@ impl EmbeddingCleanupTask {
     }
 
     /// Run the cleanup task
-    /// 
+    ///
     /// # Arguments
     /// * `dry_run` - If true, only reports orphans without deleting them
     pub async fn run(&self, dry_run: bool) -> Result<CleanupReport> {
         info!("Starting embedding cleanup task (dry_run: {})", dry_run);
-        
+
         let mut report = CleanupReport::new();
-        
+
         // Get all enabled embedding heads
         let heads = self.multi_store.get_enabled_heads();
-        
+
         for head in heads {
             info!("Checking {} collection for orphans", head.as_str());
-            
+
             match self.clean_collection(head, dry_run).await {
                 Ok(collection_report) => {
                     info!(
@@ -99,7 +99,7 @@ impl EmbeddingCleanupTask {
                 }
             }
         }
-        
+
         info!("Cleanup task complete: {}", report.summary());
         Ok(report)
     }
@@ -117,7 +117,8 @@ impl EmbeddingCleanupTask {
         };
 
         // Scroll through all points in this collection
-        let all_points = self.multi_store
+        let all_points = self
+            .multi_store
             .scroll_all_points(head)
             .await
             .context("Failed to scroll collection")?;
@@ -126,7 +127,7 @@ impl EmbeddingCleanupTask {
 
         // Check each point against SQLite
         let mut orphan_ids = Vec::new();
-        
+
         for point_id in all_points {
             // Point ID should be the message_id as a string
             let message_id: i64 = match point_id.parse() {
@@ -139,7 +140,7 @@ impl EmbeddingCleanupTask {
 
             // Check if this message_id exists in SQLite
             let exists = self.check_message_exists(message_id).await?;
-            
+
             if !exists {
                 orphan_ids.push(message_id);
                 report.orphans += 1;
@@ -148,8 +149,12 @@ impl EmbeddingCleanupTask {
 
         // Delete orphans if not a dry run
         if !dry_run && !orphan_ids.is_empty() {
-            info!("Deleting {} orphans from {} collection", orphan_ids.len(), head.as_str());
-            
+            info!(
+                "Deleting {} orphans from {} collection",
+                orphan_ids.len(),
+                head.as_str()
+            );
+
             for message_id in orphan_ids {
                 match self.multi_store.delete(head, message_id).await {
                     Ok(_) => {
@@ -167,12 +172,11 @@ impl EmbeddingCleanupTask {
 
     /// Check if a message exists in SQLite
     async fn check_message_exists(&self, message_id: i64) -> Result<bool> {
-        let result = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM memory_entries WHERE id = ?"
-        )
-        .bind(message_id)
-        .fetch_one(&*self.pool)
-        .await?;
+        let result =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_entries WHERE id = ?")
+                .bind(message_id)
+                .fetch_one(&*self.pool)
+                .await?;
 
         Ok(result > 0)
     }

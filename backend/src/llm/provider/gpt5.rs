@@ -6,11 +6,11 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::any::Any;
 use std::pin::Pin;
 use std::time::Instant;
-use tracing::{debug, error, warn, info};
+use tracing::{debug, error, info, warn};
 
 /// SSE stream that properly buffers lines across byte chunks
 struct SseStream<S> {
@@ -176,7 +176,10 @@ impl Gpt5Provider {
         }
 
         let response_json: Value = response.json().await?;
-        debug!("GPT-5 response: {}", serde_json::to_string_pretty(&response_json)?);
+        debug!(
+            "GPT-5 response: {}",
+            serde_json::to_string_pretty(&response_json)?
+        );
 
         // Extract response_id
         let response_id = response_json
@@ -216,7 +219,7 @@ impl Gpt5Provider {
         schema: Value,
     ) -> Result<Response> {
         let start = Instant::now();
-        
+
         // Build input array
         let mut input = vec![];
         for msg in messages {
@@ -225,7 +228,7 @@ impl Gpt5Provider {
                 "content": msg.content
             }));
         }
-        
+
         let body = json!({
             "model": self.model,
             "input": input,
@@ -246,9 +249,12 @@ impl Gpt5Provider {
             },
             "store": false
         });
-        
-        debug!("GPT-5 structured request: {}", serde_json::to_string_pretty(&body)?);
-        
+
+        debug!(
+            "GPT-5 structured request: {}",
+            serde_json::to_string_pretty(&body)?
+        );
+
         let response = self
             .client
             .post("https://api.openai.com/v1/responses")
@@ -257,17 +263,17 @@ impl Gpt5Provider {
             .json(&body)
             .send()
             .await?;
-        
+
         let status = response.status();
         let body_text = response.text().await?;
-        
+
         if !status.is_success() {
             error!("GPT-5 schema error {}: {}", status, body_text);
             return Err(anyhow!("GPT-5 error {}: {}", status, body_text));
         }
-        
+
         let json: Value = serde_json::from_str(&body_text)?;
-        
+
         // Extract content from GPT-5 response
         // Structure: output[] -> type="message" -> content[] -> type="output_text" -> text
         let content = if let Some(output) = json.get("output").and_then(|o| o.as_array()) {
@@ -291,14 +297,14 @@ impl Gpt5Provider {
         } else {
             String::new()
         };
-        
+
         if content.is_empty() {
             error!("Failed to extract content from response");
             return Err(anyhow!("No content in structured response"));
         }
-        
+
         let latency = start.elapsed().as_millis() as i64;
-        
+
         Ok(Response {
             content,
             model: self.model.clone(),
@@ -325,7 +331,10 @@ impl Gpt5Provider {
             None, // no response_format
         );
 
-        debug!("GPT-5 streaming request: {}", serde_json::to_string_pretty(&body)?);
+        debug!(
+            "GPT-5 streaming request: {}",
+            serde_json::to_string_pretty(&body)?
+        );
 
         let response = self
             .client
@@ -340,7 +349,11 @@ impl Gpt5Provider {
             let status = response.status();
             let error_text = response.text().await?;
             error!("GPT-5 API streaming error {}: {}", status, error_text);
-            return Err(anyhow!("GPT-5 API streaming error {}: {}", status, error_text));
+            return Err(anyhow!(
+                "GPT-5 API streaming error {}: {}",
+                status,
+                error_text
+            ));
         }
 
         // Create buffered SSE stream that properly handles line boundaries
@@ -362,7 +375,11 @@ impl Gpt5Provider {
                     match serde_json::from_str::<Value>(data) {
                         Ok(json) => {
                             // LOG EVERY EVENT TO DEBUG
-                            info!("[GPT-5 STREAM] Received event: {}", serde_json::to_string(&json).unwrap_or_else(|_| "invalid".to_string()));
+                            info!(
+                                "[GPT-5 STREAM] Received event: {}",
+                                serde_json::to_string(&json)
+                                    .unwrap_or_else(|_| "invalid".to_string())
+                            );
                             parse_sse_event(&json)
                         }
                         Err(e) => {
@@ -534,13 +551,13 @@ pub struct ToolCall {
 fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
     // First, try to get event type
     let event_type = json.get("type").and_then(|t| t.as_str());
-    
+
     // If no type field, log the entire event for debugging
     if event_type.is_none() {
         warn!("[GPT-5 PARSE] Event missing 'type' field: {}", json);
         return None;
     }
-    
+
     let event_type = event_type.unwrap();
     info!("[GPT-5 PARSE] Event type: {}", event_type);
 
@@ -548,13 +565,17 @@ fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
         "response.output_text.delta" => {
             let delta = json.get("delta").and_then(|d| d.as_str())?;
             info!("[GPT-5 PARSE] Text delta: {}", delta);
-            Some(Ok(Gpt5StreamEvent::TextDelta { delta: delta.to_string() }))
+            Some(Ok(Gpt5StreamEvent::TextDelta {
+                delta: delta.to_string(),
+            }))
         }
 
         "response.reasoning.delta" => {
             let delta = json.get("delta").and_then(|d| d.as_str())?;
             info!("[GPT-5 PARSE] Reasoning delta: {}", delta);
-            Some(Ok(Gpt5StreamEvent::ReasoningDelta { delta: delta.to_string() }))
+            Some(Ok(Gpt5StreamEvent::ReasoningDelta {
+                delta: delta.to_string(),
+            }))
         }
 
         "response.function_call_arguments.delta" => {
@@ -586,11 +607,14 @@ fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
                     let id = item.get("call_id").and_then(|i| i.as_str())?;
                     let name = item.get("name").and_then(|n| n.as_str())?;
                     let args_str = item.get("arguments").and_then(|a| a.as_str())?;
-                    
+
                     // Parse arguments JSON string
                     match serde_json::from_str::<serde_json::Value>(args_str) {
                         Ok(arguments) => {
-                            info!("[GPT-5 PARSE] Tool call complete (output_item.done): {} - {}", name, id);
+                            info!(
+                                "[GPT-5 PARSE] Tool call complete (output_item.done): {} - {}",
+                                name, id
+                            );
                             return Some(Ok(Gpt5StreamEvent::ToolCallComplete {
                                 id: id.to_string(),
                                 name: name.to_string(),
@@ -612,8 +636,14 @@ fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
             let response_id = json.get("id").and_then(|i| i.as_str())?;
             let usage = json.get("usage")?;
 
-            let input_tokens = usage.get("input_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
-            let output_tokens = usage.get("output_tokens").and_then(|t| t.as_i64()).unwrap_or(0);
+            let input_tokens = usage
+                .get("input_tokens")
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0);
+            let output_tokens = usage
+                .get("output_tokens")
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0);
             let reasoning_tokens = usage
                 .get("output_tokens_details")
                 .and_then(|d| d.get("reasoning_tokens"))
@@ -636,7 +666,9 @@ fn parse_sse_event(json: &Value) -> Option<Result<Gpt5StreamEvent>> {
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error");
             error!("[GPT-5 PARSE] Error event: {}", message);
-            Some(Ok(Gpt5StreamEvent::Error { message: message.to_string() }))
+            Some(Ok(Gpt5StreamEvent::Error {
+                message: message.to_string(),
+            }))
         }
 
         // Log but ignore other event types
@@ -698,6 +730,8 @@ impl LlmProvider for Gpt5Provider {
         _tools: Vec<Value>,
         _context: Option<super::ToolContext>,
     ) -> Result<super::ToolResponse> {
-        Err(anyhow!("Use create_with_tools or create_stream_with_tools instead"))
+        Err(anyhow!(
+            "Use create_with_tools or create_stream_with_tools instead"
+        ))
     }
 }

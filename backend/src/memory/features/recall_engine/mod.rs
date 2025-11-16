@@ -1,34 +1,33 @@
 // src/memory/features/recall_engine/mod.rs
 
 //! Refactored RecallEngine with clean separation of concerns.
-//! 
+//!
 //! This replaces the monolithic recall_engine.rs with a modular architecture:
 //! - search/ - Focused search strategy implementations  
 //! - scoring/ - Dedicated scoring algorithms
 //! - context/ - Context assembly logic
-//! 
+//!
 //! Same functionality, cleaner architecture, ready for code intelligence.
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::debug;
 
-use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use crate::llm::embeddings::EmbeddingHead;
+use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use crate::memory::{
-    core::types::MemoryEntry,
+    core::types::MemoryEntry, storage::qdrant::multi_store::QdrantMultiStore,
     storage::sqlite::store::SqliteMemoryStore,
-    storage::qdrant::multi_store::QdrantMultiStore,
 };
 
 // Import our new focused modules
-mod search;
-mod scoring;
 mod context;
+mod scoring;
+mod search;
 
 // Re-export the implementations
-use search::{RecentSearch, SemanticSearch, HybridSearch, MultiHeadSearch};
 use context::MemoryContextBuilder;
+use search::{HybridSearch, MultiHeadSearch, RecentSearch, SemanticSearch};
 
 // Public types are defined below, no need for re-export
 
@@ -36,19 +35,19 @@ use context::MemoryContextBuilder;
 // These stay exactly the same for backward compatibility
 
 /// Context for recall operations containing recent and semantic memories
-/// 
+///
 /// PHASE 1.1 UPDATE: Added summary fields for layered context architecture
 #[derive(Debug, Clone)]
 pub struct RecallContext {
     // Original fields - keep for backward compatibility
     pub recent: Vec<MemoryEntry>,
     pub semantic: Vec<MemoryEntry>,
-    
+
     // NEW: Summary layers for generous context
     /// Rolling summary of last 100 messages (~2,500 tokens)
     /// Provides mid-range context without full message history
     pub rolling_summary: Option<String>,
-    
+
     /// Session-level snapshot summary (~3,000 tokens)
     /// Comprehensive overview of entire conversation
     pub session_summary: Option<String>,
@@ -94,7 +93,11 @@ pub enum SearchMode {
     /// Combined recent + semantic
     Hybrid { query: String, config: RecallConfig },
     /// Multi-head semantic search
-    MultiHead { query: String, heads: Vec<EmbeddingHead>, limit: usize },
+    MultiHead {
+        query: String,
+        heads: Vec<EmbeddingHead>,
+        limit: usize,
+    },
 }
 
 /// Scored memory entry with relevance metrics
@@ -116,7 +119,7 @@ pub struct RecallEngine {
     semantic_search: SemanticSearch,
     hybrid_search: HybridSearch,
     multihead_search: MultiHeadSearch,
-    
+
     // Context building - clean separation from search logic
     context_builder: MemoryContextBuilder,
 }
@@ -133,20 +136,12 @@ impl RecallEngine {
         // Build focused search strategies
         let recent_search = RecentSearch::new(sqlite_store.clone());
         let semantic_search = SemanticSearch::new(embedding_client.clone(), multi_store.clone());
-        let hybrid_search = HybridSearch::new(
-            recent_search.clone(),
-            semantic_search.clone(),
-        );
-        let multihead_search = MultiHeadSearch::new(
-            embedding_client.clone(),
-            multi_store.clone(),
-        );
-        
+        let hybrid_search = HybridSearch::new(recent_search.clone(), semantic_search.clone());
+        let multihead_search = MultiHeadSearch::new(embedding_client.clone(), multi_store.clone());
+
         // Build context builder
-        let context_builder = MemoryContextBuilder::new(
-            hybrid_search.clone(),
-        );
-        
+        let context_builder = MemoryContextBuilder::new(hybrid_search.clone());
+
         Self {
             recent_search,
             semantic_search,
@@ -157,29 +152,29 @@ impl RecallEngine {
     }
 
     /// Main entry point for all search operations - SAME API as before
-    pub async fn search(
-        &self,
-        session_id: &str,
-        mode: SearchMode,
-    ) -> Result<Vec<ScoredMemory>> {
+    pub async fn search(&self, session_id: &str, mode: SearchMode) -> Result<Vec<ScoredMemory>> {
         debug!("RecallEngine::search - mode: {:?}", mode);
-        
+
         match mode {
-            SearchMode::Recent { limit } => {
-                self.recent_search.search(session_id, limit).await
-            }
+            SearchMode::Recent { limit } => self.recent_search.search(session_id, limit).await,
             SearchMode::Semantic { query, limit } => {
                 self.semantic_search.search(session_id, &query, limit).await
             }
             SearchMode::Hybrid { query, config } => {
                 self.hybrid_search.search(session_id, &query, &config).await
             }
-            SearchMode::MultiHead { query, heads, limit } => {
-                self.multihead_search.search(session_id, &query, &heads, limit).await
+            SearchMode::MultiHead {
+                query,
+                heads,
+                limit,
+            } => {
+                self.multihead_search
+                    .search(session_id, &query, &heads, limit)
+                    .await
             }
         }
     }
-    
+
     /// Build context for prompt construction - delegates to context builder
     pub async fn build_context(
         &self,
@@ -189,9 +184,11 @@ impl RecallEngine {
     ) -> Result<RecallContext> {
         // Convert Option<String> to &str for context builder
         let query_str = query.as_deref().unwrap_or("");
-        self.context_builder.build_context(session_id, query_str, config).await
+        self.context_builder
+            .build_context(session_id, query_str, config)
+            .await
     }
-    
+
     /// Get engine statistics
     pub fn get_stats(&self) -> String {
         "RecallEngine: Recent, Semantic, Hybrid, MultiHead strategies active".to_string()

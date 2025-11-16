@@ -1,8 +1,11 @@
 // src/memory/features/code_intelligence/parser.rs
-use anyhow::Result;
-use syn::{ItemFn, ItemStruct, ItemEnum, ItemImpl, Visibility, visit::{self, Visit}, Attribute};
 use crate::memory::features::code_intelligence::types::*;
-use sha2::{Sha256, Digest};
+use anyhow::Result;
+use sha2::{Digest, Sha256};
+use syn::{
+    Attribute, ItemEnum, ItemFn, ItemImpl, ItemStruct, Visibility,
+    visit::{self, Visit},
+};
 
 #[derive(Clone)]
 pub struct RustParser {
@@ -25,7 +28,8 @@ impl LanguageParser for RustParser {
         let mut analyzer = RustAnalyzer::new(self.max_complexity, file_path);
         analyzer.visit_file(&syntax_tree);
 
-        let (elements, dependencies, quality_issues, total_complexity, test_count) = analyzer.finalize();
+        let (elements, dependencies, quality_issues, total_complexity, test_count) =
+            analyzer.finalize();
         let doc_coverage = Self::calculate_doc_coverage(&elements);
 
         Ok(FileAnalysis {
@@ -53,7 +57,8 @@ impl RustParser {
         if elements.is_empty() {
             return 1.0;
         }
-        let documented = elements.iter()
+        let documented = elements
+            .iter()
             .filter(|e| e.documentation.is_some())
             .count();
         documented as f64 / elements.len() as f64
@@ -85,8 +90,22 @@ impl<'content> RustAnalyzer<'content> {
         }
     }
 
-    fn finalize(self) -> (Vec<CodeElement>, Vec<ExternalDependency>, Vec<QualityIssue>, i64, i64) {
-        (self.elements, self.dependencies, self.quality_issues, self.total_complexity, self.test_count)
+    fn finalize(
+        self,
+    ) -> (
+        Vec<CodeElement>,
+        Vec<ExternalDependency>,
+        Vec<QualityIssue>,
+        i64,
+        i64,
+    ) {
+        (
+            self.elements,
+            self.dependencies,
+            self.quality_issues,
+            self.total_complexity,
+            self.test_count,
+        )
     }
 
     fn get_visibility_string(&self, vis: &Visibility) -> String {
@@ -99,7 +118,7 @@ impl<'content> RustAnalyzer<'content> {
 
     fn extract_documentation(&self, attrs: &[Attribute]) -> Option<String> {
         let mut docs = Vec::new();
-        
+
         for attr in attrs {
             if attr.path().is_ident("doc") {
                 if let syn::Meta::NameValue(meta) = &attr.meta {
@@ -111,7 +130,7 @@ impl<'content> RustAnalyzer<'content> {
                 }
             }
         }
-        
+
         if docs.is_empty() {
             None
         } else {
@@ -129,7 +148,7 @@ impl<'content> RustAnalyzer<'content> {
         let span = item.span();
         let start = span.start();
         let end = span.end();
-        
+
         (start.line as i64, end.line as i64)
     }
 
@@ -146,16 +165,19 @@ impl<'content> RustAnalyzer<'content> {
 
     fn calculate_function_complexity(&self, block: &syn::Block) -> i64 {
         let complexity = 1;
-        
+
         struct ComplexityVisitor {
             complexity: i64,
         }
-        
+
         impl<'ast> Visit<'ast> for ComplexityVisitor {
             fn visit_expr(&mut self, expr: &'ast syn::Expr) {
                 match expr {
-                    syn::Expr::If(_) | syn::Expr::Match(_) | syn::Expr::While(_) | 
-                    syn::Expr::ForLoop(_) | syn::Expr::Loop(_) => {
+                    syn::Expr::If(_)
+                    | syn::Expr::Match(_)
+                    | syn::Expr::While(_)
+                    | syn::Expr::ForLoop(_)
+                    | syn::Expr::Loop(_) => {
                         self.complexity += 1;
                     }
                     syn::Expr::Try(_) => {
@@ -166,7 +188,7 @@ impl<'content> RustAnalyzer<'content> {
                 visit::visit_expr(self, expr);
             }
         }
-        
+
         let mut visitor = ComplexityVisitor { complexity };
         visitor.visit_block(block);
         visitor.complexity
@@ -181,30 +203,36 @@ impl<'ast, 'content> Visit<'ast> for RustAnalyzer<'content> {
         self.total_complexity += complexity;
 
         let is_test = func.attrs.iter().any(|attr| {
-            attr.path().is_ident("test") || 
-            attr.path().segments.iter().any(|seg| seg.ident == "test")
+            attr.path().is_ident("test")
+                || attr.path().segments.iter().any(|seg| seg.ident == "test")
         });
-        
+
         if is_test {
             self.test_count += 1;
         }
 
         let is_async = func.sig.asyncness.is_some();
         let content = quote::quote!(#func).to_string();
-        
+
         let full_path = self.build_full_path(&func.sig.ident.to_string());
         let (start_line, end_line) = self.extract_line_numbers(func);
 
         if complexity > self.max_complexity {
             self.quality_issues.push(QualityIssue {
                 issue_type: "complexity".to_string(),
-                severity: if complexity > self.max_complexity * 2 { "high".to_string() } else { "medium".to_string() },
+                severity: if complexity > self.max_complexity * 2 {
+                    "high".to_string()
+                } else {
+                    "medium".to_string()
+                },
                 title: format!("High cyclomatic complexity ({})", complexity),
                 description: format!(
                     "Function '{}' has complexity {} (threshold: {})",
                     func.sig.ident, complexity, self.max_complexity
                 ),
-                suggested_fix: Some("Consider breaking this function into smaller parts".to_string()),
+                suggested_fix: Some(
+                    "Consider breaking this function into smaller parts".to_string(),
+                ),
                 fix_confidence: 0.7,
                 is_auto_fixable: false,
             });
@@ -297,7 +325,7 @@ impl<'ast, 'content> Visit<'ast> for RustAnalyzer<'content> {
         if let Some((_, trait_path, _)) = &impl_item.trait_ {
             let trait_name = quote::quote!(#trait_path).to_string();
             let type_name = quote::quote!(#impl_item.self_ty).to_string();
-            
+
             self.dependencies.push(ExternalDependency {
                 import_path: trait_name.clone(),
                 imported_symbols: vec![trait_name.clone()],
@@ -330,7 +358,7 @@ impl<'ast, 'content> Visit<'ast> for RustAnalyzer<'content> {
 
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
         let import_path = quote::quote!(#use_item.tree).to_string();
-        
+
         let mut imported_symbols = Vec::new();
         Self::extract_use_symbols(&use_item.tree, &mut imported_symbols);
 

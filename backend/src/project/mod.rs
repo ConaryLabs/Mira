@@ -1,6 +1,6 @@
 // src/project/mod.rs
-pub mod types;
 pub mod store;
+pub mod types;
 
 // Re-export for easy use elsewhere
-pub use types::{Project, Artifact, ArtifactType};
+pub use types::{Artifact, ArtifactType, Project};

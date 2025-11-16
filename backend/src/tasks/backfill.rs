@@ -6,12 +6,8 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::{
-    AppState,
-    config::CONFIG,
-    llm::embeddings::EmbeddingHead,
-    llm::provider::OpenAiEmbeddings,
-    memory::core::types::MemoryEntry,
-    memory::storage::qdrant::multi_store::QdrantMultiStore,
+    AppState, config::CONFIG, llm::embeddings::EmbeddingHead, llm::provider::OpenAiEmbeddings,
+    memory::core::types::MemoryEntry, memory::storage::qdrant::multi_store::QdrantMultiStore,
 };
 use chrono::{DateTime, Utc};
 
@@ -49,18 +45,18 @@ impl BackfillTask {
         // Process in batches of 100
         const BATCH_SIZE: usize = 100;
         for chunk in messages.chunks(BATCH_SIZE) {
-            match self.process_batch(
-                pool,
-                chunk,
-                embedding_client,
-                multi_store,
-            ).await {
+            match self
+                .process_batch(pool, chunk, embedding_client, multi_store)
+                .await
+            {
                 Ok(stored_count) => {
                     total_processed += chunk.len();
                     total_embeddings_stored += stored_count;
                     info!(
                         "Backfill progress: {}/{} messages processed, {} embeddings stored",
-                        total_processed, messages.len(), total_embeddings_stored
+                        total_processed,
+                        messages.len(),
+                        total_embeddings_stored
                     );
                 }
                 Err(e) => {
@@ -79,7 +75,10 @@ impl BackfillTask {
     }
 
     /// Find all messages that have routed_to_heads but no embeddings in Qdrant
-    async fn find_messages_needing_embeddings(&self, pool: &SqlitePool) -> Result<Vec<MessageForBackfill>> {
+    async fn find_messages_needing_embeddings(
+        &self,
+        pool: &SqlitePool,
+    ) -> Result<Vec<MessageForBackfill>> {
         let rows = sqlx::query!(
             r#"
             SELECT 
@@ -116,7 +115,10 @@ impl BackfillTask {
             let routed_to_heads: Vec<String> = match serde_json::from_str(&row.routed_to_heads) {
                 Ok(heads) => heads,
                 Err(e) => {
-                    warn!("Failed to parse routed_to_heads for message {}: {}", row.id, e);
+                    warn!(
+                        "Failed to parse routed_to_heads for message {}: {}",
+                        row.id, e
+                    );
                     continue;
                 }
             };
@@ -191,7 +193,10 @@ impl BackfillTask {
                 let head = match head_str.parse::<EmbeddingHead>() {
                     Ok(h) => h,
                     Err(e) => {
-                        warn!("Invalid embedding head '{}' for message {}: {}", head_str, message.id, e);
+                        warn!(
+                            "Invalid embedding head '{}' for message {}: {}",
+                            head_str, message.id, e
+                        );
                         continue;
                     }
                 };

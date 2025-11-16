@@ -7,8 +7,8 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tracing::{debug, info};
 
-use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::llm::embeddings::EmbeddingHead;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
 /// Delete all code embeddings for a specific file_id
 pub async fn invalidate_file_embeddings(
@@ -49,16 +49,25 @@ pub async fn invalidate_file_embeddings(
         match multi_store.delete(EmbeddingHead::Code, element_id).await {
             Ok(_) => {
                 deleted_count += 1;
-                debug!("Deleted embedding for code_element {} from code collection", element_id);
+                debug!(
+                    "Deleted embedding for code_element {} from code collection",
+                    element_id
+                );
             }
             Err(e) => {
-                debug!("Could not delete code_element {} from code collection: {}", element_id, e);
+                debug!(
+                    "Could not delete code_element {} from code collection: {}",
+                    element_id, e
+                );
             }
         }
     }
 
     if deleted_count > 0 {
-        info!("Invalidated {} code embeddings for file_id {}", deleted_count, file_id);
+        info!(
+            "Invalidated {} code embeddings for file_id {}",
+            deleted_count, file_id
+        );
     }
 
     Ok(deleted_count)
@@ -70,7 +79,10 @@ pub async fn invalidate_project_embeddings(
     multi_store: &QdrantMultiStore,
     project_id: &str,
 ) -> Result<u64> {
-    info!("Invalidating all code embeddings for project: {}", project_id);
+    info!(
+        "Invalidating all code embeddings for project: {}",
+        project_id
+    );
 
     // Get all file_ids for this project
     let files = sqlx::query!(
@@ -93,6 +105,9 @@ pub async fn invalidate_project_embeddings(
         }
     }
 
-    info!("Invalidated {} embeddings for project {}", total_deleted, project_id);
+    info!(
+        "Invalidated {} embeddings for project {}",
+        total_deleted, project_id
+    );
     Ok(total_deleted)
 }

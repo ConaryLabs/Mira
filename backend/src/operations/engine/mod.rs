@@ -2,21 +2,21 @@
 // Operation Engine - orchestrates coding workflows with GPT-5 + DeepSeek delegation
 // Refactored into focused modules for maintainability
 
-pub mod events;
+pub mod artifacts;
 pub mod context;
 pub mod delegation;
-pub mod artifacts;
+pub mod events;
 pub mod lifecycle;
 pub mod orchestration;
 
 pub use events::OperationEngineEvent;
 
-use crate::llm::provider::gpt5::Gpt5Provider;
-use crate::llm::provider::deepseek::DeepSeekProvider;
-use crate::memory::service::MemoryService;
-use crate::relationship::service::RelationshipService;
 use crate::git::client::GitClient;
-use crate::operations::{Operation, OperationEvent, Artifact};
+use crate::llm::provider::deepseek::DeepSeekProvider;
+use crate::llm::provider::gpt5::Gpt5Provider;
+use crate::memory::service::MemoryService;
+use crate::operations::{Artifact, Operation, OperationEvent};
+use crate::relationship::service::RelationshipService;
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -24,9 +24,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::operations::ContextLoader;
+use artifacts::ArtifactManager;
 use context::ContextBuilder;
 use delegation::DelegationHandler;
-use artifacts::ArtifactManager;
 use lifecycle::LifecycleManager;
 use orchestration::Orchestrator;
 
@@ -52,17 +53,18 @@ impl OperationEngine {
             Arc::clone(&memory_service),
             Arc::clone(&relationship_service),
         );
-        
+
+        let context_loader = ContextLoader::new(git_client.clone(), Arc::clone(&code_intelligence));
+
         let delegation_handler = DelegationHandler::new(deepseek);
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
-        
+
         let orchestrator = Orchestrator::new(
             gpt5,
             memory_service,
-            git_client,
-            code_intelligence,
             context_builder,
+            context_loader,
             delegation_handler,
             artifact_manager.clone(),
             lifecycle_manager.clone(),
@@ -86,7 +88,9 @@ impl OperationEngine {
         kind: String,
         user_message: String,
     ) -> Result<Operation> {
-        self.lifecycle_manager.create_operation(session_id, kind, user_message).await
+        self.lifecycle_manager
+            .create_operation(session_id, kind, user_message)
+            .await
     }
 
     /// Execute an operation (main entry point)
@@ -99,14 +103,16 @@ impl OperationEngine {
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
-        self.orchestrator.run_operation(
-            operation_id,
-            session_id,
-            user_content,
-            project_id,
-            cancel_token,
-            event_tx,
-        ).await
+        self.orchestrator
+            .run_operation(
+                operation_id,
+                session_id,
+                user_content,
+                project_id,
+                cancel_token,
+                event_tx,
+            )
+            .await
     }
 
     /// Get operation by ID
@@ -116,11 +122,15 @@ impl OperationEngine {
 
     /// Get operation events
     pub async fn get_operation_events(&self, operation_id: &str) -> Result<Vec<OperationEvent>> {
-        self.lifecycle_manager.get_operation_events(operation_id).await
+        self.lifecycle_manager
+            .get_operation_events(operation_id)
+            .await
     }
 
     /// Get artifacts for operation
     pub async fn get_artifacts_for_operation(&self, operation_id: &str) -> Result<Vec<Artifact>> {
-        self.artifact_manager.get_artifacts_for_operation(operation_id).await
+        self.artifact_manager
+            .get_artifacts_for_operation(operation_id)
+            .await
     }
 }

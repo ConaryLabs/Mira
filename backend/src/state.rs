@@ -1,27 +1,23 @@
 // src/state.rs
+use anyhow::Result;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use sqlx::SqlitePool;
-use anyhow::Result;
 use tracing::info;
 
-use crate::config::CONFIG;
-use crate::llm::provider::{
-    OpenAiEmbeddings,
-    gpt5::Gpt5Provider,
-    deepseek::DeepSeekProvider,
-};
-use crate::memory::storage::sqlite::store::SqliteMemoryStore;
-use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
-use crate::memory::service::MemoryService;
-use crate::memory::features::code_intelligence::CodeIntelligenceService;
-use crate::project::store::ProjectStore;
-use crate::git::store::GitStore;
-use crate::git::client::GitClient;
-use crate::operations::OperationEngine;
 use crate::api::ws::chat::routing::MessageRouter;
-use crate::relationship::{RelationshipService, FactsService};
+use crate::config::CONFIG;
+use crate::git::client::GitClient;
+use crate::git::store::GitStore;
+use crate::llm::provider::{OpenAiEmbeddings, deepseek::DeepSeekProvider, gpt5::Gpt5Provider};
+use crate::memory::features::code_intelligence::CodeIntelligenceService;
+use crate::memory::service::MemoryService;
+use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
+use crate::memory::storage::sqlite::store::SqliteMemoryStore;
+use crate::operations::{ContextLoader, OperationEngine};
+use crate::project::store::ProjectStore;
+use crate::relationship::{FactsService, RelationshipService};
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -47,6 +43,7 @@ pub struct AppState {
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
+    pub context_loader: Arc<ContextLoader>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
     pub operation_engine: Arc<OperationEngine>,
     pub message_router: Arc<MessageRouter>,
@@ -58,13 +55,13 @@ impl AppState {
     pub async fn new(pool: SqlitePool) -> Result<Self> {
         // Initialize SQLite store
         let sqlite_store = Arc::new(SqliteMemoryStore::new(pool.clone()));
-        
+
         // Initialize project store
         let project_store = Arc::new(ProjectStore::new(pool.clone()));
-        
+
         // Validate config
         CONFIG.validate()?;
-        
+
         // Initialize GPT-5 provider
         info!("Initializing GPT-5 provider: {}", CONFIG.gpt5_model);
         let gpt5_provider = Arc::new(Gpt5Provider::new(
@@ -74,32 +71,27 @@ impl AppState {
             CONFIG.gpt5_verbosity.clone(),
             CONFIG.gpt5_reasoning.clone(),
         ));
-        
+
         // Initialize DeepSeek provider
         info!("Initializing DeepSeek provider for code generation");
-        let deepseek_provider = Arc::new(DeepSeekProvider::new(
-            CONFIG.deepseek_api_key.clone(),
-        ));
-        
+        let deepseek_provider = Arc::new(DeepSeekProvider::new(CONFIG.deepseek_api_key.clone()));
+
         // Initialize OpenAI embeddings client
         let embedding_client = Arc::new(OpenAiEmbeddings::new(
             CONFIG.openai_api_key.clone(),
             CONFIG.openai_embedding_model.clone(),
         ));
-        
+
         // Initialize Qdrant multi-store
-        let multi_store = Arc::new(QdrantMultiStore::new(
-            &CONFIG.qdrant_url,
-            "mira",
-        ).await?);
-        
+        let multi_store = Arc::new(QdrantMultiStore::new(&CONFIG.qdrant_url, "mira").await?);
+
         // Initialize code intelligence service with embedding support
         let code_intelligence = Arc::new(CodeIntelligenceService::new(
             pool.clone(),
             multi_store.clone(),
             embedding_client.clone(),
         ));
-        
+
         // Initialize git store and client with code intelligence
         let git_store = GitStore::new(pool.clone());
         let git_client = GitClient::with_code_intelligence(
@@ -107,7 +99,7 @@ impl AppState {
             git_store.clone(),
             (*code_intelligence).clone(),
         );
-        
+
         // Memory service uses GPT-5 directly
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
@@ -115,18 +107,25 @@ impl AppState {
             gpt5_provider.clone(),
             embedding_client.clone(),
         ));
-        
+
         // Initialize FactsService
         info!("Initializing FactsService");
         let facts_service = Arc::new(FactsService::new(pool.clone()));
-        
+
         // Initialize RelationshipService with FactsService
         info!("Initializing RelationshipService with FactsService");
         let relationship_service = Arc::new(RelationshipService::new(
             Arc::new(pool.clone()),
             facts_service.clone(),
         ));
-        
+
+        // Initialize ContextLoader (shared for loading file tree + code intelligence)
+        info!("Initializing ContextLoader");
+        let context_loader = Arc::new(ContextLoader::new(
+            git_client.clone(),
+            code_intelligence.clone(),
+        ));
+
         // OperationEngine requires memory and relationship integration
         info!("Initializing OperationEngine with memory and relationship integration");
         let operation_engine = Arc::new(OperationEngine::new(
@@ -135,15 +134,15 @@ impl AppState {
             (*deepseek_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
-            git_client.clone(),           // FIXED: Added git_client
-            code_intelligence.clone(),    // FIXED: Added code_intelligence
+            git_client.clone(),        // FIXED: Added git_client
+            code_intelligence.clone(), // FIXED: Added code_intelligence
         ));
-        
+
         // Initialize MessageRouter
         let message_router = Arc::new(MessageRouter::new((*gpt5_provider).clone()));
-        
+
         info!("Application state initialized successfully");
-        
+
         Ok(Self {
             sqlite_store,
             sqlite_pool: pool,
@@ -155,6 +154,7 @@ impl AppState {
             embedding_client,
             memory_service,
             code_intelligence,
+            context_loader,
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),
             operation_engine,
             message_router,

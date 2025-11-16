@@ -2,14 +2,14 @@
 // Handles code intelligence synchronization after git operations
 
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 use std::path::Path;
-use sha2::{Sha256, Digest};
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
-use crate::git::types::GitRepoAttachment;
-use crate::git::store::GitStore;
-use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::api::error::IntoApiError;
+use crate::git::store::GitStore;
+use crate::git::types::GitRepoAttachment;
+use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
 /// Manages code intelligence synchronization with git operations
 #[derive(Clone)]
@@ -28,55 +28,59 @@ impl CodeSync {
 
     /// Re-parse changed files after git pull (Layer 3)
     pub async fn sync_after_pull(&self, attachment: &GitRepoAttachment) -> Result<()> {
-        info!("Re-parsing changed files after pull for attachment {}", attachment.id);
+        info!(
+            "Re-parsing changed files after pull for attachment {}",
+            attachment.id
+        );
 
         let local_path = attachment.local_path.clone();
         let attachment_id = attachment.id.clone();
         let project_id = attachment.project_id.clone();
-        
+
         // Get list of parseable files that might have changed
-        let files_to_check = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>> {
-            let mut files = Vec::new();
-            
-            for entry in walkdir::WalkDir::new(&local_path)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|e| !should_ignore_path(e.path()))
-            {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
+        let files_to_check =
+            tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>> {
+                let mut files = Vec::new();
 
-                if !entry.file_type().is_file() {
-                    continue;
+                for entry in walkdir::WalkDir::new(&local_path)
+                    .follow_links(false)
+                    .into_iter()
+                    .filter_entry(|e| !should_ignore_path(e.path()))
+                {
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+
+                    if !entry.file_type().is_file() {
+                        continue;
+                    }
+
+                    let path = entry.path();
+                    if !is_parseable_file(path) {
+                        continue;
+                    }
+
+                    // Read file content
+                    let content = match std::fs::read_to_string(path) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    // Get relative path
+                    let relative_path = match path.strip_prefix(&local_path) {
+                        Ok(p) => p.to_string_lossy().to_string(),
+                        Err(_) => continue,
+                    };
+
+                    files.push((relative_path, content));
                 }
 
-                let path = entry.path();
-                if !is_parseable_file(path) {
-                    continue;
-                }
-
-                // Read file content
-                let content = match std::fs::read_to_string(path) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-
-                // Get relative path
-                let relative_path = match path.strip_prefix(&local_path) {
-                    Ok(p) => p.to_string_lossy().to_string(),
-                    Err(_) => continue,
-                };
-
-                files.push((relative_path, content));
-            }
-
-            Ok(files)
-        })
-        .await
-        .into_api_error("Failed to scan directory")?
-        .into_api_error("Failed to list files")?;
+                Ok(files)
+            })
+            .await
+            .into_api_error("Failed to scan directory")?
+            .into_api_error("Failed to list files")?;
 
         // Re-parse each file
         let mut parsed_count = 0;
@@ -104,10 +108,10 @@ impl CodeSync {
 
             // File changed - re-parse
             let language = detect_language_from_path(&file_path);
-            
+
             // CRITICAL FIX: Use transaction to ensure atomicity and prevent FK violations
             let mut tx = self.store.pool.begin().await?;
-            
+
             // Step 1: Upsert file record
             let file_id = sqlx::query_scalar!(
                 r#"
@@ -136,13 +140,20 @@ impl CodeSync {
             )
             .execute(&mut *tx)
             .await?;
-            
+
             // Step 3: Commit transaction (ensures file_id exists and old elements are gone)
             tx.commit().await?;
 
             // Step 4: Parse AST and store new elements
-            match self.code_intelligence
-                .analyze_and_store_with_project(file_id, &content, &file_path, &language, &project_id)
+            match self
+                .code_intelligence
+                .analyze_and_store_with_project(
+                    file_id,
+                    &content,
+                    &file_path,
+                    &language,
+                    &project_id,
+                )
                 .await
             {
                 Ok(_) => {
@@ -168,11 +179,12 @@ impl CodeSync {
         file_path: &Path,
         project_id: &str,
     ) -> Result<()> {
-        let content = tokio::fs::read_to_string(file_path).await
+        let content = tokio::fs::read_to_string(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path.display(), e))?;
 
         let file_path_str = file_path.to_string_lossy();
-        
+
         // Determine language from file extension
         let language = if is_rust_file(file_path) {
             "rust"
@@ -183,7 +195,7 @@ impl CodeSync {
         } else {
             return Ok(()); // Skip unsupported file types
         };
-        
+
         // Delete old elements before re-parsing to prevent FK/UNIQUE violations
         sqlx::query!(
             r#"
@@ -193,15 +205,12 @@ impl CodeSync {
         )
         .execute(&self.store.pool)
         .await?;
-        
+
         // Parse and store new elements
-        let result = self.code_intelligence.analyze_and_store_with_project(
-            file_id,
-            &content,
-            &file_path_str,
-            language,
-            project_id,
-        ).await?;
+        let result = self
+            .code_intelligence
+            .analyze_and_store_with_project(file_id, &content, &file_path_str, language, project_id)
+            .await?;
 
         debug!(
             "Analyzed {} file {} (id: {}): {} elements, complexity: {}, {} quality issues",

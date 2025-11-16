@@ -1,11 +1,11 @@
 // src/memory/features/summarization/strategies/rolling_summary.rs
 
-use std::sync::Arc;
-use anyhow::Result;
-use tracing::{info, debug};
 use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::SummaryType;
+use anyhow::Result;
+use std::sync::Arc;
+use tracing::{debug, info};
 
 /// Handles all rolling summary operations (10-message and 100-message windows)
 pub struct RollingSummaryStrategy {
@@ -25,19 +25,25 @@ impl RollingSummaryStrategy {
         window_size: usize,
     ) -> Result<String> {
         if messages.len() < window_size / 2 {
-            return Err(anyhow::anyhow!("Insufficient messages for {}-window summary", window_size));
+            return Err(anyhow::anyhow!(
+                "Insufficient messages for {}-window summary",
+                window_size
+            ));
         }
 
         let content = self.build_content(messages)?;
         let prompt = self.build_prompt(&content, window_size);
 
-        info!("Creating {}-message rolling summary for session {}", window_size, session_id);
-        
+        info!(
+            "Creating {}-message rolling summary for session {}",
+            window_size, session_id
+        );
+
         let messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
         }];
-        
+
         // FIXED: Remove None argument - .chat() now takes only 2 args
         let response = self.llm_provider
             .chat(
@@ -55,8 +61,8 @@ impl RollingSummaryStrategy {
         if message_count > 0 && message_count % 10 == 0 {
             return Some(SummaryType::Rolling10);
         }
-        
-        // Every 100 messages - comprehensive mega-summary  
+
+        // Every 100 messages - comprehensive mega-summary
         if message_count > 0 && message_count % 100 == 0 {
             return Some(SummaryType::Rolling100);
         }
@@ -67,7 +73,7 @@ impl RollingSummaryStrategy {
     fn build_content(&self, messages: &[MemoryEntry]) -> Result<String> {
         let mut content = String::new();
         let mut included_count = 0;
-        
+
         for msg in messages.iter().rev() {
             // Skip existing summaries to avoid recursive summarization
             if let Some(ref tags) = msg.tags {
@@ -76,12 +82,15 @@ impl RollingSummaryStrategy {
                     continue;
                 }
             }
-            
+
             content.push_str(&format!("{}: {}\n", msg.role, msg.content));
             included_count += 1;
         }
-        
-        debug!("Built rolling summary content from {} messages", included_count);
+
+        debug!(
+            "Built rolling summary content from {} messages",
+            included_count
+        );
         Ok(content)
     }
 

@@ -56,9 +56,9 @@ pub struct CodingStylePreferences {
     pub indentation: Option<String>, // "spaces_2", "spaces_4", "tabs"
     pub line_length: Option<usize>,
     pub naming_convention: Option<HashMap<String, String>>, // By language
-    pub comment_style: Option<String>, // "verbose", "minimal", "docstrings"
-    pub error_handling: Option<String>, // "result_type", "exceptions", "panic"
-    pub test_coverage: Option<String>, // "high", "medium", "low"
+    pub comment_style: Option<String>,                      // "verbose", "minimal", "docstrings"
+    pub error_handling: Option<String>,                     // "result_type", "exceptions", "panic"
+    pub test_coverage: Option<String>,                      // "high", "medium", "low"
 }
 
 /// Testing philosophy (stored as JSON in DB)
@@ -67,7 +67,7 @@ pub struct TestingPhilosophy {
     pub test_first: bool,
     pub coverage_target: Option<f32>,
     pub integration_vs_unit: Option<String>, // "integration_heavy", "balanced", "unit_heavy"
-    pub mocking_preference: Option<String>, // "extensive", "minimal", "situational"
+    pub mocking_preference: Option<String>,  // "extensive", "minimal", "situational"
 }
 
 /// Architecture preferences (stored as JSON in DB)
@@ -110,7 +110,7 @@ pub struct CommunicationPattern {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicInterest {
     pub topic: String,
-    pub interest_level: String, // "high", "medium", "low"
+    pub interest_level: String,  // "high", "medium", "low"
     pub expertise_level: String, // "expert", "intermediate", "beginner", "unknown"
     pub discussion_count: u32,
 }

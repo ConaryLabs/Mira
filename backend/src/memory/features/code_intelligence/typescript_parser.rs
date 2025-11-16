@@ -1,11 +1,11 @@
 // src/memory/features/code_intelligence/typescript_parser.rs
-use anyhow::Result;
-use swc_common::{sync::Lrc, FileName, SourceMap, Span};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
-use swc_ecma_ast::{FnDecl, ClassDecl, ImportDecl, CallExpr};
-use swc_ecma_visit::{Visit, VisitWith};
 use crate::memory::features::code_intelligence::types::*;
-use sha2::{Sha256, Digest};
+use anyhow::Result;
+use sha2::{Digest, Sha256};
+use swc_common::{FileName, SourceMap, Span, sync::Lrc};
+use swc_ecma_ast::{CallExpr, ClassDecl, FnDecl, ImportDecl};
+use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
+use swc_ecma_visit::{Visit, VisitWith};
 
 #[derive(Clone)]
 pub struct TypeScriptParser {
@@ -26,10 +26,10 @@ impl LanguageParser for TypeScriptParser {
     async fn parse_file(&self, content: &str, file_path: &str) -> Result<FileAnalysis> {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
-            Lrc::new(FileName::Custom(file_path.to_string())), 
-            content.to_string()
+            Lrc::new(FileName::Custom(file_path.to_string())),
+            content.to_string(),
         );
-        
+
         // Enable JSX for .tsx files, disable for .ts and .d.ts
         let is_tsx = file_path.ends_with(".tsx");
         let syntax = Syntax::Typescript(TsSyntax {
@@ -39,23 +39,19 @@ impl LanguageParser for TypeScriptParser {
             no_early_errors: true,
             disallow_ambiguous_jsx_like: false,
         });
-        
-        let lexer = Lexer::new(
-            syntax,
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
-        
+
+        let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
+
         let mut parser = Parser::new_from(lexer);
-        let module = parser.parse_module()
+        let module = parser
+            .parse_module()
             .map_err(|e| anyhow::anyhow!("TypeScript parse error in {}: {:?}", file_path, e))?;
-        
+
         let mut analyzer = TypeScriptAnalyzer::new(self.max_complexity, content, file_path);
         module.visit_with(&mut analyzer);
-        
+
         let doc_coverage = analyzer.calculate_doc_coverage();
-        
+
         Ok(FileAnalysis {
             elements: analyzer.elements,
             dependencies: analyzer.dependencies,
@@ -66,13 +62,13 @@ impl LanguageParser for TypeScriptParser {
             // REMOVED: websocket_calls (Phase 1 - WebSocket tracking deleted)
         })
     }
-    
+
     fn can_parse(&self, _content: &str, file_path: Option<&str>) -> bool {
         file_path.map_or(false, |path| {
             path.ends_with(".ts") || path.ends_with(".tsx") || path.ends_with(".d.ts")
         })
     }
-    
+
     fn language(&self) -> &'static str {
         "typescript"
     }
@@ -113,7 +109,9 @@ impl<'a> TypeScriptAnalyzer<'a> {
         if self.elements.is_empty() {
             return 1.0;
         }
-        let documented = self.elements.iter()
+        let documented = self
+            .elements
+            .iter()
             .filter(|e| e.documentation.is_some())
             .count();
         documented as f64 / self.elements.len() as f64
@@ -145,7 +143,8 @@ impl<'a> TypeScriptAnalyzer<'a> {
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as i64 + 1
+            .count() as i64
+            + 1
     }
 
     fn get_end_line_number(&self, span: Span) -> i64 {
@@ -153,7 +152,8 @@ impl<'a> TypeScriptAnalyzer<'a> {
         self.content[..pos.min(self.content.len())]
             .chars()
             .filter(|&c| c == '\n')
-            .count() as i64 + 1
+            .count() as i64
+            + 1
     }
 
     fn create_signature_hash(&self, content: &str) -> String {
@@ -164,11 +164,13 @@ impl<'a> TypeScriptAnalyzer<'a> {
 
     fn calculate_cyclomatic_complexity(&self, content: &str) -> i64 {
         let mut complexity = 1i64;
-        
-        for keyword in ["if", "else if", "for", "while", "case", "catch", "&&", "||", "?"] {
+
+        for keyword in [
+            "if", "else if", "for", "while", "case", "catch", "&&", "||", "?",
+        ] {
             complexity += content.matches(keyword).count() as i64;
         }
-        
+
         complexity
     }
 
@@ -181,11 +183,11 @@ impl<'a> TypeScriptAnalyzer<'a> {
     }
 
     fn is_test_function(&self, name: &str) -> bool {
-        name.contains("test") || 
-        name.contains("Test") || 
-        name.contains("spec") || 
-        name.starts_with("it") ||
-        name.starts_with("describe")
+        name.contains("test")
+            || name.contains("Test")
+            || name.contains("spec")
+            || name.starts_with("it")
+            || name.starts_with("describe")
     }
 
     fn detect_quality_issues(&mut self, element: &CodeElement) {
@@ -198,7 +200,9 @@ impl<'a> TypeScriptAnalyzer<'a> {
                     "{}: Function '{}' has complexity {} (threshold: {})",
                     self.file_path, element.name, element.complexity_score, self.max_complexity
                 ),
-                suggested_fix: Some("Consider breaking this function into smaller parts".to_string()),
+                suggested_fix: Some(
+                    "Consider breaking this function into smaller parts".to_string(),
+                ),
                 fix_confidence: 0.7,
                 is_auto_fixable: false,
             });
@@ -233,12 +237,12 @@ impl<'a> TypeScriptAnalyzer<'a> {
         for i in (0..start_line.saturating_sub(1) as usize).rev() {
             let line = lines.get(i)?;
             let trimmed = line.trim();
-            
+
             if trimmed.starts_with("*/") {
                 found_jsdoc = true;
                 continue;
             }
-            
+
             if found_jsdoc {
                 if trimmed.starts_with("/**") {
                     docs.reverse();
@@ -248,7 +252,7 @@ impl<'a> TypeScriptAnalyzer<'a> {
                     docs.push(trimmed.trim_start_matches('*').trim().to_string());
                 }
             }
-            
+
             if !trimmed.starts_with("//") && !trimmed.is_empty() && !found_jsdoc {
                 break;
             }
@@ -264,13 +268,13 @@ impl<'a> Visit for TypeScriptAnalyzer<'a> {
     fn visit_fn_decl(&mut self, node: &FnDecl) {
         let name = node.ident.sym.to_string();
         self.current_function = Some(name.clone());
-        
+
         let full_path = self.get_full_path(&name);
         let content = self.extract_text(node.function.span);
         let complexity = self.calculate_cyclomatic_complexity(&content);
         let is_async = node.function.is_async;
         let is_test = self.is_test_function(&name);
-        
+
         if is_test {
             self.test_count += 1;
         }

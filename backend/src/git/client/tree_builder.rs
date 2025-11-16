@@ -4,12 +4,12 @@
 
 use anyhow::Result;
 use git2::Repository;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use crate::git::types::GitRepoAttachment;
 use crate::api::error::IntoApiError;
+use crate::git::types::GitRepoAttachment;
 
 /// File node in the repository tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,17 +44,19 @@ impl TreeBuilder {
 
     /// Get the file tree of a repository
     pub fn get_file_tree(&self, attachment: &GitRepoAttachment) -> Result<Vec<FileNode>> {
-        let repo = Repository::open(&attachment.local_path)
-            .into_api_error("Failed to open repository")?;
+        let repo =
+            Repository::open(&attachment.local_path).into_api_error("Failed to open repository")?;
 
-        let head = repo.head()
+        let head = repo
+            .head()
             .into_api_error("Failed to get repository head")?;
-        
-        let tree = head.peel_to_tree()
+
+        let tree = head
+            .peel_to_tree()
             .into_api_error("Failed to get tree from head")?;
 
         let mut nodes = Vec::new();
-        
+
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             let name = entry.name().unwrap_or("").to_string();
             let path = if root.is_empty() {
@@ -84,9 +86,13 @@ impl TreeBuilder {
     }
 
     /// Get file content from the repository
-    pub fn get_file_content(&self, attachment: &GitRepoAttachment, file_path: &str) -> Result<String> {
+    pub fn get_file_content(
+        &self,
+        attachment: &GitRepoAttachment,
+        file_path: &str,
+    ) -> Result<String> {
         let full_path = Path::new(&attachment.local_path).join(file_path);
-        
+
         fs::read_to_string(full_path)
             .into_api_error("Failed to read file content")
             .map_err(|api_err| anyhow::Error::msg(api_err.message))
@@ -101,15 +107,13 @@ impl TreeBuilder {
         _commit_message: Option<&str>,
     ) -> Result<()> {
         let full_path = Path::new(&attachment.local_path).join(file_path);
-        
+
         // Ensure parent directory exists
         if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent)
-                .into_api_error("Failed to create parent directory")?;
+            fs::create_dir_all(parent).into_api_error("Failed to create parent directory")?;
         }
-        
-        fs::write(&full_path, content)
-            .into_api_error("Failed to write file content")?;
+
+        fs::write(&full_path, content).into_api_error("Failed to write file content")?;
 
         // For MVP, we don't auto-commit
         // In the future, we could use commit_message to create a commit
@@ -119,11 +123,11 @@ impl TreeBuilder {
     /// Build hierarchical tree structure from flat list of nodes
     fn build_tree_structure(&self, nodes: Vec<FileNode>) -> Vec<FileNode> {
         let mut root_nodes = Vec::new();
-        
+
         // For now, return a flat structure
         // In the future, we could build a proper hierarchy
         root_nodes.extend(nodes);
-        
+
         root_nodes
     }
 }

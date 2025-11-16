@@ -36,7 +36,7 @@ sqlx migrate run
 cargo run
 ```
 
-Server starts on `ws://localhost:8080/ws`
+Server starts on `ws://localhost:3001/ws`
 
 ---
 
@@ -460,7 +460,7 @@ sqlite3 mira.db "SELECT id, path, language FROM artifacts WHERE operation_id = '
 ```bash
 # Server
 MIRA_HOST=0.0.0.0
-MIRA_PORT=8080
+MIRA_PORT=3001
 MIRA_ENV=development  # development | staging | production
 
 # Database
@@ -647,7 +647,7 @@ curl http://localhost:6333/health
 curl http://localhost:6333/collections
 
 # Test WebSocket connection
-websocat ws://localhost:8080/ws
+websocat ws://localhost:3001/ws
 ```
 
 ### Logging
@@ -722,7 +722,7 @@ services:
   mira:
     build: .
     ports:
-      - "8080:8080"
+      - "3001:3001"
     environment:
       - DATABASE_URL=sqlite:///data/mira.db
       - QDRANT_URL=http://qdrant:6333

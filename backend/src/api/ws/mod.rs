@@ -1,27 +1,27 @@
 // src/api/ws/mod.rs
-use std::sync::Arc;
 use axum::{
-    extract::{ws::WebSocket, State},
+    Router,
+    extract::{State, ws::WebSocket},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures_util::StreamExt;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::state::AppState;
 
 // WebSocket submodules
 pub mod chat;
-pub mod message;
-pub mod memory;
-pub mod project;
-pub mod git;
-pub mod files;
-pub mod filesystem;
 pub mod code_intelligence;
 pub mod documents;
-pub mod operations;  // NEW: Operations module
+pub mod files;
+pub mod filesystem;
+pub mod git;
+pub mod memory;
+pub mod message;
+pub mod operations;
+pub mod project; // NEW: Operations module
 
 // Re-export key components
 pub use chat::ws_chat_handler;

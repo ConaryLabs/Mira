@@ -1,17 +1,17 @@
 // src/utils.rs
 // Minimal utility functions - only what's actually needed
 
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
-use std::sync::Arc;
-use std::num::NonZeroU32;
 use anyhow::Result;
 use futures::Future;
+use std::num::NonZeroU32;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
 // Rate limiting support
-use governor::{Quota, RateLimiter as GovRateLimiter, Jitter};
 use governor::clock::DefaultClock;
 use governor::state::{InMemoryState, NotKeyed};
+use governor::{Jitter, Quota, RateLimiter as GovRateLimiter};
 
 // ============================================================================
 // Timestamp utilities
@@ -47,24 +47,21 @@ impl RateLimiter {
     pub fn new(requests_per_minute: u32) -> Result<Self> {
         let quota = Quota::per_minute(
             NonZeroU32::new(requests_per_minute)
-                .ok_or_else(|| anyhow::anyhow!("Invalid rate limit"))?
+                .ok_or_else(|| anyhow::anyhow!("Invalid rate limit"))?,
         );
-        
+
         Ok(Self {
             limiter: Arc::new(GovRateLimiter::direct(quota)),
-            jitter: Jitter::new(
-                Duration::from_millis(10),
-                Duration::from_millis(100),
-            ),
+            jitter: Jitter::new(Duration::from_millis(10), Duration::from_millis(100)),
         })
     }
-    
+
     /// Wait until we can make a request
     pub async fn acquire(&self) -> Result<()> {
         self.limiter.until_ready_with_jitter(self.jitter).await;
         Ok(())
     }
-    
+
     /// Check if we can make a request without waiting
     pub fn try_acquire(&self) -> bool {
         self.limiter.check().is_ok()
@@ -94,40 +91,40 @@ impl Default for RetryConfig {
 }
 
 /// Retry with exponential backoff for transient errors
-pub async fn retry_with_backoff<F, Fut, T>(
-    mut operation: F,
-    config: RetryConfig,
-) -> Result<T>
+pub async fn retry_with_backoff<F, Fut, T>(mut operation: F, config: RetryConfig) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let mut retry_count = 0;
     let mut delay = config.initial_interval;
-    
+
     loop {
         match operation().await {
             Ok(value) => return Ok(value),
             Err(e) => {
                 let error_str = format!("{:?}", e);
-                
+
                 // Check if error is retryable
-                let is_retryable = error_str.contains("429") || 
-                                  error_str.contains("500") || 
-                                  error_str.contains("502") || 
-                                  error_str.contains("503");
-                
+                let is_retryable = error_str.contains("429")
+                    || error_str.contains("500")
+                    || error_str.contains("502")
+                    || error_str.contains("503");
+
                 if is_retryable && retry_count < config.max_retries {
                     retry_count += 1;
-                    warn!("Operation failed (attempt {}/{}), retrying in {:?}", 
-                          retry_count, config.max_retries, delay);
-                    
+                    warn!(
+                        "Operation failed (attempt {}/{}), retrying in {:?}",
+                        retry_count, config.max_retries, delay
+                    );
+
                     tokio::time::sleep(delay).await;
-                    
+
                     // Exponential backoff
                     delay = Duration::from_millis(
-                        (delay.as_millis() as f64 * config.multiplier) as u64
-                    ).min(config.max_interval);
+                        (delay.as_millis() as f64 * config.multiplier) as u64,
+                    )
+                    .min(config.max_interval);
                 } else {
                     return Err(e);
                 }
@@ -141,19 +138,15 @@ where
 // ============================================================================
 
 /// Execute an operation with a timeout
-pub async fn with_timeout<F, T>(
-    duration: Duration,
-    operation: F,
-    operation_name: &str,
-) -> Result<T>
+pub async fn with_timeout<F, T>(duration: Duration, operation: F, operation_name: &str) -> Result<T>
 where
     F: Future<Output = Result<T>>,
 {
     match tokio::time::timeout(duration, operation).await {
         Ok(result) => result,
         Err(_) => Err(anyhow::anyhow!(
-            "{} timed out after {:?}", 
-            operation_name, 
+            "{} timed out after {:?}",
+            operation_name,
             duration
         )),
     }

@@ -4,10 +4,6 @@
 pub mod operations;
 
 pub use operations::{
-    write_file_with_history,
-    undo_file_modification,
-    get_file_history,
-    get_modified_files,
-    FileModification,
-    write_file_with_dirs,
+    FileModification, get_file_history, get_modified_files, undo_file_modification,
+    write_file_with_dirs, write_file_with_history,
 };

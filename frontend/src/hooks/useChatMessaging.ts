@@ -7,6 +7,7 @@ import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { getSessionId } from '../config/app';
+import { detectLanguage } from '../utils/language';
 
 export const useChatMessaging = () => {
   const send = useWebSocketStore(state => state.send);
@@ -14,28 +15,6 @@ export const useChatMessaging = () => {
   const setWaitingForResponse = useChatStore(state => state.setWaitingForResponse);
   const { currentProject, modifiedFiles, currentBranch } = useAppState();
   const { activeArtifact } = useArtifactState();
-
-  // Helper to detect language from file path
-  const detectLanguage = useCallback((filePath?: string) => {
-    if (!filePath) return 'plaintext';
-    
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    switch (ext) {
-      case 'rs': return 'rust';
-      case 'ts': case 'tsx': return 'typescript';
-      case 'js': case 'jsx': return 'javascript';
-      case 'py': return 'python';
-      case 'go': return 'go';
-      case 'md': return 'markdown';
-      case 'html': return 'html';
-      case 'css': return 'css';
-      case 'json': return 'json';
-      case 'toml': return 'toml';
-      case 'yaml': case 'yml': return 'yaml';
-      case 'sh': case 'bash': return 'shell';
-      default: return 'plaintext';
-    }
-  }, []);
 
   const handleSend = useCallback(async (content: string) => {
     // Add user message immediately
@@ -89,7 +68,7 @@ export const useChatMessaging = () => {
       // Clear waiting state on error
       setWaitingForResponse(false);
     }
-  }, [send, currentProject, activeArtifact, modifiedFiles, currentBranch, addMessage, setWaitingForResponse, detectLanguage]);
+  }, [send, currentProject, activeArtifact, modifiedFiles, currentBranch, addMessage, setWaitingForResponse]);
 
   const addSystemMessage = useCallback((content: string) => {
     addMessage({
