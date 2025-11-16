@@ -76,6 +76,73 @@ npm run test:coverage    # With coverage
 npm run preview
 ```
 
+## Service Management
+
+Both the backend and frontend run as systemd services on the development/production machine:
+
+### Backend Service
+
+```bash
+# Service name: mira.service
+
+# Check status
+sudo systemctl status mira.service
+
+# Start service
+sudo systemctl start mira.service
+
+# Stop service
+sudo systemctl stop mira.service
+
+# Restart service
+sudo systemctl restart mira.service
+
+# View logs
+sudo journalctl -u mira.service -f
+
+# Enable on boot
+sudo systemctl enable mira.service
+```
+
+### Frontend Service
+
+```bash
+# Service name: mira-frontend.service
+
+# Check status
+sudo systemctl status mira-frontend.service
+
+# Start service
+sudo systemctl start mira-frontend.service
+
+# Stop service
+sudo systemctl stop mira-frontend.service
+
+# Restart service
+sudo systemctl restart mira-frontend.service
+
+# View logs
+sudo journalctl -u mira-frontend.service -f
+
+# Enable on boot
+sudo systemctl enable mira-frontend.service
+```
+
+### Managing Both Services
+
+```bash
+# Restart both services
+sudo systemctl restart mira.service mira-frontend.service
+
+# Check status of both
+sudo systemctl status mira.service mira-frontend.service
+
+# View logs for both
+sudo journalctl -u mira.service -u mira-frontend.service -f
+```
+
+**Note**: When making code changes, restart the appropriate service(s) to apply the changes. The backend service runs the Rust WebSocket server on port 3001, and the frontend service serves the built React application.
+
 ## Architecture
 
 ### Backend Architecture

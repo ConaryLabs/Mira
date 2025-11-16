@@ -6,9 +6,11 @@ import { ArtifactPanel } from './components/ArtifactPanel';
 import { QuickFileOpen, useQuickFileOpen } from './components/QuickFileOpen';
 import { ProjectsView } from './components/ProjectsView';
 import { ToastContainer } from './components/ToastContainer';
+import { TerminalPanel } from './components/TerminalPanel';
 import { useAppState } from './stores/useAppState';
 import { useWebSocketStore } from './stores/useWebSocketStore';
 import { useUIStore, useActiveTab } from './stores/useUIStore';
+import { useTerminalStore } from './stores/useTerminalStore';
 import { useWebSocketMessageHandler } from './hooks/useWebSocketMessageHandler';
 import { useMessageHandler } from './hooks/useMessageHandler';
 import { useChatPersistence } from './hooks/useChatPersistence';
@@ -16,6 +18,7 @@ import { useArtifactFileContentWire } from './hooks/useArtifactFileContentWire';
 import { useToolResultArtifactBridge } from './hooks/useToolResultArtifactBridge';
 import { useErrorHandler } from './hooks/useErrorHandler';
 import { useConnectionTracking } from './hooks/useConnectionTracking';
+import { useTerminalMessageHandler } from './hooks/useTerminalMessageHandler';
 import { MessageSquare, Folder } from 'lucide-react';
 import './App.css';
 
@@ -45,10 +48,27 @@ function App() {
   useArtifactFileContentWire();  // Belt-and-suspenders: ensure file_content opens artifacts
   useToolResultArtifactBridge(); // Tool_result → Artifact Viewer bridge
   useErrorHandler();             // WebSocket error → Chat messages + Toasts
-  useConnectionTracking();       // NEW: Sync WebSocket state → AppState connection tracking
+  useConnectionTracking();       // Sync WebSocket state → AppState connection tracking
+  useTerminalMessageHandler();   // Handle terminal WebSocket messages
   
   // Quick file open handler
   const quickFileOpen = useQuickFileOpen();
+
+  // Terminal toggle handler (Ctrl+`)
+  const { toggleTerminalVisibility } = useTerminalStore();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+` or Cmd+` to toggle terminal
+      if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+        e.preventDefault();
+        toggleTerminalVisibility();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleTerminalVisibility]);
   
   const tabs = [
     { id: 'chat' as const, label: 'Chat', icon: <MessageSquare className="w-4 h-4" /> },
@@ -114,7 +134,10 @@ function App() {
         isOpen={quickFileOpen.isOpen}
         onClose={quickFileOpen.close}
       />
-      
+
+      {/* Terminal panel - bottom overlay */}
+      <TerminalPanel />
+
       {/* Toast notifications - bottom right corner */}
       <ToastContainer />
     </div>

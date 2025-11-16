@@ -4,6 +4,7 @@ pub mod api;
 pub mod config;
 pub mod file_system;
 pub mod git;
+pub mod terminal;
 pub mod llm;
 pub mod memory;
 pub mod persona;

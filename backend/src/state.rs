@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::api::ws::chat::routing::MessageRouter;
+use crate::api::ws::terminal::TerminalSessionManager;
 use crate::config::CONFIG;
 use crate::git::client::GitClient;
 use crate::git::store::GitStore;
@@ -18,6 +19,7 @@ use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::operations::{ContextLoader, OperationEngine};
 use crate::project::store::ProjectStore;
 use crate::relationship::{FactsService, RelationshipService};
+use crate::terminal::TerminalStore;
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -49,6 +51,8 @@ pub struct AppState {
     pub message_router: Arc<MessageRouter>,
     pub relationship_service: Arc<RelationshipService>,
     pub facts_service: Arc<FactsService>,
+    pub terminal_store: Arc<TerminalStore>,
+    pub terminal_session_manager: Arc<TerminalSessionManager>,
 }
 
 impl AppState {
@@ -141,6 +145,11 @@ impl AppState {
         // Initialize MessageRouter
         let message_router = Arc::new(MessageRouter::new((*gpt5_provider).clone()));
 
+        // Initialize terminal services
+        info!("Initializing terminal services");
+        let terminal_store = Arc::new(TerminalStore::new(Arc::new(pool.clone())));
+        let terminal_session_manager = Arc::new(TerminalSessionManager::new());
+
         info!("Application state initialized successfully");
 
         Ok(Self {
@@ -160,6 +169,8 @@ impl AppState {
             message_router,
             relationship_service,
             facts_service,
+            terminal_store,
+            terminal_session_manager,
         })
     }
 }

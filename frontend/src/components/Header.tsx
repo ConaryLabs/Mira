@@ -1,25 +1,27 @@
 // src/components/Header.tsx
 import React from 'react';
-import { Play, Command, Folder, Settings } from 'lucide-react';
+import { Play, Command, Folder, Settings, Terminal } from 'lucide-react';
 import ArtifactToggle from './ArtifactToggle';
 import { CommitPushButton } from './CommitPushButton';
 import { GitSyncButton } from './GitSyncButton';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useUIStore } from '../stores/useUIStore';
+import { useTerminalStore } from '../stores/useTerminalStore';
 
 interface HeaderProps {
   onQuickFileOpen: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ onQuickFileOpen }) => {
-  const { 
-    currentProject, 
+  const {
+    currentProject,
     showArtifacts,
     setShowArtifacts
   } = useAppState();
-  
+
   const { artifacts } = useArtifactState();
   const { setActiveTab } = useUIStore();
+  const { toggleTerminalVisibility, isTerminalVisible } = useTerminalStore();
   
   return (
     <header className="h-14 border-b border-gray-700 px-4 flex items-center bg-gray-900">
@@ -81,9 +83,22 @@ export const Header: React.FC<HeaderProps> = ({ onQuickFileOpen }) => {
             )}
             
             <CommitPushButton />
+
+            {/* Terminal Toggle */}
+            <button
+              onClick={toggleTerminalVisibility}
+              className={`p-2 rounded-md transition-colors ${
+                isTerminalVisible
+                  ? 'text-blue-400 bg-blue-900/30'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+              }`}
+              title="Toggle Terminal (Ctrl+`)"
+            >
+              <Terminal size={16} />
+            </button>
           </>
         )}
-        
+
         {/* Artifact Toggle - show when there are artifacts OR project selected */}
         {(artifacts.length > 0 || currentProject) && (
           <ArtifactToggle

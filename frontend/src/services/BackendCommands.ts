@@ -329,6 +329,66 @@ export class BackendCommands {
     });
   }
 
+  // ==================== TERMINAL COMMANDS ====================
+
+  async startTerminal(projectId: string, workingDirectory?: string, cols: number = 80, rows: number = 24) {
+    return this.send({
+      type: 'terminal_command',
+      method: 'start_session',
+      params: {
+        project_id: projectId,
+        working_directory: workingDirectory,
+        cols,
+        rows
+      }
+    });
+  }
+
+  async sendTerminalInput(sessionId: string, data: string) {
+    return this.send({
+      type: 'terminal_command',
+      method: 'send_input',
+      params: {
+        session_id: sessionId,
+        data  // Base64 encoded
+      }
+    });
+  }
+
+  async resizeTerminal(sessionId: string, cols: number, rows: number) {
+    return this.send({
+      type: 'terminal_command',
+      method: 'resize',
+      params: {
+        session_id: sessionId,
+        cols,
+        rows
+      }
+    });
+  }
+
+  async closeTerminal(sessionId: string) {
+    return this.send({
+      type: 'terminal_command',
+      method: 'close_session',
+      params: {
+        session_id: sessionId
+      }
+    });
+  }
+
+  async listTerminalSessions(projectId: string, activeOnly: boolean = true, limit?: number) {
+    return this.send({
+      type: 'terminal_command',
+      method: 'list_sessions',
+      params: {
+        project_id: projectId,
+        active_only: activeOnly,
+        limit
+      }
+    });
+  }
+
   // ==================== RUN PROJECT COMMAND ====================
 
   async runProject(projectId: string, command?: string) {
@@ -336,7 +396,7 @@ export class BackendCommands {
     if (!command) {
       command = 'cargo run';  // Default to Rust
     }
-    
+
     return this.send({
       type: 'project_command',
       method: 'project.run',

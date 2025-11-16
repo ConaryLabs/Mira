@@ -70,7 +70,7 @@ const KNOWN_DATA_TYPES = new Set([
   'status',           // Status updates (thinking, typing)
   'stream',           // Token streaming (deltas)
   'chat_complete',    // Finalization message
-  
+
   // Project/file management
   'project_list',
   'projects',
@@ -80,7 +80,7 @@ const KNOWN_DATA_TYPES = new Set([
   'git_status',
   'file_tree',
   'file_content',
-  
+
   // Documents
   'document_list',
   'document_deleted',
@@ -88,17 +88,24 @@ const KNOWN_DATA_TYPES = new Set([
   'document_processing_progress',
   'document_processed',
   'document_content',
-  
+
   // Memory
   'memory_data',
-  
+
+  // Terminal
+  'terminal_started',
+  'terminal_output',
+  'terminal_closed',
+  'terminal_error',
+  'terminal_sessions',
+
   // Legacy streaming
   'stream_delta',
   'reasoning_delta',
   'stream_done',
   'artifact_created',
   'tool_result',
-  
+
   // Operation engine events (can also be wrapped in data envelope)
   'operation.started',
   'operation.streaming',

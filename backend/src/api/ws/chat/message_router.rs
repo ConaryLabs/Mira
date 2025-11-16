@@ -12,7 +12,7 @@ use super::connection::WebSocketConnection;
 use super::unified_handler::{ChatRequest, UnifiedChatHandler};
 use crate::api::error::ApiError;
 use crate::api::ws::message::{MessageMetadata, WsClientMessage, WsServerMessage};
-use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project};
+use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project, terminal};
 use crate::config::CONFIG;
 use crate::state::AppState;
 
@@ -69,6 +69,9 @@ impl MessageRouter {
             }
             WsClientMessage::DocumentCommand { method, params } => {
                 self.handle_document_command(method, params).await
+            }
+            WsClientMessage::TerminalCommand { method, params } => {
+                self.handle_terminal_command(method, params).await
             }
             _ => {
                 debug!("Ignoring message type");
@@ -300,5 +303,22 @@ impl MessageRouter {
         }
 
         Ok(())
+    }
+
+    /// Terminal command handler
+    async fn handle_terminal_command(&self, method: String, params: Value) -> Result<()> {
+        let manager = self.app_state.terminal_session_manager.clone();
+        let app_state = self.app_state.clone();
+
+        let result = match method.as_str() {
+            "start_session" => terminal::handle_start_session(params, manager, app_state).await,
+            "send_input" => terminal::handle_send_input(params, manager).await,
+            "resize" => terminal::handle_resize(params, manager).await,
+            "close_session" => terminal::handle_close_session(params, manager, app_state).await,
+            "list_sessions" => terminal::handle_list_sessions(params, manager, app_state).await,
+            _ => Err(ApiError::bad_request(format!("Unknown terminal method: {}", method))),
+        };
+
+        self.send_result(result, "TERMINAL").await
     }
 }

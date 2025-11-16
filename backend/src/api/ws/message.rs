@@ -78,6 +78,10 @@ pub enum WsClientMessage {
         method: String,
         params: serde_json::Value,
     },
+    TerminalCommand {
+        method: String,
+        params: serde_json::Value,
+    },
 }
 
 /// Represents all possible messages sent from the server to the client (frontend).
