@@ -86,6 +86,16 @@ mira/
 
 ## Recent Improvements (November 2025)
 
+### Session 7: Frontend Simplification & Cleanup
+- **Major Code Reduction** - Removed ~1,220 lines (35% reduction): git UI components, duplicate code, complex implementations
+- **ProjectsView Refactoring** - Heavy refactor from 483 to 268 lines (-45%) using custom hooks and modal components
+- **Custom Hooks Pattern** - Created useProjectOperations and useGitOperations hooks for better separation of concerns
+- **Modal Components** - Extracted CreateProjectModal and DeleteConfirmModal for reusability
+- **Toast Centralization** - Removed duplicate toast implementation, unified on global addToast
+- **Better Async Handling** - Progress toasts and optimized delays in git operations
+- **State Cleanup** - Removed write-only gitStatus property
+- **4 files deleted, 4 created, 11 modified** - 3 commits
+
 ### Session 6: Dynamic Reasoning Level Selection
 - **Context-Aware Reasoning** - Per-request GPT-5 reasoning effort override (low/medium/high)
 - **Strategic Cost Optimization** - High reasoning for planning (better quality), low for simple queries (30-40% cost savings)

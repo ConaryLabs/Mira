@@ -701,7 +701,7 @@ Let's build the future of AI-assisted development.
 
 ---
 
-**Last Updated**: 2025-11-15
+**Last Updated**: 2025-11-16
 **Status**: Partial Implementation (Terminal + Read-Only Tools Complete, Write Tools Pending)
 **Owner**: Peter (Founder)
 
@@ -709,6 +709,9 @@ Let's build the future of AI-assisted development.
 - Session 2: Integrated terminal with xterm.js + PTY (✅ Complete)
 - Session 3: External tools - web search, URL fetch, command execution (✅ Complete)
 - Session 4: Git analysis (10 tools) + Code intelligence (12 tools) (✅ Complete)
+- Session 5: Planning mode with task tracking and real-time WebSocket events (✅ Complete)
+- Session 6: Dynamic reasoning level selection for cost/quality optimization (✅ Complete)
+- Session 7: Frontend simplification - removed 1,220 lines, refactored ProjectsView with hooks (✅ Complete)
 - **Next Priorities**:
   1. Expose file write/edit meta-tools to GPT-5 (handlers exist, need delegation_tools wiring)
   2. Add file tree browser UI component
