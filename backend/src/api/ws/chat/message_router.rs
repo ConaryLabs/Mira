@@ -13,7 +13,6 @@ use super::unified_handler::{ChatRequest, UnifiedChatHandler};
 use crate::api::error::ApiError;
 use crate::api::ws::message::{MessageMetadata, WsClientMessage, WsServerMessage};
 use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project};
-use crate::config::CONFIG;
 use crate::state::AppState;
 
 pub struct MessageRouter {

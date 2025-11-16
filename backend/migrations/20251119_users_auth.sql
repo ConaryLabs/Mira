@@ -18,13 +18,13 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
 
 -- Add a default user for migration/testing (password: 'password123')
--- Hash generated with bcrypt cost 12: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7mjHmMQK2O
+-- Hash generated with Rust bcrypt crate cost 12
 INSERT OR IGNORE INTO users (id, username, email, password_hash, display_name, is_active)
 VALUES (
     'peter-eternal',
     'peter',
     'peter@mira.local',
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5NU7mjHmMQK2O',
+    '$2b$12$9zk9R/Lybz2Fg9qsDdEpi.ahiV0.Zq6y22sn4EwjacoDQXyO61A7S',
     'Peter',
     TRUE
 );
