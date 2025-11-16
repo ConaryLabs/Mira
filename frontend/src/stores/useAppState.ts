@@ -27,7 +27,6 @@ interface AppState {
   // Git State
   modifiedFiles: string[];
   currentBranch: string;
-  gitStatus: any;
   
   // Artifacts (unified type from useChatStore)
   artifacts: Artifact[];
@@ -57,7 +56,6 @@ interface AppState {
   setProjects: (projects: Project[] | ((prev: Project[]) => Project[])) => void;
   
   // Actions - Git
-  updateGitStatus: (status: any) => void;
   addModifiedFile: (file: string) => void;
   removeModifiedFile: (file: string) => void;
   clearModifiedFiles: () => void;
@@ -154,7 +152,6 @@ const initialState = {
   // Git State
   modifiedFiles: [],
   currentBranch: 'main',
-  gitStatus: null,
   
   // Artifacts
   artifacts: [],
@@ -214,8 +211,6 @@ export const useAppState = create<AppState>()(
       },
       
       // ===== Git Actions =====
-      updateGitStatus: (status) => set({ gitStatus: status }),
-      
       addModifiedFile: (file) => set((state) => ({
         modifiedFiles: state.modifiedFiles.includes(file) 
           ? state.modifiedFiles 

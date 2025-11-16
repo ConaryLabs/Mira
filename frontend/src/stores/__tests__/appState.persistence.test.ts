@@ -217,15 +217,14 @@ describe('useAppState - localStorage Persistence', () => {
 
     it('does NOT persist git state', () => {
       const store = useAppState.getState();
-      
+
+
       store.addModifiedFile('test.ts');
-      store.updateGitStatus({ branch: 'feature' });
-      
+
       const stored = localStorage.getItem(STORAGE_KEY);
       const parsed = JSON.parse(stored!);
-      
+
       expect(parsed.state.modifiedFiles).toBeUndefined();
-      expect(parsed.state.gitStatus).toBeUndefined();
     });
 
     it('only persists specified fields', () => {
@@ -255,7 +254,6 @@ describe('useAppState - localStorage Persistence', () => {
       // Should NOT persist
       expect(parsed.state.showArtifacts).toBeUndefined();
       expect(parsed.state.modifiedFiles).toBeUndefined();
-      expect(parsed.state.gitStatus).toBeUndefined();
     });
   });
 

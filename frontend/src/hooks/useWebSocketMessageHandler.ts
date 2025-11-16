@@ -11,9 +11,8 @@ export const useWebSocketMessageHandler = () => {
   const subscribe = useWebSocketStore(state => state.subscribe);
   const send = useWebSocketStore(state => state.send);
   
-  const { 
+  const {
     setProjects,
-    updateGitStatus, 
     addModifiedFile,
     clearModifiedFiles,
     setShowFileExplorer,
@@ -286,8 +285,6 @@ export const useWebSocketMessageHandler = () => {
       case 'git_status': {
         console.log('Git status update:', data.status);
         if (data.status === 'synced' || data.status === 'modified') {
-          updateGitStatus(data.status);
-          
           if (data.modified_files) {
             clearModifiedFiles();
             data.modified_files.forEach((file: string) => addModifiedFile(file));
