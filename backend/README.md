@@ -75,12 +75,14 @@ Server starts on `ws://localhost:3001/ws`
 ### Key Components
 
 - **Operation Engine** (`src/operations/engine/`) - Modular orchestration of GPT-5 → DeepSeek workflows
-  - `orchestration.rs` - Main execution logic
+  - `orchestration.rs` - Main execution logic with planning mode and dynamic reasoning
   - `lifecycle.rs` - State management (pending → started → delegating → completed)
   - `artifacts.rs` - Code artifact handling
   - `delegation.rs` - DeepSeek delegation with rich context
   - `context.rs` - Context gathering (memory + code + relationships)
-  - `events.rs` - Event emissions for real-time updates
+  - `events.rs` - Event emissions for real-time updates (including plan/task events)
+  - `simple_mode.rs` - Fast path for simple requests with low reasoning
+  - `tasks/` - Task tracking system with WebSocket event streaming
 
 - **Memory Systems** (`src/memory/`) - Hybrid storage (recent + semantic)
   - `service/` - MemoryService coordinating all memory operations
@@ -115,19 +117,37 @@ Mira uses **capability-based delegation**:
 ### 2. Operation Lifecycle
 
 ```
-PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
-                                               ↓
-                                          FAILED
+                    ┌──── Simple (score > 0.7) ────┐
+                    │                              │
+PENDING → STARTED ──┤                              ├──→ DELEGATING → GENERATING → COMPLETED
+                    │                              │                               ↓
+                    └── Complex (score ≤ 0.7) ───┐│                           FAILED
+                                                  ││
+                                          PLANNING ┘
+                                              ↓
+                                        Task Tracking
 ```
 
 Operations are complex workflows tracked through state transitions:
+
+**Simple Operations (simplicity score > 0.7):**
 1. User request → Operation created (PENDING)
 2. Execution begins → STARTED
-3. GPT-5 calls delegation tool → DELEGATING
-4. DeepSeek generates code → GENERATING
-5. Artifacts captured → COMPLETED
+3. Direct execution with low reasoning (no planning)
+4. Artifacts captured → COMPLETED
 
-All state changes emit events via channels for real-time frontend updates.
+**Complex Operations (simplicity score ≤ 0.7):**
+1. User request → Operation created (PENDING)
+2. Execution begins → STARTED
+3. **Planning phase** → GPT-5 generates execution plan with HIGH reasoning
+4. **Plan parsed** → Tasks created and tracked in database
+5. Execution with tools → DELEGATING
+6. DeepSeek generates code → GENERATING
+7. Tasks updated in real-time → COMPLETED
+
+All state changes emit events via channels for real-time frontend updates, including:
+- PlanGenerated (plan text + reasoning tokens)
+- TaskCreated, TaskStarted, TaskCompleted, TaskFailed
 
 ### 3. Memory Architecture
 
@@ -200,12 +220,17 @@ mira-backend/
 │   │       └── message.rs         # Message types
 │   ├── operations/                # Operation engine
 │   │   ├── engine/                # Modular orchestration
-│   │   │   ├── orchestration.rs   # Main execution loop
+│   │   │   ├── orchestration.rs   # Main execution loop with planning
 │   │   │   ├── lifecycle.rs       # State management
 │   │   │   ├── artifacts.rs       # Artifact handling
 │   │   │   ├── delegation.rs      # DeepSeek delegation
 │   │   │   ├── context.rs         # Context gathering
-│   │   │   └── events.rs          # Event types
+│   │   │   ├── events.rs          # Event types (including plan/task events)
+│   │   │   └── simple_mode.rs     # Fast path for simple requests
+│   │   ├── tasks/                 # Task tracking system
+│   │   │   ├── types.rs           # TaskStatus, OperationTask
+│   │   │   ├── store.rs           # Database operations
+│   │   │   └── mod.rs             # TaskManager
 │   │   ├── types.rs               # Operation, Artifact types
 │   │   └── delegation_tools.rs    # GPT-5 tool schemas
 │   ├── memory/                    # Memory systems
@@ -471,10 +496,12 @@ MIRA_SQLITE_MAX_CONNECTIONS=10
 QDRANT_URL=http://localhost:6333
 QDRANT_API_KEY=optional
 
-# OpenAI
+# OpenAI / GPT-5
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-5-0314
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+GPT5_REASONING=medium      # Default reasoning effort: low/medium/high
+GPT5_VERBOSITY=medium      # Reasoning verbosity: low/medium/high
 
 # DeepSeek
 DEEPSEEK_API_KEY=...
@@ -782,6 +809,7 @@ For comprehensive technical documentation, see:
 - Specialization: Each model excels in its domain
 - Cost efficiency: DeepSeek for bulk code generation
 - Quality: GPT-5's reasoning + DeepSeek's implementation
+- Dynamic reasoning: High effort for planning, low for simple queries, medium for normal execution
 
 **Why WebSocket over HTTP?**
 - Real-time: Streaming updates during long operations
