@@ -84,6 +84,15 @@ Both the backend and frontend run as systemd services on the development/product
 
 ```bash
 # Service name: mira.service
+# IMPORTANT: The service runs the RELEASE build, not debug build
+
+# After making backend code changes, you must:
+# 1. Build the release binary
+cd backend
+cargo build --release
+
+# 2. Restart the service to apply changes
+sudo systemctl restart mira.service
 
 # Check status
 sudo systemctl status mira.service
@@ -141,7 +150,11 @@ sudo systemctl status mira.service mira-frontend.service
 sudo journalctl -u mira.service -u mira-frontend.service -f
 ```
 
-**Note**: When making code changes, restart the appropriate service(s) to apply the changes. The backend service runs the Rust WebSocket server on port 3001, and the frontend service serves the built React application.
+**Important Notes**:
+- **Backend**: The mira.service runs the **release build** (`target/release/mira-backend`), so you must run `cargo build --release` before restarting the service to apply code changes
+- **Frontend**: After building (`npm run build`), restart mira-frontend.service to serve the updated application
+- The backend service runs the Rust WebSocket server on port 3001
+- The frontend service serves the built React application
 
 ## Architecture
 
