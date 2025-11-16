@@ -23,8 +23,8 @@ interface TerminalState {
   // Terminal visibility
   isTerminalVisible: boolean;
 
-  // Terminal panel size (percentage of viewport height)
-  terminalHeight: number;
+  // Terminal panel size (percentage of viewport width)
+  terminalWidth: number;
 
   // Actions
   addSession: (session: TerminalSession) => void;
@@ -34,7 +34,7 @@ interface TerminalState {
   toggleTerminalVisibility: () => void;
   showTerminal: () => void;
   hideTerminal: () => void;
-  setTerminalHeight: (height: number) => void;
+  setTerminalWidth: (width: number) => void;
   clearSessions: () => void;
 }
 
@@ -42,7 +42,7 @@ export const useTerminalStore = create<TerminalState>((set) => ({
   sessions: {},
   activeSessionId: null,
   isTerminalVisible: false,
-  terminalHeight: 40, // Default 40% of viewport height
+  terminalWidth: 40, // Default 40% of viewport width
 
   addSession: (session) =>
     set((state) => ({
@@ -101,9 +101,9 @@ export const useTerminalStore = create<TerminalState>((set) => ({
       isTerminalVisible: false,
     }),
 
-  setTerminalHeight: (height) =>
+  setTerminalWidth: (width) =>
     set({
-      terminalHeight: Math.max(20, Math.min(80, height)), // Clamp between 20% and 80%
+      terminalWidth: Math.max(20, Math.min(80, width)), // Clamp between 20% and 80%
     }),
 
   clearSessions: () =>

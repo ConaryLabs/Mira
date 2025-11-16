@@ -311,7 +311,20 @@ impl MessageRouter {
         let app_state = self.app_state.clone();
 
         let result = match method.as_str() {
-            "start_session" => terminal::handle_start_session(params, manager, app_state).await,
+            "start_session" => {
+                // Create channel for terminal output
+                let (output_tx, mut output_rx) = mpsc::unbounded_channel();
+                let connection = self.connection.clone();
+
+                // Spawn task to forward terminal output to WebSocket
+                tokio::spawn(async move {
+                    while let Some(msg) = output_rx.recv().await {
+                        let _ = connection.send_message(msg).await;
+                    }
+                });
+
+                terminal::handle_start_session(params, manager, app_state, Some(output_tx)).await
+            }
             "send_input" => terminal::handle_send_input(params, manager).await,
             "resize" => terminal::handle_resize(params, manager).await,
             "close_session" => terminal::handle_close_session(params, manager, app_state).await,

@@ -26,15 +26,36 @@ export const Terminal: React.FC<TerminalProps> = ({
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const sessionStartedRef = useRef<boolean>(false);
+  const sessionIdRef = useRef<string | null>(initialSessionId || null);
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId || null);
   const [isMaximized, setIsMaximized] = useState(false);
   const backendCommands = useBackendCommands();
 
   const { updateSession, removeSession } = useTerminalStore();
 
+  // Sync sessionId state with prop when it changes
+  useEffect(() => {
+    if (initialSessionId && initialSessionId !== sessionId) {
+      setSessionId(initialSessionId);
+      sessionIdRef.current = initialSessionId;
+    }
+  }, [initialSessionId]);
+
+  // Register terminal instance when sessionId becomes available
+  useEffect(() => {
+    if (sessionId && xtermRef.current) {
+      registerTerminalInstance(sessionId, xtermRef.current);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     if (!terminalRef.current) return;
 
+    // Don't create a new xterm if we already have one for this session
+    if (sessionId && xtermRef.current) {
+      return;
+    }
     // Create xterm instance with themed styling
     const xterm = new XTerm({
       cursorBlink: true,
@@ -83,15 +104,17 @@ export const Terminal: React.FC<TerminalProps> = ({
 
     // Handle terminal input (user typing)
     xterm.onData((data) => {
-      if (sessionId) {
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
         // Encode data to base64 for transmission
         const base64Data = btoa(data);
-        backendCommands.sendTerminalInput(sessionId, base64Data);
+        backendCommands.sendTerminalInput(currentSessionId, base64Data);
       }
     });
 
     // Start terminal session if not already started
-    if (!sessionId) {
+    if (!sessionId && !sessionStartedRef.current) {
+      sessionStartedRef.current = true;
       const dims = fitAddon.proposeDimensions();
       backendCommands
         .startTerminal(
@@ -100,9 +123,6 @@ export const Terminal: React.FC<TerminalProps> = ({
           dims?.cols || 80,
           dims?.rows || 24
         )
-        .then(() => {
-          xterm.writeln('\x1b[1;32mTerminal session starting...\x1b[0m');
-        })
         .catch((err) => {
           xterm.writeln(`\x1b[1;31mFailed to start terminal: ${err}\x1b[0m`);
         });
@@ -111,11 +131,12 @@ export const Terminal: React.FC<TerminalProps> = ({
     // Handle resize
     const handleResize = () => {
       fitAddon.fit();
-      if (sessionId) {
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
         const dims = fitAddon.proposeDimensions();
         if (dims) {
-          backendCommands.resizeTerminal(sessionId, dims.cols, dims.rows);
-          updateSession(sessionId, { cols: dims.cols, rows: dims.rows });
+          backendCommands.resizeTerminal(currentSessionId, dims.cols, dims.rows);
+          updateSession(currentSessionId, { cols: dims.cols, rows: dims.rows });
         }
       }
     };
@@ -125,31 +146,20 @@ export const Terminal: React.FC<TerminalProps> = ({
     // Cleanup
     return () => {
       window.removeEventListener('resize', handleResize);
-      if (sessionId) {
-        unregisterTerminalInstance(sessionId);
-        backendCommands.closeTerminal(sessionId);
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
+        unregisterTerminalInstance(currentSessionId);
+        backendCommands.closeTerminal(currentSessionId);
       }
       xterm.dispose();
     };
   }, [projectId, workingDirectory]);
 
-  // Update session ID when terminal starts
-  useEffect(() => {
-    // Listen for session start response
-    // This will be set by the WebSocket message handler
-  }, []);
-
-  // Handle WebSocket messages for terminal output
-  useEffect(() => {
-    // This will be connected to WebSocket store
-    // For now, placeholder for terminal output handling
-    // The WebSocket store should route terminal output messages here
-  }, [sessionId]);
-
   const handleClose = () => {
-    if (sessionId) {
-      backendCommands.closeTerminal(sessionId);
-      removeSession(sessionId);
+    const currentSessionId = sessionIdRef.current;
+    if (currentSessionId) {
+      backendCommands.closeTerminal(currentSessionId);
+      removeSession(currentSessionId);
     }
     onClose?.();
   };

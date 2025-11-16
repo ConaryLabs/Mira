@@ -140,4 +140,25 @@ pub enum WsServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         thinking: Option<String>,
     },
+
+    /// Terminal output message
+    #[serde(rename = "terminal_output")]
+    TerminalOutput {
+        session_id: String,
+        data: String, // base64-encoded output
+    },
+
+    /// Terminal closed message
+    #[serde(rename = "terminal_closed")]
+    TerminalClosed {
+        session_id: String,
+        exit_code: Option<i32>,
+    },
+
+    /// Terminal error message
+    #[serde(rename = "terminal_error")]
+    TerminalError {
+        session_id: String,
+        error: String,
+    },
 }

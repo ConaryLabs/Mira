@@ -275,6 +275,7 @@ pub async fn handle_start_session(
     params: Value,
     manager: Arc<TerminalSessionManager>,
     app_state: Arc<AppState>,
+    output_tx: Option<tokio::sync::mpsc::UnboundedSender<WsServerMessage>>,
 ) -> ApiResult<WsServerMessage> {
     let params: StartSessionParams = serde_json::from_value(params)
         .map_err(|e| ApiError::bad_request(format!("Invalid parameters: {}", e)))?;
@@ -301,30 +302,81 @@ pub async fn handle_start_session(
 
     // Spawn task to forward terminal output to WebSocket
     let session_id_clone = session_id.clone();
-    tokio::spawn(async move {
-        while let Some(msg) = output_rx.recv().await {
-            match msg {
-                TerminalMessage::Output { data } => {
-                    // TODO: Send to WebSocket connection
-                    // This will be handled by the WebSocket connection handler
-                    debug!(
-                        "Terminal {} output: {} bytes",
-                        session_id_clone,
-                        data.len()
-                    );
+    if let Some(tx) = output_tx {
+        tokio::spawn(async move {
+            while let Some(msg) = output_rx.recv().await {
+                match msg {
+                    TerminalMessage::Output { data } => {
+                        debug!(
+                            "Terminal {} output: {} bytes",
+                            session_id_clone,
+                            data.len()
+                        );
+
+                        // Encode output as base64
+                        let base64_data = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &data,
+                        );
+
+                        // Send terminal output to WebSocket
+                        let msg = WsServerMessage::TerminalOutput {
+                            session_id: session_id_clone.clone(),
+                            data: base64_data,
+                        };
+
+                        if tx.send(msg).is_err() {
+                            error!("Failed to send terminal output to WebSocket");
+                            break;
+                        }
+                    }
+                    TerminalMessage::Closed { exit_code } => {
+                        info!("Terminal {} closed with exit code: {:?}", session_id_clone, exit_code);
+                        let msg = WsServerMessage::TerminalClosed {
+                            session_id: session_id_clone.clone(),
+                            exit_code,
+                        };
+                        let _ = tx.send(msg);
+                        break;
+                    }
+                    TerminalMessage::Error { message } => {
+                        error!("Terminal {} error: {}", session_id_clone, message);
+                        let msg = WsServerMessage::TerminalError {
+                            session_id: session_id_clone.clone(),
+                            error: message,
+                        };
+                        let _ = tx.send(msg);
+                        break;
+                    }
+                    _ => {}
                 }
-                TerminalMessage::Closed { exit_code } => {
-                    info!("Terminal {} closed with exit code: {:?}", session_id_clone, exit_code);
-                    break;
-                }
-                TerminalMessage::Error { message } => {
-                    error!("Terminal {} error: {}", session_id_clone, message);
-                    break;
-                }
-                _ => {}
             }
-        }
-    });
+        });
+    } else {
+        // No WebSocket sender, just log
+        tokio::spawn(async move {
+            while let Some(msg) = output_rx.recv().await {
+                match msg {
+                    TerminalMessage::Output { data } => {
+                        debug!(
+                            "Terminal {} output: {} bytes (no WebSocket)",
+                            session_id_clone,
+                            data.len()
+                        );
+                    }
+                    TerminalMessage::Closed { exit_code } => {
+                        info!("Terminal {} closed with exit code: {:?}", session_id_clone, exit_code);
+                        break;
+                    }
+                    TerminalMessage::Error { message } => {
+                        error!("Terminal {} error: {}", session_id_clone, message);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
 
     Ok(WsServerMessage::Data {
         data: serde_json::to_value(StartSessionResponse {

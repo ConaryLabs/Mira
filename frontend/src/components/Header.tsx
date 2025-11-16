@@ -22,6 +22,10 @@ export const Header: React.FC<HeaderProps> = ({ onQuickFileOpen }) => {
   const { artifacts } = useArtifactState();
   const { setActiveTab } = useUIStore();
   const { toggleTerminalVisibility, isTerminalVisible } = useTerminalStore();
+
+  const handleTerminalClick = () => {
+    toggleTerminalVisibility();
+  };
   
   return (
     <header className="h-14 border-b border-gray-700 px-4 flex items-center bg-gray-900">
@@ -86,7 +90,8 @@ export const Header: React.FC<HeaderProps> = ({ onQuickFileOpen }) => {
 
             {/* Terminal Toggle */}
             <button
-              onClick={toggleTerminalVisibility}
+              type="button"
+              onClick={handleTerminalClick}
               className={`p-2 rounded-md transition-colors ${
                 isTerminalVisible
                   ? 'text-blue-400 bg-blue-900/30'
