@@ -6,9 +6,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ArtifactPanel } from '../../src/components/ArtifactPanel';
 import * as useArtifactsHook from '../../src/hooks/useArtifacts';
+import * as useAppStateModule from '../../src/stores/useAppState';
 
 // Mock the hooks
 vi.mock('../../src/hooks/useArtifacts');
+vi.mock('../../src/stores/useAppState', () => ({
+  useAppState: vi.fn(),
+}));
 vi.mock('../../src/components/MonacoEditor', () => ({
   MonacoEditor: ({ value, onChange }: any) => (
     <textarea
@@ -59,8 +63,20 @@ const defaultMockHook = {
   copyArtifact: vi.fn(),
 };
 
+const mockAddToast = vi.fn();
+
 beforeEach(() => {
   vi.clearAllMocks();
+
+  // Mock useAppState to return addToast function
+  vi.mocked(useAppStateModule.useAppState).mockImplementation((selector: any) => {
+    if (selector) {
+      const state = { addToast: mockAddToast };
+      return selector(state);
+    }
+    return mockAddToast;
+  });
+
   // Mock clipboard
   Object.assign(navigator, {
     clipboard: {
@@ -477,14 +493,17 @@ describe('ArtifactPanel Component', () => {
         activeArtifact: mockArtifacts[0],
         save,
       });
-      
+
       render(<ArtifactPanel />);
-      
+
       const saveButton = screen.getByText('Save');
       await userEvent.click(saveButton);
-      
+
       await waitFor(() => {
-        expect(screen.getByText(/Saved src\/components\/Button\.tsx/)).toBeInTheDocument();
+        expect(mockAddToast).toHaveBeenCalledWith({
+          message: 'Saved src/components/Button.tsx',
+          type: 'success'
+        });
       });
     });
     
@@ -496,14 +515,17 @@ describe('ArtifactPanel Component', () => {
         activeArtifact: mockArtifacts[0],
         save,
       });
-      
+
       render(<ArtifactPanel />);
-      
+
       const saveButton = screen.getByText('Save');
       await userEvent.click(saveButton);
-      
+
       await waitFor(() => {
-        expect(screen.getByText(/Failed to save/)).toBeInTheDocument();
+        expect(mockAddToast).toHaveBeenCalledWith({
+          message: 'Failed to save src/components/Button.tsx',
+          type: 'error'
+        });
       });
     });
     
@@ -515,14 +537,17 @@ describe('ArtifactPanel Component', () => {
         activeArtifact: mockArtifacts[0],
         apply,
       });
-      
+
       render(<ArtifactPanel />);
-      
+
       const applyButton = screen.getByText('Apply');
       await userEvent.click(applyButton);
-      
+
       await waitFor(() => {
-        expect(screen.getByText(/Applied.*to workspace/)).toBeInTheDocument();
+        expect(mockAddToast).toHaveBeenCalledWith({
+          message: 'Applied src/components/Button.tsx to workspace',
+          type: 'success'
+        });
       });
     });
     
@@ -534,21 +559,24 @@ describe('ArtifactPanel Component', () => {
         activeArtifact: mockArtifacts[0],
         copyArtifact,
       });
-      
+
       render(<ArtifactPanel />);
-      
+
       const copyButton = screen.getByTitle(/Copy to clipboard/i);
       await userEvent.click(copyButton);
-      
+
       await waitFor(() => {
-        expect(screen.getByText('Copied to clipboard')).toBeInTheDocument();
+        expect(mockAddToast).toHaveBeenCalledWith({
+          message: 'Copied to clipboard',
+          type: 'info'
+        });
       });
     });
     
     it('displays multiple toasts simultaneously', async () => {
       const save = vi.fn().mockResolvedValue(undefined);
       const apply = vi.fn().mockResolvedValue(undefined);
-      
+
       vi.mocked(useArtifactsHook.useArtifacts).mockReturnValue({
         ...defaultMockHook,
         artifacts: mockArtifacts,
@@ -556,19 +584,25 @@ describe('ArtifactPanel Component', () => {
         save,
         apply,
       });
-      
+
       render(<ArtifactPanel />);
-      
+
       const saveButton = screen.getByText('Save');
       const applyButton = screen.getByText('Apply');
-      
+
       await userEvent.click(saveButton);
       await userEvent.click(applyButton);
-      
-      // Check for toast-specific messages (not the status badges)
+
+      // Both toasts should be added
       await waitFor(() => {
-        expect(screen.getByText(/Saved src\/components\/Button\.tsx$/)).toBeInTheDocument();
-        expect(screen.getByText(/Applied.*to workspace/)).toBeInTheDocument();
+        expect(mockAddToast).toHaveBeenCalledWith({
+          message: 'Saved src/components/Button.tsx',
+          type: 'success'
+        });
+        expect(mockAddToast).toHaveBeenCalledWith({
+          message: 'Applied src/components/Button.tsx to workspace',
+          type: 'success'
+        });
       });
     });
   });

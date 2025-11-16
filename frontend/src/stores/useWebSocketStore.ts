@@ -404,7 +404,9 @@ export const useWebSocketStore = create<WebSocketStore>()(
   }))
 );
 
-// Auto-connect on store initialization
-setTimeout(() => {
-  useWebSocketStore.getState().connect();
-}, 100);
+// Auto-connect on store initialization (skip in test environment)
+if (typeof import.meta.env.VITEST === 'undefined') {
+  setTimeout(() => {
+    useWebSocketStore.getState().connect();
+  }, 100);
+}

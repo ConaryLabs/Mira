@@ -66,7 +66,8 @@ describe('CreateProjectModal', () => {
       );
 
       const nameInput = screen.getByLabelText(/Project Name/);
-      expect(nameInput).toHaveAttribute('autofocus');
+      // React's autoFocus doesn't render as an attribute, check if element is focused
+      expect(nameInput).toHaveFocus();
     });
   });
 

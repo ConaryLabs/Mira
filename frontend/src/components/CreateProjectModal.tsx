@@ -56,10 +56,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">
+            <label htmlFor="project-name" className="block text-sm font-medium text-slate-300 mb-1">
               Project Name *
             </label>
             <input
+              id="project-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -72,10 +73,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">
+            <label htmlFor="project-description" className="block text-sm font-medium text-slate-300 mb-1">
               Description (optional)
             </label>
             <textarea
+              id="project-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="A brief description of your project..."

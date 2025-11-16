@@ -25,7 +25,7 @@ describe('DeleteConfirmModal', () => {
         />
       );
 
-      expect(screen.getByText('Delete Project')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Delete Project' })).toBeInTheDocument();
       expect(screen.getByText(/Are you sure you want to delete/)).toBeInTheDocument();
       expect(screen.getByText('My Project')).toBeInTheDocument();
     });
@@ -41,7 +41,7 @@ describe('DeleteConfirmModal', () => {
         />
       );
 
-      expect(screen.queryByText('Delete Project')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Delete Project' })).not.toBeInTheDocument();
     });
 
     it('shows project name in confirmation message', () => {
@@ -102,8 +102,8 @@ describe('DeleteConfirmModal', () => {
         />
       );
 
-      // AlertTriangle icon should be present
-      const header = screen.getByText('Delete Project').closest('div');
+      // AlertTriangle icon should be present in header
+      const header = screen.getByRole('heading', { name: 'Delete Project' }).closest('div');
       expect(header?.querySelector('svg')).toBeInTheDocument();
     });
   });
@@ -332,7 +332,7 @@ describe('DeleteConfirmModal', () => {
 
   describe('styling and appearance', () => {
     it('applies danger/warning styling to modal', () => {
-      render(
+      const { container } = render(
         <DeleteConfirmModal
           isOpen={true}
           projectName="My Project"
@@ -342,13 +342,14 @@ describe('DeleteConfirmModal', () => {
         />
       );
 
-      // Modal should have red-themed border
-      const modal = screen.getByText('Delete Project').closest('div')?.parentElement;
+      // Modal should have red-themed border (second div child)
+      const modal = container.querySelector('.border-red-700\\/50');
+      expect(modal).toBeInTheDocument();
       expect(modal?.className).toContain('border-red');
     });
 
     it('applies red background to header', () => {
-      render(
+      const { container } = render(
         <DeleteConfirmModal
           isOpen={true}
           projectName="My Project"
@@ -358,7 +359,9 @@ describe('DeleteConfirmModal', () => {
         />
       );
 
-      const header = screen.getByText('Delete Project').closest('div');
+      // Header should have red background
+      const header = container.querySelector('.bg-red-900\\/20');
+      expect(header).toBeInTheDocument();
       expect(header?.className).toContain('bg-red');
     });
 
