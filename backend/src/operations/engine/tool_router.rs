@@ -48,6 +48,8 @@ impl ToolRouter {
         match tool_name {
             // File operations
             "read_project_file" => self.route_read_file(arguments).await,
+            "write_project_file" => self.route_write_file(arguments).await,
+            "edit_project_file" => self.route_edit_file(arguments).await,
             "search_codebase" => self.route_search(arguments).await,
             "list_project_files" => self.route_list_files(arguments).await,
             "get_file_summary" => self.route_file_summary(arguments).await,
@@ -427,6 +429,60 @@ impl ToolRouter {
             "file_count": structures.len(),
             "structures": structures
         }))
+    }
+
+    /// Route write_project_file directly to file handler
+    ///
+    /// Writes content to a file, creating parent directories if needed
+    async fn route_write_file(&self, args: Value) -> Result<Value> {
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
+
+        info!("[ROUTER] Writing file: {}", path);
+
+        let write_args = json!({
+            "path": path,
+            "content": content
+        });
+
+        self.file_handlers.execute_tool("write_file", write_args).await
+    }
+
+    /// Route edit_project_file directly to file handler
+    ///
+    /// Performs search/replace edits on an existing file
+    async fn route_edit_file(&self, args: Value) -> Result<Value> {
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+
+        let search = args
+            .get("search")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'search' argument"))?;
+
+        let replace = args
+            .get("replace")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'replace' argument"))?;
+
+        info!("[ROUTER] Editing file: {} (search/replace)", path);
+
+        let edit_args = json!({
+            "path": path,
+            "search": search,
+            "replace": replace
+        });
+
+        self.file_handlers.execute_tool("edit_file", edit_args).await
     }
 
     // ========================================================================

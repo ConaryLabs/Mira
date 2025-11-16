@@ -17,6 +17,8 @@ pub fn get_delegation_tools() -> Vec<Value> {
 
         // File operation meta-tools (delegate to DeepSeek)
         read_project_file_tool(),
+        write_project_file_tool(),
+        edit_project_file_tool(),
         search_codebase_tool(),
         list_project_files_tool(),
 
@@ -199,6 +201,61 @@ fn read_project_file_tool() -> Value {
     .property(
         "purpose",
         properties::description("Why you need to read these files (helps with context optimization)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: write_project_file
+/// Meta-tool that delegates file writing to DeepSeek
+fn write_project_file_tool() -> Value {
+    ToolBuilder::new(
+        "write_project_file",
+        "Write content to a file in the project. Creates new files or overwrites existing ones. Use this to save generated code, create new modules, or update configuration files. For partial edits to existing files, use edit_project_file instead."
+    )
+    .property(
+        "path",
+        properties::path("File path to write to (e.g., 'src/utils/helper.ts', 'config/settings.json')"),
+        true
+    )
+    .property(
+        "content",
+        properties::description("Complete file content to write. For existing files, this will overwrite the entire file."),
+        true
+    )
+    .property(
+        "purpose",
+        properties::optional_string("Brief explanation of what this file does (helps with documentation)"),
+        false
+    )
+    .build()
+}
+
+/// Tool: edit_project_file
+/// Meta-tool that delegates file editing (search/replace) to DeepSeek
+fn edit_project_file_tool() -> Value {
+    ToolBuilder::new(
+        "edit_project_file",
+        "Make targeted edits to an existing file using search and replace. Use this when you need to modify specific parts of a file without rewriting the entire file. Safer than write_project_file for small changes."
+    )
+    .property(
+        "path",
+        properties::path("File path to edit (e.g., 'src/main.rs')"),
+        true
+    )
+    .property(
+        "search",
+        properties::description("Exact text to search for (will be replaced). Must match exactly including whitespace."),
+        true
+    )
+    .property(
+        "replace",
+        properties::description("Text to replace the search string with. Can be empty to delete text."),
+        true
+    )
+    .property(
+        "purpose",
+        properties::optional_string("Brief explanation of what this edit accomplishes"),
         false
     )
     .build()

@@ -28,6 +28,7 @@ impl FileHandlers {
         match tool_name {
             "read_file" => self.read_file(arguments).await,
             "write_file" => self.write_file(arguments).await,
+            "edit_file" => self.edit_file(arguments).await,
             "list_files" => self.list_files(arguments).await,
             "grep_files" => self.grep_files(arguments).await,
             "summarize_file" => self.summarize_file(arguments).await,
@@ -96,6 +97,58 @@ impl FileHandlers {
             "path": path,
             "bytes_written": content.len(),
             "lines_written": line_count
+        }))
+    }
+
+    /// Edit a file using search and replace
+    async fn edit_file(&self, args: Value) -> Result<Value> {
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+
+        let search = args
+            .get("search")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'search' argument"))?;
+
+        let replace = args
+            .get("replace")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'replace' argument"))?;
+
+        let full_path = self.resolve_path(path)?;
+        info!("Editing file: {} (search/replace)", full_path.display());
+
+        // Read the file
+        let original_content = fs::read_to_string(&full_path)
+            .await
+            .with_context(|| format!("Failed to read file: {}", full_path.display()))?;
+
+        // Check if search string exists
+        if !original_content.contains(search) {
+            return Err(anyhow::anyhow!(
+                "Search string not found in file. Make sure the search text matches exactly, including whitespace."
+            ));
+        }
+
+        // Perform replacement
+        let new_content = original_content.replace(search, replace);
+
+        // Count occurrences
+        let occurrences = original_content.matches(search).count();
+
+        // Write back the modified content
+        fs::write(&full_path, &new_content)
+            .await
+            .with_context(|| format!("Failed to write file: {}", full_path.display()))?;
+
+        Ok(json!({
+            "success": true,
+            "path": path,
+            "replacements_made": occurrences,
+            "original_size": original_content.len(),
+            "new_size": new_content.len()
         }))
     }
 

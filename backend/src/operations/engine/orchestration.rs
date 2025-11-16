@@ -226,7 +226,8 @@ impl Orchestrator {
                         }
                     } else if matches!(
                         name.as_str(),
-                        "read_project_file" | "search_codebase" | "list_project_files"
+                        "read_project_file" | "write_project_file" | "edit_project_file"
+                        | "search_codebase" | "list_project_files"
                         | "get_file_summary" | "get_file_structure"
                         | "web_search" | "fetch_url" | "execute_command"
                         | "git_history" | "git_blame" | "git_diff" | "git_file_history"
