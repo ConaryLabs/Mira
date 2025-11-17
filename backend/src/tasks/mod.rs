@@ -203,9 +203,9 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
 
-            // Use GPT-5 provider directly - no router
-            let gpt5_provider = app_state.gpt5_provider.clone();
-            let message_pipeline = MessagePipeline::new(gpt5_provider);
+            // Use DeepSeek provider for message analysis
+            let deepseek_provider = app_state.deepseek_provider.clone();
+            let message_pipeline = MessagePipeline::new(deepseek_provider);
 
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);

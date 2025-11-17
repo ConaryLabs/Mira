@@ -62,6 +62,58 @@ pub fn get_delegation_tools() -> Vec<Value> {
     ]
 }
 
+/// Get tool schemas for DeepSeek (excludes GPT-5 meta-tools like generate_code)
+/// When using DeepSeek directly, it should only see actual executable tools, not
+/// the meta-tools that GPT-5 uses to delegate to DeepSeek
+pub fn get_deepseek_tools() -> Vec<Value> {
+    vec![
+        // File operation tools
+        read_project_file_tool(),
+        write_project_file_tool(),
+        edit_project_file_tool(),
+        search_codebase_tool(),
+        list_project_files_tool(),
+
+        // Token-optimized file operations
+        get_file_summary_tool(),
+        get_file_structure_tool(),
+
+        // External tools - web and command execution
+        web_search_tool(),
+        fetch_url_tool(),
+        execute_command_tool(),
+
+        // Git analysis tools
+        git_history_tool(),
+        git_blame_tool(),
+        git_diff_tool(),
+        git_file_history_tool(),
+        git_branches_tool(),
+        git_show_commit_tool(),
+        git_file_at_commit_tool(),
+        git_recent_changes_tool(),
+        git_contributors_tool(),
+        git_status_tool(),
+
+        // Code intelligence tools
+        find_function_tool(),
+        find_class_or_struct_tool(),
+        search_code_semantic_tool(),
+        find_imports_tool(),
+        analyze_dependencies_tool(),
+        get_complexity_hotspots_tool(),
+        get_quality_issues_tool(),
+        get_file_symbols_tool(),
+        find_tests_for_code_tool(),
+        get_codebase_stats_tool(),
+        find_callers_tool(),
+        get_element_definition_tool(),
+
+        // Skills system
+        activate_skill_tool(),
+    ]
+}
+
 /// Tool: generate_code
 /// Creates a new code file from scratch
 fn generate_code_tool() -> Value {

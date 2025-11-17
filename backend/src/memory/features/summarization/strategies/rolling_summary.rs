@@ -40,6 +40,8 @@ impl RollingSummaryStrategy {
         );
 
         let messages = vec![Message {
+            tool_call_id: None,
+            tool_calls: None,
             role: "user".to_string(),
             content: prompt,
         }];

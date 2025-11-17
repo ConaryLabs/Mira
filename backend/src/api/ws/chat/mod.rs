@@ -17,12 +17,10 @@ use tracing::{error, info, warn};
 pub mod connection;
 pub mod heartbeat;
 pub mod message_router;
-pub mod routing;
 pub mod unified_handler;
 
 pub use connection::WebSocketConnection;
 pub use message_router::MessageRouter;
-pub use routing::MessageRouter as LlmMessageRouter;
 pub use unified_handler::{ChatRequest, UnifiedChatHandler};
 
 use crate::api::ws::message::WsClientMessage;

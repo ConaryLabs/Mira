@@ -7,7 +7,6 @@ use serde_json::Value;
 use std::any::Any;
 
 pub mod deepseek;
-pub mod gpt5;
 pub mod openai;
 pub mod stream;
 
@@ -16,11 +15,27 @@ pub use deepseek::DeepSeekProvider;
 pub use openai::OpenAiEmbeddings;
 pub use stream::StreamEvent;
 
+/// Tool call information for assistant messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
 /// Simple message format for all providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: String,
+
+    /// For tool response messages - links response to specific tool call
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+
+    /// For assistant messages that request tool calls
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallInfo>>,
 }
 
 impl Message {
@@ -28,6 +43,8 @@ impl Message {
         Self {
             role: "user".to_string(),
             content,
+            tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -35,6 +52,8 @@ impl Message {
         Self {
             role: "assistant".to_string(),
             content,
+            tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -42,13 +61,26 @@ impl Message {
         Self {
             role: "system".to_string(),
             content,
+            tool_call_id: None,
+            tool_calls: None,
         }
     }
 
     pub fn tool_result(call_id: String, output: String) -> Self {
         Self {
             role: "tool".to_string(),
-            content: format!(r#"{{"call_id": "{}", "output": {}}}"#, call_id, output),
+            content: output,
+            tool_call_id: Some(call_id),
+            tool_calls: None,
+        }
+    }
+
+    pub fn assistant_with_tool_calls(content: String, tool_calls: Vec<ToolCallInfo>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content,
+            tool_call_id: None,
+            tool_calls: Some(tool_calls),
         }
     }
 }
@@ -90,13 +122,10 @@ pub struct ToolResponse {
     pub raw_response: Value, // Full API response
 }
 
-/// Context for multi-turn conversations
+/// Context for multi-turn conversations (currently unused with DeepSeek-only)
 #[derive(Debug, Clone)]
 pub enum ToolContext {
-    Gpt5 {
-        previous_response_id: String, // For GPT-5 multi-turn
-        tool_outputs: Vec<Value>,     // Tool outputs from previous turn
-    },
+    // Reserved for future multi-turn context if needed
 }
 
 /// Universal LLM provider interface

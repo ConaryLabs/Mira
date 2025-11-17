@@ -223,6 +223,26 @@ pub struct ToolCall {
 }
 
 impl DeepSeekProvider {
+    /// Convert tools to OpenAI-compatible format required by DeepSeek
+    /// DeepSeek expects: {"type": "function", "function": {...}}
+    fn convert_tools_to_openai_format(tools: &[Value]) -> Vec<Value> {
+        tools
+            .iter()
+            .map(|tool| {
+                // Check if already in OpenAI format (has "function" field)
+                if tool.get("function").is_some() {
+                    tool.clone()
+                } else {
+                    // Convert from our internal format to OpenAI format
+                    json!({
+                        "type": "function",
+                        "function": tool
+                    })
+                }
+            })
+            .collect()
+    }
+
     /// Call DeepSeek with tool calling support
     ///
     /// Uses `deepseek-chat` model (NOT `deepseek-reasoner`) for function calling.
@@ -238,21 +258,47 @@ impl DeepSeekProvider {
             messages.len()
         );
 
+        // Convert tools to OpenAI-compatible format
+        let openai_tools = Self::convert_tools_to_openai_format(&tools);
+
         // Convert our Message format to DeepSeek API format
         let api_messages: Vec<Value> = messages
             .iter()
-            .map(|msg| json!({
-                "role": msg.role,
-                "content": msg.content
-            }))
+            .map(|msg| {
+                let mut obj = json!({
+                    "role": msg.role,
+                    "content": msg.content
+                });
+
+                // Add tool_call_id for tool response messages
+                if let Some(ref call_id) = msg.tool_call_id {
+                    obj["tool_call_id"] = Value::String(call_id.clone());
+                }
+
+                // Add tool_calls for assistant messages requesting tool execution
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    obj["tool_calls"] = json!(tool_calls.iter().map(|tc| {
+                        json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
+                            }
+                        })
+                    }).collect::<Vec<_>>());
+                }
+
+                obj
+            })
             .collect();
 
         let request_body = json!({
             "model": "deepseek-chat",  // Use chat model for tool calling
             "messages": api_messages,
-            "tools": tools,
+            "tools": openai_tools,
             "temperature": 0.7,
-            "max_tokens": 16000,
+            "max_tokens": CONFIG.deepseek.chat_max_tokens,
         });
 
         debug!(
@@ -381,6 +427,82 @@ impl DeepSeekProvider {
             finish_reason,
             tokens_input,
             tokens_output,
+        })
+    }
+}
+
+// Implement universal LlmProvider trait for DeepSeekProvider
+#[async_trait::async_trait]
+impl super::LlmProvider for DeepSeekProvider {
+    fn name(&self) -> &'static str {
+        "deepseek"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn chat(&self, messages: Vec<Message>, system: String) -> Result<super::Response> {
+        // Call DeepSeek API without tools for simple chat
+        let start = std::time::Instant::now();
+
+        // Prepend system message
+        let mut all_messages = vec![Message::system(system)];
+        all_messages.extend(messages);
+
+        let response = self.call_with_tools(all_messages, vec![]).await?;
+
+        Ok(super::Response {
+            content: response.content.unwrap_or_default(),
+            model: "deepseek-chat".to_string(),
+            tokens: super::TokenUsage {
+                input: response.tokens_input as i64,
+                output: response.tokens_output as i64,
+                reasoning: 0,
+                cached: 0,
+            },
+            latency_ms: start.elapsed().as_millis() as i64,
+        })
+    }
+
+    async fn chat_with_tools(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        _context: Option<super::ToolContext>,
+    ) -> Result<super::ToolResponse> {
+        let start = std::time::Instant::now();
+
+        // Prepend system message
+        let mut all_messages = vec![Message::system(system)];
+        all_messages.extend(messages);
+
+        let response = self.call_with_tools(all_messages, tools).await?;
+
+        // Convert tool calls to FunctionCall format
+        let function_calls: Vec<super::FunctionCall> = response
+            .tool_calls
+            .into_iter()
+            .map(|tc| super::FunctionCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+
+        Ok(super::ToolResponse {
+            id: "deepseek_response".to_string(),
+            text_output: response.content.unwrap_or_default(),
+            function_calls,
+            tokens: super::TokenUsage {
+                input: response.tokens_input as i64,
+                output: response.tokens_output as i64,
+                reasoning: 0,
+                cached: 0,
+            },
+            latency_ms: start.elapsed().as_millis() as i64,
+            raw_response: json!({}),
         })
     }
 }

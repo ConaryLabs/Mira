@@ -191,8 +191,7 @@ impl WebSocketConnection {
     pub async fn send_connection_ready(&self) -> Result<()> {
         let welcome_msg = format!("Connected to Mira v{}", env!("CARGO_PKG_VERSION"));
         let config_msg = format!(
-            "Model: {} | Tools: {}",
-            CONFIG.gpt5_model,
+            "Model: DeepSeek (chat + reasoner) | Tools: {}",
             if CONFIG.enable_chat_tools {
                 "enabled"
             } else {

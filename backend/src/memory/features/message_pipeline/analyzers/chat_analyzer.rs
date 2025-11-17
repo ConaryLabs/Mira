@@ -50,36 +50,24 @@ impl ChatAnalyzer {
         let messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
+            tool_call_id: None,
+            tool_calls: None,
         }];
 
-        // Use GPT-5 structured output
-        if let Some(gpt5) = self
+        // Use LLM for analysis (DeepSeek-only)
+        let system = "You are a precise message analyzer. Analyze the message and output only valid JSON matching the format: {\"salience\": float (0.0-1.0), \"category\": string, \"entities\": [string], \"intent\": string}";
+
+        let provider_response = self
             .llm_provider
-            .as_any()
-            .downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>()
-        {
-            let schema = Self::get_analysis_schema();
-            let provider_response = gpt5
-                .chat_with_schema(
-                    messages,
-                    "You are a precise message analyzer. Output only valid JSON matching the schema.".to_string(),
-                    "chat_analysis",
-                    schema,
-                    None, // Use default reasoning for analysis
-                )
-                .await
-                .map_err(|e| {
-                    error!("GPT-5 structured analysis failed: {}", e);
-                    e
-                })?;
+            .chat(messages, system.to_string())
+            .await
+            .map_err(|e| {
+                error!("LLM analysis failed: {}", e);
+                e
+            })?;
 
-            return self
-                .parse_analysis_response(&provider_response.content, content)
-                .await;
-        }
-
-        error!("ChatAnalyzer requires GPT-5 provider");
-        Err(anyhow::anyhow!("ChatAnalyzer only supports GPT-5"))
+        self.parse_analysis_response(&provider_response.content, content)
+            .await
     }
 
     pub async fn analyze_batch(
@@ -96,36 +84,24 @@ impl ChatAnalyzer {
         let llm_messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
+            tool_call_id: None,
+            tool_calls: None,
         }];
 
-        // Use GPT-5 structured output
-        if let Some(gpt5) = self
+        // Use LLM for batch analysis (DeepSeek-only)
+        let system = "You are a precise message analyzer. Analyze each message and output only valid JSON matching the format.";
+
+        let provider_response = self
             .llm_provider
-            .as_any()
-            .downcast_ref::<crate::llm::provider::gpt5::Gpt5Provider>()
-        {
-            let schema = Self::get_batch_analysis_schema();
-            let provider_response = gpt5
-                .chat_with_schema(
-                    llm_messages,
-                    "You are a precise message analyzer. Output only valid JSON matching the schema.".to_string(),
-                    "batch_chat_analysis",
-                    schema,
-                    None,
-                )
-                .await
-                .map_err(|e| {
-                    error!("GPT-5 batch structured analysis failed: {}", e);
-                    e
-                })?;
+            .chat(llm_messages, system.to_string())
+            .await
+            .map_err(|e| {
+                error!("LLM batch analysis failed: {}", e);
+                e
+            })?;
 
-            return self
-                .parse_batch_response(&provider_response.content, messages)
-                .await;
-        }
-
-        error!("ChatAnalyzer requires GPT-5 provider");
-        Err(anyhow::anyhow!("ChatAnalyzer only supports GPT-5"))
+        self.parse_batch_response(&provider_response.content, messages)
+            .await
     }
 
     fn build_analysis_prompt(&self, content: &str, role: &str, context: Option<&str>) -> String {

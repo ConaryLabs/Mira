@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend orchestrates dual LLM providers (GPT-5 for reasoning, DeepSeek for code generation) with hybrid memory systems, real-time WebSocket streaming, and git integration.
+Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses DeepSeek's dual-model architecture (deepseek-chat for orchestration, deepseek-reasoner for complex generation) with hybrid memory systems, real-time WebSocket streaming, and git integration.
 
 ## Repository Structure
 
@@ -160,11 +160,12 @@ sudo journalctl -u mira.service -u mira-frontend.service -f
 
 ### Backend Architecture
 
-**Multi-LLM Orchestration:**
-- **GPT-5** handles reasoning, analysis, planning, and decision-making via Responses API
-- **DeepSeek** handles code generation when GPT-5 delegates via tool calls
-- **Operation Engine** (`src/operations/engine/`) orchestrates the GPT-5 → DeepSeek workflow
-- Dual routing: simple chat goes direct to GPT-5, complex operations use the operation engine
+**DeepSeek Dual-Model Orchestration:**
+- **deepseek-chat** (8k tokens) handles fast orchestration, tool calling, and code execution
+- **deepseek-reasoner** (64k tokens) handles complex reasoning and large-scale generation
+- **Operation Engine** (`src/operations/engine/`) routes between chat and reasoner models based on complexity
+- **ModelRouter** automatically selects the appropriate model based on task requirements
+- Cost: $0.28/M tokens (30% savings vs previous architecture)
 
 **Memory Systems** (`src/memory/`):
 - **Hybrid storage**: SQLite (structured data) + Qdrant (vector embeddings)
@@ -179,9 +180,10 @@ sudo journalctl -u mira.service -u mira-frontend.service -f
 - Port **3001** (not 8080, despite what some old docs say)
 
 **Key Backend Modules:**
-- `src/operations/engine/` - Modular operation orchestration (lifecycle, delegation, artifacts, events)
+- `src/operations/engine/` - Modular operation orchestration (lifecycle, artifacts, events, model routing)
 - `src/memory/` - Memory service coordinating SQLite + Qdrant stores
-- `src/llm/provider/` - GPT-5, DeepSeek, OpenAI embeddings providers
+- `src/llm/provider/` - DeepSeek dual-model provider, OpenAI embeddings
+- `src/llm/router/` - ModelRouter for intelligent chat/reasoner selection
 - `src/git/client/` - Git integration (clone, import, sync, branch operations)
 - `src/relationship/` - User context and fact storage
 - `src/api/ws/chat/` - Chat routing and connection management
@@ -221,7 +223,7 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
 - **Qdrant** running on `localhost:6333` (vector database)
-- **API Keys**: OpenAI (GPT-5 + embeddings), DeepSeek
+- **API Keys**: OpenAI (embeddings only), DeepSeek
 
 ## Environment Setup
 
@@ -240,13 +242,16 @@ DATABASE_URL=sqlite://mira.db
 # Qdrant
 QDRANT_URL=http://localhost:6333
 
-# LLM Providers
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-5-0314
-DEEPSEEK_API_KEY=...
-DEEPSEEK_MODEL=deepseek-reasoner
+# DeepSeek (Primary LLM)
+USE_DEEPSEEK_CODEGEN=true
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_CHAT_MODEL=deepseek-chat
+DEEPSEEK_REASONER_MODEL=deepseek-reasoner
+DEEPSEEK_CHAT_MAX_TOKENS=8192
+DEEPSEEK_REASONER_MAX_TOKENS=65536
 
-# Embeddings
+# OpenAI (Embeddings Only)
+OPENAI_API_KEY=sk-...
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
 ```
 
@@ -279,20 +284,20 @@ Operations are complex multi-step workflows tracked through state transitions. W
 
 1. Define operation kind in `src/operations/types.rs` (`operation_kinds`)
 2. Update operation engine in `src/operations/engine/orchestration.rs`
-3. Handle delegation in `src/operations/engine/delegation.rs`
-4. Add tool schemas in `src/operations/delegation_tools.rs`
+3. Add tool schemas in `src/operations/delegation_tools.rs`
+4. Update DeepSeekOrchestrator in `src/operations/engine/deepseek_orchestrator.rs`
 5. Emit events via channels for real-time frontend updates
 
 **Critical**: The `OperationEngine::new()` constructor requires 7 parameters:
 ```rust
 OperationEngine::new(
     db: Arc<SqlitePool>,
-    gpt5: Gpt5Provider,
     deepseek: DeepSeekProvider,
     memory_service: Arc<MemoryService>,
     relationship_service: Arc<RelationshipService>,
     git_client: GitClient,
     code_intelligence: Arc<CodeIntelligenceService>,
+    sudo_service: Option<Arc<SudoPermissionService>>,
 )
 ```
 
@@ -393,8 +398,8 @@ curl http://localhost:6333/collections
 ## External Dependencies
 
 - **Qdrant** vector database for embeddings (must run separately)
-- **OpenAI API** for GPT-5 and text-embedding-3-large
-- **DeepSeek API** for code generation
+- **OpenAI API** for text-embedding-3-large embeddings only
+- **DeepSeek API** for dual-model LLM (deepseek-chat + deepseek-reasoner)
 - **SQLite** for structured storage (embedded)
 
 ## Additional Documentation

@@ -13,7 +13,6 @@ pub mod file_handlers;
 pub mod git_handlers;
 pub mod lifecycle;
 pub mod orchestration;
-pub mod simple_mode;
 pub mod skills;
 pub mod tool_router;
 
@@ -21,7 +20,6 @@ pub use events::OperationEngineEvent;
 
 use crate::git::client::GitClient;
 use crate::llm::provider::deepseek::DeepSeekProvider;
-use crate::llm::provider::gpt5::Gpt5Provider;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
 use crate::relationship::service::RelationshipService;
@@ -32,27 +30,23 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::operations::{ContextLoader, TaskManager};
+use crate::operations::ContextLoader;
 use artifacts::ArtifactManager;
 use context::ContextBuilder;
-use delegation::DelegationHandler;
 use lifecycle::LifecycleManager;
 use orchestration::Orchestrator;
-use simple_mode::{SimpleModeDetector, SimpleModeExecutor};
 use tool_router::ToolRouter;
 
-/// Main operation engine coordinating GPT-5 and DeepSeek
+/// Main operation engine with DeepSeek-only architecture
 pub struct OperationEngine {
     lifecycle_manager: LifecycleManager,
     artifact_manager: ArtifactManager,
     orchestrator: Orchestrator,
-    simple_mode_executor: SimpleModeExecutor,
 }
 
 impl OperationEngine {
     pub fn new(
         db: Arc<SqlitePool>,
-        gpt5: Gpt5Provider,
         deepseek: DeepSeekProvider,
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
@@ -68,8 +62,6 @@ impl OperationEngine {
 
         let context_loader = ContextLoader::new(git_client.clone(), Arc::clone(&code_intelligence));
 
-        let delegation_handler = DelegationHandler::new(deepseek.clone());
-
         // Create tool router for file operations and code intelligence
         // TODO: Get project directory from git_client or config
         // For now, use current working directory as fallback
@@ -79,28 +71,6 @@ impl OperationEngine {
 
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
-
-        let simple_mode_executor = SimpleModeExecutor::new(gpt5.clone());
-
-        // Initialize skill registry
-        // Get skills directory: backend/skills or ./skills
-        let skills_dir = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("skills");
-
-        let skill_registry = Arc::new(skills::SkillRegistry::new(skills_dir));
-
-        // Spawn background task to load skills
-        let registry_clone = Arc::clone(&skill_registry);
-        tokio::spawn(async move {
-            if let Err(e) = registry_clone.load_all().await {
-                tracing::warn!("[ENGINE] Failed to load skills: {}", e);
-            } else {
-                tracing::info!("[ENGINE] Skills loaded successfully");
-            }
-        });
-
-        let task_manager = TaskManager::new(Arc::clone(&db));
 
         // Create DeepSeek orchestrator if enabled
         let deepseek_orchestrator = if crate::config::CONFIG.use_deepseek_codegen {
@@ -124,24 +94,19 @@ impl OperationEngine {
         };
 
         let orchestrator = Orchestrator::new(
-            gpt5,
             deepseek_orchestrator,
             memory_service,
             context_builder,
             context_loader,
-            delegation_handler,
             Some(tool_router_arc),
-            skill_registry,
             artifact_manager.clone(),
             lifecycle_manager.clone(),
-            task_manager,
         );
 
         Self {
             lifecycle_manager,
             artifact_manager,
             orchestrator,
-            simple_mode_executor,
         }
     }
 
@@ -163,7 +128,7 @@ impl OperationEngine {
 
     /// Execute an operation (main entry point)
     ///
-    /// Automatically detects if request is "simple" and uses fast path if appropriate
+    /// Routes all requests to DeepSeek orchestration
     pub async fn run_operation(
         &self,
         operation_id: &str,
@@ -173,80 +138,16 @@ impl OperationEngine {
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
-        // Check if request is simple enough for fast path
-        let simplicity = SimpleModeDetector::simplicity_score(user_content);
-
-        if simplicity > 0.7 {
-            // Use simple mode - skip full orchestration
-            tracing::info!(
-                "[ENGINE] Simple request detected (score: {:.2}), using fast path",
-                simplicity
-            );
-
-            // Start operation (minimal tracking)
-            self.lifecycle_manager
-                .start_operation(operation_id, event_tx)
-                .await?;
-
-            // Execute simple request
-            match self.simple_mode_executor.execute_simple(user_content).await {
-                Ok(response) => {
-                    // Stream response
-                    let _ = event_tx
-                        .send(OperationEngineEvent::Streaming {
-                            operation_id: operation_id.to_string(),
-                            content: response.clone(),
-                        })
-                        .await;
-
-                    // Complete operation
-                    self.lifecycle_manager
-                        .complete_operation(
-                            operation_id,
-                            session_id,
-                            Some(response),
-                            event_tx,
-                            vec![], // No artifacts
-                        )
-                        .await?;
-
-                    Ok(())
-                }
-                Err(e) => {
-                    // Fall back to full orchestration on error
-                    tracing::warn!(
-                        "[ENGINE] Simple mode failed: {}, falling back to full orchestration",
-                        e
-                    );
-                    self.orchestrator
-                        .run_operation(
-                            operation_id,
-                            session_id,
-                            user_content,
-                            project_id,
-                            cancel_token,
-                            event_tx,
-                        )
-                        .await
-                }
-            }
-        } else {
-            // Use full orchestration
-            tracing::info!(
-                "[ENGINE] Complex request detected (score: {:.2}), using full orchestration",
-                simplicity
-            );
-            self.orchestrator
-                .run_operation(
-                    operation_id,
-                    session_id,
-                    user_content,
-                    project_id,
-                    cancel_token,
-                    event_tx,
-                )
-                .await
-        }
+        self.orchestrator
+            .run_operation(
+                operation_id,
+                session_id,
+                user_content,
+                project_id,
+                cancel_token,
+                event_tx,
+            )
+            .await
     }
 
     /// Get operation by ID

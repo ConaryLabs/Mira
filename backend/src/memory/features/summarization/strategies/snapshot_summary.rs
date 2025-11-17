@@ -39,6 +39,8 @@ impl SnapshotSummaryStrategy {
         let chat_messages = vec![Message {
             role: "user".to_string(),
             content: prompt,
+            tool_call_id: None,
+            tool_calls: None,
         }];
 
         // FIXED: Remove None argument - .chat() now takes only 2 args

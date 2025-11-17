@@ -19,7 +19,6 @@ lazy_static! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
     // Domain configs (new, organized structure)
-    pub gpt5: llm::Gpt5Config,
     pub deepseek: llm::DeepSeekConfig,
     pub openai: llm::OpenAiConfig,
     pub memory: memory::MemoryConfig,
@@ -39,11 +38,6 @@ pub struct MiraConfig {
 
     // Flat field aliases for backward compatibility
     // These duplicate data from domain configs but allow legacy code to work unchanged
-    pub gpt5_api_key: String,
-    pub gpt5_model: String,
-    pub gpt5_max_tokens: usize,
-    pub gpt5_verbosity: String,
-    pub gpt5_reasoning: String,
     pub use_deepseek_codegen: bool,
     pub deepseek_api_key: String,
     pub openai_api_key: String,
@@ -69,7 +63,6 @@ impl MiraConfig {
         // Load .env file
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
 
-        let gpt5 = llm::Gpt5Config::from_env();
         let deepseek = llm::DeepSeekConfig::from_env();
         let openai = llm::OpenAiConfig::from_env();
         let memory = memory::MemoryConfig::from_env();
@@ -89,11 +82,6 @@ impl MiraConfig {
 
         Self {
             // Flat field aliases (for backward compatibility)
-            gpt5_api_key: gpt5.api_key.clone(),
-            gpt5_model: gpt5.model.clone(),
-            gpt5_max_tokens: gpt5.max_tokens,
-            gpt5_verbosity: gpt5.verbosity.clone(),
-            gpt5_reasoning: gpt5.reasoning.clone(),
             use_deepseek_codegen: deepseek.enabled,
             deepseek_api_key: deepseek.api_key.clone(),
             openai_api_key: openai.api_key.clone(),
@@ -114,7 +102,6 @@ impl MiraConfig {
             sqlite_max_connections: database.max_connections,
 
             // Domain configs
-            gpt5,
             deepseek,
             openai,
             memory,
@@ -136,7 +123,6 @@ impl MiraConfig {
 
     /// Validate config on startup
     pub fn validate(&self) -> anyhow::Result<()> {
-        self.gpt5.validate()?;
         self.deepseek.validate()?;
         Ok(())
     }
@@ -144,13 +130,8 @@ impl MiraConfig {
     // ===========================================
     // Backward compatibility accessors
     // These exist to maintain compatibility with existing code
-    // New code should access config domains directly (e.g. CONFIG.gpt5.api_key)
+    // New code should access config domains directly (e.g. CONFIG.deepseek.api_key)
     // ===========================================
-
-    // GPT-5
-    pub fn get_gpt5_key(&self) -> String {
-        self.gpt5.api_key.clone()
-    }
 
     // OpenAI
     pub fn get_openai_key(&self) -> Option<String> {

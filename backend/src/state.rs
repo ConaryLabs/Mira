@@ -6,12 +6,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::api::ws::chat::routing::MessageRouter;
 use crate::auth::AuthService;
 use crate::config::CONFIG;
 use crate::git::client::GitClient;
 use crate::git::store::GitStore;
-use crate::llm::provider::{OpenAiEmbeddings, deepseek::DeepSeekProvider, gpt5::Gpt5Provider};
+use crate::llm::provider::{OpenAiEmbeddings, deepseek::DeepSeekProvider};
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -41,7 +40,6 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub gpt5_provider: Arc<Gpt5Provider>,
     pub deepseek_provider: Arc<DeepSeekProvider>,
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
@@ -49,7 +47,6 @@ pub struct AppState {
     pub context_loader: Arc<ContextLoader>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
     pub operation_engine: Arc<OperationEngine>,
-    pub message_router: Arc<MessageRouter>,
     pub relationship_service: Arc<RelationshipService>,
     pub facts_service: Arc<FactsService>,
     pub sudo_service: Arc<SudoPermissionService>,
@@ -68,18 +65,8 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
 
-        // Initialize GPT-5 provider
-        info!("Initializing GPT-5 provider: {}", CONFIG.gpt5_model);
-        let gpt5_provider = Arc::new(Gpt5Provider::new(
-            CONFIG.gpt5_api_key.clone(),
-            CONFIG.gpt5_model.clone(),
-            CONFIG.gpt5_max_tokens,
-            CONFIG.gpt5_verbosity.clone(),
-            CONFIG.gpt5_reasoning.clone(),
-        ));
-
-        // Initialize DeepSeek provider
-        info!("Initializing DeepSeek provider for code generation");
+        // Initialize DeepSeek provider (primary LLM)
+        info!("Initializing DeepSeek provider as primary LLM");
         let deepseek_provider = Arc::new(DeepSeekProvider::new(CONFIG.deepseek_api_key.clone()));
 
         // Initialize OpenAI embeddings client
@@ -106,11 +93,11 @@ impl AppState {
             (*code_intelligence).clone(),
         );
 
-        // Memory service uses GPT-5 directly
+        // Memory service uses DeepSeek for analysis
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            gpt5_provider.clone(),
+            deepseek_provider.clone(),
             embedding_client.clone(),
         ));
 
@@ -136,11 +123,10 @@ impl AppState {
         info!("Initializing sudo permission service");
         let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
 
-        // OperationEngine requires memory and relationship integration
-        info!("Initializing OperationEngine with memory and relationship integration");
+        // OperationEngine with DeepSeek-only architecture
+        info!("Initializing OperationEngine with DeepSeek");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
-            (*gpt5_provider).clone(),
             (*deepseek_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
@@ -148,9 +134,6 @@ impl AppState {
             code_intelligence.clone(),
             Some(sudo_service.clone()), // Sudo permissions for system administration
         ));
-
-        // Initialize MessageRouter
-        let message_router = Arc::new(MessageRouter::new((*gpt5_provider).clone()));
 
         // Initialize terminal services
         info!("Initializing terminal services");
@@ -168,7 +151,6 @@ impl AppState {
             project_store,
             git_store,
             git_client,
-            gpt5_provider,
             deepseek_provider,
             embedding_client,
             memory_service,
@@ -176,7 +158,6 @@ impl AppState {
             context_loader,
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),
             operation_engine,
-            message_router,
             relationship_service,
             facts_service,
             sudo_service,

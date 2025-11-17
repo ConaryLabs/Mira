@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::deepseek::{DeepSeekProvider, ToolCall};
-use crate::llm::provider::Message;
+use crate::llm::provider::{Message, ToolCallInfo};
 use crate::llm::router::{DeepSeekModel, ModelRouter, TaskAnalysis};
 use crate::operations::engine::tool_router::ToolRouter;
 
@@ -119,15 +119,28 @@ impl DeepSeekOrchestrator {
 
             info!("[ORCHESTRATOR] Processing {} tool calls", response.tool_calls.len());
 
+            // CRITICAL: Add the assistant's message WITH tool_calls to conversation history
+            // DeepSeek requires this format: assistant message (with tool_calls) → tool results → next call
+            let tool_calls_info: Vec<ToolCallInfo> = response.tool_calls.iter().map(|tc| {
+                ToolCallInfo {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                }
+            }).collect();
+
+            let assistant_content = response.content.clone().unwrap_or_default();
+            messages.push(Message::assistant_with_tool_calls(assistant_content, tool_calls_info));
+
             // Execute tools and collect results
             for tool_call in response.tool_calls {
                 let result = self.execute_tool(operation_id, &tool_call, event_tx).await?;
 
-                // Add tool result to conversation
-                messages.push(Message {
-                    role: "tool".to_string(),
-                    content: serde_json::to_string(&result)?,
-                });
+                // Add tool result to conversation with tool_call_id
+                messages.push(Message::tool_result(
+                    tool_call.id.clone(),
+                    serde_json::to_string(&result)?,
+                ));
             }
 
             // Safety check
