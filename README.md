@@ -1,15 +1,16 @@
 # Mira
 
-**AI-Powered Coding Assistant with Intelligent Multi-LLM Orchestration**
+**AI-Powered Coding Assistant with DeepSeek Dual-Model Orchestration**
 
-Mira is a sophisticated AI coding assistant that combines the reasoning capabilities of GPT-5 with the code generation prowess of DeepSeek, backed by a comprehensive memory system and real-time streaming architecture.
+Mira is a sophisticated AI coding assistant powered by DeepSeek's dual-model architecture (deepseek-chat + deepseek-reasoner), backed by a comprehensive memory system and real-time streaming architecture.
 
 ## Overview
 
-Unlike traditional AI assistants that use a single LLM for all tasks, Mira orchestrates multiple specialized models:
-- **GPT-5** handles conversation, analysis, planning, and high-level reasoning
-- **DeepSeek** focuses on code generation and implementation
-- Each model works on what it does best, delegated intelligently by the system
+Unlike traditional AI assistants that use a single LLM for all tasks, Mira leverages DeepSeek's dual-model architecture:
+- **deepseek-chat** (8k tokens) handles fast orchestration, tool calling, and code execution
+- **deepseek-reasoner** (64k tokens) handles complex reasoning and large-scale generation
+- ModelRouter intelligently selects the appropriate model based on task complexity
+- Cost-optimized at $0.28/M tokens (30% savings vs previous architecture)
 
 Built with **Rust** (backend) and **React + TypeScript** (frontend) for performance, type safety, and real-time responsiveness.
 
@@ -26,15 +27,20 @@ Built with **Rust** (backend) and **React + TypeScript** (frontend) for performa
 ┌──────────────────▼──────────────────────────┐
 │   Rust Backend (Axum + Tokio)              │
 │   ┌─────────────────────────────────────┐  │
-│   │  Unified Chat Handler               │  │
+│   │  Operation Engine                   │  │
 │   │  • Message routing                  │  │
 │   │  • Context gathering                │  │
 │   └─────────┬───────────────────────────┘  │
 │             │                                │
-│   ┌─────────▼──────────┐  ┌──────────────┐ │
-│   │   GPT-5            │  │  DeepSeek    │ │
-│   │   (Reasoning)      │─►│  (Code Gen)  │ │
-│   └────────────────────┘  └──────────────┘ │
+│   ┌─────────▼──────────────────────────┐   │
+│   │   DeepSeek Dual-Model Orchestrator │   │
+│   │   ┌────────────┐  ┌──────────────┐ │   │
+│   │   │ chat (8k)  │  │ reasoner     │ │   │
+│   │   │ (tools)    │  │ (64k)        │ │   │
+│   │   └────────────┘  └──────────────┘ │   │
+│   │   ModelRouter selects based on     │   │
+│   │   complexity and context size      │   │
+│   └────────────────────────────────────┘   │
 │                                              │
 │   ┌──────────────────────────────────────┐ │
 │   │  Hybrid Memory System                │ │
@@ -72,15 +78,14 @@ mira/
 
 ## Key Features
 
-- **Intelligent LLM Orchestration** - GPT-5 for reasoning, DeepSeek for code generation
-- **Planning Mode** - Complex operations generate execution plans with task tracking; real-time WebSocket updates for transparent progress
-- **Dynamic Reasoning** - Context-aware GPT-5 reasoning levels (high for planning, low for simple queries, medium for normal execution)
+- **DeepSeek Dual-Model Architecture** - deepseek-chat (8k) for orchestration & tools, deepseek-reasoner (64k) for complex generation
+- **Intelligent Model Routing** - ModelRouter automatically selects chat or reasoner based on task complexity and context size
 - **Hybrid Memory System** - SQLite + Qdrant with multi-head embeddings (semantic, code, summary, documents, relationships)
 - **Real-time Streaming** - WebSocket-based bidirectional communication with cancellation support
 - **Context-Aware** - Gathers recent messages, semantic search results, file trees, and code intelligence
 - **Git Integration** - Clone, import, sync repositories; file tree navigation; diff parsing; **10 analysis tools** (history, blame, diff, branches, contributors, status, commit inspection)
 - **Code Intelligence** - AST-based parsing (Rust/TypeScript); **12 intelligence tools** (find functions/classes, semantic search, complexity analysis, quality issues, dependency tracking, test discovery)
-- **Operation Tracking** - Complex multi-step workflows with lifecycle management and task decomposition (PENDING → PLANNING → STARTED → DELEGATING → COMPLETED)
+- **Operation Tracking** - Complex multi-step workflows with lifecycle management (PENDING → STARTED → DELEGATING → GENERATING → COMPLETED)
 - **Artifact Management** - Code blocks from LLM can be saved/applied to files via Monaco editor
 - **Integrated Terminal** - xterm.js terminal emulator with real-time PTY-based shell execution in right-side panel
 
@@ -105,23 +110,20 @@ mira/
 - **State Cleanup** - Removed write-only gitStatus property
 - **4 files deleted, 4 created, 11 modified** - 3 commits
 
-### Session 6: Dynamic Reasoning Level Selection
-- **Context-Aware Reasoning** - Per-request GPT-5 reasoning effort override (low/medium/high)
+### Session 6: Dynamic Reasoning Level Selection (Historical - GPT-5 era)
+- **Context-Aware Reasoning** - Per-request reasoning effort override (low/medium/high)
 - **Strategic Cost Optimization** - High reasoning for planning (better quality), low for simple queries (30-40% cost savings)
-- **Backward Compatibility** - Optional reasoning_override parameter with fallback to configured default
-- **Implementation** - Updated all GPT-5 provider methods (create_with_tools, create_stream_with_tools, chat_with_schema)
-- **5 files modified** - gpt5.rs, orchestration.rs, simple_mode.rs, unified_handler.rs, chat_analyzer.rs
+- **Note**: This session predated the migration to DeepSeek-only architecture (Session 14)
 
-### Session 5: Planning Mode & Task Tracking
+### Session 5: Planning Mode & Task Tracking (Historical - GPT-5 era)
 - **Two-Phase Execution** - Complex operations (simplicity ≤ 0.7) generate execution plans before tool usage
 - **Task Decomposition** - Plans parsed into numbered tasks, tracked through lifecycle (pending → in_progress → completed/failed)
 - **Real-Time Updates** - WebSocket events for PlanGenerated, TaskCreated, TaskStarted, TaskCompleted, TaskFailed
 - **Database Persistence** - New operation_tasks table and planning fields in operations table
-- **High Reasoning Planning** - Uses GPT-5 high reasoning for better plan quality
-- **3 new modules, 2 migrations, 6 files modified** - TaskManager, types, store, lifecycle, orchestration, events
+- **Note**: This session predated the migration to DeepSeek-only architecture (Session 14)
 
 ### Session 4: Git Analysis & Code Intelligence Tools (22 new tools)
-- **10 Git Analysis Tools** - Expose git operations to GPT-5: history, blame, diff, file history, branches, commit inspection, contributors, status, recent changes
+- **10 Git Analysis Tools** - Expose git operations to LLM: history, blame, diff, file history, branches, commit inspection, contributors, status, recent changes
 - **12 Code Intelligence Tools** - AST-powered code analysis: find functions/classes, semantic search, imports, dependencies, complexity hotspots, quality issues, file symbols, test discovery, codebase stats, caller analysis, element definitions
 - **Tool Router Architecture** - Unified routing for file operations, external tools, git, and code intelligence
 - **Direct Execution** - Git commands via tokio::process, code intelligence via existing AST service
@@ -172,7 +174,7 @@ See **[HOUSECLEANING_SUMMARY.md](./HOUSECLEANING_SUMMARY.md)** for Session 1 det
 - **Rust 1.75+** (install via [rustup](https://rustup.rs/))
 - **SQLite 3.35+**
 - **Qdrant** vector database running on `localhost:6333`
-- **API Keys**: OpenAI (GPT-5 + embeddings), DeepSeek
+- **API Keys**: DeepSeek (primary LLM), OpenAI (embeddings only)
 
 ### Frontend
 - **Node.js 18+**
@@ -283,17 +285,20 @@ MIRA_ENV=development
 DATABASE_URL=sqlite://mira.db
 QDRANT_URL=http://localhost:6333
 
-# LLM Providers
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-5-0314
-DEEPSEEK_API_KEY=...
-DEEPSEEK_MODEL=deepseek-reasoner
+# DeepSeek (Primary LLM)
+USE_DEEPSEEK_CODEGEN=true
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_CHAT_MODEL=deepseek-chat
+DEEPSEEK_REASONER_MODEL=deepseek-reasoner
+DEEPSEEK_CHAT_MAX_TOKENS=8192
+DEEPSEEK_REASONER_MAX_TOKENS=65536
 
-# Embeddings
+# OpenAI (Embeddings Only)
+OPENAI_API_KEY=sk-...
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
-SALIENCE_MIN_FOR_EMBED=0.6
 
 # Memory
+SALIENCE_MIN_FOR_EMBED=0.6
 MAX_RECALLED_MESSAGES=10
 USE_ROLLING_SUMMARIES=true
 ```
@@ -320,7 +325,7 @@ See `backend/.env.example` for complete configuration options.
 - **Async Runtime**: Tokio
 - **Database**: SQLite (with sqlx)
 - **Vector DB**: Qdrant (with qdrant-client)
-- **LLM APIs**: OpenAI (GPT-5), DeepSeek
+- **LLM APIs**: DeepSeek (chat + reasoner), OpenAI (embeddings only)
 - **Git**: git2 (libgit2 bindings)
 
 ### Frontend
