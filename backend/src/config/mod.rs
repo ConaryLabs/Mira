@@ -137,6 +137,7 @@ impl MiraConfig {
     /// Validate config on startup
     pub fn validate(&self) -> anyhow::Result<()> {
         self.gpt5.validate()?;
+        self.deepseek.validate()?;
         Ok(())
     }
 

@@ -309,7 +309,7 @@ mod tests {
     fn test_orchestrator_creation() {
         let provider = DeepSeekProvider::new("test-key".to_string());
         let router = ModelRouter::default();
-        let orchestrator = DeepSeekOrchestrator::new(provider, router, None);
+        let _orchestrator = DeepSeekOrchestrator::new(provider, router, None);
 
         // Just verify it compiles and creates
         assert!(true);
