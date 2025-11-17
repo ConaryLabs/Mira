@@ -10,8 +10,9 @@ use crate::operations::ContextLoader;
 use crate::operations::delegation_tools::{get_delegation_tools, parse_tool_call};
 use crate::operations::engine::{
     artifacts::ArtifactManager, context::ContextBuilder, delegation::DelegationHandler,
-    events::OperationEngineEvent, lifecycle::LifecycleManager, tool_router::ToolRouter,
-    skills::SkillRegistry, simple_mode::SimpleModeDetector,
+    deepseek_orchestrator::DeepSeekOrchestrator, events::OperationEngineEvent,
+    lifecycle::LifecycleManager, tool_router::ToolRouter, skills::SkillRegistry,
+    simple_mode::SimpleModeDetector,
 };
 use crate::operations::TaskManager;
 
@@ -24,11 +25,12 @@ use tracing::{info, warn};
 
 pub struct Orchestrator {
     gpt5: Gpt5Provider,
+    deepseek_orchestrator: Option<Arc<DeepSeekOrchestrator>>,
     memory_service: Arc<MemoryService>,
     context_builder: ContextBuilder,
     context_loader: ContextLoader,
     delegation_handler: DelegationHandler,
-    tool_router: Option<ToolRouter>, // File operation routing
+    tool_router: Option<Arc<ToolRouter>>, // File operation routing
     skill_registry: Arc<SkillRegistry>, // Skills system for specialized tasks
     artifact_manager: ArtifactManager,
     lifecycle_manager: LifecycleManager,
@@ -38,11 +40,12 @@ pub struct Orchestrator {
 impl Orchestrator {
     pub fn new(
         gpt5: Gpt5Provider,
+        deepseek_orchestrator: Option<Arc<DeepSeekOrchestrator>>,
         memory_service: Arc<MemoryService>,
         context_builder: ContextBuilder,
         context_loader: ContextLoader,
         delegation_handler: DelegationHandler,
-        tool_router: Option<ToolRouter>,
+        tool_router: Option<Arc<ToolRouter>>,
         skill_registry: Arc<SkillRegistry>,
         artifact_manager: ArtifactManager,
         lifecycle_manager: LifecycleManager,
@@ -50,6 +53,7 @@ impl Orchestrator {
     ) -> Self {
         Self {
             gpt5,
+            deepseek_orchestrator,
             memory_service,
             context_builder,
             context_loader,
@@ -154,6 +158,22 @@ impl Orchestrator {
         self.lifecycle_manager
             .start_operation(operation_id, event_tx)
             .await?;
+
+        // Route to DeepSeek if enabled
+        if crate::config::CONFIG.use_deepseek_codegen && self.deepseek_orchestrator.is_some() {
+            info!("[ENGINE] DeepSeek orchestration enabled, using DeepSeek dual-model path");
+            return self
+                .execute_with_deepseek(
+                    operation_id,
+                    session_id,
+                    user_content,
+                    system_prompt,
+                    event_tx,
+                )
+                .await;
+        }
+
+        info!("[ENGINE] Using GPT-5 orchestration path");
 
         // Check complexity and generate plan for complex operations
         let simplicity = SimpleModeDetector::simplicity_score(user_content);
@@ -760,5 +780,49 @@ impl Orchestrator {
         }
 
         Ok(tasks)
+    }
+
+    /// Execute operation using DeepSeek dual-model orchestration
+    /// Simplified path that delegates to DeepSeekOrchestrator
+    async fn execute_with_deepseek(
+        &self,
+        operation_id: &str,
+        session_id: &str,
+        user_content: &str,
+        system_prompt: String,
+        event_tx: &mpsc::Sender<OperationEngineEvent>,
+    ) -> Result<()> {
+        let deepseek = match &self.deepseek_orchestrator {
+            Some(orch) => orch,
+            None => return Err(anyhow::anyhow!("DeepSeek orchestrator not initialized")),
+        };
+
+        // Build messages with system prompt
+        let messages = vec![
+            Message::system(system_prompt),
+            Message::user(user_content.to_string()),
+        ];
+
+        // Build tools for DeepSeek
+        let tools = get_delegation_tools();
+
+        // Execute with DeepSeek orchestrator
+        let response = deepseek
+            .execute(operation_id, messages, tools, event_tx)
+            .await
+            .context("DeepSeek orchestration failed")?;
+
+        // Complete operation
+        self.lifecycle_manager
+            .complete_operation(
+                operation_id,
+                session_id,
+                Some(response),
+                event_tx,
+                vec![], // Artifacts are handled by DeepSeek orchestrator
+            )
+            .await?;
+
+        Ok(())
     }
 }

@@ -74,7 +74,8 @@ impl OperationEngine {
         // TODO: Get project directory from git_client or config
         // For now, use current working directory as fallback
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let tool_router = Some(ToolRouter::new(deepseek, project_dir, code_intelligence, sudo_service));
+        let tool_router = ToolRouter::new(deepseek.clone(), project_dir, code_intelligence, sudo_service);
+        let tool_router_arc = Arc::new(tool_router);
 
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
@@ -101,13 +102,35 @@ impl OperationEngine {
 
         let task_manager = TaskManager::new(Arc::clone(&db));
 
+        // Create DeepSeek orchestrator if enabled
+        let deepseek_orchestrator = if crate::config::CONFIG.use_deepseek_codegen {
+            use crate::llm::router::ModelRouter;
+            use crate::operations::engine::deepseek_orchestrator::DeepSeekOrchestrator;
+
+            let router = ModelRouter::new(
+                crate::config::CONFIG.deepseek.chat_max_tokens,
+                crate::config::CONFIG.deepseek.reasoner_max_tokens,
+            );
+
+            let ds_orch = DeepSeekOrchestrator::new(
+                deepseek,
+                router,
+                Some(Arc::clone(&tool_router_arc)),
+            );
+
+            Some(Arc::new(ds_orch))
+        } else {
+            None
+        };
+
         let orchestrator = Orchestrator::new(
             gpt5,
+            deepseek_orchestrator,
             memory_service,
             context_builder,
             context_loader,
             delegation_handler,
-            tool_router,
+            Some(tool_router_arc),
             skill_registry,
             artifact_manager.clone(),
             lifecycle_manager.clone(),
