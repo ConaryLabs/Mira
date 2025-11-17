@@ -3,6 +3,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { useActivityStore } from '../stores/useActivityStore';
+import { useChatStore } from '../stores/useChatStore';
 import { X, Activity, GripVertical } from 'lucide-react';
 import { ReasoningSection } from './ActivitySections/ReasoningSection';
 import { TasksSection } from './ActivitySections/TasksSection';
@@ -14,19 +15,22 @@ export function ActivityPanel() {
     panelWidth,
     togglePanel,
     setPanelWidth,
-    getCurrentPlan,
-    getCurrentTasks,
-    getCurrentToolExecutions,
+    currentMessageId,
   } = useActivityStore();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const resizeHandleRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
 
-  // Get current activity data
-  const plan = getCurrentPlan();
-  const tasks = getCurrentTasks();
-  const toolExecutions = getCurrentToolExecutions();
+  // Subscribe to chat store to get reactive updates
+  const currentMessage = useChatStore(state =>
+    state.messages.find(m => m.id === currentMessageId)
+  );
+
+  // Get current activity data from the message
+  const plan = currentMessage?.plan;
+  const tasks = currentMessage?.tasks || [];
+  const toolExecutions = currentMessage?.toolExecutions || [];
 
   const hasActivity = plan || tasks.length > 0 || toolExecutions.length > 0;
 
