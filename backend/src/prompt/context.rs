@@ -384,11 +384,11 @@ pub fn add_tool_context(prompt: &mut String, tools: Option<&[Tool]>) {
             }
         }
 
-        prompt.push_str("\nCRITICAL: Always provide conversational text explaining what you're doing when using tools.\n");
-        prompt.push_str(
-            "Never respond with only a tool call - the user needs context and explanation.\n",
-        );
-        prompt.push_str("Integrate tool usage naturally into your responses with proper setup and follow-through.\n\n");
+        prompt.push_str("\nTOOL USAGE:\n");
+        prompt.push_str("- When the user asks you to perform an action (write a file, execute a command, etc.), USE THE TOOL DIRECTLY.\n");
+        prompt.push_str("- Don't say you can't do something if you have a tool for it.\n");
+        prompt.push_str("- For code-related responses, include brief conversational context with your tool calls.\n");
+        prompt.push_str("- For file operations and system commands, prioritize action over explanation.\n\n");
     }
 }
 

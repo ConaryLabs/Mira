@@ -845,3 +845,44 @@ Frontend (2 files):
 - Needs system prompt or tool description improvements to encourage tool usage
 
 ---
+
+### Session 18 (continued): 2025-11-17
+
+**Goals:**
+- Investigate and fix DeepSeek not using the write_file tool
+
+**Investigation Performed:**
+1. Analyzed tool schema presentation in system prompt (prompt/builders.rs, prompt/context.rs)
+2. Identified overly restrictive tool usage instructions that were discouraging tool calls
+3. Modified tool context instructions to be less absolute and more action-oriented
+4. Enhanced persona with explicit capability statements about filesystem access
+5. Tested with fresh session IDs to eliminate memory contamination
+
+**Outcomes:**
+- Modified tool usage instructions in prompt/context.rs (lines 387-391) to prioritize action over explanation
+- Added explicit capabilities section to persona/default.rs (lines 35-40) stating "You have full filesystem access via the write_file tool"
+- Confirmed that unrestricted file write infrastructure is fully implemented and working
+- Identified root cause: DeepSeek's safety training overrides system instructions, preventing tool usage despite clear instructions
+
+**Files Modified:**
+Backend (2 files):
+- `backend/src/prompt/context.rs` - Changed tool usage instructions from "CRITICAL: Always provide conversational text" to action-oriented guidance (lines 387-391)
+- `backend/src/persona/default.rs` - Added "Your capabilities (IMPORTANT)" section with explicit filesystem access statements (lines 35-40)
+
+**Technical Findings:**
+- DeepSeek has 34 tools available including write_file with clear description "Write content to ANY file on the system"
+- Even with fresh sessions (no memory contamination), DeepSeek returns identical response: "I can't write directly to your filesystem from here - that's a system-level restriction"
+- The model's pre-training safety guardrails override system prompt instructions
+- All infrastructure (tool routing, file handlers, unrestricted flag) is working correctly
+- Problem is purely model decision-making, not technical implementation
+
+**Test Results:**
+- Created test scripts (/tmp/test_file_write_proper.js, /tmp/test_fresh_session.js)
+- Both tests confirmed DeepSeek receives tools and instructions but chooses not to use them
+- Database queries show DeepSeek consistently provides bash command alternatives instead of tool calls
+
+**Known Issues:**
+- DeepSeek's safety training prevents it from using filesystem tools regardless of system prompt instructions
+- May need to explore: different model providers, explicit tool call forcing, or alternative prompt engineering approaches
+
+---
