@@ -70,6 +70,7 @@ pub fn get_deepseek_tools() -> Vec<Value> {
         // File operation tools
         read_project_file_tool(),
         write_project_file_tool(),
+        write_file_tool(), // NEW: Unrestricted file writing
         edit_project_file_tool(),
         search_codebase_tool(),
         list_project_files_tool(),
@@ -283,6 +284,31 @@ fn write_project_file_tool() -> Value {
     .build()
 }
 
+/// Tool: write_file
+/// Write to ANY file on the system (not restricted to project)
+fn write_file_tool() -> Value {
+    ToolBuilder::new(
+        "write_file",
+        "Write content to ANY file on the system. Use this for creating files outside projects, system configuration files (nginx, systemd, etc.), temporary files, or any other file. Unlike write_project_file, this doesn't require project context. Full filesystem access."
+    )
+    .property(
+        "path",
+        properties::path("Absolute file path to write to (e.g., '/tmp/test.txt', '/etc/nginx/sites-available/mysite', '/home/peter/notes.txt')"),
+        true
+    )
+    .property(
+        "content",
+        properties::description("Complete file content to write. This will overwrite the file if it exists."),
+        true
+    )
+    .property(
+        "create_dirs",
+        properties::optional_string("Create parent directories if they don't exist (default: true)"),
+        false
+    )
+    .build()
+}
+
 /// Tool: edit_project_file
 /// Meta-tool that delegates file editing (search/replace) to DeepSeek
 fn edit_project_file_tool() -> Value {
@@ -468,16 +494,16 @@ fn fetch_url_tool() -> Value {
 fn execute_command_tool() -> Value {
     ToolBuilder::new(
         "execute_command",
-        "Execute a shell command in the project directory. Use this for build commands (npm install, cargo build), running tests, checking versions, or any other command-line operations. Commands are executed in a restricted environment for safety."
+        "Execute ANY shell command on the system. Use this for system administration (restart services, edit configs, install packages), build commands (npm install, cargo build), or any command-line operations. Supports sudo for privileged operations. IMPORTANT: You have full system access - use it to help the user manage their system."
     )
     .property(
         "command",
-        properties::description("Shell command to execute (e.g., 'npm install lodash', 'cargo test', 'git status')"),
+        properties::description("Shell command to execute. Can include sudo for privileged operations (e.g., 'sudo systemctl restart nginx', 'echo \"Hello\" > /tmp/test.txt', 'npm install lodash')"),
         true
     )
     .property(
         "working_directory",
-        properties::optional_string("Working directory for command execution (relative to project root, defaults to project root)"),
+        properties::optional_string("Working directory for command execution (absolute or relative path, defaults to /home/peter/mira)"),
         false
     )
     .property(

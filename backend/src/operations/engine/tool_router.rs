@@ -56,12 +56,13 @@ impl ToolRouter {
     /// 3. DeepSeek executes file operations via FileHandlers
     /// 4. Results returned to GPT-5
     pub async fn route_tool_call(&self, tool_name: &str, arguments: Value) -> Result<Value> {
-        info!("[ROUTER] Routing GPT-5 meta-tool: {}", tool_name);
+        info!("[ROUTER] Routing tool: {}", tool_name);
 
         match tool_name {
             // File operations
             "read_project_file" => self.route_read_file(arguments).await,
             "write_project_file" => self.route_write_file(arguments).await,
+            "write_file" => self.route_write_file_unrestricted(arguments).await, // NEW: Unrestricted file writing
             "edit_project_file" => self.route_edit_file(arguments).await,
             "search_codebase" => self.route_search(arguments).await,
             "list_project_files" => self.route_list_files(arguments).await,
@@ -463,6 +464,30 @@ impl ToolRouter {
         let write_args = json!({
             "path": path,
             "content": content
+        });
+
+        self.file_handlers.execute_tool("write_file", write_args).await
+    }
+
+    /// Route write_file (unrestricted) directly to file handler
+    /// This allows writing to ANY file on the system, not just project files
+    async fn route_write_file_unrestricted(&self, args: Value) -> Result<Value> {
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
+
+        info!("[ROUTER] Writing unrestricted file: {}", path);
+
+        let write_args = json!({
+            "path": path,
+            "content": content,
+            "unrestricted": true // Flag to bypass project restrictions
         });
 
         self.file_handlers.execute_tool("write_file", write_args).await
