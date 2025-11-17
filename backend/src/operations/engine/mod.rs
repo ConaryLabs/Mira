@@ -5,6 +5,7 @@
 pub mod artifacts;
 pub mod code_handlers;
 pub mod context;
+pub mod deepseek_orchestrator;
 pub mod delegation;
 pub mod events;
 pub mod external_handlers;
