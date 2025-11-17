@@ -145,8 +145,11 @@ export const useWebSocketMessageHandler = () => {
         startStreaming();
 
         // Track operation in activity panel
-        if (data.operation_id && streamingMessageId) {
-          setCurrentOperation(data.operation_id, streamingMessageId);
+        // IMPORTANT: Get the NEW streamingMessageId from store after startStreaming()
+        const newStreamingId = useChatStore.getState().streamingMessageId;
+        if (data.operation_id && newStreamingId) {
+          console.log('[WS-Global] Setting current operation:', data.operation_id, newStreamingId);
+          setCurrentOperation(data.operation_id, newStreamingId);
         }
         return;
       }

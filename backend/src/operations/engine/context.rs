@@ -6,7 +6,7 @@ use crate::git::client::{FileNode, FileNodeType};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::service::MemoryService;
-use crate::operations::delegation_tools::get_delegation_tools;
+use crate::operations::delegation_tools::get_deepseek_tools;
 use crate::persona::PersonaOverlay;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::relationship::service::RelationshipService;
@@ -98,7 +98,7 @@ impl ContextBuilder {
         file_tree: Option<&Vec<FileNode>>,
     ) -> String {
         let persona = PersonaOverlay::Default;
-        let tools_json = get_delegation_tools();
+        let tools_json = get_deepseek_tools();
 
         let tools: Vec<Tool> = tools_json
             .iter()
