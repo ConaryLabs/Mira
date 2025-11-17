@@ -699,7 +699,7 @@ Frontend (4 files):
 - `frontend/src/hooks/useWebSocketMessageHandler.ts` - Added activity store routing for operation tracking
 
 **Git Commits:**
-- (To be committed)
+- `4a75155` - Feat: Replace terminal with Activity Panel for real-time execution display
 
 **Technical Decisions:**
 
