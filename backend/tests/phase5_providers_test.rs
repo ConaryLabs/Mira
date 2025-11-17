@@ -192,49 +192,6 @@ fn test_parse_tool_call_invalid_json_arguments() {
 }
 
 // ============================================================================
-// GPT-5 Provider Tests
-// ============================================================================
-
-#[test]
-fn test_normalize_verbosity() {
-    use mira_backend::llm::provider::gpt5::normalize_verbosity;
-
-    assert_eq!(normalize_verbosity("low"), "low");
-    assert_eq!(normalize_verbosity("LOW"), "low");
-    assert_eq!(normalize_verbosity("minimal"), "low");
-    assert_eq!(normalize_verbosity("concise"), "low");
-
-    assert_eq!(normalize_verbosity("high"), "high");
-    assert_eq!(normalize_verbosity("HIGH"), "high");
-    assert_eq!(normalize_verbosity("detailed"), "high");
-    assert_eq!(normalize_verbosity("verbose"), "high");
-
-    assert_eq!(normalize_verbosity("medium"), "medium");
-    assert_eq!(normalize_verbosity("MEDIUM"), "medium");
-    assert_eq!(normalize_verbosity("invalid"), "medium");
-    assert_eq!(normalize_verbosity(""), "medium");
-}
-
-#[test]
-fn test_normalize_reasoning() {
-    use mira_backend::llm::provider::gpt5::normalize_reasoning;
-
-    assert_eq!(normalize_reasoning("minimal"), "low");
-    assert_eq!(normalize_reasoning("low"), "medium"); // "low" is not in the match, goes to default
-    assert_eq!(normalize_reasoning("quick"), "low");
-
-    assert_eq!(normalize_reasoning("high"), "high");
-    assert_eq!(normalize_reasoning("HIGH"), "high");
-    assert_eq!(normalize_reasoning("thorough"), "high");
-    assert_eq!(normalize_reasoning("deep"), "high");
-
-    assert_eq!(normalize_reasoning("medium"), "medium");
-    assert_eq!(normalize_reasoning("MEDIUM"), "medium");
-    assert_eq!(normalize_reasoning("invalid"), "medium");
-    assert_eq!(normalize_reasoning(""), "medium");
-}
-
-// ============================================================================
 // DeepSeek Provider Tests
 // ============================================================================
 

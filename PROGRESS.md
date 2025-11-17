@@ -1771,6 +1771,81 @@ Phase 3 Issues (Cleanup):
 
 **Notes:**
 - Build warnings reduced from 7 to 4 (all harmless)
+
+---
+
+### Session 15: 2025-11-16
+
+**Goals:**
+- Clean up remaining GPT-5 dead code and remnants
+- Explore persona system to understand current state
+- Remove unused GPT-5/Claude-specific abstractions
+- Verify codebase is ready for DeepSeek-only operation
+
+**Outcomes:**
+- Deleted 580+ lines of dead GPT-5/Claude-specific code
+- Confirmed persona system is fully working (hardcoded to Default)
+- Updated 3 test files to use DeepSeek instead of GPT-5
+- Production code builds successfully with only 4 warnings
+- Cleaned up SQLite memory storage (removed structured response support)
+- Identified remaining test files that need updating (6 files for future session)
+
+**Files Deleted:**
+- `backend/src/llm/structured/` (entire directory, 490 lines) - Claude structured responses API support
+- `backend/src/llm/structured/processor.rs` (112 lines)
+- `backend/src/llm/structured/tool_schema.rs` (221 lines)
+- `backend/src/llm/structured/types.rs` (82 lines)
+- `backend/src/llm/structured/validator.rs` (65 lines)
+- `backend/src/llm/structured/mod.rs` (10 lines)
+- `backend/src/llm/reasoning_config.rs` (71 lines) - GPT-5 reasoning budget control
+- `backend/src/memory/storage/sqlite/structured_ops.rs` (18KB) - Unused structured response database operations
+
+**Files Modified:**
+LLM Module:
+- `backend/src/llm/mod.rs` - Removed structured and reasoning_config module declarations and re-exports
+
+SQLite Storage:
+- `backend/src/memory/storage/sqlite/store.rs` - Removed CompleteResponse import and unused structured response methods
+- `backend/src/memory/storage/sqlite/mod.rs` - Removed structured_ops module declaration and re-exports
+
+Operations:
+- `backend/src/operations/engine/external_handlers.rs` - Fixed 3 hardcoded "gpt5" strings to "deepseek" (lines 538, 575, 610)
+
+Test Files:
+- `tests/message_pipeline_flow_test.rs` - Changed from Gpt5Provider to DeepSeekProvider
+- `tests/phase5_providers_test.rs` - Removed GPT-5-specific test functions (normalize_verbosity, normalize_reasoning)
+
+Documentation:
+- `README.md` - Updated architecture diagrams and sections to reflect DeepSeek-only (Session 14)
+
+**Git Commits:**
+- `38e470a` - Docs: Update README.md to reflect DeepSeek-only architecture (from Session 14)
+- [Pending] - Refactor: Remove GPT-5 dead code and cleanup architecture
+
+**Technical Decisions:**
+1. **Dead Code Removal Strategy**: Deleted entire `structured/` module (490 lines) that was designed for Claude's Responses API - DeepSeek uses standard tool calling
+2. **Reasoning Config Removal**: Deleted reasoning_config.rs (71 lines) - GPT-5-specific reasoning budget control not applicable to DeepSeek
+3. **Persona System**: Confirmed working as designed - hardcoded to PersonaOverlay::Default, injected into every system prompt. No changes needed
+4. **Test Cleanup**: Updated 3 test files immediately, documented 6 remaining test files need future attention (artifact_flow_test, operation_engine_test, etc.)
+5. **SQLite Storage**: Removed structured response support entirely - not used anywhere in codebase
+
+**Issues/Blockers:**
+Initial Compilation Issues:
+- Missing structured module imports in 2 SQLite storage files (fixed by removing unused code)
+- Missing module declaration in sqlite/mod.rs (fixed)
+- Test files still using old GPT-5 imports (3 fixed, 6 remaining for future session)
+
+Test Compilation:
+- 6 test files still reference GPT-5 provider and old OperationEngine::new() signature
+- Files: operation_engine_test.rs, artifact_flow_test.rs, rolling_summary_test.rs, phase7_routing_test.rs, phase6_integration_test.rs, e2e_data_flow_test.rs
+- Decision: Defer test fixes to future session to avoid scope creep
+
+**Notes:**
+- Production code builds cleanly, all warnings harmless
+- Persona system research confirmed it's working perfectly - no action needed
+- Total dead code removed in Sessions 14+15: ~1,400 lines
+- Research findings: Persona is injected as first part of every system prompt via context.rs:100
+- 6 test files need updating to DeepSeek-only architecture (follow-up task)
 - Remaining warnings are false positives for fields passed to sub-components (tool_router, artifact_manager)
 - Environment configuration now clearly separates DeepSeek (primary LLM) from OpenAI (embeddings only)
 - ModelRouter automatically selects between chat and reasoner based on complexity

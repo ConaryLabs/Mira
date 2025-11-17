@@ -1,7 +1,7 @@
 // tests/message_pipeline_flow_test.rs
 // Tests message analysis pipeline - tags, topics, salience, error detection
 
-use mira_backend::llm::provider::{LlmProvider, gpt5::Gpt5Provider};
+use mira_backend::llm::provider::{LlmProvider, deepseek::DeepSeekProvider};
 use mira_backend::memory::features::message_pipeline::MessagePipeline;
 use std::sync::Arc;
 
@@ -440,19 +440,10 @@ async fn setup_pipeline() -> MessagePipeline {
 }
 
 fn create_llm_provider() -> Arc<dyn LlmProvider> {
-    // Get API key and model from environment (loaded by test runner from .env)
-    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests");
+    // Get API key from environment (loaded by test runner from .env)
+    let api_key = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY must be set for tests");
 
-    // Use actual model from config, fallback to gpt-4o if not set
-    let model = std::env::var("GPT5_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
-
-    Arc::new(Gpt5Provider::new(
-        api_key,
-        model,
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    ))
+    Arc::new(DeepSeekProvider::new(api_key))
 }
 
 // ============================================================================
