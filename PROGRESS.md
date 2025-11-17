@@ -657,6 +657,154 @@ Test Compilation:
 
 ---
 
+### Session 17: 2025-11-16
+
+**Goals:**
+- Research DeepSeek beta features to evaluate potential benefits
+- Transform frontend to mirror Claude Code with real-time execution display
+- Replace non-functional terminal panel with dedicated Activity Panel
+- Clean up inline activity displays from chat messages
+
+**Outcomes:**
+- Researched DeepSeek beta features: chat prefix completion and FIM completion (concluded not needed for current use case)
+- Built complete Activity Panel system with 3 collapsible sections:
+  - Reasoning section: LLM planning and reasoning token display
+  - Tasks section: Real-time task progress with status indicators
+  - Tool Executions section: Live feed of tool calls with expandable details
+- Removed terminal integration completely (4 files deleted)
+- Cleaned chat interface: removed inline plan/task/tool displays
+- Activity panel is resizable (300-800px), auto-scrolls, and syncs with operation lifecycle
+- TypeScript compilation successful with no errors
+
+**Files Created:**
+Frontend (5 new components/stores):
+- `frontend/src/stores/useActivityStore.ts` (120 lines) - Activity panel state management
+- `frontend/src/components/ActivityPanel.tsx` (150 lines) - Main panel with resize and sections
+- `frontend/src/components/ActivitySections/ReasoningSection.tsx` (67 lines) - LLM thinking display
+- `frontend/src/components/ActivitySections/TasksSection.tsx` (65 lines) - Task progress tracker
+- `frontend/src/components/ActivitySections/ToolExecutionsSection.tsx` (155 lines) - Tool call log
+
+**Files Deleted:**
+Frontend (4 terminal integration files):
+- `frontend/src/components/TerminalPanel.tsx`
+- `frontend/src/components/CommandOutputViewer.tsx`
+- `frontend/src/stores/useTerminalStore.ts`
+- `frontend/src/hooks/useTerminalMessageHandler.ts`
+
+**Files Modified:**
+Frontend (4 files):
+- `frontend/src/Home.tsx` - Replaced TerminalPanel with ActivityPanel, removed terminal handlers
+- `frontend/src/components/Header.tsx` - Replaced terminal toggle with activity panel toggle
+- `frontend/src/components/ChatMessage.tsx` - Removed inline plan, task, and tool execution displays
+- `frontend/src/hooks/useWebSocketMessageHandler.ts` - Added activity store routing for operation tracking
+
+**Git Commits:**
+- (To be committed)
+
+**Technical Decisions:**
+
+1. **DeepSeek Beta Features Evaluation:**
+   - Decision: Skip implementing chat prefix completion and FIM completion
+   - Rationale: Current JSON mode works well; prefix completion solves problems we've already solved
+   - FIM completion doesn't align with full-file generation model (better for IDE autocomplete)
+   - Both features are in beta and may be unstable
+
+2. **Activity Panel Architecture:**
+   - Decision: Lightweight store that pulls data from useChatStore rather than duplicating
+   - Rationale: Plan, tasks, and toolExecutions already stored per message in chat store
+   - Activity store only tracks current operation ID and messageID, then pulls data on demand
+   - Avoids data duplication and sync issues
+
+3. **Clean Separation of Concerns:**
+   - Decision: Chat messages (left) show only conversation, Activity panel (right) shows execution details
+   - Rationale: Mirrors Claude Code's clean interface design
+   - Users can focus on conversation without visual clutter
+   - Activity panel provides optional deep dive into execution internals
+
+4. **Operation Lifecycle Tracking:**
+   - Decision: Set current operation on operation.started, clear after 2-second delay on operation.completed
+   - Rationale: Keeps completed operation visible briefly for user review
+   - Auto-clear prevents stale activity from lingering
+   - New operations automatically replace old ones
+
+5. **Terminal Removal:**
+   - Decision: Complete removal rather than keeping as optional feature
+   - Rationale: User indicated it "does nothing right now" and wasn't needed
+   - Activity panel provides better real-time visibility than terminal output
+   - Simplifies codebase (removed ~500 lines)
+
+6. **Collapsible Sections:**
+   - Decision: All three activity sections default to expanded with collapse capability
+   - Rationale: Users want to see what's happening by default
+   - Collapse available for users who want more space
+   - Each section independent (can collapse reasoning but keep tasks visible)
+
+**Component Design:**
+
+Activity Panel Layout:
+```
+┌─────────────────────────────┐
+│ Activity          [X]       │ ← Header with close
+├─────────────────────────────┤
+│ ▼ Reasoning                 │ ← Collapsible sections
+│   [Plan text]               │
+│   N reasoning tokens        │
+├─────────────────────────────┤
+│ ▼ Tasks          3/5 done   │
+│   ✓ Task 1                  │
+│   ⟳ Task 2 (running)        │
+│   ⏸ Task 3 (pending)        │
+├─────────────────────────────┤
+│ ▼ Tool Executions  12 calls │
+│   ✓ read_file: main.rs      │
+│   ✓ write_file: test.rs     │
+│   ✗ git_commit: failed      │
+└─────────────────────────────┘
+```
+
+WebSocket Event Flow:
+```
+operation.started
+  → setCurrentOperation(opId, msgId)
+  → Activity panel activates
+
+operation.plan_generated
+  → updateMessagePlan()
+  → Reasoning section updates
+
+operation.task_created/started/completed
+  → addMessageTask() / updateTaskStatus()
+  → Tasks section updates
+
+operation.tool_executed
+  → addToolExecution()
+  → Tool Executions section appends
+
+operation.completed
+  → endStreaming()
+  → setTimeout(() => clearCurrentOperation(), 2000)
+```
+
+**Testing Status:**
+- TypeScript compilation: ✅ Passed (no errors)
+- Terminal references removed: ✅ Complete
+- Activity panel integrated: ✅ Complete
+- WebSocket routing configured: ✅ Complete
+- Frontend dev server: ⏳ Ready to test
+
+**Issues/Blockers:**
+- None encountered
+
+**Notes:**
+- Activity panel now provides the real-time execution visibility user requested
+- Much cleaner than terminal output - structured sections with status colors
+- Mirrors Claude Code's approach of dedicated execution detail panel
+- All existing backend events (plan, tasks, tools) already supported
+- Frontend ready for testing with `npm run dev`
+- Next: Test with real operations to verify real-time updates work correctly
+
+---
+
 ## Phase: [Future Phases]
 
 Future milestones will be added here as the project evolves.

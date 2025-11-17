@@ -4,6 +4,7 @@
 import { useEffect } from 'react';
 import { useAppState } from '../stores/useAppState';
 import { useChatStore } from '../stores/useChatStore';
+import { useActivityStore } from '../stores/useActivityStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { createArtifact, extractArtifacts } from '../utils/artifact';
 
@@ -28,8 +29,11 @@ export const useWebSocketMessageHandler = () => {
     addMessageTask,
     updateTaskStatus,
     setMessageOperationId,
-    streamingMessageId
+    streamingMessageId,
+    addToolExecution
   } = useChatStore();
+
+  const { setCurrentOperation, clearCurrentOperation } = useActivityStore();
 
   useEffect(() => {
     const unsubscribe = subscribe(
@@ -128,6 +132,10 @@ export const useWebSocketMessageHandler = () => {
           artifacts.forEach(artifact => addArtifact(artifact));
         }
 
+        // Clear current operation from activity panel after a delay
+        // (keep it visible for a bit so user can see the completed state)
+        setTimeout(() => clearCurrentOperation(), 2000);
+
         return;
       }
 
@@ -135,6 +143,11 @@ export const useWebSocketMessageHandler = () => {
         // Operation started - begin streaming
         console.log('[WS-Global] Operation started:', data.operation_id);
         startStreaming();
+
+        // Track operation in activity panel
+        if (data.operation_id && streamingMessageId) {
+          setCurrentOperation(data.operation_id, streamingMessageId);
+        }
         return;
       }
 

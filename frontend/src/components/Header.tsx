@@ -1,11 +1,11 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Folder, Terminal, X, LogOut } from 'lucide-react';
+import { Folder, Activity, X, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
 import { useAppState, useArtifactState } from '../stores/useAppState';
-import { useTerminalStore } from '../stores/useTerminalStore';
+import { useActivityStore } from '../stores/useActivityStore';
 import { useAuthStore, useCurrentUser } from '../stores/useAuthStore';
 
 export const Header: React.FC = () => {
@@ -16,14 +16,14 @@ export const Header: React.FC = () => {
   } = useAppState();
 
   const { artifacts } = useArtifactState();
-  const { toggleTerminalVisibility, isTerminalVisible } = useTerminalStore();
+  const { togglePanel, isPanelVisible } = useActivityStore();
   const [showProjects, setShowProjects] = useState(false);
   const { logout } = useAuthStore();
   const user = useCurrentUser();
   const navigate = useNavigate();
 
-  const handleTerminalClick = () => {
-    toggleTerminalVisibility();
+  const handleActivityClick = () => {
+    togglePanel();
   };
 
   const handleLogout = () => {
@@ -61,18 +61,18 @@ export const Header: React.FC = () => {
 
         {currentProject && (
           <>
-            {/* Terminal Toggle */}
+            {/* Activity Panel Toggle */}
             <button
               type="button"
-              onClick={handleTerminalClick}
+              onClick={handleActivityClick}
               className={`p-2 rounded-md transition-colors ${
-                isTerminalVisible
+                isPanelVisible
                   ? 'text-blue-400 bg-blue-900/30'
                   : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
               }`}
-              title="Toggle Terminal (Ctrl+`)"
+              title="Toggle Activity Panel"
             >
-              <Terminal size={16} />
+              <Activity size={16} />
             </button>
           </>
         )}

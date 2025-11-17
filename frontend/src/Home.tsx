@@ -3,11 +3,10 @@ import { useEffect } from 'react';
 import { Header } from './components/Header';
 import { ChatArea } from './components/ChatArea';
 import { ArtifactPanel } from './components/ArtifactPanel';
+import { ActivityPanel } from './components/ActivityPanel';
 import { ToastContainer } from './components/ToastContainer';
-import { TerminalPanel } from './components/TerminalPanel';
 import { useAppState } from './stores/useAppState';
 import { useWebSocketStore } from './stores/useWebSocketStore';
-import { useTerminalStore } from './stores/useTerminalStore';
 import { useWebSocketMessageHandler } from './hooks/useWebSocketMessageHandler';
 import { useMessageHandler } from './hooks/useMessageHandler';
 import { useChatPersistence } from './hooks/useChatPersistence';
@@ -15,7 +14,6 @@ import { useArtifactFileContentWire } from './hooks/useArtifactFileContentWire';
 import { useToolResultArtifactBridge } from './hooks/useToolResultArtifactBridge';
 import { useErrorHandler } from './hooks/useErrorHandler';
 import { useConnectionTracking } from './hooks/useConnectionTracking';
-import { useTerminalMessageHandler } from './hooks/useTerminalMessageHandler';
 
 export function Home() {
   const { showArtifacts } = useAppState();
@@ -41,23 +39,6 @@ export function Home() {
   useToolResultArtifactBridge(); // Tool_result → Artifact Viewer bridge
   useErrorHandler();             // WebSocket error → Chat messages + Toasts
   useConnectionTracking();       // Sync WebSocket state → AppState connection tracking
-  useTerminalMessageHandler();   // Handle terminal WebSocket messages
-
-  // Terminal toggle handler (Ctrl+`)
-  const { toggleTerminalVisibility } = useTerminalStore();
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+` or Cmd+` to toggle terminal
-      if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-        e.preventDefault();
-        toggleTerminalVisibility();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggleTerminalVisibility]);
 
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100">
@@ -88,8 +69,8 @@ export function Home() {
           )}
         </div>
 
-        {/* Terminal panel - right side */}
-        <TerminalPanel />
+        {/* Activity panel - right side */}
+        <ActivityPanel />
       </div>
 
       {/* Toast notifications - bottom right corner */}
