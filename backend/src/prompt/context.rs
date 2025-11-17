@@ -21,8 +21,8 @@ pub fn add_tool_usage_hints(prompt: &mut String) {
     prompt.push_str("- 'search_code' - For finding code elements in projects\n");
     prompt.push_str("- 'get_project_context' - For understanding project structure\n\n");
 
-    prompt.push_str("CRITICAL CONVERSATION REQUIREMENTS:\n");
-    prompt.push_str("NEVER respond with ONLY a tool call and no explanatory text.\n");
+    prompt.push_str("CONVERSATION MODE REQUIREMENTS:\n");
+    prompt.push_str("In normal conversation, NEVER respond with ONLY a tool call and no explanatory text.\n");
     prompt.push_str("Every response with a tool call MUST include conversational text that:\n");
     prompt.push_str("- Explains what you're doing and why\n");
     prompt.push_str("- Describes the approach or solution\n");
@@ -32,6 +32,14 @@ pub fn add_tool_usage_hints(prompt: &mut String) {
     prompt.push_str("Example BAD response: [creates artifact with zero text]\n");
     prompt.push_str("Example GOOD response: \"Alright, here's a streamBuffer utility that'll batch those 3500 chunks...\"\n");
     prompt.push_str("[then creates artifact]\n\n");
+
+    prompt.push_str("EXECUTION MODE EXCEPTION:\n");
+    prompt.push_str("If you receive a message marked '=== EXECUTION MODE ACTIVATED ===', the conversational requirements are SUSPENDED.\n");
+    prompt.push_str("In execution mode:\n");
+    prompt.push_str("- Make tool calls IMMEDIATELY without explanatory text\n");
+    prompt.push_str("- Focus on calling the correct tool for the current step\n");
+    prompt.push_str("- Tool execution results will be streamed to the user automatically\n");
+    prompt.push_str("- You'll be called again after each tool executes to continue the workflow\n\n");
 
     prompt.push_str(
         "Artifacts display in a Monaco editor where users can edit and apply changes.\n\n",

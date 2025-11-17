@@ -222,15 +222,27 @@ impl Orchestrator {
             Message::user(format!(
                 "Original request: {}\n\n\
                 Execution Plan:\n{}\n\n\
-                Now execute this plan using the available tools. Complete each step of the plan. \
-                Make the necessary tool calls to accomplish the tasks. Do not just provide instructions - actually execute the plan.",
+                === EXECUTION MODE ACTIVATED ===\n\n\
+                You are now in EXECUTION MODE. Your job is to CALL TOOLS to execute each step of the plan above.\n\n\
+                CRITICAL EXECUTION RULES:\n\
+                1. Make ONE tool call per response - the loop will continue automatically\n\
+                2. DO NOT write explanations - just call the appropriate tool for the next step\n\
+                3. For creating files: Use write_project_file with the file path and complete content\n\
+                4. For editing files: Use edit_project_file or read_project_file first to see content\n\
+                5. For searching code: Use search_codebase or find_function\n\
+                6. Each tool call will be executed immediately and you'll see the results\n\
+                7. After each tool executes, you'll be called again to make the NEXT tool call\n\n\
+                Example - if step 1 is 'Create file /tmp/hello.txt':\n\
+                Correct response: {{call write_project_file with path='/tmp/hello.txt', content='Hello World'}}\n\
+                Wrong response: \"I'll create the file by calling write_project_file...\" (NO! Just call the tool)\n\n\
+                Start executing step 1 of the plan NOW by making the appropriate tool call.",
                 user_content, plan
             ))
         } else {
             messages[0].clone()
         };
 
-        let final_messages = vec![execution_message];
+        let mut conversation_messages = vec![execution_message];
 
         // Tool use loop: continue calling GPT-5 until no more tool calls are made
         let mut accumulated_text = String::new();
@@ -248,13 +260,14 @@ impl Orchestrator {
 
             info!("[ENGINE] Tool use iteration {}/{}", iteration, max_tool_iterations);
 
-            // Track tool calls in this iteration
+            // Track tool calls and results in this iteration
             let mut tool_calls_in_iteration = Vec::new();
+            let mut tool_results_for_next_iteration = Vec::new();
 
             // Stream GPT-5 responses and handle tool calls
             let mut stream = self
                 .gpt5
-                .create_stream_with_tools(final_messages.clone(), system_prompt.clone(), tools.clone(), current_response_id.clone(), None)
+                .create_stream_with_tools(conversation_messages.clone(), system_prompt.clone(), tools.clone(), current_response_id.clone(), None)
                 .await
                 .context("Failed to create GPT-5 stream")?;
 
@@ -369,6 +382,12 @@ impl Orchestrator {
                                             ),
                                         })
                                         .await;
+
+                                    // Store tool result for next iteration
+                                    tool_results_for_next_iteration.push((
+                                        id.clone(),
+                                        serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+                                    ));
                                 }
                                 Err(e) => {
                                     warn!("[ENGINE] File operation failed: {}", e);
@@ -401,10 +420,21 @@ impl Orchestrator {
                                             content: format!("\n[File Operation Error: {}]\n", e),
                                         })
                                         .await;
+
+                                    // Store error result for next iteration
+                                    tool_results_for_next_iteration.push((
+                                        id.clone(),
+                                        format!(r#"{{"error": "{}"}}"#, e.to_string().replace('"', "\\\""))
+                                    ));
                                 }
                             }
                         } else {
                             warn!("[ENGINE] ToolRouter not available for {}", name);
+                            // Store error for missing router
+                            tool_results_for_next_iteration.push((
+                                id.clone(),
+                                r#"{"error": "ToolRouter not available"}"#.to_string()
+                            ));
                         }
                     } else if name == "activate_skill" {
                         // Handle skill activation
@@ -496,9 +526,16 @@ impl Orchestrator {
             break;
         }
 
-        // Update response_id for next iteration
+        // Update response_id and append tool results for next iteration
         if let Some(response_id) = iteration_response_id {
             info!("[ENGINE] Continuing to iteration {} with response_id: {}", iteration + 1, response_id);
+            info!("[ENGINE] {} tool results to append", tool_results_for_next_iteration.len());
+
+            // Append tool results to conversation messages for next iteration
+            for (call_id, output) in tool_results_for_next_iteration {
+                conversation_messages.push(Message::tool_result(call_id, output));
+            }
+
             current_response_id = Some(response_id);
         } else {
             warn!("[ENGINE] No response_id captured, cannot continue loop");

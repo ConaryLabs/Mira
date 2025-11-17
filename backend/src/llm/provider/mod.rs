@@ -44,6 +44,13 @@ impl Message {
             content,
         }
     }
+
+    pub fn tool_result(call_id: String, output: String) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: format!(r#"{{"call_id": "{}", "output": {}}}"#, call_id, output),
+        }
+    }
 }
 
 /// Token usage tracking across all providers

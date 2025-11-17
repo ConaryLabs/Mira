@@ -140,6 +140,7 @@ async fn test_operation_engine_lifecycle() {
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     // Create event channel
@@ -282,6 +283,7 @@ async fn test_operation_cancellation() {
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -374,6 +376,7 @@ async fn test_multiple_operations() {
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     // Create multiple operations
@@ -456,6 +459,7 @@ async fn test_operation_event_ordering() {
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -541,6 +545,7 @@ async fn test_operation_retrieval() {
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     // Create operation with specific fields

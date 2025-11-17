@@ -421,6 +421,34 @@ impl Gpt5Provider {
         })];
 
         for msg in messages {
+            // Handle tool results specially - they need call_id and output fields
+            if msg.role == "tool" {
+                // Parse the content which should be JSON with call_id and output
+                if let Ok(tool_data) = serde_json::from_str::<Value>(&msg.content) {
+                    if let (Some(call_id), Some(output)) = (
+                        tool_data.get("call_id").and_then(|c| c.as_str()),
+                        tool_data.get("output")
+                    ) {
+                        // Output field contains a JSON string, parse it to get the actual value
+                        let output_value = if let Some(output_str) = output.as_str() {
+                            // Try to parse the JSON string
+                            serde_json::from_str::<Value>(output_str).unwrap_or(output.clone())
+                        } else {
+                            output.clone()
+                        };
+
+                        input.push(json!({
+                            "role": "tool",
+                            "call_id": call_id,
+                            "output": output_value
+                        }));
+                        continue;
+                    }
+                }
+                // Fallback if parsing fails
+                warn!("Failed to parse tool result message: {}", msg.content);
+            }
+
             input.push(json!({
                 "role": msg.role,
                 "content": msg.content
