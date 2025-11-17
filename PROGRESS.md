@@ -1746,7 +1746,7 @@ Documentation:
 - `CLAUDE.md` - Updated all GPT-5 references to reflect DeepSeek-only architecture
 
 **Git Commits:**
-- (To be created) - "Refactor: Migrate from GPT-5 to DeepSeek-only architecture"
+- `7ec2856` - Refactor: Migrate from GPT-5 to DeepSeek-only architecture
 
 **Technical Decisions:**
 1. **DeepSeek Dual-Model Architecture**: Mirrors Claude Code's approach with chat model for orchestration and reasoner for complex tasks
