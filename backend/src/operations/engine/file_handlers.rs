@@ -64,7 +64,7 @@ impl FileHandlers {
         }))
     }
 
-    /// Write content to a file in the project directory
+    /// Write content to a file in the project directory (or anywhere if unrestricted)
     async fn write_file(&self, args: Value) -> Result<Value> {
         let path = args
             .get("path")
@@ -76,7 +76,20 @@ impl FileHandlers {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
 
-        let full_path = self.resolve_path(path)?;
+        let unrestricted = args
+            .get("unrestricted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let full_path = if unrestricted {
+            // Unrestricted mode - use absolute path as-is
+            info!("Writing file (unrestricted): {}", path);
+            PathBuf::from(path)
+        } else {
+            // Normal mode - validate path is within project
+            self.resolve_path(path)?
+        };
+
         info!("Writing file: {}", full_path.display());
 
         // Create parent directories if needed
@@ -211,6 +224,18 @@ impl FileHandlers {
                         files.push(rel_path.display().to_string());
                     }
                 } else if recursive && path.is_dir() {
+                    // Skip common ignored directories
+                    let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if dir_name == ".git"
+                        || dir_name == "node_modules"
+                        || dir_name == "target"
+                        || dir_name == ".next"
+                        || dir_name == "dist"
+                        || dir_name == "build"
+                    {
+                        continue;
+                    }
+
                     // Recursively list subdirectories
                     let sub_args = json!({
                         "directory": path.strip_prefix(&self.base_dir)

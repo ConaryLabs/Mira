@@ -808,3 +808,40 @@ operation.completed
 ## Phase: [Future Phases]
 
 Future milestones will be added here as the project evolves.
+
+---
+
+### Session 18: 2025-11-17
+
+**Goals:**
+- Fix Activity Panel reactivity and operation tracking
+- Enable unrestricted file system access for Mira
+- Fix context overflow from recursive file listing
+
+**Outcomes:**
+- Fixed Activity Panel not displaying activity (stale closure in useWebSocketMessageHandler, not subscribing to chat store)
+- Fixed tool schema mismatch: context builder now uses get_deepseek_tools() instead of get_delegation_tools()
+- Implemented unrestricted file write capability with write_file tool
+- Added directory filtering to list_files (.git, node_modules, target, .next, dist, build) to prevent 1.3M token context overflow
+- Updated CLAUDE.md to remove systemd service references, simplified to manual process management
+
+**Files Modified:**
+Backend (3 files):
+- `backend/src/operations/engine/context.rs` - Fixed tool schema (line 101: get_delegation_tools → get_deepseek_tools)
+- `backend/src/operations/engine/file_handlers.rs` - Added unrestricted flag support (lines 67-93), directory filtering (lines 226-237)
+- `CLAUDE.md` - Removed systemd service section, added manual process management (lines 79-120)
+
+Frontend (2 files):
+- `frontend/src/hooks/useWebSocketMessageHandler.ts` - Fixed stale closure by getting fresh streamingMessageId from store
+- `frontend/src/components/ActivityPanel.tsx` - Changed from getter functions to direct chat store subscription for reactivity
+
+**Technical Decisions:**
+- write_file tool with unrestricted: true flag bypasses project directory validation, enabling system-wide file access
+- Directory filtering prevents DeepSeek from listing hundreds of thousands of git objects during list_project_files calls
+- Activity Panel now reactively updates when tool executions/tasks/plans are added to messages
+
+**Known Issues:**
+- DeepSeek not using write_file tool despite it being available (responds "I can't write directly to your filesystem" instead of calling the tool)
+- Needs system prompt or tool description improvements to encourage tool usage
+
+---

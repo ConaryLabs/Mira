@@ -76,85 +76,48 @@ npm run test:coverage    # With coverage
 npm run preview
 ```
 
-## Service Management
+## Running the Application
 
-Both the backend and frontend run as systemd services on the development/production machine:
-
-### Backend Service
+### Backend
 
 ```bash
-# Service name: mira.service
-# IMPORTANT: The service runs the RELEASE build, not debug build
-
-# After making backend code changes, you must:
-# 1. Build the release binary
 cd backend
+
+# Development mode
+cargo run
+
+# Production mode (after making changes)
 cargo build --release
+./target/release/mira-backend
 
-# 2. Restart the service to apply changes
-sudo systemctl restart mira.service
+# Background mode with logging
+nohup ./target/release/mira-backend > /tmp/mira_backend.log 2>&1 &
 
-# Check status
-sudo systemctl status mira.service
+# Stop backend
+pkill -f mira-backend
 
-# Start service
-sudo systemctl start mira.service
-
-# Stop service
-sudo systemctl stop mira.service
-
-# Restart service
-sudo systemctl restart mira.service
-
-# View logs
-sudo journalctl -u mira.service -f
-
-# Enable on boot
-sudo systemctl enable mira.service
+# Check if running
+lsof -i :3001
 ```
 
-### Frontend Service
+### Frontend
 
 ```bash
-# Service name: mira-frontend.service
+cd frontend
 
-# Check status
-sudo systemctl status mira-frontend.service
+# Development mode
+npm run dev
 
-# Start service
-sudo systemctl start mira-frontend.service
-
-# Stop service
-sudo systemctl stop mira-frontend.service
-
-# Restart service
-sudo systemctl restart mira-frontend.service
-
-# View logs
-sudo journalctl -u mira-frontend.service -f
-
-# Enable on boot
-sudo systemctl enable mira-frontend.service
-```
-
-### Managing Both Services
-
-```bash
-# Restart both services
-sudo systemctl restart mira.service mira-frontend.service
-
-# Check status of both
-sudo systemctl status mira.service mira-frontend.service
-
-# View logs for both
-sudo journalctl -u mira.service -u mira-frontend.service -f
+# Production mode
+npm run build
+npm run preview
 ```
 
 **Important Notes**:
-- **Backend**: The mira.service runs the **release build** (`target/release/mira-backend`), so you must run `cargo build --release` before restarting the service to apply code changes
-- **Frontend**: After building (`npm run build`), restart mira-frontend.service to serve the updated application
-- The backend service runs the Rust WebSocket server on port 3001
-- The frontend service serves the built React application
+- Backend runs on port 3001 (WebSocket server)
+- Frontend dev server proxies to backend on port 3001
+- When making backend code changes, rebuild the release binary and restart the process
+- Use `pkill -f mira-backend` to stop running backend processes before starting a new one
 
 ## Architecture
 
