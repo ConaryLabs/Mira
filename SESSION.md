@@ -189,7 +189,7 @@ Each collection uses OpenAI text-embedding-3-large (3072 dimensions) with rich m
 
 ### Git Commit
 
-Commit: [To be added after commit]
+Commit: [efb2b3f](https://github.com/ConaryLabs/Mira/commit/efb2b3f)
 
 ### Statistics
 
