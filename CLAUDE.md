@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses DeepSeek's dual-model architecture (deepseek-chat for orchestration, deepseek-reasoner for complex generation) with hybrid memory systems, real-time WebSocket streaming, and git integration.
+Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses GPT 5.1 with variable reasoning effort levels, hybrid memory systems (SQLite + Qdrant), real-time WebSocket streaming, and comprehensive code intelligence including semantic graph analysis, git intelligence, and tool synthesis.
 
 ## Repository Structure
 
@@ -123,17 +123,19 @@ npm run preview
 
 ### Backend Architecture
 
-**DeepSeek Dual-Model Orchestration:**
-- **deepseek-chat** (8k tokens) handles fast orchestration, tool calling, and code execution
-- **deepseek-reasoner** (64k tokens) handles complex reasoning and large-scale generation
-- **Operation Engine** (`src/operations/engine/`) routes between chat and reasoner models based on complexity
-- **ModelRouter** automatically selects the appropriate model based on task requirements
-- Cost: $0.28/M tokens (30% savings vs previous architecture)
+**GPT 5.1 Single-Model with Variable Reasoning:**
+- **GPT 5.1** handles all operations with variable reasoning effort (minimum/medium/high)
+- **Budget Management** tracks daily/monthly spending with user-configurable limits
+- **LLM Response Cache** targets 80%+ hit rate for cost optimization (SHA-256 key hashing)
+- **Operation Engine** (`src/operations/engine/`) orchestrates complex workflows with status tracking
+- **Reasoning Effort Selection** adapts model complexity to task requirements
 
 **Memory Systems** (`src/memory/`):
-- **Hybrid storage**: SQLite (structured data) + Qdrant (vector embeddings)
-- **Multi-head embeddings** (5 heads): semantic, code, summary, documents, relationship
-- **Recall Engine**: Combines recent messages + semantic search + rolling summaries
+- **Hybrid storage**: SQLite (50+ tables) + Qdrant (3 collections: code, conversation, git)
+- **Semantic Code Understanding**: Semantic graph, call graph, design pattern detection
+- **Git Intelligence**: Commit tracking, co-change patterns, author expertise, historical fixes
+- **Personal Memory**: User profile, memory facts, learned behavioral patterns
+- **Recall Engine**: Combines recent messages + semantic search + rolling summaries + code intelligence
 - **Context Gathering**: Assembles recent messages, semantic results, file trees, and code intelligence before each LLM call
 
 **WebSocket Protocol** (`src/api/ws/`):
@@ -143,11 +145,16 @@ npm run preview
 - Port **3001** (not 8080, despite what some old docs say)
 
 **Key Backend Modules:**
-- `src/operations/engine/` - Modular operation orchestration (lifecycle, artifacts, events, model routing)
+- `src/operations/engine/` - Modular operation orchestration (lifecycle, artifacts, events, status tracking)
 - `src/memory/` - Memory service coordinating SQLite + Qdrant stores
-- `src/llm/provider/` - DeepSeek dual-model provider, OpenAI embeddings
-- `src/llm/router/` - ModelRouter for intelligent chat/reasoner selection
-- `src/git/client/` - Git integration (clone, import, sync, branch operations)
+- `src/memory/features/code_intelligence/` - Semantic graph, call graph, pattern detection
+- `src/llm/provider/` - GPT 5.1 provider with reasoning effort, OpenAI embeddings
+- `src/budget/` - Budget tracking with daily/monthly limits
+- `src/cache/` - LLM response cache (SHA-256 hashing, 80%+ hit rate)
+- `src/git/intelligence/` - Commit tracking, co-change analysis, expertise scoring
+- `src/synthesis/` - Tool pattern detection and auto-generation
+- `src/build/` - Build system integration, error tracking, fix learning
+- `src/patterns/` - Reasoning pattern storage and replay
 - `src/relationship/` - User context and fact storage
 - `src/api/ws/chat/` - Chat routing and connection management
 
@@ -182,11 +189,13 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 
 ## Prerequisites
 
-- **Rust 1.75+** (backend)
+- **Rust 1.91** (backend - target version for this dev machine)
+- **Rust Edition 2024** (use latest stable Rust edition)
+- **Stable Crates Only** (always use current stable versions of all dependencies)
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
 - **Qdrant** running on `localhost:6333` (vector database)
-- **API Keys**: OpenAI (embeddings only), DeepSeek
+- **API Keys**: OpenAI (GPT 5.1 + embeddings)
 
 ## Environment Setup
 
@@ -205,17 +214,19 @@ DATABASE_URL=sqlite://mira.db
 # Qdrant
 QDRANT_URL=http://localhost:6333
 
-# DeepSeek (Primary LLM)
-USE_DEEPSEEK_CODEGEN=true
-DEEPSEEK_API_KEY=sk-...
-DEEPSEEK_CHAT_MODEL=deepseek-chat
-DEEPSEEK_REASONER_MODEL=deepseek-reasoner
-DEEPSEEK_CHAT_MAX_TOKENS=8192
-DEEPSEEK_REASONER_MAX_TOKENS=65536
-
-# OpenAI (Embeddings Only)
+# OpenAI (GPT 5.1 + Embeddings)
 OPENAI_API_KEY=sk-...
+GPT5_MODEL=gpt-5.1
+GPT5_REASONING_DEFAULT=medium
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+
+# Budget Management
+BUDGET_DAILY_LIMIT_USD=5.0
+BUDGET_MONTHLY_LIMIT_USD=150.0
+
+# Cache Configuration
+CACHE_ENABLED=true
+CACHE_TTL_SECONDS=86400
 ```
 
 ### Frontend

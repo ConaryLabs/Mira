@@ -1,720 +1,563 @@
-# ROADMAP.md
+# Mira Roadmap: Unified Programming + Personal Context Oracle
 
-**Mira: Next-Generation AI Coding Assistant**
+## Vision
 
-Vision document for transforming Mira into a web-based development environment that combines conversational AI with powerful code manipulation capabilities.
+Mira is a next-generation AI coding assistant combining:
+- **Programming Context Oracle** from mira-cli (semantic code understanding, git intelligence, pattern detection)
+- **Personal Memory System** from Mira (user preferences, communication style, learned patterns)
+- **Web-based Interface** for accessibility and collaboration
+- **GPT 5.1** for state-of-the-art reasoning with variable effort levels
 
----
+The result is a well-rounded assistant that understands both your code and you as a developer.
 
-## Vision Statement
+## Core Architecture
 
-Mira will become the ultimate AI-powered development companion by combining:
+### LLM Stack
+- **Primary Model**: GPT 5.1 with variable reasoning effort (minimum/medium/high)
+- **Embeddings**: OpenAI text-embedding-3-large (3072 dimensions)
+- **Cost Optimization**: 80%+ cache hit rate target, budget tracking with daily/monthly limits
 
-- **Conversational Intelligence** - Natural dialogue about any topic, like claude.ai
-- **Code Manipulation Power** - Direct file/terminal access and tool execution, like Claude Code CLI
-- **Enhanced Context Awareness** - Leveraging Mira's superior memory systems (Qdrant embeddings + SQLite) for deeper code understanding
-- **Visual Feedback** - Split-view web interface where users chat naturally on the left while watching Mira work in real-time on the right
+### Storage Architecture
+- **SQLite**: Structured data (50+ tables across 9 migrations)
+- **Qdrant**: 3 collections for vector embeddings
+  - `code`: Programming context (symbols, semantic nodes, patterns)
+  - `conversation`: Messages, personal context, documents
+  - `git`: Commits, co-change patterns, historical fixes
 
-**Core Philosophy**: Enable developers to have natural conversations with an AI that can truly understand and manipulate their codebase, accessible from anywhere via web browser.
+### Backend
+- **Language**: Rust
+- **Web Server**: WebSocket-based (port 3001)
+- **Key Systems**:
+  - Code Intelligence (AST, semantic graph, call graph)
+  - Git Intelligence (commits, co-change, expertise)
+  - Memory System (conversation, facts, patterns)
+  - Operations Engine (workflow orchestration)
+  - Tool Synthesis (auto-generate custom tools)
+  - Build System Integration (error tracking, fix learning)
+  - Budget Management (cost tracking, caching)
 
----
+### Frontend
+- **Framework**: React + TypeScript
+- **State Management**: Zustand
+- **Build Tool**: Vite
+- **Key Features**:
+  - Real-time WebSocket streaming
+  - Monaco code editor
+  - File browser for projects
+  - Artifact management
+  - Activity panel
 
-## Current State Analysis
+## Core Capabilities
 
-### What Mira Has Today
+### 1. Semantic Code Understanding
 
-**Strengths:**
-- Dual LLM orchestration (GPT-5 for reasoning, DeepSeek for code generation)
-- Hybrid memory system (SQLite + Qdrant with 5-head embeddings)
-- Code intelligence service (AST parsing for Rust/TypeScript, semantic analysis, complexity tracking)
-- Git integration (clone, import, sync, branch management + **10 analysis tools**)
-- Real-time WebSocket streaming architecture
-- Artifact system (code blocks from LLM saved/applied to files)
-- **Integrated terminal** (xterm.js with PTY, multiple sessions, split-view layout)
-- React + TypeScript frontend with Monaco editor
-- Rust backend with proven performance
-- **Comprehensive tool suite** (35+ tools: file ops, git analysis, code intelligence, external tools)
+**What**: Every code symbol gets analyzed for purpose, concepts, and domain labels.
 
-**Capabilities:**
-- Intelligent conversation with context retention
-- Code generation with delegation to specialized models
-- Semantic search across conversations and code
-- Project-aware responses with file tree context and code intelligence
-- Multi-head embeddings for different content types
-- **GPT-5 can read files** (read, search, list, get summaries/structure - write/edit not yet exposed)
-- **GPT-5 can analyze git history** (history, blame, diff, branches, contributors, status)
-- **GPT-5 can search code semantically** (find functions/classes, analyze dependencies, complexity)
-- **GPT-5 can use external tools** (web search, URL fetch, command execution)
-- **Real-time terminal access** (command execution, multiple sessions, project-scoped)
+**How**:
+- AST parsing creates `code_elements` with hierarchical relationships
+- LLM analyzes each symbol to create `semantic_nodes` with purpose/concepts
+- `semantic_edges` link related code (semantic similarity, shared domain, co-change)
+- `concept_index` enables concept-based search ("find all authentication code")
 
-### What's Missing for the Vision
+**Value**:
+- Search by concept, not just keywords
+- Understand code relationships beyond syntax
+- Context-aware code generation
 
-**Completed (Sessions 2-4):**
-- ✅ **Terminal Integration** - Embedded terminal with xterm.js, PTY-based shell execution, multiple sessions
-- ✅ **Split-View Interface** - Right-side panel with terminal, resizable, traditional IDE layout
-- ✅ **Tool Execution** - GPT-5 can read files, search codebase, analyze git history, search web, execute commands
-- ✅ **Code Intelligence Tools** - 12 AST-powered tools for semantic search, complexity analysis, quality issues
-- ✅ **Git Analysis Tools** - 10 comprehensive tools for history, blame, diff, branches, contributors
-
-**Remaining Gaps:**
-1. **File Write/Edit Tools** - GPT-5 can read files but cannot write/edit (write_file handler exists but not exposed as meta-tool)
-2. **File Browser UI** - No visual file tree browser in the interface (terminal exists, file tree doesn't)
-3. **Enhanced Terminal Control** - execute_command exists but could be more powerful for LLM-driven operations
-
-**Explicitly NOT Pursuing (for now):**
-- ❌ **SSH/Remote Connectivity** - Decided to focus on local development first, defer remote machine support
-
-**The Gap**: Mira can read and analyze code deeply, but GPT-5 needs write/edit meta-tools exposed to autonomously modify files. The infrastructure exists, just needs to be wired up.
-
----
-
-## Target State
-
-### User Experience
-
-**Split-View Interface:**
+**Example**:
 ```
-┌─────────────────────────────────────────────────────┐
-│  Chat (Left Panel)        │  Terminal/Files (Right) │
-│  ─────────────────────    │  ──────────────────────│
-│  User: "Add user auth"    │  $ ssh user@vps        │
-│                            │  Connected to dev-box  │
-│  Mira: "I'll implement    │                         │
-│  JWT authentication.       │  📁 src/               │
-│  First, I'll create the   │    📁 auth/            │
-│  auth service..."          │      📄 jwt.ts         │
-│                            │      📄 middleware.ts  │
-│  [Streaming response...]   │                         │
-│                            │  $ npm install jsonwebtoken
-│  [Mira is working...]      │  + jsonwebtoken@9.0.0  │
-│                            │                         │
-│  Mira: "Done! I've added  │  $ git status          │
-│  JWT auth with middleware │  modified: src/auth/   │
-│  and tests."               │  new: tests/auth/      │
-└─────────────────────────────────────────────────────┘
+User: "Find all database access code"
+Mira: Searches concept_index for "database" concept
+      Returns functions tagged with ["database", "persistence", "storage"]
 ```
 
-**Key Features:**
-- User chats naturally on the left
-- Real-time terminal/file activity shown on the right
-- Visual feedback of every action Mira takes
-- File tree browser shows current project structure
-- Terminal displays command execution and output
-- Seamless integration between conversation and action
+### 2. Git Intelligence
 
-### Core Capabilities
+**What**: Deep understanding of git history for co-change prediction and expertise tracking.
 
-**1. Direct File Operations**
-- Read files from remote machine
-- Create new files with content
-- Edit existing files (search/replace, line edits)
-- Delete files/directories
-- All changes visible in real-time file tree
+**How**:
+- `git_commits` stores full commit history with file changes
+- `file_cochange_patterns` tracks files frequently modified together
+- `blame_annotations` links code lines to authors and commits
+- `author_expertise` scores developer expertise by file/domain
+- `historical_fixes` links error patterns to past fix commits
 
-**2. Terminal Command Execution**
-- Run bash commands on remote machine
-- Execute build tools (npm, cargo, make, etc.)
-- Run tests and see results
-- Install dependencies
-- Real-time streaming of command output
+**Value**:
+- "Files often changed with this one" suggestions
+- Find experts for specific code areas
+- Learn from past fixes for similar errors
 
-**3. Git Operations**
-- Clone repositories
-- Create branches
-- Commit changes with descriptive messages
-- Push to remote
-- View diffs and status
-- All git operations shown in terminal
-
-**4. Code Search and Navigation**
-- Search codebase with grep/ripgrep
-- Find file patterns with glob
-- Navigate to definitions
-- Analyze project structure
-- All powered by Mira's code intelligence
-
-**5. Enhanced Context Awareness**
-- Leverage Qdrant embeddings for semantic code understanding
-- Use SQLite for structured code metadata
-- Code intelligence integration for smarter suggestions
-- Memory of previous operations and patterns
-- Context-aware tool selection
-
-### Technical Architecture
-
-**Frontend Enhancements:**
+**Example**:
 ```
-React Frontend (New Components)
-├── SplitViewLayout - Main container
-│   ├── ChatPanel (Left) - Existing chat interface
-│   └── WorkspacePanel (Right) - New
-│       ├── TerminalEmulator (xterm.js) - Live terminal
-│       ├── FileTreeBrowser - Remote file explorer
-│       ├── FileViewer (Monaco) - Quick file preview
-│       └── ActivityFeed - Real-time action log
+User: Edits src/auth/validator.rs
+Mira: "This file is often changed with src/auth/middleware.rs and src/api/routes.rs"
+      "John Doe has 87% expertise in authentication code"
 ```
 
-**Backend Enhancements:**
+### 3. Call Graph Analysis
+
+**What**: Explicit caller-callee relationships for impact analysis.
+
+**How**:
+- `call_graph` table stores function call relationships
+- Graph traversal finds all callers/callees
+- Impact analysis shows what breaks if a function changes
+
+**Value**:
+- Understand function dependencies
+- Predict impact of changes
+- Context-aware refactoring
+
+**Example**:
 ```
-Rust Backend (New Services)
-├── SSH Connection Manager
-│   ├── Connection pooling
-│   ├── Session management
-│   └── Authentication (key-based)
-├── File System Service
-│   ├── Remote file operations
-│   ├── Path resolution
-│   └── Permission checking
-├── Command Execution Service
-│   ├── Shell command runner
-│   ├── Output streaming
-│   └── Process management
-├── Tool Registry (Enhanced)
-│   ├── File read/write/edit tools
-│   ├── Command execution tools
-│   ├── Git operation tools
-│   └── Code search tools
-└── Context Enhancement
-    ├── Code intelligence integration
-    ├── Semantic search for relevant context
-    └── Memory-aware tool suggestions
+User: "What calls validate_user()?"
+Mira: Traverses call_graph
+      Returns: authenticate_request(), check_permissions(), login_handler()
 ```
 
-**Data Flow:**
+### 4. Design Pattern Detection
+
+**What**: Automatically detect design patterns (Factory, Repository, Strategy, etc.).
+
+**How**:
+- LLM analyzes code structure and relationships
+- `design_patterns` table stores detected patterns with confidence scores
+- `pattern_validation_cache` caches LLM analysis results
+- Patterns guide code generation
+
+**Value**:
+- Generate code matching existing patterns
+- Architectural insight
+- Pattern-aware refactoring
+
+**Example**:
 ```
-User Chat → GPT-5 (Reasoning) → Tool Calls → Backend Services
-                                      ↓
-                        ┌─────────────┴──────────────┐
-                        │                            │
-                   SSH Service              Code Intelligence
-                        │                            │
-                   Remote Machine              Qdrant + SQLite
-                        │                            │
-                   Execute → Stream Output → Frontend Terminal
-                        │                            │
-                   Update Files → Sync → File Tree Browser
+User: "Create a new data access class"
+Mira: Detects Repository pattern in existing code
+      Generates new repository following the same pattern
 ```
 
----
+### 5. Build System Integration
 
-## Phased Implementation Plan
+**What**: Persistent error tracking with automatic context injection.
 
-### Phase 1: Foundation (Months 1-2)
+**How**:
+- `build_runs` tracks all build/test executions
+- `build_errors` stores errors with hash-based deduplication
+- `error_resolutions` links errors to fix commits
+- Recent build errors auto-injected into operation context
 
-**Goal**: Establish remote connectivity and basic file operations
+**Value**:
+- Learn from past fixes
+- Detect recurring errors
+- Automatic error context
 
-**Deliverables:**
-1. SSH Connection Management
-   - WebSocket-based SSH client integration
-   - Connection persistence and reconnection
-   - Authentication with SSH keys
-   - Session state management
+**Example**:
+```
+Build fails with "borrow checker error in src/main.rs:42"
+Mira: Checks historical_fixes for similar borrow errors
+      "This error was fixed in commit abc123 by adding explicit lifetimes"
+```
 
-2. File System API
-   - Read file contents from remote machine
-   - List directory contents
-   - Basic file metadata (size, modified date, permissions)
-   - Path normalization and validation
+### 6. Tool Synthesis
 
-3. Terminal UI Component
-   - Integrate xterm.js terminal emulator
-   - WebSocket bridge for terminal I/O
-   - Basic command execution
-   - Output streaming to frontend
+**What**: Automatically generate custom tools based on codebase patterns.
 
-4. Split-View Layout
-   - Responsive split-pane layout
-   - Resizable panels
-   - Chat on left, terminal on right
-   - Basic file tree viewer
+**How**:
+- `tool_patterns` detects repetitive codebase patterns
+- LLM generates Rust tools to automate patterns
+- `synthesized_tools` compiles and tracks tools
+- `tool_executions` measures effectiveness
+- `tool_evolution_history` tracks tool improvements
 
-**Success Criteria:**
-- User can connect to remote VPS via Mira
-- Basic terminal commands work (ls, cat, pwd, etc.)
-- File tree shows remote directory structure
-- Split view is functional and responsive
+**Value**:
+- Codebase-specific automation
+- Eliminate repetitive tasks
+- Tools improve over time
 
-### Phase 2: Tool Execution (Months 3-4)
+**Example**:
+```
+Mira detects pattern: "Frequently adding new API endpoints with similar structure"
+Mira synthesizes tool: "add_api_endpoint(name, method, auth_required)"
+Tool generates route + handler + tests following project patterns
+```
 
-**Goal**: Enable LLM to autonomously perform file and command operations
+### 7. Personal Memory
 
-**Deliverables:**
-1. File Operation Tools
-   - `read_file` - Read contents of remote file
-   - `write_file` - Create/overwrite file with content
-   - `edit_file` - Search/replace edits to existing file
-   - `list_files` - Directory listing with patterns
-   - `delete_file` - Remove files/directories
+**What**: Remember user preferences, coding style, and past decisions.
 
-2. Command Execution Tools
-   - `execute_command` - Run shell commands
-   - `run_script` - Execute multi-line scripts
-   - `install_package` - Package manager operations
-   - `run_tests` - Test runner execution
+**How**:
+- `user_profile` stores coding preferences, tech stack, communication style
+- `memory_facts` stores key-value facts with confidence tracking
+- `learned_patterns` captures behavioral patterns
+- `rolling_summaries` compress conversation history
 
-3. Git Operation Tools
-   - `git_status` - Working tree status
-   - `git_diff` - View changes
-   - `git_commit` - Create commits
-   - `git_push` - Push to remote
-   - `git_branch` - Branch operations
+**Value**:
+- Personalized assistance
+- Consistency with past decisions
+- Adaptive communication
 
-4. Real-Time Feedback
-   - Stream command output to terminal
-   - Update file tree on file changes
-   - Show git status in UI
-   - Activity log of LLM actions
+**Example**:
+```
+User: "Add error handling"
+Mira: Checks user_profile preference: "Prefers Result<T> over panicking"
+      Checks memory_facts: "User's team uses anyhow for error handling"
+      Generates code with anyhow::Result<T>
+```
 
-**Success Criteria:**
-- GPT-5 can call tools to manipulate remote files
-- User sees real-time terminal output
-- File tree updates automatically
-- Git operations work end-to-end
+### 8. Reasoning Pattern Learning
 
-### Phase 3: Intelligence Enhancement (Months 5-6)
+**What**: Store successful coding patterns and replay for similar problems.
 
-**Goal**: Leverage Mira's memory and code intelligence for superior performance
+**How**:
+- `reasoning_patterns` stores patterns with trigger types and reasoning chains
+- `reasoning_steps` captures step-by-step thinking
+- `pattern_usage` tracks success/failure
+- Patterns evolve based on success rates
 
-**Deliverables:**
-1. Code Search Integration
-   - `search_code` - Semantic code search via Qdrant
-   - `find_definition` - Locate function/class definitions
-   - `grep_files` - Pattern matching across codebase
-   - `analyze_structure` - Project structure analysis
+**Value**:
+- Learn from past successes
+- Faster problem-solving
+- Accumulating expertise
 
-2. Context-Aware Tools
-   - Pre-load relevant code context before operations
-   - Use embeddings to find related code sections
-   - Memory of previous edits for consistency
-   - Suggest related files based on current task
+**Example**:
+```
+Pattern: "Adding new database migration"
+Trigger: User mentions "migration" + "database schema"
+Reasoning chain:
+  1. Check existing migrations for naming convention
+  2. Create new migration file with next number
+  3. Write up/down migrations
+  4. Update schema documentation
+  5. Add rollback test
+Success rate: 92% (used 25 times)
+```
 
-3. Enhanced Code Intelligence
-   - Parse code structure on file changes
-   - Update embeddings in real-time
-   - Track dependencies and imports
-   - Detect code patterns and anti-patterns
+### 9. Budget Management
 
-4. Smart Suggestions
-   - Proactive error detection
-   - Test coverage suggestions
-   - Refactoring opportunities
-   - Security vulnerability warnings
+**What**: Track API costs with 80%+ cache hit rate to minimize spending.
 
-**Success Criteria:**
-- LLM uses code intelligence for better decisions
-- Context includes semantically relevant code
-- Mira suggests improvements proactively
-- Operations are faster and more accurate
+**How**:
+- `budget_tracking` logs every LLM call with cost
+- `budget_summary` aggregates daily/monthly spending
+- `llm_cache` caches responses with SHA-256 key hashing
+- Pre-call budget checks prevent overruns
 
-### Phase 4: Polish & Scale (Months 7-8)
+**Value**:
+- Predictable costs
+- Massive savings via caching
+- User-visible spending limits
 
-**Goal**: Production-ready features and multi-machine support
+**Example**:
+```
+Daily limit: $5.00
+Current spend: $4.23
+Cache hit rate: 84%
+Estimated monthly: $132 (vs $825 without cache)
+```
 
-**Deliverables:**
-1. Multi-Machine Support
-   - Connect to multiple remote machines
-   - Switch between machines in UI
-   - Per-machine session persistence
-   - Cross-machine file operations
+## Implementation Milestones
 
-2. Advanced Features
-   - File content search and preview
-   - Integrated diff viewer
-   - Collaborative editing
-   - Operation history and replay
+### Milestone 1: Foundation (Weeks 1-2) - CURRENT
 
-3. Performance Optimization
-   - Connection pooling
-   - Caching of file metadata
-   - Incremental file tree updates
-   - Optimized streaming protocols
+**Goal**: Core schema, GPT 5.1 integration, budget/cache system
 
-4. Security Hardening
-   - Command sandboxing
-   - Permission verification
-   - Audit logging
-   - Rate limiting
+**Deliverables**:
+- [x] 9 SQL migrations (50+ tables)
+- [ ] 3 Qdrant collections setup
+- [ ] GPT 5.1 provider implementation
+- [ ] Budget tracking module
+- [ ] LLM cache module
+- [ ] Basic tests
 
-**Success Criteria:**
-- Support 3+ simultaneous connections
-- Sub-100ms operation latency
-- Zero security vulnerabilities
-- Production-ready deployment
+**Files**:
+- backend/migrations/20251125_001_foundation.sql
+- backend/migrations/20251125_002_code_intelligence.sql
+- backend/migrations/20251125_003_git_intelligence.sql
+- backend/migrations/20251125_004_operations.sql
+- backend/migrations/20251125_005_documents.sql
+- backend/migrations/20251125_006_tool_synthesis.sql
+- backend/migrations/20251125_007_build_system.sql
+- backend/migrations/20251125_008_budget_cache.sql
+- backend/migrations/20251125_009_project_context.sql
+- backend/src/llm/provider/gpt5.rs
+- backend/src/budget/mod.rs
+- backend/src/cache/mod.rs
 
----
+### Milestone 2: Code Intelligence (Weeks 3-4)
 
-## Technical Considerations
+**Goal**: Semantic graph, call graph, pattern detection
 
-### Security
+**Deliverables**:
+- Semantic node/edge management
+- Call graph traversal
+- Design pattern detection (LLM-based)
+- Domain clustering
+- Code quality analysis
+- Semantic analysis cache
 
-**SSH Authentication:**
-- Use SSH key pairs (never passwords)
-- Store private keys securely (encrypted at rest)
-- Per-user key management
-- Key rotation policies
+**Files**:
+- backend/src/memory/features/code_intelligence/semantic.rs
+- backend/src/memory/features/code_intelligence/call_graph.rs
+- backend/src/memory/features/code_intelligence/patterns.rs
+- backend/src/memory/features/code_intelligence/clustering.rs
+- backend/src/memory/features/code_intelligence/cache.rs
 
-**Command Sandboxing:**
-- Whitelist allowed commands in production
-- Restrict dangerous operations (rm -rf /, etc.)
-- Filesystem access controls
-- Resource limits (CPU, memory, network)
+**Tests**:
+- backend/tests/code_intelligence_test.rs
+- backend/tests/semantic_graph_test.rs
+- backend/tests/call_graph_test.rs
 
-**Data Protection:**
-- Encrypt all WebSocket traffic (WSS)
-- No logging of sensitive data
-- Session isolation between users
-- Secure credential storage
+### Milestone 3: Git Intelligence (Weeks 5-6)
 
-### Performance
+**Goal**: Commit tracking, co-change analysis, expertise scoring
 
-**Connection Management:**
-- Connection pooling for SSH sessions
-- Automatic reconnection on disconnect
-- Heartbeat/keepalive mechanisms
-- Graceful degradation on network issues
+**Deliverables**:
+- Git commit indexing
+- Co-change pattern detection (LLM-based)
+- Blame annotation management
+- Author expertise scoring
+- Historical fix matching
+- Git context queries
 
-**Streaming Optimization:**
-- Binary WebSocket frames for terminal data
-- Chunked file transfers for large files
-- Incremental file tree updates
-- Debounced UI updates
+**Files**:
+- backend/src/git/intelligence/commits.rs
+- backend/src/git/intelligence/cochange.rs
+- backend/src/git/intelligence/blame.rs
+- backend/src/git/intelligence/expertise.rs
+- backend/src/git/intelligence/fixes.rs
 
-**Caching Strategy:**
-- Cache file metadata locally
-- Cache directory listings
-- Cache code intelligence results
-- Invalidation on file changes
+**Tests**:
+- backend/tests/git_intelligence_test.rs
+- backend/tests/cochange_detection_test.rs
 
-### Scalability
+### Milestone 4: Tool Synthesis (Weeks 7-8)
 
-**Single Machine (Phase 1-3):**
-- One SSH connection per user session
-- Local state management
-- Direct WebSocket communication
+**Goal**: Auto-generate custom tools from codebase patterns
 
-**Multi-Machine (Phase 4):**
-- Connection multiplexing
-- Shared state across machines
-- Cross-machine context awareness
-- Distributed file search
+**Deliverables**:
+- Tool pattern detection (LLM-based)
+- Tool code generation
+- Tool compilation and execution sandbox
+- Effectiveness tracking
+- Tool evolution system
 
-### Technology Choices
+**Files**:
+- backend/src/synthesis/detector.rs
+- backend/src/synthesis/generator.rs
+- backend/src/synthesis/executor.rs
+- backend/src/synthesis/evolution.rs
 
-**Terminal Emulator:**
-- **xterm.js** - Industry standard, full VT100 emulation, WebGL rendering
-- Alternatives: term.js, hterm
+**Tests**:
+- backend/tests/tool_synthesis_test.rs
+- backend/tests/tool_execution_test.rs
 
-**SSH Client:**
-- **Backend**: ssh2 (if Node.js) or russh (if Rust)
-- WebSocket bridge for browser connectivity
-- Consider WebRTC for lower latency (future)
+### Milestone 5: Build System Integration (Weeks 9-10)
 
-**File Tree:**
-- **react-complex-tree** or custom implementation
-- Lazy loading for large directories
-- Virtual scrolling for performance
+**Goal**: Error tracking and fix learning
 
-**WebSocket Protocol:**
-- JSON for command/control messages
-- Binary for terminal data streams
-- Multiplexed channels for different data types
+**Deliverables**:
+- Build/test execution tracking
+- Error parsing (cargo, npm, pytest, etc.)
+- Error deduplication
+- Resolution tracking
+- Auto-inject recent errors into context
+- Historical fix lookup
 
----
+**Files**:
+- backend/src/build/runner.rs
+- backend/src/build/parser.rs
+- backend/src/build/tracker.rs
+- backend/src/build/resolver.rs
 
-## Enhanced by Mira's Unique Strengths
+**Tests**:
+- backend/tests/build_system_test.rs
+- backend/tests/error_resolution_test.rs
 
-### Superior Memory System
+### Milestone 6: Reasoning Patterns (Weeks 11-12)
 
-**How It Helps:**
-- Remember patterns from previous coding sessions
-- Recall similar problems and their solutions
-- Learn user's coding style and preferences
-- Maintain context across long development sessions
+**Goal**: Learn and replay successful patterns
 
-**Integration:**
-- Store tool execution history in SQLite
-- Embed successful code patterns in Qdrant
-- Semantic search for "how did I solve X before?"
-- Relationship engine tracks user preferences
+**Deliverables**:
+- Pattern storage
+- Pattern matching (LLM-based)
+- Pattern replay
+- Success rate tracking
+- Pattern evolution
 
-### Multi-Head Embeddings
+**Files**:
+- backend/src/patterns/storage.rs
+- backend/src/patterns/matching.rs
+- backend/src/patterns/replay.rs
 
-**Code Head:**
-- Embed every file as it's edited
-- Semantic search for related code
-- Find similar implementations
-- Detect code duplication
+**Tests**:
+- backend/tests/reasoning_patterns_test.rs
+- backend/tests/pattern_matching_test.rs
 
-**Document Head:**
-- Embed README, docs, comments
-- Understand project architecture
-- Find relevant documentation
-- Suggest documentation updates
+### Milestone 7: Context Oracle Integration (Weeks 13-14)
 
-**Relationship Head:**
-- Learn user's workflow patterns
-- Adapt to coding style
-- Remember project conventions
-- Personalized suggestions
+**Goal**: Unified context gathering using all intelligence systems
 
-### Code Intelligence
+**Deliverables**:
+- Enhanced RecallEngine with semantic graph
+- Call graph context gathering
+- Co-change file suggestions
+- Historical fix integration
+- Pattern-based context
+- Budget-aware LLM calls
 
-**Function/Class Extraction:**
-- Parse code structure on every edit
-- Track dependencies automatically
-- Update embeddings incrementally
-- Fast symbol search
+**Files**:
+- backend/src/memory/features/recall_engine/enhanced.rs
+- backend/src/memory/features/context_oracle.rs
 
-**Project Understanding:**
-- Build comprehensive project graph
-- Understand module relationships
-- Detect architectural patterns
-- Suggest refactoring opportunities
+**Tests**:
+- backend/tests/context_oracle_test.rs
+- backend/tests/end_to_end_context_test.rs
 
-### Dual LLM Architecture
+### Milestone 8: Frontend Integration (Weeks 15-18)
 
-**GPT-5 (Reasoning):**
-- Understands user intent
-- Plans multi-step operations
-- Decides which tools to use
-- Handles errors and retries
+**Goal**: UI for all new features
 
-**DeepSeek (Code Generation):**
-- Generates high-quality code
-- Follows established patterns
-- Optimized for code synthesis
-- Fast and cost-effective
+**Deliverables**:
+- Semantic search UI
+- Co-change suggestions panel
+- Tool synthesis dashboard
+- Budget tracking UI
+- Build error integration
+- Enhanced file browser with semantic tags
 
----
+**Files**:
+- frontend/src/components/SemanticSearch.tsx
+- frontend/src/components/CoChangeSuggestions.tsx
+- frontend/src/components/ToolsDashboard.tsx
+- frontend/src/components/BudgetTracker.tsx
+- frontend/src/stores/useCodeIntelligenceStore.ts
+
+### Milestone 9: Production Hardening (Weeks 19-20)
+
+**Goal**: Performance, reliability, documentation
+
+**Deliverables**:
+- Performance optimization
+- Error handling improvements
+- Comprehensive logging
+- Deployment documentation
+- User guide
+- API documentation
+
+**Tests**:
+- Load testing
+- Cache performance benchmarks
+- Budget tracking accuracy
+- End-to-end user workflows
 
 ## Success Metrics
 
-### User Experience Metrics
-
-**Conversational Quality:**
-- User can discuss any topic naturally (like claude.ai)
-- Mira understands context across long conversations
-- Natural language commands work reliably
-
-**Tool Execution Quality:**
-- All file operations work correctly
-- Command execution is reliable
-- Git operations succeed consistently
-- Real-time feedback is accurate
-
-**Visual Feedback:**
-- User sees every action Mira takes
-- Terminal output is live and accurate
-- File tree updates in real-time
-- No hidden or mysterious operations
-
 ### Technical Metrics
+- **Cache Hit Rate**: 80%+ (target: 85%)
+- **Test Coverage**: 80%+ for all new modules
+- **Query Performance**: Semantic search < 200ms (p95)
+- **Build Error Detection**: 95%+ of compile errors tracked
+- **Pattern Detection Accuracy**: 90%+ precision for design patterns
 
-**Performance:**
-- File read latency < 200ms
-- Command execution starts < 100ms
-- Terminal rendering at 60 FPS
-- File tree loads < 500ms for 1000 files
+### Cost Metrics
+- **Daily Spending**: < $5/user/day (with caching)
+- **Monthly Spending**: < $150/user/month
+- **Cache Savings**: 80%+ cost reduction vs no caching
+- **Budget Compliance**: 100% of users within limits
 
-**Reliability:**
-- SSH connection uptime > 99%
-- Tool execution success rate > 95%
-- Zero data loss on operations
-- Graceful error recovery
+### User Experience Metrics
+- **Context Relevance**: 90%+ of suggested files are relevant
+- **Co-change Accuracy**: 85%+ of co-change suggestions are valid
+- **Tool Synthesis Success**: 3+ useful tools per project
+- **Pattern Replay Success**: 90%+ of pattern applications succeed
 
-**Intelligence:**
-- Context relevance score > 0.8
-- Code search precision > 90%
-- Suggested operations accuracy > 80%
-- Memory recall accuracy > 85%
+## Technology Stack
 
-### Business Metrics
+### Backend
+- **Language**: Rust 1.75+
+- **Web Framework**: Axum + Tower
+- **WebSocket**: tokio-tungstenite
+- **Database**: SQLite 3.35+ with sqlx
+- **Vector DB**: Qdrant (localhost:6333)
+- **LLM**: GPT 5.1 via OpenAI API
+- **Embeddings**: text-embedding-3-large via OpenAI API
 
-**Adoption:**
-- Daily active users
-- Session duration
-- Operations per session
-- User retention rate
+### Frontend
+- **Framework**: React 18+ with TypeScript
+- **Build Tool**: Vite
+- **State Management**: Zustand
+- **Editor**: Monaco Editor
+- **Terminal**: xterm.js
+- **UI Components**: Custom + Headless UI
 
-**Value Delivered:**
-- Code written per session
-- Problems solved per day
-- Time saved vs manual coding
-- User satisfaction score
+### Infrastructure
+- **Development**: Local development with hot reload
+- **Production**: Docker containers (backend + Qdrant)
+- **Database**: SQLite with WAL mode
+- **Caching**: In-process LLM cache (SQLite)
+- **Authentication**: JWT tokens
 
----
+## Future Enhancements (Post-V1)
 
-## Competitive Advantages
+### Deferred Features
+1. **Proactive Monitoring** - Background file watching with suggestions
+2. **LSP Integration** - Type information from language servers
+3. **Remote Development** - SSH support for remote codebases
+4. **Multi-language AST** - Beyond Rust and TypeScript
+5. **Collaborative Features** - Real-time co-editing
+6. **Team Analytics** - Team-wide expertise tracking
+7. **CI/CD Integration** - Hook into build pipelines
+8. **IDE Extensions** - VSCode, IntelliJ, etc.
 
-### vs Claude Code CLI
+### Research Directions
+1. **Multi-modal Code Understanding** - Images, diagrams, architecture docs
+2. **Cross-project Learning** - Learn patterns across user's projects
+3. **Automated Refactoring** - Safe, large-scale refactoring
+4. **Test Generation** - Comprehensive test suites from code
+5. **Documentation Generation** - Auto-generate docs from code + comments
 
-**Mira's Advantages:**
-- Web-based (accessible from anywhere)
-- Superior memory and code intelligence
-- Multi-head semantic understanding
-- Visual feedback in browser
-- Multi-machine support (future)
+## Contributing
 
-**Claude Code's Advantages:**
-- Native OS integration
-- Local file access
-- Lower latency
-- Offline capable
+### Getting Started
+1. Clone repository
+2. Install Rust 1.75+ and Node.js 18+
+3. Install Qdrant (Docker: `docker run -p 6333:6333 qdrant/qdrant`)
+4. Configure `.env` (see backend/.env.example)
+5. Run migrations: `cd backend && sqlx migrate run`
+6. Start backend: `cd backend && cargo run`
+7. Start frontend: `cd frontend && npm run dev`
 
-**Strategy**: Focus on web accessibility and enhanced intelligence to differentiate.
+### Development Workflow
+1. Create feature branch
+2. Write tests first
+3. Implement feature
+4. Run tests: `cargo test` and `npm run test`
+5. Check formatting: `cargo fmt` and `npm run lint`
+6. Submit PR with description
 
-### vs claude.ai
+### Code Style
+- Follow CLAUDE.md guidelines
+- No emojis in code/docs
+- File headers with path comments
+- Concise, focused comments
+- Prefer editing existing files over creating new ones
 
-**Mira's Advantages:**
-- Direct code manipulation
-- Tool execution capabilities
-- Project-aware context
-- Real-time development environment
-- Code intelligence integration
+## Status
 
-**claude.ai's Advantages:**
-- Simpler interface
-- Broader use cases
-- No setup required
-- Faster response (no tool execution)
-
-**Strategy**: Position as "claude.ai for developers" - same conversational quality plus coding superpowers.
-
-### vs GitHub Copilot
-
-**Mira's Advantages:**
-- Full project understanding
-- Multi-file operations
-- Terminal command execution
-- Conversational interface
-- Memory of past sessions
-
-**Copilot's Advantages:**
-- IDE integration
-- Line-by-line suggestions
-- Extremely fast
-- Works offline
-
-**Strategy**: Complement rather than replace Copilot - use Mira for high-level tasks, Copilot for autocomplete.
-
----
-
-## Open Questions & Decisions Needed
-
-### Technical Decisions
-
-1. **Terminal Protocol**: WebSocket vs WebRTC for terminal streaming?
-   - WebSocket: Simpler, proven, good enough latency
-   - WebRTC: Lower latency, peer-to-peer, more complex
-
-2. **SSH Backend**: Rust (russh) vs Node.js (ssh2)?
-   - Rust: Better performance, type safety, consistent with backend
-   - Node.js: More mature libraries, easier to debug
-
-3. **File Operations**: Stream vs bulk transfer for large files?
-   - Stream: Better for huge files, more complex
-   - Bulk: Simpler, good enough for most files
-
-4. **State Management**: Where to maintain file tree state?
-   - Backend: Source of truth, requires sync
-   - Frontend: Faster UI, requires invalidation strategy
-   - Hybrid: Best of both, more complexity
-
-### Product Decisions
-
-1. **Pricing Model**: How to monetize?
-   - Usage-based (per operation)
-   - Subscription tiers
-   - Free for open source, paid for private
-
-2. **Target Users**: Who are we building for?
-   - Professional developers
-   - Hobbyists and learners
-   - Teams and organizations
-
-3. **Deployment**: How do users run Mira?
-   - Cloud-hosted SaaS
-   - Self-hosted on VPS
-   - Hybrid (frontend SaaS, backend self-hosted)
-
-4. **Access Control**: How to handle permissions?
-   - Trust LLM with full access
-   - User approval for dangerous operations
-   - Configurable permission levels
-
----
-
-## Next Steps
-
-### Immediate Actions (Next 2 Weeks)
-
-1. **Prototype Terminal Integration**
-   - Spike: xterm.js in Mira frontend
-   - Spike: WebSocket terminal bridge
-   - Prove basic concept works
-
-2. **Design SSH Architecture**
-   - Choose Rust vs Node.js for SSH
-   - Design connection management
-   - Plan authentication flow
-
-3. **Define Tool Schema**
-   - List all required tools (file, command, git, search)
-   - Design tool parameter schemas
-   - Plan tool execution pipeline
-
-4. **UI Mockups**
-   - Design split-view layout
-   - Design file tree browser
-   - Design activity feed
-   - User flow diagrams
-
-### Research & Validation
-
-1. **User Interviews**
-   - Talk to potential users
-   - Validate problem/solution fit
-   - Understand workflow needs
-
-2. **Technical Spikes**
-   - SSH performance testing
-   - Terminal rendering performance
-   - File tree scalability
-   - WebSocket vs WebRTC benchmarks
-
-3. **Security Review**
-   - Threat modeling
-   - Security best practices
-   - Compliance requirements
-
----
-
-## Conclusion
-
-Mira has the potential to become the definitive AI coding assistant by combining the best of conversational AI (claude.ai) with the power of direct code manipulation (Claude Code), all enhanced by our superior memory and code intelligence systems.
-
-The roadmap is ambitious but achievable with phased execution over 8 months. Each phase delivers incremental value while building toward the complete vision.
-
-**The North Star**: A developer opens Mira in their browser, chats naturally about their coding problem, and watches as Mira autonomously implements the solution with intelligence, transparency, and precision.
-
-Let's build the future of AI-assisted development.
-
----
-
-**Last Updated**: 2025-11-16
-**Status**: Partial Implementation (File Operations Complete, File Browser UI Pending)
+**Last Updated**: 2025-11-25
+**Status**: Foundation Phase - Schema Design Complete
 **Owner**: Peter (Founder)
 
-**Recent Progress (Nov 2025):**
-- Session 2: Integrated terminal with xterm.js + PTY (✅ Complete)
-- Session 3: External tools - web search, URL fetch, command execution (✅ Complete)
-- Session 4: Git analysis (10 tools) + Code intelligence (12 tools) (✅ Complete)
-- Session 5: Planning mode with task tracking and real-time WebSocket events (✅ Complete)
-- Session 6: Dynamic reasoning level selection for cost/quality optimization (✅ Complete)
-- Session 7: Frontend simplification - removed 1,220 lines, refactored ProjectsView with hooks (✅ Complete)
-- Session 8: Implemented JWT authentication with user-based eternal sessions (✅ Complete)
-- **File Write/Edit Tools**: ALREADY IMPLEMENTED - GPT-5 has full read/write/edit access via delegation_tools.rs (✅ Verified)
-- **Next Priorities**:
-  1. Add file tree browser UI component
-  2. Improve file operation feedback in the UI (show when GPT-5 writes/edits files)
-  3. SSH/remote connectivity explicitly deferred
+**Completed** (Nov 25, 2025):
+- [x] 9 SQL migrations designed and created
+- [x] Schema covers all features (code intelligence, git, tools, budget, patterns)
+- [x] New ROADMAP.md created with unified vision
+
+**Next Steps**:
+1. Qdrant collection setup (3 collections: code, conversation, git)
+2. GPT 5.1 provider implementation
+3. Budget tracking and LLM cache modules
+4. Update configuration files and documentation
+
+**Architecture Change**: Complete pivot from DeepSeek dual-model to GPT 5.1 single-model with reasoning effort levels. Fresh database schema combining mira-cli's programming context oracle with Mira's personal memory system.
