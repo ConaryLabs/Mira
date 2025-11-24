@@ -236,4 +236,102 @@ Commit: [commit hash]
 
 ---
 
+## Session 2: GPT 5.1 Provider Implementation (2025-11-25)
+
+### Goals
+- Implement GPT 5.1 provider with reasoning effort support
+- Update configuration for GPT 5.1
+- Update environment example with new settings
+- Update documentation with emoji rules
+
+### Work Completed
+
+#### 1. GPT 5.1 Provider
+
+**File Created**: `backend/src/llm/provider/gpt5.rs`
+- Implements `LlmProvider` trait from Mira
+- Support for variable reasoning effort (minimum/medium/high)
+- Complete method with custom reasoning effort
+- Streaming support via SSE
+- Tool calling support
+- Adapted from mira-cli but integrated with Mira's trait system
+
+**Key Features**:
+- `ReasoningEffort` enum (Minimum, Medium, High)
+- API key validation
+- Error handling with helpful messages
+- Token usage tracking
+- Streaming with SSE parsing
+
+#### 2. Configuration Updates
+
+**File Modified**: `backend/src/config/llm.rs`
+- Added `Gpt5Config` struct
+- Environment variable parsing for GPT 5.1 settings
+- Reasoning effort parsing from string (low/medium/high)
+- Validation for API key requirement
+- Defaults to medium reasoning effort
+
+#### 3. Environment Configuration
+
+**File Modified**: `backend/.env.example`
+- Replaced DeepSeek dual-model section
+- Added GPT 5.1 configuration
+  - `USE_GPT5=true`
+  - `GPT5_MODEL=gpt-5.1`
+  - `GPT5_REASONING_DEFAULT=medium`
+- Added budget management placeholders
+  - `BUDGET_DAILY_LIMIT_USD=5.0`
+  - `BUDGET_MONTHLY_LIMIT_USD=150.0`
+- Added LLM cache configuration
+  - `CACHE_ENABLED=true`
+  - `CACHE_TTL_SECONDS=86400`
+
+#### 4. Documentation Updates
+
+**File Modified**: `CLAUDE.md`
+- Updated "No emojis" rule to include git commits
+- Updated External Dependencies section
+  - Removed DeepSeek API reference
+  - Updated to "OpenAI API for GPT 5.1 (LLM) and text-embedding-3-large (embeddings)"
+
+### Files Created/Modified
+
+**Created**:
+- backend/src/llm/provider/gpt5.rs
+
+**Modified**:
+- backend/src/config/llm.rs
+- backend/src/llm/provider/mod.rs (added gpt5 export)
+- backend/.env.example
+- CLAUDE.md
+
+### Technical Decisions
+
+1. **Single Provider**: GPT 5.1 replaces DeepSeek dual-model entirely
+2. **Reasoning Effort**: Configurable per-request, defaults from environment
+3. **API Compatibility**: Uses standard OpenAI chat/completions endpoint
+4. **Error Handling**: Specific error messages for common API issues (401, 403, 429)
+
+### Next Steps (Milestone 1 Remaining)
+
+1. Create budget tracking module (`backend/src/budget/mod.rs`)
+2. Create LLM cache module (`backend/src/cache/mod.rs`)
+3. Update `Cargo.toml` with new dependencies
+4. Set up 3 Qdrant collections (code, conversation, git)
+5. Write integration tests for GPT 5.1 provider
+
+### Git Commit
+
+Commit: [0aebd6b](https://github.com/ConaryLabs/Mira/commit/0aebd6b)
+
+### Statistics
+
+- **Files Changed**: 5
+- **Lines Added**: +489
+- **Lines Removed**: -29
+- **Duration**: ~1 hour
+
+---
+
 **Last Updated**: 2025-11-25
