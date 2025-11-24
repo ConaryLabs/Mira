@@ -7,11 +7,13 @@ use serde_json::Value;
 use std::any::Any;
 
 pub mod deepseek;
+pub mod gpt5;
 pub mod openai;
 pub mod stream;
 
-// Export the embeddings client
+// Export providers
 pub use deepseek::DeepSeekProvider;
+pub use gpt5::{Gpt5Provider, ReasoningEffort};
 pub use openai::OpenAiEmbeddings;
 pub use stream::StreamEvent;
 

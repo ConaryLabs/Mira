@@ -1,7 +1,8 @@
 // src/config/llm.rs
-// LLM provider configuration (DeepSeek, OpenAI)
+// LLM provider configuration (GPT 5.1, DeepSeek, OpenAI)
 
 use serde::{Deserialize, Serialize};
+use crate::llm::provider::ReasoningEffort;
 
 /// DeepSeek dual-model orchestration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +62,46 @@ impl DeepSeekConfig {
         if self.complexity_threshold < 0.0 || self.complexity_threshold > 1.0 {
             return Err(anyhow::anyhow!(
                 "DEEPSEEK_COMPLEXITY_THRESHOLD must be between 0.0 and 1.0"
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// GPT 5.1 configuration with reasoning effort
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Gpt5Config {
+    pub enabled: bool,
+    pub api_key: String,
+    pub model: String,
+    pub default_reasoning_effort: ReasoningEffort,
+}
+
+impl Gpt5Config {
+    pub fn from_env() -> Self {
+        let reasoning_str = super::helpers::env_or("GPT5_REASONING_DEFAULT", "medium");
+        let default_reasoning_effort = match reasoning_str.to_lowercase().as_str() {
+            "low" | "minimum" => ReasoningEffort::Minimum,
+            "high" => ReasoningEffort::High,
+            _ => ReasoningEffort::Medium,
+        };
+
+        Self {
+            enabled: std::env::var("USE_GPT5")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            api_key: super::helpers::env_or("OPENAI_API_KEY", ""),
+            model: super::helpers::env_or("GPT5_MODEL", "gpt-5.1"),
+            default_reasoning_effort,
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.enabled && self.api_key.is_empty() {
+            return Err(anyhow::anyhow!(
+                "OPENAI_API_KEY is required when GPT 5.1 is enabled"
             ));
         }
 

@@ -341,7 +341,7 @@ curl http://localhost:6333/collections
 - Example (TypeScript): `// frontend/src/hooks/useMessageHandler.ts`
 
 **Comments:**
-- No emojis anywhere - not in documentation, code, or comments
+- No emojis anywhere - not in documentation, code, comments, or git commits
 - No phased comments (e.g., "Phase 1:", "Phase 2:", "Step 1:", etc.)
 - Code comments should only explain what that section of code does
 - Keep comments concise and focused on the "what" and "why", not the "how"
@@ -372,8 +372,7 @@ curl http://localhost:6333/collections
 ## External Dependencies
 
 - **Qdrant** vector database for embeddings (must run separately)
-- **OpenAI API** for text-embedding-3-large embeddings only
-- **DeepSeek API** for dual-model LLM (deepseek-chat + deepseek-reasoner)
+- **OpenAI API** for GPT 5.1 (LLM) and text-embedding-3-large (embeddings)
 - **SQLite** for structured storage (embedded)
 
 ## Additional Documentation
