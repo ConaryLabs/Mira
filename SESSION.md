@@ -334,4 +334,142 @@ Commit: [0aebd6b](https://github.com/ConaryLabs/Mira/commit/0aebd6b)
 
 ---
 
-**Last Updated**: 2025-11-25
+## Session 3: Budget & Cache Implementation (2025-11-24)
+
+### Goals
+- Implement budget tracking module for cost management
+- Implement LLM cache module for cost optimization
+- Update backend module structure
+- Continue Milestone 1 completion
+
+### Work Completed
+
+#### 1. Budget Tracking Module
+
+**File Created**: `backend/src/budget/mod.rs` (370+ lines)
+- Complete `BudgetTracker` struct with SQLite integration
+- Daily and monthly spending limit enforcement
+- Request-level cost tracking with metadata
+- Usage statistics and reporting
+- Automated daily/monthly summary generation
+
+**Key Features**:
+- `record_request()` - Records each LLM API call with full metadata
+- `check_limits()` - Validates requests against daily/monthly budgets
+- `get_daily_usage()` / `get_monthly_usage()` - Usage reporting
+- `generate_daily_summary()` / `generate_monthly_summary()` - Automated aggregation
+- `BudgetUsage` struct - Comprehensive usage metrics including cache hit rate
+
+**Integration Points**:
+- Uses `budget_tracking` table for per-request records
+- Uses `budget_summary` table for aggregated daily/monthly summaries
+- Tracks: cost_usd, tokens (input/output), cache hits, provider, model, reasoning_effort
+- Designed to integrate with GPT 5.1 provider and LLM cache
+
+#### 2. LLM Cache Module
+
+**File Created**: `backend/src/cache/mod.rs` (470+ lines)
+- Complete `LlmCache` struct for response caching
+- SHA-256 key generation from request components
+- TTL-based expiration with automatic cleanup
+- Access count tracking and LRU eviction
+- Cache statistics and hit rate monitoring
+
+**Key Features**:
+- `generate_key()` - SHA-256 hash of (messages + tools + system + model + reasoning_effort)
+- `get()` - Retrieve cached response with automatic expiration checking
+- `put()` - Store response with configurable TTL
+- `cleanup_expired()` - Remove expired entries
+- `cleanup_lru()` - Evict least recently used entries when cache is full
+- `get_stats()` - Overall cache statistics
+- `get_stats_by_model()` - Per-model cache performance
+- `CachedResponse` struct - Full response metadata
+- `CacheStats` struct - Hit rate, entry count, size metrics
+
+**Integration Points**:
+- Uses `llm_cache` table from migration 008
+- Cache keys consider: messages, tools, system prompt, model, reasoning_effort
+- Different reasoning efforts create different cache keys (intentional)
+- Tracks access patterns for optimization
+
+#### 3. Module Integration
+
+**File Modified**: `backend/src/lib.rs`
+- Added `pub mod budget;` export
+- Added `pub mod cache;` export
+- Modules integrated in alphabetical order
+
+#### 4. Testing
+
+**Added Tests** (in `backend/src/cache/mod.rs`):
+- `test_cache_key_generation` - Verify SHA-256 key consistency
+- `test_cache_key_differs_on_reasoning_effort` - Different efforts = different keys
+- `test_cache_key_differs_on_messages` - Different inputs = different keys
+
+### Files Created/Modified
+
+**Created**:
+- backend/src/budget/mod.rs (370+ lines)
+- backend/src/cache/mod.rs (470+ lines)
+
+**Modified**:
+- backend/src/lib.rs (added budget and cache modules)
+
+### Technical Decisions
+
+1. **Cache Key Hashing**: SHA-256 of full request (messages + tools + system + model + reasoning_effort)
+   - Ensures different reasoning efforts don't share cache (intentional for quality)
+   - Includes system prompt to handle different contexts
+   - Tools included to differentiate tool-calling vs non-tool calls
+
+2. **TTL Strategy**: Configurable per-request with fallback to default (86400s = 24 hours)
+   - Allows short TTL for rapidly changing data
+   - Long TTL for stable patterns and code intelligence
+
+3. **LRU Eviction**: When cache grows too large, evict least recently accessed entries
+   - Preserves frequently used patterns
+   - Automatic cleanup prevents unbounded growth
+
+4. **Access Tracking**: Every cache hit increments access_count and updates last_accessed
+   - Enables LRU eviction
+   - Provides metrics for optimization
+
+5. **Budget Integration**: Budget tracker records from_cache flag
+   - Enables cache hit rate calculation
+   - Tracks cost savings from caching
+
+### Challenges Encountered
+
+**Pre-existing Compilation Errors**:
+- Found 130+ compilation errors in existing codebase (not related to new modules)
+- Errors in: operations/types.rs, tasks/types.rs, memory/features/summarization/mod.rs
+- Missing imports: ToolCallInfo, ToolContext in operations and tasks modules
+- Sized trait issues in summarization module
+
+**Note**: Budget and cache modules themselves compile successfully. The errors are in pre-existing code that needs separate fixes.
+
+### Next Steps (Milestone 1 Remaining)
+
+1. Fix compilation errors in existing codebase:
+   - Fix missing ToolCallInfo and ToolContext imports in operations and tasks modules
+   - Fix Sized trait issues in summarization module
+2. Integrate budget tracker with GPT 5.1 provider
+3. Integrate LLM cache with GPT 5.1 provider
+4. Setup 3 Qdrant collections (code, conversation, git)
+5. Write integration tests for budget + cache + GPT 5.1
+6. Test end-to-end cost tracking and caching
+
+### Git Commit
+Commit: [pending]
+
+### Statistics
+
+- **Files Changed**: 3
+- **Lines Added**: +840
+- **Lines Removed**: 0
+- **Duration**: ~1 hour
+- **New Modules**: 2 (budget, cache)
+
+---
+
+**Last Updated**: 2025-11-24
