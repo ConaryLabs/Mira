@@ -1,6 +1,5 @@
 // src/operations/engine/file_handlers.rs
-// File operation handlers for DeepSeek tool calling
-// Executes file operations requested by DeepSeek through tool calls
+// File operation handlers for GPT 5.1 tool calling
 
 use anyhow::{Context, Result};
 use glob::glob;
@@ -9,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{info, warn};
 
-/// Handler for file operation tool calls from DeepSeek
+/// Handler for file operation tool calls from GPT 5.1
 pub struct FileHandlers {
     /// Base directory for all file operations (project root)
     base_dir: PathBuf,

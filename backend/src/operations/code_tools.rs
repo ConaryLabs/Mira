@@ -1,5 +1,5 @@
 // src/operations/code_tools.rs
-// Code intelligence tool schemas for exposing AST analysis to DeepSeek
+// Code intelligence tool schemas for GPT 5.1
 
 use serde_json::{json, Value};
 

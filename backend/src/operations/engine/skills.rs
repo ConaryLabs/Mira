@@ -21,12 +21,12 @@ pub struct Skill {
     pub requires_context: bool,
 }
 
-/// Which model should handle this skill
+/// Which reasoning effort should handle this skill
 #[derive(Debug, Clone, PartialEq)]
 pub enum PreferredModel {
-    Gpt5,          // Orchestration-heavy tasks
-    DeepSeek,      // Code generation tasks
-    Either,        // No preference
+    Gpt5,            // Standard reasoning effort
+    Gpt5High,        // High reasoning effort for complex tasks
+    Either,          // No preference
 }
 
 impl Skill {
@@ -53,7 +53,7 @@ impl Skill {
 
         let preferred_model = match metadata.get("model").and_then(|v| v.as_str()) {
             Some("gpt5") => PreferredModel::Gpt5,
-            Some("deepseek") => PreferredModel::DeepSeek,
+            Some("gpt5_high") | Some("high") => PreferredModel::Gpt5High,
             _ => PreferredModel::Either,
         };
 
@@ -245,7 +245,7 @@ mod tests {
     fn test_frontmatter_parsing() {
         let content = r#"---
 description: Test skill
-model: deepseek
+model: gpt5_high
 allowed_tools: [generate_code, refactor_code]
 requires_context: false
 ---
@@ -257,7 +257,7 @@ User request: {user_request}
         let (metadata, prompt) = Skill::parse_markdown(content).unwrap();
 
         assert_eq!(metadata.get("description").unwrap().as_str().unwrap(), "Test skill");
-        assert_eq!(metadata.get("model").unwrap().as_str().unwrap(), "deepseek");
+        assert_eq!(metadata.get("model").unwrap().as_str().unwrap(), "gpt5_high");
         assert!(prompt.contains("skill prompt template"));
     }
 }

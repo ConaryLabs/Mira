@@ -1,5 +1,5 @@
 // src/operations/git_tools.rs
-// Git tool schemas for exposing git operations to DeepSeek
+// Git tool schemas for GPT 5.1
 
 use serde_json::{json, Value};
 

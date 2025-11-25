@@ -886,3 +886,42 @@ Backend (2 files):
 - May need to explore: different model providers, explicit tool call forcing, or alternative prompt engineering approaches
 
 ---
+
+### Session 19: 2025-11-25
+
+**Summary:** Removed all DeepSeek references, migrated to GPT 5.1 single-model architecture with Responses API tool calling.
+
+**Key Outcomes:**
+- Removed all DeepSeek references from codebase (comments, function names, types)
+- Renamed `get_deepseek_tools()` to `get_gpt5_tools()`
+- Updated `PreferredModel` enum: `DeepSeek` -> `Gpt5High`
+- Updated event types: `DEEPSEEK_PROGRESS` -> `LLM_PROGRESS`
+- Updated `DeepseekProgressPayload` -> `LlmProgressPayload`
+- Fixed connection message to display "GPT 5.1" instead of "DeepSeek"
+- Enabled previously ignored Qdrant tests (fixed gRPC port to 6334)
+- Fixed test assertion in `test_cleanup_finds_orphans`
+- All 127+ tests passing, no ignored tests
+
+**Files Changed:**
+- `src/api/ws/chat/unified_handler.rs` - Updated comments and log messages
+- `src/api/ws/chat/connection.rs` - Updated model display message
+- `src/operations/delegation_tools.rs` - Renamed function, updated comments
+- `src/operations/types.rs` - Updated event types and struct names
+- `src/operations/mod.rs` - Updated comments
+- `src/operations/file_tools.rs` - Updated comments
+- `src/operations/git_tools.rs` - Updated comments
+- `src/operations/code_tools.rs` - Updated comments
+- `src/operations/external_tools.rs` - Updated comments
+- `src/operations/engine/context.rs` - Updated import and comments
+- `src/operations/engine/tool_router.rs` - Updated comments and log messages
+- `src/operations/engine/skills.rs` - Updated enum and test
+- `src/operations/engine/file_handlers.rs` - Updated comments
+- `src/operations/engine/external_handlers.rs` - Updated executed_by field
+- `tests/embedding_cleanup_test.rs` - Fixed gRPC port, enabled tests, fixed assertion
+
+**Technical Decisions:**
+- GPT 5.1 is now the only LLM provider (no more dual-model architecture)
+- Tool calling uses OpenAI Responses API pattern (from mira-cli reference)
+- Qdrant tests now run against gRPC port 6334 (not HTTP port 6333)
+
+---

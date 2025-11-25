@@ -1,5 +1,5 @@
 // src/api/ws/chat/unified_handler.rs
-// DeepSeek-only chat handler - routes ALL messages to OperationEngine
+// GPT 5.1 chat handler - routes ALL messages to OperationEngine
 
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -34,14 +34,14 @@ impl UnifiedChatHandler {
         }
     }
 
-    /// Route all messages to OperationEngine (DeepSeek-only architecture)
+    /// Route all messages to OperationEngine (GPT 5.1 architecture)
     pub async fn route_and_handle(
         &self,
         request: ChatRequest,
         ws_tx: mpsc::Sender<Value>,
     ) -> Result<()> {
         info!(
-            "[DEEPSEEK] Routing to OperationEngine: {}",
+            "[GPT5] Routing to OperationEngine: {}",
             request.content.chars().take(50).collect::<String>()
         );
 

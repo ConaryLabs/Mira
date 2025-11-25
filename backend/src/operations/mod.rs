@@ -46,7 +46,7 @@ pub struct Operation {
 
     // Analysis & Routing
     pub complexity_score: Option<f64>,
-    pub delegated_to: Option<String>,  // e.g., "deepseek"
+    pub delegated_to: Option<String>,  // e.g., "gpt5"
     pub primary_model: Option<String>, // e.g., "gpt-5"
     pub delegation_reason: Option<String>,
 
@@ -130,7 +130,7 @@ pub struct Artifact {
     pub constraints: Option<String>,     // JSON array of constraints
 
     // Generation metadata
-    pub generated_by: Option<String>,    // e.g., "deepseek", "gpt5"
+    pub generated_by: Option<String>,    // e.g., "gpt5"
     pub generation_time_ms: Option<i64>, // How long generation took
     pub context_tokens: Option<i64>,     // Tokens in context
     pub output_tokens: Option<i64>,      // Tokens generated

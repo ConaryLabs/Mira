@@ -1,12 +1,11 @@
 // src/operations/file_tools.rs
-// File operation tool schemas for DeepSeek
-// These tools allow DeepSeek to interact with the project filesystem
+// File operation tool schemas for GPT 5.1
 
 use serde_json::Value;
 
 use super::tool_builder::{ToolBuilder, properties};
 
-/// Get all file operation tool schemas for DeepSeek
+/// Get all file operation tool schemas for GPT 5.1
 pub fn get_file_operation_tools() -> Vec<Value> {
     vec![
         read_file_tool(),

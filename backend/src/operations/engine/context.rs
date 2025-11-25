@@ -6,7 +6,7 @@ use crate::git::client::{FileNode, FileNodeType};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::service::MemoryService;
-use crate::operations::delegation_tools::get_deepseek_tools;
+use crate::operations::delegation_tools::get_gpt5_tools;
 use crate::persona::PersonaOverlay;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::relationship::service::RelationshipService;
@@ -98,7 +98,7 @@ impl ContextBuilder {
         file_tree: Option<&Vec<FileNode>>,
     ) -> String {
         let persona = PersonaOverlay::Default;
-        let tools_json = get_deepseek_tools();
+        let tools_json = get_gpt5_tools();
 
         let tools: Vec<Tool> = tools_json
             .iter()
@@ -123,7 +123,7 @@ impl ContextBuilder {
         )
     }
 
-    /// Build enriched context string for DeepSeek with all available information
+    /// Build enriched context string for GPT 5.1 with all available information
     pub fn build_enriched_context(
         args: &serde_json::Value,
         file_tree: Option<&Vec<FileNode>>,
@@ -141,7 +141,7 @@ impl ContextBuilder {
             }
         }
 
-        // 2. Repository structure (so DeepSeek knows what files exist)
+        // 2. Repository structure (so model knows what files exist)
         if let Some(tree) = file_tree {
             enriched_context.push_str("=== PROJECT STRUCTURE ===\n");
             enriched_context.push_str(&Self::format_file_tree(tree, 0, 3)); // max depth 3
@@ -206,7 +206,7 @@ impl ContextBuilder {
         enriched_context
     }
 
-    /// Format file tree for context (limit depth to avoid overwhelming DeepSeek)
+    /// Format file tree for context (limit depth to keep context manageable)
     fn format_file_tree(nodes: &[FileNode], depth: usize, max_depth: usize) -> String {
         if depth >= max_depth {
             return String::new();

@@ -160,7 +160,7 @@ impl ToolRouter {
 
         while !response.tool_calls.is_empty() {
             info!(
-                "[ROUTER] DeepSeek requested {} tool call(s)",
+                "[ROUTER] GPT 5.1 requested {} tool call(s)",
                 response.tool_calls.len()
             );
 
@@ -240,7 +240,7 @@ impl ToolRouter {
         }))
     }
 
-    /// Route search_codebase to DeepSeek's grep_files tool
+    /// Route search_codebase to grep_files tool
     async fn route_search(&self, args: Value) -> Result<Value> {
         let query = args
             .get("query")
@@ -297,7 +297,7 @@ impl ToolRouter {
         self.file_handlers.execute_tool("grep_files", grep_args).await
     }
 
-    /// Route list_project_files to DeepSeek's list_files tool
+    /// Route list_project_files to list_files tool
     async fn route_list_files(&self, args: Value) -> Result<Value> {
         let directory = args
             .get("directory")

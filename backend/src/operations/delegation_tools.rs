@@ -1,5 +1,5 @@
 // src/operations/delegation_tools.rs
-// Tool schema definitions for GPT-5 delegation to DeepSeek
+// Tool schema definitions for GPT 5.1 tool calling
 // Refactored to use ToolBuilder for cleaner, more maintainable code
 
 use serde_json::Value;
@@ -15,7 +15,7 @@ pub fn get_delegation_tools() -> Vec<Value> {
         refactor_code_tool(),
         debug_code_tool(),
 
-        // File operation meta-tools (delegate to DeepSeek)
+        // File operation tools
         read_project_file_tool(),
         write_project_file_tool(),
         edit_project_file_tool(),
@@ -62,10 +62,9 @@ pub fn get_delegation_tools() -> Vec<Value> {
     ]
 }
 
-/// Get tool schemas for DeepSeek (excludes GPT-5 meta-tools like generate_code)
-/// When using DeepSeek directly, it should only see actual executable tools, not
-/// the meta-tools that GPT-5 uses to delegate to DeepSeek
-pub fn get_deepseek_tools() -> Vec<Value> {
+/// Get tool schemas for GPT 5.1 (executable tools for tool calling loop)
+/// These are the actual tools GPT 5.1 can execute
+pub fn get_gpt5_tools() -> Vec<Value> {
     vec![
         // File operation tools
         read_project_file_tool(),
@@ -235,12 +234,11 @@ pub fn parse_tool_call(tool_call: &Value) -> anyhow::Result<(String, Value)> {
 }
 
 // ============================================================================
-// File Operation Meta-Tools
-// These tools are seen by GPT-5 but delegate to DeepSeek for execution
+// File Operation Tools
 // ============================================================================
 
 /// Tool: read_project_file
-/// Meta-tool that delegates file reading to DeepSeek
+/// Read files from the project
 fn read_project_file_tool() -> Value {
     ToolBuilder::new(
         "read_project_file",
@@ -260,7 +258,7 @@ fn read_project_file_tool() -> Value {
 }
 
 /// Tool: write_project_file
-/// Meta-tool that delegates file writing to DeepSeek
+/// Write files to the project
 fn write_project_file_tool() -> Value {
     ToolBuilder::new(
         "write_project_file",
@@ -310,7 +308,7 @@ fn write_file_tool() -> Value {
 }
 
 /// Tool: edit_project_file
-/// Meta-tool that delegates file editing (search/replace) to DeepSeek
+/// Edit files in the project using search/replace
 fn edit_project_file_tool() -> Value {
     ToolBuilder::new(
         "edit_project_file",
@@ -340,7 +338,7 @@ fn edit_project_file_tool() -> Value {
 }
 
 /// Tool: search_codebase
-/// Meta-tool that delegates code searching to DeepSeek
+/// Search for code patterns across the project
 fn search_codebase_tool() -> Value {
     ToolBuilder::new(
         "search_codebase",
@@ -365,7 +363,7 @@ fn search_codebase_tool() -> Value {
 }
 
 /// Tool: list_project_files
-/// Meta-tool that delegates file listing to DeepSeek
+/// List files in the project directory
 fn list_project_files_tool() -> Value {
     ToolBuilder::new(
         "list_project_files",

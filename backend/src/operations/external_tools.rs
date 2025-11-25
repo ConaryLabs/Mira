@@ -1,6 +1,5 @@
 // src/operations/external_tools.rs
 // External tool schemas for web search, URL fetching, and command execution
-// These are the actual tools that DeepSeek calls (not meta-tools)
 
 use serde_json::{json, Value};
 
@@ -13,7 +12,7 @@ pub fn get_external_tools() -> Vec<Value> {
     ]
 }
 
-/// Internal web search tool (called by DeepSeek)
+/// Internal web search tool
 fn web_search_internal_tool() -> Value {
     json!({
         "type": "function",
@@ -43,7 +42,7 @@ fn web_search_internal_tool() -> Value {
     })
 }
 
-/// Internal URL fetch tool (called by DeepSeek)
+/// Internal URL fetch tool
 fn fetch_url_internal_tool() -> Value {
     json!({
         "type": "function",
@@ -69,7 +68,7 @@ fn fetch_url_internal_tool() -> Value {
     })
 }
 
-/// Internal command execution tool (called by DeepSeek)
+/// Internal command execution tool
 fn execute_command_internal_tool() -> Value {
     json!({
         "type": "function",

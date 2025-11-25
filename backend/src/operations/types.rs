@@ -37,7 +37,7 @@ pub mod event_types {
     pub const STATUS_CHANGE: &str = "status_change";
     pub const GPT5_ANALYSIS: &str = "gpt5_analysis";
     pub const DELEGATION: &str = "delegation";
-    pub const DEEPSEEK_PROGRESS: &str = "deepseek_progress";
+    pub const LLM_PROGRESS: &str = "llm_progress";
     pub const ARTIFACT_CREATED: &str = "artifact_created";
     pub const ARTIFACT_UPDATED: &str = "artifact_updated";
     pub const REVIEW_FEEDBACK: &str = "review_feedback";
@@ -91,7 +91,7 @@ pub struct CodeModificationContext {
     pub preserve_behavior: bool,
 }
 
-/// Delegation instructions for DeepSeek
+/// Delegation instructions for code generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegationInstructions {
     pub task_description: String,
@@ -131,14 +131,14 @@ pub struct Gpt5AnalysisPayload {
 /// Payload for delegation events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegationPayload {
-    pub delegated_to: String, // e.g., "deepseek-reasoner-3.2"
+    pub delegated_to: String, // e.g., "gpt-5.1"
     pub instructions: DelegationInstructions,
     pub estimated_duration_ms: Option<u64>,
 }
 
-/// Payload for DeepSeek progress events
+/// Payload for LLM progress events
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeepseekProgressPayload {
+pub struct LlmProgressPayload {
     pub stage: String,
     pub progress_percent: Option<f32>,
     pub current_step: String,
