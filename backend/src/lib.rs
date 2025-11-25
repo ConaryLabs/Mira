@@ -29,6 +29,9 @@ pub mod synthesis;
 // Milestone 5 - Build system integration
 pub mod build;
 
+// Milestone 6 - Reasoning pattern learning
+pub mod patterns;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;
