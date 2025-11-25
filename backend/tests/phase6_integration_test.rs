@@ -2,12 +2,11 @@
 // UPDATED: Rewritten to use public API (run_operation) instead of internal methods
 //
 // Phase 6: Operation Engine Integration Tests
-// Tests full orchestration: GPT-5 -> DeepSeek delegation -> Artifact creation
+// Tests full orchestration: GPT 5.1 -> Tool execution -> Artifact creation
 
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
-use mira_backend::llm::provider::deepseek::DeepSeekProvider;
-use mira_backend::llm::provider::gpt5::Gpt5Provider;
+use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
 use mira_backend::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
@@ -36,19 +35,13 @@ async fn create_test_db() -> Arc<sqlx::SqlitePool> {
     Arc::new(pool)
 }
 
-/// Helper to create test providers (these will use fake API keys for now)
-fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
-    let gpt5 = Gpt5Provider::new(
+/// Helper to create test GPT 5.1 provider (uses fake API key)
+fn create_test_gpt5() -> Gpt5Provider {
+    Gpt5Provider::new(
         "test-gpt5-key".to_string(),
-        "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    );
-
-    let deepseek = DeepSeekProvider::new("test-deepseek-key".to_string());
-
-    (gpt5, deepseek)
+        "gpt-5.1".to_string(),
+        ReasoningEffort::Medium,
+    ).expect("Should create GPT5 provider")
 }
 
 /// Setup test services
@@ -77,10 +70,8 @@ async fn setup_services(
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    ));
+        ReasoningEffort::Medium,
+    ).expect("Should create GPT5 provider"));
 
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
@@ -118,9 +109,10 @@ async fn setup_services(
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_engine_with_providers() {
     let db = create_test_db().await;
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -128,11 +120,11 @@ async fn test_operation_engine_with_providers() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     // Create event channel
@@ -214,9 +206,10 @@ async fn test_operation_engine_with_providers() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_lifecycle_complete() {
     let db = create_test_db().await;
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -224,11 +217,11 @@ async fn test_operation_lifecycle_complete() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -297,9 +290,10 @@ async fn test_operation_lifecycle_complete() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_cancellation() {
     let db = create_test_db().await;
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -307,11 +301,11 @@ async fn test_operation_cancellation() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -370,9 +364,10 @@ async fn test_operation_cancellation() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -380,11 +375,11 @@ async fn test_multiple_operations_concurrency() {
     let engine = Arc::new(OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     ));
 
     let mut handles = vec![];

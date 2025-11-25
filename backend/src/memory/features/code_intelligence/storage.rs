@@ -222,13 +222,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
                 start_line: row.start_line, // i64 -> i64 (no cast!)
                 end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0), // Option<i64> -> i64
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -277,13 +277,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
-                start_line: row.start_line, // i64 -> i64 (no cast!)
-                end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
+                start_line: row.start_line,
+                end_line: row.end_line,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0),
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -313,8 +313,8 @@ impl CodeIntelligenceStorage {
             issues.push(QualityIssue {
                 issue_type: row.issue_type,
                 severity: row.severity,
-                title: row.title,
-                description: row.description,
+                title: row.title.unwrap_or_default(),
+                description: row.description.unwrap_or_default(),
                 suggested_fix: row.suggested_fix,
                 fix_confidence: row.fix_confidence.unwrap_or(0.0),
                 is_auto_fixable: row.is_auto_fixable.unwrap_or(false),
@@ -354,13 +354,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
-                start_line: row.start_line, // i64 -> i64 (no cast!)
-                end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
+                start_line: row.start_line,
+                end_line: row.end_line,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0),
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -408,7 +408,7 @@ impl CodeIntelligenceStorage {
             total_files: stats.total_files as i64, // COUNT() returns i32, cast to i64
             analyzed_files: stats.analyzed_files.unwrap_or(0) as i64,
             total_elements: stats.total_elements.unwrap_or(0) as i64,
-            avg_complexity: stats.avg_complexity.unwrap_or(0) as f64, // AVG() returns i64 in sqlx, cast to f64
+            avg_complexity: stats.avg_complexity.unwrap_or(0.0),
             total_quality_issues: quality_stats.total_issues as i64,
             critical_issues: quality_stats.critical_issues.unwrap_or(0) as i64,
             high_issues: quality_stats.high_issues.unwrap_or(0) as i64,
@@ -441,13 +441,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
-                start_line: row.start_line, // i64 -> i64 (no cast!)
-                end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
+                start_line: row.start_line,
+                end_line: row.end_line,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0),
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -488,13 +488,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
-                start_line: row.start_line, // i64 -> i64 (no cast!)
-                end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
+                start_line: row.start_line,
+                end_line: row.end_line,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0),
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -524,13 +524,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
-                start_line: row.start_line, // i64 -> i64 (no cast!)
-                end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
+                start_line: row.start_line,
+                end_line: row.end_line,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0),
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,
@@ -567,13 +567,13 @@ impl CodeIntelligenceStorage {
             elements.push(CodeElement {
                 element_type: row.element_type,
                 name: row.name,
-                full_path: row.full_path,
-                visibility: row.visibility,
-                start_line: row.start_line, // i64 -> i64 (no cast!)
-                end_line: row.end_line,     // i64 -> i64 (no cast!)
-                content: row.content,
+                full_path: row.full_path.unwrap_or_default(),
+                visibility: row.visibility.unwrap_or_default(),
+                start_line: row.start_line,
+                end_line: row.end_line,
+                content: row.content.unwrap_or_default(),
                 signature_hash: row.signature_hash.unwrap_or_default(),
-                complexity_score: row.complexity_score.unwrap_or(0),
+                complexity_score: row.complexity_score.unwrap_or(0.0) as i64,
                 is_test: row.is_test.unwrap_or(false),
                 is_async: row.is_async.unwrap_or(false),
                 documentation: row.documentation,

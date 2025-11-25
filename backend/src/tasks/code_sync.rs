@@ -42,14 +42,19 @@ impl CodeSyncTask {
         let mut total_synced = 0;
 
         for attachment in attachments {
-            let local_path = if attachment.attachment_type.as_deref() == Some("local_directory") {
-                attachment.local_path
-            } else {
-                attachment.local_path
+            let attachment_id = match &attachment.id {
+                Some(id) => id.clone(),
+                None => continue,
             };
+            let local_path = &attachment.local_path;
+
+            if local_path.is_empty() {
+                warn!("Attachment {} has no local_path", attachment_id);
+                continue;
+            }
 
             match self
-                .sync_attachment(&attachment.id, &attachment.project_id, &local_path)
+                .sync_attachment(&attachment_id, &attachment.project_id, local_path)
                 .await
             {
                 Ok(count) => {

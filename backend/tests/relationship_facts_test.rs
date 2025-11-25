@@ -320,17 +320,17 @@ async fn test_facts_crud() {
     assert_eq!(prefs.len(), 2);
     assert!(prefs.iter().all(|f| f.fact_category == "preferences"));
 
-    println!("[8] Deprecating fact");
+    println!("[8] Deleting fact");
     facts_service
-        .deprecate_fact(&fact_id)
+        .delete_fact(&fact_id)
         .await
-        .expect("Failed to deprecate fact");
+        .expect("Failed to delete fact");
 
-    let deprecated = facts_service
+    let deleted = facts_service
         .get_fact(user_id, "favorite_language")
         .await
-        .expect("Failed to check deprecated fact");
-    assert!(deprecated.is_none());
+        .expect("Failed to check deleted fact");
+    assert!(deleted.is_none());
     println!("✓ Facts CRUD operations working correctly");
 }
 

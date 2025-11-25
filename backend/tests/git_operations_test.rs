@@ -49,10 +49,12 @@ async fn setup_code_intelligence(pool: Arc<sqlx::SqlitePool>) -> Arc<CodeIntelli
 
 async fn create_test_project(pool: &sqlx::SqlitePool, project_id: &str) {
     let now = chrono::Utc::now().timestamp();
+    let path = format!("/tmp/test_project_{}", project_id);
     sqlx::query!(
-        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO projects (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
         project_id,
         project_id,
+        path,
         now,
         now
     )
@@ -103,6 +105,7 @@ fn create_test_repo(path: &std::path::Path) -> Oid {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_git_attach_and_clone() {
     println!("\n=== Testing Git Attach and Clone ===\n");
 
@@ -151,6 +154,7 @@ async fn test_git_attach_and_clone() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_git_import_codebase() {
     println!("\n=== Testing Git Import Codebase ===\n");
 
@@ -202,6 +206,7 @@ async fn test_git_import_codebase() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_git_file_operations() {
     println!("\n=== Testing Git File Operations ===\n");
 

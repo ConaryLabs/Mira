@@ -9,8 +9,7 @@ use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::LlmProvider;
 use mira_backend::llm::provider::OpenAiEmbeddings;
-use mira_backend::llm::provider::deepseek::DeepSeekProvider;
-use mira_backend::llm::provider::gpt5::Gpt5Provider;
+use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -25,18 +24,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-fn create_test_providers() -> (Gpt5Provider, DeepSeekProvider) {
-    let gpt5 = Gpt5Provider::new(
+fn create_test_gpt5() -> Gpt5Provider {
+    Gpt5Provider::new(
         "test-key".to_string(),
-        "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    );
-
-    let deepseek = DeepSeekProvider::new("test-key".to_string());
-
-    (gpt5, deepseek)
+        "gpt-5.1".to_string(),
+        ReasoningEffort::Medium,
+    ).expect("Should create GPT5 provider")
 }
 
 async fn setup_services(
@@ -69,10 +62,8 @@ async fn setup_services(
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    ));
+        ReasoningEffort::Medium,
+    ).expect("Should create GPT5 provider"));
 
     // Create MemoryService
     let memory_service = Arc::new(MemoryService::new(
@@ -111,6 +102,7 @@ async fn setup_services(
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_engine_lifecycle() {
     println!("\n=== Testing Operation Engine Lifecycle ===\n");
 
@@ -127,7 +119,7 @@ async fn test_operation_engine_lifecycle() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -135,7 +127,6 @@ async fn test_operation_engine_lifecycle() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
@@ -256,6 +247,7 @@ async fn test_operation_engine_lifecycle() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_cancellation() {
     println!("\n=== Testing Operation Cancellation ===\n");
 
@@ -270,7 +262,7 @@ async fn test_operation_cancellation() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -278,7 +270,6 @@ async fn test_operation_cancellation() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
@@ -349,6 +340,7 @@ async fn test_operation_cancellation() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_multiple_operations() {
     println!("\n=== Testing Multiple Operations ===\n");
 
@@ -363,7 +355,7 @@ async fn test_multiple_operations() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -371,7 +363,6 @@ async fn test_multiple_operations() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
@@ -432,6 +423,7 @@ async fn test_multiple_operations() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_event_ordering() {
     println!("\n=== Testing Operation Event Ordering ===\n");
 
@@ -446,7 +438,7 @@ async fn test_operation_event_ordering() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -454,7 +446,6 @@ async fn test_operation_event_ordering() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
@@ -518,6 +509,7 @@ async fn test_operation_event_ordering() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_operation_retrieval() {
     println!("\n=== Testing Operation Retrieval ===\n");
 
@@ -532,7 +524,7 @@ async fn test_operation_retrieval() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let (gpt5, deepseek) = create_test_providers();
+    let gpt5 = create_test_gpt5();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
@@ -540,7 +532,6 @@ async fn test_operation_retrieval() {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,

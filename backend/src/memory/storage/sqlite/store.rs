@@ -36,6 +36,69 @@ impl SqliteMemoryStore {
         &self.pool
     }
 
+    // =====================================
+    // SUMMARY OPERATIONS
+    // =====================================
+
+    /// Store a rolling summary
+    pub async fn store_rolling_summary(
+        &self,
+        session_id: &str,
+        summary_type: &str,
+        summary_text: &str,
+        message_count: usize,
+    ) -> Result<i64> {
+        let created_at = chrono::Utc::now().timestamp();
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO rolling_summaries (session_id, summary_type, summary_text, message_count, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(summary_type)
+        .bind(summary_text)
+        .bind(message_count as i64)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get rolling summaries for a session (most recent first)
+    pub async fn get_rolling_summaries(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<super::super::super::features::memory_types::SummaryRecord>> {
+        use super::super::super::features::memory_types::SummaryRecord;
+
+        let rows = sqlx::query_as::<_, (i64, String, String, i64, i64)>(
+            r#"
+            SELECT id, summary_type, summary_text, message_count, created_at
+            FROM rolling_summaries
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT 10
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, summary_type, summary_text, message_count, created_at)| SummaryRecord {
+                id,
+                summary_type,
+                summary_text,
+                message_count: message_count as usize,
+                created_at,
+            })
+            .collect())
+    }
+
     /// Database migrations (unchanged)
     pub async fn run_migrations(&self) -> Result<()> {
         info!("Migrations handled by SQLx CLI");

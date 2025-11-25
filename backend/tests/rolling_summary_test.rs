@@ -45,10 +45,8 @@ async fn create_test_memory_service() -> Arc<MemoryService> {
     let llm_provider = Arc::new(Gpt5Provider::new(
         api_key.clone(),
         CONFIG.gpt5_model.clone(),
-        CONFIG.gpt5_max_tokens,
-        CONFIG.gpt5_verbosity.clone(),
         CONFIG.gpt5_reasoning.clone(),
-    ));
+    ).expect("Failed to create GPT5 provider"));
 
     // Create embedding client - use CONFIG settings
     let embedding_client = Arc::new(OpenAiEmbeddings::new(
@@ -99,6 +97,7 @@ async fn create_test_messages(
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_create_rolling_10_summary() {
     println!("\n=== Testing Rolling 10-Message Summary Creation ===\n");
 
@@ -126,6 +125,7 @@ async fn test_create_rolling_10_summary() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_create_rolling_100_summary() {
     println!("\n=== Testing Rolling 100-Message Summary Creation ===\n");
 
@@ -156,6 +156,7 @@ async fn test_create_rolling_100_summary() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_create_summary_with_summary_type() {
     println!("\n=== Testing Summary Creation with SummaryType Enum ===\n");
 
@@ -185,6 +186,7 @@ async fn test_create_summary_with_summary_type() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_get_rolling_summary() {
     println!("\n=== Testing Rolling Summary Retrieval ===\n");
 
@@ -226,6 +228,7 @@ async fn test_get_rolling_summary() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_get_rolling_summary_none() {
     println!("\n=== Testing Rolling Summary Retrieval (None) ===\n");
 
@@ -250,6 +253,7 @@ async fn test_get_rolling_summary_none() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_get_session_summary() {
     println!("\n=== Testing Session Summary Retrieval ===\n");
 
@@ -290,6 +294,7 @@ async fn test_get_session_summary() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_check_and_process_summaries_trigger_10() {
     println!("\n=== Testing Background Summary Trigger (10 messages) ===\n");
 
@@ -321,6 +326,7 @@ async fn test_check_and_process_summaries_trigger_10() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_check_and_process_summaries_trigger_100() {
     println!("\n=== Testing Background Summary Trigger (100 messages) ===\n");
 
@@ -352,6 +358,7 @@ async fn test_check_and_process_summaries_trigger_100() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_check_and_process_summaries_no_trigger() {
     println!("\n=== Testing Background Summary (No Trigger) ===\n");
 
@@ -381,6 +388,7 @@ async fn test_check_and_process_summaries_no_trigger() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_create_snapshot_summary() {
     println!("\n=== Testing Snapshot Summary Creation ===\n");
 
@@ -408,6 +416,7 @@ async fn test_create_snapshot_summary() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_snapshot_vs_rolling_summary() {
     println!("\n=== Testing Snapshot vs Rolling Summary Differences ===\n");
 
@@ -447,6 +456,7 @@ async fn test_snapshot_vs_rolling_summary() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_summary_with_empty_session() {
     println!("\n=== Testing Summary Creation with Empty Session ===\n");
 
@@ -482,6 +492,7 @@ async fn test_summary_with_empty_session() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_summary_with_insufficient_messages() {
     println!("\n=== Testing Summary with Insufficient Messages ===\n");
 
@@ -521,6 +532,7 @@ async fn test_summary_with_insufficient_messages() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_multiple_summaries_same_session() {
     println!("\n=== Testing Multiple Summaries for Same Session ===\n");
 
@@ -559,6 +571,7 @@ async fn test_multiple_summaries_same_session() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_summary_types_enum_values() {
     println!("\n=== Testing SummaryType Enum Values ===\n");
 
@@ -599,6 +612,7 @@ async fn test_summary_types_enum_values() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_summary_content_quality() {
     println!("\n=== Testing Summary Content Quality ===\n");
 
@@ -716,6 +730,7 @@ async fn test_summary_content_quality() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_end_to_end_summary_workflow() {
     println!("\n=== Testing End-to-End Summary Workflow ===\n");
 
@@ -763,6 +778,7 @@ async fn test_end_to_end_summary_workflow() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_concurrent_summary_operations() {
     println!("\n=== Testing Concurrent Summary Operations ===\n");
 

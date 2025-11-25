@@ -5,6 +5,6 @@ pub mod provider;
 pub mod router;
 pub mod types;
 
-pub use router::{DeepSeekModel, ModelRouter, TaskAnalysis};
+pub use router::{ReasoningRouter, TaskAnalysis, Complexity, TaskType};
 
 // OpenAI embeddings are now accessed via provider::OpenAiEmbeddings

@@ -6,14 +6,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
 
-pub mod deepseek;
 pub mod gpt5;
 pub mod openai;
 pub mod stream;
 
 // Export providers
-pub use deepseek::DeepSeekProvider;
-pub use gpt5::{Gpt5Provider, ReasoningEffort};
+pub use gpt5::{Gpt5Pricing, Gpt5Provider, ReasoningEffort, ToolCall, ToolCallResponse, CodeGenRequest, CodeGenResponse, CodeArtifact, build_user_prompt};
 pub use openai::OpenAiEmbeddings;
 pub use stream::StreamEvent;
 
@@ -124,7 +122,7 @@ pub struct ToolResponse {
     pub raw_response: Value, // Full API response
 }
 
-/// Context for multi-turn conversations (currently unused with DeepSeek-only)
+/// Context for multi-turn conversations
 #[derive(Debug, Clone)]
 pub enum ToolContext {
     // Reserved for future multi-turn context if needed

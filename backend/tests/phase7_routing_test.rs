@@ -4,8 +4,7 @@
 // Tests: Message helpers, provider routing, LLM message flow, cloning
 
 use mira_backend::llm::provider::Message;
-use mira_backend::llm::provider::deepseek::DeepSeekProvider;
-use mira_backend::llm::provider::gpt5::Gpt5Provider;
+use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
 
 // ============================================================================
 // Message Helper Tests
@@ -50,10 +49,8 @@ fn test_gpt5_provider_clone() {
     let provider = Gpt5Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    );
+        ReasoningEffort::Medium,
+    ).expect("Should create provider");
 
     // Should compile and clone successfully (compile-time test)
     let _cloned = provider.clone();
@@ -62,26 +59,15 @@ fn test_gpt5_provider_clone() {
     assert!(true);
 }
 
-#[test]
-fn test_deepseek_provider_clone() {
-    let provider = DeepSeekProvider::new("test-key".to_string());
-
-    // Should compile and clone successfully (compile-time test)
-    let _cloned = provider.clone();
-
-    // Clone derive works - this test passes if it compiles
-    assert!(true);
-}
+// GPT 5.1 is the only LLM provider now
 
 #[test]
 fn test_provider_clone_independence() {
     let original = Gpt5Provider::new(
         "original-key".to_string(),
         "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    );
+        ReasoningEffort::Medium,
+    ).expect("Should create provider");
 
     let cloned = original.clone();
 
@@ -102,42 +88,29 @@ fn test_create_gpt5_provider() {
     let provider = Gpt5Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        4000,
-        "high".to_string(),
-        "high".to_string(),
-    );
+        ReasoningEffort::High,
+    ).expect("Should create provider");
 
     // If this compiles, provider construction works
     drop(provider);
     assert!(true);
 }
 
-#[test]
-fn test_create_deepseek_provider() {
-    let provider = DeepSeekProvider::new("test-key".to_string());
-
-    // If this compiles, provider construction works
-    drop(provider);
-    assert!(true);
-}
+// Only GPT 5.1 provider is used now
 
 #[test]
 fn test_provider_with_different_configs() {
     let minimal = Gpt5Provider::new(
         "key1".to_string(),
         "gpt-5-preview".to_string(),
-        2000,
-        "low".to_string(),
-        "low".to_string(),
-    );
+        ReasoningEffort::Minimum,
+    ).expect("Should create minimal provider");
 
     let maximal = Gpt5Provider::new(
         "key2".to_string(),
         "gpt-5-preview".to_string(),
-        8000,
-        "high".to_string(),
-        "high".to_string(),
-    );
+        ReasoningEffort::High,
+    ).expect("Should create maximal provider");
 
     // Both should construct successfully
     drop(minimal);
@@ -157,7 +130,7 @@ fn test_simple_task_routing() {
 
     assert!(
         !should_delegate,
-        "Simple tasks should NOT delegate to DeepSeek"
+        "Simple tasks use minimum reasoning effort"
     );
 }
 
@@ -167,7 +140,7 @@ fn test_complex_task_routing() {
     let task_complexity = "complex";
     let should_delegate = matches!(task_complexity, "complex" | "very_complex");
 
-    assert!(should_delegate, "Complex tasks SHOULD delegate to DeepSeek");
+    assert!(should_delegate, "Complex tasks use high reasoning effort");
 }
 
 #[test]
@@ -229,6 +202,8 @@ fn test_context_with_system_message() {
     context.push(Message {
         role: "system".to_string(),
         content: "You are a helpful assistant".to_string(),
+        tool_call_id: None,
+        tool_calls: None,
     });
     context.push(Message::user("Hello".to_string()));
     context.push(Message::assistant("Hi there!".to_string()));

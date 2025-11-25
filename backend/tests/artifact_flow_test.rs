@@ -11,8 +11,7 @@ use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::LlmProvider;
 use mira_backend::llm::provider::OpenAiEmbeddings;
-use mira_backend::llm::provider::deepseek::DeepSeekProvider;
-use mira_backend::llm::provider::gpt5::Gpt5Provider;
+use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -41,16 +40,12 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
 
     let db = Arc::new(pool);
 
-    // Create providers
+    // Create provider
     let gpt5 = Gpt5Provider::new(
-        common::gpt5_api_key(),
-        "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    );
-
-    let deepseek = DeepSeekProvider::new(common::deepseek_api_key());
+        common::openai_api_key(),
+        "gpt-5.1".to_string(),
+        ReasoningEffort::Medium,
+    ).expect("Should create GPT5 provider");
 
     // Setup services
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*db).clone()));
@@ -69,10 +64,8 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
         common::gpt5_api_key(),
         "gpt-5-preview".to_string(),
-        4000,
-        "medium".to_string(),
-        "medium".to_string(),
-    ));
+        ReasoningEffort::Medium,
+    ).expect("Should create GPT5 provider"));
 
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
@@ -97,11 +90,11 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
     let engine = OperationEngine::new(
         db.clone(),
         gpt5,
-        deepseek,
         memory_service,
         relationship_service,
         git_client,
         code_intelligence,
+        None, // sudo_service
     );
 
     (engine, db)
@@ -156,6 +149,7 @@ fn compute_hash(content: &str) -> String {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_artifact_retrieval() {
     println!("\n=== Testing Artifact Retrieval ===\n");
 
@@ -215,6 +209,7 @@ async fn test_artifact_retrieval() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_artifact_hash_consistency() {
     println!("\n=== Testing Artifact Hash Consistency ===\n");
 
@@ -260,6 +255,7 @@ async fn test_artifact_hash_consistency() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_multiple_operations_artifact_isolation() {
     println!("\n=== Testing Artifact Isolation Across Operations ===\n");
 
@@ -327,6 +323,7 @@ async fn test_multiple_operations_artifact_isolation() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_artifact_different_languages() {
     println!("\n=== Testing Artifacts with Different Languages ===\n");
 
@@ -382,6 +379,7 @@ async fn test_artifact_different_languages() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_empty_operation_no_artifacts() {
     println!("\n=== Testing Operation with No Artifacts ===\n");
 
@@ -411,6 +409,7 @@ async fn test_empty_operation_no_artifacts() {
 }
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_artifact_content_preservation() {
     println!("\n=== Testing Artifact Content Preservation ===\n");
 

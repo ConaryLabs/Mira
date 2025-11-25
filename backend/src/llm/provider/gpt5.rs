@@ -10,7 +10,7 @@ use std::any::Any;
 use std::time::Instant;
 use tracing::{debug, info};
 
-use super::{LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse, FunctionCall};
+use super::{LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse, FunctionCall, ToolCallInfo};
 
 /// Reasoning effort level for GPT 5.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +30,39 @@ impl ReasoningEffort {
     }
 }
 
+/// GPT 5.1 pricing (per 1M tokens)
+/// Source: https://openai.com/api/pricing/
+pub struct Gpt5Pricing;
+
+impl Gpt5Pricing {
+    /// Input token price per 1M tokens (USD)
+    const INPUT_PRICE_PER_M: f64 = 1.25;
+    /// Cached input token price per 1M tokens (USD) - 90% discount
+    const CACHED_INPUT_PRICE_PER_M: f64 = 0.125;
+    /// Output token price per 1M tokens (USD)
+    const OUTPUT_PRICE_PER_M: f64 = 10.00;
+
+    /// Calculate cost from token usage (uncached)
+    pub fn calculate_cost(tokens_input: i64, tokens_output: i64) -> f64 {
+        let input_cost = (tokens_input as f64 / 1_000_000.0) * Self::INPUT_PRICE_PER_M;
+        let output_cost = (tokens_output as f64 / 1_000_000.0) * Self::OUTPUT_PRICE_PER_M;
+        input_cost + output_cost
+    }
+
+    /// Calculate cost with cached input tokens
+    pub fn calculate_cost_with_cache(
+        tokens_input: i64,
+        tokens_cached: i64,
+        tokens_output: i64,
+    ) -> f64 {
+        let uncached_input = tokens_input - tokens_cached;
+        let input_cost = (uncached_input as f64 / 1_000_000.0) * Self::INPUT_PRICE_PER_M;
+        let cached_cost = (tokens_cached as f64 / 1_000_000.0) * Self::CACHED_INPUT_PRICE_PER_M;
+        let output_cost = (tokens_output as f64 / 1_000_000.0) * Self::OUTPUT_PRICE_PER_M;
+        input_cost + cached_cost + output_cost
+    }
+}
+
 impl Default for ReasoningEffort {
     fn default() -> Self {
         ReasoningEffort::Medium
@@ -37,6 +70,7 @@ impl Default for ReasoningEffort {
 }
 
 /// GPT 5.1 provider using OpenAI API
+#[derive(Clone)]
 pub struct Gpt5Provider {
     client: Client,
     api_key: String,
@@ -63,6 +97,11 @@ impl Gpt5Provider {
             model,
             default_reasoning_effort,
         })
+    }
+
+    /// Check if provider is configured and available
+    pub fn is_available(&self) -> bool {
+        !self.api_key.is_empty()
     }
 
     /// Validate the API key by making a minimal API call
@@ -243,6 +282,297 @@ impl Gpt5Provider {
         })
     }
 
+    /// Call with tools - matches the interface expected by orchestrators
+    pub async fn call_with_tools(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+    ) -> Result<ToolCallResponse> {
+        info!(
+            "GPT 5.1: Calling with {} tools, {} messages",
+            tools.len(),
+            messages.len()
+        );
+
+        // Convert tools to OpenAI format if needed
+        let openai_tools = Self::convert_tools_to_openai_format(&tools);
+
+        // Convert our Message format to API format
+        let api_messages: Vec<Value> = messages
+            .iter()
+            .map(|msg| {
+                let mut obj = serde_json::json!({
+                    "role": msg.role,
+                    "content": msg.content
+                });
+
+                // Add tool_call_id for tool response messages
+                if let Some(ref call_id) = msg.tool_call_id {
+                    obj["tool_call_id"] = Value::String(call_id.clone());
+                }
+
+                // Add tool_calls for assistant messages requesting tool execution
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    obj["tool_calls"] = serde_json::json!(tool_calls.iter().map(|tc| {
+                        serde_json::json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
+                            }
+                        })
+                    }).collect::<Vec<_>>());
+                }
+
+                obj
+            })
+            .collect();
+
+        let mut request_body = serde_json::json!({
+            "model": self.model,
+            "messages": api_messages,
+            "tools": openai_tools,
+            "tool_choice": "auto",
+            "reasoning_effort": self.default_reasoning_effort.as_str(),
+        });
+
+        // Remove empty tools array if no tools
+        if tools.is_empty() {
+            request_body.as_object_mut().unwrap().remove("tools");
+            request_body.as_object_mut().unwrap().remove("tool_choice");
+        }
+
+        debug!(
+            "GPT 5.1 tool calling request:\n{}",
+            serde_json::to_string_pretty(&request_body).unwrap_or_default()
+        );
+
+        let response = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(anyhow!("GPT 5.1 API error {}: {}", status, error_text));
+        }
+
+        let response_json: Value = response.json().await?;
+
+        debug!(
+            "GPT 5.1 tool calling response:\n{}",
+            serde_json::to_string_pretty(&response_json).unwrap_or_default()
+        );
+
+        // Extract usage information
+        let usage = response_json.get("usage");
+        let tokens_input = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let tokens_output = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+
+        // Extract the choice
+        let choice = response_json
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .ok_or_else(|| anyhow!("No choices in GPT 5.1 response"))?;
+
+        let message = choice
+            .get("message")
+            .ok_or_else(|| anyhow!("No message in GPT 5.1 choice"))?;
+
+        let finish_reason = choice
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Extract content (may be null if tool calls are present)
+        let content = message
+            .get("content")
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string());
+
+        // Extract tool calls if present
+        let mut tool_calls = Vec::new();
+        if let Some(calls) = message.get("tool_calls").and_then(|t| t.as_array()) {
+            for call in calls {
+                let id = call
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .ok_or_else(|| anyhow!("Missing tool call id"))?
+                    .to_string();
+
+                let function = call
+                    .get("function")
+                    .ok_or_else(|| anyhow!("Missing function in tool call"))?;
+
+                let name = function
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| anyhow!("Missing function name"))?
+                    .to_string();
+
+                let arguments_str = function
+                    .get("arguments")
+                    .and_then(|a| a.as_str())
+                    .ok_or_else(|| anyhow!("Missing function arguments"))?;
+
+                let arguments: Value = serde_json::from_str(arguments_str)?;
+
+                tool_calls.push(ToolCall {
+                    id,
+                    name,
+                    arguments,
+                });
+            }
+        }
+
+        if !tool_calls.is_empty() {
+            info!(
+                "GPT 5.1 returned {} tool call(s): {:?}",
+                tool_calls.len(),
+                tool_calls.iter().map(|tc| &tc.name).collect::<Vec<_>>()
+            );
+        } else if let Some(ref text) = content {
+            info!("GPT 5.1 returned text response: {} chars", text.len());
+        }
+
+        Ok(ToolCallResponse {
+            content,
+            tool_calls,
+            finish_reason,
+            tokens_input,
+            tokens_output,
+        })
+    }
+
+    /// Convert tools to OpenAI-compatible format
+    fn convert_tools_to_openai_format(tools: &[Value]) -> Vec<Value> {
+        tools
+            .iter()
+            .map(|tool| {
+                // Check if already in OpenAI format (has "function" field)
+                if tool.get("function").is_some() {
+                    tool.clone()
+                } else {
+                    // Convert from our internal format to OpenAI format
+                    serde_json::json!({
+                        "type": "function",
+                        "function": tool
+                    })
+                }
+            })
+            .collect()
+    }
+
+    /// Generate code artifact with structured JSON output
+    pub async fn generate_code(&self, request: CodeGenRequest) -> Result<CodeGenResponse> {
+        info!(
+            "GPT 5.1: Generating {} code at {}",
+            request.language, request.path
+        );
+
+        let system_prompt = format!(
+            "You are a code generation specialist. Generate clean, working code based on the user's requirements.\n\
+            Output ONLY valid JSON with this exact structure:\n\
+            {{\n  \
+              \"path\": \"file/path/here\",\n  \
+              \"content\": \"complete file content here\",\n  \
+              \"language\": \"{}\",\n  \
+              \"explanation\": \"brief explanation of the code\"\n\
+            }}\n\n\
+            CRITICAL:\n\
+            - Generate COMPLETE files, never use '...' or placeholders\n\
+            - Include ALL imports, functions, types, and closing braces\n\
+            - The content field must contain the entire working file\n\
+            - Use proper {} language syntax and best practices",
+            request.language, request.language
+        );
+
+        let user_prompt = build_user_prompt(&request);
+
+        debug!("GPT 5.1 user prompt:\n{}", user_prompt);
+
+        let request_body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "response_format": {"type": "json_object"},
+            "reasoning_effort": self.default_reasoning_effort.as_str(),
+        });
+
+        let response = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(anyhow!("GPT 5.1 API error {}: {}", status, error_text));
+        }
+
+        let response_json: Value = response.json().await?;
+
+        // Extract content from response
+        let content_str = response_json
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| anyhow!("Invalid GPT 5.1 response structure"))?;
+
+        // Parse the JSON content
+        let artifact: CodeArtifact = serde_json::from_str(content_str)?;
+
+        // Extract token usage
+        let usage = response_json.get("usage");
+        let tokens_input = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+        let tokens_output = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+
+        info!(
+            "GPT 5.1: Generated {} lines of code at {}",
+            artifact.content.lines().count(),
+            artifact.path
+        );
+
+        Ok(CodeGenResponse {
+            artifact,
+            tokens_input,
+            tokens_output,
+        })
+    }
+
     /// Parse tool calling response
     fn parse_tool_response(&self, response: Value, latency_ms: i64) -> Result<ToolResponse> {
         let choice = response["choices"][0].clone();
@@ -406,4 +736,88 @@ impl LlmProvider for Gpt5Provider {
 
         Ok(Box::new(Box::pin(text_stream)))
     }
+}
+
+// ============================================================================
+// Supporting Types for Code Generation and Tool Calling
+// ============================================================================
+
+/// Response from tool calling API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallResponse {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+    pub finish_reason: String,
+    pub tokens_input: i64,
+    pub tokens_output: i64,
+}
+
+/// Individual tool call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+/// Request to generate code
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeGenRequest {
+    pub path: String,
+    pub description: String,
+    pub language: String,
+    pub framework: Option<String>,
+    pub dependencies: Vec<String>,
+    pub style_guide: Option<String>,
+    pub context: String,
+}
+
+/// Response from code generation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeGenResponse {
+    pub artifact: CodeArtifact,
+    pub tokens_input: i64,
+    pub tokens_output: i64,
+}
+
+/// Code artifact generated
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeArtifact {
+    pub path: String,
+    pub content: String,
+    pub language: String,
+    #[serde(default)]
+    pub explanation: Option<String>,
+}
+
+/// Build user prompt from request
+pub fn build_user_prompt(request: &CodeGenRequest) -> String {
+    let mut prompt = format!(
+        "Generate a {} file at path: {}\n\n\
+        Description: {}\n\n",
+        request.language, request.path, request.description
+    );
+
+    if let Some(framework) = &request.framework {
+        prompt.push_str(&format!("Framework: {}\n\n", framework));
+    }
+
+    if !request.dependencies.is_empty() {
+        prompt.push_str(&format!(
+            "Dependencies: {}\n\n",
+            request.dependencies.join(", ")
+        ));
+    }
+
+    if let Some(style) = &request.style_guide {
+        prompt.push_str(&format!("Style preferences: {}\n\n", style));
+    }
+
+    if !request.context.is_empty() {
+        prompt.push_str(&format!("Additional context:\n{}\n\n", request.context));
+    }
+
+    prompt.push_str("Remember: Output ONLY the JSON object, no other text.");
+
+    prompt
 }

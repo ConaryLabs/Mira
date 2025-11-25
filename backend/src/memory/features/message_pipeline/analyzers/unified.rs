@@ -222,41 +222,27 @@ impl UnifiedAnalyzer {
             });
         }
 
-        let mut heads = vec![EmbeddingHead::Semantic];
+        // Default to Conversation collection for messages
+        let mut heads = vec![EmbeddingHead::Conversation];
 
-        // Add code-specific routing
+        // Add Code collection for code-related content
         if is_code {
             heads.push(EmbeddingHead::Code);
-
-            // Add language-specific routing if detected
-            if let Some(lang) = programming_lang {
-                if lang == "rust" {
-                    heads.push(EmbeddingHead::Code);
-                }
-                // Add other language heads as needed
-            }
         }
 
-        // FIXED: Add Relationship head routing for user preferences/patterns/facts
-        // This is triggered when LLM detects relationship-relevant information
-        // Examples: "I prefer tabs", "I work at X", "Call me Y", etc.
-        if let Some(ref impact) = chat_result.relationship_impact {
-            if !impact.is_empty() {
-                heads.push(EmbeddingHead::Relationship);
-                debug!("Routing to Relationship head due to impact: {}", impact);
-            }
-        }
-
-        // Add topic-specific routing
+        // Topic-based routing
         for topic in &chat_result.topics {
             match topic.to_lowercase().as_str() {
                 "architecture" | "design" | "planning" => {
-                    heads.push(EmbeddingHead::Semantic);
+                    // Keep in Conversation collection
                 }
                 "bug" | "error" | "debug" | "fix" => {
                     heads.push(EmbeddingHead::Code);
                 }
-                _ => {} // Semantic head covers everything else
+                "git" | "commit" | "merge" | "branch" => {
+                    heads.push(EmbeddingHead::Git);
+                }
+                _ => {} // Conversation collection covers everything else
             }
         }
 

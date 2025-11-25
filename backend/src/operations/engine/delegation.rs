@@ -1,8 +1,8 @@
 // src/operations/engine/delegation.rs
-// DeepSeek delegation for code generation tasks
+// GPT 5.1 delegation for code generation tasks
 
 use crate::git::client::FileNode;
-use crate::llm::provider::deepseek::DeepSeekProvider;
+use crate::llm::provider::{Gpt5Provider, CodeGenRequest};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::operations::engine::context::ContextBuilder;
@@ -12,16 +12,16 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 pub struct DelegationHandler {
-    deepseek: DeepSeekProvider,
+    gpt5: Gpt5Provider,
 }
 
 impl DelegationHandler {
-    pub fn new(deepseek: DeepSeekProvider) -> Self {
-        Self { deepseek }
+    pub fn new(gpt5: Gpt5Provider) -> Self {
+        Self { gpt5 }
     }
 
-    /// Delegate to DeepSeek with enriched context
-    pub async fn delegate_to_deepseek(
+    /// Delegate to GPT 5.1 with enriched context
+    pub async fn delegate_to_gpt5(
         &self,
         tool_name: &str,
         args: serde_json::Value,
@@ -33,12 +33,12 @@ impl DelegationHandler {
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
                 return Err(anyhow::anyhow!(
-                    "Operation cancelled before DeepSeek delegation"
+                    "Operation cancelled before GPT 5.1 delegation"
                 ));
             }
         }
 
-        info!("Delegating {} to DeepSeek", tool_name);
+        info!("Delegating {} to GPT 5.1", tool_name);
 
         // Build enriched context from all sources
         let enriched_context =
@@ -59,7 +59,7 @@ impl DelegationHandler {
                     .unwrap_or("Generate code")
                     .to_string();
 
-                crate::llm::provider::deepseek::CodeGenRequest {
+                CodeGenRequest {
                     path,
                     description,
                     language: args
@@ -99,7 +99,7 @@ impl DelegationHandler {
                     format!("{}\n\nExisting code:\n{}", instructions, existing)
                 };
 
-                crate::llm::provider::deepseek::CodeGenRequest {
+                CodeGenRequest {
                     path,
                     description,
                     language: args
@@ -136,7 +136,7 @@ impl DelegationHandler {
                     error_msg, code
                 );
 
-                crate::llm::provider::deepseek::CodeGenRequest {
+                CodeGenRequest {
                     path,
                     description,
                     language: args
@@ -176,9 +176,9 @@ impl DelegationHandler {
                     skill_prompt, task_description, enriched_context
                 );
 
-                info!("[DELEGATION] Executing '{}' skill via DeepSeek", skill_name);
+                info!("[DELEGATION] Executing '{}' skill via GPT 5.1", skill_name);
 
-                crate::llm::provider::deepseek::CodeGenRequest {
+                CodeGenRequest {
                     path: "skill_output.md".to_string(), // Skills might not produce code
                     description: full_description,
                     language: "markdown".to_string(), // Default to markdown for skills
@@ -196,12 +196,12 @@ impl DelegationHandler {
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
                 return Err(anyhow::anyhow!(
-                    "Operation cancelled during DeepSeek request"
+                    "Operation cancelled during GPT 5.1 request"
                 ));
             }
         }
 
-        let response = self.deepseek.generate_code(request).await?;
+        let response = self.gpt5.generate_code(request).await?;
 
         Ok(serde_json::json!({
             "artifact": {

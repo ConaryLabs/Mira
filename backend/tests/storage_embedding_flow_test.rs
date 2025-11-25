@@ -112,6 +112,7 @@ async fn test_parent_child_relationships() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_qdrant_connection() {
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
@@ -135,6 +136,7 @@ async fn test_qdrant_connection() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_embedding_storage_in_qdrant() {
     // Setup
     let qdrant_url =
@@ -163,9 +165,9 @@ async fn test_embedding_storage_in_qdrant() {
     entry.id = Some(12345); // Need an ID for Qdrant
     entry.embedding = Some(embedding.clone());
 
-    // Store in Conversation head
+    // Store in Conversation collection
     let point_id = multi_store
-        .save(EmbeddingHead::Semantic, &entry)
+        .save(EmbeddingHead::Conversation, &entry)
         .await
         .expect("Should store embedding");
 
@@ -181,6 +183,7 @@ async fn test_embedding_storage_in_qdrant() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_qdrant_semantic_search() {
     // Setup
     let qdrant_url =
@@ -205,7 +208,7 @@ async fn test_qdrant_semantic_search() {
         entry.embedding = Some(embedding);
 
         multi_store
-            .save(EmbeddingHead::Semantic, &entry)
+            .save(EmbeddingHead::Conversation, &entry)
             .await
             .expect("Should store");
     }
@@ -218,7 +221,7 @@ async fn test_qdrant_semantic_search() {
         .expect("Should embed query");
 
     let results = multi_store
-        .search(EmbeddingHead::Semantic, "test-session", &query_embedding, 3)
+        .search(EmbeddingHead::Conversation, "test-session", &query_embedding, 3)
         .await
         .expect("Search should work");
 
@@ -240,6 +243,7 @@ async fn test_qdrant_semantic_search() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_multi_head_storage() {
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
@@ -348,6 +352,7 @@ async fn test_message_embeddings_tracking() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_full_storage_flow() {
     // Setup both storage systems
     let db_pool = setup_test_db().await;
@@ -388,7 +393,7 @@ async fn test_full_storage_flow() {
     qdrant_entry.embedding = Some(embedding.clone());
 
     let point_id = multi_store
-        .save(EmbeddingHead::Semantic, &qdrant_entry)
+        .save(EmbeddingHead::Conversation, &qdrant_entry)
         .await
         .expect("Should store in Qdrant");
 
@@ -407,7 +412,7 @@ async fn test_full_storage_flow() {
 
     // 5. Verify Qdrant search
     let search_results = multi_store
-        .search(EmbeddingHead::Semantic, "test-session", &embedding, 1)
+        .search(EmbeddingHead::Conversation, "test-session", &embedding, 1)
         .await
         .expect("Should search Qdrant");
 
@@ -422,6 +427,7 @@ async fn test_full_storage_flow() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires Qdrant"]
 async fn test_deletion_across_systems() {
     let db_pool = setup_test_db().await;
     let sqlite = SqliteMemoryStore::new(db_pool);
@@ -447,7 +453,7 @@ async fn test_deletion_across_systems() {
     entry.embedding = Some(embedding);
 
     multi_store
-        .save(EmbeddingHead::Semantic, &entry)
+        .save(EmbeddingHead::Conversation, &entry)
         .await
         .expect("Should store in Qdrant");
 

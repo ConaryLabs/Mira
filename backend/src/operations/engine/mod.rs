@@ -1,16 +1,16 @@
 // src/operations/engine/mod.rs
-// Operation Engine - orchestrates coding workflows with GPT-5 + DeepSeek delegation
+// Operation Engine - orchestrates coding workflows with GPT 5.1
 // Refactored into focused modules for maintainability
 
 pub mod artifacts;
 pub mod code_handlers;
 pub mod context;
-pub mod deepseek_orchestrator;
 pub mod delegation;
 pub mod events;
 pub mod external_handlers;
 pub mod file_handlers;
 pub mod git_handlers;
+pub mod gpt5_orchestrator;
 pub mod lifecycle;
 pub mod orchestration;
 pub mod skills;
@@ -19,7 +19,7 @@ pub mod tool_router;
 pub use events::OperationEngineEvent;
 
 use crate::git::client::GitClient;
-use crate::llm::provider::deepseek::DeepSeekProvider;
+use crate::llm::provider::Gpt5Provider;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
 use crate::relationship::service::RelationshipService;
@@ -37,7 +37,7 @@ use lifecycle::LifecycleManager;
 use orchestration::Orchestrator;
 use tool_router::ToolRouter;
 
-/// Main operation engine with DeepSeek-only architecture
+/// Main operation engine with GPT 5.1 architecture
 pub struct OperationEngine {
     lifecycle_manager: LifecycleManager,
     artifact_manager: ArtifactManager,
@@ -47,7 +47,7 @@ pub struct OperationEngine {
 impl OperationEngine {
     pub fn new(
         db: Arc<SqlitePool>,
-        deepseek: DeepSeekProvider,
+        gpt5: Gpt5Provider,
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
         git_client: GitClient,
@@ -63,38 +63,23 @@ impl OperationEngine {
         let context_loader = ContextLoader::new(git_client.clone(), Arc::clone(&code_intelligence));
 
         // Create tool router for file operations and code intelligence
-        // TODO: Get project directory from git_client or config
-        // For now, use current working directory as fallback
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let tool_router = ToolRouter::new(deepseek.clone(), project_dir, code_intelligence, sudo_service);
+        let tool_router = ToolRouter::new(gpt5.clone(), project_dir, code_intelligence, sudo_service);
         let tool_router_arc = Arc::new(tool_router);
 
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
 
-        // Create DeepSeek orchestrator if enabled
-        let deepseek_orchestrator = if crate::config::CONFIG.use_deepseek_codegen {
-            use crate::llm::router::ModelRouter;
-            use crate::operations::engine::deepseek_orchestrator::DeepSeekOrchestrator;
+        // Create GPT 5.1 orchestrator
+        use crate::operations::engine::gpt5_orchestrator::Gpt5Orchestrator;
 
-            let router = ModelRouter::new(
-                crate::config::CONFIG.deepseek.chat_max_tokens,
-                crate::config::CONFIG.deepseek.reasoner_max_tokens,
-            );
-
-            let ds_orch = DeepSeekOrchestrator::new(
-                deepseek,
-                router,
-                Some(Arc::clone(&tool_router_arc)),
-            );
-
-            Some(Arc::new(ds_orch))
-        } else {
-            None
-        };
+        let gpt5_orchestrator = Gpt5Orchestrator::new(
+            gpt5,
+            Some(Arc::clone(&tool_router_arc)),
+        );
 
         let orchestrator = Orchestrator::new(
-            deepseek_orchestrator,
+            Some(Arc::new(gpt5_orchestrator)),
             memory_service,
             context_builder,
             context_loader,
@@ -128,7 +113,7 @@ impl OperationEngine {
 
     /// Execute an operation (main entry point)
     ///
-    /// Routes all requests to DeepSeek orchestration
+    /// Routes all requests to GPT 5.1 orchestration
     pub async fn run_operation(
         &self,
         operation_id: &str,

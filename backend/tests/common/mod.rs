@@ -13,14 +13,9 @@ pub fn openai_api_key() -> String {
     get_test_api_key("OPENAI_API_KEY")
 }
 
-/// Get DeepSeek API key for tests (from environment or placeholder)
-pub fn deepseek_api_key() -> String {
-    get_test_api_key("DEEPSEEK_API_KEY")
-}
-
-/// Get GPT-5 API key for tests (from environment or placeholder)
+/// Get GPT 5.1 API key for tests (from environment or placeholder)
 pub fn gpt5_api_key() -> String {
-    get_test_api_key("GPT5_API_KEY")
+    get_test_api_key("OPENAI_API_KEY")
 }
 
 /// Check if running with real API keys

@@ -78,33 +78,36 @@ pub mod utils {
     }
 }
 
+/// Embedding collection types for Qdrant storage
+///
+/// Three collections (consolidated from previous 5):
+/// - Code: Semantic nodes, code elements, design patterns, AST analysis
+/// - Conversation: Messages, summaries, facts, user patterns, documents
+/// - Git: Commits, co-change patterns, historical fixes, blame analysis
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmbeddingHead {
-    Semantic,
+    /// Code intelligence: semantic nodes, code elements, design patterns
     Code,
-    Summary,
-    Documents,
-    Relationship,
+    /// Conversation data: messages, summaries, facts, user patterns, documents
+    Conversation,
+    /// Git intelligence: commits, co-change patterns, historical fixes
+    Git,
 }
 
 impl EmbeddingHead {
     pub fn as_str(&self) -> &'static str {
         match self {
-            EmbeddingHead::Semantic => "semantic",
             EmbeddingHead::Code => "code",
-            EmbeddingHead::Summary => "summary",
-            EmbeddingHead::Documents => "documents",
-            EmbeddingHead::Relationship => "relationship",
+            EmbeddingHead::Conversation => "conversation",
+            EmbeddingHead::Git => "git",
         }
     }
 
     pub fn all() -> Vec<EmbeddingHead> {
         vec![
-            EmbeddingHead::Semantic,
             EmbeddingHead::Code,
-            EmbeddingHead::Summary,
-            EmbeddingHead::Documents,
-            EmbeddingHead::Relationship,
+            EmbeddingHead::Conversation,
+            EmbeddingHead::Git,
         ]
     }
 }
@@ -120,11 +123,9 @@ impl FromStr for EmbeddingHead {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
-            "semantic" => Ok(EmbeddingHead::Semantic),
             "code" => Ok(EmbeddingHead::Code),
-            "summary" => Ok(EmbeddingHead::Summary),
-            "documents" => Ok(EmbeddingHead::Documents),
-            "relationship" => Ok(EmbeddingHead::Relationship),
+            "conversation" => Ok(EmbeddingHead::Conversation),
+            "git" => Ok(EmbeddingHead::Git),
             _ => Err(anyhow::anyhow!("Unknown embedding head: {}", s)),
         }
     }

@@ -10,7 +10,7 @@ use crate::auth::AuthService;
 use crate::config::CONFIG;
 use crate::git::client::GitClient;
 use crate::git::store::GitStore;
-use crate::llm::provider::{OpenAiEmbeddings, deepseek::DeepSeekProvider};
+use crate::llm::provider::{OpenAiEmbeddings, Gpt5Provider};
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -40,7 +40,7 @@ pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub deepseek_provider: Arc<DeepSeekProvider>,
+    pub gpt5_provider: Arc<Gpt5Provider>,
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
@@ -65,9 +65,13 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
 
-        // Initialize DeepSeek provider (primary LLM)
-        info!("Initializing DeepSeek provider as primary LLM");
-        let deepseek_provider = Arc::new(DeepSeekProvider::new(CONFIG.deepseek_api_key.clone()));
+        // Initialize GPT 5.1 provider (primary LLM)
+        info!("Initializing GPT 5.1 provider as primary LLM");
+        let gpt5_provider = Arc::new(Gpt5Provider::new(
+            CONFIG.openai_api_key.clone(),
+            CONFIG.gpt5_model.clone(),
+            CONFIG.gpt5_reasoning.clone(),
+        ).expect("Failed to create GPT 5.1 provider"));
 
         // Initialize OpenAI embeddings client
         let embedding_client = Arc::new(OpenAiEmbeddings::new(
@@ -93,11 +97,11 @@ impl AppState {
             (*code_intelligence).clone(),
         );
 
-        // Memory service uses DeepSeek for analysis
+        // Memory service uses GPT 5.1 for analysis
         let memory_service = Arc::new(MemoryService::new(
             sqlite_store.clone(),
             multi_store.clone(),
-            deepseek_provider.clone(),
+            gpt5_provider.clone(),
             embedding_client.clone(),
         ));
 
@@ -123,11 +127,11 @@ impl AppState {
         info!("Initializing sudo permission service");
         let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
 
-        // OperationEngine with DeepSeek-only architecture
-        info!("Initializing OperationEngine with DeepSeek");
+        // OperationEngine with GPT 5.1 architecture
+        info!("Initializing OperationEngine with GPT 5.1");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
-            (*deepseek_provider).clone(),
+            (*gpt5_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
             git_client.clone(),
@@ -151,7 +155,7 @@ impl AppState {
             project_store,
             git_store,
             git_client,
-            deepseek_provider,
+            gpt5_provider,
             embedding_client,
             memory_service,
             code_intelligence,

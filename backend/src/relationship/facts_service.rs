@@ -1,4 +1,4 @@
-// src/relationship/facts_service.rs
+// backend/src/relationship/facts_service.rs
 
 use anyhow::Result;
 use chrono::Utc;
@@ -24,7 +24,7 @@ impl FactsService {
         fact_key: &str,
         fact_value: &str,
         fact_category: &str,
-        context: Option<&str>,
+        source: Option<&str>,
         confidence: f64,
     ) -> Result<String> {
         let now = Utc::now().timestamp();
@@ -41,15 +41,15 @@ impl FactsService {
             // Update existing fact
             sqlx::query(
                 r#"
-                UPDATE memory_facts 
-                SET fact_value = ?, fact_category = ?, context = ?, 
-                    confidence = ?, updated_at = ?
+                UPDATE memory_facts
+                SET fact_value = ?, fact_category = ?, source = ?,
+                    confidence = ?, last_confirmed = ?
                 WHERE id = ?
                 "#,
             )
             .bind(fact_value)
             .bind(fact_category)
-            .bind(context)
+            .bind(source)
             .bind(confidence)
             .bind(now)
             .bind(&fact_id)
@@ -66,9 +66,8 @@ impl FactsService {
                 r#"
                 INSERT INTO memory_facts (
                     id, user_id, fact_key, fact_value, fact_category,
-                    context, confidence, reference_count, still_relevant,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                    source, confidence, learned_at, times_referenced
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                 "#,
             )
             .bind(&fact_id)
@@ -76,9 +75,8 @@ impl FactsService {
             .bind(fact_key)
             .bind(fact_value)
             .bind(fact_category)
-            .bind(context)
+            .bind(source)
             .bind(confidence)
-            .bind(now)
             .bind(now)
             .execute(&self.pool)
             .await?;
@@ -93,10 +91,9 @@ impl FactsService {
         let row = sqlx::query(
             r#"
             SELECT id, user_id, fact_key, fact_value, fact_category,
-                   context, confidence, last_referenced, reference_count,
-                   still_relevant, created_at, updated_at
+                   confidence, source, learned_at, last_confirmed, times_referenced
             FROM memory_facts
-            WHERE user_id = ? AND fact_key = ? AND still_relevant = 1
+            WHERE user_id = ? AND fact_key = ?
             "#,
         )
         .bind(user_id)
@@ -121,11 +118,10 @@ impl FactsService {
             sqlx::query(
                 r#"
                 SELECT id, user_id, fact_key, fact_value, fact_category,
-                       context, confidence, last_referenced, reference_count,
-                       still_relevant, created_at, updated_at
+                       confidence, source, learned_at, last_confirmed, times_referenced
                 FROM memory_facts
-                WHERE user_id = ? AND fact_category = ? AND still_relevant = 1
-                ORDER BY confidence DESC, reference_count DESC
+                WHERE user_id = ? AND fact_category = ?
+                ORDER BY confidence DESC, times_referenced DESC
                 "#,
             )
             .bind(user_id)
@@ -134,11 +130,10 @@ impl FactsService {
             sqlx::query(
                 r#"
                 SELECT id, user_id, fact_key, fact_value, fact_category,
-                       context, confidence, last_referenced, reference_count,
-                       still_relevant, created_at, updated_at
+                       confidence, source, learned_at, last_confirmed, times_referenced
                 FROM memory_facts
-                WHERE user_id = ? AND still_relevant = 1
-                ORDER BY confidence DESC, reference_count DESC
+                WHERE user_id = ?
+                ORDER BY confidence DESC, times_referenced DESC
                 "#,
             )
             .bind(user_id)
@@ -154,14 +149,14 @@ impl FactsService {
         Ok(facts)
     }
 
-    /// Mark a fact as referenced (updates last_referenced and increments count)
+    /// Mark a fact as referenced (updates last_confirmed and increments count)
     pub async fn reference_fact(&self, fact_id: &str) -> Result<()> {
         let now = Utc::now().timestamp();
 
         sqlx::query(
             r#"
-            UPDATE memory_facts 
-            SET last_referenced = ?, reference_count = reference_count + 1
+            UPDATE memory_facts
+            SET last_confirmed = ?, times_referenced = times_referenced + 1
             WHERE id = ?
             "#,
         )
@@ -174,18 +169,7 @@ impl FactsService {
         Ok(())
     }
 
-    /// Mark a fact as no longer relevant (soft delete)
-    pub async fn deprecate_fact(&self, fact_id: &str) -> Result<()> {
-        sqlx::query("UPDATE memory_facts SET still_relevant = 0 WHERE id = ?")
-            .bind(fact_id)
-            .execute(&self.pool)
-            .await?;
-
-        info!("Deprecated fact {}", fact_id);
-        Ok(())
-    }
-
-    /// Delete a fact permanently
+    /// Delete a fact
     pub async fn delete_fact(&self, fact_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM memory_facts WHERE id = ?")
             .bind(fact_id)
@@ -207,10 +191,10 @@ impl FactsService {
             fact_value: row.try_get("fact_value")?,
             fact_category: row.try_get("fact_category")?,
             confidence: row.try_get("confidence")?,
-            source: row.try_get("context")?, // Note: context maps to source field
-            learned_at: row.try_get("created_at")?,
-            last_confirmed: row.try_get("last_referenced")?,
-            times_referenced: row.try_get("reference_count")?,
+            source: row.try_get("source")?,
+            learned_at: row.try_get("learned_at")?,
+            last_confirmed: row.try_get("last_confirmed")?,
+            times_referenced: row.try_get("times_referenced")?,
         })
     }
 }

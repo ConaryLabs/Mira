@@ -18,9 +18,9 @@ lazy_static! {
 /// Main configuration structure - composes all domain configs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
-    // Domain configs (new, organized structure)
-    pub deepseek: llm::DeepSeekConfig,
+    // Domain configs (organized structure)
     pub openai: llm::OpenAiConfig,
+    pub gpt5: llm::Gpt5Config,
     pub memory: memory::MemoryConfig,
     pub summarization: memory::SummarizationConfig,
     pub qdrant: memory::QdrantConfig,
@@ -37,10 +37,10 @@ pub struct MiraConfig {
     pub retry: caching::RetryConfig,
 
     // Flat field aliases for backward compatibility
-    // These duplicate data from domain configs but allow legacy code to work unchanged
-    pub use_deepseek_codegen: bool,
-    pub deepseek_api_key: String,
     pub openai_api_key: String,
+    pub gpt5_api_key: String,
+    pub gpt5_model: String,
+    pub gpt5_reasoning: llm::ReasoningEffort,
     pub openai_embedding_model: String,
     pub qdrant_url: String,
     pub qdrant_collection: String,
@@ -63,8 +63,8 @@ impl MiraConfig {
         // Load .env file
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
 
-        let deepseek = llm::DeepSeekConfig::from_env();
         let openai = llm::OpenAiConfig::from_env();
+        let gpt5 = llm::Gpt5Config::from_env();
         let memory = memory::MemoryConfig::from_env();
         let summarization = memory::SummarizationConfig::from_env();
         let qdrant = memory::QdrantConfig::from_env();
@@ -82,9 +82,10 @@ impl MiraConfig {
 
         Self {
             // Flat field aliases (for backward compatibility)
-            use_deepseek_codegen: deepseek.enabled,
-            deepseek_api_key: deepseek.api_key.clone(),
             openai_api_key: openai.api_key.clone(),
+            gpt5_api_key: gpt5.api_key.clone(),
+            gpt5_model: gpt5.model.clone(),
+            gpt5_reasoning: gpt5.default_reasoning_effort.clone(),
             openai_embedding_model: openai.embedding_model.clone(),
             qdrant_url: qdrant.url.clone(),
             qdrant_collection: qdrant.collection.clone(),
@@ -102,8 +103,8 @@ impl MiraConfig {
             sqlite_max_connections: database.max_connections,
 
             // Domain configs
-            deepseek,
             openai,
+            gpt5,
             memory,
             summarization,
             qdrant,
@@ -123,14 +124,12 @@ impl MiraConfig {
 
     /// Validate config on startup
     pub fn validate(&self) -> anyhow::Result<()> {
-        self.deepseek.validate()?;
+        self.gpt5.validate()?;
         Ok(())
     }
 
     // ===========================================
     // Backward compatibility accessors
-    // These exist to maintain compatibility with existing code
-    // New code should access config domains directly (e.g. CONFIG.deepseek.api_key)
     // ===========================================
 
     // OpenAI

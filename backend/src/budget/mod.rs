@@ -1,8 +1,12 @@
 // backend/src/budget/mod.rs
 
+//! Budget tracking for LLM API costs
+//!
+//! Tracks daily and monthly spending with configurable limits.
+
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Datelike, Utc};
-use sqlx::SqlitePool;
+use chrono::{DateTime, Datelike, TimeZone, Utc};
+use sqlx::{Row, SqlitePool};
 use tracing::{debug, warn};
 
 /// Budget tracking for LLM API costs
@@ -48,7 +52,7 @@ impl BudgetTracker {
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO budget_tracking (
                 user_id, operation_id, provider, model, reasoning_effort,
@@ -56,17 +60,17 @@ impl BudgetTracker {
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
-            user_id,
-            operation_id,
-            provider,
-            model,
-            reasoning_effort,
-            tokens_input,
-            tokens_output,
-            cost_usd,
-            from_cache,
-            timestamp
         )
+        .bind(user_id)
+        .bind(operation_id)
+        .bind(provider)
+        .bind(model)
+        .bind(reasoning_effort)
+        .bind(tokens_input)
+        .bind(tokens_output)
+        .bind(cost_usd)
+        .bind(from_cache)
+        .bind(timestamp)
         .execute(&self.db)
         .await?;
 
@@ -133,36 +137,42 @@ impl BudgetTracker {
 
     /// Get total spending for a user since a timestamp
     pub async fn get_usage_since(&self, user_id: &str, since: i64) -> Result<BudgetUsage> {
-        let result = sqlx::query!(
+        let row = sqlx::query(
             r#"
             SELECT
-                COALESCE(SUM(cost_usd), 0.0) as "total_cost!: f64",
-                COUNT(*) as "total_requests!: i64",
-                SUM(CASE WHEN from_cache THEN 1 ELSE 0 END) as "cached_requests!: i64",
-                COALESCE(SUM(tokens_input), 0) as "tokens_input!: i64",
-                COALESCE(SUM(tokens_output), 0) as "tokens_output!: i64"
+                COALESCE(SUM(cost_usd), 0.0) as total_cost,
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN from_cache THEN 1 ELSE 0 END) as cached_requests,
+                COALESCE(SUM(tokens_input), 0) as tokens_input,
+                COALESCE(SUM(tokens_output), 0) as tokens_output
             FROM budget_tracking
             WHERE user_id = ? AND timestamp >= ?
             "#,
-            user_id,
-            since
         )
+        .bind(user_id)
+        .bind(since)
         .fetch_one(&self.db)
         .await?;
 
-        let cache_hit_rate = if result.total_requests > 0 {
-            result.cached_requests as f64 / result.total_requests as f64
+        let total_cost: f64 = row.get("total_cost");
+        let total_requests: i64 = row.get("total_requests");
+        let cached_requests: i64 = row.get("cached_requests");
+        let tokens_input: i64 = row.get("tokens_input");
+        let tokens_output: i64 = row.get("tokens_output");
+
+        let cache_hit_rate = if total_requests > 0 {
+            cached_requests as f64 / total_requests as f64
         } else {
             0.0
         };
 
         Ok(BudgetUsage {
-            total_cost_usd: result.total_cost,
-            total_requests: result.total_requests,
-            cached_requests: result.cached_requests,
+            total_cost_usd: total_cost,
+            total_requests,
+            cached_requests,
             cache_hit_rate,
-            tokens_input: result.tokens_input,
-            tokens_output: result.tokens_output,
+            tokens_input,
+            tokens_output,
         })
     }
 
@@ -180,12 +190,19 @@ impl BudgetTracker {
 
     /// Generate and store daily summary
     pub async fn generate_daily_summary(&self, user_id: &str, day: DateTime<Utc>) -> Result<()> {
-        let day_start = day.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        let day_start = day
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
         let day_end = day_start + 86400; // 24 hours
 
-        let usage = self.get_usage_in_range(user_id, day_start, day_end).await?;
+        let usage = self
+            .get_usage_in_range(user_id, day_start, day_end)
+            .await?;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO budget_summary (
                 user_id, period_type, period_start, period_end,
@@ -201,17 +218,17 @@ impl BudgetTracker {
                 total_cost_usd = excluded.total_cost_usd,
                 cache_hit_rate = excluded.cache_hit_rate
             "#,
-            user_id,
-            day_start,
-            day_end,
-            usage.total_requests,
-            usage.cached_requests,
-            usage.tokens_input,
-            usage.tokens_output,
-            usage.total_cost_usd,
-            usage.cache_hit_rate,
-            Utc::now().timestamp()
         )
+        .bind(user_id)
+        .bind(day_start)
+        .bind(day_end)
+        .bind(usage.total_requests)
+        .bind(usage.cached_requests)
+        .bind(usage.tokens_input)
+        .bind(usage.tokens_output)
+        .bind(usage.total_cost_usd)
+        .bind(usage.cache_hit_rate)
+        .bind(Utc::now().timestamp())
         .execute(&self.db)
         .await?;
 
@@ -241,7 +258,8 @@ impl BudgetTracker {
             .timestamp();
 
         let next_month = if month.month() == 12 {
-            Utc.with_ymd_and_hms(month.year() + 1, 1, 1, 0, 0, 0).unwrap()
+            Utc.with_ymd_and_hms(month.year() + 1, 1, 1, 0, 0, 0)
+                .unwrap()
         } else {
             Utc.with_ymd_and_hms(month.year(), month.month() + 1, 1, 0, 0, 0)
                 .unwrap()
@@ -252,7 +270,7 @@ impl BudgetTracker {
             .get_usage_in_range(user_id, month_start, month_end)
             .await?;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO budget_summary (
                 user_id, period_type, period_start, period_end,
@@ -268,17 +286,17 @@ impl BudgetTracker {
                 total_cost_usd = excluded.total_cost_usd,
                 cache_hit_rate = excluded.cache_hit_rate
             "#,
-            user_id,
-            month_start,
-            month_end,
-            usage.total_requests,
-            usage.cached_requests,
-            usage.tokens_input,
-            usage.tokens_output,
-            usage.total_cost_usd,
-            usage.cache_hit_rate,
-            Utc::now().timestamp()
         )
+        .bind(user_id)
+        .bind(month_start)
+        .bind(month_end)
+        .bind(usage.total_requests)
+        .bind(usage.cached_requests)
+        .bind(usage.tokens_input)
+        .bind(usage.tokens_output)
+        .bind(usage.total_cost_usd)
+        .bind(usage.cache_hit_rate)
+        .bind(Utc::now().timestamp())
         .execute(&self.db)
         .await?;
 
@@ -299,37 +317,43 @@ impl BudgetTracker {
         start: i64,
         end: i64,
     ) -> Result<BudgetUsage> {
-        let result = sqlx::query!(
+        let row = sqlx::query(
             r#"
             SELECT
-                COALESCE(SUM(cost_usd), 0.0) as "total_cost!: f64",
-                COUNT(*) as "total_requests!: i64",
-                SUM(CASE WHEN from_cache THEN 1 ELSE 0 END) as "cached_requests!: i64",
-                COALESCE(SUM(tokens_input), 0) as "tokens_input!: i64",
-                COALESCE(SUM(tokens_output), 0) as "tokens_output!: i64"
+                COALESCE(SUM(cost_usd), 0.0) as total_cost,
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN from_cache THEN 1 ELSE 0 END) as cached_requests,
+                COALESCE(SUM(tokens_input), 0) as tokens_input,
+                COALESCE(SUM(tokens_output), 0) as tokens_output
             FROM budget_tracking
             WHERE user_id = ? AND timestamp >= ? AND timestamp < ?
             "#,
-            user_id,
-            start,
-            end
         )
+        .bind(user_id)
+        .bind(start)
+        .bind(end)
         .fetch_one(&self.db)
         .await?;
 
-        let cache_hit_rate = if result.total_requests > 0 {
-            result.cached_requests as f64 / result.total_requests as f64
+        let total_cost: f64 = row.get("total_cost");
+        let total_requests: i64 = row.get("total_requests");
+        let cached_requests: i64 = row.get("cached_requests");
+        let tokens_input: i64 = row.get("tokens_input");
+        let tokens_output: i64 = row.get("tokens_output");
+
+        let cache_hit_rate = if total_requests > 0 {
+            cached_requests as f64 / total_requests as f64
         } else {
             0.0
         };
 
         Ok(BudgetUsage {
-            total_cost_usd: result.total_cost,
-            total_requests: result.total_requests,
-            cached_requests: result.cached_requests,
+            total_cost_usd: total_cost,
+            total_requests,
+            cached_requests,
             cache_hit_rate,
-            tokens_input: result.tokens_input,
-            tokens_output: result.tokens_output,
+            tokens_input,
+            tokens_output,
         })
     }
 

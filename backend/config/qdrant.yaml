@@ -1,0 +1,9 @@
+# Qdrant configuration
+storage:
+  storage_path: ./qdrant_storage
+
+service:
+  http_port: 6333
+  grpc_port: 6334
+
+telemetry_disabled: true

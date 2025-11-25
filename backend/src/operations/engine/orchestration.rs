@@ -1,13 +1,13 @@
 // src/operations/engine/orchestration.rs
-// Main operation orchestration: run_operation method (DeepSeek-only)
+// Main operation orchestration: run_operation method (GPT 5.1)
 
 use crate::llm::provider::Message;
 use crate::memory::service::MemoryService;
 use crate::operations::ContextLoader;
-use crate::operations::delegation_tools::get_deepseek_tools;
+use crate::operations::delegation_tools::get_delegation_tools;
 use crate::operations::engine::{
     artifacts::ArtifactManager, context::ContextBuilder,
-    deepseek_orchestrator::DeepSeekOrchestrator, events::OperationEngineEvent,
+    gpt5_orchestrator::Gpt5Orchestrator, events::OperationEngineEvent,
     lifecycle::LifecycleManager, tool_router::ToolRouter,
 };
 
@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 pub struct Orchestrator {
-    deepseek_orchestrator: Option<Arc<DeepSeekOrchestrator>>,
+    gpt5_orchestrator: Option<Arc<Gpt5Orchestrator>>,
     memory_service: Arc<MemoryService>,
     context_builder: ContextBuilder,
     context_loader: ContextLoader,
@@ -29,7 +29,7 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     pub fn new(
-        deepseek_orchestrator: Option<Arc<DeepSeekOrchestrator>>,
+        gpt5_orchestrator: Option<Arc<Gpt5Orchestrator>>,
         memory_service: Arc<MemoryService>,
         context_builder: ContextBuilder,
         context_loader: ContextLoader,
@@ -38,7 +38,7 @@ impl Orchestrator {
         lifecycle_manager: LifecycleManager,
     ) -> Self {
         Self {
-            deepseek_orchestrator,
+            gpt5_orchestrator,
             memory_service,
             context_builder,
             context_loader,
@@ -139,9 +139,9 @@ impl Orchestrator {
             .start_operation(operation_id, event_tx)
             .await?;
 
-        // Always use DeepSeek orchestration (DeepSeek-only architecture)
-        info!("[ENGINE] Using DeepSeek orchestration");
-        self.execute_with_deepseek(
+        // Use GPT 5.1 orchestration
+        info!("[ENGINE] Using GPT 5.1 orchestration");
+        self.execute_with_gpt5(
             operation_id,
             session_id,
             user_content,
@@ -150,7 +150,8 @@ impl Orchestrator {
         )
         .await
     }
-    async fn execute_with_deepseek(
+
+    async fn execute_with_gpt5(
         &self,
         operation_id: &str,
         session_id: &str,
@@ -158,9 +159,9 @@ impl Orchestrator {
         system_prompt: String,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
-        let deepseek = match &self.deepseek_orchestrator {
+        let gpt5 = match &self.gpt5_orchestrator {
             Some(orch) => orch,
-            None => return Err(anyhow::anyhow!("DeepSeek orchestrator not initialized")),
+            None => return Err(anyhow::anyhow!("GPT 5.1 orchestrator not initialized")),
         };
 
         // Build messages with system prompt
@@ -169,14 +170,15 @@ impl Orchestrator {
             Message::user(user_content.to_string()),
         ];
 
-        // Build tools for DeepSeek (excludes GPT-5 meta-tools)
-        let tools = get_deepseek_tools();
+        // Build tools for GPT 5.1
+        let tools = get_delegation_tools();
 
-        // Execute with DeepSeek orchestrator
-        let response = deepseek
-            .execute(operation_id, messages, tools, event_tx)
+        // Execute with GPT 5.1 orchestrator
+        // Use session_id as user_id for budget tracking (they map 1:1 in current design)
+        let response = gpt5
+            .execute(session_id, operation_id, messages, tools, event_tx)
             .await
-            .context("DeepSeek orchestration failed")?;
+            .context("GPT 5.1 orchestration failed")?;
 
         // Complete operation
         self.lifecycle_manager
@@ -185,7 +187,7 @@ impl Orchestrator {
                 session_id,
                 Some(response),
                 event_tx,
-                vec![], // Artifacts are handled by DeepSeek orchestrator
+                vec![], // Artifacts are handled by orchestrator
             )
             .await?;
 

@@ -54,7 +54,7 @@ impl ChatAnalyzer {
             tool_calls: None,
         }];
 
-        // Use LLM for analysis (DeepSeek-only)
+        // Use LLM for analysis
         let system = "You are a precise message analyzer. Analyze the message and output only valid JSON matching the format: {\"salience\": float (0.0-1.0), \"category\": string, \"entities\": [string], \"intent\": string}";
 
         let provider_response = self
@@ -88,7 +88,7 @@ impl ChatAnalyzer {
             tool_calls: None,
         }];
 
-        // Use LLM for batch analysis (DeepSeek-only)
+        // Use LLM for batch analysis
         let system = "You are a precise message analyzer. Analyze each message and output only valid JSON matching the format.";
 
         let provider_response = self

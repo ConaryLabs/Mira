@@ -111,15 +111,20 @@ impl BackfillTask {
 
         let mut messages = Vec::new();
         for row in rows {
-            // FIXED: routed_to_heads is now NOT NULL, so it's String not Option<String>
-            let routed_to_heads: Vec<String> = match serde_json::from_str(&row.routed_to_heads) {
-                Ok(heads) => heads,
-                Err(e) => {
-                    warn!(
-                        "Failed to parse routed_to_heads for message {}: {}",
-                        row.id, e
-                    );
-                    continue;
+            // Parse routed_to_heads (may be NULL in database)
+            let routed_to_heads_str = row.routed_to_heads.unwrap_or_default();
+            let routed_to_heads: Vec<String> = if routed_to_heads_str.is_empty() {
+                vec![]
+            } else {
+                match serde_json::from_str(&routed_to_heads_str) {
+                    Ok(heads) => heads,
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse routed_to_heads for message {}: {}",
+                            row.id, e
+                        );
+                        continue;
+                    }
                 }
             };
 
@@ -127,10 +132,15 @@ impl BackfillTask {
                 continue;
             }
 
-            // FIXED: topics is now NOT NULL, so it's String not Option<String>
-            let topics: Vec<String> = match serde_json::from_str(&row.topics) {
-                Ok(t) => t,
-                Err(_) => vec!["general".to_string()],
+            // Parse topics (may be NULL in database)
+            let topics_str = row.topics.unwrap_or_default();
+            let topics: Vec<String> = if topics_str.is_empty() {
+                vec!["general".to_string()]
+            } else {
+                match serde_json::from_str(&topics_str) {
+                    Ok(t) => t,
+                    Err(_) => vec!["general".to_string()],
+                }
             };
 
             messages.push(MessageForBackfill {

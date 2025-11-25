@@ -1,17 +1,44 @@
-// src/memory/features/code_intelligence/mod.rs
+// backend/src/memory/features/code_intelligence/mod.rs
 
+pub mod cache;
+pub mod call_graph;
+pub mod clustering;
 pub mod invalidation;
 pub mod javascript_parser;
 pub mod parser;
+pub mod patterns;
+pub mod semantic;
 pub mod storage;
 pub mod types;
 pub mod typescript_parser;
 
+// Core exports
 pub use javascript_parser::JavaScriptParser;
 pub use parser::RustParser;
 pub use storage::{CodeIntelligenceStorage, RepoStats};
 pub use types::*;
 pub use typescript_parser::TypeScriptParser;
+
+// Semantic graph exports
+pub use semantic::{
+    ConceptEntry, SemanticAnalysis, SemanticEdge, SemanticGraphService, SemanticNode,
+    SemanticRelationType,
+};
+
+// Call graph exports
+pub use call_graph::{CallEdge, CallGraphElement, CallGraphService, CallGraphStats, ImpactAnalysis};
+
+// Pattern detection exports
+pub use patterns::{DesignPattern, PatternDetectionResult, PatternDetectionService, PatternType};
+
+// Clustering exports
+pub use clustering::{ClusterSuggestion, DomainAnalysis, DomainCluster, DomainClusteringService};
+
+// Cache exports
+pub use cache::{
+    CodeIntelligenceCache, PatternCacheEntry, PatternCacheService, PatternValidationResult,
+    SemanticAnalysisResult, SemanticCacheEntry, SemanticCacheService,
+};
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -32,6 +59,9 @@ pub struct CodeIntelligenceService {
     rust_parser: RustParser,
     typescript_parser: TypeScriptParser,
     javascript_parser: JavaScriptParser,
+    // New code intelligence services
+    call_graph_service: Arc<CallGraphService>,
+    cache: Arc<CodeIntelligenceCache>,
 }
 
 impl CodeIntelligenceService {
@@ -40,15 +70,52 @@ impl CodeIntelligenceService {
         multi_store: Arc<QdrantMultiStore>,
         embedding_client: Arc<OpenAiEmbeddings>,
     ) -> Self {
+        let db = Arc::new(pool.clone());
         Self {
             storage: Arc::new(CodeIntelligenceStorage::new(pool.clone())),
             multi_store,
             embedding_client,
-            pool,
             rust_parser: RustParser::new(),
             typescript_parser: TypeScriptParser::new(),
             javascript_parser: JavaScriptParser::new(),
+            call_graph_service: Arc::new(CallGraphService::new(pool.clone())),
+            cache: Arc::new(CodeIntelligenceCache::new(db)),
+            pool,
         }
+    }
+
+    /// Get access to the call graph service
+    pub fn call_graph(&self) -> &CallGraphService {
+        &self.call_graph_service
+    }
+
+    /// Get access to the code intelligence cache
+    pub fn cache(&self) -> &CodeIntelligenceCache {
+        &self.cache
+    }
+
+    /// Create a semantic graph service with an LLM provider
+    pub fn create_semantic_service(
+        &self,
+        llm_provider: Arc<dyn crate::llm::provider::LlmProvider>,
+    ) -> SemanticGraphService {
+        SemanticGraphService::new(self.pool.clone(), llm_provider)
+    }
+
+    /// Create a pattern detection service with an LLM provider
+    pub fn create_pattern_service(
+        &self,
+        llm_provider: Arc<dyn crate::llm::provider::LlmProvider>,
+    ) -> PatternDetectionService {
+        PatternDetectionService::new(self.pool.clone(), llm_provider)
+    }
+
+    /// Create a domain clustering service with an LLM provider
+    pub fn create_clustering_service(
+        &self,
+        llm_provider: Arc<dyn crate::llm::provider::LlmProvider>,
+    ) -> DomainClusteringService {
+        DomainClusteringService::new(self.pool.clone(), llm_provider)
     }
 
     /// Invalidate all embeddings for a file before re-analyzing
@@ -92,11 +159,11 @@ impl CodeIntelligenceService {
                 None => continue,
             };
 
-            let language = row.language;
+            let language = row.language.unwrap_or_default();
             let element_type = row.element_type;
             let name = row.name;
-            let full_path = row.full_path;
-            let content = row.content;
+            let full_path = row.full_path.unwrap_or_default();
+            let content = row.content.unwrap_or_default();
 
             // Create embedding content: "type name: content"
             let embed_text = format!("{} {}: {}", element_type, name, content);

@@ -200,7 +200,9 @@ pub async fn undo_file_modification(
     let full_path = base_path.join(file_path);
 
     // Restore original content
-    tokio::fs::write(&full_path, &mod_record.original_content)
+    let original_content = mod_record.original_content
+        .ok_or_else(|| anyhow::anyhow!("Original content not found for modification"))?;
+    tokio::fs::write(&full_path, original_content.as_bytes())
         .await
         .context("Failed to restore original file content")?;
 
@@ -256,10 +258,10 @@ pub async fn get_file_history(
             id: r.id.unwrap_or(0),
             project_id: r.project_id,
             file_path: r.file_path,
-            original_content: r.original_content,
-            modified_content: r.modified_content,
+            original_content: r.original_content.unwrap_or_default(),
+            modified_content: r.modified_content.unwrap_or_default(),
             modification_time: r.modification_time,
-            reverted: r.reverted.unwrap_or(false),
+            reverted: r.reverted.unwrap_or(0) != 0,
         })
         .collect())
 }

@@ -67,7 +67,8 @@ impl GitStore {
             .map(|r| {
                 let import_status = r
                     .import_status
-                    .parse::<GitImportStatus>()
+                    .as_deref()
+                    .and_then(|s| s.parse::<GitImportStatus>().ok())
                     .unwrap_or(GitImportStatus::Pending);
 
                 let last_imported_at = r
@@ -81,9 +82,9 @@ impl GitStore {
                     .map(|dt| dt.with_timezone(&Utc));
 
                 GitRepoAttachment {
-                    id: r.id,
+                    id: r.id.unwrap_or_default(),
                     project_id: r.project_id,
-                    repo_url: r.repo_url,
+                    repo_url: r.repo_url.unwrap_or_default(),
                     local_path: r.local_path,
                     import_status,
                     last_imported_at,
@@ -110,7 +111,8 @@ impl GitStore {
         Ok(r.map(|r| {
             let import_status = r
                 .import_status
-                .parse::<GitImportStatus>()
+                .as_deref()
+                .and_then(|s| s.parse::<GitImportStatus>().ok())
                 .unwrap_or(GitImportStatus::Pending);
 
             let last_imported_at = r
@@ -124,9 +126,9 @@ impl GitStore {
                 .map(|dt| dt.with_timezone(&Utc));
 
             GitRepoAttachment {
-                id: r.id,
+                id: r.id.unwrap_or_default(),
                 project_id: r.project_id,
-                repo_url: r.repo_url,
+                repo_url: r.repo_url.unwrap_or_default(),
                 local_path: r.local_path,
                 import_status,
                 last_imported_at,
@@ -306,7 +308,7 @@ impl GitStore {
             .into_iter()
             .map(|r| RepositoryFile {
                 id: r.id.unwrap_or(0),
-                attachment_id: r.attachment_id,
+                attachment_id: r.attachment_id.unwrap_or_default(),
                 file_path: r.file_path,
                 content_hash: r.content_hash,
                 language: r.language,

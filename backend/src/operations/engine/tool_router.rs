@@ -1,13 +1,13 @@
 // src/operations/engine/tool_router.rs
-// Tool Router - Routes GPT-5 meta-tools to DeepSeek file operations
-// This is the key component enabling the strategic dual-model architecture
+// Tool Router - Routes tool calls to appropriate handlers
+// GPT 5.1 single-model architecture
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tracing::{info, warn};
 
-use crate::llm::provider::deepseek::DeepSeekProvider;
+use crate::llm::provider::Gpt5Provider;
 use crate::llm::provider::Message;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
@@ -15,9 +15,9 @@ use crate::sudo::SudoPermissionService;
 use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
 use std::sync::Arc;
 
-/// Routes GPT-5 meta-tool calls to DeepSeek file operation execution
+/// Routes tool calls to appropriate handlers
 pub struct ToolRouter {
-    deepseek: DeepSeekProvider,
+    gpt5: Gpt5Provider,
     file_handlers: FileHandlers,
     external_handlers: ExternalHandlers,
     git_handlers: GitHandlers,
@@ -27,7 +27,7 @@ pub struct ToolRouter {
 impl ToolRouter {
     /// Create a new tool router
     pub fn new(
-        deepseek: DeepSeekProvider,
+        gpt5: Gpt5Provider,
         project_dir: PathBuf,
         code_intelligence: Arc<CodeIntelligenceService>,
         sudo_service: Option<Arc<SudoPermissionService>>,
@@ -40,7 +40,7 @@ impl ToolRouter {
         };
 
         Self {
-            deepseek,
+            gpt5,
             file_handlers: FileHandlers::new(project_dir.clone()),
             external_handlers,
             git_handlers: GitHandlers::new(project_dir),
@@ -48,13 +48,12 @@ impl ToolRouter {
         }
     }
 
-    /// Route a GPT-5 meta-tool call to appropriate handler
+    /// Route a tool call to appropriate handler
     ///
     /// Flow:
-    /// 1. GPT-5 calls meta-tool (e.g., "read_project_file")
-    /// 2. Router translates to DeepSeek tool call(s)
-    /// 3. DeepSeek executes file operations via FileHandlers
-    /// 4. Results returned to GPT-5
+    /// 1. GPT 5.1 calls tool (e.g., "read_project_file")
+    /// 2. Router executes via appropriate handler
+    /// 3. Results returned to GPT 5.1
     pub async fn route_tool_call(&self, tool_name: &str, arguments: Value) -> Result<Value> {
         info!("[ROUTER] Routing tool: {}", tool_name);
 
@@ -104,7 +103,7 @@ impl ToolRouter {
         }
     }
 
-    /// Route read_project_file to DeepSeek's read_file tool
+    /// Route read_project_file to read_file tool
     ///
     /// Supports reading multiple files in one call (optimized for token usage)
     async fn route_read_file(&self, args: Value) -> Result<Value> {
@@ -124,7 +123,7 @@ impl ToolRouter {
             purpose
         );
 
-        // Build DeepSeek prompt with file reading tools
+        // Build prompt with file reading tools
         let system_prompt = format!(
             "You are a file reading assistant. Use the read_file tool to read the requested files. \
             Purpose: {}\n\n\
@@ -147,13 +146,13 @@ impl ToolRouter {
             Message::user(user_prompt),
         ];
 
-        // Call DeepSeek with file operation tools
+        // Call GPT 5.1 with file operation tools
         let tools = get_file_operation_tools();
         let mut response = self
-            .deepseek
+            .gpt5
             .call_with_tools(messages.clone(), tools.clone())
             .await
-            .context("DeepSeek file read failed")?;
+            .context("GPT 5.1 file read failed")?;
 
         // Execute tool calls and continue conversation
         let mut all_files = Vec::new();
@@ -206,7 +205,7 @@ impl ToolRouter {
                 response.content.clone().unwrap_or_default(),
             ));
 
-            // Add tool results as user messages (DeepSeek format)
+            // Add tool results as user messages
             for (tool_id, result) in tool_results {
                 conversation.push(Message::user(format!(
                     "[Tool Result for {}]\n{}",
@@ -215,14 +214,14 @@ impl ToolRouter {
                 )));
             }
 
-            // Continue conversation with DeepSeek
+            // Continue conversation with GPT 5.1
             response = self
-                .deepseek
+                .gpt5
                 .call_with_tools(conversation.clone(), tools.clone())
                 .await
-                .context("DeepSeek continuation failed")?;
+                .context("GPT 5.1 continuation failed")?;
 
-            // Break if DeepSeek returns text instead of more tool calls
+            // Break if GPT 5.1 returns text instead of more tool calls
             if response.tool_calls.is_empty() {
                 break;
             }
@@ -256,7 +255,7 @@ impl ToolRouter {
 
         info!("[ROUTER] Searching codebase for: '{}'", query);
 
-        // Build DeepSeek prompt for searching
+        // Build prompt for searching
         let system_prompt = "You are a code search assistant. Use the grep_files tool to search for the requested pattern.";
 
         let mut user_prompt = format!("Search for: {}", query);
@@ -271,12 +270,12 @@ impl ToolRouter {
 
         let tools = get_file_operation_tools();
         let response = self
-            .deepseek
+            .gpt5
             .call_with_tools(messages, tools)
             .await
-            .context("DeepSeek search failed")?;
+            .context("GPT 5.1 search failed")?;
 
-        // Execute grep tool if DeepSeek called it
+        // Execute grep tool if called
         if let Some(tool_call) = response.tool_calls.first() {
             if tool_call.name == "grep_files" {
                 let result = self
@@ -312,7 +311,7 @@ impl ToolRouter {
 
         info!("[ROUTER] Listing files in: {}", directory);
 
-        // Build DeepSeek prompt for listing
+        // Build prompt for listing
         let system_prompt = "You are a file listing assistant. Use the list_files tool to list the requested directory.";
 
         let mut user_prompt = format!("List files in directory: {}", directory);
@@ -330,12 +329,12 @@ impl ToolRouter {
 
         let tools = get_file_operation_tools();
         let response = self
-            .deepseek
+            .gpt5
             .call_with_tools(messages, tools)
             .await
-            .context("DeepSeek list failed")?;
+            .context("GPT 5.1 list failed")?;
 
-        // Execute list_files tool if DeepSeek called it
+        // Execute list_files tool if called
         if let Some(tool_call) = response.tool_calls.first() {
             if tool_call.name == "list_files" {
                 let result = self
@@ -359,7 +358,7 @@ impl ToolRouter {
             .await
     }
 
-    /// Route get_file_summary to DeepSeek's summarize_file tool
+    /// Route get_file_summary to summarize_file tool
     ///
     /// Token-optimized: Returns only preview + stats instead of full content
     async fn route_file_summary(&self, args: Value) -> Result<Value> {
@@ -405,7 +404,7 @@ impl ToolRouter {
         }))
     }
 
-    /// Route get_file_structure to DeepSeek's extract_symbols tool
+    /// Route get_file_structure to extract_symbols tool
     ///
     /// Token-optimized: Returns only symbol list instead of full code
     async fn route_file_structure(&self, args: Value) -> Result<Value> {
@@ -527,10 +526,9 @@ impl ToolRouter {
     // External Operations Routing (Web, Commands)
     // ========================================================================
 
-    /// Route web_search to DeepSeek + external handler
+    /// Route web_search to external handler
     ///
-    /// Unlike file operations, web search is executed directly (not via DeepSeek)
-    /// for better reliability and speed
+    /// Web search is executed directly for better reliability and speed
     async fn route_web_search(&self, args: Value) -> Result<Value> {
         info!("[ROUTER] Routing web_search");
 

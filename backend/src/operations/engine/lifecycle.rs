@@ -333,12 +333,12 @@ impl LifecycleManager {
         Ok(Operation {
             id: row.id.unwrap_or_else(|| operation_id.to_string()),
             session_id: row.session_id,
-            kind: row.kind,
+            kind: row.kind.unwrap_or_default(),
             status: row.status,
             created_at: row.created_at,
             started_at: row.started_at,
             completed_at: row.completed_at,
-            user_message: row.user_message,
+            user_message: row.user_message.unwrap_or_default(),
             context_snapshot: None,
             complexity_score: None,
             delegated_to: None,
@@ -383,7 +383,7 @@ impl LifecycleManager {
                 operation_id: operation_id.to_string(),
                 event_type: row.event_type,
                 created_at: row.created_at,
-                sequence_number: row.sequence_number,
+                sequence_number: row.sequence_number.unwrap_or(0),
                 event_data: row.event_data,
             })
             .collect();
