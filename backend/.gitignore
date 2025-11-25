@@ -103,9 +103,11 @@ lcov.info
 *.tmp
 .temp/
 
-# Qdrant data (if running locally)
+# Qdrant data and binaries (if running locally)
 qdrant_storage/
 qdrant_data/
+bin/
+.qdrant-initialized
 
 # Session data
 sessions/
