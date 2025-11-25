@@ -1,55 +1,46 @@
 # Mira
 
-**AI-Powered Coding Assistant with DeepSeek Dual-Model Orchestration**
+**AI-Powered Coding Assistant with GPT 5.1 and Hybrid Memory**
 
-Mira is a sophisticated AI coding assistant powered by DeepSeek's dual-model architecture (deepseek-chat + deepseek-reasoner), backed by a comprehensive memory system and real-time streaming architecture.
+Mira is a sophisticated AI coding assistant powered by GPT 5.1 with variable reasoning effort, backed by a comprehensive memory system (SQLite + Qdrant) and real-time streaming architecture.
 
 ## Overview
 
-Unlike traditional AI assistants that use a single LLM for all tasks, Mira leverages DeepSeek's dual-model architecture:
-- **deepseek-chat** (8k tokens) handles fast orchestration, tool calling, and code execution
-- **deepseek-reasoner** (64k tokens) handles complex reasoning and large-scale generation
-- ModelRouter intelligently selects the appropriate model based on task complexity
-- Cost-optimized at $0.28/M tokens (30% savings vs previous architecture)
+Mira combines:
+- **GPT 5.1** for state-of-the-art reasoning with variable effort levels (minimum/medium/high)
+- **Hybrid Memory System** with SQLite (structured) + Qdrant (vector) storage
+- **Code Intelligence** for semantic understanding, call graph analysis, and pattern detection
+- **Git Intelligence** for commit tracking, co-change patterns, and expertise scoring
+- **Real-time Streaming** via WebSocket for interactive coding sessions
 
 Built with **Rust** (backend) and **React + TypeScript** (frontend) for performance, type safety, and real-time responsiveness.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│   React + TypeScript Frontend (Vite)       │
-│   • Real-time WebSocket communication      │
-│   • Monaco code editor                     │
-│   • Zustand state management               │
-└──────────────────┬──────────────────────────┘
-                   │ WebSocket (port 3001)
-┌──────────────────▼──────────────────────────┐
-│   Rust Backend (Axum + Tokio)              │
-│   ┌─────────────────────────────────────┐  │
-│   │  Operation Engine                   │  │
-│   │  • Message routing                  │  │
-│   │  • Context gathering                │  │
-│   └─────────┬───────────────────────────┘  │
-│             │                                │
-│   ┌─────────▼──────────────────────────┐   │
-│   │   DeepSeek Dual-Model Orchestrator │   │
-│   │   ┌────────────┐  ┌──────────────┐ │   │
-│   │   │ chat (8k)  │  │ reasoner     │ │   │
-│   │   │ (tools)    │  │ (64k)        │ │   │
-│   │   └────────────┘  └──────────────┘ │   │
-│   │   ModelRouter selects based on     │   │
-│   │   complexity and context size      │   │
-│   └────────────────────────────────────┘   │
-│                                              │
-│   ┌──────────────────────────────────────┐ │
-│   │  Hybrid Memory System                │ │
-│   │  • SQLite (structured data)          │ │
-│   │  • Qdrant (vector embeddings)        │ │
-│   │  • 5-head embeddings                 │ │
-│   │  • Recall engine (recent + semantic) │ │
-│   └──────────────────────────────────────┘ │
-└─────────────────────────────────────────────┘
+                        Frontend (React + TypeScript)
+                        Real-time WebSocket, Monaco Editor
+                                    |
+                              WebSocket (3001)
+                                    |
+                        +-----------v-----------+
+                        |    Rust Backend       |
+                        |    (Axum + Tokio)     |
+                        +-----------+-----------+
+                                    |
+            +-----------+-----------+-----------+-----------+
+            |           |           |           |           |
+      +-----v-----+ +---v---+ +-----v-----+ +---v---+ +-----v-----+
+      | Operation | | GPT   | | Memory    | | Git   | | Code      |
+      | Engine    | | 5.1   | | Service   | | Intel | | Intel     |
+      +-----------+ +-------+ +-----------+ +-------+ +-----------+
+                                    |
+                        +-----------+-----------+
+                        |                       |
+                  +-----v-----+           +-----v-----+
+                  | SQLite    |           | Qdrant    |
+                  | (50+ tbl) |           | (3 coll)  |
+                  +-----------+           +-----------+
 ```
 
 ## Repository Structure
@@ -61,10 +52,10 @@ mira/
 │   │   ├── api/      # WebSocket handlers
 │   │   ├── operations/ # Operation engine
 │   │   ├── memory/   # Memory systems
-│   │   ├── llm/      # LLM providers
-│   │   └── git/      # Git integration
+│   │   ├── llm/      # LLM providers (GPT 5.1)
+│   │   └── git/      # Git integration + intelligence
 │   ├── tests/        # Integration tests (127+ tests)
-│   ├── migrations/   # Database migrations
+│   ├── migrations/   # Database migrations (9 migrations)
 │   └── README.md     # Detailed backend docs
 │
 └── frontend/         # React + TypeScript frontend
@@ -76,105 +67,88 @@ mira/
     └── package.json
 ```
 
-## Key Features
+## Implemented Features
 
-- **DeepSeek Dual-Model Architecture** - deepseek-chat (8k) for orchestration & tools, deepseek-reasoner (64k) for complex generation
-- **Intelligent Model Routing** - ModelRouter automatically selects chat or reasoner based on task complexity and context size
-- **Hybrid Memory System** - SQLite + Qdrant with multi-head embeddings (semantic, code, summary, documents, relationships)
+### Core System
+- **GPT 5.1 Integration** - Single-model architecture with variable reasoning effort (minimum/medium/high)
+- **Budget Tracking** - Daily/monthly spending limits with per-request cost tracking
+- **LLM Response Cache** - SHA-256 keyed cache targeting 80%+ hit rate
 - **Real-time Streaming** - WebSocket-based bidirectional communication with cancellation support
-- **Context-Aware** - Gathers recent messages, semantic search results, file trees, and code intelligence
-- **Git Integration** - Clone, import, sync repositories; file tree navigation; diff parsing; **10 analysis tools** (history, blame, diff, branches, contributors, status, commit inspection)
-- **Code Intelligence** - AST-based parsing (Rust/TypeScript); **12 intelligence tools** (find functions/classes, semantic search, complexity analysis, quality issues, dependency tracking, test discovery)
-- **Operation Tracking** - Complex multi-step workflows with lifecycle management (PENDING → STARTED → DELEGATING → GENERATING → COMPLETED)
-- **Artifact Management** - Code blocks from LLM can be saved/applied to files via Monaco editor
-- **Integrated Terminal** - xterm.js terminal emulator with real-time PTY-based shell execution in right-side panel
+- **Operation Tracking** - Complex multi-step workflows with lifecycle management
 
-## Recent Improvements (November 2025)
+### Memory System
+- **Hybrid Storage** - SQLite (50+ tables) + Qdrant (3 collections)
+- **Multi-head Embeddings** - Separate vectors for code, conversation, and git content
+- **Recall Engine** - Combines recent messages + semantic search + rolling summaries
+- **Message Analysis** - Automatic extraction of mood, intent, topics, salience
 
-### Session 8: Test Suite Fixes & Accessibility
-- **Test Pass Rate Improvement** - Fixed 31 failing tests, improved pass rate from 90% to 96% (344/358 passing)
-- **Toast Testing** - Updated tests to verify global addToast calls instead of local DOM elements
-- **Accessibility Improvements** - Added proper label-input associations (htmlFor/id) in CreateProjectModal and DeleteConfirmModal
-- **WebSocket Store Fix** - Disabled auto-connect in test environment to prevent interference with fake timers
-- **Test Infrastructure** - Improved WebSocket mocks with property setters, better console mocking
-- **Strategic Test Skipping** - Skipped 8 complex WebSocket integration tests requiring deeper mock refactor
-- **6 files modified** - ArtifactPanel tests, CreateProjectModal component/tests, DeleteConfirmModal tests, WebSocket store, integration tests
+### Code Intelligence (Milestone 2 Complete)
+- **Semantic Graph** - Purpose, concepts, and domain labels for every code symbol
+- **Call Graph** - Explicit caller-callee relationships with impact analysis
+- **Design Pattern Detection** - Factory, Repository, Builder, Observer, etc.
+- **Domain Clustering** - Group related code by semantic similarity
+- **Analysis Caching** - SHA-256 keyed cache for LLM analysis results
 
-### Session 7: Frontend Simplification & Cleanup
-- **Major Code Reduction** - Removed ~1,220 lines (35% reduction): git UI components, duplicate code, complex implementations
-- **ProjectsView Refactoring** - Heavy refactor from 483 to 268 lines (-45%) using custom hooks and modal components
-- **Custom Hooks Pattern** - Created useProjectOperations and useGitOperations hooks for better separation of concerns
-- **Modal Components** - Extracted CreateProjectModal and DeleteConfirmModal for reusability
-- **Toast Centralization** - Removed duplicate toast implementation, unified on global addToast
-- **Better Async Handling** - Progress toasts and optimized delays in git operations
-- **State Cleanup** - Removed write-only gitStatus property
-- **4 files deleted, 4 created, 11 modified** - 3 commits
+### Git Intelligence (Milestone 3 Complete)
+- **Commit Tracking** - Full commit history with file changes and metadata
+- **Co-change Patterns** - Detect files frequently modified together (Jaccard confidence)
+- **Blame Annotations** - Line-level blame with cache invalidation
+- **Author Expertise** - Score developer expertise by file/domain (40% commits + 30% lines + 30% recency)
+- **Historical Fixes** - Link error patterns to past fix commits
 
-### Session 6: Dynamic Reasoning Level Selection (Historical - GPT-5 era)
-- **Context-Aware Reasoning** - Per-request reasoning effort override (low/medium/high)
-- **Strategic Cost Optimization** - High reasoning for planning (better quality), low for simple queries (30-40% cost savings)
-- **Note**: This session predated the migration to DeepSeek-only architecture (Session 14)
+### Tools & Integration
+- **34 Built-in Tools** - File operations, git commands, code analysis, web search, command execution
+- **Git Analysis** - History, blame, diff, branches, contributors, status, commit inspection
+- **Code Analysis** - Find functions/classes, semantic search, complexity analysis, quality issues, test discovery
+- **External Tools** - Web search (DuckDuckGo), URL fetch with markdown conversion, sandboxed shell execution
 
-### Session 5: Planning Mode & Task Tracking (Historical - GPT-5 era)
-- **Two-Phase Execution** - Complex operations (simplicity ≤ 0.7) generate execution plans before tool usage
-- **Task Decomposition** - Plans parsed into numbered tasks, tracked through lifecycle (pending → in_progress → completed/failed)
-- **Real-Time Updates** - WebSocket events for PlanGenerated, TaskCreated, TaskStarted, TaskCompleted, TaskFailed
-- **Database Persistence** - New operation_tasks table and planning fields in operations table
-- **Note**: This session predated the migration to DeepSeek-only architecture (Session 14)
+### Frontend
+- **Real-time Chat** - Streaming responses with cancellation
+- **Activity Panel** - Live view of reasoning, tasks, and tool executions
+- **Monaco Editor** - Embedded code editor for artifacts
+- **File Browser** - Navigate and select files from projects
+- **Project Management** - Create, import, and manage code projects
 
-### Session 4: Git Analysis & Code Intelligence Tools (22 new tools)
-- **10 Git Analysis Tools** - Expose git operations to LLM: history, blame, diff, file history, branches, commit inspection, contributors, status, recent changes
-- **12 Code Intelligence Tools** - AST-powered code analysis: find functions/classes, semantic search, imports, dependencies, complexity hotspots, quality issues, file symbols, test discovery, codebase stats, caller analysis, element definitions
-- **Tool Router Architecture** - Unified routing for file operations, external tools, git, and code intelligence
-- **Direct Execution** - Git commands via tokio::process, code intelligence via existing AST service
-- **Type-Safe Integration** - Proper Option<i32> handling, Arc<CodeIntelligenceService> injection
-- **2,777 lines added** - 4 new modules, 5 modified files, comprehensive tool schemas
+## Upcoming Features
 
-### Session 3: External Tools Integration (3 new tools)
-- **Web Search** - DuckDuckGo API integration with structured results
-- **URL Fetch** - HTTP client with content extraction and markdown conversion
-- **Command Execution** - Sandboxed shell commands with timeout and output capture
-- **External Handlers** - Dedicated module for non-file, non-git tools
-- **Tool Router Pattern** - Extended routing architecture for scalability
+### Milestone 4: Tool Synthesis
+- Auto-generate custom tools from codebase patterns
+- Tool compilation and execution sandbox
+- Effectiveness tracking and evolution
 
-### Session 2: Integrated Terminal
-- **Terminal emulator** - xterm.js with real-time I/O and proper VT100 emulation
-- **PTY-based execution** - portable-pty for native shell support
-- **WebSocket streaming** - bidirectional communication with base64 encoding
-- **Right-side panel** - resizable panel with traditional IDE layout
-- **React fixes** - resolved Hooks violation, stale closure issues
-- Note: Session 3 simplified to single terminal (removed multi-session tabs)
+### Milestone 5: Build System Integration
+- Build/test execution tracking
+- Error parsing and deduplication
+- Resolution tracking with historical fix lookup
 
-### Session 1: Comprehensive Codebase Housecleaning (25 tasks)
+### Milestone 6: Reasoning Patterns
+- Store successful coding patterns
+- Pattern matching and replay
+- Success rate tracking and evolution
 
-**Code Quality:**
-- **Eliminated 700+ lines** of duplicated code
-- **Created 14 new focused modules** for better organization
-- **Refactored config system** from 445-line monolith to 7 domain-specific configs
-- **Split prompt builder** from 612 lines into 5 focused modules
-- **Consolidated frontend message handlers** with shared artifact utilities
+### Milestone 7: Context Oracle
+- Unified context gathering from all intelligence systems
+- Budget-aware LLM calls
+- Enhanced recall with semantic graph
 
-**Testing & Documentation:**
-- **Added 62 new tests** (45 frontend + 17 backend) - all passing
-- **Created STATE_BOUNDARIES.md** - frontend architecture documentation
-- **Created test helpers** for cleaner test configuration
-- **Catalogued 20 technical debt items** in ISSUES_TO_CREATE.md
+### Milestone 8: Frontend Integration
+- Semantic search UI
+- Co-change suggestions panel
+- Budget tracking dashboard
+- Tool synthesis dashboard
 
-**Architecture:**
-- **Improved message router** - extracted common patterns, reduced duplication
-- **Better error handling** - proper logging instead of silent failures
-- **Simplified state management** - removed unused state, clearer boundaries
-- **Tool builder pattern** - DRY code for LLM tool definitions
-
-See **[HOUSECLEANING_SUMMARY.md](./HOUSECLEANING_SUMMARY.md)** for Session 1 details and **[PROGRESS.md](./PROGRESS.md)** for complete session history.
+### Milestone 9: Production Hardening
+- Performance optimization
+- Comprehensive logging
+- Deployment documentation
 
 ## Prerequisites
 
 ### Backend
-- **Rust 1.75+** (install via [rustup](https://rustup.rs/))
+- **Rust 1.91** (target version)
 - **SQLite 3.35+**
-- **Qdrant** vector database running on `localhost:6333`
-- **API Keys**: DeepSeek (primary LLM), OpenAI (embeddings only)
+- **Qdrant** running on `localhost:6334` (gRPC)
+- **API Keys**: OpenAI (GPT 5.1 + embeddings)
 
 ### Frontend
 - **Node.js 18+**
@@ -185,8 +159,11 @@ See **[HOUSECLEANING_SUMMARY.md](./HOUSECLEANING_SUMMARY.md)** for Session 1 det
 ### 1. Start Qdrant (Vector Database)
 
 ```bash
-# Using Docker
-docker run -p 6333:6333 qdrant/qdrant:latest
+# Using the bundled binary
+./backend/bin/qdrant --config-path ./backend/config/qdrant.yaml
+
+# Or using Docker
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
 ```
 
 ### 2. Setup Backend
@@ -200,9 +177,7 @@ cargo build
 # Configure environment
 cp .env.example .env
 # Edit .env with your API keys:
-#   - OPENAI_API_KEY
-#   - DEEPSEEK_API_KEY
-#   - QDRANT_URL (default: http://localhost:6333)
+#   - OPENAI_API_KEY (for GPT 5.1 and embeddings)
 
 # Run database migrations
 sqlx migrate run
@@ -223,7 +198,7 @@ npm install
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173` and will proxy WebSocket connections to the backend on port 3001.
+The frontend will be available at `http://localhost:5173`.
 
 ## Development Commands
 
@@ -238,8 +213,8 @@ RUST_LOG=debug cargo run     # With debug logging
 cargo watch -x run           # Hot reload (requires cargo-watch)
 
 # Testing
-cargo test                   # Run all tests
-cargo test --test operation_engine_test  # Specific test
+cargo test                   # Run all tests (127+ tests)
+cargo test --test git_intelligence_test  # Specific test
 cargo test -- --nocapture    # With output
 
 # Code quality
@@ -283,39 +258,31 @@ MIRA_ENV=development
 
 # Database
 DATABASE_URL=sqlite://mira.db
-QDRANT_URL=http://localhost:6333
+QDRANT_URL=http://localhost:6334
 
-# DeepSeek (Primary LLM)
-USE_DEEPSEEK_CODEGEN=true
-DEEPSEEK_API_KEY=sk-...
-DEEPSEEK_CHAT_MODEL=deepseek-chat
-DEEPSEEK_REASONER_MODEL=deepseek-reasoner
-DEEPSEEK_CHAT_MAX_TOKENS=8192
-DEEPSEEK_REASONER_MAX_TOKENS=65536
-
-# OpenAI (Embeddings Only)
+# OpenAI (GPT 5.1 + Embeddings)
 OPENAI_API_KEY=sk-...
+GPT5_MODEL=gpt-5.1
+GPT5_REASONING_DEFAULT=medium
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
 
-# Memory
-SALIENCE_MIN_FOR_EMBED=0.6
-MAX_RECALLED_MESSAGES=10
-USE_ROLLING_SUMMARIES=true
-```
+# Budget Management
+BUDGET_DAILY_LIMIT_USD=5.0
+BUDGET_MONTHLY_LIMIT_USD=150.0
 
-See `backend/.env.example` for complete configuration options.
+# Cache Configuration
+CACHE_ENABLED=true
+CACHE_TTL_SECONDS=86400
+```
 
 ## Documentation
 
-### Development & Architecture
 - **[CLAUDE.md](./CLAUDE.md)** - Guide for AI assistants working with this codebase
-- **[PROGRESS.md](./PROGRESS.md)** - Detailed session-by-session development progress with technical decisions
-- **[ROADMAP.md](./ROADMAP.md)** - Project roadmap and planned features
-- **[frontend/docs/STATE_BOUNDARIES.md](./frontend/docs/STATE_BOUNDARIES.md)** - Frontend state management architecture
-
-### Project Management
-- **[HOUSECLEANING_SUMMARY.md](./HOUSECLEANING_SUMMARY.md)** - Recent codebase refactoring (Nov 2025)
-- **[ISSUES_TO_CREATE.md](./ISSUES_TO_CREATE.md)** - Catalogued technical debt and improvements
+- **[backend/WHITEPAPER.md](./backend/WHITEPAPER.md)** - Technical architecture reference
+- **[SESSION.md](./SESSION.md)** - Development session history
+- **[ROADMAP.md](./ROADMAP.md)** - Project roadmap and milestone details
+- **[PROGRESS.md](./PROGRESS.md)** - Detailed technical progress log
+- **[frontend/docs/STATE_BOUNDARIES.md](./frontend/docs/STATE_BOUNDARIES.md)** - Frontend state management
 
 ## Technology Stack
 
@@ -325,8 +292,7 @@ See `backend/.env.example` for complete configuration options.
 - **Async Runtime**: Tokio
 - **Database**: SQLite (with sqlx)
 - **Vector DB**: Qdrant (with qdrant-client)
-- **LLM APIs**: DeepSeek (chat + reasoner), OpenAI (embeddings only)
-- **Git**: git2 (libgit2 bindings)
+- **LLM**: OpenAI GPT 5.1 + text-embedding-3-large
 
 ### Frontend
 - **Language**: TypeScript
@@ -336,76 +302,20 @@ See `backend/.env.example` for complete configuration options.
 - **Code Editor**: Monaco Editor
 - **Styling**: Tailwind CSS
 - **Testing**: Vitest + React Testing Library
-- **WebSocket**: Native WebSocket API
-
-## Architecture Highlights
-
-### Operation Engine
-Complex workflows are tracked through state transitions:
-```
-PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
-                                               ↓
-                                          FAILED
-```
-
-### Memory System
-Three-tier memory architecture:
-1. **Recent Memory** - Last N messages (chronological)
-2. **Semantic Memory** - Vector search across 5 embedding heads
-3. **Rolling Summaries** - Compressed context (10-msg and 100-msg windows)
-
-### Embedding Heads
-- `semantic` - General conversation
-- `code` - Programming content
-- `summary` - Conversation summaries
-- `documents` - Project documentation
-- `relationship` - User preferences and patterns
 
 ## Testing
 
-- **Backend**: 18 test suites, 144+ tests (including 17 new tool builder tests)
-- **Frontend**: 18 test files, 358 tests total, **344 passing (96% pass rate)**
-  - Component tests: ArtifactPanel, modals, chat components
-  - Integration tests: WebSocket error handling, state management
-  - Unit tests: Artifact utilities, language detection, custom hooks
-- **Test Coverage**: Critical paths for artifact creation, tool building, message routing, toast notifications, accessibility
-- **Test Helpers**: Shared utilities for API key configuration in `backend/tests/common/`
-- **Recent Improvements**: Session 8 fixed 31 tests, improved accessibility, fixed WebSocket test infrastructure
+- **Backend**: 127+ tests across 17 test suites
+- **Frontend**: 350+ tests with 96% pass rate
+- Run all tests:
 
-Run all tests:
 ```bash
-# Backend (all tests)
-cd backend && cargo test
+# Backend
+cd backend && DATABASE_URL="sqlite://mira.db" cargo test
 
-# Backend (specific test suite)
-cargo test --test tool_builder_test
-
-# Frontend (all tests)
+# Frontend
 cd frontend && npm test
-
-# Frontend (specific test)
-npm test -- src/utils/__tests__/artifact.test.ts
-
-# Frontend (watch mode)
-npm run test:watch
 ```
-
-## Troubleshooting
-
-**Backend won't start:**
-- Ensure Qdrant is running on `localhost:6333`
-- Check SQLite database permissions
-- Verify API keys in `.env`
-
-**Frontend can't connect:**
-- Ensure backend is running on port 3001
-- Check browser console for WebSocket errors
-- Verify proxy configuration in `vite.config.js`
-
-**Memory/embedding issues:**
-- Check `SALIENCE_MIN_FOR_EMBED` threshold
-- Verify Qdrant collections are created
-- Run `backend/scripts/reset_embeddings.sh` if needed
 
 ## License
 
@@ -414,6 +324,6 @@ Proprietary
 ## Support
 
 For issues or questions:
-1. Review [PROGRESS.md](./PROGRESS.md) for technical decisions and troubleshooting notes
+1. Review [PROGRESS.md](./PROGRESS.md) for technical decisions and troubleshooting
 2. Check [ISSUES_TO_CREATE.md](./ISSUES_TO_CREATE.md) for known technical debt
 3. Open an issue with detailed reproduction steps

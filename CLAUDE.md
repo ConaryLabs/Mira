@@ -194,7 +194,7 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 - **Stable Crates Only** (always use current stable versions of all dependencies)
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
-- **Qdrant** running on `localhost:6333` (vector database)
+- **Qdrant** running on `localhost:6334` (gRPC) or `localhost:6333` (HTTP)
 - **API Keys**: OpenAI (GPT 5.1 + embeddings)
 
 ## Environment Setup
@@ -211,8 +211,8 @@ MIRA_ENV=development
 # Database
 DATABASE_URL=sqlite://mira.db
 
-# Qdrant
-QDRANT_URL=http://localhost:6333
+# Qdrant (gRPC port)
+QDRANT_URL=http://localhost:6334
 
 # OpenAI (GPT 5.1 + Embeddings)
 OPENAI_API_KEY=sk-...
@@ -258,27 +258,26 @@ Operations are complex multi-step workflows tracked through state transitions. W
 
 1. Define operation kind in `src/operations/types.rs` (`operation_kinds`)
 2. Update operation engine in `src/operations/engine/orchestration.rs`
-3. Add tool schemas in `src/operations/delegation_tools.rs`
-4. Update DeepSeekOrchestrator in `src/operations/engine/deepseek_orchestrator.rs`
+3. Add tool schemas in `src/operations/delegation_tools.rs` (use `get_gpt5_tools()`)
+4. Update context building in `src/operations/engine/context.rs`
 5. Emit events via channels for real-time frontend updates
 
-**Critical**: The `OperationEngine::new()` constructor requires 7 parameters:
-```rust
-OperationEngine::new(
-    db: Arc<SqlitePool>,
-    deepseek: DeepSeekProvider,
-    memory_service: Arc<MemoryService>,
-    relationship_service: Arc<RelationshipService>,
-    git_client: GitClient,
-    code_intelligence: Arc<CodeIntelligenceService>,
-    sudo_service: Option<Arc<SudoPermissionService>>,
-)
+**Tool Schema Format** (OpenAI Chat Completions API):
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "tool_name",
+    "description": "What the tool does",
+    "parameters": { ... }
+  }
+}
 ```
 
 ## Common Pitfalls
 
 1. **Backend port confusion**: The backend runs on port **3001**, not 8080 (some old docs/comments say 8080)
-2. **Qdrant dependency**: Many features require Qdrant running on `localhost:6333`
+2. **Qdrant dependency**: Many features require Qdrant running on `localhost:6334` (gRPC)
 3. **SQLite WAL mode**: Enable with `PRAGMA journal_mode=WAL` for better concurrency
 4. **Test isolation**: Backend tests use in-memory databases; don't rely on persistent state
 5. **WebSocket protocols**: Two coexisting protocols (legacy chat + operations) - don't confuse them
@@ -304,7 +303,7 @@ Repositories stored in `backend/repos/` (or `backend/test_repos/` for tests).
 
 **Storage locations:**
 - SQLite: `backend/mira.db` (messages, operations, artifacts)
-- Qdrant: Vector embeddings across 5 collections
+- Qdrant: Vector embeddings across 3 collections (code, conversation, git)
 - Git repos: `backend/repos/`
 - Documents: `backend/storage/documents/`
 
@@ -321,7 +320,7 @@ RUST_LOG=mira_backend::operations=trace cargo run
 # Check database
 sqlite3 backend/mira.db "SELECT * FROM operations ORDER BY created_at DESC LIMIT 10;"
 
-# Check Qdrant
+# Check Qdrant (HTTP API)
 curl http://localhost:6333/health
 curl http://localhost:6333/collections
 ```
