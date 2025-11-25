@@ -26,6 +26,9 @@ pub mod relationship;
 // Milestone 4 - Tool synthesis system
 pub mod synthesis;
 
+// Milestone 5 - Build system integration
+pub mod build;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;
