@@ -73,7 +73,6 @@ CREATE TABLE IF NOT EXISTS blame_annotations (
     file_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     UNIQUE(project_id, file_path, line_number, file_hash),
-    FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
@@ -126,7 +125,6 @@ CREATE TABLE IF NOT EXISTS historical_fixes (
     similarity_hash TEXT NOT NULL,
     embedding_point_id TEXT,
     created_at INTEGER NOT NULL,
-    FOREIGN KEY (fix_commit_hash) REFERENCES git_commits(commit_hash),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 

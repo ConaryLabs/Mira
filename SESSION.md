@@ -994,4 +994,146 @@ Added `#[ignore = "requires Qdrant"]` to 65 tests that require external Qdrant s
 
 ---
 
+## Session 8: Milestone 3 - Git Intelligence Implementation (2025-11-25)
+
+### Goals
+- Implement Milestone 3: Git Intelligence features
+- Create commit tracking, co-change patterns, blame management, expertise scoring, and historical fix matching modules
+- Integrate git intelligence modules with existing git module
+
+### Work Completed
+
+#### 1. Created Git Intelligence Module Structure
+
+**New File**: `backend/src/git/intelligence/mod.rs`
+- Module declarations and re-exports for all git intelligence services
+- Exports: `BlameAnnotation`, `BlameService`, `CochangePattern`, `CochangeService`, `CochangeSuggestion`, `CommitService`, `GitCommit`, `CommitFileChange`, `AuthorExpertise`, `ExpertiseService`, `ExpertiseQuery`, `HistoricalFix`, `FixService`, `FixMatch`
+
+#### 2. Commit Tracking
+
+**New File**: `backend/src/git/intelligence/commits.rs` (~520 lines)
+- `GitCommit` struct with full metadata (hash, author, message, file changes, timestamps)
+- `CommitFileChange` struct for tracking additions/modifications/deletions
+- `FileChangeType` enum (Added, Modified, Deleted, Renamed, Copied)
+- `CommitService` for CRUD operations:
+  - `index_commit()` - Store commits with file changes as JSON
+  - `get_commit()`, `get_commits_by_author()`, `get_commits_for_file()`
+  - `get_recent_commits()`, `query_commits()` with flexible filtering
+  - `get_stats()` - Project-wide commit statistics
+
+#### 3. Co-Change Pattern Detection
+
+**New File**: `backend/src/git/intelligence/cochange.rs` (~440 lines)
+- `CochangePattern` struct tracking files that change together
+- `CochangeSuggestion` for file recommendations
+- `CochangeConfig` for tuning (min_cochanges, min_confidence, max_patterns)
+- `CochangeService` with:
+  - `analyze_project()` - Build patterns from commit history
+  - Jaccard coefficient for confidence scoring: `count / (a + b - count)`
+  - `get_suggestions()` - Recommend related files
+  - `get_patterns()`, `get_high_confidence_patterns()`, `get_patterns_for_file()`
+
+#### 4. Blame Annotation Management
+
+**New File**: `backend/src/git/intelligence/blame.rs` (~510 lines)
+- `BlameAnnotation` struct for line-level blame data
+- `BlameFileSummary`, `BlameAuthorStats` for file analysis
+- `BlameRange` for contiguous line grouping
+- `BlameService` with:
+  - `compute_file_hash()` - SHA-256 for cache invalidation
+  - `store_annotations()`, `get_file_blame()`, `get_line_range_blame()`
+  - `get_file_summary()` - Author statistics per file
+  - `get_blame_ranges()` - Contiguous ranges by commit/author
+  - `get_line_author()` - Who last modified a specific line
+  - `is_blame_current()` - Cache validity check
+
+#### 5. Author Expertise Scoring
+
+**New File**: `backend/src/git/intelligence/expertise.rs` (~470 lines)
+- `AuthorExpertise` struct with scoring metadata
+- `ExpertRecommendation`, `ExpertiseQuery`, `ExpertiseStats` structs
+- Scoring algorithm: **40% commits + 30% lines + 30% recency** (365-day decay)
+- `ExpertiseService` with:
+  - `analyze_project()` - Build expertise from commit history
+  - `find_experts_for_file()` - Find experts for specific files
+  - `find_experts_for_domain()` - Find domain experts
+  - `get_top_experts()` - Project-wide top contributors
+  - `get_author_expertise()` - Individual author details
+  - `get_stats()` - Expertise statistics
+
+#### 6. Historical Fix Matching
+
+**New File**: `backend/src/git/intelligence/fixes.rs` (~750 lines)
+- `HistoricalFix` struct for storing fix information
+- `FixMatch` for returning similar fixes with similarity scores
+- `ErrorCategory` enum (CompileError, RuntimeError, TypeMismatch, NullReference, BoundsError, ImportError, SyntaxError, LogicError, ConfigError, DependencyError, TestFailure, Unknown)
+- `FixMatchConfig` for tuning (min_similarity, max_matches, category_boost, file_boost)
+- `FixService` with:
+  - `compute_similarity_hash()` - SHA-256 of normalized error pattern
+  - `normalize_error_pattern()` - Remove variable parts (paths, numbers, quoted strings)
+  - `classify_error()` - Keyword-based error classification
+  - `record_fix()`, `extract_fix_from_commit()` - Store fixes
+  - `find_similar_fixes()` - Match errors to historical fixes
+  - Pattern similarity using word overlap (Jaccard)
+  - `get_fix()`, `get_fix_by_commit()`, `get_project_fixes()`, `get_recent_fixes()`
+  - `get_stats()` - Fix statistics by category
+
+#### 7. Module Integration
+
+**File Modified**: `backend/src/git/mod.rs`
+- Added `pub mod intelligence;`
+- Added `pub use intelligence::*;`
+
+#### 8. Database Schema Fixes
+
+**File Modified**: `backend/migrations/20251125000003_git_intelligence.sql`
+- Removed foreign key constraint `FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash)` from `blame_annotations`
+- Removed foreign key constraint `FOREIGN KEY (fix_commit_hash) REFERENCES git_commits(commit_hash)` from `historical_fixes`
+- These constraints failed because `commit_hash` is only unique in combination with `project_id`
+
+### Technical Decisions
+
+1. **File Changes as JSON**: `CommitService` stores file changes as JSON string in `file_changes` column for flexibility
+
+2. **Jaccard Confidence**: Co-change confidence = `cochange_count / (changes_a + changes_b - cochange_count)` provides intuitive 0-1 range
+
+3. **Expertise Scoring**:
+   - 40% based on commit count (contribution frequency)
+   - 30% based on lines changed (contribution size)
+   - 30% based on recency (365-day exponential decay)
+
+4. **Error Pattern Normalization**: Remove paths, numbers, quoted strings before hashing to match similar errors regardless of variable details
+
+5. **SHA-256 Hashing**: Used for blame cache invalidation (file content) and fix similarity (error pattern)
+
+6. **SQLx Type Handling**: Extensive work to handle sqlx's type inference for aggregate functions (SUM, MAX, GROUP_CONCAT) vs direct column selects
+
+### Files Created/Modified
+
+**Created**:
+- backend/src/git/intelligence/mod.rs
+- backend/src/git/intelligence/commits.rs (~520 lines)
+- backend/src/git/intelligence/cochange.rs (~440 lines)
+- backend/src/git/intelligence/blame.rs (~510 lines)
+- backend/src/git/intelligence/expertise.rs (~470 lines)
+- backend/src/git/intelligence/fixes.rs (~750 lines)
+
+**Modified**:
+- backend/src/git/mod.rs (added intelligence module)
+- backend/migrations/20251125000003_git_intelligence.sql (removed problematic foreign keys)
+
+### Build Status
+
+**Compilation**: Successfully compiles with warnings only
+**Tests**: All 127+ tests passing
+
+### Statistics
+
+- **New Files**: 6
+- **Lines Added**: ~2,700+ lines
+- **Test Status**: All tests passing
+- **Duration**: ~2 hours
+
+---
+
 **Last Updated**: 2025-11-25
