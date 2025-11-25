@@ -1,98 +1,64 @@
 // src/operations/external_tools.rs
 // External tool schemas for web search, URL fetching, and command execution
 
-use serde_json::{json, Value};
+use serde_json::Value;
+
+use crate::operations::tool_builder::{properties, ToolBuilder};
 
 /// Get all external operation tool schemas
 pub fn get_external_tools() -> Vec<Value> {
     vec![
-        web_search_internal_tool(),
-        fetch_url_internal_tool(),
-        execute_command_internal_tool(),
+        web_search(),
+        fetch_url(),
+        execute_command(),
     ]
 }
 
-/// Internal web search tool
-fn web_search_internal_tool() -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "web_search_internal",
-            "description": "Search the web for information. Returns search results with titles, URLs, and snippets.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query"
-                    },
-                    "num_results": {
-                        "type": "string",
-                        "description": "Number of results (default: 5)"
-                    },
-                    "search_type": {
-                        "type": "string",
-                        "enum": ["general", "documentation", "stackoverflow", "github"],
-                        "description": "Type of search to perform"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    })
+/// Search the web for information
+fn web_search() -> Value {
+    ToolBuilder::new(
+        "web_search",
+        "Search the web for information. Returns search results with titles, URLs, and snippets.",
+    )
+    .property("query", properties::query("Search query"), true)
+    .property("num_results", properties::integer("Number of results to return", Some(5)), false)
+    .property(
+        "search_type",
+        properties::enum_string(
+            "Type of search to perform",
+            &["general", "documentation", "stackoverflow", "github"],
+        ),
+        false,
+    )
+    .build()
 }
 
-/// Internal URL fetch tool
-fn fetch_url_internal_tool() -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "fetch_url_internal",
-            "description": "Fetch content from a URL and extract text/code. Returns the extracted content.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Full URL to fetch"
-                    },
-                    "extract_mode": {
-                        "type": "string",
-                        "enum": ["full", "main_content", "code_blocks"],
-                        "description": "What content to extract"
-                    }
-                },
-                "required": ["url"]
-            }
-        }
-    })
+/// Fetch content from a URL
+fn fetch_url() -> Value {
+    ToolBuilder::new(
+        "fetch_url",
+        "Fetch content from a URL and extract text/code. Returns the extracted content.",
+    )
+    .property("url", properties::url("Full URL to fetch"), true)
+    .property(
+        "extract_mode",
+        properties::enum_string(
+            "What content to extract",
+            &["full", "main_content", "code_blocks"],
+        ),
+        false,
+    )
+    .build()
 }
 
-/// Internal command execution tool
-fn execute_command_internal_tool() -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": "execute_command_internal",
-            "description": "Execute a shell command and return the output. Use for build commands, tests, version checks, etc.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute"
-                    },
-                    "working_directory": {
-                        "type": "string",
-                        "description": "Working directory (relative to project root)"
-                    },
-                    "timeout_seconds": {
-                        "type": "string",
-                        "description": "Timeout in seconds (default: 30)"
-                    }
-                },
-                "required": ["command"]
-            }
-        }
-    })
+/// Execute a shell command
+fn execute_command() -> Value {
+    ToolBuilder::new(
+        "execute_command",
+        "Execute a shell command and return the output. Use for build commands, tests, version checks, etc.",
+    )
+    .property("command", properties::string("Shell command to execute"), true)
+    .property("working_directory", properties::path("Working directory (relative to project root)"), false)
+    .property("timeout_seconds", properties::integer("Timeout in seconds", Some(30)), false)
+    .build()
 }

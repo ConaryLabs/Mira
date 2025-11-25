@@ -23,6 +23,9 @@ pub mod utils;
 pub mod operations;
 pub mod relationship;
 
+// Milestone 4 - Tool synthesis system
+pub mod synthesis;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;
