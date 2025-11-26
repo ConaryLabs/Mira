@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "project_id",
@@ -21,7 +21,7 @@
       {
         "name": "element_id",
         "ordinal": 3,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "issue_type",
@@ -51,12 +51,12 @@
       {
         "name": "line_start",
         "ordinal": 9,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "line_end",
         "ordinal": 10,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "suggested_fix",
@@ -86,17 +86,17 @@
       {
         "name": "detected_at",
         "ordinal": 16,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "created_at",
         "ordinal": 17,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "resolved_at",
         "ordinal": 18,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

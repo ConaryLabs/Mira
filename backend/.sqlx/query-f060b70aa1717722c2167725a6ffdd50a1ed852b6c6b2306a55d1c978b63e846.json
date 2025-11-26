@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT author_name, author_email,\n                   SUM(expertise_score) as \"total_score: f64\",\n                   SUM(commit_count) as \"total_commits: i64\",\n                   MAX(last_contribution) as \"last_active: i64\",\n                   GROUP_CONCAT(file_pattern) as \"patterns: String\"\n            FROM author_expertise\n            WHERE project_id = ?\n            GROUP BY author_email\n            ORDER BY 3 DESC\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "author_name",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "author_email",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "total_score: f64",
+        "ordinal": 2,
+        "type_info": "Null"
+      },
+      {
+        "name": "total_commits: i64",
+        "ordinal": 3,
+        "type_info": "Null"
+      },
+      {
+        "name": "last_active: i64",
+        "ordinal": 4,
+        "type_info": "Null"
+      },
+      {
+        "name": "patterns: String",
+        "ordinal": 5,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "f060b70aa1717722c2167725a6ffdd50a1ed852b6c6b2306a55d1c978b63e846"
+}

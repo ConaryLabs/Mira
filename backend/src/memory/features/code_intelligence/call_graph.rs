@@ -96,7 +96,7 @@ impl CallGraphService {
         .await?;
 
         Ok(CallEdge {
-            id: Some(result.id),
+            id: result.id,
             caller_id,
             callee_id,
             call_line,
@@ -240,7 +240,7 @@ impl CallGraphService {
         Ok(rows
             .into_iter()
             .map(|r| CallEdge {
-                id: Some(r.id),
+                id: r.id,
                 caller_id: r.caller_id,
                 callee_id: r.callee_id,
                 call_line: r.call_line,

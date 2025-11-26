@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"count: i64\" FROM git_commits WHERE project_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5a8f6da4070833a0584daecdf6dd013f5563986ab9f2b4077187a44a0bd778fb"
+}

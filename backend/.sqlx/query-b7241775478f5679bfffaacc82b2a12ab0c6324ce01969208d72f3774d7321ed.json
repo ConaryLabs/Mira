@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "project_id",
@@ -16,7 +16,7 @@
       {
         "name": "file_id",
         "ordinal": 2,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "file_path",
@@ -51,22 +51,22 @@
       {
         "name": "start_line",
         "ordinal": 9,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "end_line",
         "ordinal": 10,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "line_start",
         "ordinal": 11,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "line_end",
         "ordinal": 12,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "content",
@@ -91,7 +91,7 @@
       {
         "name": "parent_id",
         "ordinal": 17,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "complexity_score",
@@ -121,17 +121,17 @@
       {
         "name": "analyzed_at",
         "ordinal": 23,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "created_at",
         "ordinal": 24,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "updated_at",
         "ordinal": 25,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

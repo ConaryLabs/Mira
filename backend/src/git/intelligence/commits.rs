@@ -444,20 +444,20 @@ impl CommitService {
     /// Get commit statistics for a project
     pub async fn get_stats(&self, project_id: &str) -> Result<CommitStats> {
         let total_commits: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) as count FROM git_commits WHERE project_id = ?",
+            r#"SELECT COUNT(*) as "count: i64" FROM git_commits WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(&self.pool)
-        .await? as i64;
+        .await?;
 
         let stats_row = sqlx::query!(
             r#"
             SELECT
-                COALESCE(SUM(insertions), 0) as total_insertions,
-                COALESCE(SUM(deletions), 0) as total_deletions,
-                COUNT(DISTINCT author_email) as unique_authors,
-                MIN(authored_at) as first_commit,
-                MAX(authored_at) as last_commit
+                COALESCE(SUM(insertions), 0) as "total_insertions: i64",
+                COALESCE(SUM(deletions), 0) as "total_deletions: i64",
+                COUNT(DISTINCT author_email) as "unique_authors: i64",
+                MIN(authored_at) as "first_commit: i64",
+                MAX(authored_at) as "last_commit: i64"
             FROM git_commits
             WHERE project_id = ?
             "#,
@@ -468,9 +468,9 @@ impl CommitService {
 
         Ok(CommitStats {
             total_commits,
-            total_insertions: stats_row.total_insertions as i64,
-            total_deletions: stats_row.total_deletions as i64,
-            unique_authors: stats_row.unique_authors as i64,
+            total_insertions: stats_row.total_insertions,
+            total_deletions: stats_row.total_deletions,
+            unique_authors: stats_row.unique_authors,
             files_changed: 0, // Would need separate calculation
             first_commit: stats_row.first_commit,
             last_commit: stats_row.last_commit,

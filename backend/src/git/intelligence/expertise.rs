@@ -270,14 +270,14 @@ impl ExpertiseService {
         let rows = sqlx::query!(
             r#"
             SELECT author_name, author_email,
-                   SUM(expertise_score) as total_score,
-                   SUM(commit_count) as total_commits,
-                   MAX(last_contribution) as last_active,
-                   GROUP_CONCAT(file_pattern) as patterns
+                   SUM(expertise_score) as "total_score: f64",
+                   SUM(commit_count) as "total_commits: i64",
+                   MAX(last_contribution) as "last_active: i64",
+                   GROUP_CONCAT(file_pattern) as "patterns: String"
             FROM author_expertise
             WHERE project_id = ? AND domain = ?
             GROUP BY author_email
-            ORDER BY total_score DESC
+            ORDER BY 3 DESC
             LIMIT ?
             "#,
             project_id,
@@ -289,17 +289,15 @@ impl ExpertiseService {
 
         Ok(rows
             .into_iter()
-            .filter_map(|r| {
-                let author_name = r.author_name?;
-                let author_email = r.author_email?;
-                Some(ExpertRecommendation {
-                    author_name,
-                    author_email,
-                    expertise_score: r.total_score,
-                    commit_count: r.total_commits,
-                    last_active: r.last_active,
-                    matching_patterns: r.patterns.split(',').map(String::from).collect(),
-                })
+            .map(|r| {
+                ExpertRecommendation {
+                    author_name: r.author_name,
+                    author_email: r.author_email,
+                    expertise_score: r.total_score.unwrap_or(0.0),
+                    commit_count: r.total_commits.unwrap_or(0),
+                    last_active: r.last_active.unwrap_or(0),
+                    matching_patterns: r.patterns.map(|p| p.split(',').map(String::from).collect()).unwrap_or_default(),
+                }
             })
             .collect())
     }
@@ -313,14 +311,14 @@ impl ExpertiseService {
         let rows = sqlx::query!(
             r#"
             SELECT author_name, author_email,
-                   SUM(expertise_score) as total_score,
-                   SUM(commit_count) as total_commits,
-                   MAX(last_contribution) as last_active,
-                   GROUP_CONCAT(file_pattern) as patterns
+                   SUM(expertise_score) as "total_score: f64",
+                   SUM(commit_count) as "total_commits: i64",
+                   MAX(last_contribution) as "last_active: i64",
+                   GROUP_CONCAT(file_pattern) as "patterns: String"
             FROM author_expertise
             WHERE project_id = ?
             GROUP BY author_email
-            ORDER BY total_score DESC
+            ORDER BY 3 DESC
             LIMIT ?
             "#,
             project_id,
@@ -331,17 +329,15 @@ impl ExpertiseService {
 
         Ok(rows
             .into_iter()
-            .filter_map(|r| {
-                let author_name = r.author_name?;
-                let author_email = r.author_email?;
-                Some(ExpertRecommendation {
-                    author_name,
-                    author_email,
-                    expertise_score: r.total_score,
-                    commit_count: r.total_commits,
-                    last_active: r.last_active,
-                    matching_patterns: r.patterns.split(',').map(String::from).collect(),
-                })
+            .map(|r| {
+                ExpertRecommendation {
+                    author_name: r.author_name,
+                    author_email: r.author_email,
+                    expertise_score: r.total_score.unwrap_or(0.0),
+                    commit_count: r.total_commits.unwrap_or(0),
+                    last_active: r.last_active.unwrap_or(0),
+                    matching_patterns: r.patterns.map(|p| p.split(',').map(String::from).collect()).unwrap_or_default(),
+                }
             })
             .collect())
     }
@@ -390,21 +386,21 @@ impl ExpertiseService {
     /// Get expertise statistics for a project
     pub async fn get_stats(&self, project_id: &str) -> Result<ExpertiseStats> {
         let total_authors: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(DISTINCT author_email) as count FROM author_expertise WHERE project_id = ?",
+            r#"SELECT COUNT(DISTINCT author_email) as "count: i64" FROM author_expertise WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(&self.pool)
-        .await? as i64;
+        .await?;
 
         let total_patterns: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(DISTINCT file_pattern) as count FROM author_expertise WHERE project_id = ?",
+            r#"SELECT COUNT(DISTINCT file_pattern) as "count: i64" FROM author_expertise WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(&self.pool)
-        .await? as i64;
+        .await?;
 
         let avg_score: f64 = sqlx::query_scalar!(
-            "SELECT COALESCE(AVG(expertise_score), 0.0) as avg FROM author_expertise WHERE project_id = ?",
+            r#"SELECT COALESCE(AVG(expertise_score), 0.0) as "avg: f64" FROM author_expertise WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(&self.pool)
@@ -412,11 +408,11 @@ impl ExpertiseService {
 
         let top_rows = sqlx::query!(
             r#"
-            SELECT author_email, SUM(expertise_score) as total_score
+            SELECT author_email, SUM(expertise_score) as "total_score: f64"
             FROM author_expertise
             WHERE project_id = ?
             GROUP BY author_email
-            ORDER BY total_score DESC
+            ORDER BY 2 DESC
             LIMIT 5
             "#,
             project_id
@@ -426,7 +422,7 @@ impl ExpertiseService {
 
         let top_contributors: Vec<(String, f64)> = top_rows
             .into_iter()
-            .map(|r| (r.author_email, r.total_score))
+            .map(|r| (r.author_email, r.total_score.unwrap_or(0.0)))
             .collect();
 
         Ok(ExpertiseStats {

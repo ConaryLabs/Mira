@@ -15,8 +15,7 @@ serde_json = "1.0.117"
 # HTTP client for external APIs (OpenAI, etc)
 reqwest = { version = "0.12.4", features = ["json", "rustls-tls", "stream", "multipart", "blocking"] }
 # Database
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
-libsqlite3-sys = { version = "0.27", features = ["bundled"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
 # Core utilities
 dotenv = "0.15.0"
 tracing = "0.1.40"

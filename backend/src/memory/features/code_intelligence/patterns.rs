@@ -384,7 +384,7 @@ If clearly present, set confidence > 0.7.
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(result.id)
+        Ok(result.id.unwrap_or(0))
     }
 
     /// Get patterns for a project

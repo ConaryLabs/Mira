@@ -6,17 +6,17 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "source_node_id",
         "ordinal": 1,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "target_node_id",
         "ordinal": 2,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "relationship_type",
@@ -36,7 +36,7 @@
       {
         "name": "created_at",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

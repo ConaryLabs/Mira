@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                COUNT(*) as \"total_files: i64\",\n                SUM(CASE WHEN ast_analyzed = TRUE THEN 1 ELSE 0 END) as \"analyzed_files: i64\",\n                SUM(element_count) as \"total_elements: i64\",\n                AVG(complexity_score) as \"avg_complexity: f64\"\n            FROM repository_files\n            WHERE attachment_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "total_files: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "analyzed_files: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      },
+      {
+        "name": "total_elements: i64",
+        "ordinal": 2,
+        "type_info": "Null"
+      },
+      {
+        "name": "avg_complexity: f64",
+        "ordinal": 3,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c5e9ef6b06ff2c816e26b3110986de7ac93f3c3a20bde3f84c30f28b37e154e5"
+}

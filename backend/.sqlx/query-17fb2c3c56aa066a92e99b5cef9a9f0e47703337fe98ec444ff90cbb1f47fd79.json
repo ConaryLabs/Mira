@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT MIN(authored_at) as \"oldest: i64\", MAX(authored_at) as \"newest: i64\"\n            FROM blame_annotations\n            WHERE project_id = ? AND file_path = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "oldest: i64",
+        "ordinal": 0,
+        "type_info": "Null"
+      },
+      {
+        "name": "newest: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "17fb2c3c56aa066a92e99b5cef9a9f0e47703337fe98ec444ff90cbb1f47fd79"
+}

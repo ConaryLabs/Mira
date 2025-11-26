@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "project_id",
@@ -41,12 +41,12 @@
       {
         "name": "authored_at",
         "ordinal": 7,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "committed_at",
         "ordinal": 8,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "parent_hashes",
@@ -61,12 +61,12 @@
       {
         "name": "insertions",
         "ordinal": 11,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "deletions",
         "ordinal": 12,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "embedding_point_id",
@@ -76,7 +76,7 @@
       {
         "name": "indexed_at",
         "ordinal": 14,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

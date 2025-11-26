@@ -189,9 +189,9 @@ async fn count_code_elements(pool: &SqlitePool, project_id: &str) -> Result<Valu
     // FIXED: Use proper JOINs to get to project_id
     let counts = sqlx::query!(
         r#"
-        SELECT 
+        SELECT
             ce.element_type,
-            COUNT(*) as count
+            COUNT(*) as "count: i64"
         FROM code_elements ce
         JOIN repository_files rf ON ce.file_id = rf.id
         JOIN git_repo_attachments gra ON rf.attachment_id = gra.id
@@ -205,7 +205,7 @@ async fn count_code_elements(pool: &SqlitePool, project_id: &str) -> Result<Valu
 
     let mut stats = HashMap::new();
     for row in counts {
-        stats.insert(row.element_type, row.count);
+        stats.insert(row.element_type, row.count.unwrap_or(0));
     }
 
     // FIXED: Use complexity_score (not cyclomatic_complexity) and proper JOINs

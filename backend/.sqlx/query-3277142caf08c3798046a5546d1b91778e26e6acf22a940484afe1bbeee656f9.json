@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "pattern_id",
@@ -41,7 +41,7 @@
       {
         "name": "time_saved_ms",
         "ordinal": 7,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "cost_saved_usd",
@@ -51,7 +51,7 @@
       {
         "name": "used_at",
         "ordinal": 9,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

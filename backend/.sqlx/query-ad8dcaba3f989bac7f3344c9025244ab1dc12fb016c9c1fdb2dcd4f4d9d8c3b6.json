@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "project_id",
@@ -31,12 +31,12 @@
       {
         "name": "modification_time",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "reverted",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

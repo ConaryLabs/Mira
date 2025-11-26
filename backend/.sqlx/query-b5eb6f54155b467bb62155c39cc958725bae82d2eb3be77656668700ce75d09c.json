@@ -6,12 +6,12 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "symbol_id",
         "ordinal": 1,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "purpose",
@@ -46,17 +46,17 @@
       {
         "name": "last_analyzed",
         "ordinal": 8,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "created_at",
         "ordinal": 9,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "updated_at",
         "ordinal": 10,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "strength",
@@ -68,7 +68,7 @@
       "Right": 3
     },
     "nullable": [
-      false,
+      true,
       false,
       false,
       true,

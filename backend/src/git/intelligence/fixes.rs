@@ -264,8 +264,9 @@ impl FixService {
         .await?;
 
         if let Some(row) = result {
-            debug!("Recorded historical fix with id {}", row.id);
-            Ok(row.id)
+            let id = row.id.unwrap_or(0);
+            debug!("Recorded historical fix with id {}", id);
+            Ok(id)
         } else {
             // Fix already exists
             Ok(0)
@@ -657,20 +658,20 @@ impl FixService {
     pub async fn get_stats(&self, project_id: &str) -> Result<FixStats> {
         // Total fixes
         let total: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) as count FROM historical_fixes WHERE project_id = ?",
+            r#"SELECT COUNT(*) as "count: i64" FROM historical_fixes WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(&self.pool)
-        .await? as i64;
+        .await?;
 
         // By category
         let category_rows = sqlx::query!(
             r#"
-            SELECT error_category, COUNT(*) as count
+            SELECT error_category, COUNT(*) as "count: i64"
             FROM historical_fixes
             WHERE project_id = ?
             GROUP BY error_category
-            ORDER BY count DESC
+            ORDER BY 2 DESC
             "#,
             project_id
         )
@@ -679,7 +680,7 @@ impl FixService {
 
         let by_category: Vec<(String, i64)> = category_rows
             .into_iter()
-            .map(|r| (r.error_category, r.count as i64))
+            .map(|r| (r.error_category, r.count.unwrap_or(0)))
             .collect();
 
         // Most fixed files (parse JSON and count)
@@ -697,12 +698,12 @@ impl FixService {
         // Recent fixes (last 30 days)
         let thirty_days_ago = Utc::now().timestamp() - (30 * 24 * 60 * 60);
         let recent: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) as count FROM historical_fixes WHERE project_id = ? AND fixed_at > ?",
+            r#"SELECT COUNT(*) as "count: i64" FROM historical_fixes WHERE project_id = ? AND fixed_at > ?"#,
             project_id,
             thirty_days_ago
         )
         .fetch_one(&self.pool)
-        .await? as i64;
+        .await?;
 
         Ok(FixStats {
             total_fixes: total,

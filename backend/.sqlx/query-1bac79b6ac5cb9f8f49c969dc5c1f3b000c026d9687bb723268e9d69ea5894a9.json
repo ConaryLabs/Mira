@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "project_id",
@@ -46,7 +46,7 @@
       {
         "name": "detected_at",
         "ordinal": 8,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

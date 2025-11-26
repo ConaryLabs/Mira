@@ -316,7 +316,7 @@ impl SemanticGraphService {
         .await?;
 
         Ok(SemanticEdge {
-            id: Some(result.id),
+            id: result.id,
             source_node_id,
             target_node_id,
             relationship_type,
@@ -419,7 +419,7 @@ impl SemanticGraphService {
             .map(|r| {
                 (
                     SemanticNode {
-                        id: Some(r.id),
+                        id: r.id,
                         symbol_id: r.symbol_id,
                         purpose: r.purpose,
                         description: r.description,

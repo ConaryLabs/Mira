@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT COUNT(*) as \"count: i64\" FROM build_errors e\n            JOIN build_runs r ON e.build_run_id = r.id\n            WHERE r.project_id = ? AND e.severity = 'error' AND e.resolved_at IS NOT NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "306ac591a74559872b3a51ce304e9979d8a5cf7dc6aef96d1f8e8fd4b91bb55e"
+}

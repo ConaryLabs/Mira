@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "project_id",
@@ -26,17 +26,17 @@
       {
         "name": "cochange_count",
         "ordinal": 4,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "total_changes_a",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "total_changes_b",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "confidence_score",
@@ -46,7 +46,7 @@
       {
         "name": "last_cochange",
         "ordinal": 8,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "embedding_point_id",
@@ -56,12 +56,12 @@
       {
         "name": "created_at",
         "ordinal": 10,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "updated_at",
         "ordinal": 11,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

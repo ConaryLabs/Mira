@@ -6,14 +6,14 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {
       "Right": 7
     },
     "nullable": [
-      false
+      true
     ]
   },
   "hash": "7923583e8f69d3306ec6f71a23d4ee90f22fecd87df237520ae2b484b5699630"

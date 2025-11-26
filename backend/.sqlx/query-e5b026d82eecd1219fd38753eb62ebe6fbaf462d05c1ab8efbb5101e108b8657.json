@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "pattern_type",
@@ -31,17 +31,17 @@
       {
         "name": "created_at",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "last_used",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "hit_count",
         "ordinal": 7,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

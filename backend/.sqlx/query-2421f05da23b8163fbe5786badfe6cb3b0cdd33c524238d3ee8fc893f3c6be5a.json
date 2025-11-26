@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(DISTINCT author_email) as \"count: i64\" FROM author_expertise WHERE project_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2421f05da23b8163fbe5786badfe6cb3b0cdd33c524238d3ee8fc893f3c6be5a"
+}

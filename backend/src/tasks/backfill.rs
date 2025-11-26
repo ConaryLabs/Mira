@@ -120,7 +120,7 @@ impl BackfillTask {
                     Ok(heads) => heads,
                     Err(e) => {
                         warn!(
-                            "Failed to parse routed_to_heads for message {}: {}",
+                            "Failed to parse routed_to_heads for message {:?}: {}",
                             row.id, e
                         );
                         continue;
@@ -144,7 +144,7 @@ impl BackfillTask {
             };
 
             messages.push(MessageForBackfill {
-                id: row.id,
+                id: row.id.unwrap_or(0),
                 session_id: row.session_id,
                 content: row.content,
                 timestamp: row.timestamp.to_string(), // Convert i64 to String

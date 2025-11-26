@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT AVG(resolution_time_ms) as \"avg: f64\"\n            FROM error_resolutions r\n            JOIN build_errors e ON r.error_hash = e.error_hash\n            JOIN build_runs b ON e.build_run_id = b.id\n            WHERE b.project_id = ? AND r.resolution_time_ms IS NOT NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "avg: f64",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "70b39c2acc9c90c5f97de6489f2a6d0990b0d7e1bbc94f72750b65951c54431f"
+}

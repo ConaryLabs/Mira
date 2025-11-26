@@ -6,7 +6,7 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "concept",
@@ -26,12 +26,12 @@
       {
         "name": "created_at",
         "ordinal": 4,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "updated_at",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

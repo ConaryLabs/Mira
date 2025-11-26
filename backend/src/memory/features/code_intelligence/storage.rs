@@ -375,12 +375,12 @@ impl CodeIntelligenceStorage {
     pub async fn get_repo_stats(&self, attachment_id: &str) -> Result<RepoStats> {
         let stats = sqlx::query!(
             r#"
-            SELECT 
-                COUNT(*) as total_files,
-                SUM(CASE WHEN ast_analyzed = TRUE THEN 1 ELSE 0 END) as analyzed_files,
-                SUM(element_count) as total_elements,
-                AVG(complexity_score) as avg_complexity
-            FROM repository_files 
+            SELECT
+                COUNT(*) as "total_files: i64",
+                SUM(CASE WHEN ast_analyzed = TRUE THEN 1 ELSE 0 END) as "analyzed_files: i64",
+                SUM(element_count) as "total_elements: i64",
+                AVG(complexity_score) as "avg_complexity: f64"
+            FROM repository_files
             WHERE attachment_id = ?
             "#,
             attachment_id
@@ -390,10 +390,10 @@ impl CodeIntelligenceStorage {
 
         let quality_stats = sqlx::query!(
             r#"
-            SELECT 
-                COUNT(*) as total_issues,
-                SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical_issues,
-                SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) as high_issues
+            SELECT
+                COUNT(*) as "total_issues: i64",
+                SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as "critical_issues: i64",
+                SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) as "high_issues: i64"
             FROM code_quality_issues cqi
             JOIN code_elements ce ON cqi.element_id = ce.id
             JOIN repository_files rf ON ce.file_id = rf.id
@@ -405,13 +405,13 @@ impl CodeIntelligenceStorage {
         .await?;
 
         Ok(RepoStats {
-            total_files: stats.total_files as i64, // COUNT() returns i32, cast to i64
-            analyzed_files: stats.analyzed_files.unwrap_or(0) as i64,
-            total_elements: stats.total_elements.unwrap_or(0) as i64,
+            total_files: stats.total_files,
+            analyzed_files: stats.analyzed_files.unwrap_or(0),
+            total_elements: stats.total_elements.unwrap_or(0),
             avg_complexity: stats.avg_complexity.unwrap_or(0.0),
-            total_quality_issues: quality_stats.total_issues as i64,
-            critical_issues: quality_stats.critical_issues.unwrap_or(0) as i64,
-            high_issues: quality_stats.high_issues.unwrap_or(0) as i64,
+            total_quality_issues: quality_stats.total_issues,
+            critical_issues: quality_stats.critical_issues.unwrap_or(0),
+            high_issues: quality_stats.high_issues.unwrap_or(0),
         })
     }
 

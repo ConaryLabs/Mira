@@ -31,12 +31,12 @@
       {
         "name": "last_imported_at",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "last_sync_at",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            ce.element_type,\n            COUNT(*) as \"count: i64\"\n        FROM code_elements ce\n        JOIN repository_files rf ON ce.file_id = rf.id\n        JOIN git_repo_attachments gra ON rf.attachment_id = gra.id\n        WHERE gra.project_id = ?\n        GROUP BY ce.element_type\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "element_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "count: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "a10a2addcc264df08e9cf394d0856d44b1c2435f2c67e882946b40328e2228aa"
+}

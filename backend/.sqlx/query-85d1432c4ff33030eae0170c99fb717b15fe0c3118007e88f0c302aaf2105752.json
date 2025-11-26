@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"count: i64\" FROM build_runs WHERE project_id = ? AND exit_code = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "85d1432c4ff33030eae0170c99fb717b15fe0c3118007e88f0c302aaf2105752"
+}

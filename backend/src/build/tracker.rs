@@ -365,37 +365,36 @@ impl BuildTracker {
     pub async fn get_build_stats(&self, project_id: &str) -> Result<BuildStats> {
         // Total builds
         let total = sqlx::query!(
-            r#"SELECT COUNT(*) as count FROM build_runs WHERE project_id = ?"#,
+            r#"SELECT COUNT(*) as "count: i64" FROM build_runs WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(self.pool.as_ref())
         .await?
-        .count as i64;
+        .count;
 
         // Successful builds
         let successful = sqlx::query!(
-            r#"SELECT COUNT(*) as count FROM build_runs WHERE project_id = ? AND exit_code = 0"#,
+            r#"SELECT COUNT(*) as "count: i64" FROM build_runs WHERE project_id = ? AND exit_code = 0"#,
             project_id
         )
         .fetch_one(self.pool.as_ref())
         .await?
-        .count as i64;
+        .count;
 
         // Average duration
         let avg_duration = sqlx::query!(
-            r#"SELECT AVG(duration_ms) as avg FROM build_runs WHERE project_id = ?"#,
+            r#"SELECT AVG(duration_ms) as "avg: f64" FROM build_runs WHERE project_id = ?"#,
             project_id
         )
         .fetch_one(self.pool.as_ref())
         .await?
         .avg
-        .map(|v| v as f64)
         .unwrap_or(0.0);
 
         // Total errors
         let total_errors = sqlx::query!(
             r#"
-            SELECT COUNT(*) as count FROM build_errors e
+            SELECT COUNT(*) as "count: i64" FROM build_errors e
             JOIN build_runs r ON e.build_run_id = r.id
             WHERE r.project_id = ? AND e.severity = 'error'
             "#,
@@ -403,12 +402,12 @@ impl BuildTracker {
         )
         .fetch_one(self.pool.as_ref())
         .await?
-        .count as i64;
+        .count;
 
         // Resolved errors
         let resolved_errors = sqlx::query!(
             r#"
-            SELECT COUNT(*) as count FROM build_errors e
+            SELECT COUNT(*) as "count: i64" FROM build_errors e
             JOIN build_runs r ON e.build_run_id = r.id
             WHERE r.project_id = ? AND e.severity = 'error' AND e.resolved_at IS NOT NULL
             "#,
@@ -416,17 +415,17 @@ impl BuildTracker {
         )
         .fetch_one(self.pool.as_ref())
         .await?
-        .count as i64;
+        .count;
 
         // Most common errors
         let common_errors = sqlx::query!(
             r#"
-            SELECT e.message, COUNT(*) as count
+            SELECT e.message, COUNT(*) as "count: i64"
             FROM build_errors e
             JOIN build_runs r ON e.build_run_id = r.id
             WHERE r.project_id = ? AND e.severity = 'error'
             GROUP BY e.error_hash
-            ORDER BY count DESC
+            ORDER BY 2 DESC
             LIMIT 5
             "#,
             project_id
@@ -434,7 +433,7 @@ impl BuildTracker {
         .fetch_all(self.pool.as_ref())
         .await?
         .into_iter()
-        .map(|r| (r.message, r.count as i64))
+        .map(|r| (r.message, r.count.unwrap_or(0)))
         .collect();
 
         let success_rate = if total > 0 {

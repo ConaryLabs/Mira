@@ -51,12 +51,12 @@
       {
         "name": "use_count",
         "ordinal": 9,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "success_count",
         "ordinal": 10,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "cost_savings_usd",
@@ -66,17 +66,17 @@
       {
         "name": "created_at",
         "ordinal": 12,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "updated_at",
         "ordinal": 13,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "last_used",
         "ordinal": 14,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

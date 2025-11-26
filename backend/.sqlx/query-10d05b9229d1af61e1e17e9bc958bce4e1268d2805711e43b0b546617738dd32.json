@@ -31,17 +31,17 @@
       {
         "name": "created_at!",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "closed_at",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "exit_code",
         "ordinal": 7,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

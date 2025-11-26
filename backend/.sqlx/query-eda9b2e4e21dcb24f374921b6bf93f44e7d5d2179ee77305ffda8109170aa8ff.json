@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT COUNT(*) as \"count: i64\" FROM blame_annotations\n            WHERE project_id = ? AND file_path = ? AND file_hash = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eda9b2e4e21dcb24f374921b6bf93f44e7d5d2179ee77305ffda8109170aa8ff"
+}

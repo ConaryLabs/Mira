@@ -6,12 +6,12 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "symbol_id",
         "ordinal": 1,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "code_hash",
@@ -31,17 +31,17 @@
       {
         "name": "created_at",
         "ordinal": 5,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "last_used",
         "ordinal": 6,
-        "type_info": "Int64"
+        "type_info": "Integer"
       },
       {
         "name": "hit_count",
         "ordinal": 7,
-        "type_info": "Int64"
+        "type_info": "Integer"
       }
     ],
     "parameters": {

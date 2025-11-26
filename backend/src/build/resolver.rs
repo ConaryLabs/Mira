@@ -307,7 +307,7 @@ impl ErrorResolver {
         // Total resolutions
         let total = sqlx::query!(
             r#"
-            SELECT COUNT(*) as count FROM error_resolutions r
+            SELECT COUNT(*) as "count: i64" FROM error_resolutions r
             JOIN build_errors e ON r.error_hash = e.error_hash
             JOIN build_runs b ON e.build_run_id = b.id
             WHERE b.project_id = ?
@@ -316,12 +316,12 @@ impl ErrorResolver {
         )
         .fetch_one(self.pool.as_ref())
         .await?
-        .count as i64;
+        .count;
 
         // By type
         let by_type = sqlx::query!(
             r#"
-            SELECT r.resolution_type, COUNT(*) as count
+            SELECT r.resolution_type, COUNT(*) as "count: i64"
             FROM error_resolutions r
             JOIN build_errors e ON r.error_hash = e.error_hash
             JOIN build_runs b ON e.build_run_id = b.id
@@ -333,13 +333,13 @@ impl ErrorResolver {
         .fetch_all(self.pool.as_ref())
         .await?
         .into_iter()
-        .map(|r| (ResolutionType::from_str(&r.resolution_type), r.count as i64))
+        .map(|r| (ResolutionType::from_str(&r.resolution_type), r.count.unwrap_or(0)))
         .collect();
 
         // Average resolution time
         let avg_time = sqlx::query!(
             r#"
-            SELECT AVG(resolution_time_ms) as avg
+            SELECT AVG(resolution_time_ms) as "avg: f64"
             FROM error_resolutions r
             JOIN build_errors e ON r.error_hash = e.error_hash
             JOIN build_runs b ON e.build_run_id = b.id
@@ -349,8 +349,7 @@ impl ErrorResolver {
         )
         .fetch_one(self.pool.as_ref())
         .await?
-        .avg
-        .map(|v| v as f64);
+        .avg;
 
         Ok(ResolutionStats {
             project_id: project_id.to_string(),

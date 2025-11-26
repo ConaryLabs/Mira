@@ -229,7 +229,7 @@ impl CochangeService {
         let rows = sqlx::query!(
             r#"
             SELECT
-                CASE WHEN file_path_a = ? THEN file_path_b ELSE file_path_a END as related_file,
+                CASE WHEN file_path_a = ? THEN file_path_b ELSE file_path_a END as "related_file: String",
                 cochange_count, confidence_score
             FROM file_cochange_patterns
             WHERE project_id = ? AND (file_path_a = ? OR file_path_b = ?)
@@ -247,15 +247,18 @@ impl CochangeService {
 
         Ok(rows
             .into_iter()
-            .map(|r| CochangeSuggestion {
-                file_path: r.related_file,
-                confidence: r.confidence_score,
-                cochange_count: r.cochange_count,
-                reason: format!(
-                    "Changed together {} times ({:.0}% confidence)",
-                    r.cochange_count,
-                    r.confidence_score * 100.0
-                ),
+            .filter_map(|r| {
+                let related_file = r.related_file?;
+                Some(CochangeSuggestion {
+                    file_path: related_file,
+                    confidence: r.confidence_score,
+                    cochange_count: r.cochange_count,
+                    reason: format!(
+                        "Changed together {} times ({:.0}% confidence)",
+                        r.cochange_count,
+                        r.confidence_score * 100.0
+                    ),
+                })
             })
             .collect())
     }

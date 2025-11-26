@@ -288,13 +288,13 @@ impl BlameService {
             r#"
             SELECT
                 author_name, author_email,
-                COUNT(*) as line_count,
-                MIN(authored_at) as first_contribution,
-                MAX(authored_at) as last_contribution
+                COUNT(*) as "line_count: i64",
+                MIN(authored_at) as "first_contribution: i64",
+                MAX(authored_at) as "last_contribution: i64"
             FROM blame_annotations
             WHERE project_id = ? AND file_path = ?
             GROUP BY author_email
-            ORDER BY line_count DESC
+            ORDER BY 3 DESC
             "#,
             project_id,
             file_path
@@ -302,32 +302,31 @@ impl BlameService {
         .fetch_all(&self.pool)
         .await?;
 
-        let total_lines: i64 = author_rows.iter().map(|r| r.line_count as i64).sum();
+        let total_lines: i64 = author_rows.iter().map(|r| r.line_count.unwrap_or(0)).sum();
 
         let authors: Vec<BlameAuthorStats> = author_rows
             .into_iter()
-            .filter_map(|r| {
-                let author_name = r.author_name?;
-                let author_email = r.author_email?;
-                Some(BlameAuthorStats {
-                    author_name,
-                    author_email,
-                    line_count: r.line_count as i64,
+            .map(|r| {
+                let line_count = r.line_count.unwrap_or(0);
+                BlameAuthorStats {
+                    author_name: r.author_name,
+                    author_email: r.author_email,
+                    line_count,
                     percentage: if total_lines > 0 {
-                        (r.line_count as f64 / total_lines as f64) * 100.0
+                        (line_count as f64 / total_lines as f64) * 100.0
                     } else {
                         0.0
                     },
-                    first_contribution: r.first_contribution,
-                    last_contribution: r.last_contribution,
-                })
+                    first_contribution: r.first_contribution.unwrap_or(0),
+                    last_contribution: r.last_contribution.unwrap_or(0),
+                }
             })
             .collect();
 
         // Get oldest and newest lines
         let time_range = sqlx::query!(
             r#"
-            SELECT MIN(authored_at) as oldest, MAX(authored_at) as newest
+            SELECT MIN(authored_at) as "oldest: i64", MAX(authored_at) as "newest: i64"
             FROM blame_annotations
             WHERE project_id = ? AND file_path = ?
             "#,
@@ -446,7 +445,7 @@ impl BlameService {
     ) -> Result<bool> {
         let count: i64 = sqlx::query_scalar!(
             r#"
-            SELECT COUNT(*) as count FROM blame_annotations
+            SELECT COUNT(*) as "count: i64" FROM blame_annotations
             WHERE project_id = ? AND file_path = ? AND file_hash = ?
             "#,
             project_id,
@@ -454,7 +453,7 @@ impl BlameService {
             file_hash
         )
         .fetch_one(&self.pool)
-        .await? as i64;
+        .await?;
 
         Ok(count > 0)
     }
