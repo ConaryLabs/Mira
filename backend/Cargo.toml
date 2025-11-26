@@ -30,7 +30,7 @@ clap = { version = "4.5", features = ["derive"] }
 thiserror = "1.0"
 lazy_static = "1.5.0"
 # Git integration
-git2 = "0.18.3"
+git2 = "0.20"
 # File and data handling
 base64 = "0.22"
 bytes = "1.5"
