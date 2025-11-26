@@ -342,7 +342,7 @@ impl<'a> Visit for JavaScriptAnalyzer<'a> {
     }
 
     fn visit_import_decl(&mut self, node: &ImportDecl) {
-        let import_path = node.src.value.to_string();
+        let import_path = node.src.value.as_str().unwrap_or("").to_string();
         let mut imported_symbols = Vec::new();
 
         for specifier in &node.specifiers {
