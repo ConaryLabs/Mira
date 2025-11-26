@@ -191,7 +191,7 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 
 - **Rust 1.91** (backend - target version for this dev machine)
 - **Rust Edition 2024** (use latest stable Rust edition)
-- **Stable Crates Only** (always use current stable versions of all dependencies)
+- **Latest Stable Crates** - Always use the current latest stable version of all dependencies. When adding new dependencies or upgrading existing ones, check crates.io for the latest version. No pinning to old versions unless there's a specific compatibility issue.
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
 - **Qdrant 1.16+** running on `localhost:6334` (gRPC) and `localhost:6333` (HTTP)

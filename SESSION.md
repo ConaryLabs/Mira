@@ -4,6 +4,43 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 22: Dependency Upgrades (2025-11-26)
+
+**Summary:** Upgraded all remaining dependencies to latest stable versions.
+
+**Work Completed:**
+- SQLx 0.7 → 0.8
+- thiserror 1.0 → 2
+- zip 2.2 → 6
+- swc crates to latest (ecma_parser 27, ecma_ast 18, common 17)
+- axum 0.7 → 0.8
+- git2 0.18.3 → 0.20
+- governor 0.6 → 0.10
+- pdf-extract 0.7 → 0.10
+- lopdf 0.34 → 0.38
+- quick-xml 0.37 → 0.38 (API change: `unescape()` → `decode()`)
+- jsonwebtoken 9.3 → 10 (with rust_crypto feature)
+- bcrypt 0.16 → 0.17
+- tokio-tungstenite 0.27 → 0.28
+
+**Files Modified:**
+- `backend/Cargo.toml` - All dependency version bumps
+- `backend/Cargo.lock` - Lockfile updates
+- `backend/src/memory/features/document_processing/parser.rs` - quick-xml API migration
+
+**Test Status:** All tests passing
+
+**Commits:**
+- `cc3beaa` - Upgrade thiserror from 1.0 to 2
+- `74398f2` - Upgrade zip from 2.2 to 6
+- `a66f68d` - Upgrade swc crates to latest versions
+- `7055e59` - Upgrade axum from 0.7 to 0.8
+- `c4696c4` - Upgrade git2 from 0.18.3 to 0.20
+- `b18890a` - Session 21: Upgrade SQLx from 0.7 to 0.8
+- `c98f750` - Upgrade remaining dependencies to latest stable versions
+
+---
+
 ## Session 19: GPT 5.1 Migration & Docs (2025-11-25)
 
 **Summary:** Removed DeepSeek references, migrated to GPT 5.1 end-to-end, fixed Qdrant tests, updated all documentation.
