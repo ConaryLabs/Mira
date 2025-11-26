@@ -51,7 +51,7 @@ qdrant-client = "1.15"
 # Document processing
 pdf-extract = "0.7"
 lopdf = "0.34"
-zip = "2.2"
+zip = "6"
 encoding_rs = "0.8"
 mime_guess = "2.0"
 quick-xml = "0.37"
