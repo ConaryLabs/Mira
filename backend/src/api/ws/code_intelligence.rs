@@ -42,6 +42,31 @@ struct DeleteRepositoryDataRequest {
     project_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BudgetStatusRequest {
+    user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SemanticSearchRequest {
+    query: String,
+    project_id: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CochangeRequest {
+    project_id: String,
+    file_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExpertiseRequest {
+    project_id: String,
+    file_path: Option<String>,
+    limit: Option<i64>,
+}
+
 pub async fn handle_code_intelligence_command(
     method: &str,
     params: Value,
@@ -247,6 +272,186 @@ pub async fn handle_code_intelligence_command(
                     "type": "repository_data_deleted",
                     "project_id": req.project_id,
                     "deleted_elements": deleted_elements
+                }),
+                request_id: None,
+            })
+        }
+
+        "code.budget_status" => {
+            let req: BudgetStatusRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid budget request: {}", e)))?;
+
+            info!("Getting budget status for user: {}", req.user_id);
+            let status = app_state
+                .budget_tracker
+                .get_budget_status(&req.user_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("Budget query failed: {}", e)))?;
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "budget_status",
+                    "daily_usage_percent": status.daily_usage_percent,
+                    "monthly_usage_percent": status.monthly_usage_percent,
+                    "daily_spent_usd": status.daily_spent_usd,
+                    "daily_limit_usd": status.daily_limit_usd,
+                    "monthly_spent_usd": status.monthly_spent_usd,
+                    "monthly_limit_usd": status.monthly_limit_usd,
+                    "daily_remaining": status.daily_remaining(),
+                    "monthly_remaining": status.monthly_remaining(),
+                    "is_critical": status.is_critical(),
+                    "is_low": status.is_low(),
+                    "last_updated": chrono::Utc::now().timestamp_millis()
+                }),
+                request_id: None,
+            })
+        }
+
+        "code.semantic_search" => {
+            let req: SemanticSearchRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid semantic search request: {}", e)))?;
+
+            info!("Semantic search for query: {} (project: {:?})", req.query, req.project_id);
+
+            let project_id = req.project_id.as_deref().unwrap_or("default");
+            let limit = req.limit.unwrap_or(10);
+            let results = app_state
+                .code_intelligence
+                .search_code(&req.query, project_id, limit)
+                .await
+                .map_err(|e| ApiError::internal(format!("Semantic search failed: {}", e)))?;
+
+            // Transform MemoryEntry results into search result format
+            let results_json: Vec<_> = results
+                .into_iter()
+                .enumerate()
+                .map(|(idx, entry)| {
+                    // Extract file path from tags
+                    let file_path = entry.tags.as_ref()
+                        .and_then(|tags| tags.iter()
+                            .find(|t| t.starts_with("path:"))
+                            .and_then(|t| t.strip_prefix("path:"))
+                            .map(|s| s.to_string()))
+                        .unwrap_or_default();
+
+                    // Extract line info from tags if available
+                    let line_start = entry.tags.as_ref()
+                        .and_then(|tags| tags.iter()
+                            .find(|t| t.starts_with("start_line:"))
+                            .and_then(|t| t.strip_prefix("start_line:"))
+                            .and_then(|s| s.parse::<i32>().ok()))
+                        .unwrap_or(0);
+
+                    let line_end = entry.tags.as_ref()
+                        .and_then(|tags| tags.iter()
+                            .find(|t| t.starts_with("end_line:"))
+                            .and_then(|t| t.strip_prefix("end_line:"))
+                            .and_then(|s| s.parse::<i32>().ok()))
+                        .unwrap_or(0);
+
+                    // Use salience as a proxy for score if available
+                    let score = entry.salience.unwrap_or(0.5) as f64;
+
+                    json!({
+                        "id": entry.id.map(|id| id.to_string()).unwrap_or_else(|| idx.to_string()),
+                        "file_path": file_path,
+                        "content": entry.content,
+                        "score": score,
+                        "line_start": line_start,
+                        "line_end": line_end,
+                        "language": entry.programming_lang,
+                    })
+                })
+                .collect();
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "semantic_search_results",
+                    "query": req.query,
+                    "results": results_json,
+                    "count": results_json.len()
+                }),
+                request_id: None,
+            })
+        }
+
+        "code.cochange" => {
+            let req: CochangeRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid cochange request: {}", e)))?;
+
+            info!("Getting co-change suggestions for: {} in project: {}", req.file_path, req.project_id);
+
+            let suggestions = app_state
+                .cochange_service
+                .get_suggestions(&req.project_id, &req.file_path)
+                .await
+                .map_err(|e| ApiError::internal(format!("Co-change query failed: {}", e)))?;
+
+            let suggestions_json: Vec<_> = suggestions
+                .into_iter()
+                .map(|s| {
+                    json!({
+                        "file_path": s.file_path,
+                        "confidence": s.confidence,
+                        "reason": s.reason,
+                        "co_change_count": s.cochange_count,
+                    })
+                })
+                .collect();
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "cochange_suggestions",
+                    "file_path": req.file_path,
+                    "project_id": req.project_id,
+                    "suggestions": suggestions_json,
+                    "count": suggestions_json.len()
+                }),
+                request_id: None,
+            })
+        }
+
+        "code.expertise" => {
+            let req: ExpertiseRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid expertise request: {}", e)))?;
+
+            info!("Getting expertise for project: {} (file: {:?})", req.project_id, req.file_path);
+
+            let limit = req.limit.unwrap_or(10);
+            let experts = if let Some(file_path) = req.file_path {
+                app_state
+                    .expertise_service
+                    .find_experts_for_file(&req.project_id, &file_path, limit)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("Expertise query failed: {}", e)))?
+            } else {
+                app_state
+                    .expertise_service
+                    .get_top_experts(&req.project_id, limit)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("Expertise query failed: {}", e)))?
+            };
+
+            let experts_json: Vec<_> = experts
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "author": e.author_name,
+                        "email": e.author_email,
+                        "total_commits": e.commit_count,
+                        "last_active": e.last_active,
+                        "expertise_areas": e.matching_patterns,
+                        "overall_score": e.expertise_score
+                    })
+                })
+                .collect();
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "expertise_results",
+                    "project_id": req.project_id,
+                    "experts": experts_json,
+                    "count": experts_json.len()
                 }),
                 request_id: None,
             })

@@ -4,9 +4,11 @@ import { Header } from './components/Header';
 import { ChatArea } from './components/ChatArea';
 import { ArtifactPanel } from './components/ArtifactPanel';
 import { ActivityPanel } from './components/ActivityPanel';
+import { IntelligencePanel } from './components/IntelligencePanel';
 import { ToastContainer } from './components/ToastContainer';
 import { useAppState } from './stores/useAppState';
 import { useWebSocketStore } from './stores/useWebSocketStore';
+import { useCodeIntelligenceStore } from './stores/useCodeIntelligenceStore';
 import { useWebSocketMessageHandler } from './hooks/useWebSocketMessageHandler';
 import { useMessageHandler } from './hooks/useMessageHandler';
 import { useChatPersistence } from './hooks/useChatPersistence';
@@ -14,9 +16,11 @@ import { useArtifactFileContentWire } from './hooks/useArtifactFileContentWire';
 import { useToolResultArtifactBridge } from './hooks/useToolResultArtifactBridge';
 import { useErrorHandler } from './hooks/useErrorHandler';
 import { useConnectionTracking } from './hooks/useConnectionTracking';
+import { useCodeIntelligenceHandler } from './hooks/useCodeIntelligenceHandler';
 
 export function Home() {
   const { showArtifacts } = useAppState();
+  const isIntelligenceVisible = useCodeIntelligenceStore(state => state.isPanelVisible);
   const connect = useWebSocketStore(state => state.connect);
   const disconnect = useWebSocketStore(state => state.disconnect);
   const connectionState = useWebSocketStore(state => state.connectionState);
@@ -39,6 +43,7 @@ export function Home() {
   useToolResultArtifactBridge(); // Tool_result → Artifact Viewer bridge
   useErrorHandler();             // WebSocket error → Chat messages + Toasts
   useConnectionTracking();       // Sync WebSocket state → AppState connection tracking
+  useCodeIntelligenceHandler();  // Code intelligence WebSocket responses
 
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100">
@@ -68,6 +73,9 @@ export function Home() {
             </div>
           )}
         </div>
+
+        {/* Intelligence panel - right side (before Activity) */}
+        {isIntelligenceVisible && <IntelligencePanel />}
 
         {/* Activity panel - right side */}
         <ActivityPanel />

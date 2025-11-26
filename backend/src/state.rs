@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::auth::AuthService;
+use crate::budget::BudgetTracker;
 use crate::build::BuildTracker;
 use crate::config::CONFIG;
 use crate::context_oracle::ContextOracle;
@@ -67,6 +68,8 @@ pub struct AppState {
     pub pattern_matcher: Arc<PatternMatcher>,
     // Context Oracle - unified context gathering
     pub context_oracle: Arc<ContextOracle>,
+    // Budget tracking
+    pub budget_tracker: Arc<BudgetTracker>,
 }
 
 impl AppState {
@@ -121,6 +124,18 @@ impl AppState {
         // Initialize build tracker (needed for context oracle)
         info!("Initializing build tracker");
         let build_tracker = Arc::new(BuildTracker::new(Arc::new(pool.clone())));
+
+        // Initialize budget tracker
+        info!("Initializing budget tracker");
+        let daily_limit = std::env::var("BUDGET_DAILY_LIMIT_USD")
+            .unwrap_or_else(|_| "5.0".to_string())
+            .parse::<f64>()
+            .unwrap_or(5.0);
+        let monthly_limit = std::env::var("BUDGET_MONTHLY_LIMIT_USD")
+            .unwrap_or_else(|_| "150.0".to_string())
+            .parse::<f64>()
+            .unwrap_or(150.0);
+        let budget_tracker = Arc::new(BudgetTracker::new(pool.clone(), daily_limit, monthly_limit));
 
         // Initialize pattern services (needed for context oracle)
         info!("Initializing pattern services");
@@ -219,6 +234,7 @@ impl AppState {
             pattern_storage,
             pattern_matcher,
             context_oracle,
+            budget_tracker,
         })
     }
 }

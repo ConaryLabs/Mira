@@ -1,11 +1,12 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Folder, Activity, X, LogOut } from 'lucide-react';
+import { Folder, Activity, X, LogOut, Brain } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useActivityStore } from '../stores/useActivityStore';
+import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { useAuthStore, useCurrentUser } from '../stores/useAuthStore';
 
 export const Header: React.FC = () => {
@@ -17,6 +18,10 @@ export const Header: React.FC = () => {
 
   const { artifacts } = useArtifactState();
   const { togglePanel, isPanelVisible } = useActivityStore();
+  const {
+    togglePanel: toggleIntelligence,
+    isPanelVisible: isIntelligenceVisible
+  } = useCodeIntelligenceStore();
   const [showProjects, setShowProjects] = useState(false);
   const { logout } = useAuthStore();
   const user = useCurrentUser();
@@ -24,6 +29,10 @@ export const Header: React.FC = () => {
 
   const handleActivityClick = () => {
     togglePanel();
+  };
+
+  const handleIntelligenceClick = () => {
+    toggleIntelligence();
   };
 
   const handleLogout = () => {
@@ -61,6 +70,20 @@ export const Header: React.FC = () => {
 
         {currentProject && (
           <>
+            {/* Intelligence Panel Toggle */}
+            <button
+              type="button"
+              onClick={handleIntelligenceClick}
+              className={`p-2 rounded-md transition-colors ${
+                isIntelligenceVisible
+                  ? 'text-purple-400 bg-purple-900/30'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+              }`}
+              title="Toggle Intelligence Panel (Budget, Search, Co-Change)"
+            >
+              <Brain size={16} />
+            </button>
+
             {/* Activity Panel Toggle */}
             <button
               type="button"

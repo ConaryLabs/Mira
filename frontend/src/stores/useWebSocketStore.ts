@@ -131,6 +131,13 @@ const KNOWN_DATA_TYPES = new Set([
   'artifact_created',
   'tool_result',
 
+  // Code intelligence data types
+  'budget_status',
+  'semantic_search_results',
+  'cochange_suggestions',
+  'expertise_results',
+  'code_search_results',
+
   // Operation engine events (can also be wrapped in data envelope)
   'operation.started',
   'operation.streaming',

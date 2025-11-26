@@ -4,6 +4,70 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 26: Milestone 8 - Intelligence Panel WebSocket Integration (2025-11-26)
+
+**Summary:** Completed WebSocket integration for the Intelligence Panel, connecting frontend components to backend intelligence services.
+
+**Work Completed:**
+
+1. **Backend: BudgetTracker Integration** (`state.rs`):
+   - Added `BudgetTracker` to AppState
+   - Initialized with env vars: `BUDGET_DAILY_LIMIT_USD`, `BUDGET_MONTHLY_LIMIT_USD`
+   - Default limits: $5/day, $150/month
+
+2. **Backend: New WebSocket Handlers** (`api/ws/code_intelligence.rs`):
+   - `code.budget_status` - Returns daily/monthly usage, limits, remaining budget, status flags
+   - `code.semantic_search` - Vector-based semantic code search via Qdrant
+   - `code.cochange` - Co-change file suggestions from git history patterns
+   - `code.expertise` - Author expertise lookup for files/projects
+
+3. **Frontend: Intelligence Panel Components** (new files):
+   - `IntelligencePanel.tsx` - Tab-based panel (Budget, Search, Co-Change, Fixes, Expertise)
+   - `BudgetTracker.tsx` - Budget display with progress bars, auto-refresh
+   - `SemanticSearch.tsx` - Semantic code search with results display
+   - `CoChangeSuggestions.tsx` - Co-change patterns with file path input
+   - `useCodeIntelligenceStore.ts` - Zustand store for all intelligence state
+
+4. **Frontend: WebSocket Integration**:
+   - Created `useCodeIntelligenceHandler.ts` hook for WebSocket response handling
+   - Updated `useWebSocketStore.ts` with new data types
+   - Wired handler in `Home.tsx`
+   - Added Brain icon toggle in `Header.tsx`
+
+**Message Protocol:**
+```typescript
+// Request format
+{
+  type: 'code_intelligence_command',
+  method: 'code.budget_status' | 'code.semantic_search' | 'code.cochange' | 'code.expertise',
+  params: { ... }
+}
+
+// Response data types
+'budget_status', 'semantic_search_results', 'cochange_suggestions', 'expertise_results'
+```
+
+**Files Modified:**
+- `backend/src/state.rs` - BudgetTracker integration
+- `backend/src/api/ws/code_intelligence.rs` - 4 new handlers (~150 lines)
+- `frontend/src/Home.tsx` - Handler hook integration
+- `frontend/src/components/Header.tsx` - Brain icon toggle
+- `frontend/src/stores/useWebSocketStore.ts` - New data types
+
+**New Files:**
+- `frontend/src/components/IntelligencePanel.tsx`
+- `frontend/src/components/BudgetTracker.tsx`
+- `frontend/src/components/SemanticSearch.tsx`
+- `frontend/src/components/CoChangeSuggestions.tsx`
+- `frontend/src/stores/useCodeIntelligenceStore.ts`
+- `frontend/src/hooks/useCodeIntelligenceHandler.ts`
+
+**Build Status:** Backend compiles, Frontend types check passes
+
+**Milestone 8 Progress:** Core WebSocket integration complete. Panel UI functional.
+
+---
+
 ## Session 25: Milestone 7 Complete - Budget-Aware Config & E2E Testing (2025-11-26)
 
 **Summary:** Completed Milestone 7 with budget-aware context configuration selection and end-to-end testing using GPT 5.1.
