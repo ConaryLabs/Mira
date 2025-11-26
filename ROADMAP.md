@@ -374,25 +374,38 @@ Estimated monthly: $132 (vs $825 without cache)
 
 **Commit**: `fdc561c`
 
-### Milestone 7: Context Oracle Integration (Weeks 13-14)
+### Milestone 7: Context Oracle Integration - IN PROGRESS
 
 **Goal**: Unified context gathering using all intelligence systems
 
 **Deliverables**:
-- Enhanced RecallEngine with semantic graph
-- Call graph context gathering
-- Co-change file suggestions
-- Historical fix integration
-- Pattern-based context
-- Budget-aware LLM calls
+- [x] Context Oracle module with 8 intelligence sources
+- [x] AppState integration with all services
+- [x] OperationEngine integration
+- [x] ContextBuilder integration with oracle output
+- [ ] Budget-aware context config selection
+- [ ] Enhanced RecallEngine combining oracle + memory
+- [ ] End-to-end testing with real LLM
 
-**Files**:
-- backend/src/memory/features/recall_engine/enhanced.rs
-- backend/src/memory/features/context_oracle.rs
+**Key Files**:
+- `backend/src/context_oracle/types.rs` - Context types and configs
+- `backend/src/context_oracle/gatherer.rs` - Main gathering logic (675 lines)
+- `backend/src/state.rs` - Service initialization
+- `backend/src/operations/engine/context.rs` - Oracle integration in context building
+- `backend/src/operations/engine/mod.rs` - OperationEngine with oracle
 
-**Tests**:
-- backend/tests/context_oracle_test.rs
-- backend/tests/end_to_end_context_test.rs
+**Intelligence Sources**:
+1. Code context (semantic search)
+2. Call graph (callers/callees)
+3. Co-change suggestions (files changed together)
+4. Historical fixes (similar past fixes)
+5. Design patterns (detected patterns)
+6. Reasoning patterns (suggested approaches)
+7. Build errors (recent errors)
+8. Expertise (author expertise)
+
+**Commits**:
+- `678998d` - Integrate Context Oracle into AppState and OperationEngine
 
 ### Milestone 8: Frontend Integration (Weeks 15-18)
 
@@ -526,7 +539,7 @@ Estimated monthly: $132 (vs $825 without cache)
 ## Status
 
 **Last Updated**: 2025-11-26
-**Current Phase**: Milestone 7 - Context Oracle Integration (Pending)
+**Current Phase**: Milestone 7 - Context Oracle Integration (In Progress)
 **Owner**: Peter (Founder)
 
 ### Completed Milestones
