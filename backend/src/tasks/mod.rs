@@ -13,6 +13,7 @@ use tracing::{error, info, warn};
 use crate::memory::features::decay;
 use crate::memory::features::message_pipeline::MessagePipeline;
 use crate::state::AppState;
+use crate::watcher::{WatcherConfig, WatcherService};
 
 pub mod backfill;
 pub mod code_sync;
@@ -32,6 +33,8 @@ pub struct TaskManager {
     config: TaskConfig,
     metrics: Arc<TaskMetrics>,
     handles: Vec<JoinHandle<()>>,
+    /// File watcher service (owned by TaskManager)
+    watcher_service: Option<WatcherService>,
 }
 
 impl TaskManager {
@@ -42,6 +45,7 @@ impl TaskManager {
             config: TaskConfig::from_env(),
             metrics: Arc::new(TaskMetrics::new()),
             handles: Vec::new(),
+            watcher_service: None,
         }
     }
 
@@ -88,6 +92,11 @@ impl TaskManager {
             self.handles.push(handle);
         }
 
+        // Start file watcher (real-time file change detection)
+        if self.config.file_watcher_enabled {
+            self.start_file_watcher().await;
+        }
+
         // Start metrics reporter
         let handle = self.spawn_metrics_reporter();
         self.handles.push(handle);
@@ -109,6 +118,44 @@ impl TaskManager {
                 error!("Embedding backfill failed: {}", e);
             }
         }
+    }
+
+    /// Start the file watcher service
+    async fn start_file_watcher(&mut self) {
+        info!("Starting file watcher service");
+
+        let watcher_config = WatcherConfig::from_env();
+        let mut watcher = WatcherService::new(
+            self.app_state.sqlite_pool.clone(),
+            self.app_state.code_intelligence.clone(),
+            watcher_config,
+        );
+
+        match watcher.start().await {
+            Ok(()) => {
+                info!("File watcher service started successfully");
+
+                // Register all existing repositories for watching
+                match watcher.register_existing_repositories().await {
+                    Ok(count) => {
+                        info!("Registered {} existing repositories for file watching", count);
+                    }
+                    Err(e) => {
+                        warn!("Failed to register existing repositories: {}", e);
+                    }
+                }
+
+                self.watcher_service = Some(watcher);
+            }
+            Err(e) => {
+                error!("Failed to start file watcher: {}", e);
+            }
+        }
+    }
+
+    /// Get a reference to the watcher service for external use
+    pub fn watcher_service(&self) -> Option<&WatcherService> {
+        self.watcher_service.as_ref()
     }
 
     /// Spawns the embedding cleanup task
@@ -387,8 +434,13 @@ impl TaskManager {
     }
 
     /// Gracefully shutdown all background tasks
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         info!("Shutting down background tasks");
+
+        // Stop file watcher first
+        if let Some(ref mut watcher) = self.watcher_service {
+            watcher.stop().await;
+        }
 
         for handle in self.handles {
             handle.abort();

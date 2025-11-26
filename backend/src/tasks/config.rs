@@ -29,6 +29,9 @@ pub struct TaskConfig {
     pub embedding_cleanup_enabled: bool,
     pub embedding_cleanup_interval: Duration,
 
+    // File watcher (real-time file change detection)
+    pub file_watcher_enabled: bool,
+
     // Active session processing limit
     pub active_session_limit: i64,
 }
@@ -111,6 +114,13 @@ impl TaskConfig {
                     .parse()
                     .unwrap_or(604800),
             ),
+
+            // File watcher enabled by default
+            // When enabled, code_sync polling can be reduced or disabled
+            file_watcher_enabled: std::env::var("TASK_FILE_WATCHER_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
 
             // Limit active sessions to avoid overload
             active_session_limit: std::env::var("ACTIVE_SESSION_LIMIT")

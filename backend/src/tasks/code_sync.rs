@@ -2,6 +2,7 @@
 // Background task to keep code intelligence up-to-date
 
 use anyhow::Result;
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use std::path::Path;
@@ -91,7 +92,7 @@ impl CodeSyncTask {
     ) -> Result<usize> {
         let mut synced = 0;
 
-        // Walk all files in the directory
+        // PHASE 1: Process existing files on disk
         for entry in WalkDir::new(base_path)
             .follow_links(false)
             .into_iter()
@@ -153,6 +154,23 @@ impl CodeSyncTask {
                 continue;
             }
 
+            // Log modification to local_changes for audit trail
+            if let Some(ref old_hash) = last_hash {
+                // This is a modification (not a new file)
+                if let Err(e) = self
+                    .log_file_change(
+                        project_id,
+                        &relative_path,
+                        "modified",
+                        Some(old_hash.as_str()),
+                        Some(&current_hash),
+                    )
+                    .await
+                {
+                    warn!("Failed to log file change: {}", e);
+                }
+            }
+
             // File changed or is new - re-parse and embed
             match self
                 .upsert_and_parse(
@@ -173,7 +191,112 @@ impl CodeSyncTask {
             }
         }
 
+        // PHASE 2: Detect and cleanup deleted files
+        let deleted_count = self
+            .cleanup_deleted_files(attachment_id, project_id, base_path)
+            .await?;
+
+        if deleted_count > 0 {
+            info!(
+                "Cleaned up {} deleted files for attachment {}",
+                deleted_count, attachment_id
+            );
+        }
+
         Ok(synced)
+    }
+
+    /// Detect and cleanup files that exist in DB but were deleted from disk
+    async fn cleanup_deleted_files(
+        &self,
+        attachment_id: &str,
+        project_id: &str,
+        base_path: &str,
+    ) -> Result<usize> {
+        // Get all file paths currently tracked in database for this attachment
+        let db_files: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT id, file_path, content_hash FROM repository_files
+            WHERE attachment_id = ?
+            "#,
+        )
+        .bind(attachment_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut deleted_count = 0;
+        let base = Path::new(base_path);
+
+        for (file_id, relative_path, old_hash) in db_files {
+            let full_path = base.join(&relative_path);
+
+            if !full_path.exists() {
+                // File was deleted from disk - clean up SQLite and Qdrant
+                info!(
+                    "Detected deleted file: {} (file_id: {})",
+                    relative_path, file_id
+                );
+
+                // Invalidate embeddings first (deletes from Qdrant)
+                if let Err(e) = self.code_intelligence.invalidate_file(file_id).await {
+                    warn!(
+                        "Failed to invalidate embeddings for deleted file {}: {}",
+                        file_id, e
+                    );
+                }
+
+                // Delete code_elements (cascade will handle related tables)
+                sqlx::query!("DELETE FROM code_elements WHERE file_id = ?", file_id)
+                    .execute(&self.pool)
+                    .await?;
+
+                // Delete the repository_files record
+                sqlx::query!("DELETE FROM repository_files WHERE id = ?", file_id)
+                    .execute(&self.pool)
+                    .await?;
+
+                // Log deletion to local_changes for audit trail
+                if let Err(e) = self
+                    .log_file_change(project_id, &relative_path, "deleted", old_hash.as_deref(), None)
+                    .await
+                {
+                    warn!("Failed to log file deletion: {}", e);
+                }
+
+                deleted_count += 1;
+            }
+        }
+
+        Ok(deleted_count)
+    }
+
+    /// Log a file change to local_changes table for audit trail
+    async fn log_file_change(
+        &self,
+        project_id: &str,
+        file_path: &str,
+        change_type: &str,
+        old_hash: Option<&str>,
+        new_hash: Option<&str>,
+    ) -> Result<()> {
+        let created_at = Utc::now().timestamp();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO local_changes (project_id, file_path, change_type, old_hash, new_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+            project_id,
+            file_path,
+            change_type,
+            old_hash,
+            new_hash,
+            created_at
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Upsert repository_files record and trigger AST parsing + embedding

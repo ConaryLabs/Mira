@@ -129,8 +129,8 @@ impl EmbeddingCleanupTask {
         let mut orphan_ids = Vec::new();
 
         for point_id in all_points {
-            // Point ID should be the message_id as a string
-            let message_id: i64 = match point_id.parse() {
+            // Point ID should be the record ID as a string
+            let record_id: i64 = match point_id.parse() {
                 Ok(id) => id,
                 Err(_) => {
                     warn!("Invalid point ID format: {}", point_id);
@@ -138,11 +138,11 @@ impl EmbeddingCleanupTask {
                 }
             };
 
-            // Check if this message_id exists in SQLite
-            let exists = self.check_message_exists(message_id).await?;
+            // Check if this ID exists in the appropriate SQLite table
+            let exists = self.check_point_exists(head, record_id).await?;
 
             if !exists {
-                orphan_ids.push(message_id);
+                orphan_ids.push(record_id);
                 report.orphans += 1;
             }
         }
@@ -155,13 +155,13 @@ impl EmbeddingCleanupTask {
                 head.as_str()
             );
 
-            for message_id in orphan_ids {
-                match self.multi_store.delete(head, message_id).await {
+            for record_id in orphan_ids {
+                match self.multi_store.delete(head, record_id).await {
                     Ok(_) => {
                         report.deleted += 1;
                     }
                     Err(e) => {
-                        warn!("Failed to delete point {}: {}", message_id, e);
+                        warn!("Failed to delete point {}: {}", record_id, e);
                     }
                 }
             }
@@ -170,13 +170,27 @@ impl EmbeddingCleanupTask {
         Ok(report)
     }
 
-    /// Check if a message exists in SQLite
-    async fn check_message_exists(&self, message_id: i64) -> Result<bool> {
-        let result =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_entries WHERE id = ?")
-                .bind(message_id)
-                .fetch_one(&*self.pool)
-                .await?;
+    /// Check if a point ID is valid for the given collection
+    ///
+    /// Code collection: check code_elements table (point_id = code_element.id)
+    /// Conversation/Git collections: check memory_entries table (point_id = memory_entry.id)
+    async fn check_point_exists(&self, head: EmbeddingHead, point_id: i64) -> Result<bool> {
+        let result = match head {
+            EmbeddingHead::Code => {
+                // Code collection uses code_elements.id as point_id
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM code_elements WHERE id = ?")
+                    .bind(point_id)
+                    .fetch_one(&*self.pool)
+                    .await?
+            }
+            EmbeddingHead::Conversation | EmbeddingHead::Git => {
+                // Conversation and Git collections use memory_entries.id as point_id
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_entries WHERE id = ?")
+                    .bind(point_id)
+                    .fetch_one(&*self.pool)
+                    .await?
+            }
+        };
 
         Ok(result > 0)
     }

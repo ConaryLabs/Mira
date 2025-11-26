@@ -426,17 +426,51 @@ Estimated monthly: $132 (vs $825 without cache)
 **Commits**:
 - `678998d` - Integrate Context Oracle into AppState and OperationEngine
 
-### Milestone 8: Frontend Integration (Weeks 15-18)
+### Milestone 8: Real-time File Watching - COMPLETE
+
+**Goal**: Replace polling-based file sync with real-time file watching
+
+**Deliverables**:
+- [x] File watcher service using notify crate (cross-platform)
+- [x] Debounced event processing (300ms per-file, 1000ms batch)
+- [x] Git operation cooldown (3s) to prevent redundant processing
+- [x] Content hash comparison to skip unchanged files
+- [x] Audit trail logging to local_changes table
+- [x] Automatic registration of existing repositories at startup
+- [x] Gap fixes: file deletion detection, collection-aware embedding cleanup
+
+**Key Files**:
+- `backend/src/watcher/mod.rs` - WatcherService orchestration
+- `backend/src/watcher/config.rs` - Environment-based configuration
+- `backend/src/watcher/events.rs` - FileChangeEvent types
+- `backend/src/watcher/registry.rs` - WatchRegistry for managing paths
+- `backend/src/watcher/processor.rs` - EventProcessor for file changes
+- `backend/src/tasks/mod.rs` - TaskManager integration
+- `backend/src/tasks/config.rs` - TASK_FILE_WATCHER_ENABLED flag
+- `backend/src/tasks/code_sync.rs` - File deletion detection fix
+- `backend/src/tasks/embedding_cleanup.rs` - Collection-aware cleanup fix
+
+**Configuration**:
+- `TASK_FILE_WATCHER_ENABLED=true` - Enable/disable watcher (default: true)
+- `WATCHER_DEBOUNCE_MS=300` - Per-file debounce delay
+- `WATCHER_BATCH_MS=1000` - Batch collection window
+- `WATCHER_GIT_COOLDOWN_MS=3000` - Post-git-operation cooldown
+
+**Dependencies Added**:
+- `notify` v8 - Cross-platform file system notifications
+- `notify-debouncer-full` v0.5 - Event debouncing
+
+### Milestone 9: Frontend Integration
 
 **Goal**: UI for all new features
 
 **Deliverables**:
-- Semantic search UI
-- Co-change suggestions panel
-- Tool synthesis dashboard
-- Budget tracking UI
-- Build error integration
-- Enhanced file browser with semantic tags
+- [x] Semantic search UI (SemanticSearch.tsx)
+- [x] Co-change suggestions panel (CoChangeSuggestions.tsx)
+- [ ] Tool synthesis dashboard
+- [x] Budget tracking UI (BudgetTracker.tsx)
+- [ ] Build error integration
+- [ ] Enhanced file browser with semantic tags
 
 **Files**:
 - frontend/src/components/SemanticSearch.tsx
@@ -445,7 +479,7 @@ Estimated monthly: $132 (vs $825 without cache)
 - frontend/src/components/BudgetTracker.tsx
 - frontend/src/stores/useCodeIntelligenceStore.ts
 
-### Milestone 9: Production Hardening (Weeks 19-20)
+### Milestone 10: Production Hardening
 
 **Goal**: Performance, reliability, documentation
 
@@ -513,7 +547,7 @@ Estimated monthly: $132 (vs $825 without cache)
 ## Future Enhancements (Post-V1)
 
 ### Deferred Features
-1. **Proactive Monitoring** - Background file watching with suggestions
+1. ~~**Proactive Monitoring** - Background file watching with suggestions~~ (Implemented in Milestone 8)
 2. **LSP Integration** - Type information from language servers
 3. **Remote Development** - SSH support for remote codebases
 4. **Multi-language AST** - Beyond Rust and TypeScript
@@ -558,7 +592,7 @@ Estimated monthly: $132 (vs $825 without cache)
 ## Status
 
 **Last Updated**: 2025-11-26
-**Current Phase**: Milestone 7 - Context Oracle Integration (In Progress)
+**Current Phase**: Milestone 9 - Frontend Integration (In Progress)
 **Owner**: Peter (Founder)
 
 ### Completed Milestones
@@ -601,12 +635,23 @@ Estimated monthly: $132 (vs $825 without cache)
 - Pattern replay with success rate tracking
 - Commit: `fdc561c`
 
+**Milestone 7: Context Oracle Integration** - Complete
+- Unified context gathering with 8 intelligence sources
+- Budget-aware config selection
+- RecallEngine integration
+- Commit: `678998d`
+
+**Milestone 8: Real-time File Watching** - Complete
+- Cross-platform file watcher (notify crate)
+- Debounced event processing with batch collection
+- Git operation cooldown, content hash comparison
+- Gap fixes: deletion detection, collection-aware cleanup
+
 ### Next Steps
 
-1. **Milestone 7**: Context Oracle Integration - Unified context gathering using all intelligence systems
-2. **Milestone 8**: Frontend Integration - UI for semantic search, co-change suggestions, tool dashboard
-3. **Milestone 9**: Production Hardening - Performance, reliability, documentation
+1. **Milestone 9**: Frontend Integration - Complete remaining UI components (tool dashboard, build errors)
+2. **Milestone 10**: Production Hardening - Performance, reliability, documentation
 
 ### Architecture
 
-GPT 5.1 single-model with variable reasoning effort (minimum/medium/high). Database schema combines mira-cli's programming context oracle with Mira's personal memory system. All operations routed through the unified Operation Engine.
+GPT 5.1 single-model with variable reasoning effort (minimum/medium/high). Database schema combines mira-cli's programming context oracle with Mira's personal memory system. All operations routed through the unified Operation Engine. Real-time file watching via notify crate for immediate code intelligence updates.

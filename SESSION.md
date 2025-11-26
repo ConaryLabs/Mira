@@ -4,6 +4,69 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 27: Milestone 8 - Real-time File Watching (2025-11-26)
+
+**Summary:** Implemented real-time file watching to replace 5-minute polling, with gap fixes for file deletion detection and collection-aware embedding cleanup.
+
+**Work Completed:**
+
+1. **Gap Fixes (Pre-requisites):**
+   - **Gap 1 - File Deletion Detection** (`tasks/code_sync.rs`): Added `cleanup_deleted_files()` to detect and remove orphaned repository_files records
+   - **Gap 2 - Collection-Aware Cleanup** (`tasks/embedding_cleanup.rs`): Fixed `check_point_exists()` to check code_elements for Code collection vs memory_entries for Conversation
+   - **Gap 3 - Audit Logging**: Added `log_file_change()` to track all changes in local_changes table
+
+2. **File Watcher Module** (`src/watcher/`):
+   - `mod.rs` - WatcherService with start/stop, watch/unwatch repository, git operation cooldown
+   - `config.rs` - WatcherConfig with env-based settings (debounce_ms, batch_ms, git_cooldown_ms)
+   - `events.rs` - FileChangeEvent with ChangeType enum, from_debounced() constructor
+   - `registry.rs` - WatchRegistry managing watched paths with pending watch queue
+   - `processor.rs` - EventProcessor handling create/modify/delete with hash comparison
+
+3. **TaskManager Integration** (`tasks/mod.rs`):
+   - Added `watcher_service: Option<WatcherService>` field
+   - Added `start_file_watcher()` method with automatic repository registration
+   - Added `watcher_service()` getter for external access
+   - Updated `shutdown()` to stop watcher gracefully
+
+4. **Configuration** (`tasks/config.rs`):
+   - Added `file_watcher_enabled: bool` field
+   - Added `TASK_FILE_WATCHER_ENABLED` env var (default: true)
+
+**Dependencies Added** (`Cargo.toml`):
+```toml
+notify = "8"
+notify-debouncer-full = "0.5"
+```
+
+**Key Features:**
+- Cross-platform file watching (Linux inotify, macOS FSEvents, Windows ReadDirectoryChanges)
+- 300ms per-file debounce, 1000ms batch collection window
+- 3s git operation cooldown to prevent redundant processing after git ops
+- Content hash comparison skips unchanged files
+- Automatic registration of existing imported repositories at startup
+- Graceful shutdown support
+
+**Files Created:**
+- `backend/src/watcher/mod.rs` (~245 lines)
+- `backend/src/watcher/config.rs` (~70 lines)
+- `backend/src/watcher/events.rs` (~90 lines)
+- `backend/src/watcher/registry.rs` (~210 lines)
+- `backend/src/watcher/processor.rs` (~370 lines)
+
+**Files Modified:**
+- `backend/Cargo.toml` - Added notify dependencies
+- `backend/src/lib.rs` - Added `pub mod watcher`
+- `backend/src/tasks/mod.rs` - TaskManager integration
+- `backend/src/tasks/config.rs` - file_watcher_enabled flag
+- `backend/src/tasks/code_sync.rs` - Gap 1 & 3 fixes
+- `backend/src/tasks/embedding_cleanup.rs` - Gap 2 fix
+
+**Test Status:** All 75 lib tests passing
+
+**Milestone 8 Status:** COMPLETE
+
+---
+
 ## Session 26: Milestone 8 - Intelligence Panel WebSocket Integration (2025-11-26)
 
 **Summary:** Completed WebSocket integration for the Intelligence Panel, connecting frontend components to backend intelligence services.

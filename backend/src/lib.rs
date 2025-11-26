@@ -35,6 +35,9 @@ pub mod patterns;
 // Milestone 7 - Context Oracle (unified intelligence gathering)
 pub mod context_oracle;
 
+// Milestone 8 - Real-time file watching
+pub mod watcher;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;
