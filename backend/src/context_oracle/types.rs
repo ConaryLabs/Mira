@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 pub struct ContextConfig {
     /// Include semantic code search results
     pub include_code_search: bool,
+    /// Include semantic graph concepts
+    pub include_semantic_concepts: bool,
+    /// Include project guidelines
+    pub include_guidelines: bool,
     /// Include call graph context
     pub include_call_graph: bool,
     /// Include co-change suggestions
@@ -21,6 +25,8 @@ pub struct ContextConfig {
     pub include_reasoning_patterns: bool,
     /// Include recent build errors
     pub include_build_errors: bool,
+    /// Include past error resolutions
+    pub include_error_resolutions: bool,
     /// Include author expertise
     pub include_expertise: bool,
     /// Maximum tokens for context (budget-aware)
@@ -37,13 +43,16 @@ impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             include_code_search: true,
+            include_semantic_concepts: true, // Concept-based code understanding
+            include_guidelines: true, // Project guidelines are important context
             include_call_graph: true,
             include_cochange: true,
             include_historical_fixes: true,
             include_patterns: true,
             include_reasoning_patterns: true,
             include_build_errors: true,
-            include_expertise: false, // Off by default to save tokens
+            include_error_resolutions: true, // Show how past errors were resolved
+            include_expertise: true, // Expert context is valuable for code understanding
             max_context_tokens: 8000,
             max_code_results: 10,
             max_cochange_suggestions: 5,
@@ -57,12 +66,15 @@ impl ContextConfig {
     pub fn minimal() -> Self {
         Self {
             include_code_search: true,
+            include_semantic_concepts: false, // Skip concepts to save tokens
+            include_guidelines: true, // Always include guidelines - minimal tokens, high value
             include_call_graph: false,
             include_cochange: false,
             include_historical_fixes: false,
             include_patterns: false,
             include_reasoning_patterns: false,
             include_build_errors: false,
+            include_error_resolutions: false,
             include_expertise: false,
             max_context_tokens: 4000,
             max_code_results: 5,
@@ -75,12 +87,15 @@ impl ContextConfig {
     pub fn full() -> Self {
         Self {
             include_code_search: true,
+            include_semantic_concepts: true,
+            include_guidelines: true,
             include_call_graph: true,
             include_cochange: true,
             include_historical_fixes: true,
             include_patterns: true,
             include_reasoning_patterns: true,
             include_build_errors: true,
+            include_error_resolutions: true,
             include_expertise: true,
             max_context_tokens: 16000,
             max_code_results: 20,
@@ -93,13 +108,16 @@ impl ContextConfig {
     pub fn for_error() -> Self {
         Self {
             include_code_search: true,
+            include_semantic_concepts: true, // Concepts help understand error context
+            include_guidelines: true,
             include_call_graph: true,
             include_cochange: false,
             include_historical_fixes: true,
             include_patterns: true,
             include_reasoning_patterns: true,
             include_build_errors: true,
-            include_expertise: false,
+            include_error_resolutions: true, // Critical for error context
+            include_expertise: true, // Experts can help identify fix patterns
             max_context_tokens: 12000,
             max_code_results: 10,
             max_cochange_suggestions: 0,
@@ -135,12 +153,15 @@ impl ContextConfig {
             // Very tight budget: minimal error config
             Self {
                 include_code_search: true,
+                include_semantic_concepts: false, // Skip to save tokens
+                include_guidelines: true, // Guidelines are always valuable
                 include_call_graph: false,
                 include_cochange: false,
                 include_historical_fixes: true,
                 include_patterns: false,
                 include_reasoning_patterns: false,
                 include_build_errors: true,
+                include_error_resolutions: true, // Keep even on tight budget - very useful for errors
                 include_expertise: false,
                 max_context_tokens: 4000,
                 max_code_results: 3,
@@ -151,12 +172,15 @@ impl ContextConfig {
             // Moderate budget: reduced error config
             Self {
                 include_code_search: true,
+                include_semantic_concepts: true, // Include concepts for better error understanding
+                include_guidelines: true,
                 include_call_graph: true,
                 include_cochange: false,
                 include_historical_fixes: true,
                 include_patterns: false,
                 include_reasoning_patterns: true,
                 include_build_errors: true,
+                include_error_resolutions: true,
                 include_expertise: false,
                 max_context_tokens: 8000,
                 max_code_results: 5,
@@ -398,11 +422,35 @@ pub struct ExpertiseContext {
     pub relevant_files: Vec<String>,
 }
 
+/// Past error resolution context
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResolutionContext {
+    pub error_hash: String,
+    pub resolution_type: String,
+    pub files_changed: Vec<String>,
+    pub commit_hash: Option<String>,
+    pub resolved_at: i64,
+    pub notes: Option<String>,
+}
+
+/// Semantic concept context from the semantic graph
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticConceptContext {
+    pub concept: String,
+    pub related_symbols: Vec<String>,
+    pub domain: Option<String>,
+    pub purpose: Option<String>,
+}
+
 /// Complete gathered context from all systems
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatheredContext {
+    /// Project guidelines content
+    pub guidelines: Option<String>,
     /// Code search results
     pub code_context: Option<CodeContext>,
+    /// Semantic concepts related to the query
+    pub semantic_concepts: Vec<SemanticConceptContext>,
     /// Call graph information
     pub call_graph: Option<CallGraphContext>,
     /// Co-change suggestions
@@ -415,6 +463,8 @@ pub struct GatheredContext {
     pub reasoning_patterns: Vec<ReasoningPatternSuggestion>,
     /// Recent build errors
     pub build_errors: Vec<BuildErrorContext>,
+    /// Past error resolutions
+    pub error_resolutions: Vec<ErrorResolutionContext>,
     /// Expert authors for the area
     pub expertise: Vec<ExpertiseContext>,
     /// Token count estimate
@@ -428,13 +478,16 @@ pub struct GatheredContext {
 impl GatheredContext {
     pub fn empty() -> Self {
         Self {
+            guidelines: None,
             code_context: None,
+            semantic_concepts: Vec::new(),
             call_graph: None,
             cochange_suggestions: Vec::new(),
             historical_fixes: Vec::new(),
             design_patterns: Vec::new(),
             reasoning_patterns: Vec::new(),
             build_errors: Vec::new(),
+            error_resolutions: Vec::new(),
             expertise: Vec::new(),
             estimated_tokens: 0,
             duration_ms: 0,
@@ -445,6 +498,12 @@ impl GatheredContext {
     /// Format context for prompt injection
     pub fn format_for_prompt(&self) -> String {
         let mut output = String::new();
+
+        // Guidelines first - they provide important project context
+        if let Some(ref guidelines) = self.guidelines {
+            output.push_str(guidelines);
+            output.push_str("\n\n");
+        }
 
         // Code context
         if let Some(ref code) = self.code_context {
@@ -460,6 +519,28 @@ impl GatheredContext {
                     }
                 }
             }
+        }
+
+        // Semantic concepts
+        if !self.semantic_concepts.is_empty() {
+            output.push_str("## Related Concepts\n\n");
+            for concept in &self.semantic_concepts {
+                output.push_str(&format!("- **{}**", concept.concept));
+                if let Some(ref domain) = concept.domain {
+                    output.push_str(&format!(" ({})", domain));
+                }
+                if let Some(ref purpose) = concept.purpose {
+                    output.push_str(&format!(": {}", purpose));
+                }
+                output.push('\n');
+                if !concept.related_symbols.is_empty() {
+                    output.push_str(&format!(
+                        "  Related: {}\n",
+                        concept.related_symbols.join(", ")
+                    ));
+                }
+            }
+            output.push('\n');
         }
 
         // Call graph
@@ -551,6 +632,23 @@ impl GatheredContext {
             output.push('\n');
         }
 
+        // Error resolutions - how similar errors were fixed before
+        if !self.error_resolutions.is_empty() {
+            output.push_str("## Past Error Resolutions\n\n");
+            for res in &self.error_resolutions {
+                output.push_str(&format!(
+                    "- **{}**: Fixed by {} in files: {}\n",
+                    res.resolution_type,
+                    res.commit_hash.as_deref().unwrap_or("manual fix"),
+                    res.files_changed.join(", ")
+                ));
+                if let Some(ref notes) = res.notes {
+                    output.push_str(&format!("  Notes: {}\n", notes));
+                }
+            }
+            output.push('\n');
+        }
+
         // Expertise
         if !self.expertise.is_empty() {
             output.push_str("## Domain Experts\n\n");
@@ -570,13 +668,16 @@ impl GatheredContext {
 
     /// Check if context is essentially empty
     pub fn is_empty(&self) -> bool {
-        self.code_context.is_none()
+        self.guidelines.is_none()
+            && self.code_context.is_none()
+            && self.semantic_concepts.is_empty()
             && self.call_graph.is_none()
             && self.cochange_suggestions.is_empty()
             && self.historical_fixes.is_empty()
             && self.design_patterns.is_empty()
             && self.reasoning_patterns.is_empty()
             && self.build_errors.is_empty()
+            && self.error_resolutions.is_empty()
             && self.expertise.is_empty()
     }
 }

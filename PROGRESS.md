@@ -926,6 +926,65 @@ Backend (2 files):
 
 ---
 
+### Session 21: 2025-11-26
+
+**Summary:** Context Oracle housecleaning - wired 3 unused intelligence systems into LLM context, fixed default configs.
+
+**Goals:**
+- Audit stored vs retrieved data to find unused tables/services
+- Wire up unused intelligence systems to Context Oracle
+- Ensure all gathered context flows through to LLM prompts
+
+**Audit Findings:**
+- 56 tables across 9 migrations
+- 27 tables had write operations but no read/retrieval
+- Key unused systems:
+  - Semantic Graph (900+ lines, never queried)
+  - Project Guidelines (no Rust code existed)
+  - Error Resolutions (stored but not in Context Oracle)
+- `include_expertise` defaulted to false (should be true)
+
+**Key Outcomes:**
+- Wired ErrorResolver into Context Oracle with `gather_error_resolutions()` method
+- Wired SemanticGraphService into Context Oracle with `gather_semantic_concepts()` method
+- Created new ProjectGuidelinesService (CRUD + context formatting)
+- Changed `include_expertise` from false to true in all config presets
+- Added 3 new config flags: `include_error_resolutions`, `include_semantic_concepts`, `include_guidelines`
+- All 127+ tests pass after config updates
+
+**Files Created:**
+- `backend/src/project/guidelines.rs` (~100 lines) - Complete guidelines service with CRUD, content hashing, context formatting
+
+**Files Modified:**
+Context Oracle (2 files):
+- `backend/src/context_oracle/types.rs` - Added 3 config flags, 2 new context types (ErrorResolutionContext, SemanticConceptContext), updated GatheredContext struct and format_for_prompt()
+- `backend/src/context_oracle/gatherer.rs` - Added fields for semantic_graph, guidelines_service, error_resolver; added 3 builder methods; added 3 gathering methods; added helper methods (get_symbol_name, extract_concepts_from_query, find_error_hashes_for_message)
+
+Application State:
+- `backend/src/state.rs` - Added semantic_graph and guidelines_service fields, wired all services to Context Oracle
+- `backend/src/project/mod.rs` - Added guidelines module and exports
+
+Tests:
+- `backend/tests/recall_engine_oracle_test.rs` - Updated assertions to match new defaults (expertise enabled)
+
+**Technical Decisions:**
+1. **Error Resolution Extraction**: Query errors from message content using LIKE pattern matching on error hashes
+2. **Semantic Concept Extraction**: Extract programming keywords from query, search concept index, resolve to symbol names
+3. **Guidelines Context**: Format as bullet points with file path prefixes for LLM clarity
+4. **Config Defaults**: All intelligence features now enabled by default (expertise, guidelines, semantic concepts, error resolutions)
+
+**Bug Fixes:**
+- Fixed temporary value borrowed error in `find_error_hashes_for_message` (created let binding before query)
+- Fixed SemanticNode field access (search_by_concept returns Vec<i64>, not structs)
+- Updated test assertions after changing default config values
+
+**Notes:**
+- Context now flows: gather → format_for_prompt → LLM context injection
+- All new context sources properly integrated into budget-aware configuration
+- Minimal config still disables heavy features (call_graph, expertise) for cost savings
+
+---
+
 ### Session 20: 2025-11-26
 
 **Summary:** Fixed all 7 previously-ignored integration tests by resolving Qdrant client/server version mismatch, fixing analysis metadata persistence, and correcting SQLite query ordering.

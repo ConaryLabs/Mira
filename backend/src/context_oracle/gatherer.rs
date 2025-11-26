@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::build::BuildTracker;
+use crate::build::{BuildTracker, ErrorResolver};
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
-use crate::memory::features::code_intelligence::CodeIntelligenceService;
+use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::patterns::{MatchContext, PatternMatcher, PatternStorage};
+use crate::project::guidelines::ProjectGuidelinesService;
 
 use super::types::*;
 
@@ -18,10 +19,13 @@ use super::types::*;
 pub struct ContextOracle {
     pool: Arc<SqlitePool>,
     code_intelligence: Option<Arc<CodeIntelligenceService>>,
+    semantic_graph: Option<Arc<SemanticGraphService>>,
+    guidelines_service: Option<Arc<ProjectGuidelinesService>>,
     cochange_service: Option<Arc<CochangeService>>,
     expertise_service: Option<Arc<ExpertiseService>>,
     fix_service: Option<Arc<FixService>>,
     build_tracker: Option<Arc<BuildTracker>>,
+    error_resolver: Option<Arc<ErrorResolver>>,
     pattern_storage: Option<Arc<PatternStorage>>,
     pattern_matcher: Option<Arc<PatternMatcher>>,
 }
@@ -32,10 +36,13 @@ impl ContextOracle {
         Self {
             pool,
             code_intelligence: None,
+            semantic_graph: None,
+            guidelines_service: None,
             cochange_service: None,
             expertise_service: None,
             fix_service: None,
             build_tracker: None,
+            error_resolver: None,
             pattern_storage: None,
             pattern_matcher: None,
         }
@@ -44,6 +51,18 @@ impl ContextOracle {
     /// Add code intelligence service
     pub fn with_code_intelligence(mut self, service: Arc<CodeIntelligenceService>) -> Self {
         self.code_intelligence = Some(service);
+        self
+    }
+
+    /// Add semantic graph service for concept-based search
+    pub fn with_semantic_graph(mut self, service: Arc<SemanticGraphService>) -> Self {
+        self.semantic_graph = Some(service);
+        self
+    }
+
+    /// Add project guidelines service
+    pub fn with_guidelines(mut self, service: Arc<ProjectGuidelinesService>) -> Self {
+        self.guidelines_service = Some(service);
         self
     }
 
@@ -71,6 +90,12 @@ impl ContextOracle {
         self
     }
 
+    /// Add error resolver for past resolution context
+    pub fn with_error_resolver(mut self, resolver: Arc<ErrorResolver>) -> Self {
+        self.error_resolver = Some(resolver);
+        self
+    }
+
     /// Add pattern storage
     pub fn with_pattern_storage(mut self, storage: Arc<PatternStorage>) -> Self {
         self.pattern_storage = Some(storage);
@@ -94,11 +119,28 @@ impl ContextOracle {
         let mut context = GatheredContext::empty();
         let config = &request.config;
 
+        // Gather project guidelines first - they provide foundational context
+        if config.include_guidelines {
+            if let Some(guidelines) = self.gather_guidelines(request).await {
+                context.sources_used.push("guidelines".to_string());
+                context.guidelines = Some(guidelines);
+            }
+        }
+
         // Gather code context
         if config.include_code_search {
             if let Some(code_ctx) = self.gather_code_context(request).await {
                 context.sources_used.push("code_intelligence".to_string());
                 context.code_context = Some(code_ctx);
+            }
+        }
+
+        // Gather semantic concepts
+        if config.include_semantic_concepts {
+            let concepts = self.gather_semantic_concepts(request).await;
+            if !concepts.is_empty() {
+                context.sources_used.push("semantic_graph".to_string());
+                context.semantic_concepts = concepts;
             }
         }
 
@@ -155,6 +197,15 @@ impl ContextOracle {
             }
         }
 
+        // Gather past error resolutions
+        if config.include_error_resolutions {
+            let resolutions = self.gather_error_resolutions(request).await;
+            if !resolutions.is_empty() {
+                context.sources_used.push("error_resolutions".to_string());
+                context.error_resolutions = resolutions;
+            }
+        }
+
         // Gather expertise information
         if config.include_expertise {
             let expertise = self.gather_expertise(request).await;
@@ -176,6 +227,24 @@ impl ContextOracle {
         );
 
         Ok(context)
+    }
+
+    /// Gather project guidelines
+    async fn gather_guidelines(&self, request: &ContextRequest) -> Option<String> {
+        let service = self.guidelines_service.as_ref()?;
+        let project_id = request.project_id.as_ref()?;
+
+        match service.get_guidelines_for_context(project_id).await {
+            Ok(Some(guidelines)) => Some(guidelines),
+            Ok(None) => {
+                debug!("No guidelines found for project {}", project_id);
+                None
+            }
+            Err(e) => {
+                debug!("Failed to get guidelines: {}", e);
+                None
+            }
+        }
     }
 
     /// Gather code context from semantic search
@@ -244,6 +313,102 @@ impl ContextOracle {
                 None
             }
         }
+    }
+
+    /// Gather semantic concepts related to the query
+    async fn gather_semantic_concepts(
+        &self,
+        request: &ContextRequest,
+    ) -> Vec<SemanticConceptContext> {
+        let semantic_graph = match &self.semantic_graph {
+            Some(sg) => sg,
+            None => return Vec::new(),
+        };
+
+        // Extract potential concept keywords from query
+        let concepts = self.extract_concepts_from_query(&request.query);
+
+        let mut results = Vec::new();
+        for concept in concepts.iter().take(5) {
+            // search_by_concept returns Vec<i64> (symbol IDs)
+            match semantic_graph.search_by_concept(concept).await {
+                Ok(symbol_ids) => {
+                    if !symbol_ids.is_empty() {
+                        let mut related_symbols = Vec::new();
+                        let mut domain: Option<String> = None;
+                        let mut purpose: Option<String> = None;
+
+                        // Get semantic node details and code element names (limit to first 5)
+                        for symbol_id in symbol_ids.iter().take(5) {
+                            // Get the code element name for this symbol
+                            if let Ok(Some(name)) = self.get_symbol_name(*symbol_id).await {
+                                related_symbols.push(name);
+                            }
+
+                            // Get semantic node for domain/purpose info
+                            if let Ok(Some(node)) =
+                                semantic_graph.get_node_by_symbol(*symbol_id).await
+                            {
+                                // Use first node's domain_labels/purpose
+                                if domain.is_none() && !node.domain_labels.is_empty() {
+                                    domain = Some(node.domain_labels.join(", "));
+                                }
+                                if purpose.is_none() && !node.purpose.is_empty() {
+                                    purpose = Some(node.purpose.clone());
+                                }
+                            }
+                        }
+
+                        if !related_symbols.is_empty() {
+                            results.push(SemanticConceptContext {
+                                concept: concept.clone(),
+                                related_symbols,
+                                domain,
+                                purpose,
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to search concept '{}': {}", concept, e);
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Get the name of a code element by its ID (symbol_id)
+    async fn get_symbol_name(&self, symbol_id: i64) -> Result<Option<String>> {
+        let name = sqlx::query_scalar!(
+            r#"SELECT name FROM code_elements WHERE id = ?"#,
+            symbol_id
+        )
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        Ok(name)
+    }
+
+    /// Extract potential concept keywords from a query
+    fn extract_concepts_from_query(&self, query: &str) -> Vec<String> {
+        // Simple extraction: words > 3 chars that look like concepts
+        // In production, could use NLP or keyword extraction
+        let stop_words = [
+            "the", "and", "that", "this", "with", "from", "have", "what",
+            "where", "when", "how", "why", "can", "could", "would", "should",
+            "are", "was", "were", "been", "being", "for", "not", "but",
+        ];
+
+        query
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|word| {
+                word.len() > 3
+                    && !stop_words.contains(&word.to_lowercase().as_str())
+                    && !word.chars().all(|c| c.is_numeric())
+            })
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// Gather call graph context for current file/function
@@ -519,6 +684,72 @@ impl ContextOracle {
                 Vec::new()
             }
         }
+    }
+
+    /// Gather past error resolutions for similar errors
+    async fn gather_error_resolutions(
+        &self,
+        request: &ContextRequest,
+    ) -> Vec<ErrorResolutionContext> {
+        let resolver = match &self.error_resolver {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        // If we have build errors in context, look for resolutions for those
+        // Otherwise, try to find resolutions by error message if provided
+        let error_hashes: Vec<String> = if let Some(ref error_msg) = request.error_message {
+            // Try to find similar errors by message
+            match self.find_error_hashes_for_message(error_msg).await {
+                Ok(hashes) => hashes,
+                Err(_) => return Vec::new(),
+            }
+        } else {
+            return Vec::new();
+        };
+
+        let mut resolutions = Vec::new();
+        for hash in error_hashes.iter().take(5) {
+            match resolver.find_resolutions(hash).await {
+                Ok(mut res) => {
+                    for r in res.drain(..).take(2) {
+                        resolutions.push(ErrorResolutionContext {
+                            error_hash: r.error_hash,
+                            resolution_type: r.resolution_type.as_str().to_string(),
+                            files_changed: r.files_changed,
+                            commit_hash: r.commit_hash,
+                            resolved_at: r.resolved_at.timestamp(),
+                            notes: r.notes,
+                        });
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to get resolutions for {}: {}", hash, e);
+                }
+            }
+        }
+
+        resolutions
+    }
+
+    /// Find error hashes that match a given error message
+    async fn find_error_hashes_for_message(&self, message: &str) -> Result<Vec<String>> {
+        // Look for build errors with similar messages
+        let search_pattern = format!("%{}%", &message[..50.min(message.len())]);
+        let rows = sqlx::query!(
+            r#"
+            SELECT DISTINCT error_hash
+            FROM build_errors
+            WHERE message LIKE ?
+            ORDER BY last_seen_at DESC
+            LIMIT 5
+            "#,
+            search_pattern
+        )
+        .fetch_all(self.pool.as_ref())
+        .await?;
+
+        Ok(rows.into_iter().map(|r| r.error_hash).collect())
     }
 
     /// Gather expertise information

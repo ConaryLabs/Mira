@@ -148,7 +148,10 @@ fn test_context_config_default() {
     assert!(config.include_patterns);
     assert!(config.include_reasoning_patterns);
     assert!(config.include_build_errors);
-    assert!(!config.include_expertise); // Off by default
+    assert!(config.include_expertise); // Expertise enabled by default for better context
+    assert!(config.include_error_resolutions); // Error resolutions enabled
+    assert!(config.include_semantic_concepts); // Semantic concepts enabled
+    assert!(config.include_guidelines); // Guidelines enabled
     assert_eq!(config.max_context_tokens, 8000);
     assert_eq!(config.max_code_results, 10);
 }
@@ -170,11 +173,13 @@ fn test_context_config_for_budget_full() {
 
 #[test]
 fn test_context_config_for_budget_standard() {
-    // Moderate usage (40-80%) should return standard config
+    // Moderate usage (40-80%) should return standard (default) config
     let config = ContextConfig::for_budget(50.0, 60.0);
 
-    assert!(!config.include_expertise); // Standard config excludes expertise
+    // Standard config now includes all features (same as default)
+    assert!(config.include_expertise); // Expertise now enabled by default
     assert!(config.include_cochange);
+    assert!(config.include_guidelines); // Guidelines always included
     assert_eq!(config.max_context_tokens, 8000);
     assert_eq!(config.max_code_results, 10);
 }

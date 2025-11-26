@@ -8,19 +8,20 @@ use tracing::info;
 
 use crate::auth::AuthService;
 use crate::budget::BudgetTracker;
-use crate::build::BuildTracker;
+use crate::build::{BuildTracker, ErrorResolver};
 use crate::config::CONFIG;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
 use crate::llm::provider::{Gpt5Provider, OpenAiEmbeddings};
-use crate::memory::features::code_intelligence::CodeIntelligenceService;
+use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::operations::{ContextLoader, OperationEngine};
 use crate::patterns::{PatternMatcher, PatternStorage};
+use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::store::ProjectStore;
 use crate::relationship::{FactsService, RelationshipService};
 use crate::sudo::SudoPermissionService;
@@ -43,12 +44,14 @@ pub struct AppState {
     pub sqlite_store: Arc<SqliteMemoryStore>,
     pub sqlite_pool: SqlitePool,
     pub project_store: Arc<ProjectStore>,
+    pub guidelines_service: Arc<ProjectGuidelinesService>,
     pub git_store: GitStore,
     pub git_client: GitClient,
     pub gpt5_provider: Arc<Gpt5Provider>,
     pub embedding_client: Arc<OpenAiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
+    pub semantic_graph: Arc<SemanticGraphService>,
     pub context_loader: Arc<ContextLoader>,
     pub upload_sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
     pub operation_engine: Arc<OperationEngine>,
@@ -63,6 +66,7 @@ pub struct AppState {
     pub fix_service: Arc<FixService>,
     // Build system
     pub build_tracker: Arc<BuildTracker>,
+    pub error_resolver: Arc<ErrorResolver>,
     // Pattern services
     pub pattern_storage: Arc<PatternStorage>,
     pub pattern_matcher: Arc<PatternMatcher>,
@@ -79,6 +83,9 @@ impl AppState {
 
         // Initialize project store
         let project_store = Arc::new(ProjectStore::new(pool.clone()));
+
+        // Initialize guidelines service
+        let guidelines_service = Arc::new(ProjectGuidelinesService::new(pool.clone()));
 
         // Validate config
         CONFIG.validate()?;
@@ -107,6 +114,10 @@ impl AppState {
             embedding_client.clone(),
         ));
 
+        // Initialize semantic graph service for concept-based code search
+        info!("Initializing semantic graph service");
+        let semantic_graph = Arc::new(code_intelligence.create_semantic_service(gpt5_provider.clone()));
+
         // Initialize git store and client with code intelligence
         let git_store = GitStore::new(pool.clone());
         let git_client = GitClient::with_code_intelligence(
@@ -124,6 +135,10 @@ impl AppState {
         // Initialize build tracker (needed for context oracle)
         info!("Initializing build tracker");
         let build_tracker = Arc::new(BuildTracker::new(Arc::new(pool.clone())));
+
+        // Initialize error resolver (needed for context oracle)
+        info!("Initializing error resolver");
+        let error_resolver = Arc::new(ErrorResolver::new(Arc::new(pool.clone()), build_tracker.clone()));
 
         // Initialize budget tracker
         info!("Initializing budget tracker");
@@ -147,10 +162,13 @@ impl AppState {
         let context_oracle = Arc::new(
             ContextOracle::new(Arc::new(pool.clone()))
                 .with_code_intelligence(code_intelligence.clone())
+                .with_semantic_graph(semantic_graph.clone())
+                .with_guidelines(guidelines_service.clone())
                 .with_cochange(cochange_service.clone())
                 .with_expertise(expertise_service.clone())
                 .with_fix_service(fix_service.clone())
                 .with_build_tracker(build_tracker.clone())
+                .with_error_resolver(error_resolver.clone())
                 .with_pattern_storage(pattern_storage.clone())
                 .with_pattern_matcher(pattern_matcher.clone()),
         );
@@ -213,12 +231,14 @@ impl AppState {
             sqlite_store,
             sqlite_pool: pool,
             project_store,
+            guidelines_service,
             git_store,
             git_client,
             gpt5_provider,
             embedding_client,
             memory_service,
             code_intelligence,
+            semantic_graph,
             context_loader,
             upload_sessions: Arc::new(RwLock::new(HashMap::new())),
             operation_engine,
@@ -231,6 +251,7 @@ impl AppState {
             expertise_service,
             fix_service,
             build_tracker,
+            error_resolver,
             pattern_storage,
             pattern_matcher,
             context_oracle,
