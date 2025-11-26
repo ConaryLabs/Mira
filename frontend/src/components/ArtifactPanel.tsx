@@ -1,11 +1,15 @@
 // src/components/ArtifactPanel.tsx
 // REFACTORED: Editable path, keyboard shortcuts, single Save button, Apply button
+// ENHANCED: Diff/Content view toggle for git-style diff viewing
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { X, Copy, Save, FileText, Code, CheckCircle } from 'lucide-react';
+import { X, Copy, Save, FileText, Code, CheckCircle, GitCompare, FileCode } from 'lucide-react';
 import { useArtifacts } from '../hooks/useArtifacts';
 import { useAppState } from '../stores/useAppState';
 import { MonacoEditor } from './MonacoEditor';
+import { UnifiedDiffView, DiffStats } from './UnifiedDiffView';
+
+type ViewMode = 'content' | 'diff';
 
 export const ArtifactPanel: React.FC = () => {
   const {
@@ -25,6 +29,7 @@ export const ArtifactPanel: React.FC = () => {
 
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [pathInput, setPathInput] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('diff'); // Default to diff view
   
   // Update path input when active artifact changes
   useEffect(() => {
@@ -32,6 +37,20 @@ export const ArtifactPanel: React.FC = () => {
       setPathInput(activeArtifact.path);
     }
   }, [activeArtifact?.id]);
+
+  // Auto-switch to content view for new files (no diff available)
+  useEffect(() => {
+    if (activeArtifact) {
+      if (activeArtifact.isNewFile || !activeArtifact.diff) {
+        setViewMode('content');
+      } else {
+        setViewMode('diff');
+      }
+    }
+  }, [activeArtifact?.id]);
+
+  // Check if diff view is available
+  const hasDiff = activeArtifact && activeArtifact.diff && !activeArtifact.isNewFile;
 
   const handleContentChange = useCallback((newContent: string | undefined) => {
     if (activeArtifact && newContent !== undefined) {
@@ -224,6 +243,40 @@ export const ArtifactPanel: React.FC = () => {
               )}
             </div>
             
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-1 border-r border-gray-700 pr-3 mr-2">
+              <button
+                onClick={() => setViewMode('diff')}
+                disabled={!hasDiff}
+                className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                  viewMode === 'diff' && hasDiff
+                    ? 'bg-blue-600/30 text-blue-400 border border-blue-500/50'
+                    : hasDiff
+                    ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    : 'text-gray-600 cursor-not-allowed'
+                }`}
+                title={hasDiff ? 'View diff' : 'No diff available (new file)'}
+              >
+                <GitCompare size={14} />
+                Diff
+              </button>
+              <button
+                onClick={() => setViewMode('content')}
+                className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
+                  viewMode === 'content'
+                    ? 'bg-blue-600/30 text-blue-400 border border-blue-500/50'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                }`}
+                title="View full content"
+              >
+                <FileCode size={14} />
+                Content
+              </button>
+              {hasDiff && activeArtifact?.diff && (
+                <DiffStats diff={activeArtifact.diff} className="ml-2" />
+              )}
+            </div>
+
             {/* Actions */}
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
@@ -261,14 +314,18 @@ export const ArtifactPanel: React.FC = () => {
         </div>
       </div>
       
-      {/* Editor - takes remaining height */}
+      {/* Editor/Diff View - takes remaining height */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <MonacoEditor
-          value={activeArtifact.content}
-          language={activeArtifact.language || 'plaintext'}
-          onChange={handleContentChange}
-          options={{ readOnly: false }}
-        />
+        {viewMode === 'diff' && hasDiff && activeArtifact.diff ? (
+          <UnifiedDiffView diff={activeArtifact.diff} />
+        ) : (
+          <MonacoEditor
+            value={activeArtifact.content}
+            language={activeArtifact.language || 'plaintext'}
+            onChange={handleContentChange}
+            options={{ readOnly: false }}
+          />
+        )}
       </div>
     </div>
   );

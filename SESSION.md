@@ -4,6 +4,71 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 28: Git-Style Diff Viewing (2025-11-27)
+
+**Summary:** Implemented git-style unified diff viewing for file changes, showing diffs in both inline chat and artifact panel.
+
+**Work Completed:**
+
+1. **Backend: Unified Diff Algorithm** (`operations/engine/artifacts.rs`):
+   - Added `similar = "2"` crate for LCS-based diff algorithm
+   - Rewrote `compute_diff()` to generate proper unified diff format (`@@` hunks, `+/-` markers)
+   - Updated `create_artifact()` to accept `project_root: Option<&Path>` parameter
+   - Reads original file from disk for accurate diffs (not just previous artifacts)
+   - Sets `is_new_file` flag based on file existence
+
+2. **Backend: WebSocket Serialization** (`api/ws/operations/stream.rs`):
+   - Added `diff` field to artifact JSON in `ArtifactCompleted` event
+   - Added `is_new_file` field to artifact JSON in `ArtifactCompleted` event
+   - Added same fields to artifacts array in `Completed` event
+
+3. **Frontend: Type Updates**:
+   - `stores/useChatStore.ts`: Added `diff?: string` and `isNewFile?: boolean` to Artifact interface
+   - `utils/artifact.ts`: Updated `createArtifact()` to extract `diff` and `is_new_file` from payloads
+
+4. **Frontend: UnifiedDiffView Component** (new file):
+   - `components/UnifiedDiffView.tsx`: Git-style diff viewer component
+   - Color-coded lines: green (additions), red (deletions), blue (hunk headers)
+   - `DiffStats` component showing `+N/-N` counts
+   - `parseDiffStats()` helper function
+   - Compact mode for inline chat display
+
+5. **Frontend: ArtifactPanel Enhancement** (`components/ArtifactPanel.tsx`):
+   - Added `viewMode` state (`'content' | 'diff'`)
+   - Added Diff/Content toggle buttons with GitCompare and FileCode icons
+   - Auto-switches to content view for new files (no diff available)
+   - Shows `+N/-N` diff stats when diff is available
+   - Defaults to diff view when viewing modified files
+
+6. **Frontend: ChatMessage Enhancement** (`components/ChatMessage.tsx`):
+   - Shows "New File" badge with FilePlus icon for new files
+   - Shows `+N/-N` diff stats for modified files with diffs
+   - Added expandable "Show diff" / "Hide diff" toggle
+   - Collapsible diff preview using compact UnifiedDiffView
+
+**User Experience:**
+- Modified files show `+N/-N` stats inline
+- New files show "New File" badge (no diff available)
+- Click "Show diff" to expand inline preview in chat
+- Artifact panel defaults to diff view with toggle to content
+- Full git-style unified diff format with proper hunk headers
+
+**Files Created:**
+- `frontend/src/components/UnifiedDiffView.tsx` (~100 lines)
+
+**Files Modified:**
+- `backend/Cargo.toml` - Added `similar = "2"`
+- `backend/src/operations/engine/artifacts.rs` - New diff algorithm, disk file reading
+- `backend/src/api/ws/operations/stream.rs` - Added diff/is_new_file to JSON
+- `frontend/src/stores/useChatStore.ts` - Artifact type update
+- `frontend/src/utils/artifact.ts` - Extract new fields
+- `frontend/src/components/ArtifactPanel.tsx` - Diff/content toggle
+- `frontend/src/components/ChatMessage.tsx` - Diff stats and preview
+
+**Build Status:** Backend compiles (14 warnings), Frontend types check passes
+
+---
+
 ## Session 27: Milestone 8 - Real-time File Watching (2025-11-26)
 
 **Summary:** Implemented real-time file watching to replace 5-minute polling, with gap fixes for file deletion detection and collection-aware embedding cleanup.

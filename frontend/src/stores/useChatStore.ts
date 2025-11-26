@@ -16,6 +16,8 @@ export interface Artifact {
   timestamp?: number;
   status?: ArtifactStatus;
   origin?: 'llm' | 'user';
+  diff?: string;        // Unified diff string (git-style)
+  isNewFile?: boolean;  // True if creating a new file
 }
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';

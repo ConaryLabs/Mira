@@ -1,5 +1,6 @@
 // src/components/ChatMessage.tsx
 // FIXED: Removed overly restrictive changeType requirement for Apply All button
+// ENHANCED: Added diff stats and expandable diff preview
 
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -8,7 +9,8 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ChatMessage as ChatMessageType, Artifact } from '../stores/useChatStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useAppState } from '../stores/useAppState';
-import { Check, FileCode, User, Bot } from 'lucide-react';
+import { Check, FileCode, User, Bot, ChevronDown, ChevronRight, FilePlus } from 'lucide-react';
+import { UnifiedDiffView, DiffStats } from './UnifiedDiffView';
 
 interface ChatMessageProps {
   message: ChatMessageType & { isStreaming?: boolean };
@@ -17,7 +19,20 @@ interface ChatMessageProps {
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [appliedArtifacts, setAppliedArtifacts] = useState<Set<string>>(new Set());
   const [isApplyingAll, setIsApplyingAll] = useState(false);
+  const [expandedDiffs, setExpandedDiffs] = useState<Set<string>>(new Set());
   const { send } = useWebSocketStore();
+
+  const toggleDiffExpanded = (artifactId: string) => {
+    setExpandedDiffs(prev => {
+      const next = new Set(prev);
+      if (next.has(artifactId)) {
+        next.delete(artifactId);
+      } else {
+        next.add(artifactId);
+      }
+      return next;
+    });
+  };
   const { currentProject, setShowArtifacts, addArtifact, setActiveArtifact } = useAppState();
   
   const isUser = message.role === 'user';
@@ -208,24 +223,35 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               {messageArtifacts.map((artifact) => {
                 const isApplied = isArtifactApplied(artifact.id);
                 const isPrimary = artifact.changeType === 'primary';
-                
+                const hasDiff = artifact.diff && !artifact.isNewFile;
+                const isDiffExpanded = expandedDiffs.has(artifact.id);
+
                 return (
                   <div
                     key={artifact.id}
                     className={`
                       p-3 rounded-lg border transition-colors
-                      ${isPrimary 
-                        ? 'border-red-500/50 bg-red-900/10' 
+                      ${isPrimary
+                        ? 'border-red-500/50 bg-red-900/10'
                         : 'border-gray-700 bg-gray-800/50'
                       }
                     `}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <code className="text-sm text-blue-400 font-mono truncate">
                             {artifact.path}
                           </code>
+                          {artifact.isNewFile && (
+                            <span className="text-xs bg-green-700/30 text-green-400 px-2 py-0.5 rounded flex items-center gap-1">
+                              <FilePlus className="w-3 h-3" />
+                              New File
+                            </span>
+                          )}
+                          {hasDiff && artifact.diff && (
+                            <DiffStats diff={artifact.diff} />
+                          )}
                           {isPrimary && (
                             <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded">
                               Primary Fix
@@ -241,7 +267,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                           {artifact.content.split('\n').length} lines • {artifact.language}
                         </p>
                       </div>
-                      
+
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleViewInArtifacts(artifact)}
@@ -273,6 +299,28 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                         )}
                       </div>
                     </div>
+
+                    {/* Expandable diff preview */}
+                    {hasDiff && artifact.diff && (
+                      <div className="mt-2">
+                        <button
+                          onClick={() => toggleDiffExpanded(artifact.id)}
+                          className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                        >
+                          {isDiffExpanded ? (
+                            <ChevronDown className="w-3 h-3" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3" />
+                          )}
+                          {isDiffExpanded ? 'Hide diff' : 'Show diff'}
+                        </button>
+                        {isDiffExpanded && (
+                          <div className="mt-2">
+                            <UnifiedDiffView diff={artifact.diff} compact />
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -471,12 +471,14 @@ Estimated monthly: $132 (vs $825 without cache)
 - [x] Budget tracking UI (BudgetTracker.tsx)
 - [ ] Build error integration
 - [ ] Enhanced file browser with semantic tags
+- [x] Git-style diff viewing for artifacts
 
 **Files**:
 - frontend/src/components/SemanticSearch.tsx
 - frontend/src/components/CoChangeSuggestions.tsx
 - frontend/src/components/ToolsDashboard.tsx
 - frontend/src/components/BudgetTracker.tsx
+- frontend/src/components/UnifiedDiffView.tsx
 - frontend/src/stores/useCodeIntelligenceStore.ts
 
 ### Milestone 10: Production Hardening
@@ -591,7 +593,7 @@ Estimated monthly: $132 (vs $825 without cache)
 
 ## Status
 
-**Last Updated**: 2025-11-26
+**Last Updated**: 2025-11-27
 **Current Phase**: Milestone 9 - Frontend Integration (In Progress)
 **Owner**: Peter (Founder)
 

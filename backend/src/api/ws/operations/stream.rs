@@ -81,6 +81,8 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                     "content": artifact.content,
                     "language": artifact.language,
                     "kind": artifact.kind,
+                    "diff": artifact.diff,
+                    "is_new_file": artifact.is_new_file.map(|v| v == 1).unwrap_or(true),
                 },
                 "timestamp": timestamp
             })
@@ -100,6 +102,8 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                         "content": artifact.content,
                         "language": artifact.language,
                         "kind": artifact.kind,
+                        "diff": artifact.diff,
+                        "is_new_file": artifact.is_new_file.map(|v| v == 1).unwrap_or(true),
                     })
                 })
                 .collect();

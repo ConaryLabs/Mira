@@ -66,6 +66,8 @@ export function createArtifact(
     status: options?.status ?? obj.status ?? 'draft',
     origin: options?.origin ?? obj.origin ?? 'llm',
     timestamp: obj.timestamp ?? Date.now(),
+    diff: obj.diff ?? undefined,
+    isNewFile: obj.is_new_file ?? obj.isNewFile ?? undefined,
   };
 }
 

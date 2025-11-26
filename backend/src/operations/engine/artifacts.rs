@@ -5,10 +5,12 @@ use crate::operations::{Artifact, engine::events::OperationEngineEvent};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
+use similar::{ChangeTag, TextDiff};
 use sqlx::SqlitePool;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Clone)]
 pub struct ArtifactManager {
@@ -21,11 +23,16 @@ impl ArtifactManager {
     }
 
     /// Create artifact from tool call arguments
+    ///
+    /// If `project_root` is provided, the function will check if the file exists
+    /// on disk and compute a diff against the current file content (not previous
+    /// artifacts in the same operation).
     pub async fn create_artifact(
         &self,
         operation_id: &str,
         args: serde_json::Value,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        project_root: Option<&Path>,
     ) -> Result<()> {
         let path = args
             .get("path")
@@ -60,22 +67,44 @@ impl ArtifactManager {
         hasher.update(content.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
 
-        // Check if previous artifact exists
-        let previous = sqlx::query!(
-            "SELECT content FROM artifacts WHERE operation_id = ? AND file_path = ? ORDER BY created_at DESC LIMIT 1",
-            operation_id,
-            path
-        )
-        .fetch_optional(&*self.db)
-        .await?;
-
-        let diff = if let Some(prev) = previous {
-            Some(Self::compute_diff(&prev.content, &content))
+        // Determine if file exists and compute diff
+        let (diff, is_new_file) = if let Some(root) = project_root {
+            let file_path = root.join(&path);
+            if file_path.exists() && file_path.is_file() {
+                // Read original file content from disk
+                match tokio::fs::read_to_string(&file_path).await {
+                    Ok(original_content) => {
+                        debug!("[ENGINE] Computing diff against existing file: {}", path);
+                        let diff = Self::compute_diff(&original_content, &content);
+                        (Some(diff), false)
+                    }
+                    Err(e) => {
+                        debug!("[ENGINE] Failed to read file {}: {}, treating as new", path, e);
+                        (None, true)
+                    }
+                }
+            } else {
+                debug!("[ENGINE] File does not exist, marking as new: {}", path);
+                (None, true)
+            }
         } else {
-            None
+            // Fallback: Check previous artifacts in DB (original behavior)
+            let previous = sqlx::query!(
+                "SELECT content FROM artifacts WHERE operation_id = ? AND file_path = ? ORDER BY created_at DESC LIMIT 1",
+                operation_id,
+                path
+            )
+            .fetch_optional(&*self.db)
+            .await?;
+
+            if let Some(prev) = previous {
+                (Some(Self::compute_diff(&prev.content, &content)), false)
+            } else {
+                (None, true)
+            }
         };
 
-        let artifact = Artifact::new(
+        let mut artifact = Artifact::new(
             operation_id.to_string(),
             "code".to_string(),
             Some(path.clone()),
@@ -84,6 +113,9 @@ impl ArtifactManager {
             language,
             diff,
         );
+
+        // Set is_new_file flag
+        artifact.is_new_file = Some(if is_new_file { 1 } else { 0 });
 
         sqlx::query!(
             r#"
@@ -172,50 +204,85 @@ impl ArtifactManager {
         Ok(artifacts)
     }
 
-    /// Compute a simple unified diff between old and new content
+    /// Compute a unified diff between old and new content using LCS algorithm
     fn compute_diff(old_content: &str, new_content: &str) -> String {
-        let old_lines: Vec<&str> = old_content.lines().collect();
-        let new_lines: Vec<&str> = new_content.lines().collect();
+        let diff = TextDiff::from_lines(old_content, new_content);
+        let mut output = String::new();
 
-        let mut diff = String::new();
-        diff.push_str(&format!("--- old\n+++ new\n"));
+        // Add file headers
+        output.push_str("--- a/original\n");
+        output.push_str("+++ b/modified\n");
 
-        let max_lines = old_lines.len().max(new_lines.len());
-        let mut changes = Vec::new();
+        // Generate hunks with 3 lines of context
+        for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+            // Calculate hunk header
+            let mut old_start = 0;
+            let mut old_count = 0;
+            let mut new_start = 0;
+            let mut new_count = 0;
 
-        for i in 0..max_lines {
-            let old_line = old_lines.get(i).copied();
-            let new_line = new_lines.get(i).copied();
-
-            match (old_line, new_line) {
-                (Some(old), Some(new)) if old != new => {
-                    changes.push(format!("-{}", old));
-                    changes.push(format!("+{}", new));
+            for op in group {
+                match op {
+                    similar::DiffOp::Equal { old_index, new_index, len } => {
+                        if old_start == 0 {
+                            old_start = old_index + 1;
+                            new_start = new_index + 1;
+                        }
+                        old_count += len;
+                        new_count += len;
+                    }
+                    similar::DiffOp::Delete { old_index, old_len, .. } => {
+                        if old_start == 0 {
+                            old_start = old_index + 1;
+                            new_start = 1;
+                        }
+                        old_count += old_len;
+                    }
+                    similar::DiffOp::Insert { new_index, new_len, .. } => {
+                        if old_start == 0 {
+                            old_start = 1;
+                            new_start = new_index + 1;
+                        }
+                        new_count += new_len;
+                    }
+                    similar::DiffOp::Replace { old_index, old_len, new_index, new_len } => {
+                        if old_start == 0 {
+                            old_start = old_index + 1;
+                            new_start = new_index + 1;
+                        }
+                        old_count += old_len;
+                        new_count += new_len;
+                    }
                 }
-                (Some(old), None) => {
-                    changes.push(format!("-{}", old));
+            }
+
+            // Add hunk header
+            if idx > 0 || !group.is_empty() {
+                output.push_str(&format!(
+                    "@@ -{},{} +{},{} @@\n",
+                    old_start, old_count, new_start, new_count
+                ));
+            }
+
+            // Add diff lines
+            for op in group {
+                for change in diff.iter_changes(op) {
+                    let sign = match change.tag() {
+                        ChangeTag::Delete => "-",
+                        ChangeTag::Insert => "+",
+                        ChangeTag::Equal => " ",
+                    };
+                    let line = change.value();
+                    output.push_str(sign);
+                    output.push_str(line);
+                    // Ensure line ends with newline
+                    if !line.ends_with('\n') {
+                        output.push('\n');
+                    }
                 }
-                (None, Some(new)) => {
-                    changes.push(format!("+{}", new));
-                }
-                _ => {} // Lines are the same or both None
             }
         }
 
-        if !changes.is_empty() {
-            diff.push_str(&format!(
-                "@@ -{},{} +{},{} @@\n",
-                1,
-                old_lines.len(),
-                1,
-                new_lines.len()
-            ));
-            for change in changes {
-                diff.push_str(&change);
-                diff.push('\n');
-            }
-        }
-
-        diff
+        output
     }
 }
