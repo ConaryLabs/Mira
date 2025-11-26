@@ -147,7 +147,7 @@ impl DocumentParser {
                     Ok(Event::Text(e)) => {
                         if in_text {
                             let text = e
-                                .unescape()
+                                .decode()
                                 .map_err(|err| anyhow::anyhow!("XML decode error: {}", err))?;
                             content.push_str(&text);
                             content.push(' '); // Add space between text runs
@@ -212,7 +212,7 @@ impl DocumentParser {
                     }
                     Ok(Event::Text(e)) => {
                         let text = e
-                            .unescape()
+                            .decode()
                             .map_err(|err| anyhow::anyhow!("XML decode error: {}", err))?;
 
                         match current_element.as_str() {

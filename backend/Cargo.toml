@@ -39,7 +39,7 @@ tokio-stream = { version = "0.1", features = ["net", "io-util"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3.31"
 # Rate limiting and retry logic
-governor = "0.6"
+governor = "0.10"
 parking_lot = "0.12.4"
 quote = "1.0.40"
 sha2 = "0.10.9"
@@ -49,12 +49,12 @@ regex = "1.11.2"
 # Vector database - latest stable
 qdrant-client = "1.15"
 # Document processing
-pdf-extract = "0.7"
-lopdf = "0.34"
+pdf-extract = "0.10"
+lopdf = "0.38"
 zip = "6"
 encoding_rs = "0.8"
 mime_guess = "2.0"
-quick-xml = "0.37"
+quick-xml = "0.38"
 swc_ecma_parser = "27"
 swc_ecma_ast = "18"
 swc_common = "17"
@@ -64,11 +64,11 @@ glob = "0.3.3"
 urlencoding = "2.1.3"
 html-escape = "0.2.13"
 # Authentication
-jsonwebtoken = "9.3"
-bcrypt = "0.16"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+bcrypt = "0.17"
 tower-http = { version = "0.6", features = ["cors"] }
 [dev-dependencies]
 tempfile = "3.8"
-tokio-tungstenite = "0.27.0"
+tokio-tungstenite = "0.28"
 url = "2.5.0"
 uuid = { version = "1.8", features = ["v4"] }
