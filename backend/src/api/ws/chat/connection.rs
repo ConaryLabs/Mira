@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
+use bytes::Bytes;
 use futures_util::SinkExt;
 use futures_util::stream::{SplitSink, StreamExt};
 use tokio::sync::Mutex;
@@ -49,7 +50,7 @@ impl StatusSender for WebSocketStatusSender {
             let mut sender_guard = sender.lock().await;
 
             // Send ping frame
-            if let Err(e) = sender_guard.send(Message::Text(message)).await {
+            if let Err(e) = sender_guard.send(Message::Text(Utf8Bytes::from(message))).await {
                 warn!("Heartbeat send failed (connection likely closed): {}", e);
                 return;
             }
@@ -147,7 +148,7 @@ impl WebSocketConnection {
 
         let mut sender = self.sender.lock().await;
 
-        if let Err(e) = sender.send(Message::Text(json_str)).await {
+        if let Err(e) = sender.send(Message::Text(Utf8Bytes::from(json_str))).await {
             warn!("Failed to send message (connection likely closed): {}", e);
             drop(sender);
             self.mark_closed().await;
@@ -223,7 +224,7 @@ impl WebSocketConnection {
     }
 
     /// Sends a pong response to a client's ping with proper flushing.
-    pub async fn send_pong(&self, data: Vec<u8>) -> Result<()> {
+    pub async fn send_pong(&self, data: Bytes) -> Result<()> {
         if self.is_closed().await {
             debug!("Skipping pong on closed connection");
             return Ok(());

@@ -7,7 +7,7 @@ name = "mira_backend"
 path = "src/lib.rs"
 [dependencies]
 # Web framework - WebSocket only
-axum = { version = "0.7", features = ["macros", "ws"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
 tokio = { version = "1.38", features = ["full"] }
 # Serialization
 serde = { version = "1.0.203", features = ["derive"] }
