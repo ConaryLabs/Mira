@@ -18,6 +18,7 @@ pub mod tool_router;
 
 pub use events::OperationEngineEvent;
 
+use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::llm::provider::Gpt5Provider;
 use crate::memory::service::MemoryService;
@@ -53,12 +54,18 @@ impl OperationEngine {
         git_client: GitClient,
         code_intelligence: Arc<crate::memory::features::code_intelligence::CodeIntelligenceService>,
         sudo_service: Option<Arc<crate::sudo::SudoPermissionService>>,
+        context_oracle: Option<Arc<ContextOracle>>,
     ) -> Self {
         // Build sub-components
-        let context_builder = ContextBuilder::new(
+        let mut context_builder = ContextBuilder::new(
             Arc::clone(&memory_service),
             Arc::clone(&relationship_service),
         );
+
+        // Add Context Oracle if provided
+        if let Some(oracle) = context_oracle {
+            context_builder = context_builder.with_context_oracle(oracle);
+        }
 
         let context_loader = ContextLoader::new(git_client.clone(), Arc::clone(&code_intelligence));
 

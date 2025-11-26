@@ -7,15 +7,19 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::auth::AuthService;
+use crate::build::BuildTracker;
 use crate::config::CONFIG;
+use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
+use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
-use crate::llm::provider::{OpenAiEmbeddings, Gpt5Provider};
+use crate::llm::provider::{Gpt5Provider, OpenAiEmbeddings};
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 use crate::operations::{ContextLoader, OperationEngine};
+use crate::patterns::{PatternMatcher, PatternStorage};
 use crate::project::store::ProjectStore;
 use crate::relationship::{FactsService, RelationshipService};
 use crate::sudo::SudoPermissionService;
@@ -52,6 +56,17 @@ pub struct AppState {
     pub sudo_service: Arc<SudoPermissionService>,
     pub terminal_store: Arc<TerminalStore>,
     pub auth_service: Arc<AuthService>,
+    // Git intelligence services
+    pub cochange_service: Arc<CochangeService>,
+    pub expertise_service: Arc<ExpertiseService>,
+    pub fix_service: Arc<FixService>,
+    // Build system
+    pub build_tracker: Arc<BuildTracker>,
+    // Pattern services
+    pub pattern_storage: Arc<PatternStorage>,
+    pub pattern_matcher: Arc<PatternMatcher>,
+    // Context Oracle - unified context gathering
+    pub context_oracle: Arc<ContextOracle>,
 }
 
 impl AppState {
@@ -127,8 +142,36 @@ impl AppState {
         info!("Initializing sudo permission service");
         let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
 
-        // OperationEngine with GPT 5.1 architecture
-        info!("Initializing OperationEngine with GPT 5.1");
+        // Initialize git intelligence services
+        info!("Initializing git intelligence services");
+        let cochange_service = Arc::new(CochangeService::new(pool.clone()));
+        let expertise_service = Arc::new(ExpertiseService::new(pool.clone()));
+        let fix_service = Arc::new(FixService::new(pool.clone()));
+
+        // Initialize build tracker
+        info!("Initializing build tracker");
+        let build_tracker = Arc::new(BuildTracker::new(Arc::new(pool.clone())));
+
+        // Initialize pattern services
+        info!("Initializing pattern services");
+        let pattern_storage = Arc::new(PatternStorage::new(Arc::new(pool.clone())));
+        let pattern_matcher = Arc::new(PatternMatcher::new(pattern_storage.clone()));
+
+        // Initialize Context Oracle with all intelligence services
+        info!("Initializing Context Oracle");
+        let context_oracle = Arc::new(
+            ContextOracle::new(Arc::new(pool.clone()))
+                .with_code_intelligence(code_intelligence.clone())
+                .with_cochange(cochange_service.clone())
+                .with_expertise(expertise_service.clone())
+                .with_fix_service(fix_service.clone())
+                .with_build_tracker(build_tracker.clone())
+                .with_pattern_storage(pattern_storage.clone())
+                .with_pattern_matcher(pattern_matcher.clone()),
+        );
+
+        // OperationEngine with GPT 5.1 architecture and Context Oracle
+        info!("Initializing OperationEngine with GPT 5.1 and Context Oracle");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
             (*gpt5_provider).clone(),
@@ -137,6 +180,7 @@ impl AppState {
             git_client.clone(),
             code_intelligence.clone(),
             Some(sudo_service.clone()), // Sudo permissions for system administration
+            Some(context_oracle.clone()), // Context Oracle for unified intelligence
         ));
 
         // Initialize terminal services
@@ -167,6 +211,13 @@ impl AppState {
             sudo_service,
             terminal_store,
             auth_service,
+            cochange_service,
+            expertise_service,
+            fix_service,
+            build_tracker,
+            pattern_storage,
+            pattern_matcher,
+            context_oracle,
         })
     }
 }

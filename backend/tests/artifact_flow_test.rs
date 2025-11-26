@@ -95,6 +95,7 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     (engine, db)

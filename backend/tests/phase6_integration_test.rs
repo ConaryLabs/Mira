@@ -125,6 +125,7 @@ async fn test_operation_engine_with_providers() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     // Create event channel
@@ -222,6 +223,7 @@ async fn test_operation_lifecycle_complete() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -306,6 +308,7 @@ async fn test_operation_cancellation() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -380,6 +383,7 @@ async fn test_multiple_operations_concurrency() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     ));
 
     let mut handles = vec![];

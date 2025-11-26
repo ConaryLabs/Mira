@@ -1,7 +1,8 @@
 // src/operations/engine/context.rs
-// Context building for operations: memory, code intelligence, file trees
+// Context building for operations: memory, code intelligence, file trees, and Context Oracle
 
 use crate::config::CONFIG;
+use crate::context_oracle::{ContextOracle, ContextRequest, GatheredContext};
 use crate::git::client::{FileNode, FileNodeType};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
@@ -19,6 +20,7 @@ use tracing::{debug, info, warn};
 pub struct ContextBuilder {
     memory_service: Arc<MemoryService>,
     relationship_service: Arc<RelationshipService>,
+    context_oracle: Option<Arc<ContextOracle>>,
 }
 
 impl ContextBuilder {
@@ -29,6 +31,60 @@ impl ContextBuilder {
         Self {
             memory_service,
             relationship_service,
+            context_oracle: None,
+        }
+    }
+
+    /// Add Context Oracle for enhanced context gathering
+    pub fn with_context_oracle(mut self, oracle: Arc<ContextOracle>) -> Self {
+        self.context_oracle = Some(oracle);
+        self
+    }
+
+    /// Gather context from the Context Oracle
+    pub async fn gather_oracle_context(
+        &self,
+        query: &str,
+        session_id: &str,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Option<GatheredContext> {
+        let oracle = self.context_oracle.as_ref()?;
+
+        let mut request = ContextRequest::new(query.to_string(), session_id.to_string());
+
+        if let Some(pid) = project_id {
+            request = request.with_project(pid);
+        }
+
+        if let Some(file) = current_file {
+            request = request.with_file(file);
+        }
+
+        if let Some(error) = error_message {
+            request = request.with_error(error, None);
+        }
+
+        match oracle.gather(&request).await {
+            Ok(context) => {
+                if context.is_empty() {
+                    debug!("Oracle gathered empty context");
+                    None
+                } else {
+                    info!(
+                        "Oracle gathered context: {} sources, ~{} tokens, {}ms",
+                        context.sources_used.len(),
+                        context.estimated_tokens,
+                        context.duration_ms
+                    );
+                    Some(context)
+                }
+            }
+            Err(e) => {
+                warn!("Failed to gather oracle context: {}", e);
+                None
+            }
         }
     }
 
@@ -130,6 +186,17 @@ impl ContextBuilder {
         code_context: Option<&Vec<MemoryEntry>>,
         recall_context: &RecallContext,
     ) -> String {
+        Self::build_enriched_context_with_oracle(args, file_tree, code_context, recall_context, None)
+    }
+
+    /// Build enriched context with optional Context Oracle output
+    pub fn build_enriched_context_with_oracle(
+        args: &serde_json::Value,
+        file_tree: Option<&Vec<FileNode>>,
+        code_context: Option<&Vec<MemoryEntry>>,
+        recall_context: &RecallContext,
+        oracle_context: Option<&GatheredContext>,
+    ) -> String {
         let mut enriched_context = String::new();
 
         // 1. GPT-5's context from tool call (if any)
@@ -169,7 +236,17 @@ impl ContextBuilder {
             }
         }
 
-        // 4. Memory context (user preferences, coding style)
+        // 4. Context Oracle intelligence (co-change, patterns, fixes, etc.)
+        if let Some(oracle) = oracle_context {
+            let oracle_output = oracle.format_for_prompt();
+            if !oracle_output.is_empty() {
+                enriched_context.push_str("=== CODEBASE INTELLIGENCE ===\n");
+                enriched_context.push_str(&oracle_output);
+                enriched_context.push_str("\n");
+            }
+        }
+
+        // 5. Memory context (user preferences, coding style)
         if !recall_context.recent.is_empty()
             || !recall_context.semantic.is_empty()
             || recall_context.rolling_summary.is_some()
@@ -200,8 +277,9 @@ impl ContextBuilder {
         }
 
         info!(
-            "[ENGINE] Built enriched context: {} chars",
-            enriched_context.len()
+            "[ENGINE] Built enriched context: {} chars{}",
+            enriched_context.len(),
+            if oracle_context.is_some() { " (with oracle)" } else { "" }
         );
         enriched_context
     }

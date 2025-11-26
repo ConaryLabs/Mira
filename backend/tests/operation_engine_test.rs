@@ -130,6 +130,7 @@ async fn test_operation_engine_lifecycle() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     // Create event channel
@@ -273,6 +274,7 @@ async fn test_operation_cancellation() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -366,6 +368,7 @@ async fn test_multiple_operations() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     // Create multiple operations
@@ -449,6 +452,7 @@ async fn test_operation_event_ordering() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -535,6 +539,7 @@ async fn test_operation_retrieval() {
         git_client,
         code_intelligence,
         None, // sudo_service
+        None, // context_oracle
     );
 
     // Create operation with specific fields
