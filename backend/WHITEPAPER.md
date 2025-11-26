@@ -367,6 +367,318 @@ DATABASE_URL="sqlite://mira.db" cargo test -- --nocapture
 - Pagination for Qdrant scrolling
 - Rolling summaries compress old context
 
+## Information Flow & Context Pipeline
+
+This section documents how information flows through the system - from storage to LLM context injection.
+
+### High-Level Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              USER MESSAGE                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           OPERATION ENGINE                                   │
+│                    (src/operations/engine/orchestration.rs)                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+            ┌─────────────────────────┼─────────────────────────┐
+            ▼                         ▼                         ▼
+┌───────────────────┐    ┌───────────────────────┐    ┌────────────────────┐
+│   RECALL ENGINE   │    │    CONTEXT ORACLE     │    │   CONTEXT BUILDER  │
+│  (Memory Context) │    │  (Code Intelligence)  │    │  (Prompt Assembly) │
+│  recall_engine/   │    │   context_oracle/     │    │ engine/context.rs  │
+└─────────┬─────────┘    └───────────┬───────────┘    └─────────┬──────────┘
+          │                          │                          │
+          │                          ▼                          │
+          │              ┌───────────────────────┐              │
+          │              │   GATHERED CONTEXT    │              │
+          │              │  • Guidelines         │              │
+          │              │  • Code Search        │              │
+          │              │  • Semantic Concepts  │              │
+          │              │  • Call Graph         │              │
+          │              │  • Co-change          │              │
+          │              │  • Historical Fixes   │              │
+          │              │  • Design Patterns    │              │
+          │              │  • Reasoning Patterns │              │
+          │              │  • Build Errors       │              │
+          │              │  • Error Resolutions  │              │
+          │              │  • Expertise          │              │
+          │              └───────────┬───────────┘              │
+          │                          │                          │
+          └──────────────────────────┼──────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     UNIFIED PROMPT BUILDER                                   │
+│                      (src/prompt/builders.rs)                               │
+│                                                                             │
+│  Assembles: Persona + Memory + Code Intelligence + Tools + File Context     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            GPT 5.1 API CALL                                 │
+│                      System Prompt + User Message                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Context Oracle: Intelligence Hub
+
+The Context Oracle (`src/context_oracle/`) is the central hub for gathering intelligence from all subsystems.
+
+**Architecture:**
+```rust
+pub struct ContextOracle {
+    pool: Arc<SqlitePool>,
+    code_intelligence: Option<Arc<CodeIntelligenceService>>,
+    semantic_graph: Option<Arc<SemanticGraphService>>,
+    guidelines_service: Option<Arc<ProjectGuidelinesService>>,
+    cochange_service: Option<Arc<CochangeService>>,
+    expertise_service: Option<Arc<ExpertiseService>>,
+    fix_service: Option<Arc<FixService>>,
+    build_tracker: Option<Arc<BuildTracker>>,
+    error_resolver: Option<Arc<ErrorResolver>>,
+    pattern_storage: Option<Arc<PatternStorage>>,
+    pattern_matcher: Option<Arc<PatternMatcher>>,
+}
+```
+
+**Gathering Pipeline:**
+
+| Source | Method | Data Retrieved | SQLite Table(s) | Qdrant Collection |
+|--------|--------|----------------|-----------------|-------------------|
+| Guidelines | `gather_guidelines()` | Project guidelines content | `project_guidelines` | - |
+| Code Search | `gather_code_context()` | Semantically relevant code | `code_elements` | `code` |
+| Semantic Concepts | `gather_semantic_concepts()` | Related symbols by concept | `semantic_nodes`, `concept_index` | - |
+| Call Graph | `gather_call_graph_context()` | Callers/callees of functions | `call_graph` | - |
+| Co-change | `gather_cochange_suggestions()` | Files that change together | `file_cochange_patterns` | - |
+| Historical Fixes | `gather_historical_fixes()` | Past fixes for similar errors | `historical_fixes` | - |
+| Design Patterns | `gather_design_patterns()` | Detected patterns (Factory, etc.) | `design_patterns` | - |
+| Reasoning Patterns | `gather_reasoning_patterns()` | Matched reasoning strategies | `reasoning_patterns` | - |
+| Build Errors | `gather_build_errors()` | Recent compilation errors | `build_errors` | - |
+| Error Resolutions | `gather_error_resolutions()` | How past errors were fixed | `error_resolutions` | - |
+| Expertise | `gather_expertise()` | Expert authors for file/domain | `author_expertise` | - |
+
+### Context Configuration
+
+Context gathering is budget-aware and configurable:
+
+```rust
+pub struct ContextConfig {
+    pub include_code_search: bool,         // Semantic code search
+    pub include_semantic_concepts: bool,   // Concept-based code understanding
+    pub include_guidelines: bool,          // Project guidelines
+    pub include_call_graph: bool,          // Function relationships
+    pub include_cochange: bool,            // Co-change suggestions
+    pub include_historical_fixes: bool,    // Past error fixes
+    pub include_patterns: bool,            // Design patterns
+    pub include_reasoning_patterns: bool,  // Reasoning strategies
+    pub include_build_errors: bool,        // Recent build errors
+    pub include_error_resolutions: bool,   // How errors were resolved
+    pub include_expertise: bool,           // Author expertise
+    pub max_context_tokens: usize,         // Token budget limit
+    pub max_code_results: usize,           // Code search limit
+    pub max_cochange_suggestions: usize,   // Co-change limit
+    pub max_historical_fixes: usize,       // Fix history limit
+}
+```
+
+**Budget-Aware Presets:**
+
+| Preset | Budget Usage | Token Limit | Features Enabled |
+|--------|-------------|-------------|------------------|
+| `full()` | <40% | 16,000 | All features, max results |
+| `default()` | 40-80% | 8,000 | All features, standard limits |
+| `minimal()` | >80% | 4,000 | Code search + guidelines only |
+| `for_error()` | Any | 12,000 | Error-focused (fixes, resolutions, build errors) |
+
+### Recall Engine: Memory Context
+
+The Recall Engine (`src/memory/features/recall_engine/`) provides conversation memory context.
+
+**Components:**
+- `RecentSearch`: Chronological message retrieval from SQLite
+- `SemanticSearch`: Vector similarity search from Qdrant
+- `HybridSearch`: Combined recent + semantic with scoring
+- `MultiHeadSearch`: Multi-embedding search (emotional, factual, code)
+
+**RecallContext Structure:**
+```rust
+pub struct RecallContext {
+    pub recent: Vec<MemoryEntry>,           // Recent messages
+    pub semantic: Vec<MemoryEntry>,         // Semantically similar
+    pub rolling_summary: Option<String>,    // Last 100 messages compressed
+    pub session_summary: Option<String>,    // Full session summary
+    pub code_intelligence: Option<GatheredContext>,  // From Context Oracle
+}
+```
+
+### Prompt Assembly
+
+The UnifiedPromptBuilder (`src/prompt/builders.rs`) assembles the final system prompt:
+
+**Assembly Order:**
+1. **Persona** - Core personality from `src/persona/default.rs`
+2. **Project Context** - Active project name and metadata
+3. **Memory Context** - Summaries + recent + semantic memories
+4. **Code Intelligence** - From semantic search results
+5. **Repository Structure** - File tree (directories and key files)
+6. **Tool Context** - Available tools and usage hints
+7. **File Context** - Currently viewed file content
+
+**Enriched Context (for tool execution):**
+The ContextBuilder (`src/operations/engine/context.rs`) builds enriched context for tool-assisted operations:
+
+```
+=== TASK CONTEXT ===
+[LLM's context from tool call]
+
+=== PROJECT STRUCTURE ===
+[Directory tree, max depth 3]
+
+=== RELEVANT CODE CONTEXT ===
+[Top 5 semantic search results with file paths]
+
+=== CODEBASE INTELLIGENCE ===
+[Context Oracle output - formatted sections for each source]
+
+=== USER PREFERENCES & CODING STYLE ===
+[Rolling summary + relevant semantic memories]
+```
+
+### GatheredContext Formatting
+
+The Context Oracle formats its output via `GatheredContext::format_for_prompt()`:
+
+```markdown
+## Project Guidelines
+[Guidelines content with file path prefixes]
+
+## Relevant Code
+**function** `func_name` in `src/file.rs`
+```code```
+
+## Related Concepts
+- **concept** (domain): purpose
+  Related: symbol1, symbol2
+
+## Call Graph
+**Callers**: func1, func2
+**Callees**: func3, func4
+
+## Related Files (Often Changed Together)
+- `src/related.rs` (85% confidence): reason
+
+## Similar Past Fixes
+- **abc1234** (90% similar): fix description
+
+## Detected Patterns
+- **FactoryPattern** (Factory): description
+
+## Suggested Approach
+**PatternName** (85% match)
+description
+Steps:
+1. Step one
+2. Step two
+
+## Recent Build Errors
+- **category**: error message
+
+## Past Error Resolutions
+- **fix_type**: Fixed by commit in files: file1, file2
+
+## Domain Experts
+- **author@email** (90% expertise): areas
+```
+
+### Data Storage Summary
+
+**Where Data is Written:**
+
+| Data Type | Service | SQLite Table | Qdrant Collection |
+|-----------|---------|--------------|-------------------|
+| Messages | MemoryService | `memory_entries` | `conversation` |
+| Message Analysis | MessagePipeline | `message_analysis` | - |
+| Rolling Summaries | SummarizationService | `rolling_summaries` | - |
+| Memory Facts | FactsService | `memory_facts` | - |
+| Code Elements | CodeIntelligenceService | `code_elements` | `code` |
+| Semantic Nodes | SemanticGraphService | `semantic_nodes` | - |
+| Call Graph | CallGraphService | `call_graph` | - |
+| Design Patterns | PatternDetector | `design_patterns` | - |
+| Git Commits | GitStore | `git_commits` | `git` |
+| Co-change Patterns | CochangeService | `file_cochange_patterns` | - |
+| Author Expertise | ExpertiseService | `author_expertise` | - |
+| Historical Fixes | FixService | `historical_fixes` | - |
+| Build Errors | BuildTracker | `build_errors` | - |
+| Error Resolutions | ErrorResolver | `error_resolutions` | - |
+| Project Guidelines | ProjectGuidelinesService | `project_guidelines` | - |
+| Reasoning Patterns | PatternStorage | `reasoning_patterns` | - |
+| Budget Tracking | BudgetTracker | `budget_tracking` | - |
+| LLM Cache | LlmCache | `llm_cache` | - |
+
+**Where Data is Read (for LLM Context):**
+
+| Context Source | Read By | Injected Via |
+|----------------|---------|--------------|
+| Recent Messages | RecallEngine | `add_memory_context()` |
+| Semantic Memories | RecallEngine | `add_memory_context()` |
+| Rolling Summary | RecallEngine | `add_memory_context()` |
+| Session Summary | RecallEngine | `add_memory_context()` |
+| Code Search Results | ContextOracle | `build_enriched_context_with_oracle()` |
+| Semantic Concepts | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Call Graph | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Co-change | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Historical Fixes | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Design Patterns | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Reasoning Patterns | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Build Errors | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Error Resolutions | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Expertise | ContextOracle | `GatheredContext::format_for_prompt()` |
+| Guidelines | ContextOracle | `GatheredContext::format_for_prompt()` |
+| File Tree | ContextLoader | `add_repository_structure()` |
+| Tools | delegation_tools | `add_tool_context()` |
+
+### Integration Points
+
+**AppState Wiring (`src/state.rs`):**
+```rust
+let context_oracle = Arc::new(
+    ContextOracle::new(Arc::new(pool.clone()))
+        .with_code_intelligence(code_intelligence.clone())
+        .with_semantic_graph(semantic_graph.clone())
+        .with_guidelines(guidelines_service.clone())
+        .with_cochange(cochange_service.clone())
+        .with_expertise(expertise_service.clone())
+        .with_fix_service(fix_service.clone())
+        .with_build_tracker(build_tracker.clone())
+        .with_error_resolver(error_resolver.clone())
+        .with_pattern_storage(pattern_storage.clone())
+        .with_pattern_matcher(pattern_matcher.clone()),
+);
+```
+
+**MemoryService with Oracle:**
+```rust
+let memory_service = Arc::new(MemoryService::with_oracle(
+    sqlite_store.clone(),
+    multi_store.clone(),
+    gpt5_provider.clone(),
+    embedding_client.clone(),
+    Some(context_oracle.clone()),
+));
+```
+
+**OperationEngine with Oracle:**
+```rust
+let operation_engine = Arc::new(OperationEngine::new(
+    // ... other params
+    Some(context_oracle.clone()),  // Context Oracle for unified intelligence
+));
+```
+
 ## Security
 
 ### API Key Management
