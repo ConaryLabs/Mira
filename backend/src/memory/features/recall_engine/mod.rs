@@ -11,8 +11,9 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
 
+use crate::context_oracle::{ContextConfig, ContextOracle, ContextRequest, GatheredContext};
 use crate::llm::embeddings::EmbeddingHead;
 use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use crate::memory::{
@@ -36,21 +37,23 @@ use search::{HybridSearch, MultiHeadSearch, RecentSearch, SemanticSearch};
 
 /// Context for recall operations containing recent and semantic memories
 ///
-/// PHASE 1.1 UPDATE: Added summary fields for layered context architecture
+/// Combines conversation memory with optional code intelligence from the Context Oracle.
 #[derive(Debug, Clone)]
 pub struct RecallContext {
-    // Original fields - keep for backward compatibility
+    // Conversation memory
     pub recent: Vec<MemoryEntry>,
     pub semantic: Vec<MemoryEntry>,
 
-    // NEW: Summary layers for generous context
+    // Summary layers for generous context
     /// Rolling summary of last 100 messages (~2,500 tokens)
-    /// Provides mid-range context without full message history
     pub rolling_summary: Option<String>,
-
     /// Session-level snapshot summary (~3,000 tokens)
-    /// Comprehensive overview of entire conversation
     pub session_summary: Option<String>,
+
+    // Code intelligence from Context Oracle
+    /// Gathered context from code intelligence systems (semantic code search,
+    /// call graph, co-change, historical fixes, patterns, build errors, expertise)
+    pub code_intelligence: Option<GatheredContext>,
 }
 
 /// Configuration for recall operations
@@ -113,6 +116,8 @@ pub struct ScoredMemory {
 // ===== NEW CLEAN RECALL ENGINE =====
 
 /// Unified recall engine - now clean and modular!
+///
+/// Combines conversation memory search with optional code intelligence from ContextOracle.
 pub struct RecallEngine {
     // Search strategies - focused, single-purpose modules
     recent_search: RecentSearch,
@@ -122,6 +127,9 @@ pub struct RecallEngine {
 
     // Context building - clean separation from search logic
     context_builder: MemoryContextBuilder,
+
+    // Optional code intelligence oracle
+    context_oracle: Option<Arc<ContextOracle>>,
 }
 
 impl RecallEngine {
@@ -148,7 +156,24 @@ impl RecallEngine {
             hybrid_search,
             multihead_search,
             context_builder,
+            context_oracle: None,
         }
+    }
+
+    /// Add a context oracle for code intelligence integration
+    pub fn with_oracle(mut self, oracle: Arc<ContextOracle>) -> Self {
+        self.context_oracle = Some(oracle);
+        self
+    }
+
+    /// Set the context oracle (for when engine is already constructed)
+    pub fn set_oracle(&mut self, oracle: Arc<ContextOracle>) {
+        self.context_oracle = Some(oracle);
+    }
+
+    /// Check if oracle is available
+    pub fn has_oracle(&self) -> bool {
+        self.context_oracle.is_some()
     }
 
     /// Main entry point for all search operations - SAME API as before
@@ -187,6 +212,95 @@ impl RecallEngine {
         self.context_builder
             .build_context(session_id, query_str, config)
             .await
+    }
+
+    /// Build enriched context combining memory recall with code intelligence
+    ///
+    /// This method gathers both conversation memory and code intelligence from the
+    /// Context Oracle in a single call, providing comprehensive context for LLM prompts.
+    pub async fn build_enriched_context(
+        &self,
+        session_id: &str,
+        query: &str,
+        recall_config: RecallConfig,
+        oracle_config: Option<ContextConfig>,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<RecallContext> {
+        info!(
+            "Building enriched context for session {} with oracle: {}",
+            session_id,
+            self.has_oracle()
+        );
+
+        // Get memory context first
+        let mut context = self
+            .context_builder
+            .build_context(session_id, query, recall_config)
+            .await?;
+
+        // Add code intelligence if oracle is available
+        if let Some(oracle) = &self.context_oracle {
+            let oracle_cfg = oracle_config.unwrap_or_default();
+
+            // Build oracle request
+            let mut request = ContextRequest::new(query.to_string(), session_id.to_string())
+                .with_config(oracle_cfg);
+
+            if let Some(pid) = project_id {
+                request = request.with_project(pid);
+            }
+
+            if let Some(file) = current_file {
+                request = request.with_file(file);
+            }
+
+            if let Some(error) = error_message {
+                request = request.with_error(error, None);
+            }
+
+            // Gather code intelligence
+            match oracle.gather(&request).await {
+                Ok(gathered) => {
+                    if !gathered.is_empty() {
+                        info!(
+                            "Gathered code intelligence: {} sources, ~{} tokens",
+                            gathered.sources_used.len(),
+                            gathered.estimated_tokens
+                        );
+                        context.code_intelligence = Some(gathered);
+                    }
+                }
+                Err(e) => {
+                    // Log but don't fail - code intelligence is optional
+                    tracing::warn!("Failed to gather code intelligence: {}", e);
+                }
+            }
+        }
+
+        Ok(context)
+    }
+
+    /// Build context with code intelligence using default oracle config
+    pub async fn build_context_with_oracle(
+        &self,
+        session_id: &str,
+        query: &str,
+        recall_config: RecallConfig,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+    ) -> Result<RecallContext> {
+        self.build_enriched_context(
+            session_id,
+            query,
+            recall_config,
+            None,
+            project_id,
+            current_file,
+            None,
+        )
+        .await
     }
 
     /// Get engine statistics

@@ -140,6 +140,7 @@ impl ContextBuilder {
                     semantic: vec![],
                     rolling_summary: None,
                     session_summary: None,
+                    code_intelligence: None,
                 })
             }
         }

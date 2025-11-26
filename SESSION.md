@@ -4,6 +4,125 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 25: Milestone 7 Complete - Budget-Aware Config & E2E Testing (2025-11-26)
+
+**Summary:** Completed Milestone 7 with budget-aware context configuration selection and end-to-end testing using GPT 5.1.
+
+**Work Completed:**
+
+1. **Budget-Aware Context Config** (`context_oracle/types.rs`):
+   - Added `ContextConfig::for_budget(daily%, monthly%)` - auto-selects minimal/standard/full based on usage
+   - Added `ContextConfig::for_error_with_budget()` - error-focused config that respects budget constraints
+   - Added `BudgetStatus` struct with helper methods: `get_config()`, `get_error_config()`, `is_critical()`, `is_low()`, `daily_remaining()`, `monthly_remaining()`
+   - Budget thresholds: <40% = full, 40-80% = standard, >80% = minimal
+
+2. **BudgetTracker Enhancement** (`budget/mod.rs`):
+   - Added `get_budget_status()` - returns `BudgetStatus` for config selection
+   - Added `daily_limit()` and `monthly_limit()` getters
+
+3. **Tests** (`recall_engine_oracle_test.rs`):
+   - Added 10 new tests for budget-aware config selection
+   - Tests cover: budget thresholds, error configs, BudgetStatus creation/methods
+
+4. **E2E Integration Tests** (`context_oracle_e2e_test.rs`):
+   - `test_context_oracle_full_flow` - Oracle gather with code intelligence
+   - `test_memory_service_with_oracle` - MemoryService enriched context
+   - `test_budget_aware_config_with_tracker` - BudgetTracker + config selection
+   - `test_full_integration_flow` - Complete flow with all services
+   - All tests use GPT 5.1 and real Qdrant
+
+**Budget Config Thresholds:**
+- Usage < 40%: Full config (16K tokens, all features)
+- Usage 40-80%: Standard config (8K tokens, most features)
+- Usage > 80%: Minimal config (4K tokens, essential features)
+- Error handling prioritizes historical fixes even under budget pressure
+
+**Files Modified:**
+- `backend/src/context_oracle/types.rs` - BudgetStatus, budget-aware configs
+- `backend/src/budget/mod.rs` - get_budget_status()
+- `backend/tests/recall_engine_oracle_test.rs` - 10 new tests (now 20 total)
+- `backend/tests/context_oracle_e2e_test.rs` - New E2E test file (4 tests)
+
+**Test Status:** All tests passing (20 oracle tests + 4 E2E tests)
+
+**Milestone 7 Status:** COMPLETE
+
+---
+
+## Session 24: Enhanced RecallEngine with Oracle Integration (2025-11-26)
+
+**Summary:** Integrated Context Oracle into RecallEngine, allowing memory recall to include code intelligence from all 8 intelligence sources in a unified context.
+
+**Work Completed:**
+
+1. **RecallContext Enhancement** (`memory/features/recall_engine/mod.rs`):
+   - Added `code_intelligence: Option<GatheredContext>` field
+   - RecallContext now combines conversation memory + code intelligence
+
+2. **RecallEngine Oracle Integration** (`memory/features/recall_engine/mod.rs`):
+   - Added optional `context_oracle` field
+   - Added `with_oracle()` builder method
+   - Added `set_oracle()` for post-construction setup
+   - Added `has_oracle()` to check availability
+   - Added `build_enriched_context()` - combines memory + oracle
+   - Added `build_context_with_oracle()` - convenience method
+
+3. **RecallEngineCoordinator** (`memory/service/recall_engine/coordinator.rs`):
+   - Added `has_oracle()` check
+   - Added `build_enriched_context()` delegation
+   - Added `build_enriched_context_with_config()` with custom config
+   - Added `parallel_recall_context_with_oracle()`
+
+4. **MemoryService Enhancement** (`memory/service/mod.rs`):
+   - Added `with_oracle()` constructor for oracle integration
+   - Added `build_enriched_context()` delegation
+   - Added `build_enriched_context_with_config()` delegation
+   - Added `parallel_recall_context_with_oracle()`
+   - Added `has_oracle()` check
+
+5. **AppState Update** (`state.rs`):
+   - Reordered service initialization (oracle before memory service)
+   - MemoryService now created with `with_oracle()` to include oracle
+
+6. **Test Updates**:
+   - Fixed RecallContext initializations in context.rs, memory.rs
+   - Fixed context_builder_prompt_assembly_test.rs
+   - Added new test file: `recall_engine_oracle_test.rs` (10 tests)
+
+**Key API Changes:**
+
+```rust
+// Build context with memory only (existing)
+memory_service.parallel_recall_context(session_id, query, 10, 20).await
+
+// Build context with memory + code intelligence (new)
+memory_service.build_enriched_context(session_id, query, Some(project_id), Some(current_file)).await
+
+// Build context with custom oracle config (new)
+memory_service.build_enriched_context_with_config(
+    session_id, query, ContextConfig::full(), Some(project_id), Some(file), Some(error_msg)
+).await
+```
+
+**Files Modified:**
+- `backend/src/memory/features/recall_engine/mod.rs` - Core engine + RecallContext
+- `backend/src/memory/features/recall_engine/context/memory_builder.rs` - code_intelligence field
+- `backend/src/memory/service/recall_engine/coordinator.rs` - Coordinator methods
+- `backend/src/memory/service/mod.rs` - MemoryService with_oracle
+- `backend/src/state.rs` - Service initialization order
+- `backend/src/operations/engine/context.rs` - RecallContext fix
+- `backend/src/api/ws/memory.rs` - RecallContext fix
+- `backend/tests/context_builder_prompt_assembly_test.rs` - Test fix
+- `backend/tests/recall_engine_oracle_test.rs` - New test file (10 tests)
+
+**Test Status:** All tests passing (10 new tests for oracle integration)
+
+**Remaining for Milestone 7:**
+- Budget-aware context config selection
+- End-to-end testing with real LLM
+
+---
+
 ## Session 23: Milestone 7 - Context Oracle Integration (2025-11-26)
 
 **Summary:** Integrated Context Oracle into AppState and OperationEngine, connecting all 8 intelligence sources to the context building pipeline.
@@ -54,11 +173,6 @@ Development session history with progressively detailed entries (recent sessions
 - `9dc8455` - Docs: Update SESSION.md and CLAUDE.md for dependency upgrades
 - `c9b04c1` - Docs: Mark Milestones 4-6 complete in ROADMAP.md
 - `678998d` - Milestone 7: Integrate Context Oracle into AppState and OperationEngine
-
-**Remaining for Milestone 7:**
-- Budget-aware context config selection
-- Enhanced RecallEngine combining oracle + memory
-- End-to-end testing with real LLM
 
 ---
 

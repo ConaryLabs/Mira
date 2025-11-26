@@ -112,12 +112,41 @@ impl AppState {
             (*code_intelligence).clone(),
         );
 
-        // Memory service uses GPT 5.1 for analysis
-        let memory_service = Arc::new(MemoryService::new(
+        // Initialize git intelligence services (needed for context oracle)
+        info!("Initializing git intelligence services");
+        let cochange_service = Arc::new(CochangeService::new(pool.clone()));
+        let expertise_service = Arc::new(ExpertiseService::new(pool.clone()));
+        let fix_service = Arc::new(FixService::new(pool.clone()));
+
+        // Initialize build tracker (needed for context oracle)
+        info!("Initializing build tracker");
+        let build_tracker = Arc::new(BuildTracker::new(Arc::new(pool.clone())));
+
+        // Initialize pattern services (needed for context oracle)
+        info!("Initializing pattern services");
+        let pattern_storage = Arc::new(PatternStorage::new(Arc::new(pool.clone())));
+        let pattern_matcher = Arc::new(PatternMatcher::new(pattern_storage.clone()));
+
+        // Initialize Context Oracle with all intelligence services
+        info!("Initializing Context Oracle");
+        let context_oracle = Arc::new(
+            ContextOracle::new(Arc::new(pool.clone()))
+                .with_code_intelligence(code_intelligence.clone())
+                .with_cochange(cochange_service.clone())
+                .with_expertise(expertise_service.clone())
+                .with_fix_service(fix_service.clone())
+                .with_build_tracker(build_tracker.clone())
+                .with_pattern_storage(pattern_storage.clone())
+                .with_pattern_matcher(pattern_matcher.clone()),
+        );
+
+        // Memory service uses GPT 5.1 for analysis with Context Oracle for code intelligence
+        let memory_service = Arc::new(MemoryService::with_oracle(
             sqlite_store.clone(),
             multi_store.clone(),
             gpt5_provider.clone(),
             embedding_client.clone(),
+            Some(context_oracle.clone()),
         ));
 
         // Initialize FactsService
@@ -141,34 +170,6 @@ impl AppState {
         // Initialize sudo permission service
         info!("Initializing sudo permission service");
         let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
-
-        // Initialize git intelligence services
-        info!("Initializing git intelligence services");
-        let cochange_service = Arc::new(CochangeService::new(pool.clone()));
-        let expertise_service = Arc::new(ExpertiseService::new(pool.clone()));
-        let fix_service = Arc::new(FixService::new(pool.clone()));
-
-        // Initialize build tracker
-        info!("Initializing build tracker");
-        let build_tracker = Arc::new(BuildTracker::new(Arc::new(pool.clone())));
-
-        // Initialize pattern services
-        info!("Initializing pattern services");
-        let pattern_storage = Arc::new(PatternStorage::new(Arc::new(pool.clone())));
-        let pattern_matcher = Arc::new(PatternMatcher::new(pattern_storage.clone()));
-
-        // Initialize Context Oracle with all intelligence services
-        info!("Initializing Context Oracle");
-        let context_oracle = Arc::new(
-            ContextOracle::new(Arc::new(pool.clone()))
-                .with_code_intelligence(code_intelligence.clone())
-                .with_cochange(cochange_service.clone())
-                .with_expertise(expertise_service.clone())
-                .with_fix_service(fix_service.clone())
-                .with_build_tracker(build_tracker.clone())
-                .with_pattern_storage(pattern_storage.clone())
-                .with_pattern_matcher(pattern_matcher.clone()),
-        );
 
         // OperationEngine with GPT 5.1 architecture and Context Oracle
         info!("Initializing OperationEngine with GPT 5.1 and Context Oracle");

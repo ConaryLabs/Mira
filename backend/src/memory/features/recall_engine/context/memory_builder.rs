@@ -47,12 +47,15 @@ impl MemoryContextBuilder {
             semantic.len()
         );
 
-        // PHASE 1.1 FIX: Add summary fields (initialized as None - will be populated by unified_handler)
+        // Summary and code intelligence fields initialized as None
+        // - rolling_summary/session_summary populated by unified_handler
+        // - code_intelligence populated by RecallEngine::build_enriched_context()
         Ok(RecallContext {
             recent,
             semantic,
             rolling_summary: None,
             session_summary: None,
+            code_intelligence: None,
         })
     }
 

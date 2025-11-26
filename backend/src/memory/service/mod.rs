@@ -2,6 +2,7 @@
 use std::sync::Arc;
 use tracing::info;
 
+use crate::context_oracle::{ContextConfig, ContextOracle};
 use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
 use crate::memory::{
     features::{
@@ -50,7 +51,21 @@ impl MemoryService {
         llm_provider: Arc<dyn LlmProvider>,
         embedding_client: Arc<OpenAiEmbeddings>,
     ) -> Self {
-        info!("Initializing MemoryService with 3 unified engines");
+        Self::with_oracle(sqlite_store, multi_store, llm_provider, embedding_client, None)
+    }
+
+    /// Creates a new memory service with optional context oracle for code intelligence
+    pub fn with_oracle(
+        sqlite_store: Arc<SqliteMemoryStore>,
+        multi_store: Arc<QdrantMultiStore>,
+        llm_provider: Arc<dyn LlmProvider>,
+        embedding_client: Arc<OpenAiEmbeddings>,
+        context_oracle: Option<Arc<ContextOracle>>,
+    ) -> Self {
+        info!(
+            "Initializing MemoryService with 3 unified engines (oracle: {})",
+            context_oracle.is_some()
+        );
 
         // Core storage with multi_store for get_multi_store access
         let core = MemoryCoreService::new(sqlite_store.clone(), multi_store.clone());
@@ -58,12 +73,19 @@ impl MemoryService {
         // Initialize 3 unified engines - MessagePipeline only needs LLM provider
         let message_pipeline = Arc::new(MessagePipeline::new(llm_provider.clone()));
 
-        let recall_engine = Arc::new(RecallEngine::new(
+        // RecallEngine with optional oracle for code intelligence
+        let mut recall_engine = RecallEngine::new(
             llm_provider.clone(),
             embedding_client.clone(),
             sqlite_store.clone(),
             multi_store.clone(),
-        ));
+        );
+
+        if let Some(oracle) = context_oracle {
+            recall_engine.set_oracle(oracle);
+        }
+
+        let recall_engine = Arc::new(recall_engine);
 
         let summarization_engine = Arc::new(SummarizationEngine::new(
             llm_provider.clone(),
@@ -143,6 +165,71 @@ impl MemoryService {
         self.recall_engine
             .parallel_recall_context(session_id, query, recent_count, semantic_count)
             .await
+    }
+
+    /// Build enriched context combining memory recall with code intelligence
+    ///
+    /// This is the primary method for getting comprehensive context that includes
+    /// both conversation memory and code intelligence from the Context Oracle.
+    pub async fn build_enriched_context(
+        &self,
+        session_id: &str,
+        query: &str,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+    ) -> anyhow::Result<RecallContext> {
+        self.recall_engine
+            .build_enriched_context(session_id, query, project_id, current_file)
+            .await
+    }
+
+    /// Build enriched context with custom oracle configuration
+    pub async fn build_enriched_context_with_config(
+        &self,
+        session_id: &str,
+        query: &str,
+        oracle_config: ContextConfig,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+        error_message: Option<&str>,
+    ) -> anyhow::Result<RecallContext> {
+        self.recall_engine
+            .build_enriched_context_with_config(
+                session_id,
+                query,
+                oracle_config,
+                project_id,
+                current_file,
+                error_message,
+            )
+            .await
+    }
+
+    /// Build parallel recall context with code intelligence
+    pub async fn parallel_recall_context_with_oracle(
+        &self,
+        session_id: &str,
+        query: &str,
+        recent_count: usize,
+        semantic_count: usize,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+    ) -> anyhow::Result<RecallContext> {
+        self.recall_engine
+            .parallel_recall_context_with_oracle(
+                session_id,
+                query,
+                recent_count,
+                semantic_count,
+                project_id,
+                current_file,
+            )
+            .await
+    }
+
+    /// Check if oracle is available for code intelligence
+    pub fn has_oracle(&self) -> bool {
+        self.recall_engine.has_oracle()
     }
 
     // Summarization engine delegations

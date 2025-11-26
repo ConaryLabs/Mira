@@ -106,6 +106,146 @@ impl ContextConfig {
             max_historical_fixes: 5,
         }
     }
+
+    /// Select config based on budget usage percentage
+    ///
+    /// - If budget usage > 80%: minimal config (save tokens)
+    /// - If budget usage 40-80%: standard config (balanced)
+    /// - If budget usage < 40%: full config (maximize context)
+    pub fn for_budget(daily_usage_percent: f64, monthly_usage_percent: f64) -> Self {
+        // Use the more restrictive of daily or monthly
+        let usage_percent = daily_usage_percent.max(monthly_usage_percent);
+
+        if usage_percent > 80.0 {
+            Self::minimal()
+        } else if usage_percent > 40.0 {
+            Self::default() // Standard config
+        } else {
+            Self::full()
+        }
+    }
+
+    /// Select config for error handling based on budget
+    ///
+    /// Error handling gets priority, but respects budget constraints
+    pub fn for_error_with_budget(daily_usage_percent: f64, monthly_usage_percent: f64) -> Self {
+        let usage_percent = daily_usage_percent.max(monthly_usage_percent);
+
+        if usage_percent > 90.0 {
+            // Very tight budget: minimal error config
+            Self {
+                include_code_search: true,
+                include_call_graph: false,
+                include_cochange: false,
+                include_historical_fixes: true,
+                include_patterns: false,
+                include_reasoning_patterns: false,
+                include_build_errors: true,
+                include_expertise: false,
+                max_context_tokens: 4000,
+                max_code_results: 3,
+                max_cochange_suggestions: 0,
+                max_historical_fixes: 2,
+            }
+        } else if usage_percent > 60.0 {
+            // Moderate budget: reduced error config
+            Self {
+                include_code_search: true,
+                include_call_graph: true,
+                include_cochange: false,
+                include_historical_fixes: true,
+                include_patterns: false,
+                include_reasoning_patterns: true,
+                include_build_errors: true,
+                include_expertise: false,
+                max_context_tokens: 8000,
+                max_code_results: 5,
+                max_cochange_suggestions: 0,
+                max_historical_fixes: 3,
+            }
+        } else {
+            // Comfortable budget: full error config
+            Self::for_error()
+        }
+    }
+}
+
+/// Budget status for context config selection
+#[derive(Debug, Clone)]
+pub struct BudgetStatus {
+    /// Daily budget usage (0.0 to 100.0+)
+    pub daily_usage_percent: f64,
+    /// Monthly budget usage (0.0 to 100.0+)
+    pub monthly_usage_percent: f64,
+    /// Amount spent today (USD)
+    pub daily_spent_usd: f64,
+    /// Daily budget limit (USD)
+    pub daily_limit_usd: f64,
+    /// Amount spent this month (USD)
+    pub monthly_spent_usd: f64,
+    /// Monthly budget limit (USD)
+    pub monthly_limit_usd: f64,
+}
+
+impl BudgetStatus {
+    /// Create a new budget status
+    pub fn new(
+        daily_spent: f64,
+        daily_limit: f64,
+        monthly_spent: f64,
+        monthly_limit: f64,
+    ) -> Self {
+        let daily_usage_percent = if daily_limit > 0.0 {
+            (daily_spent / daily_limit) * 100.0
+        } else {
+            0.0
+        };
+
+        let monthly_usage_percent = if monthly_limit > 0.0 {
+            (monthly_spent / monthly_limit) * 100.0
+        } else {
+            0.0
+        };
+
+        Self {
+            daily_usage_percent,
+            monthly_usage_percent,
+            daily_spent_usd: daily_spent,
+            daily_limit_usd: daily_limit,
+            monthly_spent_usd: monthly_spent,
+            monthly_limit_usd: monthly_limit,
+        }
+    }
+
+    /// Get the appropriate context config based on budget status
+    pub fn get_config(&self) -> ContextConfig {
+        ContextConfig::for_budget(self.daily_usage_percent, self.monthly_usage_percent)
+    }
+
+    /// Get error-focused config based on budget status
+    pub fn get_error_config(&self) -> ContextConfig {
+        ContextConfig::for_error_with_budget(self.daily_usage_percent, self.monthly_usage_percent)
+    }
+
+    /// Check if budget is critical (>90% used)
+    pub fn is_critical(&self) -> bool {
+        self.daily_usage_percent > 90.0 || self.monthly_usage_percent > 90.0
+    }
+
+    /// Check if budget is low (>70% used)
+    pub fn is_low(&self) -> bool {
+        self.daily_usage_percent > 70.0 || self.monthly_usage_percent > 70.0
+    }
+
+    /// Get remaining daily budget (USD)
+    pub fn daily_remaining(&self) -> f64 {
+        (self.daily_limit_usd - self.daily_spent_usd).max(0.0)
+    }
+
+    /// Get remaining monthly budget (USD)
+    pub fn monthly_remaining(&self) -> f64 {
+        (self.monthly_limit_usd - self.monthly_spent_usd).max(0.0)
+    }
 }
 
 /// Request for context gathering

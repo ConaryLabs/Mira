@@ -184,6 +184,7 @@ async fn get_context(
             semantic: Vec::new(),
             rolling_summary: None,
             session_summary: None,
+            code_intelligence: None,
         }
     };
 

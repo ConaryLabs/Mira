@@ -1,5 +1,6 @@
 // src/memory/service/recall_engine/coordinator.rs
 
+use crate::context_oracle::ContextConfig;
 use crate::memory::{
     core::types::MemoryEntry,
     features::recall_engine::{RecallConfig, RecallContext, RecallEngine, SearchMode},
@@ -20,9 +21,58 @@ impl RecallEngineCoordinator {
         }
     }
 
+    /// Check if the underlying engine has a context oracle configured
+    pub fn has_oracle(&self) -> bool {
+        self.engine.has_oracle()
+    }
+
     pub async fn build_context(&self, session_id: &str, query: &str) -> Result<RecallContext> {
         self.engine
             .build_context(session_id, Some(query.to_string()), self.config.clone())
+            .await
+    }
+
+    /// Build context with code intelligence from the Context Oracle
+    ///
+    /// This combines conversation memory with code intelligence for comprehensive context.
+    pub async fn build_enriched_context(
+        &self,
+        session_id: &str,
+        query: &str,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+    ) -> Result<RecallContext> {
+        self.engine
+            .build_context_with_oracle(
+                session_id,
+                query,
+                self.config.clone(),
+                project_id,
+                current_file,
+            )
+            .await
+    }
+
+    /// Build enriched context with custom oracle configuration
+    pub async fn build_enriched_context_with_config(
+        &self,
+        session_id: &str,
+        query: &str,
+        oracle_config: ContextConfig,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<RecallContext> {
+        self.engine
+            .build_enriched_context(
+                session_id,
+                query,
+                self.config.clone(),
+                Some(oracle_config),
+                project_id,
+                current_file,
+                error_message,
+            )
             .await
     }
 
@@ -41,6 +91,26 @@ impl RecallEngineCoordinator {
         };
         self.engine
             .build_context(session_id, Some(query.to_string()), config)
+            .await
+    }
+
+    /// Build parallel recall context with code intelligence
+    pub async fn parallel_recall_context_with_oracle(
+        &self,
+        session_id: &str,
+        query: &str,
+        recent_count: usize,
+        semantic_count: usize,
+        project_id: Option<&str>,
+        current_file: Option<&str>,
+    ) -> Result<RecallContext> {
+        let config = RecallConfig {
+            recent_count,
+            semantic_count,
+            ..self.config.clone()
+        };
+        self.engine
+            .build_context_with_oracle(session_id, query, config, project_id, current_file)
             .await
     }
 

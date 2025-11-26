@@ -374,7 +374,7 @@ Estimated monthly: $132 (vs $825 without cache)
 
 **Commit**: `fdc561c`
 
-### Milestone 7: Context Oracle Integration - IN PROGRESS
+### Milestone 7: Context Oracle Integration - COMPLETE
 
 **Goal**: Unified context gathering using all intelligence systems
 
@@ -383,9 +383,9 @@ Estimated monthly: $132 (vs $825 without cache)
 - [x] AppState integration with all services
 - [x] OperationEngine integration
 - [x] ContextBuilder integration with oracle output
-- [ ] Budget-aware context config selection
-- [ ] Enhanced RecallEngine combining oracle + memory
-- [ ] End-to-end testing with real LLM
+- [x] Enhanced RecallEngine combining oracle + memory
+- [x] Budget-aware context config selection
+- [x] End-to-end testing with real LLM (GPT 5.1)
 
 **Key Files**:
 - `backend/src/context_oracle/types.rs` - Context types and configs
@@ -393,6 +393,8 @@ Estimated monthly: $132 (vs $825 without cache)
 - `backend/src/state.rs` - Service initialization
 - `backend/src/operations/engine/context.rs` - Oracle integration in context building
 - `backend/src/operations/engine/mod.rs` - OperationEngine with oracle
+- `backend/src/memory/features/recall_engine/mod.rs` - RecallEngine with oracle
+- `backend/src/memory/service/mod.rs` - MemoryService with oracle
 
 **Intelligence Sources**:
 1. Code context (semantic search)
@@ -403,6 +405,23 @@ Estimated monthly: $132 (vs $825 without cache)
 6. Reasoning patterns (suggested approaches)
 7. Build errors (recent errors)
 8. Expertise (author expertise)
+
+**RecallEngine Integration**:
+- `RecallContext` now includes `code_intelligence: Option<GatheredContext>`
+- `build_enriched_context()` combines memory + oracle in single call
+- `MemoryService::with_oracle()` for oracle-enabled memory service
+- 20 tests in `recall_engine_oracle_test.rs`
+
+**Budget-Aware Config Selection**:
+- `ContextConfig::for_budget(daily%, monthly%)` - auto-selects minimal/standard/full
+- `ContextConfig::for_error_with_budget()` - error-focused config respecting budget
+- `BudgetStatus` struct with `get_config()`, `is_critical()`, `is_low()`, `daily_remaining()`, `monthly_remaining()`
+- `BudgetTracker::get_budget_status()` - queries DB for current usage
+
+**E2E Testing**:
+- 4 integration tests in `context_oracle_e2e_test.rs`
+- Tests full flow: Oracle + MemoryService + BudgetTracker
+- Requires real OpenAI API key and Qdrant (run with `--ignored`)
 
 **Commits**:
 - `678998d` - Integrate Context Oracle into AppState and OperationEngine

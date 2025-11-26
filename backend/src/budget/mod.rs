@@ -378,4 +378,30 @@ impl BudgetTracker {
             .and_utc()
             .timestamp()
     }
+
+    /// Get budget status for a user (for budget-aware context selection)
+    pub async fn get_budget_status(
+        &self,
+        user_id: &str,
+    ) -> Result<crate::context_oracle::BudgetStatus> {
+        let daily_usage = self.get_daily_usage(user_id).await?;
+        let monthly_usage = self.get_monthly_usage(user_id).await?;
+
+        Ok(crate::context_oracle::BudgetStatus::new(
+            daily_usage.total_cost_usd,
+            self.daily_limit_usd,
+            monthly_usage.total_cost_usd,
+            self.monthly_limit_usd,
+        ))
+    }
+
+    /// Get the daily limit
+    pub fn daily_limit(&self) -> f64 {
+        self.daily_limit_usd
+    }
+
+    /// Get the monthly limit
+    pub fn monthly_limit(&self) -> f64 {
+        self.monthly_limit_usd
+    }
 }
