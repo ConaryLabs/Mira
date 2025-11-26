@@ -1,0 +1,170 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT * FROM code_elements\n            WHERE name LIKE ? OR full_path LIKE ?\n            ORDER BY \n                CASE WHEN name = ? THEN 0 \n                     WHEN name LIKE ? THEN 1 \n                     ELSE 2 END,\n                name\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_id",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "language",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "full_path",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "element_type",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "visibility",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "start_line",
+        "ordinal": 9,
+        "type_info": "Int64"
+      },
+      {
+        "name": "end_line",
+        "ordinal": 10,
+        "type_info": "Int64"
+      },
+      {
+        "name": "line_start",
+        "ordinal": 11,
+        "type_info": "Int64"
+      },
+      {
+        "name": "line_end",
+        "ordinal": 12,
+        "type_info": "Int64"
+      },
+      {
+        "name": "content",
+        "ordinal": 13,
+        "type_info": "Text"
+      },
+      {
+        "name": "signature",
+        "ordinal": 14,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 15,
+        "type_info": "Text"
+      },
+      {
+        "name": "signature_hash",
+        "ordinal": 16,
+        "type_info": "Text"
+      },
+      {
+        "name": "parent_id",
+        "ordinal": 17,
+        "type_info": "Int64"
+      },
+      {
+        "name": "complexity_score",
+        "ordinal": 18,
+        "type_info": "Float"
+      },
+      {
+        "name": "is_test",
+        "ordinal": 19,
+        "type_info": "Bool"
+      },
+      {
+        "name": "is_async",
+        "ordinal": 20,
+        "type_info": "Bool"
+      },
+      {
+        "name": "documentation",
+        "ordinal": 21,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata",
+        "ordinal": 22,
+        "type_info": "Text"
+      },
+      {
+        "name": "analyzed_at",
+        "ordinal": 23,
+        "type_info": "Int64"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 24,
+        "type_info": "Int64"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 25,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "8f750d7cf6b9023799745f8ec25f98adc60cb8b98bead7c560e013ead162e125"
+}

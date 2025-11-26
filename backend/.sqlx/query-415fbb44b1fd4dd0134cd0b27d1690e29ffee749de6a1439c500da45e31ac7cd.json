@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(DISTINCT file_pattern) as count FROM author_expertise WHERE project_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "count",
+        "ordinal": 0,
+        "type_info": "Int"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "415fbb44b1fd4dd0134cd0b27d1690e29ffee749de6a1439c500da45e31ac7cd"
+}

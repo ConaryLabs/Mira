@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE git_commits SET embedding_point_id = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f9fddc95b96d761b66681c3aea2b3bc607cee56d508329bd6a882a8fc1e2ee66"
+}

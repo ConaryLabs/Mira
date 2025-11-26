@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    INSERT INTO code_quality_issues (\n                        element_id, issue_type, severity, title, description, \n                        suggested_fix, fix_confidence, is_auto_fixable\n                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "eaa4347ed7f1a4d1f2e7edd1ef6a82f3564f55fa9219fb9b6f06391448b5ff1d"
+}

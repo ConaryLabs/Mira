@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM file_cochange_patterns WHERE project_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "84e9f492f343aa0eaed92b5f64432ef6723610a9c2dea3a4a8e87d7032e97607"
+}

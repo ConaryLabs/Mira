@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::parser::ErrorParser;
 use super::tracker::BuildTracker;
@@ -209,7 +209,7 @@ impl BuildRunner {
             match self.tracker.store_build_run(&build_run).await {
                 Ok(build_id) => {
                     // Update errors with build_run_id and store them
-                    for mut error in &mut errors {
+                    for error in &mut errors {
                         error.build_run_id = build_id;
                     }
 

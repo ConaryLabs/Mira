@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO author_expertise (\n                project_id, author_email, author_name, file_pattern, domain,\n                commit_count, line_count, last_contribution, first_contribution,\n                expertise_score, created_at, updated_at\n            )\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ON CONFLICT(project_id, author_email, file_pattern) DO UPDATE SET\n                author_name = excluded.author_name,\n                domain = excluded.domain,\n                commit_count = excluded.commit_count,\n                line_count = excluded.line_count,\n                last_contribution = excluded.last_contribution,\n                expertise_score = excluded.expertise_score,\n                updated_at = excluded.updated_at\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "07b78117f191eac778b76456fb1382090860aff82f7cd06256f6904794a89a96"
+}

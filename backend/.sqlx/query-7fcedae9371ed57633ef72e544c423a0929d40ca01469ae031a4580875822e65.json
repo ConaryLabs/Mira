@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO build_runs (\n                project_id, operation_id, build_type, command, exit_code,\n                duration_ms, started_at, completed_at, error_count, warning_count, triggered_by\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "7fcedae9371ed57633ef72e544c423a0929d40ca01469ae031a4580875822e65"
+}

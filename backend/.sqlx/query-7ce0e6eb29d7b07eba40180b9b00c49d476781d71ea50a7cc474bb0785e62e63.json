@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT local_path FROM git_repo_attachments WHERE project_id = ? LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "local_path",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7ce0e6eb29d7b07eba40180b9b00c49d476781d71ea50a7cc474bb0785e62e63"
+}

@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, project_id, repo_url, local_path, import_status, \n                   last_imported_at, last_sync_at\n            FROM git_repo_attachments\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "repo_url",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "local_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "import_status",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_imported_at",
+        "ordinal": 5,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_sync_at",
+        "ordinal": 6,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "abdd54f68e902526ffa0171bfdb350ce7974322a9c9557a3453ec47d3bf306d1"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE operations\n            SET plan_text = ?, plan_generated_at = ?, planning_tokens_reasoning = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "bf4524c362899cc20c96f709d006d9dfdd9a9ce73c6d832ca85ed81d1455f494"
+}

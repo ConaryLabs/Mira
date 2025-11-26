@@ -149,7 +149,7 @@ fn compute_hash(content: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_artifact_retrieval() {
     println!("\n=== Testing Artifact Retrieval ===\n");
 
@@ -209,7 +209,7 @@ async fn test_artifact_retrieval() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_artifact_hash_consistency() {
     println!("\n=== Testing Artifact Hash Consistency ===\n");
 
@@ -255,7 +255,7 @@ async fn test_artifact_hash_consistency() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_multiple_operations_artifact_isolation() {
     println!("\n=== Testing Artifact Isolation Across Operations ===\n");
 
@@ -323,7 +323,7 @@ async fn test_multiple_operations_artifact_isolation() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_artifact_different_languages() {
     println!("\n=== Testing Artifacts with Different Languages ===\n");
 
@@ -379,7 +379,7 @@ async fn test_artifact_different_languages() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_empty_operation_no_artifacts() {
     println!("\n=== Testing Operation with No Artifacts ===\n");
 
@@ -409,7 +409,7 @@ async fn test_empty_operation_no_artifacts() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_artifact_content_preservation() {
     println!("\n=== Testing Artifact Content Preservation ===\n");
 

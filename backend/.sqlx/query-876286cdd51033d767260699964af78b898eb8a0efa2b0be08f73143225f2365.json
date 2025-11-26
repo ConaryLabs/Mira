@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MIN(created_at) FROM pattern_validation_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "MIN(created_at)",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "876286cdd51033d767260699964af78b898eb8a0efa2b0be08f73143225f2365"
+}

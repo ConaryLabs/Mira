@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM pattern_validation_cache\n            WHERE id IN (\n                SELECT id FROM pattern_validation_cache\n                ORDER BY hit_count ASC, last_used ASC\n                LIMIT ?\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "69b066a7289bce5c5c74bbab4e088a544b405f03b5ec4fee3f5969ae4721c33a"
+}

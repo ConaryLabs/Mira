@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, pattern_type, code_hash, validation_result, confidence,\n                   created_at, last_used, hit_count\n            FROM pattern_validation_cache\n            WHERE pattern_type = ? AND code_hash = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "pattern_type",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "code_hash",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "validation_result",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "confidence",
+        "ordinal": 4,
+        "type_info": "Float"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 5,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_used",
+        "ordinal": 6,
+        "type_info": "Int64"
+      },
+      {
+        "name": "hit_count",
+        "ordinal": 7,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "e5b026d82eecd1219fd38753eb62ebe6fbaf462d05c1ab8efbb5101e108b8657"
+}

@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT e.id, e.build_run_id, e.error_hash, e.severity, e.error_code, e.message,\n                   e.file_path, e.line_number, e.column_number, e.suggestion, e.code_snippet,\n                   e.category, e.first_seen_at, e.last_seen_at, e.occurrence_count, e.resolved_at\n            FROM build_errors e\n            JOIN build_runs r ON e.build_run_id = r.id\n            WHERE r.project_id = ? AND e.resolved_at IS NULL AND e.severity = 'error'\n            ORDER BY e.occurrence_count DESC, e.last_seen_at DESC\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "build_run_id",
+        "ordinal": 1,
+        "type_info": "Int64"
+      },
+      {
+        "name": "error_hash",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "severity",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "error_code",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "message",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "line_number",
+        "ordinal": 7,
+        "type_info": "Int64"
+      },
+      {
+        "name": "column_number",
+        "ordinal": 8,
+        "type_info": "Int64"
+      },
+      {
+        "name": "suggestion",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "code_snippet",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "first_seen_at",
+        "ordinal": 12,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_seen_at",
+        "ordinal": 13,
+        "type_info": "Int64"
+      },
+      {
+        "name": "occurrence_count",
+        "ordinal": 14,
+        "type_info": "Int64"
+      },
+      {
+        "name": "resolved_at",
+        "ordinal": 15,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "e0e81abeac285f7f83779bd67f24c0b9849a02999fc8b6f6d26d0375604db707"
+}

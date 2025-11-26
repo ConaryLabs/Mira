@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, concept, symbol_ids, confidence, created_at, updated_at\n            FROM concept_index\n            ORDER BY confidence DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "concept",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "symbol_ids",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "confidence",
+        "ordinal": 3,
+        "type_info": "Float"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Int64"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 5,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e6fa82d7dd9db7813c7a69fa69712032838caa119f70cb980f1fa48d60d11b30"
+}

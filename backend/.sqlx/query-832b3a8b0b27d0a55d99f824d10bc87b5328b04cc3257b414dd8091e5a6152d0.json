@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM document_chunks WHERE document_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "832b3a8b0b27d0a55d99f824d10bc87b5328b04cc3257b414dd8091e5a6152d0"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO pattern_usage (\n                pattern_id, operation_id, user_id, context_match_score,\n                applied_successfully, outcome_notes, time_saved_ms, cost_saved_usd, used_at\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "629d022c89979edf4dcff4d1dd98266e3ab7dbfc72e4ea48ac92160d5286ce8e"
+}

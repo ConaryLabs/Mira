@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, project_id, domain_name, symbol_ids, file_paths,\n                   cohesion_score, created_at, updated_at\n            FROM domain_clusters\n            WHERE project_id = ? AND domain_name = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "domain_name",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "symbol_ids",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_paths",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "cohesion_score",
+        "ordinal": 5,
+        "type_info": "Float"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Int64"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 7,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "20bee915f20176650706521bba6cf3cfb32a89b4eab60c1a4dbbc23b9f87dd47"
+}

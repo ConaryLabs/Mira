@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT pattern_type, pattern_name, description, confidence, involved_symbols\n            FROM design_patterns\n            WHERE project_id = ? AND confidence >= 0.7\n            ORDER BY confidence DESC\n            LIMIT 5\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "pattern_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "pattern_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "description",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "confidence",
+        "ordinal": 3,
+        "type_info": "Float"
+      },
+      {
+        "name": "involved_symbols",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "6a4abc4f3a0811e22a4e2076ae6a370272fe3e3d88539c0b3a90514f6a0b557a"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE semantic_analysis_cache SET last_used = ?, hit_count = hit_count + 1 WHERE symbol_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "732b8453b3cbb2ca036d90b37418e9cfd3e8739eef4192437888af9a358e3b75"
+}

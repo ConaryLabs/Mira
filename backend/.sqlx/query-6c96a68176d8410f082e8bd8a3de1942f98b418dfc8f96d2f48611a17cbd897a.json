@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO blame_annotations (\n                    project_id, file_path, line_number, commit_hash,\n                    author_name, author_email, authored_at, line_content,\n                    file_hash, created_at\n                )\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ON CONFLICT(project_id, file_path, line_number, file_hash) DO UPDATE SET\n                    commit_hash = excluded.commit_hash,\n                    author_name = excluded.author_name,\n                    author_email = excluded.author_email,\n                    authored_at = excluded.authored_at,\n                    line_content = excluded.line_content\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": []
+  },
+  "hash": "6c96a68176d8410f082e8bd8a3de1942f98b418dfc8f96d2f48611a17cbd897a"
+}

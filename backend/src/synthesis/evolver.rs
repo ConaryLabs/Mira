@@ -165,7 +165,7 @@ impl ToolEvolver {
     /// Analyze tool for potential improvements
     async fn analyze_for_improvements(
         &self,
-        tool: &SynthesizedTool,
+        _tool: &SynthesizedTool,
         effectiveness: &ToolEffectiveness,
     ) -> Result<Vec<String>> {
         let mut suggestions = Vec::new();

@@ -313,7 +313,7 @@ impl BuildError {
         error_code: Option<&str>,
         message: &str,
         file_path: Option<&str>,
-        line_number: Option<i32>,
+        _line_number: Option<i32>,
     ) -> String {
         use sha2::{Digest, Sha256};
 

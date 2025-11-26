@@ -47,9 +47,7 @@ async fn setup_services(
     let multi_store = Arc::new(
         QdrantMultiStore::new(&CONFIG.qdrant_url, "test_ops")
             .await
-            .unwrap_or_else(|_| {
-                panic!("Qdrant not available - these tests don't actually need it")
-            }),
+            .expect("Failed to connect to Qdrant - ensure Qdrant is running on port 6334"),
     );
 
     // Create embedding client (won't be used in these tests)
@@ -102,7 +100,7 @@ async fn setup_services(
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_engine_lifecycle() {
     println!("\n=== Testing Operation Engine Lifecycle ===\n");
 
@@ -247,7 +245,7 @@ async fn test_operation_engine_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_cancellation() {
     println!("\n=== Testing Operation Cancellation ===\n");
 
@@ -340,7 +338,7 @@ async fn test_operation_cancellation() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_multiple_operations() {
     println!("\n=== Testing Multiple Operations ===\n");
 
@@ -423,7 +421,7 @@ async fn test_multiple_operations() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_event_ordering() {
     println!("\n=== Testing Operation Event Ordering ===\n");
 
@@ -509,7 +507,7 @@ async fn test_operation_event_ordering() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_retrieval() {
     println!("\n=== Testing Operation Retrieval ===\n");
 

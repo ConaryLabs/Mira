@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::llm::provider::{Gpt5Provider, LlmProvider, Message, ReasoningEffort};
+use crate::llm::provider::{Gpt5Provider, LlmProvider, Message};
 
 use super::storage::PatternStorage;
 use super::types::*;

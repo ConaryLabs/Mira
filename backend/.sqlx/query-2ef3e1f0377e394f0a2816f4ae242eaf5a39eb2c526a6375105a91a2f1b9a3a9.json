@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO document_chunks (\n                    document_id, chunk_index, qdrant_point_id, content,\n                    char_start, char_end\n                ) VALUES (?, ?, ?, ?, ?, ?)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "2ef3e1f0377e394f0a2816f4ae242eaf5a39eb2c526a6375105a91a2f1b9a3a9"
+}

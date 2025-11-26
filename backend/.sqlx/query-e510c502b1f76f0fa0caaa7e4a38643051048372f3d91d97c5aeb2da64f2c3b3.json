@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                COALESCE(SUM(insertions), 0) as total_insertions,\n                COALESCE(SUM(deletions), 0) as total_deletions,\n                COUNT(DISTINCT author_email) as unique_authors,\n                MIN(authored_at) as first_commit,\n                MAX(authored_at) as last_commit\n            FROM git_commits\n            WHERE project_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "total_insertions",
+        "ordinal": 0,
+        "type_info": "Int"
+      },
+      {
+        "name": "total_deletions",
+        "ordinal": 1,
+        "type_info": "Int"
+      },
+      {
+        "name": "unique_authors",
+        "ordinal": 2,
+        "type_info": "Int"
+      },
+      {
+        "name": "first_commit",
+        "ordinal": 3,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_commit",
+        "ordinal": 4,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "e510c502b1f76f0fa0caaa7e4a38643051048372f3d91d97c5aeb2da64f2c3b3"
+}

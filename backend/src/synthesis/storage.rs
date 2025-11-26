@@ -2,7 +2,7 @@
 // Database storage for tool synthesis artifacts
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, info};

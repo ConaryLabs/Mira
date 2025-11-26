@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO terminal_sessions (\n                id, project_id, conversation_session_id, working_directory,\n                shell, created_at, closed_at, exit_code\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "f6b9bf7c027eb771c1f993d612675ea0443b6cc8115b2954e3c0576e2c4ce54f"
+}

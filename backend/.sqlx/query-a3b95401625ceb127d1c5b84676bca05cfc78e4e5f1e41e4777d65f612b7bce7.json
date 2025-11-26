@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO pattern_validation_cache (\n                pattern_type, code_hash, validation_result, confidence, created_at, last_used, hit_count\n            ) VALUES (?, ?, ?, ?, ?, ?, 0)\n            ON CONFLICT(pattern_type, code_hash) DO UPDATE SET\n                validation_result = excluded.validation_result,\n                confidence = excluded.confidence,\n                last_used = excluded.last_used\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "a3b95401625ceb127d1c5b84676bca05cfc78e4e5f1e41e4777d65f612b7bce7"
+}

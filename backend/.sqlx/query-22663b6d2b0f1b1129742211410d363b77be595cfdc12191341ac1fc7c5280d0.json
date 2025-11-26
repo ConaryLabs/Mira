@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id as \"id!\", name, element_type, file_path\n            FROM code_elements\n            WHERE project_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "element_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "22663b6d2b0f1b1129742211410d363b77be595cfdc12191341ac1fc7c5280d0"
+}

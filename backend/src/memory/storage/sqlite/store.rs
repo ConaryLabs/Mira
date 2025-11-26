@@ -52,7 +52,7 @@ impl SqliteMemoryStore {
 
         let result = sqlx::query(
             r#"
-            INSERT INTO rolling_summaries (session_id, summary_type, summary_text, message_count, created_at)
+            INSERT INTO rolling_summaries (session_id, summary_type, content, message_count, created_at)
             VALUES (?, ?, ?, ?, ?)
             "#,
         )
@@ -76,7 +76,7 @@ impl SqliteMemoryStore {
 
         let rows = sqlx::query_as::<_, (i64, String, String, i64, i64)>(
             r#"
-            SELECT id, summary_type, summary_text, message_count, created_at
+            SELECT id, summary_type, content, message_count, created_at
             FROM rolling_summaries
             WHERE session_id = ?
             ORDER BY created_at DESC
@@ -89,10 +89,10 @@ impl SqliteMemoryStore {
 
         Ok(rows
             .into_iter()
-            .map(|(id, summary_type, summary_text, message_count, created_at)| SummaryRecord {
+            .map(|(id, summary_type, content, message_count, created_at)| SummaryRecord {
                 id,
                 summary_type,
-                summary_text,
+                summary_text: content,
                 message_count: message_count as usize,
                 created_at,
             })

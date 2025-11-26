@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT ce.id as \"id!\", ce.name, ce.element_type, ce.file_path, ce.start_line\n            FROM code_elements ce\n            WHERE ce.project_id = ?\n              AND ce.element_type = 'function'\n              AND ce.id NOT IN (SELECT callee_id FROM call_graph)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "element_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "start_line",
+        "ordinal": 4,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "b2194c7547048c80739d544bdab0491fec1b2791b634bc537d9346558f4604af"
+}

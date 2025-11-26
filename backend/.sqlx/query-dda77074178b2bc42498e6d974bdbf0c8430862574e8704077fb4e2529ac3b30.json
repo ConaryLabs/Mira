@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO git_repo_attachments \n                (id, project_id, repo_url, local_path, attachment_type, import_status, local_path_override)\n            VALUES (?, ?, '', ?, 'local_directory', 'complete', ?)\n            ON CONFLICT(project_id, repo_url) DO UPDATE SET\n                attachment_type = 'local_directory',\n                local_path = excluded.local_path,\n                local_path_override = excluded.local_path_override,\n                import_status = 'complete',\n                last_sync_at = (strftime('%s', 'now'))\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "dda77074178b2bc42498e6d974bdbf0c8430862574e8704077fb4e2529ac3b30"
+}

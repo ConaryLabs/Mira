@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, build_run_id, error_hash, severity, error_code, message,\n                   file_path, line_number, column_number, suggestion, code_snippet,\n                   category, first_seen_at, last_seen_at, occurrence_count, resolved_at\n            FROM build_errors\n            WHERE build_run_id = ?\n            ORDER BY severity DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "build_run_id",
+        "ordinal": 1,
+        "type_info": "Int64"
+      },
+      {
+        "name": "error_hash",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "severity",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "error_code",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "message",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "line_number",
+        "ordinal": 7,
+        "type_info": "Int64"
+      },
+      {
+        "name": "column_number",
+        "ordinal": 8,
+        "type_info": "Int64"
+      },
+      {
+        "name": "suggestion",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "code_snippet",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "first_seen_at",
+        "ordinal": 12,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_seen_at",
+        "ordinal": 13,
+        "type_info": "Int64"
+      },
+      {
+        "name": "occurrence_count",
+        "ordinal": 14,
+        "type_info": "Int64"
+      },
+      {
+        "name": "resolved_at",
+        "ordinal": 15,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "204a3ff216f6a8c83e8e6611f53783bfc43d77cf83065063d8aefc82d7e006ad"
+}

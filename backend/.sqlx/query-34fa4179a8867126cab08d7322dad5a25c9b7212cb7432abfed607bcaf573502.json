@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM domain_clusters WHERE project_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "34fa4179a8867126cab08d7322dad5a25c9b7212cb7432abfed607bcaf573502"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO reasoning_steps (\n                pattern_id, step_number, step_type, description, rationale, created_at\n            ) VALUES (?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "d1b2735192e432253df1ac52335947e7d6405bca480d58f0435971e13c02a92e"
+}

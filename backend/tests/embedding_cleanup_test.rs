@@ -103,6 +103,7 @@ async fn test_cleanup_report_summary() {
 }
 
 #[tokio::test]
+
 async fn test_cleanup_dry_run() {
     let pool = create_test_db().await;
     let multi_store = create_test_qdrant().await;
@@ -119,6 +120,7 @@ async fn test_cleanup_dry_run() {
 }
 
 #[tokio::test]
+
 async fn test_cleanup_runs_successfully() {
     let pool = create_test_db().await;
     let multi_store = create_test_qdrant().await;

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pattern_validation_cache SET last_used = ?, hit_count = hit_count + 1 WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7c1607356c9cfabea6578fabbaa69f5b500e3fde6ff17f70b2d6fb297a194c61"
+}

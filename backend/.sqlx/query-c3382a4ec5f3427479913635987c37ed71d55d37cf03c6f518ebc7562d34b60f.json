@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, session_id, kind, status, created_at, started_at, completed_at,\n                   user_message, delegate_calls, result, error\n            FROM operations\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "session_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Int64"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 5,
+        "type_info": "Int64"
+      },
+      {
+        "name": "completed_at",
+        "ordinal": 6,
+        "type_info": "Int64"
+      },
+      {
+        "name": "user_message",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "delegate_calls",
+        "ordinal": 8,
+        "type_info": "Int64"
+      },
+      {
+        "name": "result",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "error",
+        "ordinal": 10,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c3382a4ec5f3427479913635987c37ed71d55d37cf03c6f518ebc7562d34b60f"
+}

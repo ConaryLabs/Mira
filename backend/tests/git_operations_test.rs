@@ -105,7 +105,7 @@ fn create_test_repo(path: &std::path::Path) -> Oid {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_git_attach_and_clone() {
     println!("\n=== Testing Git Attach and Clone ===\n");
 
@@ -154,7 +154,7 @@ async fn test_git_attach_and_clone() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_git_import_codebase() {
     println!("\n=== Testing Git Import Codebase ===\n");
 
@@ -206,7 +206,7 @@ async fn test_git_import_codebase() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_git_file_operations() {
     println!("\n=== Testing Git File Operations ===\n");
 

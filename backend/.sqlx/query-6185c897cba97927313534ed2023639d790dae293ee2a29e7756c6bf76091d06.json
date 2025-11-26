@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM blame_annotations\n            WHERE project_id = ?\n              AND (file_path, file_hash) NOT IN (\n                  SELECT file_path, file_hash\n                  FROM blame_annotations b2\n                  WHERE b2.project_id = ?\n                  GROUP BY file_path\n                  HAVING created_at = MAX(created_at)\n              )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "6185c897cba97927313534ed2023639d790dae293ee2a29e7756c6bf76091d06"
+}

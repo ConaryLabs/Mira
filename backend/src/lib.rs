@@ -32,6 +32,9 @@ pub mod build;
 // Milestone 6 - Reasoning pattern learning
 pub mod patterns;
 
+// Milestone 7 - Context Oracle (unified intelligence gathering)
+pub mod context_oracle;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;

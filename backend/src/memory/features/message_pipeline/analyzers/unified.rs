@@ -208,7 +208,7 @@ impl UnifiedAnalyzer {
         &self,
         chat_result: &super::chat_analyzer::ChatAnalysisResult,
         is_code: bool,
-        programming_lang: &Option<String>,
+        _programming_lang: &Option<String>,
     ) -> Result<RoutingDecision> {
         // Skip if salience too low
         if chat_result.salience < self.config.min_salience_threshold {

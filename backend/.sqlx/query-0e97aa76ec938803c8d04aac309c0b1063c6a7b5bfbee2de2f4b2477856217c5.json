@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM code_elements WHERE file_id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "0e97aa76ec938803c8d04aac309c0b1063c6a7b5bfbee2de2f4b2477856217c5"
+}

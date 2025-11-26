@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT SUM(cost_savings_usd) as total FROM reasoning_patterns",
+  "describe": {
+    "columns": [
+      {
+        "name": "total",
+        "ordinal": 0,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "abf58654c4e51647a8361b3a95b5d317eb887afc3c11562245b20d4a4e3a44cf"
+}

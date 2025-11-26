@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, project_id, error_pattern, error_category, fix_commit_hash,\n                   files_modified, fix_description, fixed_at, similarity_hash,\n                   embedding_point_id, created_at\n            FROM historical_fixes\n            WHERE project_id = ?\n            ORDER BY fixed_at DESC\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "error_pattern",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "error_category",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "fix_commit_hash",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "files_modified",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "fix_description",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "fixed_at",
+        "ordinal": 7,
+        "type_info": "Int64"
+      },
+      {
+        "name": "similarity_hash",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "embedding_point_id",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 10,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "cbc45dc79a92c6bd842d2af3fac418d45d7f89c80f21d39210a56192bcec082e"
+}

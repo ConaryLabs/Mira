@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT ce.id as \"id!\", ce.name, ce.element_type, ce.file_path, ce.start_line\n            FROM code_elements ce\n            JOIN call_graph cg ON ce.id = cg.caller_id\n            WHERE cg.callee_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "element_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "start_line",
+        "ordinal": 4,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "aa1e48d188c6e47ca14d08ab2d470fb6d13205f2a934c892d781f06184a01d04"
+}

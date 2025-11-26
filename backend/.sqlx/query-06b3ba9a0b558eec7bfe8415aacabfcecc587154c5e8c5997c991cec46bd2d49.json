@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT error_category, COUNT(*) as count\n            FROM historical_fixes\n            WHERE project_id = ?\n            GROUP BY error_category\n            ORDER BY count DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "error_category",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "count",
+        "ordinal": 1,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "06b3ba9a0b558eec7bfe8415aacabfcecc587154c5e8c5997c991cec46bd2d49"
+}

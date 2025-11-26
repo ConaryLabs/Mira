@@ -47,8 +47,8 @@ sha2 = "0.10.9"
 syn = { version = "2.0.106", features = ["full", "extra-traits", "visit"] }
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
 regex = "1.11.2"
-# Vector database
-qdrant-client = "1.12"
+# Vector database - latest stable
+qdrant-client = "1.15"
 # Document processing
 pdf-extract = "0.7"
 lopdf = "0.34"

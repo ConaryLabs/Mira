@@ -925,3 +925,39 @@ Backend (2 files):
 - Qdrant tests now run against gRPC port 6334 (not HTTP port 6333)
 
 ---
+
+### Session 20: 2025-11-26
+
+**Summary:** Fixed all 7 previously-ignored integration tests by resolving Qdrant client/server version mismatch, fixing analysis metadata persistence, and correcting SQLite query ordering.
+
+**Key Outcomes:**
+- All 7 previously-ignored tests now pass (code_embedding: 3, e2e_data_flow: 4)
+- Updated qdrant-client from 1.12 to 1.15 (latest stable)
+- Downloaded and configured Qdrant server 1.16.1 with config file
+- Fixed analysis metadata (salience, mood, intent, topics) not being saved/loaded
+- Fixed message ordering in load_recent_memories for consistent results
+- Fixed .gitignore `storage/` pattern that was accidentally ignoring source files
+
+**Files Changed:**
+Backend (10+ files):
+- `Cargo.toml` - Updated qdrant-client to 1.15
+- `src/memory/storage/qdrant/multi_store.rs` - Use PointStruct::new() for proper vector construction
+- `src/memory/storage/sqlite/core.rs` - Added analysis metadata save (INSERT INTO message_analysis), load (LEFT JOIN), fixed ordering (ORDER BY timestamp DESC, m.id DESC)
+- `.gitignore` - Fixed `storage/` to `/storage/` to not ignore source files, added `/config/config.yaml`
+- `config/config.yaml` - New Qdrant config file (storage path, ports)
+- Various test files - Fixed Qdrant port references (6333 -> 6334), schema sync
+
+**Technical Decisions:**
+1. **Qdrant Version**: Using latest stable (1.15 client, 1.16.1 server) for compatibility and features
+2. **Vector Construction**: Changed from manual `PointStruct { vectors: Some(Vectors::from(...)) }` to `PointStruct::new(id, vectors, payload)` which properly handles the new protobuf format
+3. **Analysis Metadata Storage**: Now saves to `message_analysis` table when salience/mood/intent are present, and loads via LEFT JOIN
+4. **Message Ordering**: Added `m.id DESC` as secondary sort key to ensure consistent ordering when messages have same timestamp (rapid saves)
+5. **Return Order**: `load_recent_memories` now returns newest-first (removed incorrect reverse)
+
+**Test Results:**
+- code_embedding_test: 3/3 ignored tests pass
+- e2e_data_flow_test: 4/4 ignored tests pass  
+- All 72 lib tests pass
+- All non-ignored integration tests pass
+
+---

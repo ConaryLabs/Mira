@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT \n                COUNT(*) as total_issues,\n                SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) as critical_issues,\n                SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) as high_issues\n            FROM code_quality_issues cqi\n            JOIN code_elements ce ON cqi.element_id = ce.id\n            JOIN repository_files rf ON ce.file_id = rf.id\n            WHERE rf.attachment_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "total_issues",
+        "ordinal": 0,
+        "type_info": "Int"
+      },
+      {
+        "name": "critical_issues",
+        "ordinal": 1,
+        "type_info": "Int"
+      },
+      {
+        "name": "high_issues",
+        "ordinal": 2,
+        "type_info": "Int"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "f7ee16dd0349d6e39835aaeb11b32dff63243388e5e34debf85bd1712481e4d6"
+}

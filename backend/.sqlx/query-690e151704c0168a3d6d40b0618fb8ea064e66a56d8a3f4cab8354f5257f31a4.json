@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO code_elements (\n                    file_id, language, element_type, name, full_path, visibility,\n                    start_line, end_line, content, signature_hash, complexity_score,\n                    is_test, is_async, documentation, metadata\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ON CONFLICT(file_id, name, start_line) DO UPDATE SET\n                    content = excluded.content,\n                    signature_hash = excluded.signature_hash,\n                    complexity_score = excluded.complexity_score,\n                    analyzed_at = CURRENT_TIMESTAMP\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "690e151704c0168a3d6d40b0618fb8ea064e66a56d8a3f4cab8354f5257f31a4"
+}

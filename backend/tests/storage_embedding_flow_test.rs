@@ -2,6 +2,10 @@
 // Tests the critical path: Message → SQLite → Embedding → Qdrant
 
 use chrono::Utc;
+
+fn init_env() {
+    let _ = dotenv::dotenv();
+}
 use mira_backend::llm::{embeddings::EmbeddingHead, provider::OpenAiEmbeddings};
 use mira_backend::memory::{
     core::traits::MemoryStore, core::types::MemoryEntry,
@@ -112,10 +116,10 @@ async fn test_parent_child_relationships() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_qdrant_connection() {
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
 
     let multi_store = QdrantMultiStore::new(&qdrant_url, "test_collection")
         .await
@@ -136,11 +140,11 @@ async fn test_qdrant_connection() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+#[ignore = "integration test - requires Qdrant + OpenAI API"]
 async fn test_embedding_storage_in_qdrant() {
     // Setup
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let multi_store = QdrantMultiStore::new(&qdrant_url, "test_collection")
         .await
         .expect("Should connect to Qdrant");
@@ -183,11 +187,11 @@ async fn test_embedding_storage_in_qdrant() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+#[ignore = "integration test - requires Qdrant + OpenAI API"]
 async fn test_qdrant_semantic_search() {
     // Setup
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let multi_store = QdrantMultiStore::new(&qdrant_url, "test_search")
         .await
         .expect("Should connect");
@@ -243,10 +247,10 @@ async fn test_qdrant_semantic_search() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+#[ignore = "integration test - requires Qdrant + OpenAI API"]
 async fn test_multi_head_storage() {
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let multi_store = QdrantMultiStore::new(&qdrant_url, "test_multihead")
         .await
         .expect("Should connect");
@@ -352,14 +356,14 @@ async fn test_message_embeddings_tracking() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+#[ignore = "integration test - requires Qdrant + OpenAI API"]
 async fn test_full_storage_flow() {
     // Setup both storage systems
     let db_pool = setup_test_db().await;
     let sqlite = SqliteMemoryStore::new(db_pool.clone());
 
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let multi_store = QdrantMultiStore::new(&qdrant_url, "test_full_flow")
         .await
         .expect("Should connect to Qdrant");
@@ -427,13 +431,13 @@ async fn test_full_storage_flow() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+#[ignore = "integration test - requires Qdrant + OpenAI API"]
 async fn test_deletion_across_systems() {
     let db_pool = setup_test_db().await;
     let sqlite = SqliteMemoryStore::new(db_pool);
 
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let multi_store = QdrantMultiStore::new(&qdrant_url, "test_deletion")
         .await
         .expect("Should connect");
@@ -595,7 +599,8 @@ fn create_test_entry(session_id: &str, role: &str, content: &str) -> MemoryEntry
 }
 
 fn create_embedding_client() -> Arc<OpenAiEmbeddings> {
-    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests");
+    init_env();
+    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests - ensure backend/.env exists");
 
     Arc::new(OpenAiEmbeddings::new(
         api_key.clone(),

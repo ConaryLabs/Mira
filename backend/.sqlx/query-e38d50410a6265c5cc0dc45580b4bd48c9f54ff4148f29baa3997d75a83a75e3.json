@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, project_id, file_path, line_number, commit_hash,\n                   author_name, author_email, authored_at, line_content,\n                   file_hash, created_at\n            FROM blame_annotations\n            WHERE project_id = ? AND file_path = ? AND file_hash = ?\n            ORDER BY line_number\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "line_number",
+        "ordinal": 3,
+        "type_info": "Int64"
+      },
+      {
+        "name": "commit_hash",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "author_name",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "author_email",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "authored_at",
+        "ordinal": 7,
+        "type_info": "Int64"
+      },
+      {
+        "name": "line_content",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_hash",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 10,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e38d50410a6265c5cc0dc45580b4bd48c9f54ff4148f29baa3997d75a83a75e3"
+}

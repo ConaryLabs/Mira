@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, occurrence_count FROM build_errors\n            WHERE error_hash = ? AND resolved_at IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "occurrence_count",
+        "ordinal": 1,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "69c5f9ef39c9e7d807f33d3f700f6dd233817cc37c0814025f2326e82e024c9d"
+}

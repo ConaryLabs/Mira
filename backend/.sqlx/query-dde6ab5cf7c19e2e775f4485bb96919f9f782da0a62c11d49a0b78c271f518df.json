@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM pattern_validation_cache WHERE pattern_type = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "dde6ab5cf7c19e2e775f4485bb96919f9f782da0a62c11d49a0b78c271f518df"
+}

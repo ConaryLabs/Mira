@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT attachment_type, local_path, local_path_override\n            FROM git_repo_attachments\n            WHERE project_id = ?\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "attachment_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "local_path",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "local_path_override",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "d7d4253e27cdd03889c386581e87cb0fb2361b3bad3903611dc65334a5ad2c86"
+}

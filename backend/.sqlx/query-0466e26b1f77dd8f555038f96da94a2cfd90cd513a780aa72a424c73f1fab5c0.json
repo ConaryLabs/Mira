@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE git_repo_attachments\n            SET last_imported_at = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0466e26b1f77dd8f555038f96da94a2cfd90cd513a780aa72a424c73f1fab5c0"
+}

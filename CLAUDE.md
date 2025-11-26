@@ -194,8 +194,22 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 - **Stable Crates Only** (always use current stable versions of all dependencies)
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
-- **Qdrant** running on `localhost:6334` (gRPC) or `localhost:6333` (HTTP)
+- **Qdrant 1.16+** running on `localhost:6334` (gRPC) and `localhost:6333` (HTTP)
 - **API Keys**: OpenAI (GPT 5.1 + embeddings)
+
+### Starting Qdrant
+
+```bash
+cd backend
+# Start Qdrant with config file (creates qdrant_storage/ directory)
+./bin/qdrant --config-path ./config/config.yaml
+
+# Or run in background
+nohup ./bin/qdrant --config-path ./config/config.yaml > /tmp/qdrant.log 2>&1 &
+
+# Verify it's running
+curl http://localhost:6333  # Should return version info
+```
 
 ## Environment Setup
 
@@ -245,6 +259,12 @@ The frontend proxies to backend port 3001 (configured in `vite.config.js`).
   - `git_operations_test.rs` - Git integration
   - `message_pipeline_flow_test.rs` - Message analysis
   - `e2e_data_flow_test.rs` - End-to-end flows
+
+**Environment for Tests:**
+- Tests load `backend/.env` via `dotenv::dotenv()` for API keys
+- Qdrant tests require Qdrant running on `localhost:6334` (gRPC)
+- Some tests marked `#[ignore]` require real OpenAI API calls
+- Run ignored tests with: `cargo test -- --ignored`
 
 ### Frontend Tests
 

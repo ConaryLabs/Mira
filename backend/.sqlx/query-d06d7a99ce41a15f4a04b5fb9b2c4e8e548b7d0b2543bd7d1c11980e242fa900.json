@@ -1,0 +1,104 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, project_id, name, description, trigger_type, reasoning_chain,\n                   solution_template, applicable_contexts, success_rate, use_count,\n                   success_count, cost_savings_usd, created_at, updated_at, last_used\n            FROM reasoning_patterns\n            WHERE success_rate >= 0.8 AND use_count >= 3\n            ORDER BY success_rate DESC, use_count DESC\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "description",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "trigger_type",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "reasoning_chain",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "solution_template",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "applicable_contexts",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "success_rate",
+        "ordinal": 8,
+        "type_info": "Float"
+      },
+      {
+        "name": "use_count",
+        "ordinal": 9,
+        "type_info": "Int64"
+      },
+      {
+        "name": "success_count",
+        "ordinal": 10,
+        "type_info": "Int64"
+      },
+      {
+        "name": "cost_savings_usd",
+        "ordinal": 11,
+        "type_info": "Float"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 12,
+        "type_info": "Int64"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 13,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_used",
+        "ordinal": 14,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "d06d7a99ce41a15f4a04b5fb9b2c4e8e548b7d0b2543bd7d1c11980e242fa900"
+}

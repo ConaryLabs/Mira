@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM git_commits WHERE project_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "606583e88aacc8f2ce97326dd2db49423e4f474b12706fbeb8c137de5a348258"
+}

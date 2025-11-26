@@ -20,7 +20,7 @@ use std::sync::Arc;
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
+#[ignore = "LLM response format issue - topics field not always returned"]
 async fn test_complete_message_flow() {
     println!("\n=== Starting Complete Message Flow Test ===\n");
 
@@ -181,7 +181,7 @@ async fn test_complete_message_flow() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_conversation_thread_flow() {
     println!("\n=== Testing Conversation Thread Flow ===\n");
 
@@ -257,7 +257,7 @@ async fn test_conversation_thread_flow() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_multi_session_isolation() {
     println!("\n=== Testing Multi-Session Isolation ===\n");
 
@@ -302,7 +302,7 @@ async fn test_multi_session_isolation() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_high_volume_message_flow() {
     println!("\n=== Testing High-Volume Message Flow ===\n");
 
@@ -359,7 +359,7 @@ async fn test_high_volume_message_flow() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
+#[ignore = "timestamp precision issue with rapid saves"]
 async fn test_error_recovery() {
     println!("\n=== Testing Error Recovery ===\n");
 
@@ -413,7 +413,7 @@ async fn test_error_recovery() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
+#[ignore = "LLM response format issue - topics field not always returned"]
 async fn test_code_message_routing() {
     println!("\n=== Testing Code Message Routing ===\n");
 
@@ -479,10 +479,11 @@ fn authenticate(token: &str) -> Result<User, AuthError> {
 
 // ============================================================================
 // TEST 7: Recall Engine Integration
+// NOTE: Requires real OpenAI API for embeddings
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+#[ignore = "integration test - requires OpenAI API for real embeddings"]
 async fn test_recall_engine_integration() {
     println!("\n=== Testing Recall Engine Integration ===\n");
 
@@ -568,9 +569,9 @@ async fn setup_full_stack() -> (MemoryService, Arc<OpenAiEmbeddings>, Arc<Qdrant
     let db_pool = setup_test_db().await;
     let sqlite_store = Arc::new(SqliteMemoryStore::new(db_pool));
 
-    // Setup Qdrant
+    // Setup Qdrant (gRPC port 6334)
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let multi_store = Arc::new(
         QdrantMultiStore::new(&qdrant_url, "e2e_test")
             .await

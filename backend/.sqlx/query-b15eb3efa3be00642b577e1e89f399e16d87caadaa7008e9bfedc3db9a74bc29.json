@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO call_graph (caller_id, callee_id, call_line)\n            VALUES (?, ?, ?)\n            ON CONFLICT(caller_id, callee_id, call_line) DO UPDATE SET\n                caller_id = excluded.caller_id\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b15eb3efa3be00642b577e1e89f399e16d87caadaa7008e9bfedc3db9a74bc29"
+}

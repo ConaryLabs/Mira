@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT author_name, author_email, expertise_score, commit_count,\n                   last_contribution, file_pattern\n            FROM author_expertise\n            WHERE project_id = ? AND file_pattern = ?\n            ORDER BY expertise_score DESC\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "author_name",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "author_email",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "expertise_score",
+        "ordinal": 2,
+        "type_info": "Float"
+      },
+      {
+        "name": "commit_count",
+        "ordinal": 3,
+        "type_info": "Int64"
+      },
+      {
+        "name": "last_contribution",
+        "ordinal": 4,
+        "type_info": "Int64"
+      },
+      {
+        "name": "file_pattern",
+        "ordinal": 5,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "725086c6c07d2b8a7e2eb475dfd3143be8848296eb2d024432fcd896e5ff45c1"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT e.message, COUNT(*) as count\n            FROM build_errors e\n            JOIN build_runs r ON e.build_run_id = r.id\n            WHERE r.project_id = ? AND e.severity = 'error'\n            GROUP BY e.error_hash\n            ORDER BY count DESC\n            LIMIT 5\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "message",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "count",
+        "ordinal": 1,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "fc77fd0683fa339700a392bfe04b76c51db3f64d26e9f70df09e2e17e2334767"
+}

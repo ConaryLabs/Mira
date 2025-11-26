@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, language, element_type, name, full_path, content, visibility\n            FROM code_elements\n            WHERE file_id = ?\n            ORDER BY start_line\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "language",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "element_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "full_path",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "visibility",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "19f3580a57a6e7eb74747282ddfed2f982109c03264f65866749427f190f4101"
+}

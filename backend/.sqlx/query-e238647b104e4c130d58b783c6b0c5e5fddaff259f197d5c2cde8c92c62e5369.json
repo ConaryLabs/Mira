@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, attachment_id, file_path, content_hash, language, \n                   last_indexed, line_count, function_count\n            FROM repository_files\n            WHERE attachment_id = ?\n            ORDER BY file_path\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "attachment_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "language",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_indexed",
+        "ordinal": 5,
+        "type_info": "Int64"
+      },
+      {
+        "name": "line_count",
+        "ordinal": 6,
+        "type_info": "Int64"
+      },
+      {
+        "name": "function_count",
+        "ordinal": 7,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e238647b104e4c130d58b783c6b0c5e5fddaff259f197d5c2cde8c92c62e5369"
+}

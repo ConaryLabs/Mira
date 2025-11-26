@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM blame_annotations WHERE project_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ba41a9f337e6ec53f53791f3ae25ac97cb05350a09ac9c4792dcac8b98eaea2d"
+}

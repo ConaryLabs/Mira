@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, operation_id, kind, file_path, content, content_hash, language, diff_from_previous, created_at\n            FROM artifacts\n            WHERE operation_id = ?\n            ORDER BY created_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "operation_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "kind",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "language",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "diff_from_previous",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 8,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "b8d58008150833337696593412ad1cba187e105c7b0fdac4bcd56b99ee36edfb"
+}

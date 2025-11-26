@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO semantic_edges (\n                source_node_id, target_node_id, relationship_type, strength, metadata, created_at\n            ) VALUES (?, ?, ?, ?, ?, ?)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c9cf4bb27f44ce303d38fc28324b4e139612311d125ef71f1b8599e4e158a34c"
+}

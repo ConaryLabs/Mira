@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT r.resolution_type, COUNT(*) as count\n            FROM error_resolutions r\n            JOIN build_errors e ON r.error_hash = e.error_hash\n            JOIN build_runs b ON e.build_run_id = b.id\n            WHERE b.project_id = ?\n            GROUP BY r.resolution_type\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "resolution_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "count",
+        "ordinal": 1,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "fc33a8023bde7a84cab5917297368fe12d930acdf49c7d7c04673e84a00f4eee"
+}

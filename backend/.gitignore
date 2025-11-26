@@ -156,5 +156,8 @@ mira.db
 data/
 test_repos/
 
-# Document storage (runtime data)
-storage/
+# Document storage (runtime data) - only top-level storage directory
+/storage/
+
+# Local Qdrant config (machine-specific)
+/config/config.yaml

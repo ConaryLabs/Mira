@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT COUNT(*) as \"count: i64\"\n        FROM code_quality_issues cqi\n        JOIN code_elements ce ON cqi.element_id = ce.id\n        JOIN repository_files rf ON ce.file_id = rf.id\n        JOIN git_repo_attachments gra ON rf.attachment_id = gra.id\n        WHERE gra.project_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "count: i64",
+        "ordinal": 0,
+        "type_info": "Int"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8456dfdbb7e58413ba2a2d3c84616292bf946449f6bffb2292a02583871ba506"
+}

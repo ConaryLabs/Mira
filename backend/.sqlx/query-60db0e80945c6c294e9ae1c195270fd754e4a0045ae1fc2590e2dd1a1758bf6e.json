@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content FROM artifacts WHERE operation_id = ? AND file_path = ? ORDER BY created_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "content",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "60db0e80945c6c294e9ae1c195270fd754e4a0045ae1fc2590e2dd1a1758bf6e"
+}

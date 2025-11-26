@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, project_id, local_path, attachment_type\n            FROM git_repo_attachments\n            WHERE import_status = 'complete'\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "local_path",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "attachment_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "8cde15a6876767558cefff7c5b369ccd1c47409438fd3ec14c3985706f8a7b0b"
+}

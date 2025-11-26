@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_changes FROM git_commits WHERE project_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_changes",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8486fb309ab4dca6460754cbfca4d91154a5d2e6acf9f6131b1cde0af9c0782e"
+}

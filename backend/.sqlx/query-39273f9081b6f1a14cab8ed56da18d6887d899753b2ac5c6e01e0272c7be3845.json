@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(AVG(expertise_score), 0.0) as avg FROM author_expertise WHERE project_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "avg",
+        "ordinal": 0,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "39273f9081b6f1a14cab8ed56da18d6887d899753b2ac5c6e01e0272c7be3845"
+}

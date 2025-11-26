@@ -55,7 +55,7 @@ async fn setup_services(
 ) {
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*pool).clone()));
 
-    let qdrant_url = "http://localhost:6333";
+    let qdrant_url = "http://localhost:6334";
     let multi_store = Arc::new(
         QdrantMultiStore::new(qdrant_url, "test_phase6")
             .await
@@ -109,7 +109,7 @@ async fn setup_services(
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_engine_with_providers() {
     let db = create_test_db().await;
     let gpt5 = create_test_gpt5();
@@ -206,7 +206,7 @@ async fn test_operation_engine_with_providers() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_lifecycle_complete() {
     let db = create_test_db().await;
     let gpt5 = create_test_gpt5();
@@ -290,7 +290,7 @@ async fn test_operation_lifecycle_complete() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_operation_cancellation() {
     let db = create_test_db().await;
     let gpt5 = create_test_gpt5();
@@ -364,7 +364,7 @@ async fn test_operation_cancellation() {
 }
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
+
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
     let gpt5 = create_test_gpt5();

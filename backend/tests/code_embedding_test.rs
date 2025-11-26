@@ -2,7 +2,8 @@
 // Tests for code element embedding and semantic search
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+use chrono::Utc;
+use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 
 use mira_backend::llm::embeddings::EmbeddingHead;
@@ -117,27 +118,36 @@ async fn setup_test_db() -> SqlitePool {
     .await
     .unwrap();
 
+    // Match production schema from migrations/20251125000002_code_intelligence.sql
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS code_elements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
-            language TEXT NOT NULL,
-            element_type TEXT NOT NULL,
+            project_id TEXT,
+            file_id INTEGER,
+            file_path TEXT,
+            language TEXT,
             name TEXT NOT NULL,
-            full_path TEXT NOT NULL,
-            visibility TEXT NOT NULL,
+            full_path TEXT,
+            element_type TEXT NOT NULL,
+            visibility TEXT,
             start_line INTEGER NOT NULL,
             end_line INTEGER NOT NULL,
-            content TEXT NOT NULL,
+            line_start INTEGER,
+            line_end INTEGER,
+            content TEXT,
+            signature TEXT,
+            content_hash TEXT,
             signature_hash TEXT,
-            complexity_score INTEGER DEFAULT 0,
+            parent_id INTEGER,
+            complexity_score REAL,
             is_test BOOLEAN DEFAULT FALSE,
             is_async BOOLEAN DEFAULT FALSE,
             documentation TEXT,
             metadata TEXT,
-            created_at INTEGER,
             analyzed_at INTEGER,
+            created_at INTEGER,
+            updated_at INTEGER,
             UNIQUE(file_id, name, start_line)
         )
         "#,
@@ -196,7 +206,7 @@ fn setup_embedding_client() -> Arc<OpenAiEmbeddings> {
 
 async fn setup_qdrant() -> Arc<QdrantMultiStore> {
     let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".to_string());
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     Arc::new(
         QdrantMultiStore::new(&qdrant_url, "test_code_embedding")
             .await
@@ -206,10 +216,10 @@ async fn setup_qdrant() -> Arc<QdrantMultiStore> {
 
 // ============================================================================
 // TEST 1: Parse and Embed Code Elements
+// NOTE: Requires real OpenAI API + Qdrant, schema sync issues with code_elements table
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires Qdrant"]
 async fn test_parse_and_embed_code_elements() -> Result<()> {
     println!("\n=== Testing Code Element Parsing and Embedding ===\n");
 
@@ -262,6 +272,79 @@ async fn test_parse_and_embed_code_elements() -> Result<()> {
         "Should find at least 2 elements (function, struct)"
     );
 
+    // Debug: Test embedding client directly
+    let test_embed = embedding_client.embed("test embedding").await;
+    match &test_embed {
+        Ok(v) => println!("[2a] Embedding client works, vector dim: {}", v.len()),
+        Err(e) => println!("[2a] Embedding client FAILED: {}", e),
+    }
+
+    // Debug: Check what's in code_elements table
+    let rows = sqlx::query("SELECT id, name, element_type, content FROM code_elements WHERE file_id = ?")
+        .bind(file_id)
+        .fetch_all(&pool)
+        .await?;
+    println!("[2b] DB has {} code_elements for file_id {}", rows.len(), file_id);
+    for row in &rows {
+        let id: i64 = row.get("id");
+        let name: String = row.get("name");
+        let element_type: String = row.get("element_type");
+        let content: Option<String> = row.try_get("content").ok();
+        println!("[2c] Element {}: {} '{}' content_len={}", id, element_type, name, content.as_ref().map(|c| c.len()).unwrap_or(0));
+    }
+
+    // Debug: Test Qdrant save directly
+    let test_embedding = embedding_client.embed("test code element").await?;
+    println!("[2d] test_embedding len: {}", test_embedding.len());
+    let test_entry = mira_backend::memory::core::types::MemoryEntry {
+        id: Some(999),
+        session_id: "code:test-project".to_string(),
+        role: "code".to_string(),
+        content: "test content".to_string(),
+        timestamp: Utc::now(),
+        embedding: Some(test_embedding),
+        contains_code: Some(true),
+        programming_lang: Some("rust".to_string()),
+        tags: Some(vec!["test".to_string()]),
+        response_id: None,
+        parent_id: None,
+        mood: None,
+        intensity: None,
+        salience: None,
+        original_salience: None,
+        intent: None,
+        topics: None,
+        summary: None,
+        relationship_impact: None,
+        language: None,
+        analyzed_at: None,
+        analysis_version: None,
+        routed_to_heads: None,
+        last_recalled: None,
+        recall_count: None,
+        contains_error: None,
+        error_type: None,
+        error_severity: None,
+        error_file: None,
+        model_version: None,
+        prompt_tokens: None,
+        completion_tokens: None,
+        reasoning_tokens: None,
+        total_tokens: None,
+        latency_ms: None,
+        generation_time_ms: None,
+        finish_reason: None,
+        tool_calls: None,
+        temperature: None,
+        max_tokens: None,
+        embedding_heads: None,
+        qdrant_point_ids: None,
+    };
+    match multi_store.save(EmbeddingHead::Code, &test_entry).await {
+        Ok(point_id) => println!("[2d] Qdrant save OK, point_id: {}", point_id),
+        Err(e) => println!("[2d] Qdrant save FAILED: {:?}", e),
+    }
+
     // Step 3: Embed the code elements
     let embedded_count = code_intelligence
         .embed_code_elements(file_id, project_id)
@@ -289,11 +372,11 @@ async fn test_parse_and_embed_code_elements() -> Result<()> {
 
 // ============================================================================
 // TEST 2: Semantic Search for Code Elements
-// FIXME: Search timing issues - needs investigation
+// NOTE: Requires real OpenAI API + Qdrant, complex integration test
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "search timing issues need investigation"]
+#[ignore = "integration test - requires OpenAI API + Qdrant, schema sync issues"]
 async fn test_semantic_search_code_elements() -> Result<()> {
     println!("\n=== Testing Semantic Search for Code Elements ===\n");
 
@@ -337,9 +420,21 @@ async fn test_semantic_search_code_elements() -> Result<()> {
         .analyze_and_store_with_project(file_id, TEST_RUST_CODE, "src/auth.rs", "rust", project_id)
         .await?;
 
-    code_intelligence
+    // Debug: Check how many elements were stored
+    let element_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM code_elements WHERE file_id = ?")
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+    println!("[0a] Stored {} code elements in DB for file_id {}", element_count, file_id);
+
+    let embed_count = code_intelligence
         .embed_code_elements(file_id, project_id)
         .await?;
+
+    println!("[1a] Embedded {} code elements", embed_count);
+
+    // Wait for Qdrant to index (2 seconds for safety)
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     println!("[1] Setup complete - code embedded");
 
@@ -347,10 +442,13 @@ async fn test_semantic_search_code_elements() -> Result<()> {
     let query = "user authentication and token verification";
     let query_embedding = embedding_client.embed(query).await?;
 
+    let session_filter = format!("code:{}", project_id);
+    println!("[1b] Searching with session_id filter: '{}'", session_filter);
+
     let results = multi_store
         .search(
             EmbeddingHead::Code,
-            &format!("code:{}", project_id),
+            &session_filter,
             &query_embedding,
             5,
         )
@@ -360,6 +458,16 @@ async fn test_semantic_search_code_elements() -> Result<()> {
         "[2] Search for 'authentication' returned {} results",
         results.len()
     );
+
+    // Debug: Also try search with session_id using search_all
+    let all_results = multi_store.search_all(&session_filter, &query_embedding, 10).await?;
+    println!("[2a] search_all with '{}' returned {} head groups", session_filter, all_results.len());
+    for (head, entries) in &all_results {
+        println!("[2b] search_all {} head: {} results", head.as_str(), entries.len());
+    }
+
+    // Debug: Check collection info
+    println!("[2c] multi_store enabled heads: {:?}", multi_store.get_enabled_heads());
     assert!(
         !results.is_empty(),
         "Should find code elements related to authentication"
@@ -382,11 +490,11 @@ async fn test_semantic_search_code_elements() -> Result<()> {
 
 // ============================================================================
 // TEST 3: Invalidation on File Change
-// FIXME: Search timing issues - needs investigation
+// NOTE: Requires real OpenAI API + Qdrant, complex integration test
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "search timing issues need investigation"]
+#[ignore = "integration test - requires OpenAI API + Qdrant, schema sync issues"]
 async fn test_invalidation_on_file_change() -> Result<()> {
     println!("\n=== Testing Invalidation on File Change ===\n");
 
@@ -465,6 +573,9 @@ async fn test_invalidation_on_file_change() -> Result<()> {
         .embed_code_elements(file_id, project_id)
         .await?;
 
+    // Wait for Qdrant to index (2 seconds for safety)
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
     println!("[3] Modified code: {} elements embedded", new_count);
 
     // Step 4: Verify search returns updated code
@@ -493,11 +604,11 @@ async fn test_invalidation_on_file_change() -> Result<()> {
 
 // ============================================================================
 // TEST 4: Struct and Function Search
-// FIXME: Search timing issues - needs investigation
+// NOTE: Requires real OpenAI API + Qdrant, complex integration test
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "search timing issues need investigation"]
+#[ignore = "integration test - requires OpenAI API + Qdrant, schema sync issues"]
 async fn test_search_different_element_types() -> Result<()> {
     println!("\n=== Testing Search for Structs and Functions ===\n");
 
@@ -544,6 +655,9 @@ async fn test_search_different_element_types() -> Result<()> {
     code_intelligence
         .embed_code_elements(file_id, project_id)
         .await?;
+
+    // Wait for Qdrant to index (2 seconds for safety)
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     println!("[1] Code embedded");
 

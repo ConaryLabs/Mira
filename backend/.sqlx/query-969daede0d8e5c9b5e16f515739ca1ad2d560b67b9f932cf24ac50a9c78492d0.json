@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO domain_clusters (\n                project_id, domain_name, symbol_ids, file_paths,\n                cohesion_score, created_at, updated_at\n            ) VALUES (?, ?, ?, ?, ?, ?, ?)\n            ON CONFLICT(project_id, domain_name) DO UPDATE SET\n                symbol_ids = excluded.symbol_ids,\n                file_paths = excluded.file_paths,\n                cohesion_score = excluded.cohesion_score,\n                updated_at = excluded.updated_at\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "969daede0d8e5c9b5e16f515739ca1ad2d560b67b9f932cf24ac50a9c78492d0"
+}

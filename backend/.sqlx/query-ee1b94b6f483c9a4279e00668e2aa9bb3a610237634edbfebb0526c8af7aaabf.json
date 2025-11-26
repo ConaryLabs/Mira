@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT OR REPLACE INTO pattern_validation_cache\n            (pattern_type, code_hash, validation_result, confidence, created_at, last_used, hit_count)\n            VALUES (?, ?, ?, ?, ?, ?, 0)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "ee1b94b6f483c9a4279e00668e2aa9bb3a610237634edbfebb0526c8af7aaabf"
+}

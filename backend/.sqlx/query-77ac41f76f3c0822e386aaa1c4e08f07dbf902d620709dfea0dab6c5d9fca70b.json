@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MIN(created_at) FROM semantic_analysis_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "MIN(created_at)",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "77ac41f76f3c0822e386aaa1c4e08f07dbf902d620709dfea0dab6c5d9fca70b"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                UPDATE build_errors\n                SET occurrence_count = ?, last_seen_at = ?, build_run_id = ?\n                WHERE id = ?\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "511dbf0b03238954bb51d7cb1f201df5f61dcc9282a8dcc264935e55d91f2dd5"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO design_patterns (\n                project_id, pattern_name, pattern_type, confidence,\n                involved_symbols, description, detected_at\n            ) VALUES (?, ?, ?, ?, ?, ?, ?)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7923583e8f69d3306ec6f71a23d4ee90f22fecd87df237520ae2b484b5699630"
+}

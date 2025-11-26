@@ -246,8 +246,8 @@ impl CommitService {
 
         sql.push_str(" ORDER BY authored_at DESC LIMIT ?");
 
-        // Execute with dynamic binding
-        let rows = sqlx::query(&sql)
+        // Execute with dynamic binding (currently shadowed by simpler fallback below)
+        let _rows = sqlx::query(&sql)
             .bind(&query.project_id)
             .bind(query.author_email.as_ref())
             .bind(query.since)
@@ -260,7 +260,7 @@ impl CommitService {
         // Note: This simplified version doesn't handle all filter combinations
         // For production, use a query builder or separate queries per filter combo
 
-        // Fallback to simple query for now
+        // Use simple query for now
         let rows = sqlx::query!(
             r#"
             SELECT id, project_id, commit_hash, author_name, author_email,

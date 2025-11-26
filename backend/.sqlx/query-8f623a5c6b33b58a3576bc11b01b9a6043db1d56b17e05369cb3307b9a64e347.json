@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, pattern_id, step_number, step_type, description, rationale, created_at\n            FROM reasoning_steps\n            WHERE pattern_id = ?\n            ORDER BY step_number\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "pattern_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "step_number",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "step_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "description",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "rationale",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "8f623a5c6b33b58a3576bc11b01b9a6043db1d56b17e05369cb3307b9a64e347"
+}

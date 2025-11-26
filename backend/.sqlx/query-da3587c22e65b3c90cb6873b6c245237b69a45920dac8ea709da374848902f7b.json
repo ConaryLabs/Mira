@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT COUNT(*) as count FROM error_resolutions r\n            JOIN build_errors e ON r.error_hash = e.error_hash\n            JOIN build_runs b ON e.build_run_id = b.id\n            WHERE b.project_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "count",
+        "ordinal": 0,
+        "type_info": "Int"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "da3587c22e65b3c90cb6873b6c245237b69a45920dac8ea709da374848902f7b"
+}

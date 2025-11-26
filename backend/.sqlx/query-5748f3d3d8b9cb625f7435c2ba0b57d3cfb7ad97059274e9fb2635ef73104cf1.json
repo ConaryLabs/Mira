@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT sn.symbol_id, sn.concepts, sn.domain_labels, ce.file_path\n            FROM semantic_nodes sn\n            JOIN code_elements ce ON sn.symbol_id = ce.id\n            WHERE ce.project_id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "symbol_id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "concepts",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "domain_labels",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "file_path",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "5748f3d3d8b9cb625f7435c2ba0b57d3cfb7ad97059274e9fb2635ef73104cf1"
+}
