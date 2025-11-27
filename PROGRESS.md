@@ -1108,6 +1108,72 @@ All features implemented:
 
 ---
 
+### Session 23: 2025-11-27
+
+**Summary:** Prompt Building Cleanup - Centralized all internal prompts into src/prompt/internal.rs module.
+
+**Goals:**
+- Review and tighten up all prompt building throughout codebase
+- Ensure personality only comes from src/persona/default.rs
+- Centralize scattered internal prompts while preserving technical requirements
+
+**Key Outcomes:**
+- Created `src/prompt/internal.rs` with 7 submodules containing all internal prompts
+- Migrated 13 files to use centralized imports
+- Added documentation explaining why internal prompts skip persona
+- All builds and tests passing
+
+**Modules in internal.rs:**
+| Module | Prompts | Purpose |
+|--------|---------|---------|
+| `tool_router` | FILE_READER, CODE_SEARCHER, FILE_LISTER | Inner loop tool operations |
+| `patterns` | PATTERN_MATCHER, step_executor(), TEMPLATE_APPLIER, solution_generator() | Pattern matching (JSON output) |
+| `synthesis` | CODE_GENERATOR, CODE_EVOLVER, PATTERN_DETECTOR | Code generation (Rust output) |
+| `analysis` | MESSAGE_ANALYZER, BATCH_ANALYZER | Message analysis (JSON output) |
+| `code_intelligence` | DESIGN_PATTERN_DETECTOR, SEMANTIC_ANALYZER, DOMAIN_PATTERN_ANALYZER | Code analysis |
+| `summarization` | SNAPSHOT_SUMMARIZER, ROLLING_SUMMARIZER | Conversation summarization |
+| `llm` | code_gen_specialist() | LLM code generation |
+
+**Files Modified:**
+- `backend/src/prompt/internal.rs` - **CREATED** - Centralized internal prompts (~310 lines)
+- `backend/src/prompt/mod.rs` - Added internal module export with architecture comments
+- `backend/src/prompt/builders.rs` - Added doc comments clarifying persona flow
+- `backend/src/persona/default.rs` - Added doc comment noting single source for personality
+- `backend/src/operations/engine/tool_router.rs` - Import from internal::tool_router
+- `backend/src/patterns/matcher.rs` - Import from internal::patterns
+- `backend/src/patterns/replay.rs` - Import from internal::patterns
+- `backend/src/synthesis/generator.rs` - Import from internal::synthesis
+- `backend/src/synthesis/evolver.rs` - Import from internal::synthesis
+- `backend/src/synthesis/detector.rs` - Import from internal::synthesis
+- `backend/src/memory/features/message_pipeline/analyzers/chat_analyzer.rs` - Import from internal::analysis
+- `backend/src/memory/features/code_intelligence/patterns.rs` - Import from internal::code_intelligence
+- `backend/src/memory/features/code_intelligence/semantic.rs` - Import from internal::code_intelligence
+- `backend/src/memory/features/code_intelligence/clustering.rs` - Import from internal::code_intelligence
+- `backend/src/memory/features/summarization/strategies/snapshot_summary.rs` - Import from internal::summarization
+- `backend/src/memory/features/summarization/strategies/rolling_summary.rs` - Import from internal::summarization
+- `backend/src/llm/provider/gpt5.rs` - Import from internal::llm
+
+**Git Commits:**
+- `6bd47ff` - Prompt Building Cleanup: Centralize internal prompts
+- `3384877` - Prompt Cleanup: Centralize remaining internal prompts
+
+**Technical Decisions:**
+1. **No Persona for Internal Prompts**: All internal prompts stay technical because they require:
+   - JSON output that gets parsed (personality could break parsing)
+   - Code generation that must be compilable (personality text corrupts code)
+   - Inner loop efficiency (extra tokens waste context)
+2. **Function vs Const**: Prompts with dynamic parameters (step_executor, solution_generator, code_gen_specialist) are functions; others are constants
+3. **Preserved build_technical_code_prompt()**: Kept in builders.rs as-is per design confirmation
+
+**Architecture:**
+```
+src/persona/default.rs     -> SINGLE SOURCE for personality
+src/prompt/builders.rs     -> User-facing prompts (inject persona)
+src/prompt/internal.rs     -> Technical prompts (no persona)
+```
+
+---
+
 ### Session 20: 2025-11-26
 
 **Summary:** Fixed all 7 previously-ignored integration tests by resolving Qdrant client/server version mismatch, fixing analysis metadata persistence, and correcting SQLite query ordering.
