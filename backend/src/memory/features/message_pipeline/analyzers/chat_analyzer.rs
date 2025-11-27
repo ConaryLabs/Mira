@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use crate::llm::provider::{LlmProvider, Message};
+use crate::prompt::internal::analysis as prompts;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatAnalysisResult {
@@ -55,7 +56,7 @@ impl ChatAnalyzer {
         }];
 
         // Use LLM for analysis
-        let system = "You are a precise message analyzer. Analyze the message and output only valid JSON. Required fields: salience (0.0-1.0), topics (array of strings). Optional: contains_code, programming_lang, contains_error, error_type, error_file, error_severity, mood, intensity, intent, summary, relationship_impact.";
+        let system = prompts::MESSAGE_ANALYZER;
 
         let provider_response = self
             .llm_provider
@@ -89,7 +90,7 @@ impl ChatAnalyzer {
         }];
 
         // Use LLM for batch analysis
-        let system = "You are a precise message analyzer. Analyze each message and output only valid JSON matching the format.";
+        let system = prompts::BATCH_ANALYZER;
 
         let provider_response = self
             .llm_provider

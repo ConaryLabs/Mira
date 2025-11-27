@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::llm::provider::{Gpt5Provider, Message, ReasoningEffort};
+use crate::prompt::internal::synthesis as prompts;
 
 use super::storage::SynthesisStorage;
 use super::types::*;
@@ -207,16 +208,7 @@ impl ToolEvolver {
         tool: &SynthesizedTool,
         suggestions: &[String],
     ) -> Result<String> {
-        let system_prompt = r#"You are a Rust code improvement expert. Your task is to improve an existing tool implementation based on the provided suggestions.
-
-Maintain the same Tool trait implementation structure but improve:
-1. Error handling
-2. Performance
-3. Code clarity
-4. Edge case handling
-
-Return the improved code wrapped in ```rust code blocks.
-"#;
+        let system_prompt = prompts::CODE_EVOLVER;
 
         let user_prompt = format!(
             r#"Improve the following tool implementation:

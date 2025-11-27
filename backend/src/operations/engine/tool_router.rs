@@ -11,6 +11,7 @@ use crate::llm::provider::Gpt5Provider;
 use crate::llm::provider::Message;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
+use crate::prompt::internal::tool_router as prompts;
 use crate::sudo::SudoPermissionService;
 use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
 use std::sync::Arc;
@@ -125,10 +126,8 @@ impl ToolRouter {
 
         // Build prompt with file reading tools
         let system_prompt = format!(
-            "You are a file reading assistant. Use the read_file tool to read the requested files. \
-            Purpose: {}\n\n\
-            Read all requested files and return a summary with the file contents.",
-            purpose
+            "{} Purpose: {}",
+            prompts::FILE_READER, purpose
         );
 
         let user_prompt = format!(
@@ -256,7 +255,7 @@ impl ToolRouter {
         info!("[ROUTER] Searching codebase for: '{}'", query);
 
         // Build prompt for searching
-        let system_prompt = "You are a code search assistant. Use the grep_files tool to search for the requested pattern.";
+        let system_prompt = prompts::CODE_SEARCHER;
 
         let mut user_prompt = format!("Search for: {}", query);
         if let Some(pattern) = file_pattern {
@@ -312,7 +311,7 @@ impl ToolRouter {
         info!("[ROUTER] Listing files in: {}", directory);
 
         // Build prompt for listing
-        let system_prompt = "You are a file listing assistant. Use the list_files tool to list the requested directory.";
+        let system_prompt = prompts::FILE_LISTER;
 
         let mut user_prompt = format!("List files in directory: {}", directory);
         if let Some(p) = pattern {

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::{Gpt5Provider, LlmProvider, Message};
+use crate::prompt::internal::synthesis as prompts;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
 use super::storage::SynthesisStorage;
@@ -133,35 +134,7 @@ impl PatternDetector {
         project_id: &str,
         context: &str,
     ) -> Result<Vec<ToolPattern>> {
-        let system_prompt = r#"You are a code pattern analyzer. Your task is to identify repetitive patterns in code that could be automated as custom tools.
-
-For each pattern you identify, provide:
-1. A unique name (snake_case)
-2. The pattern type (one of: file_operation, api_call, data_transformation, validation, database_query, config_parsing, error_handling, code_generation, testing, logging, caching)
-3. A description of what the pattern does
-4. How many times you estimate it occurs (frequency)
-5. Your confidence score (0.0 to 1.0) that this is a real, automatable pattern
-
-Focus on patterns that:
-- Appear multiple times across the codebase
-- Follow a consistent structure
-- Could benefit from automation
-- Are not already handled by existing tools
-
-Return your analysis as JSON in this exact format:
-{
-  "patterns": [
-    {
-      "name": "pattern_name",
-      "type": "pattern_type",
-      "description": "What this pattern does",
-      "frequency": 5,
-      "confidence": 0.85,
-      "example_files": ["file1.rs", "file2.rs"]
-    }
-  ]
-}
-"#;
+        let system_prompt = prompts::PATTERN_DETECTOR;
 
         let user_prompt = format!(
             "Analyze the following code elements and identify automatable patterns:\n\n{}",

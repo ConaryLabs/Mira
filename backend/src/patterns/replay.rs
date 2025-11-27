@@ -7,6 +7,7 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::{Gpt5Provider, Message, ReasoningEffort};
+use crate::prompt::internal::patterns as prompts;
 
 use super::matcher::PatternMatcher;
 use super::storage::PatternStorage;
@@ -168,22 +169,14 @@ impl PatternReplay {
             step.step_number, step.description, step.step_type
         );
 
-        let system_prompt = format!(
-            r#"You are executing step {} of a coding pattern.
-
-Step type: {}
-Step description: {}
-{}
-
-Provide a concise response that completes this step. Be specific and actionable.
-"#,
+        let system_prompt = prompts::step_executor(
             step.step_number,
             step.step_type.as_str(),
-            step.description,
-            step.rationale
+            &step.description,
+            &step.rationale
                 .as_ref()
                 .map(|r| format!("Rationale: {}", r))
-                .unwrap_or_default()
+                .unwrap_or_default(),
         );
 
         let mut user_content = String::new();
@@ -237,10 +230,7 @@ Provide a concise response that completes this step. Be specific and actionable.
         context: &MatchContext,
         steps: &[ExecutedStep],
     ) -> Result<String> {
-        let system_prompt = r#"You are applying a solution template. Fill in the template with appropriate values based on the context and step outputs.
-
-Return the filled template ready to use.
-"#;
+        let system_prompt = prompts::TEMPLATE_APPLIER;
 
         let mut user_content = format!("Template:\n{}\n\n", template);
 
@@ -273,13 +263,7 @@ Return the filled template ready to use.
         context: &MatchContext,
         steps: &[ExecutedStep],
     ) -> Result<String> {
-        let system_prompt = format!(
-            r#"You completed the "{}" pattern. Based on the step outputs, provide a final solution or recommendation.
-
-Be concise and actionable. If code is needed, provide it.
-"#,
-            pattern.name
-        );
+        let system_prompt = prompts::solution_generator(&pattern.name);
 
         let mut user_content = String::new();
 

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::llm::provider::{Gpt5Provider, Message, ReasoningEffort};
+use crate::prompt::internal::synthesis as prompts;
 
 use super::storage::SynthesisStorage;
 use super::types::*;
@@ -225,70 +226,7 @@ impl ToolGenerator {
 
     /// Get system prompt for code generation
     fn get_generation_system_prompt(&self) -> String {
-        r#"You are a Rust code generator specializing in creating tools for an AI assistant.
-
-Generate a complete, compilable Rust module that implements the Tool trait.
-
-The tool must:
-1. Implement the Tool trait with name(), definition(), and execute() methods
-2. Return proper ToolDefinition with OpenAI-compatible schema
-3. Handle errors gracefully and return ToolResult
-4. Be async-safe (Send + Sync)
-
-Template structure:
-```rust
-use async_trait::async_trait;
-use anyhow::Result;
-use serde_json::json;
-
-use crate::synthesis::{Tool, ToolArgs, ToolResult, ToolDefinition, FunctionDefinition};
-
-pub struct MyTool;
-
-impl MyTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl Tool for MyTool {
-    fn name(&self) -> &str {
-        "my_tool"
-    }
-
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            tool_type: "function".to_string(),
-            function: FunctionDefinition {
-                name: "my_tool".to_string(),
-                description: "Description of what the tool does".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "param1": {
-                            "type": "string",
-                            "description": "Parameter description"
-                        }
-                    },
-                    "required": ["param1"]
-                }),
-            },
-        }
-    }
-
-    async fn execute(&self, args: ToolArgs) -> Result<ToolResult> {
-        let param1 = args.get_string("param1")?;
-
-        // Tool implementation here
-
-        Ok(ToolResult::success("Result".to_string()))
-    }
-}
-```
-
-Return ONLY the Rust code, wrapped in ```rust code blocks.
-"#.to_string()
+        prompts::CODE_GENERATOR.to_string()
     }
 
     /// Get initial generation prompt

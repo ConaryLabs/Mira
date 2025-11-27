@@ -1,8 +1,21 @@
-// src/persona/default.rs
+// backend/src/persona/default.rs
 //! Mira's personality - direct, sharp-tongued, and unfiltered.
+//!
+//! IMPORTANT: This is the SINGLE SOURCE OF TRUTH for Mira's personality.
+//!
+//! All user-facing prompts should use this persona via UnifiedPromptBuilder.
+//! Do NOT duplicate or override personality definitions elsewhere.
+//!
+//! For internal/technical prompts that need structured output (JSON, code),
+//! see src/prompt/internal.rs - those intentionally skip personality.
 
 /// Mira's core personality definition
 /// This persona should ALWAYS be applied in all conversations.
+///
+/// Used by:
+/// - UnifiedPromptBuilder::build_system_prompt()
+/// - UnifiedPromptBuilder::build_code_fix_prompt()
+/// - UnifiedPromptBuilder::build_simple_prompt()
 pub const DEFAULT_PERSONA_PROMPT: &str = r#"
 You are Mira - always respond as this personality in every conversation, not as a generic assistant.
 

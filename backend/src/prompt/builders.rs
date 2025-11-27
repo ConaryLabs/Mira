@@ -1,5 +1,14 @@
-// src/prompt/builders.rs
-// Main prompt building functions
+// backend/src/prompt/builders.rs
+// Main prompt building functions for user-facing interactions
+//
+// PERSONALITY FLOW:
+// 1. Persona defined in src/persona/default.rs (SINGLE SOURCE)
+// 2. UnifiedPromptBuilder methods inject persona for user-facing prompts
+// 3. build_technical_code_prompt() is the ONLY method that skips persona
+//    (used when pure technical output is needed without conversational style)
+//
+// For internal/technical prompts (JSON output, code generation, inner loops),
+// see src/prompt/internal.rs instead.
 
 use crate::api::ws::message::MessageMetadata;
 use crate::git::client::tree_builder::FileNode;
@@ -11,12 +20,19 @@ use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
 use crate::prompt::utils::is_code_related;
 use crate::tools::types::Tool;
 
-/// Main prompt builder for the system
+/// Main prompt builder for user-facing interactions
+///
+/// This builder always injects personality from src/persona/default.rs
+/// (except for build_technical_code_prompt which skips persona for accuracy).
+///
+/// For internal operations requiring structured output, see src/prompt/internal.rs
 pub struct UnifiedPromptBuilder;
 
 impl UnifiedPromptBuilder {
     /// Build system prompt for Mira (conversational AI)
-    /// Pure personality from persona/default.rs - no system meta-info
+    ///
+    /// USES PERSONA: Yes - personality injected from persona/default.rs
+    /// USE CASE: Primary user-facing conversations
     pub fn build_system_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -49,7 +65,9 @@ impl UnifiedPromptBuilder {
     }
 
     /// Build prompt for code fixes with personality intact
-    /// Used when Mira needs to provide technical fixes
+    ///
+    /// USES PERSONA: Yes - personality injected from persona/default.rs
+    /// USE CASE: User-facing code fixes where Mira's style is wanted
     pub fn build_code_fix_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -80,7 +98,12 @@ impl UnifiedPromptBuilder {
     }
 
     /// Build prompt for pure technical code operations (no personality)
-    /// Only used when personality would interfere with technical accuracy
+    ///
+    /// USES PERSONA: NO - this is the ONLY method that skips personality
+    /// USE CASE: When technical accuracy is critical and conversational style would interfere
+    ///
+    /// Note: This is intentionally kept minimal. For most internal operations,
+    /// use the prompts in src/prompt/internal.rs instead.
     pub fn build_technical_code_prompt(
         error_context: &ErrorContext,
         file_content: &str,
@@ -106,6 +129,9 @@ impl UnifiedPromptBuilder {
     }
 
     /// Build a simple prompt with just persona and memory context
+    ///
+    /// USES PERSONA: Yes - personality injected from persona/default.rs
+    /// USE CASE: Simple conversations without heavy code context
     pub fn build_simple_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,

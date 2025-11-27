@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::llm::provider::{Gpt5Provider, LlmProvider, Message};
+use crate::prompt::internal::patterns as prompts;
 
 use super::storage::PatternStorage;
 use super::types::*;
@@ -209,15 +210,7 @@ impl PatternMatcher {
             None => return Ok(0.0),
         };
 
-        let system_prompt = r#"You are a pattern matching assistant. Given a user's request and a coding pattern, determine how well the pattern applies.
-
-Return a JSON object with:
-- score: A number from 0.0 to 1.0 indicating match quality
-- reason: Brief explanation of why (one sentence)
-
-Example response:
-{"score": 0.85, "reason": "User is adding a database migration which matches this pattern"}
-"#;
+        let system_prompt = prompts::PATTERN_MATCHER;
 
         let user_prompt = format!(
             r#"User request: "{}"
