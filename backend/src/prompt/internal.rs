@@ -201,6 +201,53 @@ pub mod analysis {
         "You are a precise message analyzer. Analyze each message and output only valid JSON matching the format.";
 }
 
+/// Code intelligence prompts - used for code analysis and pattern detection
+pub mod code_intelligence {
+    /// Design pattern detector - identifies patterns in code
+    pub const DESIGN_PATTERN_DETECTOR: &str =
+        "You are an expert at identifying design patterns in code.";
+
+    /// Semantic code analyzer - analyzes code semantics and concepts
+    pub const SEMANTIC_ANALYZER: &str = "You are an expert at semantic code analysis.";
+
+    /// Domain pattern analyzer - identifies domain-specific patterns and clusters
+    pub const DOMAIN_PATTERN_ANALYZER: &str =
+        "You are an expert at analyzing code and identifying domain patterns.";
+}
+
+/// Summarization prompts - used for conversation summarization
+pub mod summarization {
+    /// Snapshot summarizer - creates comprehensive conversation snapshots
+    pub const SNAPSHOT_SUMMARIZER: &str = "You are a conversation summarizer. Create comprehensive, detailed snapshots that capture the entire arc of a conversation.";
+
+    /// Rolling summarizer - creates incremental technical summaries
+    pub const ROLLING_SUMMARIZER: &str = "You are a conversation summarizer. Create detailed, technical summaries that preserve important context and specifics.";
+}
+
+/// LLM provider prompts - used for direct LLM operations
+pub mod llm {
+    /// Code generation specialist - generates clean, working code
+    /// Returns a formatted prompt for the given language
+    pub fn code_gen_specialist(language: &str) -> String {
+        format!(
+            "You are a code generation specialist. Generate clean, working code based on the user's requirements.\n\
+            Output ONLY valid JSON with this exact structure:\n\
+            {{\n  \
+              \"path\": \"file/path/here\",\n  \
+              \"content\": \"complete file content here\",\n  \
+              \"language\": \"{}\",\n  \
+              \"explanation\": \"brief explanation of the code\"\n\
+            }}\n\n\
+            CRITICAL:\n\
+            - Generate COMPLETE files, never use '...' or placeholders\n\
+            - Include ALL imports, functions, types, and closing braces\n\
+            - The content field must contain the entire working file\n\
+            - Use proper {} language syntax and best practices",
+            language, language
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +275,18 @@ mod tests {
         // Analysis prompts
         assert!(!analysis::MESSAGE_ANALYZER.is_empty());
         assert!(!analysis::BATCH_ANALYZER.is_empty());
+
+        // Code intelligence prompts
+        assert!(!code_intelligence::DESIGN_PATTERN_DETECTOR.is_empty());
+        assert!(!code_intelligence::SEMANTIC_ANALYZER.is_empty());
+        assert!(!code_intelligence::DOMAIN_PATTERN_ANALYZER.is_empty());
+
+        // Summarization prompts
+        assert!(!summarization::SNAPSHOT_SUMMARIZER.is_empty());
+        assert!(!summarization::ROLLING_SUMMARIZER.is_empty());
+
+        // LLM prompts (functions)
+        assert!(!llm::code_gen_specialist("rust").is_empty());
     }
 
     #[test]
@@ -241,5 +300,9 @@ mod tests {
 
         let solution_prompt = patterns::solution_generator("my_pattern");
         assert!(solution_prompt.contains("my_pattern"));
+
+        // LLM code gen specialist should include language
+        let code_gen = llm::code_gen_specialist("typescript");
+        assert!(code_gen.contains("typescript"));
     }
 }

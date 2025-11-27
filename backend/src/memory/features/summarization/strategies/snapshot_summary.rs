@@ -2,6 +2,7 @@
 
 use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
+use crate::prompt::internal::summarization as prompts;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
@@ -47,7 +48,7 @@ impl SnapshotSummaryStrategy {
         let response = self.llm_provider
             .chat(
                 chat_messages,
-                "You are a conversation summarizer. Create comprehensive, detailed snapshots that capture the entire arc of a conversation.".to_string(),
+                prompts::SNAPSHOT_SUMMARIZER.to_string(),
             )
             .await?;
 

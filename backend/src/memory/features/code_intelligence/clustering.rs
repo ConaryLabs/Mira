@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::llm::provider::LlmProvider;
+use crate::prompt::internal::code_intelligence as prompts;
 
 // ============================================================================
 // Data Structures
@@ -210,7 +211,7 @@ Focus on:
         let messages = vec![crate::llm::provider::Message::user(prompt)];
         let response = self
             .llm_provider
-            .chat(messages, "You are an expert at analyzing code and identifying domain patterns.".to_string())
+            .chat(messages, prompts::DOMAIN_PATTERN_ANALYZER.to_string())
             .await
             .context("LLM cluster suggestion failed")?;
         let response = response.content;

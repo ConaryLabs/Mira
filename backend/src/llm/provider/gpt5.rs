@@ -11,6 +11,7 @@ use std::time::Instant;
 use tracing::{debug, info};
 
 use super::{LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse, FunctionCall, ToolCallInfo};
+use crate::prompt::internal::llm as prompts;
 
 /// Reasoning effort level for GPT 5.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -486,22 +487,7 @@ impl Gpt5Provider {
             request.language, request.path
         );
 
-        let system_prompt = format!(
-            "You are a code generation specialist. Generate clean, working code based on the user's requirements.\n\
-            Output ONLY valid JSON with this exact structure:\n\
-            {{\n  \
-              \"path\": \"file/path/here\",\n  \
-              \"content\": \"complete file content here\",\n  \
-              \"language\": \"{}\",\n  \
-              \"explanation\": \"brief explanation of the code\"\n\
-            }}\n\n\
-            CRITICAL:\n\
-            - Generate COMPLETE files, never use '...' or placeholders\n\
-            - Include ALL imports, functions, types, and closing braces\n\
-            - The content field must contain the entire working file\n\
-            - Use proper {} language syntax and best practices",
-            request.language, request.language
-        );
+        let system_prompt = prompts::code_gen_specialist(&request.language);
 
         let user_prompt = build_user_prompt(&request);
 

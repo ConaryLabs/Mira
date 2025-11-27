@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::LlmProvider;
+use crate::prompt::internal::code_intelligence as prompts;
 
 // ============================================================================
 // Data Structures
@@ -708,7 +709,7 @@ Focus on:
         let messages = vec![crate::llm::provider::Message::user(prompt)];
         let response = self
             .llm_provider
-            .chat(messages, "You are an expert at semantic code analysis.".to_string())
+            .chat(messages, prompts::SEMANTIC_ANALYZER.to_string())
             .await
             .context("LLM analysis failed")?;
 

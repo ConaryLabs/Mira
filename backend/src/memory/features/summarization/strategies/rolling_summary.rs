@@ -3,6 +3,7 @@
 use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::SummaryType;
+use crate::prompt::internal::summarization as prompts;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -50,7 +51,7 @@ impl RollingSummaryStrategy {
         let response = self.llm_provider
             .chat(
                 messages,
-                "You are a conversation summarizer. Create detailed, technical summaries that preserve important context and specifics.".to_string(),
+                prompts::ROLLING_SUMMARIZER.to_string(),
             )
             .await?;
 

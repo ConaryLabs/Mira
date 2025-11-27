@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::llm::provider::LlmProvider;
+use crate::prompt::internal::code_intelligence as prompts;
 
 // ============================================================================
 // Data Structures
@@ -305,7 +306,7 @@ If clearly present, set confidence > 0.7.
         let messages = vec![crate::llm::provider::Message::user(prompt)];
         let response = self
             .llm_provider
-            .chat(messages, "You are an expert at identifying design patterns in code.".to_string())
+            .chat(messages, prompts::DESIGN_PATTERN_DETECTOR.to_string())
             .await
             .context("LLM pattern detection failed")?;
 
