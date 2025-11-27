@@ -21,16 +21,15 @@
 /// These need to be minimal and focused to avoid wasting context tokens
 pub mod tool_router {
     /// File reading assistant prompt - used in inner loop file operations
-    pub const FILE_READER: &str = "You are a file reading assistant. Use the read_file tool to read the requested files. \
-Read all requested files and return a summary with the file contents.";
+    pub const FILE_READER: &str =
+        "Read the requested files using read_file. Return file contents with a brief summary.";
 
     /// Code search assistant prompt - used for grep operations
     pub const CODE_SEARCHER: &str =
-        "You are a code search assistant. Use the grep_files tool to search for the requested pattern.";
+        "Search for the pattern using grep_files. Return matching results.";
 
     /// File listing assistant prompt - used for directory listings
-    pub const FILE_LISTER: &str =
-        "You are a file listing assistant. Use the list_files tool to list the requested directory.";
+    pub const FILE_LISTER: &str = "List the directory contents using list_files.";
 }
 
 /// Pattern system prompts - JSON output required for pattern matching
@@ -194,34 +193,52 @@ Return your analysis as JSON in this exact format:
 /// Analysis prompts - JSON output required for structured analysis
 pub mod analysis {
     /// Message analyzer system prompt - returns structured JSON analysis
-    pub const MESSAGE_ANALYZER: &str = "You are a precise message analyzer. Analyze the message and output only valid JSON. Required fields: salience (0.0-1.0), topics (array of strings). Optional: contains_code, programming_lang, contains_error, error_type, error_file, error_severity, mood, intensity, intent, summary, relationship_impact.";
+    pub const MESSAGE_ANALYZER: &str = r#"Analyze this message. Return JSON only.
+
+Required: {"salience": 0.0-1.0, "topics": ["..."]}
+
+Optional fields (include if applicable):
+- contains_code, programming_lang
+- contains_error, error_type, error_file, error_severity
+- mood, intensity, intent
+- summary, relationship_impact"#;
 
     /// Batch message analyzer system prompt - returns JSON array
     pub const BATCH_ANALYZER: &str =
-        "You are a precise message analyzer. Analyze each message and output only valid JSON matching the format.";
+        "Analyze each message. Return a JSON array with one analysis object per message, \
+         using the same schema as single message analysis.";
 }
 
 /// Code intelligence prompts - used for code analysis and pattern detection
 pub mod code_intelligence {
     /// Design pattern detector - identifies patterns in code
     pub const DESIGN_PATTERN_DETECTOR: &str =
-        "You are an expert at identifying design patterns in code.";
+        "Identify design patterns in the provided code. Return the pattern name, \
+         confidence level, and the code elements that form the pattern.";
 
     /// Semantic code analyzer - analyzes code semantics and concepts
-    pub const SEMANTIC_ANALYZER: &str = "You are an expert at semantic code analysis.";
+    pub const SEMANTIC_ANALYZER: &str =
+        "Analyze this code's semantic meaning. Identify: the problem it solves, \
+         key concepts implemented, and the domain it belongs to.";
 
     /// Domain pattern analyzer - identifies domain-specific patterns and clusters
     pub const DOMAIN_PATTERN_ANALYZER: &str =
-        "You are an expert at analyzing code and identifying domain patterns.";
+        "Group these code elements by functional domain (auth, database, api, etc.). \
+         Return only high-confidence clusters with clear shared purpose.";
 }
 
 /// Summarization prompts - used for conversation summarization
 pub mod summarization {
     /// Snapshot summarizer - creates comprehensive conversation snapshots
-    pub const SNAPSHOT_SUMMARIZER: &str = "You are a conversation summarizer. Create comprehensive, detailed snapshots that capture the entire arc of a conversation.";
+    pub const SNAPSHOT_SUMMARIZER: &str =
+        "Create a comprehensive snapshot of this conversation. Capture: \
+         who the user is, what they're working on, key decisions made, \
+         technical context, and the relationship dynamic.";
 
     /// Rolling summarizer - creates incremental technical summaries
-    pub const ROLLING_SUMMARIZER: &str = "You are a conversation summarizer. Create detailed, technical summaries that preserve important context and specifics.";
+    pub const ROLLING_SUMMARIZER: &str =
+        "Create a technical summary preserving: specific file paths, \
+         function names, error messages, and decisions. Skip pleasantries.";
 }
 
 /// LLM provider prompts - used for direct LLM operations
@@ -230,20 +247,21 @@ pub mod llm {
     /// Returns a formatted prompt for the given language
     pub fn code_gen_specialist(language: &str) -> String {
         format!(
-            "You are a code generation specialist. Generate clean, working code based on the user's requirements.\n\
-            Output ONLY valid JSON with this exact structure:\n\
-            {{\n  \
-              \"path\": \"file/path/here\",\n  \
-              \"content\": \"complete file content here\",\n  \
-              \"language\": \"{}\",\n  \
-              \"explanation\": \"brief explanation of the code\"\n\
-            }}\n\n\
-            CRITICAL:\n\
-            - Generate COMPLETE files, never use '...' or placeholders\n\
-            - Include ALL imports, functions, types, and closing braces\n\
-            - The content field must contain the entire working file\n\
-            - Use proper {} language syntax and best practices",
-            language, language
+            r#"Generate clean, working {} code.
+
+Output ONLY valid JSON:
+{{
+  "path": "file/path/here",
+  "content": "complete file content",
+  "language": "{}",
+  "explanation": "brief explanation"
+}}
+
+CRITICAL:
+- Complete files only, no placeholders or '...'
+- Include ALL imports, types, and closing braces
+- Follow {} best practices"#,
+            language, language, language
         )
     }
 }
