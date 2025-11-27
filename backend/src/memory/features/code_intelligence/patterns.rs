@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::llm::provider::LlmProvider;
 use crate::prompt::internal::code_intelligence as prompts;
@@ -331,7 +331,6 @@ If clearly present, set confidence > 0.7.
 
             if let Some(r) = row {
                 elements.push(CodeElementInfo {
-                    id: r.id,
                     name: r.name,
                     element_type: r.element_type,
                     content: r.content.unwrap_or_default(),
@@ -582,7 +581,6 @@ If clearly present, set confidence > 0.7.
 /// Code element info for pattern detection
 #[derive(Debug, Clone)]
 struct CodeElementInfo {
-    id: i64,
     name: String,
     element_type: String,
     content: String,

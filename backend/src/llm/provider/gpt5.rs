@@ -10,7 +10,7 @@ use std::any::Any;
 use std::time::Instant;
 use tracing::{debug, info};
 
-use super::{LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse, FunctionCall, ToolCallInfo};
+use super::{LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse, FunctionCall};
 use crate::prompt::internal::llm as prompts;
 
 /// Reasoning effort level for GPT 5.1
@@ -103,6 +103,16 @@ impl Gpt5Provider {
     /// Check if provider is configured and available
     pub fn is_available(&self) -> bool {
         !self.api_key.is_empty()
+    }
+
+    /// Get the model name
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Get the default reasoning effort
+    pub fn reasoning_effort(&self) -> ReasoningEffort {
+        self.default_reasoning_effort
     }
 
     /// Validate the API key by making a minimal API call

@@ -1,7 +1,7 @@
 // backend/src/operations/engine/gpt5_orchestrator.rs
 // GPT 5.1-based orchestration for intelligent code generation and tool execution
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -9,10 +9,21 @@ use tracing::{debug, info, warn};
 
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
-use crate::llm::provider::{Gpt5Pricing, Gpt5Provider, Message, ToolCall, ToolCallInfo};
+use crate::llm::provider::{Gpt5Pricing, Gpt5Provider, Message, ToolCall, ToolCallInfo, ToolCallResponse};
 use crate::operations::engine::tool_router::ToolRouter;
 
 use super::events::OperationEngineEvent;
+
+/// System prompt for tool-calling operations
+const TOOL_SYSTEM_PROMPT: &str = "You are an intelligent coding assistant.";
+
+/// Cached tool response format (serialized for storage)
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedToolResponse {
+    content: Option<String>,
+    tool_calls: Vec<ToolCall>,
+    finish_reason: String,
+}
 
 /// GPT 5.1 orchestrator for intelligent tool execution
 ///
@@ -98,6 +109,134 @@ impl Gpt5Orchestrator {
         Ok(())
     }
 
+    /// Convert messages to JSON values for cache key generation
+    fn messages_to_json(&self, messages: &[Message]) -> Vec<Value> {
+        messages
+            .iter()
+            .map(|msg| {
+                let mut obj = serde_json::json!({
+                    "role": msg.role,
+                    "content": msg.content
+                });
+                if let Some(ref call_id) = msg.tool_call_id {
+                    obj["tool_call_id"] = Value::String(call_id.clone());
+                }
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    obj["tool_calls"] = serde_json::to_value(tool_calls).unwrap_or(Value::Null);
+                }
+                obj
+            })
+            .collect()
+    }
+
+    /// Try to get a cached response for the given messages and tools
+    async fn try_cache_get(
+        &self,
+        messages: &[Message],
+        tools: &[Value],
+    ) -> Option<ToolCallResponse> {
+        let cache = self.cache.as_ref()?;
+
+        let messages_json = self.messages_to_json(messages);
+        let model = self.provider.model();
+        let reasoning = self.provider.reasoning_effort().as_str();
+
+        match cache
+            .get(
+                &messages_json,
+                Some(tools),
+                TOOL_SYSTEM_PROMPT,
+                model,
+                Some(reasoning),
+            )
+            .await
+        {
+            Ok(Some(cached)) => {
+                // Parse cached response back into ToolCallResponse
+                match serde_json::from_str::<CachedToolResponse>(&cached.response) {
+                    Ok(parsed) => {
+                        info!(
+                            "[CACHE] Hit! Returning cached response (saved ${:.6})",
+                            cached.cost_usd
+                        );
+                        Some(ToolCallResponse {
+                            content: parsed.content,
+                            tool_calls: parsed.tool_calls,
+                            finish_reason: parsed.finish_reason,
+                            tokens_input: cached.tokens_input,
+                            tokens_output: cached.tokens_output,
+                        })
+                    }
+                    Err(e) => {
+                        warn!("[CACHE] Failed to parse cached response: {}", e);
+                        None
+                    }
+                }
+            }
+            Ok(None) => {
+                debug!("[CACHE] Miss");
+                None
+            }
+            Err(e) => {
+                warn!("[CACHE] Error checking cache: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Store a response in the cache
+    async fn cache_put(
+        &self,
+        messages: &[Message],
+        tools: &[Value],
+        response: &ToolCallResponse,
+    ) {
+        let Some(cache) = &self.cache else {
+            return;
+        };
+
+        let messages_json = self.messages_to_json(messages);
+        let model = self.provider.model();
+        let reasoning = self.provider.reasoning_effort().as_str();
+
+        // Serialize response for caching
+        let cached_response = CachedToolResponse {
+            content: response.content.clone(),
+            tool_calls: response.tool_calls.clone(),
+            finish_reason: response.finish_reason.clone(),
+        };
+
+        let response_json = match serde_json::to_string(&cached_response) {
+            Ok(json) => json,
+            Err(e) => {
+                warn!("[CACHE] Failed to serialize response: {}", e);
+                return;
+            }
+        };
+
+        let cost = Gpt5Pricing::calculate_cost(response.tokens_input, response.tokens_output);
+
+        if let Err(e) = cache
+            .put(
+                &messages_json,
+                Some(tools),
+                TOOL_SYSTEM_PROMPT,
+                model,
+                Some(reasoning),
+                &response_json,
+                response.tokens_input,
+                response.tokens_output,
+                cost,
+                None, // Use default TTL
+            )
+            .await
+        {
+            warn!("[CACHE] Failed to store response: {}", e);
+        } else {
+            debug!("[CACHE] Stored response for future use");
+        }
+    }
+
     /// Execute a request with tool calling support
     pub async fn execute(
         &self,
@@ -130,6 +269,7 @@ impl Gpt5Orchestrator {
         let max_iterations = 10; // Safety limit
         let mut total_tokens_input: i64 = 0;
         let mut total_tokens_output: i64 = 0;
+        let mut total_from_cache = false;
 
         for iteration in 1..=max_iterations {
             debug!(
@@ -137,12 +277,29 @@ impl Gpt5Orchestrator {
                 iteration, max_iterations
             );
 
-            // Call GPT 5.1 with tools
-            let response = self
-                .provider
-                .call_with_tools(messages.clone(), tools.clone())
-                .await
-                .context("Failed to call GPT 5.1")?;
+            // Try cache first
+            let (response, from_cache) = if let Some(cached) =
+                self.try_cache_get(&messages, &tools).await
+            {
+                (cached, true)
+            } else {
+                // Call GPT 5.1 with tools
+                let resp = self
+                    .provider
+                    .call_with_tools(messages.clone(), tools.clone())
+                    .await
+                    .context("Failed to call GPT 5.1")?;
+
+                // Store in cache for future use
+                self.cache_put(&messages, &tools, &resp).await;
+
+                (resp, false)
+            };
+
+            // Track if any response came from cache (for budget reporting)
+            if from_cache {
+                total_from_cache = true;
+            }
 
             // Track token usage
             total_tokens_input += response.tokens_input;
@@ -204,15 +361,22 @@ impl Gpt5Orchestrator {
             operation_id,
             total_tokens_input,
             total_tokens_output,
-            false, // Not from cache
+            total_from_cache,
         )
         .await?;
 
+        let actual_cost = if total_from_cache {
+            0.0
+        } else {
+            Gpt5Pricing::calculate_cost(total_tokens_input, total_tokens_output)
+        };
+
         info!(
-            "[ORCHESTRATOR] Complete: {} input, {} output tokens, ${:.6} cost",
+            "[ORCHESTRATOR] Complete: {} input, {} output tokens, ${:.6} cost{}",
             total_tokens_input,
             total_tokens_output,
-            Gpt5Pricing::calculate_cost(total_tokens_input, total_tokens_output)
+            actual_cost,
+            if total_from_cache { " (from cache)" } else { "" }
         );
 
         Ok(accumulated_text)
@@ -227,35 +391,45 @@ impl Gpt5Orchestrator {
     ) -> Result<Value> {
         info!("[ORCHESTRATOR] Executing tool: {}", tool_call.name);
 
-        // Emit tool execution event
-        let _ = event_tx.send(OperationEngineEvent::ToolExecuted {
-            operation_id: operation_id.to_string(),
-            tool_name: tool_call.name.clone(),
-            tool_type: "file".to_string(),
-            summary: format!("Executing {}", tool_call.name),
-            success: true,
-            details: None,
-        }).await;
-
         // Route to tool router if available
-        if let Some(router) = &self.tool_router {
+        let (result, success, summary) = if let Some(router) = &self.tool_router {
             match router.route_tool_call(&tool_call.name, tool_call.arguments.clone()).await {
-                Ok(result) => Ok(result),
+                Ok(result) => {
+                    // Check if result indicates success (some tools return success: false in response)
+                    let is_success = result.get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true); // Default to true if no success field
+                    (result, is_success, format!("Executed {}", tool_call.name))
+                }
                 Err(e) => {
                     warn!("[ORCHESTRATOR] Tool execution failed: {}", e);
-                    Ok(serde_json::json!({
+                    let error_result = serde_json::json!({
                         "success": false,
                         "error": e.to_string()
-                    }))
+                    });
+                    (error_result, false, format!("Failed: {}", e))
                 }
             }
         } else {
             warn!("[ORCHESTRATOR] No tool router available");
-            Ok(serde_json::json!({
+            let error_result = serde_json::json!({
                 "success": false,
                 "error": "Tool router not available"
-            }))
-        }
+            });
+            (error_result, false, "Tool router not available".to_string())
+        };
+
+        // Emit tool execution event AFTER execution with actual result
+        let _ = event_tx.send(OperationEngineEvent::ToolExecuted {
+            operation_id: operation_id.to_string(),
+            tool_name: tool_call.name.clone(),
+            tool_type: "file".to_string(),
+            summary,
+            success,
+            details: Some(result.clone()),
+        }).await;
+
+        Ok(result)
     }
 }
 

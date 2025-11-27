@@ -352,7 +352,6 @@ Generate a corrected, complete implementation that resolves all errors.
         ValidationResult {
             is_valid: errors.is_empty(),
             errors,
-            warnings: Vec::new(),
         }
     }
 }
@@ -361,5 +360,4 @@ Generate a corrected, complete implementation that resolves all errors.
 struct ValidationResult {
     is_valid: bool,
     errors: Vec<String>,
-    warnings: Vec<String>,
 }

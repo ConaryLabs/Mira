@@ -25,7 +25,6 @@ pub struct ErrorParser {
     // Cargo patterns
     cargo_error_re: Regex,
     cargo_warning_re: Regex,
-    cargo_note_re: Regex,
     cargo_help_re: Regex,
     cargo_location_re: Regex,
 
@@ -35,7 +34,6 @@ pub struct ErrorParser {
 
     // Pytest patterns
     pytest_error_re: Regex,
-    pytest_failure_re: Regex,
 
     // Generic patterns
     generic_error_re: Regex,
@@ -48,8 +46,6 @@ impl ErrorParser {
             cargo_error_re: Regex::new(r"^error(?:\[([A-Z]\d+)\])?: (.+)$").unwrap(),
             // Cargo: "warning: unused variable"
             cargo_warning_re: Regex::new(r"^warning(?:\[([A-Z]\d+)\])?: (.+)$").unwrap(),
-            // Cargo: "note: ..."
-            cargo_note_re: Regex::new(r"^note: (.+)$").unwrap(),
             // Cargo: "help: ..."
             cargo_help_re: Regex::new(r"^help: (.+)$").unwrap(),
             // Cargo location: "  --> src/main.rs:42:10"
@@ -65,8 +61,6 @@ impl ErrorParser {
 
             // Pytest: "FAILED test_file.py::test_name - AssertionError"
             pytest_error_re: Regex::new(r"^FAILED ([^:]+)::([^ ]+) - (.+)$").unwrap(),
-            // Pytest: "E       AssertionError: ..."
-            pytest_failure_re: Regex::new(r"^E\s+(.+)$").unwrap(),
 
             // Generic: "error: ..." or "Error: ..."
             generic_error_re: Regex::new(r"(?i)^(error|warning|note):\s*(.+)$").unwrap(),

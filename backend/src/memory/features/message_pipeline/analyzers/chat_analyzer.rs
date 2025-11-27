@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
@@ -182,107 +182,6 @@ CRITICAL RULES:
             messages.len(),
             message_list
         )
-    }
-
-    fn get_analysis_schema() -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "salience": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0
-                },
-                "topics": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                },
-                "contains_code": {"type": ["boolean", "null"]},
-                "programming_lang": {"type": ["string", "null"]},
-                "contains_error": {"type": ["boolean", "null"]},
-                "error_type": {"type": ["string", "null"]},
-                "error_file": {"type": ["string", "null"]},
-                "error_severity": {"type": ["string", "null"]},
-                "mood": {"type": ["string", "null"]},
-                "intensity": {
-                    "type": ["number", "null"],
-                    "minimum": 0.0,
-                    "maximum": 1.0
-                },
-                "intent": {"type": ["string", "null"]},
-                "summary": {"type": ["string", "null"]},
-                "relationship_impact": {"type": ["string", "null"]}
-            },
-            "required": [
-                "salience",
-                "topics",
-                "contains_code",
-                "programming_lang",
-                "contains_error",
-                "error_type",
-                "error_file",
-                "error_severity",
-                "mood",
-                "intensity",
-                "intent",
-                "summary",
-                "relationship_impact"
-            ],
-            "additionalProperties": false
-        })
-    }
-
-    fn get_batch_analysis_schema() -> Value {
-        json!({
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "message_index": {"type": "integer", "minimum": 1},
-                    "salience": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0
-                    },
-                    "topics": {
-                        "type": "array",
-                        "items": {"type": "string"}
-                    },
-                    "contains_code": {"type": ["boolean", "null"]},
-                    "programming_lang": {"type": ["string", "null"]},
-                    "contains_error": {"type": ["boolean", "null"]},
-                    "error_type": {"type": ["string", "null"]},
-                    "error_file": {"type": ["string", "null"]},
-                    "error_severity": {"type": ["string", "null"]},
-                    "mood": {"type": ["string", "null"]},
-                    "intensity": {
-                        "type": ["number", "null"],
-                        "minimum": 0.0,
-                        "maximum": 1.0
-                    },
-                    "intent": {"type": ["string", "null"]},
-                    "summary": {"type": ["string", "null"]},
-                    "relationship_impact": {"type": ["string", "null"]}
-                },
-                "required": [
-                    "message_index",
-                    "salience",
-                    "topics",
-                    "contains_code",
-                    "programming_lang",
-                    "contains_error",
-                    "error_type",
-                    "error_file",
-                    "error_severity",
-                    "mood",
-                    "intensity",
-                    "intent",
-                    "summary",
-                    "relationship_impact"
-                ],
-                "additionalProperties": false
-            }
-        })
     }
 
     async fn parse_analysis_response(

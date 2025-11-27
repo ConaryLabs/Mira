@@ -18,6 +18,8 @@ pub mod tool_router;
 
 pub use events::OperationEngineEvent;
 
+use crate::budget::BudgetTracker;
+use crate::cache::LlmCache;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::llm::provider::Gpt5Provider;
@@ -55,6 +57,8 @@ impl OperationEngine {
         code_intelligence: Arc<crate::memory::features::code_intelligence::CodeIntelligenceService>,
         sudo_service: Option<Arc<crate::sudo::SudoPermissionService>>,
         context_oracle: Option<Arc<ContextOracle>>,
+        budget_tracker: Option<Arc<BudgetTracker>>,
+        llm_cache: Option<Arc<LlmCache>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -77,12 +81,14 @@ impl OperationEngine {
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
 
-        // Create GPT 5.1 orchestrator
+        // Create GPT 5.1 orchestrator with budget tracking and caching
         use crate::operations::engine::gpt5_orchestrator::Gpt5Orchestrator;
 
-        let gpt5_orchestrator = Gpt5Orchestrator::new(
+        let gpt5_orchestrator = Gpt5Orchestrator::with_services(
             gpt5,
             Some(Arc::clone(&tool_router_arc)),
+            budget_tracker,
+            llm_cache,
         );
 
         let orchestrator = Orchestrator::new(
@@ -90,8 +96,6 @@ impl OperationEngine {
             memory_service,
             context_builder,
             context_loader,
-            Some(tool_router_arc),
-            artifact_manager.clone(),
             lifecycle_manager.clone(),
         );
 

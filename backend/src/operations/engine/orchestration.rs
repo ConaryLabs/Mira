@@ -6,9 +6,8 @@ use crate::memory::service::MemoryService;
 use crate::operations::ContextLoader;
 use crate::operations::delegation_tools::get_delegation_tools;
 use crate::operations::engine::{
-    artifacts::ArtifactManager, context::ContextBuilder,
-    gpt5_orchestrator::Gpt5Orchestrator, events::OperationEngineEvent,
-    lifecycle::LifecycleManager, tool_router::ToolRouter,
+    context::ContextBuilder, gpt5_orchestrator::Gpt5Orchestrator,
+    events::OperationEngineEvent, lifecycle::LifecycleManager,
 };
 
 use anyhow::{Context, Result};
@@ -22,8 +21,6 @@ pub struct Orchestrator {
     memory_service: Arc<MemoryService>,
     context_builder: ContextBuilder,
     context_loader: ContextLoader,
-    tool_router: Option<Arc<ToolRouter>>,
-    artifact_manager: ArtifactManager,
     lifecycle_manager: LifecycleManager,
 }
 
@@ -33,8 +30,6 @@ impl Orchestrator {
         memory_service: Arc<MemoryService>,
         context_builder: ContextBuilder,
         context_loader: ContextLoader,
-        tool_router: Option<Arc<ToolRouter>>,
-        artifact_manager: ArtifactManager,
         lifecycle_manager: LifecycleManager,
     ) -> Self {
         Self {
@@ -42,8 +37,6 @@ impl Orchestrator {
             memory_service,
             context_builder,
             context_loader,
-            tool_router,
-            artifact_manager,
             lifecycle_manager,
         }
     }
@@ -124,8 +117,20 @@ impl Orchestrator {
             .load_project_context(user_content, project_id, 10)
             .await;
 
+        // Gather Context Oracle intelligence (co-change patterns, expertise, fixes, etc.)
+        let oracle_context = self
+            .context_builder
+            .gather_oracle_context(
+                user_content,
+                session_id,
+                project_id,
+                None, // current_file - could be extracted from user_content in future
+                None, // error_message - could be extracted from user_content in future
+            )
+            .await;
+
         // Build system prompt with full context
-        let system_prompt = self
+        let mut system_prompt = self
             .context_builder
             .build_system_prompt(
                 session_id,
@@ -134,6 +139,20 @@ impl Orchestrator {
                 file_tree.as_ref(),
             )
             .await;
+
+        // Append Context Oracle intelligence to system prompt if available
+        if let Some(oracle) = &oracle_context {
+            let oracle_output = oracle.format_for_prompt();
+            if !oracle_output.is_empty() {
+                system_prompt.push_str("\n\n=== CODEBASE INTELLIGENCE ===\n");
+                system_prompt.push_str(&oracle_output);
+                info!(
+                    "[ENGINE] Added oracle context: {} sources, ~{} tokens",
+                    oracle.sources_used.len(),
+                    oracle.estimated_tokens
+                );
+            }
+        }
 
         self.lifecycle_manager
             .start_operation(operation_id, event_tx)

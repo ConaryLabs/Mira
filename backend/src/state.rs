@@ -9,6 +9,7 @@ use tracing::info;
 use crate::auth::AuthService;
 use crate::budget::BudgetTracker;
 use crate::build::{BuildTracker, ErrorResolver};
+use crate::cache::LlmCache;
 use crate::config::CONFIG;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
@@ -75,6 +76,8 @@ pub struct AppState {
     pub context_oracle: Arc<ContextOracle>,
     // Budget tracking
     pub budget_tracker: Arc<BudgetTracker>,
+    // LLM response cache
+    pub llm_cache: Arc<LlmCache>,
     // Tool synthesis
     pub synthesis_storage: Arc<SynthesisStorage>,
 }
@@ -155,6 +158,18 @@ impl AppState {
             .unwrap_or(150.0);
         let budget_tracker = Arc::new(BudgetTracker::new(pool.clone(), daily_limit, monthly_limit));
 
+        // Initialize LLM cache
+        info!("Initializing LLM cache");
+        let cache_enabled = std::env::var("CACHE_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse::<bool>()
+            .unwrap_or(true);
+        let cache_ttl = std::env::var("CACHE_TTL_SECONDS")
+            .unwrap_or_else(|_| "86400".to_string())
+            .parse::<i64>()
+            .unwrap_or(86400);
+        let llm_cache = Arc::new(LlmCache::new(pool.clone(), cache_enabled, cache_ttl));
+
         // Initialize pattern services (needed for context oracle)
         info!("Initializing pattern services");
         let pattern_storage = Arc::new(PatternStorage::new(Arc::new(pool.clone())));
@@ -222,6 +237,8 @@ impl AppState {
             code_intelligence.clone(),
             Some(sudo_service.clone()), // Sudo permissions for system administration
             Some(context_oracle.clone()), // Context Oracle for unified intelligence
+            Some(budget_tracker.clone()), // Budget tracking for cost control
+            Some(llm_cache.clone()), // LLM response cache for cost optimization
         ));
 
         // Initialize terminal services
@@ -263,6 +280,7 @@ impl AppState {
             pattern_matcher,
             context_oracle,
             budget_tracker,
+            llm_cache,
             synthesis_storage,
         })
     }

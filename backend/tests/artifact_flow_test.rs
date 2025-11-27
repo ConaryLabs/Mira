@@ -96,6 +96,8 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
         code_intelligence,
         None, // sudo_service
         None, // context_oracle
+        None, // budget_tracker
+        None, // llm_cache
     );
 
     (engine, db)

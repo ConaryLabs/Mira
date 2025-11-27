@@ -2,7 +2,7 @@
 // GPT 5.1 chat handler - routes ALL messages to OperationEngine
 
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
@@ -20,7 +20,6 @@ pub struct ChatRequest {
 }
 
 pub struct UnifiedChatHandler {
-    app_state: Arc<AppState>,
     operation_manager: Arc<OperationManager>,
 }
 
@@ -29,7 +28,6 @@ impl UnifiedChatHandler {
         let operation_manager = Arc::new(OperationManager::new(app_state.operation_engine.clone()));
 
         Self {
-            app_state,
             operation_manager,
         }
     }

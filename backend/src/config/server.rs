@@ -45,16 +45,12 @@ impl DatabaseConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     pub level: String,
-    pub trace_sql: bool,
-    pub debug_logging: bool,
 }
 
 impl LoggingConfig {
     pub fn from_env() -> Self {
         Self {
             level: super::helpers::require_env("MIRA_LOG_LEVEL"),
-            trace_sql: super::helpers::require_env_parsed("MIRA_TRACE_SQL"),
-            debug_logging: super::helpers::require_env_parsed("MIRA_DEBUG_LOGGING"),
         }
     }
 }

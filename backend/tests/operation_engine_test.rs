@@ -131,6 +131,8 @@ async fn test_operation_engine_lifecycle() {
         code_intelligence,
         None, // sudo_service
         None, // context_oracle
+        None, // budget_tracker
+        None, // llm_cache
     );
 
     // Create event channel
@@ -275,6 +277,8 @@ async fn test_operation_cancellation() {
         code_intelligence,
         None, // sudo_service
         None, // context_oracle
+        None, // budget_tracker
+        None, // llm_cache
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -369,6 +373,8 @@ async fn test_multiple_operations() {
         code_intelligence,
         None, // sudo_service
         None, // context_oracle
+        None, // budget_tracker
+        None, // llm_cache
     );
 
     // Create multiple operations
@@ -453,6 +459,8 @@ async fn test_operation_event_ordering() {
         code_intelligence,
         None, // sudo_service
         None, // context_oracle
+        None, // budget_tracker
+        None, // llm_cache
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -540,6 +548,8 @@ async fn test_operation_retrieval() {
         code_intelligence,
         None, // sudo_service
         None, // context_oracle
+        None, // budget_tracker
+        None, // llm_cache
     );
 
     // Create operation with specific fields
