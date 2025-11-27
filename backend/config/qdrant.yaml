@@ -1,6 +1,6 @@
 # Qdrant configuration
 storage:
-  storage_path: ./qdrant_storage
+  storage_path: ./data/qdrant
 
 service:
   http_port: 6333

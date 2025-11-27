@@ -1,0 +1,29 @@
+[Unit]
+Description=Mira Backend Server
+After=network.target mira-qdrant.service
+Requires=mira-qdrant.service
+
+[Service]
+Type=simple
+User=MIRA_USER
+Group=MIRA_USER
+WorkingDirectory=MIRA_PATH/backend
+ExecStart=MIRA_PATH/backend/target/release/mira-backend
+EnvironmentFile=MIRA_PATH/backend/.env
+Restart=always
+RestartSec=5
+
+# Give Qdrant time to start
+ExecStartPre=/bin/sleep 3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mira-backend
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

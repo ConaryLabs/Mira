@@ -283,7 +283,7 @@ MIRA_PORT=3001
 MIRA_ENV=development
 
 # Database
-DATABASE_URL=sqlite://mira.db
+DATABASE_URL=sqlite://data/mira.db
 QDRANT_URL=http://localhost:6334
 
 # GPT 5.1
@@ -335,13 +335,13 @@ CACHE_TTL_SECONDS=86400
 ### Running Tests
 ```bash
 # All tests
-DATABASE_URL="sqlite://mira.db" cargo test
+DATABASE_URL="sqlite://data/mira.db" cargo test
 
 # Specific suite
-DATABASE_URL="sqlite://mira.db" cargo test --test git_intelligence_test
+DATABASE_URL="sqlite://data/mira.db" cargo test --test git_intelligence_test
 
 # With output
-DATABASE_URL="sqlite://mira.db" cargo test -- --nocapture
+DATABASE_URL="sqlite://data/mira.db" cargo test -- --nocapture
 ```
 
 ### Test Helpers

@@ -38,7 +38,7 @@ echo -e "${YELLOW}Starting nuclear reset...${NC}"
 
 # Get configuration from environment or use defaults
 QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
-SQLITE_DB="${SQLITE_DB:-mira.db}"
+SQLITE_DB="${SQLITE_DB:-data/mira.db}"
 COLLECTION_PREFIX="${QDRANT_COLLECTION_PREFIX:-mira}"
 
 echo ""

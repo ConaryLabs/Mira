@@ -257,7 +257,7 @@ MIRA_PORT=3001
 MIRA_ENV=development
 
 # Database
-DATABASE_URL=sqlite://mira.db
+DATABASE_URL=sqlite://data/mira.db
 QDRANT_URL=http://localhost:6334
 
 # OpenAI (GPT 5.1 + Embeddings)
@@ -311,7 +311,7 @@ CACHE_TTL_SECONDS=86400
 
 ```bash
 # Backend
-cd backend && DATABASE_URL="sqlite://mira.db" cargo test
+cd backend && DATABASE_URL="sqlite://data/mira.db" cargo test
 
 # Frontend
 cd frontend && npm test

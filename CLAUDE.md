@@ -201,7 +201,7 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 
 ```bash
 cd backend
-# Start Qdrant with config file (creates qdrant_storage/ directory)
+# Start Qdrant with config file (creates data/qdrant/ directory)
 ./bin/qdrant --config-path ./config/config.yaml
 
 # Or run in background
@@ -223,7 +223,7 @@ MIRA_PORT=3001
 MIRA_ENV=development
 
 # Database
-DATABASE_URL=sqlite://mira.db
+DATABASE_URL=sqlite://data/mira.db
 
 # Qdrant (gRPC port)
 QDRANT_URL=http://localhost:6334
@@ -319,13 +319,76 @@ Repositories stored in `backend/repos/` (or `backend/test_repos/` for tests).
 - Check `SALIENCE_MIN_FOR_EMBED` threshold (default 0.6)
 - Verify OpenAI API key for embeddings
 - Inspect `EMBED_HEADS` configuration
-- Run `backend/scripts/reset_embeddings.sh` if embeddings are corrupted
+- Run `backend/scripts/db-reset-qdrant.sh` if embeddings are corrupted
 
 **Storage locations:**
-- SQLite: `backend/mira.db` (messages, operations, artifacts)
+- SQLite: `backend/data/mira.db` (messages, operations, artifacts)
 - Qdrant: Vector embeddings across 3 collections (code, conversation, git)
 - Git repos: `backend/repos/`
 - Documents: `backend/storage/documents/`
+
+## Database Management
+
+### Reset Scripts
+
+All scripts are in `backend/scripts/` and should be run from the backend directory.
+
+| Script | Purpose |
+|--------|---------|
+| `db-reset.sh` | Full reset - wipes SQLite + Qdrant |
+| `db-reset-sqlite.sh` | Reset SQLite only (preserves embeddings) |
+| `db-reset-qdrant.sh` | Reset Qdrant only (preserves structured data) |
+| `db-reset-test.sh` | Clean up test Qdrant collections |
+
+### Common Operations
+
+**Full database reset (nuclear option):**
+```bash
+cd backend
+./scripts/db-reset.sh
+```
+
+**Reset just SQLite (keep embeddings):**
+```bash
+cd backend
+./scripts/db-reset-sqlite.sh
+```
+
+**Reset just embeddings (keep messages/operations):**
+```bash
+cd backend
+./scripts/db-reset-qdrant.sh
+```
+
+**Clean up after tests:**
+```bash
+cd backend
+./scripts/db-reset-test.sh
+```
+
+**Manual SQLite operations:**
+```bash
+# View tables
+sqlite3 data/mira.db ".tables"
+
+# Run specific query
+sqlite3 data/mira.db "SELECT COUNT(*) FROM memory_entries;"
+
+# Run migrations manually
+DATABASE_URL="sqlite:./data/mira.db" sqlx migrate run
+```
+
+**Manual Qdrant operations:**
+```bash
+# List collections
+curl http://localhost:6333/collections
+
+# Delete specific collection
+curl -X DELETE http://localhost:6333/collections/mira_code
+
+# Check collection info
+curl http://localhost:6333/collections/mira_conversation
+```
 
 ## Debugging
 
@@ -338,7 +401,7 @@ RUST_LOG=debug cargo run
 RUST_LOG=mira_backend::operations=trace cargo run
 
 # Check database
-sqlite3 backend/mira.db "SELECT * FROM operations ORDER BY created_at DESC LIMIT 10;"
+sqlite3 backend/data/mira.db "SELECT * FROM operations ORDER BY created_at DESC LIMIT 10;"
 
 # Check Qdrant (HTTP API)
 curl http://localhost:6333/health
