@@ -6,6 +6,7 @@ import { useAppState } from '../stores/useAppState';
 import { useChatStore } from '../stores/useChatStore';
 import { useActivityStore } from '../stores/useActivityStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
+import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { createArtifact, extractArtifacts } from '../utils/artifact';
 
 export const useWebSocketMessageHandler = () => {
@@ -306,6 +307,25 @@ export const useWebSocketMessageHandler = () => {
             data.modified_files.forEach((file: string) => addModifiedFile(file));
           }
         }
+        return;
+      }
+
+      // CODE INTELLIGENCE - Budget Status
+      case 'budget_status': {
+        console.log('[WS-Global] Budget status update');
+        useCodeIntelligenceStore.getState().setBudget({
+          dailyUsagePercent: data.daily_usage_percent,
+          monthlyUsagePercent: data.monthly_usage_percent,
+          dailySpentUsd: data.daily_spent_usd,
+          dailyLimitUsd: data.daily_limit_usd,
+          monthlySpentUsd: data.monthly_spent_usd,
+          monthlyLimitUsd: data.monthly_limit_usd,
+          dailyRemaining: data.daily_remaining,
+          monthlyRemaining: data.monthly_remaining,
+          isCritical: data.is_critical,
+          isLow: data.is_low,
+          lastUpdated: data.last_updated || Date.now(),
+        });
         return;
       }
 

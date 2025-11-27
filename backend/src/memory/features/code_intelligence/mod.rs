@@ -15,7 +15,7 @@ pub mod typescript_parser;
 // Core exports
 pub use javascript_parser::JavaScriptParser;
 pub use parser::RustParser;
-pub use storage::{CodeIntelligenceStorage, RepoStats};
+pub use storage::{CodeIntelligenceStorage, FileSemanticStats, RepoStats};
 pub use types::*;
 pub use typescript_parser::TypeScriptParser;
 
@@ -510,5 +510,10 @@ impl CodeIntelligenceService {
 
     pub async fn delete_repository_data(&self, attachment_id: &str) -> Result<i64> {
         self.storage.delete_repository_data(attachment_id).await
+    }
+
+    /// Get semantic stats for all files in a project
+    pub async fn get_file_semantic_stats(&self, project_id: &str) -> Result<Vec<FileSemanticStats>> {
+        self.storage.get_file_semantic_stats(project_id).await
     }
 }

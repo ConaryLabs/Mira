@@ -467,18 +467,20 @@ Estimated monthly: $132 (vs $825 without cache)
 **Deliverables**:
 - [x] Semantic search UI (SemanticSearch.tsx)
 - [x] Co-change suggestions panel (CoChangeSuggestions.tsx)
-- [ ] Tool synthesis dashboard
+- [x] Tool synthesis dashboard (ToolsDashboard.tsx)
 - [x] Budget tracking UI (BudgetTracker.tsx)
-- [ ] Build error integration
-- [ ] Enhanced file browser with semantic tags
-- [x] Git-style diff viewing for artifacts
+- [x] Build error integration (BuildErrorsPanel.tsx)
+- [x] Enhanced file browser with semantic tags (FileBrowser.tsx)
+- [x] Git-style diff viewing for artifacts (UnifiedDiffView.tsx)
 
 **Files**:
 - frontend/src/components/SemanticSearch.tsx
 - frontend/src/components/CoChangeSuggestions.tsx
 - frontend/src/components/ToolsDashboard.tsx
+- frontend/src/components/BuildErrorsPanel.tsx
 - frontend/src/components/BudgetTracker.tsx
 - frontend/src/components/UnifiedDiffView.tsx
+- frontend/src/components/FileBrowser.tsx (enhanced)
 - frontend/src/stores/useCodeIntelligenceStore.ts
 
 ### Milestone 10: Production Hardening
@@ -594,7 +596,7 @@ Estimated monthly: $132 (vs $825 without cache)
 ## Status
 
 **Last Updated**: 2025-11-27
-**Current Phase**: Milestone 9 - Frontend Integration (In Progress)
+**Current Phase**: Milestone 10 - Production Hardening (Next)
 **Owner**: Peter (Founder)
 
 ### Completed Milestones
@@ -649,10 +651,18 @@ Estimated monthly: $132 (vs $825 without cache)
 - Git operation cooldown, content hash comparison
 - Gap fixes: deletion detection, collection-aware cleanup
 
+**Milestone 9: Frontend Integration** - Complete
+- Semantic search UI with real-time results
+- Co-change suggestions panel with confidence scores
+- Budget tracking UI with daily/monthly progress bars
+- Git-style unified diff viewing for artifacts
+- Build error integration panel (errors, builds, stats)
+- Tool synthesis dashboard (tools, patterns, stats)
+- Enhanced file browser with semantic tags (test/complexity/issues/analyzed)
+
 ### Next Steps
 
-1. **Milestone 9**: Frontend Integration - Complete remaining UI components (tool dashboard, build errors)
-2. **Milestone 10**: Production Hardening - Performance, reliability, documentation
+1. **Milestone 10**: Production Hardening - Performance, reliability, documentation
 
 ### Architecture
 

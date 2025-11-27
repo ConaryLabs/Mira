@@ -1,14 +1,16 @@
 // frontend/src/components/IntelligencePanel.tsx
-// Main panel for code intelligence features: budget, search, co-change, etc.
+// Main panel for code intelligence features: budget, search, co-change, build errors, tools, etc.
 
 import React, { useRef, useEffect, useState } from 'react';
-import { X, Brain, GripVertical, DollarSign, Search, GitBranch, History, Users } from 'lucide-react';
+import { X, Brain, GripVertical, DollarSign, Search, GitBranch, AlertTriangle, Wrench, Users } from 'lucide-react';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { BudgetTracker } from './BudgetTracker';
 import { SemanticSearch } from './SemanticSearch';
 import { CoChangeSuggestions } from './CoChangeSuggestions';
+import { BuildErrorsPanel } from './BuildErrorsPanel';
+import { ToolsDashboard } from './ToolsDashboard';
 
-type TabId = 'budget' | 'search' | 'cochange' | 'fixes' | 'expertise';
+type TabId = 'budget' | 'search' | 'cochange' | 'builds' | 'tools' | 'expertise';
 
 interface Tab {
   id: TabId;
@@ -20,7 +22,8 @@ const TABS: Tab[] = [
   { id: 'budget', label: 'Budget', icon: <DollarSign className="w-4 h-4" /> },
   { id: 'search', label: 'Search', icon: <Search className="w-4 h-4" /> },
   { id: 'cochange', label: 'Co-Change', icon: <GitBranch className="w-4 h-4" /> },
-  { id: 'fixes', label: 'Fixes', icon: <History className="w-4 h-4" /> },
+  { id: 'builds', label: 'Builds', icon: <AlertTriangle className="w-4 h-4" /> },
+  { id: 'tools', label: 'Tools', icon: <Wrench className="w-4 h-4" /> },
   { id: 'expertise', label: 'Experts', icon: <Users className="w-4 h-4" /> },
 ];
 
@@ -68,14 +71,10 @@ export function IntelligencePanel() {
         return <SemanticSearch />;
       case 'cochange':
         return <CoChangeSuggestions />;
-      case 'fixes':
-        return (
-          <div className="p-4 text-center text-slate-500">
-            <History className="w-8 h-8 mx-auto mb-2 text-slate-600" />
-            <p className="text-sm">Historical Fixes</p>
-            <p className="text-xs mt-1">Coming soon</p>
-          </div>
-        );
+      case 'builds':
+        return <BuildErrorsPanel />;
+      case 'tools':
+        return <ToolsDashboard />;
       case 'expertise':
         return (
           <div className="p-4 text-center text-slate-500">

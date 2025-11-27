@@ -25,6 +25,7 @@ use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::store::ProjectStore;
 use crate::relationship::{FactsService, RelationshipService};
 use crate::sudo::SudoPermissionService;
+use crate::synthesis::storage::SynthesisStorage;
 use crate::terminal::TerminalStore;
 
 /// Session data for file uploads
@@ -74,6 +75,8 @@ pub struct AppState {
     pub context_oracle: Arc<ContextOracle>,
     // Budget tracking
     pub budget_tracker: Arc<BudgetTracker>,
+    // Tool synthesis
+    pub synthesis_storage: Arc<SynthesisStorage>,
 }
 
 impl AppState {
@@ -156,6 +159,10 @@ impl AppState {
         info!("Initializing pattern services");
         let pattern_storage = Arc::new(PatternStorage::new(Arc::new(pool.clone())));
         let pattern_matcher = Arc::new(PatternMatcher::new(pattern_storage.clone()));
+
+        // Initialize synthesis storage
+        info!("Initializing synthesis storage");
+        let synthesis_storage = Arc::new(SynthesisStorage::new(Arc::new(pool.clone())));
 
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
@@ -256,6 +263,7 @@ impl AppState {
             pattern_matcher,
             context_oracle,
             budget_tracker,
+            synthesis_storage,
         })
     }
 }

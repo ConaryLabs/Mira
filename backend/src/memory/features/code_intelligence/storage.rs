@@ -596,3 +596,67 @@ pub struct RepoStats {
     pub critical_issues: i64,      // Changed from u32 - matches SQLite INTEGER
     pub high_issues: i64,          // Changed from u32 - matches SQLite INTEGER
 }
+
+/// Semantic stats for a single file
+#[derive(Debug, Clone)]
+pub struct FileSemanticStats {
+    pub file_path: String,
+    pub language: Option<String>,
+    pub element_count: i64,
+    pub complexity_score: Option<f64>,
+    pub quality_issue_count: i64,
+    pub is_test_file: bool,
+    pub is_analyzed: bool,
+    pub function_count: i64,
+    pub line_count: i64,
+}
+
+impl CodeIntelligenceStorage {
+    /// Get semantic stats for all files in a project
+    pub async fn get_file_semantic_stats(&self, project_id: &str) -> Result<Vec<FileSemanticStats>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                rf.file_path,
+                rf.language,
+                rf.element_count,
+                rf.complexity_score,
+                rf.ast_analyzed as "is_analyzed: bool",
+                rf.function_count,
+                rf.line_count,
+                (SELECT COUNT(*) FROM code_quality_issues cqi
+                 JOIN code_elements ce ON cqi.element_id = ce.id
+                 WHERE ce.file_id = rf.id) as "quality_issue_count: i64",
+                CASE
+                    WHEN rf.file_path LIKE '%_test%' OR rf.file_path LIKE '%test_%'
+                         OR rf.file_path LIKE '%/tests/%' OR rf.file_path LIKE '%_spec%'
+                         OR rf.file_path LIKE '%.test.%' OR rf.file_path LIKE '%.spec.%'
+                    THEN 1 ELSE 0
+                END as "is_test_file: i64"
+            FROM repository_files rf
+            WHERE rf.project_id = ?
+            ORDER BY rf.file_path
+            "#,
+            project_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let stats = rows
+            .into_iter()
+            .map(|r| FileSemanticStats {
+                file_path: r.file_path,
+                language: r.language,
+                element_count: r.element_count.unwrap_or(0),
+                complexity_score: r.complexity_score,
+                quality_issue_count: r.quality_issue_count.unwrap_or(0),
+                is_test_file: r.is_test_file.unwrap_or(0) == 1,
+                is_analyzed: r.is_analyzed.unwrap_or(false),
+                function_count: r.function_count.unwrap_or(0),
+                line_count: r.line_count.unwrap_or(0),
+            })
+            .collect();
+
+        Ok(stats)
+    }
+}

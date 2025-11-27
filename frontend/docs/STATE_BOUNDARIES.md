@@ -114,6 +114,45 @@ The Mira frontend uses Zustand for state management with the following stores:
 
 ---
 
+### 6. `useCodeIntelligenceStore` - Code Intelligence Panel
+**Location**: `src/stores/useCodeIntelligenceStore.ts`
+**Responsibility**: Manages Intelligence Panel state (budget, search, build errors, etc.)
+**Persisted**: No
+
+**State**:
+- `isPanelVisible: boolean` - Intelligence panel visibility
+- `activeTab: 'budget' | 'search' | 'cochange' | 'builds' | 'tools' | 'expertise'` - Active tab
+- `budget: BudgetStatus | null` - Budget usage data
+- `semanticResults: SemanticSearchResult[]` - Semantic search results
+- `cochangeSuggestions: CochangeSuggestion[]` - Co-change file suggestions
+- `buildErrors: BuildError[]` - Build errors for project
+- Loading states for each data type
+
+**Actions**:
+- `togglePanel()` - Show/hide intelligence panel
+- `setActiveTab()` - Switch active tab
+- `setBudget()` - Update budget status
+- `setSemanticResults()` - Set semantic search results
+- `setCochangeSuggestions()` - Set co-change suggestions
+- `setBuildErrors()` - Set build errors
+
+**Used By**:
+- `IntelligencePanel.tsx` - Main container with tabs
+- `BudgetTracker.tsx` - Budget usage display
+- `SemanticSearch.tsx` - Code semantic search
+- `CoChangeSuggestions.tsx` - File co-change patterns
+- `BuildErrorsPanel.tsx` - Build errors and stats
+- `ToolsDashboard.tsx` - Tool synthesis dashboard
+
+---
+
+### 7. `useActivityStore` - Operation Activity
+**Location**: `src/stores/useActivityStore.ts`
+**Responsibility**: Tracks current operation for activity indicator
+**Persisted**: No
+
+---
+
 ## State Ownership Rules
 
 ### Artifacts: Two Types
@@ -134,10 +173,10 @@ Backend WebSocket Message
          ↓
 useWebSocketMessageHandler
          ↓
-  ┌─────────────┬──────────────┐
-  ↓             ↓              ↓
-ChatStore   AppState      UIStore
-(messages)  (artifacts)   (toasts)
+  ┌─────────────┬──────────────┬─────────────────────┐
+  ↓             ↓              ↓                     ↓
+ChatStore   AppState      UIStore      CodeIntelligenceStore
+(messages)  (artifacts)   (toasts)     (budget, search, builds)
 ```
 
 ### Update Patterns

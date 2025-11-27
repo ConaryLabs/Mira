@@ -985,6 +985,129 @@ Tests:
 
 ---
 
+### Session 22: 2025-11-27
+
+**Summary:** Milestone 9 continuation - Implemented Build Error Integration and Tool Synthesis Dashboard UI components with full WebSocket API support.
+
+**Goals:**
+- Continue Milestone 9 (Frontend Integration)
+- Implement Build Error Integration UI
+- Implement Tool Synthesis Dashboard UI
+
+**Key Outcomes:**
+- Added 6 new WebSocket API handlers for build system and tool synthesis
+- Created BuildErrorsPanel component with errors, builds, and stats tabs
+- Created ToolsDashboard component with tools, patterns, and stats tabs
+- Updated IntelligencePanel with 2 new tabs (Builds, Tools)
+- Extended useCodeIntelligenceStore with new tab types
+- All frontend and backend compiles without errors
+
+**Backend Changes (code_intelligence.rs):**
+New request types:
+- BuildStatsRequest, BuildErrorsRequest, RecentBuildsRequest
+- ToolsListRequest, ToolPatternsRequest, SynthesisStatsRequest
+
+New WebSocket handlers:
+- `code.build_stats` - Get build statistics for a project
+- `code.build_errors` - Get unresolved build errors
+- `code.recent_builds` - Get recent build runs
+- `code.tools_list` - List synthesized tools
+- `code.tool_patterns` - List detected patterns
+- `code.synthesis_stats` - Get synthesis statistics
+
+AppState additions:
+- Added `synthesis_storage: Arc<SynthesisStorage>` to AppState
+
+**Frontend Changes:**
+Files created:
+- `frontend/src/components/BuildErrorsPanel.tsx` (~350 lines) - Complete build errors UI with:
+  - Unresolved errors list with expand/collapse
+  - Recent builds list with status indicators
+  - Build statistics overview with progress bars
+  - Tab navigation between errors/builds/stats
+
+- `frontend/src/components/ToolsDashboard.tsx` (~400 lines) - Complete tool synthesis UI with:
+  - Synthesized tools list with compilation status
+  - Detected patterns list with confidence scores
+  - Synthesis statistics overview
+  - Pattern type icons and status badges
+
+Files modified:
+- `frontend/src/components/IntelligencePanel.tsx` - Added Builds and Tools tabs, imported new components
+- `frontend/src/stores/useCodeIntelligenceStore.ts` - Updated activeTab type to include 'builds' and 'tools'
+- `frontend/src/hooks/useWebSocketMessageHandler.ts` - Added budget_status handler with store integration
+
+**Technical Decisions:**
+1. **Component Architecture**: Each panel has internal tab navigation (errors/builds/stats and tools/patterns/stats) to keep the main IntelligencePanel tabs manageable
+2. **Data Fetching**: Components fetch their own data via WebSocket subscriptions on mount and project change
+3. **State Management**: Local useState for component-specific data, Zustand for shared state (budget)
+4. **UI Pattern**: Consistent expandable list items with chevron icons and metadata display
+
+**Milestone 9 Progress:**
+Completed:
+- Semantic search UI
+- Co-change suggestions panel
+- Budget tracking UI
+- Git-style diff viewing for artifacts
+- Build error integration UI
+- Tool synthesis dashboard
+
+Remaining:
+- Enhanced file browser with semantic tags
+
+---
+
+### Session 22 (continued): 2025-11-27
+
+**Summary:** Completed Milestone 9 - Added Enhanced File Browser with semantic tags showing code intelligence data.
+
+**Key Outcomes:**
+- Added `code.file_semantic_stats` WebSocket API endpoint
+- Enhanced FileBrowser component with semantic indicators
+- Files now show: test file indicator, quality issues, complexity score, element count, analyzed status
+- Added toolbar with toggle for semantic tags and legend
+- File content view shows line count, function count, and complexity score
+- Language-colored file icons (Rust=orange, TypeScript/JavaScript=yellow, Python=blue)
+
+**Backend Changes:**
+- `backend/src/memory/features/code_intelligence/storage.rs`:
+  - Added `FileSemanticStats` struct with file metadata
+  - Added `get_file_semantic_stats()` method to query all file stats for a project
+  - Detects test files via path patterns (test_, _test, /tests/, .test., .spec.)
+  - Counts quality issues per file via JOIN with code_elements and code_quality_issues
+
+- `backend/src/memory/features/code_intelligence/mod.rs`:
+  - Exported `FileSemanticStats` type
+  - Added wrapper method `get_file_semantic_stats()` on CodeIntelligenceService
+
+- `backend/src/api/ws/code_intelligence.rs`:
+  - Added `FileSemanticStatsRequest` struct
+  - Added handler for `code.file_semantic_stats` method
+
+**Frontend Changes:**
+- `frontend/src/components/FileBrowser.tsx` - Complete rewrite with:
+  - `FileSemanticStats` interface matching backend response
+  - `SemanticTags` component showing icons for test/issues/complexity/elements/analyzed
+  - `getComplexityColor()` function for color-coding complexity scores
+  - `getLanguageColor()` function for language-specific file icons
+  - Toolbar with Eye/EyeOff toggle button for semantic tags
+  - Legend bar explaining icon meanings
+  - File header showing stats when file selected
+  - Fetches semantic stats on project change via WebSocket
+
+**Milestone 9 Status: COMPLETE**
+
+All features implemented:
+- Semantic search UI
+- Co-change suggestions panel
+- Budget tracking UI
+- Git-style diff viewing for artifacts
+- Build error integration UI
+- Tool synthesis dashboard
+- Enhanced file browser with semantic tags
+
+---
+
 ### Session 20: 2025-11-26
 
 **Summary:** Fixed all 7 previously-ignored integration tests by resolving Qdrant client/server version mismatch, fixing analysis metadata persistence, and correcting SQLite query ordering.

@@ -113,7 +113,7 @@ interface CodeIntelligenceStore {
 
   // Panel visibility
   isPanelVisible: boolean;
-  activeTab: 'budget' | 'search' | 'cochange' | 'fixes' | 'expertise';
+  activeTab: 'budget' | 'search' | 'cochange' | 'builds' | 'tools' | 'expertise';
 
   // Actions - Budget
   setBudget: (budget: BudgetStatus) => void;
