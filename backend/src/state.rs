@@ -27,7 +27,6 @@ use crate::project::store::ProjectStore;
 use crate::relationship::{FactsService, RelationshipService};
 use crate::sudo::SudoPermissionService;
 use crate::synthesis::storage::SynthesisStorage;
-use crate::terminal::TerminalStore;
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -60,7 +59,6 @@ pub struct AppState {
     pub relationship_service: Arc<RelationshipService>,
     pub facts_service: Arc<FactsService>,
     pub sudo_service: Arc<SudoPermissionService>,
-    pub terminal_store: Arc<TerminalStore>,
     pub auth_service: Arc<AuthService>,
     // Git intelligence services
     pub cochange_service: Arc<CochangeService>,
@@ -241,10 +239,6 @@ impl AppState {
             Some(llm_cache.clone()), // LLM response cache for cost optimization
         ));
 
-        // Initialize terminal services
-        info!("Initializing terminal services");
-        let terminal_store = Arc::new(TerminalStore::new(Arc::new(pool.clone())));
-
         // Initialize authentication service
         info!("Initializing authentication service");
         let auth_service = Arc::new(AuthService::new(pool.clone()));
@@ -269,7 +263,6 @@ impl AppState {
             relationship_service,
             facts_service,
             sudo_service,
-            terminal_store,
             auth_service,
             cochange_service,
             expertise_service,

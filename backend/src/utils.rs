@@ -6,7 +6,6 @@ use futures::Future;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::warn;
 
 // Rate limiting support
 use governor::clock::DefaultClock;
@@ -65,71 +64,6 @@ impl RateLimiter {
     /// Check if we can make a request without waiting
     pub fn try_acquire(&self) -> bool {
         self.limiter.check().is_ok()
-    }
-}
-
-// ============================================================================
-// Retry utilities
-// ============================================================================
-
-pub struct RetryConfig {
-    pub max_retries: u32,
-    pub initial_interval: Duration,
-    pub multiplier: f64,
-    pub max_interval: Duration,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_interval: Duration::from_millis(500),
-            multiplier: 2.0,
-            max_interval: Duration::from_secs(10),
-        }
-    }
-}
-
-/// Retry with exponential backoff for transient errors
-pub async fn retry_with_backoff<F, Fut, T>(mut operation: F, config: RetryConfig) -> Result<T>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    let mut retry_count = 0;
-    let mut delay = config.initial_interval;
-
-    loop {
-        match operation().await {
-            Ok(value) => return Ok(value),
-            Err(e) => {
-                let error_str = format!("{:?}", e);
-
-                // Check if error is retryable
-                let is_retryable = error_str.contains("429")
-                    || error_str.contains("500")
-                    || error_str.contains("502")
-                    || error_str.contains("503");
-
-                if is_retryable && retry_count < config.max_retries {
-                    retry_count += 1;
-                    warn!(
-                        "Operation failed (attempt {}/{}), retrying in {:?}",
-                        retry_count, config.max_retries, delay
-                    );
-
-                    tokio::time::sleep(delay).await;
-
-                    // Exponential backoff
-                    delay = Duration::from_millis(
-                        (delay.as_millis() as f64 * config.multiplier) as u64,
-                    )
-                    .min(config.max_interval);
-                } else {
-                    return Err(e);
-                }
-            }
-        }
     }
 }
 

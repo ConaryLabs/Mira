@@ -157,31 +157,11 @@ impl MiraConfig {
         self.summarization.is_rolling_enabled()
     }
 
-    pub fn get_rolling_summary_config(&self) -> RollingSummaryConfig {
-        RollingSummaryConfig {
-            enabled: self.summarization.is_rolling_enabled(),
-            rolling_10: self.summarization.rolling_10,
-            rolling_100: self.summarization.rolling_100,
-            use_in_context: self.summarization.use_rolling_in_context,
-            max_age_hours: self.summarization.max_age_hours,
-            min_gap: self.summarization.min_gap,
-        }
-    }
-
     // Recent cache
     pub fn is_recent_cache_enabled(&self) -> bool {
         self.recent_cache.enabled
     }
 
-    pub fn get_recent_cache_config(&self) -> RecentCacheConfig {
-        RecentCacheConfig {
-            enabled: self.recent_cache.enabled,
-            capacity: self.recent_cache.capacity,
-            ttl_seconds: self.recent_cache.ttl_seconds,
-            max_per_session: self.recent_cache.max_per_session,
-            warmup: self.recent_cache.warmup,
-        }
-    }
 }
 
 impl Default for MiraConfig {
@@ -190,22 +170,3 @@ impl Default for MiraConfig {
     }
 }
 
-// Legacy types for backward compatibility
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RollingSummaryConfig {
-    pub enabled: bool,
-    pub rolling_10: bool,
-    pub rolling_100: bool,
-    pub use_in_context: bool,
-    pub max_age_hours: u32,
-    pub min_gap: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecentCacheConfig {
-    pub enabled: bool,
-    pub capacity: usize,
-    pub ttl_seconds: u64,
-    pub max_per_session: usize,
-    pub warmup: bool,
-}
