@@ -129,6 +129,7 @@ async fn test_operation_engine_with_providers() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     // Create event channel
@@ -230,6 +231,7 @@ async fn test_operation_lifecycle_complete() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -318,6 +320,7 @@ async fn test_operation_cancellation() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -396,6 +399,7 @@ async fn test_multiple_operations_concurrency() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     ));
 
     let mut handles = vec![];

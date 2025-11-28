@@ -134,6 +134,7 @@ async fn test_operation_engine_lifecycle() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     // Create event channel
@@ -281,6 +282,7 @@ async fn test_operation_cancellation() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -378,6 +380,7 @@ async fn test_multiple_operations() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     // Create multiple operations
@@ -465,6 +468,7 @@ async fn test_operation_event_ordering() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -555,6 +559,7 @@ async fn test_operation_retrieval() {
         None, // budget_tracker
         None, // llm_cache
         None, // project_task_service
+        None, // guidelines_service
     );
 
     // Create operation with specific fields

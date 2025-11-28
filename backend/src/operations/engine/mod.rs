@@ -11,6 +11,7 @@ pub mod external_handlers;
 pub mod file_handlers;
 pub mod git_handlers;
 pub mod gpt5_orchestrator;
+pub mod guidelines_handlers;
 pub mod lifecycle;
 pub mod orchestration;
 pub mod skills;
@@ -26,6 +27,7 @@ use crate::git::client::GitClient;
 use crate::llm::provider::Gpt5Provider;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
+use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::ProjectTaskService;
 use crate::relationship::service::RelationshipService;
 
@@ -62,6 +64,7 @@ impl OperationEngine {
         budget_tracker: Option<Arc<BudgetTracker>>,
         llm_cache: Option<Arc<LlmCache>>,
         project_task_service: Option<Arc<ProjectTaskService>>,
+        guidelines_service: Option<Arc<ProjectGuidelinesService>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -89,6 +92,11 @@ impl OperationEngine {
         // Add project task service if provided
         if let Some(task_service) = project_task_service {
             tool_router = tool_router.with_project_task_service(task_service);
+        }
+
+        // Add guidelines service if provided
+        if let Some(guidelines_svc) = guidelines_service {
+            tool_router = tool_router.with_guidelines_service(guidelines_svc);
         }
         let tool_router_arc = Arc::new(tool_router);
 

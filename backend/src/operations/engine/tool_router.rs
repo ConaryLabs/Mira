@@ -11,10 +11,11 @@ use crate::llm::provider::Gpt5Provider;
 use crate::llm::provider::Message;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
+use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::ProjectTaskService;
 use crate::prompt::internal::tool_router as prompts;
 use crate::sudo::SudoPermissionService;
-use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers, task_handlers};
+use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers, guidelines_handlers, task_handlers};
 use std::sync::Arc;
 
 /// Routes tool calls to appropriate handlers
@@ -25,6 +26,7 @@ pub struct ToolRouter {
     git_handlers: GitHandlers,
     code_handlers: CodeHandlers,
     project_task_service: Option<Arc<ProjectTaskService>>,
+    guidelines_service: Option<Arc<ProjectGuidelinesService>>,
 }
 
 impl ToolRouter {
@@ -49,12 +51,19 @@ impl ToolRouter {
             git_handlers: GitHandlers::new(project_dir),
             code_handlers: CodeHandlers::new(code_intelligence),
             project_task_service: None,
+            guidelines_service: None,
         }
     }
 
     /// Set the project task service for task management
     pub fn with_project_task_service(mut self, service: Arc<ProjectTaskService>) -> Self {
         self.project_task_service = Some(service);
+        self
+    }
+
+    /// Set the guidelines service for project guidelines management
+    pub fn with_guidelines_service(mut self, service: Arc<ProjectGuidelinesService>) -> Self {
+        self.guidelines_service = Some(service);
         self
     }
 
@@ -114,6 +123,11 @@ impl ToolRouter {
                 "manage_project_task requires context - use route_tool_call_with_context"
             )),
 
+            // Project guidelines management - requires context, use route_tool_call_with_context
+            "manage_project_guidelines" => Err(anyhow::anyhow!(
+                "manage_project_guidelines requires context - use route_tool_call_with_context"
+            )),
+
             _ => Err(anyhow::anyhow!("Unknown meta-tool: {}", tool_name)),
         }
     }
@@ -130,8 +144,14 @@ impl ToolRouter {
         session_id: &str,
     ) -> Result<Value> {
         // Handle context-dependent tools
-        if tool_name == "manage_project_task" {
-            return self.route_manage_project_task(arguments, project_id, session_id).await;
+        match tool_name {
+            "manage_project_task" => {
+                return self.route_manage_project_task(arguments, project_id, session_id).await;
+            }
+            "manage_project_guidelines" => {
+                return self.route_manage_project_guidelines(arguments, project_id).await;
+            }
+            _ => {}
         }
 
         // Delegate to regular routing for other tools
@@ -152,6 +172,21 @@ impl ToolRouter {
         })?;
 
         task_handlers::handle_manage_project_task(service, &args, project_id, session_id).await
+    }
+
+    /// Route manage_project_guidelines to guidelines handler
+    async fn route_manage_project_guidelines(
+        &self,
+        args: Value,
+        project_id: Option<&str>,
+    ) -> Result<Value> {
+        info!("[ROUTER] Routing manage_project_guidelines");
+
+        let service = self.guidelines_service.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("ProjectGuidelinesService not configured")
+        })?;
+
+        guidelines_handlers::handle_manage_project_guidelines(service, &args, project_id).await
     }
 
     /// Route read_project_file to read_file tool

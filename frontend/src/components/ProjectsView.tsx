@@ -2,7 +2,7 @@
 // REFACTORED: Extracted modals and operations into hooks
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, Github, Trash2, Clock, Tag, GitBranch, FileText } from 'lucide-react';
+import { Plus, Folder, Github, Trash2, Clock, Tag, GitBranch, FileText, Settings } from 'lucide-react';
 import { useAppState } from '../stores/useAppState';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useProjectOperations } from '../hooks/useProjectOperations';
@@ -11,6 +11,7 @@ import { CreateProjectModal } from './CreateProjectModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { DocumentsModal } from './documents';
 import { CodebaseAttachModal } from './CodebaseAttachModal';
+import { ProjectSettingsModal } from './ProjectSettingsModal';
 import type { Project } from '../types';
 
 export const ProjectsView: React.FC = () => {
@@ -34,6 +35,7 @@ export const ProjectsView: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [attachTarget, setAttachTarget] = useState<string | null>(null);
   const [showDocuments, setShowDocuments] = useState(false);
+  const [settingsTarget, setSettingsTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Load projects on mount
   useEffect(() => {
@@ -221,6 +223,17 @@ export const ProjectsView: React.FC = () => {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      setSettingsTarget({ id: project.id, name: project.name });
+                    }}
+                    className="px-2 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors flex items-center gap-1"
+                    title="Project settings"
+                  >
+                    <Settings size={12} />
+                    Settings
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setDeleteTarget({ id: project.id, name: project.name });
                     }}
                     className="px-2 py-1.5 text-xs bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded transition-colors flex items-center gap-1"
@@ -265,6 +278,15 @@ export const ProjectsView: React.FC = () => {
           projectId={currentProject.id}
           projectName={currentProject.name}
           onClose={() => setShowDocuments(false)}
+        />
+      )}
+
+      {settingsTarget && (
+        <ProjectSettingsModal
+          projectId={settingsTarget.id}
+          projectName={settingsTarget.name}
+          isOpen={true}
+          onClose={() => setSettingsTarget(null)}
         />
       )}
     </div>

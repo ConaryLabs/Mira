@@ -64,6 +64,22 @@ struct ListArtifactsRequest {
     project_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GuidelinesGetRequest {
+    project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuidelinesSetRequest {
+    project_id: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuidelinesDeleteRequest {
+    project_id: String,
+}
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -320,6 +336,11 @@ pub async fn handle_project_command(
         "project.file_history" => get_file_history(params, app_state).await,
         "project.modified_files" => get_modified_files(params, app_state).await,
 
+        // ========== GUIDELINES MANAGEMENT ==========
+        "guidelines.get" => get_guidelines(params, app_state).await,
+        "guidelines.set" => set_guidelines(params, app_state).await,
+        "guidelines.delete" => delete_guidelines(params, app_state).await,
+
         _ => {
             error!("Unknown project method: {}", method);
             return Err(ApiError::bad_request(format!(
@@ -505,5 +526,83 @@ async fn get_modified_files(params: Value, app_state: Arc<AppState>) -> ApiResul
             "count": files.len()
         }),
         request_id: None,
+    })
+}
+
+// ============================================================================
+// GUIDELINES HANDLERS
+// ============================================================================
+
+/// Get guidelines for a project
+async fn get_guidelines(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
+    let req: GuidelinesGetRequest = serde_json::from_value(params)
+        .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+    let guidelines = app_state
+        .guidelines_service
+        .get_guidelines(&req.project_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to get guidelines: {}", e)))?;
+
+    // Extract content and file_path if guidelines exist
+    let (content, file_path) = guidelines
+        .map(|g| (Some(g.content), Some(g.file_path)))
+        .unwrap_or((None, None));
+
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "type": "guidelines",
+            "project_id": req.project_id,
+            "content": content,
+            "file_path": file_path
+        }),
+        request_id: None,
+    })
+}
+
+/// Set guidelines for a project
+async fn set_guidelines(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
+    let req: GuidelinesSetRequest = serde_json::from_value(params)
+        .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+    // Use "guidelines.md" as default file path for DB-stored guidelines
+    app_state
+        .guidelines_service
+        .save_guidelines(&req.project_id, "guidelines.md", &req.content)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to set guidelines: {}", e)))?;
+
+    info!("Guidelines updated for project {}", req.project_id);
+
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "type": "guidelines_updated",
+            "project_id": req.project_id,
+            "content": req.content
+        }),
+        request_id: None,
+    })
+}
+
+/// Delete guidelines for a project
+async fn delete_guidelines(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
+    let req: GuidelinesDeleteRequest = serde_json::from_value(params)
+        .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+    let deleted = app_state
+        .guidelines_service
+        .delete_guidelines(&req.project_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to delete guidelines: {}", e)))?;
+
+    if !deleted {
+        return Err(ApiError::not_found("Guidelines not found for this project"));
+    }
+
+    info!("Guidelines deleted for project {}", req.project_id);
+
+    Ok(WsServerMessage::Status {
+        message: format!("Guidelines deleted for project {}", req.project_id),
+        detail: None,
     })
 }

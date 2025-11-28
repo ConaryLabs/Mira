@@ -1271,3 +1271,40 @@ Backend (10+ files):
 - Build successful (only existing qdrant deprecation warning)
 
 ---
+
+### Session 31: 2025-11-28
+
+**Summary:** Added project guidelines management system - persistent per-project guidelines that are injected into AI context, with both LLM tool access and frontend settings UI.
+
+**Key Outcomes:**
+- Created `manage_project_guidelines` LLM tool with get/set/append actions
+- Added 3 WebSocket API endpoints for frontend access (guidelines.get/set/delete)
+- Built ProjectSettingsModal frontend component with markdown editor
+- Guidelines automatically included in AI context when working with project
+- All tests pass (15+ tests across 3 test suites verified)
+
+**New Files Created:**
+- `backend/src/operations/engine/guidelines_handlers.rs` (~130 lines) - Tool handler with get/set/append actions
+- `frontend/src/components/ProjectSettingsModal.tsx` (~220 lines) - Settings modal with guidelines editor
+
+**Files Modified:**
+Backend:
+- `src/api/ws/project.rs` - Added guidelines.get, guidelines.set, guidelines.delete handlers
+- `src/operations/delegation_tools.rs` - Added manage_project_guidelines tool schema
+- `src/operations/engine/tool_router.rs` - Routed guidelines tool to handler
+- `src/operations/engine/mod.rs` - Exported guidelines_handlers module
+- `src/state.rs` - Wired guidelines service to ToolRouter
+- `tests/phase6_integration_test.rs` - Fixed OperationEngine::new() signature
+- `tests/operation_engine_test.rs` - Fixed OperationEngine::new() signature
+- `tests/artifact_flow_test.rs` - Fixed OperationEngine::new() signature
+
+Frontend:
+- `src/components/ProjectsView.tsx` - Added Settings button, imported ProjectSettingsModal
+
+**Technical Decisions:**
+1. **Dual Access Pattern**: Both LLM (via tool) and user (via frontend modal) can manage guidelines
+2. **Markdown Format**: Guidelines stored as markdown for rich formatting
+3. **Append Action**: LLM can add sections without overwriting existing content
+4. **Context Injection**: Guidelines automatically included in system prompt via existing Context Oracle integration
+
+---

@@ -245,6 +245,7 @@ impl AppState {
             Some(budget_tracker.clone()), // Budget tracking for cost control
             Some(llm_cache.clone()), // LLM response cache for cost optimization
             Some(project_task_service.clone()), // Project task management
+            Some(guidelines_service.clone()), // Project guidelines management
         ));
 
         // Initialize authentication service

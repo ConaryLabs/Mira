@@ -114,6 +114,9 @@ pub fn get_gpt5_tools() -> Vec<Value> {
 
         // Project task management
         manage_project_task_tool(),
+
+        // Project guidelines management
+        manage_project_guidelines_tool(),
     ]
 }
 
@@ -1132,6 +1135,46 @@ fn manage_project_task_tool() -> Value {
     .property(
         "tags",
         properties::string_array("Tags for categorization (e.g., ['feature', 'frontend'])"),
+        false
+    )
+    .build()
+}
+
+/// Tool: manage_project_guidelines
+/// Create, view, or update project guidelines that persist across sessions
+fn manage_project_guidelines_tool() -> Value {
+    ToolBuilder::new(
+        "manage_project_guidelines",
+        "Create or update project guidelines that persist across sessions. Guidelines are automatically included in every conversation about this project. Use this when:
+        - User asks to initialize or setup project context (like 'claude init')
+        - User wants to document coding standards, preferences, or architecture
+        - User asks to view or update existing guidelines
+
+        Guidelines help maintain consistency across conversations and provide context about the project."
+    )
+    .property(
+        "action",
+        serde_json::json!({
+            "type": "string",
+            "enum": ["get", "set", "append"],
+            "description": "What to do:\n- get: Retrieve current guidelines\n- set: Replace entire guidelines content\n- append: Add content to existing guidelines"
+        }),
+        true
+    )
+    .property(
+        "content",
+        serde_json::json!({
+            "type": "string",
+            "description": "Guidelines content in markdown format (required for set/append)"
+        }),
+        false
+    )
+    .property(
+        "section",
+        serde_json::json!({
+            "type": "string",
+            "description": "Section heading to add (for append action, creates a new ## section)"
+        }),
         false
     )
     .build()
