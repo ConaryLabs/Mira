@@ -538,7 +538,6 @@ Estimated monthly: $132 (vs $825 without cache)
 - **Build Tool**: Vite
 - **State Management**: Zustand
 - **Editor**: Monaco Editor
-- **Terminal**: xterm.js
 - **UI Components**: Custom + Headless UI
 
 ### Infrastructure

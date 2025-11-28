@@ -4,6 +4,35 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 29: Housekeeping - Dead Code Removal (2025-11-28)
+
+**Summary:** Removed 1,087 lines of dead/unused code discovered during codebase audit.
+
+**Audit Findings:**
+- Terminal module (884 lines) - frontend removed in Session 17, backend never cleaned up
+- Duplicate config structs (RecentCacheConfig, RollingSummaryConfig)
+- Unused llm/types.rs (ChatResponse struct)
+- Dead code in llm/embeddings.rs (EmbeddingConfig, utils module)
+- Unused retry utilities in utils.rs
+
+**Files Deleted:**
+- `src/terminal/` (5 files, 884 lines)
+- `src/llm/types.rs` (16 lines)
+
+**Files Modified:**
+- `src/lib.rs` - removed terminal module
+- `src/state.rs` - removed terminal_store
+- `src/llm/mod.rs` - removed types module
+- `src/llm/embeddings.rs` - removed dead structs/utils (74 lines)
+- `src/config/mod.rs` - removed duplicates and dead functions (39 lines)
+- `src/utils.rs` - removed retry utilities (66 lines)
+
+**Build Status:** Clean (1 Qdrant deprecation warning), all 169 tests passing
+
+**Commit:** `d002d49`
+
+---
+
 ## Session 28: Git-Style Diff Viewing (2025-11-27)
 
 **Summary:** Implemented git-style unified diff viewing for file changes, showing diffs in both inline chat and artifact panel.
