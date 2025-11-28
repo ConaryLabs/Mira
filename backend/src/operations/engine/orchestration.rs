@@ -154,6 +154,13 @@ impl Orchestrator {
             }
         }
 
+        // Append active project tasks to system prompt if available
+        if let Some(task_context) = self.context_builder.load_task_context(project_id).await {
+            system_prompt.push_str("\n\n=== ACTIVE TASKS ===\n");
+            system_prompt.push_str(&task_context);
+            info!("[ENGINE] Added task context to system prompt");
+        }
+
         self.lifecycle_manager
             .start_operation(operation_id, event_tx)
             .await?;
@@ -165,6 +172,7 @@ impl Orchestrator {
             session_id,
             user_content,
             system_prompt,
+            project_id,
             event_tx,
         )
         .await
@@ -176,6 +184,7 @@ impl Orchestrator {
         session_id: &str,
         user_content: &str,
         system_prompt: String,
+        project_id: Option<&str>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
         let gpt5 = match &self.gpt5_orchestrator {
@@ -195,7 +204,7 @@ impl Orchestrator {
         // Execute with GPT 5.1 orchestrator
         // Use session_id as user_id for budget tracking (they map 1:1 in current design)
         let response = gpt5
-            .execute(session_id, operation_id, messages, tools, event_tx)
+            .execute_with_context(session_id, operation_id, messages, tools, project_id, session_id, event_tx)
             .await
             .context("GPT 5.1 orchestration failed")?;
 

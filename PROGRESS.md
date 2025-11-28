@@ -1204,8 +1204,70 @@ Backend (10+ files):
 
 **Test Results:**
 - code_embedding_test: 3/3 ignored tests pass
-- e2e_data_flow_test: 4/4 ignored tests pass  
+- e2e_data_flow_test: 4/4 ignored tests pass
 - All 72 lib tests pass
 - All non-ignored integration tests pass
+
+---
+
+### Session 30: 2025-11-28
+
+**Summary:** Implemented persistent project task tracking system inspired by Claude Code v2.0.55's todo feature, with AI-managed tasks, LLM tool access, and system prompt injection.
+
+**Key Outcomes:**
+- Created complete project tasks module with types, store, and service layers
+- Added `manage_project_task` tool for LLM to create/update/complete/list tasks
+- Implemented context injection - active tasks appear in system prompt as `=== ACTIVE TASKS ===`
+- Added context-aware tool routing for tools needing project_id/session_id
+- Tasks persist across sessions in SQLite (uses existing migration 009 tables)
+
+**New Files Created:**
+- `backend/src/project/tasks/types.rs` - ProjectTask, TaskSession, TaskContext structs with status/priority enums
+- `backend/src/project/tasks/store.rs` - CRUD operations with SQLite
+- `backend/src/project/tasks/service.rs` - Business logic with `format_for_prompt()` for context injection
+- `backend/src/project/tasks/mod.rs` - Module exports
+- `backend/src/operations/engine/task_handlers.rs` - Tool execution handler
+
+**Files Modified:**
+- `backend/src/project/mod.rs` - Added tasks module and re-exports
+- `backend/src/operations/delegation_tools.rs` - Added `manage_project_task` tool schema
+- `backend/src/operations/engine/tool_router.rs` - Added `route_tool_call_with_context()` for context-aware routing
+- `backend/src/operations/engine/gpt5_orchestrator.rs` - Added `execute_with_context()` passing project_id/session_id
+- `backend/src/operations/engine/orchestration.rs` - Injects active tasks into system prompt
+- `backend/src/operations/engine/context.rs` - Added `load_task_context()` method
+- `backend/src/operations/engine/mod.rs` - Wired ProjectTaskService to ContextBuilder and ToolRouter
+- `backend/src/state.rs` - Added ProjectTaskService to AppState
+- `backend/tests/operation_engine_test.rs` - Updated OperationEngine::new() calls
+- `backend/tests/artifact_flow_test.rs` - Updated OperationEngine::new() calls
+- `backend/tests/phase6_integration_test.rs` - Updated OperationEngine::new() calls
+
+**Technical Decisions:**
+1. **Explicit LLM Tool**: Gave LLM direct access via `manage_project_task` tool rather than implicit task inference
+2. **Context Injection**: Active tasks injected into system prompt so Mira sees current work state
+3. **Context-Aware Routing**: Added `route_tool_call_with_context()` to pass project_id/session_id to tools that need it
+4. **Session Tracking**: TaskSession struct tracks files touched and commits made during task work
+5. **Artifact/Commit Linking**: Tasks can be linked to artifacts and commits when completed
+
+**Tool Schema:**
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "manage_project_task",
+    "description": "Create, update, or complete project tasks...",
+    "parameters": {
+      "action": "create|update|complete|list",
+      "title": "Task title (for create)",
+      "task_id": "Task ID (for update/complete)",
+      "progress_note": "Progress description (for update)",
+      "completion_summary": "What was accomplished (for complete)"
+    }
+  }
+}
+```
+
+**Test Results:**
+- All tests pass
+- Build successful (only existing qdrant deprecation warning)
 
 ---

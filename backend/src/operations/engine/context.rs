@@ -9,6 +9,7 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::service::MemoryService;
 use crate::operations::delegation_tools::get_gpt5_tools;
 use crate::persona::PersonaOverlay;
+use crate::project::ProjectTaskService;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::relationship::service::RelationshipService;
 use crate::tools::types::Tool;
@@ -21,6 +22,7 @@ pub struct ContextBuilder {
     memory_service: Arc<MemoryService>,
     relationship_service: Arc<RelationshipService>,
     context_oracle: Option<Arc<ContextOracle>>,
+    project_task_service: Option<Arc<ProjectTaskService>>,
 }
 
 impl ContextBuilder {
@@ -32,6 +34,7 @@ impl ContextBuilder {
             memory_service,
             relationship_service,
             context_oracle: None,
+            project_task_service: None,
         }
     }
 
@@ -39,6 +42,33 @@ impl ContextBuilder {
     pub fn with_context_oracle(mut self, oracle: Arc<ContextOracle>) -> Self {
         self.context_oracle = Some(oracle);
         self
+    }
+
+    /// Add ProjectTaskService for task context injection
+    pub fn with_project_task_service(mut self, service: Arc<ProjectTaskService>) -> Self {
+        self.project_task_service = Some(service);
+        self
+    }
+
+    /// Load active tasks for a project and format for system prompt injection
+    pub async fn load_task_context(&self, project_id: Option<&str>) -> Option<String> {
+        let service = self.project_task_service.as_ref()?;
+        let project_id = project_id?;
+
+        match service.format_for_prompt(project_id).await {
+            Ok(Some(context)) if !context.is_empty() => {
+                info!("[ENGINE] Loaded task context for project {}", project_id);
+                Some(context)
+            }
+            Ok(_) => {
+                debug!("[ENGINE] No active tasks for project {}", project_id);
+                None
+            }
+            Err(e) => {
+                warn!("[ENGINE] Failed to load task context: {}", e);
+                None
+            }
+        }
     }
 
     /// Gather context from the Context Oracle

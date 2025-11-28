@@ -111,6 +111,9 @@ pub fn get_gpt5_tools() -> Vec<Value> {
 
         // Skills system
         activate_skill_tool(),
+
+        // Project task management
+        manage_project_task_tool(),
     ]
 }
 
@@ -1064,6 +1067,71 @@ fn activate_skill_tool() -> Value {
     .property(
         "context",
         properties::optional_string("Additional context about the code, project, or requirements that the skill should know about"),
+        false
+    )
+    .build()
+}
+
+// ============================================================================
+// Project Task Management
+// ============================================================================
+
+/// Tool: manage_project_task
+/// Create, update, or complete persistent project tasks
+fn manage_project_task_tool() -> Value {
+    ToolBuilder::new(
+        "manage_project_task",
+        "Create, update, or complete persistent project tasks. Tasks persist across sessions and track your progress on work items. Use this when:
+        - User requests new work (feature, fix, improvement) -> create a task
+        - You're continuing work on an existing task -> update with progress notes
+        - Work is finished -> complete the task with a summary
+
+        Tasks automatically link to artifacts and commits you produce."
+    )
+    .property(
+        "action",
+        serde_json::json!({
+            "type": "string",
+            "enum": ["create", "update", "complete", "list"],
+            "description": "What to do:\n- create: Start tracking a new task\n- update: Add progress notes to existing task\n- complete: Mark task as done\n- list: Show all incomplete tasks"
+        }),
+        true
+    )
+    .property(
+        "task_id",
+        serde_json::json!({
+            "type": "integer",
+            "description": "Task ID (required for update/complete actions)"
+        }),
+        false
+    )
+    .property(
+        "title",
+        properties::description("Task title - short description of what needs to be done (required for create)"),
+        false
+    )
+    .property(
+        "description",
+        properties::optional_string("Detailed description of the task or progress update"),
+        false
+    )
+    .property(
+        "priority",
+        serde_json::json!({
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "Task priority (for create, default: medium)"
+        }),
+        false
+    )
+    .property(
+        "progress_notes",
+        properties::optional_string("Progress update or completion summary (for update/complete)"),
+        false
+    )
+    .property(
+        "tags",
+        properties::string_array("Tags for categorization (e.g., ['feature', 'frontend'])"),
         false
     )
     .build()

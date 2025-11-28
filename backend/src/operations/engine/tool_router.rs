@@ -11,9 +11,10 @@ use crate::llm::provider::Gpt5Provider;
 use crate::llm::provider::Message;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
+use crate::project::ProjectTaskService;
 use crate::prompt::internal::tool_router as prompts;
 use crate::sudo::SudoPermissionService;
-use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers};
+use super::{code_handlers::CodeHandlers, external_handlers::ExternalHandlers, file_handlers::FileHandlers, git_handlers::GitHandlers, task_handlers};
 use std::sync::Arc;
 
 /// Routes tool calls to appropriate handlers
@@ -23,6 +24,7 @@ pub struct ToolRouter {
     external_handlers: ExternalHandlers,
     git_handlers: GitHandlers,
     code_handlers: CodeHandlers,
+    project_task_service: Option<Arc<ProjectTaskService>>,
 }
 
 impl ToolRouter {
@@ -46,7 +48,14 @@ impl ToolRouter {
             external_handlers,
             git_handlers: GitHandlers::new(project_dir),
             code_handlers: CodeHandlers::new(code_intelligence),
+            project_task_service: None,
         }
+    }
+
+    /// Set the project task service for task management
+    pub fn with_project_task_service(mut self, service: Arc<ProjectTaskService>) -> Self {
+        self.project_task_service = Some(service);
+        self
     }
 
     /// Route a tool call to appropriate handler
@@ -100,8 +109,49 @@ impl ToolRouter {
             "fetch_url" => self.route_fetch_url(arguments).await,
             "execute_command" => self.route_execute_command(arguments).await,
 
+            // Project task management - requires context, use route_tool_call_with_context
+            "manage_project_task" => Err(anyhow::anyhow!(
+                "manage_project_task requires context - use route_tool_call_with_context"
+            )),
+
             _ => Err(anyhow::anyhow!("Unknown meta-tool: {}", tool_name)),
         }
+    }
+
+    /// Route a tool call with project/session context
+    ///
+    /// Some tools (like manage_project_task) need context that isn't in the arguments.
+    /// Use this method when you have project_id and session_id available.
+    pub async fn route_tool_call_with_context(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+        project_id: Option<&str>,
+        session_id: &str,
+    ) -> Result<Value> {
+        // Handle context-dependent tools
+        if tool_name == "manage_project_task" {
+            return self.route_manage_project_task(arguments, project_id, session_id).await;
+        }
+
+        // Delegate to regular routing for other tools
+        self.route_tool_call(tool_name, arguments).await
+    }
+
+    /// Route manage_project_task to task handler
+    async fn route_manage_project_task(
+        &self,
+        args: Value,
+        project_id: Option<&str>,
+        session_id: &str,
+    ) -> Result<Value> {
+        info!("[ROUTER] Routing manage_project_task");
+
+        let service = self.project_task_service.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("ProjectTaskService not configured")
+        })?;
+
+        task_handlers::handle_manage_project_task(service, &args, project_id, session_id).await
     }
 
     /// Route read_project_file to read_file tool

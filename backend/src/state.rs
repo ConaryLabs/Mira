@@ -24,6 +24,7 @@ use crate::operations::{ContextLoader, OperationEngine};
 use crate::patterns::{PatternMatcher, PatternStorage};
 use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::store::ProjectStore;
+use crate::project::ProjectTaskService;
 use crate::relationship::{FactsService, RelationshipService};
 use crate::sudo::SudoPermissionService;
 use crate::synthesis::storage::SynthesisStorage;
@@ -78,6 +79,8 @@ pub struct AppState {
     pub llm_cache: Arc<LlmCache>,
     // Tool synthesis
     pub synthesis_storage: Arc<SynthesisStorage>,
+    // Project task tracking
+    pub project_task_service: Arc<ProjectTaskService>,
 }
 
 impl AppState {
@@ -177,6 +180,10 @@ impl AppState {
         info!("Initializing synthesis storage");
         let synthesis_storage = Arc::new(SynthesisStorage::new(Arc::new(pool.clone())));
 
+        // Initialize project task service
+        info!("Initializing project task service");
+        let project_task_service = Arc::new(ProjectTaskService::new(pool.clone()));
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -237,6 +244,7 @@ impl AppState {
             Some(context_oracle.clone()), // Context Oracle for unified intelligence
             Some(budget_tracker.clone()), // Budget tracking for cost control
             Some(llm_cache.clone()), // LLM response cache for cost optimization
+            Some(project_task_service.clone()), // Project task management
         ));
 
         // Initialize authentication service
@@ -275,6 +283,7 @@ impl AppState {
             budget_tracker,
             llm_cache,
             synthesis_storage,
+            project_task_service,
         })
     }
 }

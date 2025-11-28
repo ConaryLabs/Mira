@@ -14,6 +14,7 @@ pub mod gpt5_orchestrator;
 pub mod lifecycle;
 pub mod orchestration;
 pub mod skills;
+pub mod task_handlers;
 pub mod tool_router;
 
 pub use events::OperationEngineEvent;
@@ -25,6 +26,7 @@ use crate::git::client::GitClient;
 use crate::llm::provider::Gpt5Provider;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
+use crate::project::ProjectTaskService;
 use crate::relationship::service::RelationshipService;
 
 use anyhow::Result;
@@ -59,6 +61,7 @@ impl OperationEngine {
         context_oracle: Option<Arc<ContextOracle>>,
         budget_tracker: Option<Arc<BudgetTracker>>,
         llm_cache: Option<Arc<LlmCache>>,
+        project_task_service: Option<Arc<ProjectTaskService>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -71,11 +74,22 @@ impl OperationEngine {
             context_builder = context_builder.with_context_oracle(oracle);
         }
 
+        // Add ProjectTaskService for task context injection (used by orchestrator)
+        let project_task_service_for_context = project_task_service.clone();
+        if let Some(task_service) = project_task_service_for_context {
+            context_builder = context_builder.with_project_task_service(task_service);
+        }
+
         let context_loader = ContextLoader::new(git_client.clone(), Arc::clone(&code_intelligence));
 
         // Create tool router for file operations and code intelligence
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let tool_router = ToolRouter::new(gpt5.clone(), project_dir, code_intelligence, sudo_service);
+        let mut tool_router = ToolRouter::new(gpt5.clone(), project_dir, code_intelligence, sudo_service);
+
+        // Add project task service if provided
+        if let Some(task_service) = project_task_service {
+            tool_router = tool_router.with_project_task_service(task_service);
+        }
         let tool_router_arc = Arc::new(tool_router);
 
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));

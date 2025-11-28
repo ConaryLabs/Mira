@@ -246,8 +246,24 @@ impl Gpt5Orchestrator {
         tools: Vec<Value>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
+        // Use default context (no project_id or session_id)
+        self.execute_with_context(user_id, operation_id, messages, tools, None, operation_id, event_tx)
+            .await
+    }
+
+    /// Execute a request with tool calling support and project context
+    pub async fn execute_with_context(
+        &self,
+        user_id: &str,
+        operation_id: &str,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        project_id: Option<&str>,
+        session_id: &str,
+        event_tx: &mpsc::Sender<OperationEngineEvent>,
+    ) -> Result<String> {
         info!("[ORCHESTRATOR] Executing with GPT 5.1");
-        self.execute_with_tools(user_id, operation_id, messages, tools, event_tx)
+        self.execute_with_tools(user_id, operation_id, messages, tools, project_id, session_id, event_tx)
             .await
     }
 
@@ -258,6 +274,8 @@ impl Gpt5Orchestrator {
         operation_id: &str,
         mut messages: Vec<Message>,
         tools: Vec<Value>,
+        project_id: Option<&str>,
+        session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
         info!("[ORCHESTRATOR] Executing with GPT 5.1 (tools + orchestration)");
@@ -339,7 +357,7 @@ impl Gpt5Orchestrator {
 
             // Execute tools and collect results
             for tool_call in response.tool_calls {
-                let result = self.execute_tool(operation_id, &tool_call, event_tx).await?;
+                let result = self.execute_tool(operation_id, &tool_call, project_id, session_id, event_tx).await?;
 
                 // Add tool result to conversation with tool_call_id
                 messages.push(Message::tool_result(
@@ -387,13 +405,16 @@ impl Gpt5Orchestrator {
         &self,
         operation_id: &str,
         tool_call: &ToolCall,
+        project_id: Option<&str>,
+        session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<Value> {
         info!("[ORCHESTRATOR] Executing tool: {}", tool_call.name);
 
         // Route to tool router if available
         let (result, success, summary) = if let Some(router) = &self.tool_router {
-            match router.route_tool_call(&tool_call.name, tool_call.arguments.clone()).await {
+            // Use context-aware routing for tools that need project/session info
+            match router.route_tool_call_with_context(&tool_call.name, tool_call.arguments.clone(), project_id, session_id).await {
                 Ok(result) => {
                     // Check if result indicates success (some tools return success: false in response)
                     let is_success = result.get("success")
