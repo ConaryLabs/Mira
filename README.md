@@ -97,7 +97,7 @@ mira/
 - **Historical Fixes** - Link error patterns to past fix commits
 
 ### Tools & Integration
-- **34 Built-in Tools** - File operations, git commands, code analysis, web search, command execution
+- **39 Built-in Tools** - File operations, git commands, code analysis, web search, command execution
 - **Git Analysis** - History, blame, diff, branches, contributors, status, commit inspection
 - **Code Analysis** - Find functions/classes, semantic search, complexity analysis, quality issues, test discovery
 - **External Tools** - Web search (DuckDuckGo), URL fetch with markdown conversion, sandboxed shell execution
@@ -277,9 +277,9 @@ CACHE_TTL_SECONDS=86400
 
 ## Documentation
 
+- **[USERGUIDE.md](./USERGUIDE.md)** - Comprehensive user and developer guide
 - **[CLAUDE.md](./CLAUDE.md)** - Guide for AI assistants working with this codebase
 - **[backend/WHITEPAPER.md](./backend/WHITEPAPER.md)** - Technical architecture reference
-- **[SESSION.md](./SESSION.md)** - Development session history
 - **[ROADMAP.md](./ROADMAP.md)** - Project roadmap and milestone details
 - **[PROGRESS.md](./PROGRESS.md)** - Detailed technical progress log
 - **[frontend/docs/STATE_BOUNDARIES.md](./frontend/docs/STATE_BOUNDARIES.md)** - Frontend state management
