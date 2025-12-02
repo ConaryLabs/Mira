@@ -386,10 +386,19 @@ impl Gemini3Provider {
                 .unwrap_or(0),
         };
 
-        info!(
-            "Gemini 3 response: {} input tokens, {} output tokens, {} thinking tokens",
-            tokens.input, tokens.output, tokens.reasoning
-        );
+        // Log token usage with cache info
+        if tokens.cached > 0 {
+            let cache_percent = (tokens.cached as f64 / tokens.input as f64 * 100.0) as i64;
+            info!(
+                "Gemini 3 response: {} input ({} cached = {}% savings), {} output, {} thinking",
+                tokens.input, tokens.cached, cache_percent, tokens.output, tokens.reasoning
+            );
+        } else {
+            info!(
+                "Gemini 3 response: {} input tokens, {} output tokens, {} thinking tokens (no cache hit)",
+                tokens.input, tokens.output, tokens.reasoning
+            );
+        }
 
         Ok(Response {
             content,
@@ -538,6 +547,19 @@ impl Gemini3Provider {
             .and_then(|u| u.get("candidatesTokenCount"))
             .and_then(|t| t.as_i64())
             .unwrap_or(0);
+        let tokens_cached = usage
+            .and_then(|u| u.get("cachedContentTokenCount"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
+
+        // Log cache info
+        if tokens_cached > 0 {
+            let cache_percent = (tokens_cached as f64 / tokens_input as f64 * 100.0) as i64;
+            info!(
+                "Gemini 3 tool call: {} input ({} cached = {}% savings), {} output",
+                tokens_input, tokens_cached, cache_percent, tokens_output
+            );
+        }
 
         if !tool_calls.is_empty() {
             info!(
@@ -632,12 +654,24 @@ impl Gemini3Provider {
             .and_then(|u| u.get("candidatesTokenCount"))
             .and_then(|t| t.as_i64())
             .unwrap_or(0);
+        let tokens_cached = usage
+            .and_then(|u| u.get("cachedContentTokenCount"))
+            .and_then(|t| t.as_i64())
+            .unwrap_or(0);
 
-        info!(
-            "Gemini 3: Generated {} lines of code at {}",
-            artifact.content.lines().count(),
-            artifact.path
-        );
+        if tokens_cached > 0 {
+            let cache_percent = (tokens_cached as f64 / tokens_input as f64 * 100.0) as i64;
+            info!(
+                "Gemini 3: Generated {} lines at {} ({} cached = {}% savings)",
+                artifact.content.lines().count(), artifact.path, tokens_cached, cache_percent
+            );
+        } else {
+            info!(
+                "Gemini 3: Generated {} lines of code at {}",
+                artifact.content.lines().count(),
+                artifact.path
+            );
+        }
 
         Ok(CodeGenResponse {
             artifact,
@@ -757,13 +791,24 @@ impl Gemini3Provider {
                 .and_then(|u| u.get("thoughtsTokenCount"))
                 .and_then(|t| t.as_i64())
                 .unwrap_or(0),
-            cached: 0,
+            cached: usage
+                .and_then(|u| u.get("cachedContentTokenCount"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0),
         };
 
-        info!(
-            "Gemini 3 tool response: {} input tokens, {} output tokens, {} function calls",
-            tokens.input, tokens.output, function_calls.len()
-        );
+        if tokens.cached > 0 {
+            let cache_percent = (tokens.cached as f64 / tokens.input as f64 * 100.0) as i64;
+            info!(
+                "Gemini 3 tool response: {} input ({} cached = {}% savings), {} output, {} function calls",
+                tokens.input, tokens.cached, cache_percent, tokens.output, function_calls.len()
+            );
+        } else {
+            info!(
+                "Gemini 3 tool response: {} input tokens, {} output tokens, {} function calls",
+                tokens.input, tokens.output, function_calls.len()
+            );
+        }
 
         Ok(ToolResponse {
             id: candidate
