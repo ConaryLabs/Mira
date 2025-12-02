@@ -20,6 +20,26 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ---
 
+## Phase: Testing & Quality
+
+### Session 30: 2025-12-02
+
+**Summary:** Added 191 new tests across 12 files to fill critical testing gaps.
+
+**Key Outcomes:**
+- Backend: 7 budget tracker tests (daily/monthly limits, cache tracking)
+- Frontend stores: 47 tests (auth, activity, code intelligence)
+- Frontend hooks: 28 tests (message handler, artifacts)
+- Frontend components: 109 tests (CodeBlock, TaskTracker, BudgetTracker, ActivityPanel, Header, FileBrowser)
+
+**Files Created:**
+- `backend/tests/budget_test.rs`
+- `frontend/src/stores/__tests__/{authStore,activityStore,codeIntelligenceStore}.test.ts`
+- `frontend/src/hooks/__tests__/{useMessageHandler,useArtifacts}.test.ts`
+- `frontend/src/components/__tests__/{CodeBlock,TaskTracker,BudgetTracker,ActivityPanel,Header,FileBrowser}.test.tsx`
+
+---
+
 ## Phase: Codebase Refactoring & Architecture Migration
 
 ### Session 1: 2025-11-15

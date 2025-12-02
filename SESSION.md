@@ -4,6 +4,56 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 30: Testing Gap Fill (2025-12-02)
+
+**Summary:** Added 191 new tests across 12 files to fill critical testing gaps in frontend stores, hooks, and components.
+
+**Work Completed:**
+
+1. **Backend Budget Tests** (`tests/budget_test.rs` - 7 tests):
+   - Budget tracker creation, request recording, daily/monthly limit enforcement
+   - Cache hit rate tracking, usage aggregation
+   - Required `create_test_user` helper for foreign key constraints
+
+2. **Frontend Store Tests** (3 files, 47 tests):
+   - `authStore.test.ts` (12 tests) - Login, logout, token persistence, user state
+   - `activityStore.test.ts` (15 tests) - Panel controls, operation tracking, data accessors
+   - `codeIntelligenceStore.test.ts` (20 tests) - Budget, search, co-change, build errors
+
+3. **Frontend Hook Tests** (2 files, 28 tests):
+   - `useMessageHandler.test.ts` (11 tests) - Message processing, streaming, tool execution
+   - `useArtifacts.test.ts` (17 tests) - Artifact CRUD, save/apply, clipboard operations
+
+4. **Frontend Component Tests** (6 files, 109 tests):
+   - `CodeBlock.test.tsx` (12 tests) - Copy functionality, dark/light mode, code formatting
+   - `TaskTracker.test.tsx` (19 tests) - Progress calculation, status combinations
+   - `BudgetTracker.test.tsx` (20 tests) - Loading/error/data states, warnings, refresh
+   - `ActivityPanel.test.tsx` (15 tests) - Visibility, resize, content sections
+   - `Header.test.tsx` (20 tests) - Project selector, panel toggles, logout
+   - `FileBrowser.test.tsx` (23 tests) - File tree, selection, semantic stats
+
+**Test Coverage Improvement:**
+- Frontend: ~50 tests → ~260 tests (5x increase)
+- Backend: Added dedicated budget system testing
+
+**Files Created:**
+- `backend/tests/budget_test.rs`
+- `frontend/src/stores/__tests__/authStore.test.ts`
+- `frontend/src/stores/__tests__/activityStore.test.ts`
+- `frontend/src/stores/__tests__/codeIntelligenceStore.test.ts`
+- `frontend/src/hooks/__tests__/useMessageHandler.test.ts`
+- `frontend/src/hooks/__tests__/useArtifacts.test.ts`
+- `frontend/src/components/__tests__/CodeBlock.test.tsx`
+- `frontend/src/components/__tests__/TaskTracker.test.tsx`
+- `frontend/src/components/__tests__/BudgetTracker.test.tsx`
+- `frontend/src/components/__tests__/ActivityPanel.test.tsx`
+- `frontend/src/components/__tests__/Header.test.tsx`
+- `frontend/src/components/__tests__/FileBrowser.test.tsx`
+
+**Build Status:** All new tests passing (310 store/hook/component tests total)
+
+---
+
 ## Session 29: Housekeeping - Dead Code Removal (2025-11-28)
 
 **Summary:** Removed 1,087 lines of dead/unused code discovered during codebase audit.
