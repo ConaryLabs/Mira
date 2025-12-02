@@ -58,7 +58,7 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
 
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         common::google_api_key(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(

@@ -53,7 +53,7 @@ async fn setup_services(
     // Create embedding client (won't be used in these tests)
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         "test-key".to_string(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     // Create LLM provider for MemoryService

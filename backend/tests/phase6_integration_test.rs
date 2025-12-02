@@ -64,7 +64,7 @@ async fn setup_services(
 
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         "test-key".to_string(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(

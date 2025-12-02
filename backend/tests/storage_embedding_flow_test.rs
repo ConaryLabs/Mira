@@ -600,11 +600,11 @@ fn create_test_entry(session_id: &str, role: &str, content: &str) -> MemoryEntry
 
 fn create_embedding_client() -> Arc<GeminiEmbeddings> {
     init_env();
-    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests - ensure backend/.env exists");
+    let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set for tests - ensure backend/.env exists");
 
     Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ))
 }
 
@@ -614,5 +614,5 @@ fn create_embedding_client() -> Arc<GeminiEmbeddings> {
 
 // Run with: cargo test --test storage_embedding_flow_test -- --nocapture
 // Requires:
-//   - OPENAI_API_KEY environment variable
+//   - GOOGLE_API_KEY environment variable
 //   - Qdrant running on localhost:6334 (or QDRANT_URL set)

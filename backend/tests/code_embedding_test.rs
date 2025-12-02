@@ -197,10 +197,10 @@ async fn setup_test_db() -> SqlitePool {
 
 fn setup_embedding_client() -> Arc<GeminiEmbeddings> {
     init_env();
-    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "test-key".to_string());
+    let api_key = std::env::var("GOOGLE_API_KEY").unwrap_or_else(|_| "test-key".to_string());
     Arc::new(GeminiEmbeddings::new(
         api_key,
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ))
 }
 

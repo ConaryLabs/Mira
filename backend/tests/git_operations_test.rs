@@ -37,7 +37,7 @@ async fn setup_code_intelligence(pool: Arc<sqlx::SqlitePool>) -> Arc<CodeIntelli
 
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         "test-key".to_string(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     Arc::new(CodeIntelligenceService::new(

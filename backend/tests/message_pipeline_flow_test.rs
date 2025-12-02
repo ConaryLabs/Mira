@@ -454,7 +454,7 @@ fn create_llm_provider() -> Arc<dyn LlmProvider> {
     // Load .env file
     let _ = dotenv::dotenv();
     // Get API key from environment
-    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests");
+    let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set for tests");
 
     Arc::new(Gemini3Provider::new(
         api_key,
@@ -468,4 +468,4 @@ fn create_llm_provider() -> Arc<dyn LlmProvider> {
 // ============================================================================
 
 // Run tests with: cargo test --test message_pipeline_flow_test -- --nocapture
-// Requires: OPENAI_API_KEY environment variable set
+// Requires: GOOGLE_API_KEY environment variable set

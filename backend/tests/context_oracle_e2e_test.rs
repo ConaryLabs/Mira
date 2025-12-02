@@ -2,7 +2,7 @@
 // End-to-end tests for Context Oracle with real LLM integration
 //
 // These tests require:
-// - Valid OPENAI_API_KEY in .env
+// - Valid GOOGLE_API_KEY in .env
 // - Qdrant running on localhost:6334 (gRPC)
 //
 // Run with: cargo test --test context_oracle_e2e_test -- --ignored --nocapture
@@ -41,7 +41,7 @@ async fn setup_test_pool() -> SqlitePool {
 
 fn get_google_api_key() -> Option<String> {
     dotenv().ok();
-    std::env::var("OPENAI_API_KEY").ok()
+    std::env::var("GOOGLE_API_KEY").ok()
 }
 
 fn get_qdrant_url() -> String {
@@ -58,7 +58,7 @@ async fn test_context_oracle_full_flow() {
     let api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
-            println!("Skipping test: OPENAI_API_KEY not set");
+            println!("Skipping test: GOOGLE_API_KEY not set");
             return;
         }
     };
@@ -75,7 +75,7 @@ async fn test_context_oracle_full_flow() {
 
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     let code_intelligence = Arc::new(
@@ -117,7 +117,7 @@ async fn test_memory_service_with_oracle() {
     let api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
-            println!("Skipping test: OPENAI_API_KEY not set");
+            println!("Skipping test: GOOGLE_API_KEY not set");
             return;
         }
     };
@@ -140,7 +140,7 @@ async fn test_memory_service_with_oracle() {
     );
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     let code_intelligence = Arc::new(
@@ -197,7 +197,7 @@ async fn test_budget_aware_config_with_tracker() {
     let _api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
-            println!("Skipping test: OPENAI_API_KEY not set");
+            println!("Skipping test: GOOGLE_API_KEY not set");
             return;
         }
     };
@@ -274,7 +274,7 @@ async fn test_full_integration_flow() {
     let api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
-            println!("Skipping test: OPENAI_API_KEY not set");
+            println!("Skipping test: GOOGLE_API_KEY not set");
             return;
         }
     };
@@ -299,7 +299,7 @@ async fn test_full_integration_flow() {
     );
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     let code_intelligence = Arc::new(

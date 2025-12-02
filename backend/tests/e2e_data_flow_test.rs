@@ -580,7 +580,7 @@ async fn setup_full_stack() -> (MemoryService, Arc<GeminiEmbeddings>, Arc<Qdrant
 
     // Load .env and setup LLM provider
     let _ = dotenv::dotenv();
-    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
+    let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set");
 
     // Use actual model from config, fallback to gpt-4o
     let model = std::env::var("GPT5_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
@@ -594,7 +594,7 @@ async fn setup_full_stack() -> (MemoryService, Arc<GeminiEmbeddings>, Arc<Qdrant
     // Setup embedding client
     let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
-        "text-embedding-3-large".to_string(),
+        "gemini-embedding-001".to_string(),
     ));
 
     // Create memory service
@@ -721,7 +721,7 @@ fn create_empty_entry(session_id: &str, role: &str, content: &str) -> MemoryEntr
 
 // Run with: cargo test --test e2e_data_flow_test -- --nocapture --test-threads=1
 // Requires:
-//   - OPENAI_API_KEY environment variable
+//   - GOOGLE_API_KEY environment variable
 //   - Qdrant running on localhost:6334
 //
 // Use --test-threads=1 to avoid race conditions with shared Qdrant collections
