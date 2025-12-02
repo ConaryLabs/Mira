@@ -1,4 +1,6 @@
 // src/state.rs
+// Application state - Gemini 3 Pro powered
+
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -15,7 +17,7 @@ use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
-use crate::llm::provider::{Gpt5Provider, OpenAiEmbeddings};
+use crate::llm::provider::{Gemini3Provider, GeminiEmbeddings};
 use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -49,8 +51,8 @@ pub struct AppState {
     pub guidelines_service: Arc<ProjectGuidelinesService>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub gpt5_provider: Arc<Gpt5Provider>,
-    pub embedding_client: Arc<OpenAiEmbeddings>,
+    pub llm_provider: Arc<Gemini3Provider>,
+    pub embedding_client: Arc<GeminiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub semantic_graph: Arc<SemanticGraphService>,
@@ -97,18 +99,22 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
 
-        // Initialize GPT 5.1 provider (primary LLM)
-        info!("Initializing GPT 5.1 provider as primary LLM");
-        let gpt5_provider = Arc::new(Gpt5Provider::new(
-            CONFIG.openai_api_key.clone(),
-            CONFIG.gpt5_model.clone(),
-            CONFIG.gpt5_reasoning.clone(),
-        ).expect("Failed to create GPT 5.1 provider"));
+        // Initialize Gemini 3 Pro provider (primary LLM)
+        info!("Initializing Gemini 3 Pro provider");
+        let llm_provider = Arc::new(
+            Gemini3Provider::new(
+                CONFIG.google_api_key.clone(),
+                CONFIG.gemini_model.clone(),
+                CONFIG.gemini_thinking.clone(),
+            )
+            .expect("Failed to create Gemini 3 provider"),
+        );
 
-        // Initialize OpenAI embeddings client
-        let embedding_client = Arc::new(OpenAiEmbeddings::new(
-            CONFIG.openai_api_key.clone(),
-            CONFIG.openai_embedding_model.clone(),
+        // Initialize Gemini embeddings client
+        info!("Initializing Gemini embeddings client");
+        let embedding_client = Arc::new(GeminiEmbeddings::new(
+            CONFIG.google_api_key.clone(),
+            CONFIG.gemini_embedding_model.clone(),
         ));
 
         // Initialize Qdrant multi-store
@@ -123,7 +129,8 @@ impl AppState {
 
         // Initialize semantic graph service for concept-based code search
         info!("Initializing semantic graph service");
-        let semantic_graph = Arc::new(code_intelligence.create_semantic_service(gpt5_provider.clone()));
+        let semantic_graph =
+            Arc::new(code_intelligence.create_semantic_service(llm_provider.clone()));
 
         // Initialize git store and client with code intelligence
         let git_store = GitStore::new(pool.clone());
@@ -145,7 +152,8 @@ impl AppState {
 
         // Initialize error resolver (needed for context oracle)
         info!("Initializing error resolver");
-        let error_resolver = Arc::new(ErrorResolver::new(Arc::new(pool.clone()), build_tracker.clone()));
+        let error_resolver =
+            Arc::new(ErrorResolver::new(Arc::new(pool.clone()), build_tracker.clone()));
 
         // Initialize budget tracker
         info!("Initializing budget tracker");
@@ -200,11 +208,11 @@ impl AppState {
                 .with_pattern_matcher(pattern_matcher.clone()),
         );
 
-        // Memory service uses GPT 5.1 for analysis with Context Oracle for code intelligence
+        // Memory service uses Gemini 3 for analysis with Context Oracle for code intelligence
         let memory_service = Arc::new(MemoryService::with_oracle(
             sqlite_store.clone(),
             multi_store.clone(),
-            gpt5_provider.clone(),
+            llm_provider.clone(),
             embedding_client.clone(),
             Some(context_oracle.clone()),
         ));
@@ -231,28 +239,28 @@ impl AppState {
         info!("Initializing sudo permission service");
         let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
 
-        // OperationEngine with GPT 5.1 architecture and Context Oracle
-        info!("Initializing OperationEngine with GPT 5.1 and Context Oracle");
+        // OperationEngine with Gemini 3 architecture and Context Oracle
+        info!("Initializing OperationEngine with Gemini 3 and Context Oracle");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
-            (*gpt5_provider).clone(),
+            (*llm_provider).clone(),
             memory_service.clone(),
             relationship_service.clone(),
             git_client.clone(),
             code_intelligence.clone(),
-            Some(sudo_service.clone()), // Sudo permissions for system administration
-            Some(context_oracle.clone()), // Context Oracle for unified intelligence
-            Some(budget_tracker.clone()), // Budget tracking for cost control
-            Some(llm_cache.clone()), // LLM response cache for cost optimization
-            Some(project_task_service.clone()), // Project task management
-            Some(guidelines_service.clone()), // Project guidelines management
+            Some(sudo_service.clone()),
+            Some(context_oracle.clone()),
+            Some(budget_tracker.clone()),
+            Some(llm_cache.clone()),
+            Some(project_task_service.clone()),
+            Some(guidelines_service.clone()),
         ));
 
         // Initialize authentication service
         info!("Initializing authentication service");
         let auth_service = Arc::new(AuthService::new(pool.clone()));
 
-        info!("Application state initialized successfully");
+        info!("Application state initialized successfully with Gemini 3 Pro");
 
         Ok(Self {
             sqlite_store,
@@ -261,7 +269,7 @@ impl AppState {
             guidelines_service,
             git_store,
             git_client,
-            gpt5_provider,
+            llm_provider,
             embedding_client,
             memory_service,
             code_intelligence,

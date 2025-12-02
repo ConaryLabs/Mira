@@ -3,7 +3,7 @@
 
 use mira_backend::config::CONFIG;
 use mira_backend::git::{client::GitClient, store::GitStore, types::GitImportStatus};
-use mira_backend::llm::provider::OpenAiEmbeddings;
+use mira_backend::llm::provider::GeminiEmbeddings;
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
@@ -35,7 +35,7 @@ async fn setup_code_intelligence(pool: Arc<sqlx::SqlitePool>) -> Arc<CodeIntelli
             .unwrap_or_else(|_| panic!("Qdrant not available")),
     );
 
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         "test-key".to_string(),
         "text-embedding-3-large".to_string(),
     ));

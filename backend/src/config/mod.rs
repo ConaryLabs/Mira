@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - refactored into domain modules
+// Central configuration for Mira backend - Gemini 3 Pro powered
 
 pub mod caching;
 pub mod helpers;
@@ -19,8 +19,7 @@ lazy_static! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiraConfig {
     // Domain configs (organized structure)
-    pub openai: llm::OpenAiConfig,
-    pub gpt5: llm::Gpt5Config,
+    pub gemini: llm::GeminiConfig,
     pub memory: memory::MemoryConfig,
     pub summarization: memory::SummarizationConfig,
     pub qdrant: memory::QdrantConfig,
@@ -37,11 +36,10 @@ pub struct MiraConfig {
     pub retry: caching::RetryConfig,
 
     // Flat field aliases for backward compatibility
-    pub openai_api_key: String,
-    pub gpt5_api_key: String,
-    pub gpt5_model: String,
-    pub gpt5_reasoning: llm::ReasoningEffort,
-    pub openai_embedding_model: String,
+    pub google_api_key: String,
+    pub gemini_model: String,
+    pub gemini_embedding_model: String,
+    pub gemini_thinking: llm::ThinkingLevel,
     pub qdrant_url: String,
     pub qdrant_collection: String,
     pub session_id: String,
@@ -63,8 +61,7 @@ impl MiraConfig {
         // Load .env file
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
 
-        let openai = llm::OpenAiConfig::from_env();
-        let gpt5 = llm::Gpt5Config::from_env();
+        let gemini = llm::GeminiConfig::from_env();
         let memory = memory::MemoryConfig::from_env();
         let summarization = memory::SummarizationConfig::from_env();
         let qdrant = memory::QdrantConfig::from_env();
@@ -81,12 +78,11 @@ impl MiraConfig {
         let retry = caching::RetryConfig::from_env();
 
         Self {
-            // Flat field aliases (for backward compatibility)
-            openai_api_key: openai.api_key.clone(),
-            gpt5_api_key: gpt5.api_key.clone(),
-            gpt5_model: gpt5.model.clone(),
-            gpt5_reasoning: gpt5.default_reasoning_effort.clone(),
-            openai_embedding_model: openai.embedding_model.clone(),
+            // Flat field aliases
+            google_api_key: gemini.api_key.clone(),
+            gemini_model: gemini.model.clone(),
+            gemini_embedding_model: gemini.embedding_model.clone(),
+            gemini_thinking: gemini.default_thinking_level.clone(),
             qdrant_url: qdrant.url.clone(),
             qdrant_collection: qdrant.collection.clone(),
             session_id: session.session_id.clone(),
@@ -103,8 +99,7 @@ impl MiraConfig {
             sqlite_max_connections: database.max_connections,
 
             // Domain configs
-            openai,
-            gpt5,
+            gemini,
             memory,
             summarization,
             qdrant,
@@ -124,17 +119,8 @@ impl MiraConfig {
 
     /// Validate config on startup
     pub fn validate(&self) -> anyhow::Result<()> {
-        self.gpt5.validate()?;
+        self.gemini.validate()?;
         Ok(())
-    }
-
-    // ===========================================
-    // Backward compatibility accessors
-    // ===========================================
-
-    // OpenAI
-    pub fn get_openai_key(&self) -> Option<String> {
-        Some(self.openai.api_key.clone())
     }
 
     // JSON
@@ -161,7 +147,6 @@ impl MiraConfig {
     pub fn is_recent_cache_enabled(&self) -> bool {
         self.recent_cache.enabled
     }
-
 }
 
 impl Default for MiraConfig {
@@ -169,4 +154,3 @@ impl Default for MiraConfig {
         Self::from_env()
     }
 }
-

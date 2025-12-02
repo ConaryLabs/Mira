@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use tracing::{info, warn};
 
-use crate::llm::provider::Gpt5Provider;
+use crate::llm::provider::Gemini3Provider;
 use crate::llm::provider::Message;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::operations::get_file_operation_tools;
@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 /// Routes tool calls to appropriate handlers
 pub struct ToolRouter {
-    gpt5: Gpt5Provider,
+    llm: Gemini3Provider,
     file_handlers: FileHandlers,
     external_handlers: ExternalHandlers,
     git_handlers: GitHandlers,
@@ -32,7 +32,7 @@ pub struct ToolRouter {
 impl ToolRouter {
     /// Create a new tool router
     pub fn new(
-        gpt5: Gpt5Provider,
+        llm: Gemini3Provider,
         project_dir: PathBuf,
         code_intelligence: Arc<CodeIntelligenceService>,
         sudo_service: Option<Arc<SudoPermissionService>>,
@@ -45,7 +45,7 @@ impl ToolRouter {
         };
 
         Self {
-            gpt5,
+            llm,
             file_handlers: FileHandlers::new(project_dir.clone()),
             external_handlers,
             git_handlers: GitHandlers::new(project_dir),
@@ -233,7 +233,7 @@ impl ToolRouter {
         // Call GPT 5.1 with file operation tools
         let tools = get_file_operation_tools();
         let mut response = self
-            .gpt5
+            .llm
             .call_with_tools(messages.clone(), tools.clone())
             .await
             .context("GPT 5.1 file read failed")?;
@@ -300,7 +300,7 @@ impl ToolRouter {
 
             // Continue conversation with GPT 5.1
             response = self
-                .gpt5
+                .llm
                 .call_with_tools(conversation.clone(), tools.clone())
                 .await
                 .context("GPT 5.1 continuation failed")?;
@@ -354,7 +354,7 @@ impl ToolRouter {
 
         let tools = get_file_operation_tools();
         let response = self
-            .gpt5
+            .llm
             .call_with_tools(messages, tools)
             .await
             .context("GPT 5.1 search failed")?;
@@ -413,7 +413,7 @@ impl ToolRouter {
 
         let tools = get_file_operation_tools();
         let response = self
-            .gpt5
+            .llm
             .call_with_tools(messages, tools)
             .await
             .context("GPT 5.1 list failed")?;

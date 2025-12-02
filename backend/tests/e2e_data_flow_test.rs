@@ -5,7 +5,7 @@ use chrono::Utc;
 use mira_backend::{
     llm::{
         embeddings::EmbeddingHead,
-        provider::{LlmProvider, OpenAiEmbeddings, gpt5::{Gpt5Provider, ReasoningEffort}},
+        provider::{LlmProvider, GeminiEmbeddings, {Gemini3Provider, ThinkingLevel}},
     },
     memory::{
         core::types::MemoryEntry, service::MemoryService,
@@ -564,7 +564,7 @@ async fn test_recall_engine_integration() {
 // Helper Functions
 // ============================================================================
 
-async fn setup_full_stack() -> (MemoryService, Arc<OpenAiEmbeddings>, Arc<QdrantMultiStore>) {
+async fn setup_full_stack() -> (MemoryService, Arc<GeminiEmbeddings>, Arc<QdrantMultiStore>) {
     // Setup database
     let db_pool = setup_test_db().await;
     let sqlite_store = Arc::new(SqliteMemoryStore::new(db_pool));
@@ -585,14 +585,14 @@ async fn setup_full_stack() -> (MemoryService, Arc<OpenAiEmbeddings>, Arc<Qdrant
     // Use actual model from config, fallback to gpt-4o
     let model = std::env::var("GPT5_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
 
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         api_key.clone(),
         model,
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create GPT5 provider"));
 
     // Setup embedding client
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
         "text-embedding-3-large".to_string(),
     ));

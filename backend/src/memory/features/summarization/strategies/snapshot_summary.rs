@@ -37,12 +37,7 @@ impl SnapshotSummaryStrategy {
             messages.len()
         );
 
-        let chat_messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let chat_messages = vec![Message::user(prompt)];
 
         // FIXED: Remove None argument - .chat() now takes only 2 args
         let response = self.llm_provider

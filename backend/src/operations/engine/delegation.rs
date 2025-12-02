@@ -2,7 +2,7 @@
 // GPT 5.1 delegation for code generation tasks
 
 use crate::git::client::FileNode;
-use crate::llm::provider::{Gpt5Provider, CodeGenRequest};
+use crate::llm::provider::{Gemini3Provider, CodeGenRequest};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::operations::engine::context::ContextBuilder;
@@ -12,12 +12,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 pub struct DelegationHandler {
-    gpt5: Gpt5Provider,
+    llm: Gemini3Provider,
 }
 
 impl DelegationHandler {
-    pub fn new(gpt5: Gpt5Provider) -> Self {
-        Self { gpt5 }
+    pub fn new(llm: Gemini3Provider) -> Self {
+        Self { llm }
     }
 
     /// Delegate to GPT 5.1 with enriched context
@@ -201,7 +201,7 @@ impl DelegationHandler {
             }
         }
 
-        let response = self.gpt5.generate_code(request).await?;
+        let response = self.llm.generate_code(request).await?;
 
         Ok(serde_json::json!({
             "artifact": {

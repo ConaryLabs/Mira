@@ -7,7 +7,7 @@ use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 
 use mira_backend::llm::embeddings::EmbeddingHead;
-use mira_backend::llm::provider::OpenAiEmbeddings;
+use mira_backend::llm::provider::GeminiEmbeddings;
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
@@ -195,10 +195,10 @@ async fn setup_test_db() -> SqlitePool {
     pool
 }
 
-fn setup_embedding_client() -> Arc<OpenAiEmbeddings> {
+fn setup_embedding_client() -> Arc<GeminiEmbeddings> {
     init_env();
     let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "test-key".to_string());
-    Arc::new(OpenAiEmbeddings::new(
+    Arc::new(GeminiEmbeddings::new(
         api_key,
         "text-embedding-3-large".to_string(),
     ))
@@ -216,10 +216,11 @@ async fn setup_qdrant() -> Arc<QdrantMultiStore> {
 
 // ============================================================================
 // TEST 1: Parse and Embed Code Elements
-// NOTE: Requires real OpenAI API + Qdrant, schema sync issues with code_elements table
+// NOTE: Requires real Gemini API + Qdrant
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "integration test - requires Gemini API + Qdrant"]
 async fn test_parse_and_embed_code_elements() -> Result<()> {
     println!("\n=== Testing Code Element Parsing and Embedding ===\n");
 
@@ -376,7 +377,7 @@ async fn test_parse_and_embed_code_elements() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires OpenAI API + Qdrant, schema sync issues"]
+#[ignore = "integration test - requires Gemini API + Qdrant"]
 async fn test_semantic_search_code_elements() -> Result<()> {
     println!("\n=== Testing Semantic Search for Code Elements ===\n");
 
@@ -494,7 +495,7 @@ async fn test_semantic_search_code_elements() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires OpenAI API + Qdrant, schema sync issues"]
+#[ignore = "integration test - requires Gemini API + Qdrant"]
 async fn test_invalidation_on_file_change() -> Result<()> {
     println!("\n=== Testing Invalidation on File Change ===\n");
 
@@ -608,7 +609,7 @@ async fn test_invalidation_on_file_change() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires OpenAI API + Qdrant, schema sync issues"]
+#[ignore = "integration test - requires Gemini API + Qdrant"]
 async fn test_search_different_element_types() -> Result<()> {
     println!("\n=== Testing Search for Structs and Functions ===\n");
 

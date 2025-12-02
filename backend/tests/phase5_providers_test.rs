@@ -197,7 +197,7 @@ fn test_parse_tool_call_invalid_json_arguments() {
 
 #[test]
 fn test_build_user_prompt() {
-    use mira_backend::llm::provider::gpt5::{CodeGenRequest, build_user_prompt};
+    use mira_backend::llm::provider::{CodeGenRequest, build_user_prompt};
 
     let request = CodeGenRequest {
         path: "src/components/Button.tsx".to_string(),
@@ -223,7 +223,7 @@ fn test_build_user_prompt() {
 
 #[test]
 fn test_build_user_prompt_minimal() {
-    use mira_backend::llm::provider::gpt5::{CodeGenRequest, build_user_prompt};
+    use mira_backend::llm::provider::{CodeGenRequest, build_user_prompt};
 
     let request = CodeGenRequest {
         path: "test.rs".to_string(),
@@ -247,7 +247,7 @@ fn test_build_user_prompt_minimal() {
 
 #[test]
 fn test_code_artifact_serialization() {
-    use mira_backend::llm::provider::gpt5::CodeArtifact;
+    use mira_backend::llm::provider::CodeArtifact;
 
     let artifact = CodeArtifact {
         path: "test.ts".to_string(),
@@ -267,7 +267,7 @@ fn test_code_artifact_serialization() {
 
 #[test]
 fn test_code_artifact_without_explanation() {
-    use mira_backend::llm::provider::gpt5::CodeArtifact;
+    use mira_backend::llm::provider::CodeArtifact;
 
     let json = r#"{"path":"test.rs","content":"fn main() {}","language":"rust"}"#;
     let artifact: CodeArtifact =
@@ -281,7 +281,7 @@ fn test_code_artifact_without_explanation() {
 
 #[test]
 fn test_codegen_request_serialization() {
-    use mira_backend::llm::provider::gpt5::CodeGenRequest;
+    use mira_backend::llm::provider::CodeGenRequest;
 
     let request = CodeGenRequest {
         path: "src/lib.rs".to_string(),

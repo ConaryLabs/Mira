@@ -6,8 +6,8 @@
 
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
-use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
-use mira_backend::llm::provider::{LlmProvider, OpenAiEmbeddings};
+use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
+use mira_backend::llm::provider::{LlmProvider, GeminiEmbeddings};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -36,11 +36,11 @@ async fn create_test_db() -> Arc<sqlx::SqlitePool> {
 }
 
 /// Helper to create test GPT 5.1 provider (uses fake API key)
-fn create_test_gpt5() -> Gpt5Provider {
-    Gpt5Provider::new(
+fn create_test_gpt5() -> Gemini3Provider {
+    Gemini3Provider::new(
         "test-gpt5-key".to_string(),
         "gpt-5.1".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create GPT5 provider")
 }
 
@@ -62,15 +62,15 @@ async fn setup_services(
             .unwrap_or_else(|_| panic!("Qdrant not available")),
     );
 
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         "test-key".to_string(),
         "text-embedding-3-large".to_string(),
     ));
 
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create GPT5 provider"));
 
     let memory_service = Arc::new(MemoryService::new(

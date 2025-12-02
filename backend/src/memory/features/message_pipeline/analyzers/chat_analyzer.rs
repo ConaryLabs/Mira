@@ -48,12 +48,7 @@ impl ChatAnalyzer {
         debug!("Analyzing {} message: {} chars", role, content.len());
 
         let prompt = self.build_analysis_prompt(content, role, context);
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let messages = vec![Message::user(prompt)];
 
         // Use LLM for analysis
         let system = prompts::MESSAGE_ANALYZER;
@@ -82,12 +77,7 @@ impl ChatAnalyzer {
         info!("Batch analyzing {} messages", messages.len());
 
         let prompt = self.build_batch_prompt(messages);
-        let llm_messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let llm_messages = vec![Message::user(prompt)];
 
         // Use LLM for batch analysis
         let system = prompts::BATCH_ANALYZER;

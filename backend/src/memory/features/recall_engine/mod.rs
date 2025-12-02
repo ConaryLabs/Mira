@@ -15,7 +15,7 @@ use tracing::{debug, info};
 
 use crate::context_oracle::{ContextConfig, ContextOracle, ContextRequest, GatheredContext};
 use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
+use crate::llm::provider::{GeminiEmbeddings, LlmProvider};
 use crate::memory::{
     core::types::MemoryEntry, storage::qdrant::multi_store::QdrantMultiStore,
     storage::sqlite::store::SqliteMemoryStore,
@@ -134,10 +134,10 @@ pub struct RecallEngine {
 
 impl RecallEngine {
     /// Creates a new recall engine with clean modular architecture
-    /// Takes both LlmProvider (for future chat features) and OpenAiEmbeddings (for embeddings)
+    /// Takes both LlmProvider (for future chat features) and GeminiEmbeddings (for embeddings)
     pub fn new(
         _llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {

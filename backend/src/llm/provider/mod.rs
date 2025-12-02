@@ -1,18 +1,22 @@
 // src/llm/provider/mod.rs
-// LLM Provider trait - clean, provider-agnostic interface
+// LLM Provider trait - Gemini 3 Pro primary provider
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
 
-pub mod gpt5;
-pub mod openai;
+pub mod gemini3;
+pub mod gemini_embeddings;
 pub mod stream;
 
-// Export providers
-pub use gpt5::{Gpt5Pricing, Gpt5Provider, ReasoningEffort, ToolCall, ToolCallResponse, CodeGenRequest, CodeGenResponse, CodeArtifact, build_user_prompt};
-pub use openai::OpenAiEmbeddings;
+// Export Gemini providers (primary)
+pub use gemini3::{
+    build_user_prompt, CodeArtifact, CodeGenRequest, CodeGenResponse, Gemini3Pricing,
+    Gemini3Provider, ThinkingLevel, ToolCall, ToolCallResponse,
+};
+pub use gemini_embeddings::GeminiEmbeddings;
 pub use stream::StreamEvent;
 
 /// Tool call information for assistant messages
@@ -36,6 +40,12 @@ pub struct Message {
     /// For assistant messages that request tool calls
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallInfo>>,
+
+    /// Thought signature for Gemini 3 multi-turn conversations
+    /// CRITICAL: Must be captured and passed back in subsequent turns
+    /// for function calling to work correctly
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 impl Message {
@@ -45,6 +55,7 @@ impl Message {
             content,
             tool_call_id: None,
             tool_calls: None,
+            thought_signature: None,
         }
     }
 
@@ -54,6 +65,7 @@ impl Message {
             content,
             tool_call_id: None,
             tool_calls: None,
+            thought_signature: None,
         }
     }
 
@@ -63,6 +75,7 @@ impl Message {
             content,
             tool_call_id: None,
             tool_calls: None,
+            thought_signature: None,
         }
     }
 
@@ -72,6 +85,7 @@ impl Message {
             content: output,
             tool_call_id: Some(call_id),
             tool_calls: None,
+            thought_signature: None,
         }
     }
 
@@ -81,7 +95,30 @@ impl Message {
             content,
             tool_call_id: None,
             tool_calls: Some(tool_calls),
+            thought_signature: None,
         }
+    }
+
+    /// Create an assistant message with tool calls and thought signature
+    /// Used for Gemini 3 multi-turn function calling
+    pub fn assistant_with_tool_calls_and_signature(
+        content: String,
+        tool_calls: Vec<ToolCallInfo>,
+        thought_signature: Option<String>,
+    ) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content,
+            tool_call_id: None,
+            tool_calls: Some(tool_calls),
+            thought_signature,
+        }
+    }
+
+    /// Set the thought signature on an existing message
+    pub fn with_thought_signature(mut self, signature: Option<String>) -> Self {
+        self.thought_signature = signature;
+        self
     }
 }
 
@@ -90,8 +127,8 @@ impl Message {
 pub struct TokenUsage {
     pub input: i64,
     pub output: i64,
-    pub reasoning: i64, // For GPT-5
-    pub cached: i64,    // For future use
+    pub reasoning: i64, // For thinking tokens (Gemini 3)
+    pub cached: i64,    // For cached tokens
 }
 
 /// Basic chat response (no tools)

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::llm::provider::{Gpt5Provider, Message, ReasoningEffort};
+use crate::llm::provider::{Gemini3Provider, Message, ThinkingLevel};
 use crate::prompt::internal::patterns as prompts;
 
 use super::matcher::PatternMatcher;
@@ -64,7 +64,7 @@ pub struct ExecutedStep {
 pub struct PatternReplay {
     storage: Arc<PatternStorage>,
     matcher: Arc<PatternMatcher>,
-    llm: Gpt5Provider,
+    llm: Gemini3Provider,
     config: ReplayConfig,
 }
 
@@ -72,7 +72,7 @@ impl PatternReplay {
     pub fn new(
         storage: Arc<PatternStorage>,
         matcher: Arc<PatternMatcher>,
-        llm: Gpt5Provider,
+        llm: Gemini3Provider,
     ) -> Self {
         Self {
             storage,
@@ -207,16 +207,15 @@ impl PatternReplay {
 
         let messages = vec![Message::user(user_content)];
 
-        // Use appropriate reasoning effort based on step type
-        let effort = match step.step_type {
-            StepType::Generate | StepType::Analyze => ReasoningEffort::Medium,
-            StepType::Validate | StepType::Decide => ReasoningEffort::High,
-            _ => ReasoningEffort::Minimum,
+        // Use appropriate thinking level based on step type
+        let thinking_level = match step.step_type {
+            StepType::Validate | StepType::Decide => ThinkingLevel::High,
+            _ => ThinkingLevel::Low,
         };
 
         let response = self
             .llm
-            .complete_with_reasoning(messages, system_prompt, effort)
+            .complete_with_thinking(messages, system_prompt, thinking_level)
             .await
             .context("Step execution failed")?;
 
@@ -250,7 +249,7 @@ impl PatternReplay {
 
         let response = self
             .llm
-            .complete_with_reasoning(messages, system_prompt.to_string(), ReasoningEffort::Medium)
+            .complete_with_thinking(messages, system_prompt.to_string(), ThinkingLevel::High)
             .await?;
 
         Ok(response.content)
@@ -287,7 +286,7 @@ impl PatternReplay {
 
         let response = self
             .llm
-            .complete_with_reasoning(messages, system_prompt, ReasoningEffort::Medium)
+            .complete_with_thinking(messages, system_prompt, ThinkingLevel::High)
             .await?;
 
         Ok(response.content)

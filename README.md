@@ -1,13 +1,13 @@
 # Mira
 
-**AI-Powered Coding Assistant with GPT 5.1 and Hybrid Memory**
+**AI-Powered Coding Assistant with Gemini 3 Pro and Hybrid Memory**
 
-Mira is a sophisticated AI coding assistant powered by GPT 5.1 with variable reasoning effort, backed by a comprehensive memory system (SQLite + Qdrant) and real-time streaming architecture.
+Mira is a sophisticated AI coding assistant powered by Gemini 3 Pro with variable thinking levels, backed by a comprehensive memory system (SQLite + Qdrant) and real-time streaming architecture.
 
 ## Overview
 
 Mira combines:
-- **GPT 5.1** for state-of-the-art reasoning with variable effort levels (minimum/medium/high)
+- **Gemini 3 Pro** for state-of-the-art reasoning with variable thinking levels (low/high)
 - **Hybrid Memory System** with SQLite (structured) + Qdrant (vector) storage
 - **Code Intelligence** for semantic understanding, call graph analysis, and pattern detection
 - **Git Intelligence** for commit tracking, co-change patterns, and expertise scoring
@@ -31,8 +31,8 @@ Built with **Rust** (backend) and **React + TypeScript** (frontend) for performa
             +-----------+-----------+-----------+-----------+
             |           |           |           |           |
       +-----v-----+ +---v---+ +-----v-----+ +---v---+ +-----v-----+
-      | Operation | | GPT   | | Memory    | | Git   | | Code      |
-      | Engine    | | 5.1   | | Service   | | Intel | | Intel     |
+      | Operation | | Gemini| | Memory    | | Git   | | Code      |
+      | Engine    | | 3 Pro | | Service   | | Intel | | Intel     |
       +-----------+ +-------+ +-----------+ +-------+ +-----------+
                                     |
                         +-----------+-----------+
@@ -52,7 +52,7 @@ mira/
 │   │   ├── api/      # WebSocket handlers
 │   │   ├── operations/ # Operation engine
 │   │   ├── memory/   # Memory systems
-│   │   ├── llm/      # LLM providers (GPT 5.1)
+│   │   ├── llm/      # LLM providers (Gemini 3 Pro)
 │   │   └── git/      # Git integration + intelligence
 │   ├── tests/        # Integration tests (127+ tests)
 │   ├── migrations/   # Database migrations (9 migrations)
@@ -70,7 +70,7 @@ mira/
 ## Implemented Features
 
 ### Core System
-- **GPT 5.1 Integration** - Single-model architecture with variable reasoning effort (minimum/medium/high)
+- **Gemini 3 Pro Integration** - Single-model architecture with variable thinking levels (low/high)
 - **Budget Tracking** - Daily/monthly spending limits with per-request cost tracking
 - **LLM Response Cache** - SHA-256 keyed cache targeting 80%+ hit rate
 - **Real-time Streaming** - WebSocket-based bidirectional communication with cancellation support
@@ -148,7 +148,7 @@ mira/
 - **Rust 1.91** (target version)
 - **SQLite 3.35+**
 - **Qdrant** running on `localhost:6334` (gRPC)
-- **API Keys**: OpenAI (GPT 5.1 + embeddings)
+- **API Keys**: Google (Gemini 3 Pro + embeddings)
 
 ### Frontend
 - **Node.js 18+**
@@ -177,7 +177,7 @@ cargo build
 # Configure environment
 cp .env.example .env
 # Edit .env with your API keys:
-#   - OPENAI_API_KEY (for GPT 5.1 and embeddings)
+#   - GOOGLE_API_KEY (for Gemini 3 Pro and embeddings)
 
 # Run database migrations
 sqlx migrate run
@@ -260,11 +260,11 @@ MIRA_ENV=development
 DATABASE_URL=sqlite://data/mira.db
 QDRANT_URL=http://localhost:6334
 
-# OpenAI (GPT 5.1 + Embeddings)
-OPENAI_API_KEY=sk-...
-GPT5_MODEL=gpt-5.1
-GPT5_REASONING_DEFAULT=medium
-OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+# Google Gemini (LLM + Embeddings)
+GOOGLE_API_KEY=...
+GEMINI_MODEL=gemini-3-pro-preview
+GEMINI_THINKING_LEVEL=high
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
 # Budget Management
 BUDGET_DAILY_LIMIT_USD=5.0
@@ -292,7 +292,7 @@ CACHE_TTL_SECONDS=86400
 - **Async Runtime**: Tokio
 - **Database**: SQLite (with sqlx)
 - **Vector DB**: Qdrant (with qdrant-client)
-- **LLM**: OpenAI GPT 5.1 + text-embedding-3-large
+- **LLM**: Google Gemini 3 Pro + gemini-embedding-001
 
 ### Frontend
 - **Language**: TypeScript

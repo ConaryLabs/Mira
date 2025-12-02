@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::llm::provider::{Gpt5Provider, LlmProvider, Message};
+use crate::llm::provider::{Gemini3Provider, LlmProvider, Message};
 use crate::prompt::internal::patterns as prompts;
 
 use super::storage::PatternStorage;
@@ -36,7 +36,7 @@ impl Default for MatcherConfig {
 /// Pattern matcher finds applicable patterns for a context
 pub struct PatternMatcher {
     storage: Arc<PatternStorage>,
-    llm: Option<Gpt5Provider>,
+    llm: Option<Gemini3Provider>,
     config: MatcherConfig,
 }
 
@@ -49,7 +49,7 @@ impl PatternMatcher {
         }
     }
 
-    pub fn with_llm(mut self, llm: Gpt5Provider) -> Self {
+    pub fn with_llm(mut self, llm: Gemini3Provider) -> Self {
         self.llm = Some(llm);
         self
     }

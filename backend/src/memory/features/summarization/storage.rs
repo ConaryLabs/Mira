@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::OpenAiEmbeddings;
+use crate::llm::provider::GeminiEmbeddings;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::{SummaryRecord, SummaryType};
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -18,7 +18,7 @@ use crate::memory::storage::sqlite::store::SqliteMemoryStore;
 
 /// Storage layer for summaries - handles both SQLite and Qdrant persistence
 pub struct SummaryStorage {
-    embedding_client: Arc<OpenAiEmbeddings>,
+    embedding_client: Arc<GeminiEmbeddings>,
     sqlite_store: Arc<SqliteMemoryStore>,
     multi_store: Arc<QdrantMultiStore>,
 }
@@ -26,7 +26,7 @@ pub struct SummaryStorage {
 impl SummaryStorage {
     /// Create new summary storage with all required dependencies
     pub fn new(
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {

@@ -4,7 +4,7 @@ pub mod storage;
 pub mod strategies;
 pub mod triggers;
 
-use crate::llm::provider::{LlmProvider, OpenAiEmbeddings};
+use crate::llm::provider::{GeminiEmbeddings, LlmProvider};
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::features::memory_types::SummaryType;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -32,10 +32,10 @@ pub struct SummarizationEngine {
 
 impl SummarizationEngine {
     /// Creates new summarization engine with all strategy modules
-    /// Takes both LlmProvider (for summary generation) and OpenAiEmbeddings (for embeddings)
+    /// Takes both LlmProvider (for summary generation) and GeminiEmbeddings (for embeddings)
     pub fn new(
         llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {

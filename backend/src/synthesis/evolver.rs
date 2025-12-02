@@ -6,7 +6,7 @@ use chrono::Utc;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::llm::provider::{Gpt5Provider, Message, ReasoningEffort};
+use crate::llm::provider::{Gemini3Provider, Message, ThinkingLevel};
 use crate::prompt::internal::synthesis as prompts;
 
 use super::storage::SynthesisStorage;
@@ -35,13 +35,13 @@ impl Default for EvolverConfig {
 
 /// Tool evolver improves tools based on effectiveness metrics
 pub struct ToolEvolver {
-    llm: Gpt5Provider,
+    llm: Gemini3Provider,
     storage: Arc<SynthesisStorage>,
     config: EvolverConfig,
 }
 
 impl ToolEvolver {
-    pub fn new(llm: Gpt5Provider, storage: Arc<SynthesisStorage>) -> Self {
+    pub fn new(llm: Gemini3Provider, storage: Arc<SynthesisStorage>) -> Self {
         Self {
             llm,
             storage,
@@ -240,7 +240,7 @@ Generate an improved implementation that addresses these suggestions while maint
 
         let response = self
             .llm
-            .complete_with_reasoning(messages, system_prompt.to_string(), ReasoningEffort::High)
+            .complete_with_thinking(messages, system_prompt.to_string(), ThinkingLevel::High)
             .await
             .context("LLM improvement generation failed")?;
 

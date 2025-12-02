@@ -40,12 +40,7 @@ impl RollingSummaryStrategy {
             window_size, session_id
         );
 
-        let messages = vec![Message {
-            tool_call_id: None,
-            tool_calls: None,
-            role: "user".to_string(),
-            content: prompt,
-        }];
+        let messages = vec![Message::user(prompt)];
 
         // FIXED: Remove None argument - .chat() now takes only 2 args
         let response = self.llm_provider

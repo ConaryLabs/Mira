@@ -4,7 +4,7 @@
 // Tests: Message helpers, provider routing, LLM message flow, cloning
 
 use mira_backend::llm::provider::Message;
-use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
+use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
 
 // ============================================================================
 // Message Helper Tests
@@ -46,10 +46,10 @@ fn test_message_conversation_flow() {
 
 #[test]
 fn test_gpt5_provider_clone() {
-    let provider = Gpt5Provider::new(
+    let provider = Gemini3Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create provider");
 
     // Should compile and clone successfully (compile-time test)
@@ -63,10 +63,10 @@ fn test_gpt5_provider_clone() {
 
 #[test]
 fn test_provider_clone_independence() {
-    let original = Gpt5Provider::new(
+    let original = Gemini3Provider::new(
         "original-key".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create provider");
 
     let cloned = original.clone();
@@ -85,10 +85,10 @@ fn test_provider_clone_independence() {
 
 #[test]
 fn test_create_gpt5_provider() {
-    let provider = Gpt5Provider::new(
+    let provider = Gemini3Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::High,
+        ThinkingLevel::High,
     ).expect("Should create provider");
 
     // If this compiles, provider construction works
@@ -100,16 +100,16 @@ fn test_create_gpt5_provider() {
 
 #[test]
 fn test_provider_with_different_configs() {
-    let minimal = Gpt5Provider::new(
+    let minimal = Gemini3Provider::new(
         "key1".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::Minimum,
+        ThinkingLevel::Low,
     ).expect("Should create minimal provider");
 
-    let maximal = Gpt5Provider::new(
+    let maximal = Gemini3Provider::new(
         "key2".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::High,
+        ThinkingLevel::High,
     ).expect("Should create maximal provider");
 
     // Both should construct successfully
@@ -198,13 +198,8 @@ fn test_empty_context_handling() {
 fn test_context_with_system_message() {
     let mut context: Vec<Message> = Vec::new();
 
-    // System message (using user constructor since we don't have system helper)
-    context.push(Message {
-        role: "system".to_string(),
-        content: "You are a helpful assistant".to_string(),
-        tool_call_id: None,
-        tool_calls: None,
-    });
+    // System message
+    context.push(Message::system("You are a helpful assistant".to_string()));
     context.push(Message::user("Hello".to_string()));
     context.push(Message::assistant("Hi there!".to_string()));
 

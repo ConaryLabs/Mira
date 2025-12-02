@@ -1,6 +1,6 @@
 ---
 description: Systematic debugging with root cause analysis
-model: gpt5
+model: gemini
 allowed_tools: [read_project_file, search_codebase, get_file_structure, get_file_summary, debug_code]
 requires_context: true
 ---

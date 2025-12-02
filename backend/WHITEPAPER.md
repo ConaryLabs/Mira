@@ -5,7 +5,7 @@ This document provides a comprehensive technical reference for the Mira backend 
 ## System Overview
 
 Mira is an AI coding assistant with a Rust backend that uses:
-- **GPT 5.1** for all LLM operations with variable reasoning effort
+- **Gemini 3 Pro** for all LLM operations with variable thinking levels
 - **SQLite** for structured data storage (50+ tables)
 - **Qdrant** for vector embeddings (3 collections)
 - **WebSocket** for real-time client communication
@@ -28,7 +28,7 @@ Mira is an AI coding assistant with a Rust backend that uses:
         ┌──────────────────┼──────────────────┐
         │                  │                  │
 ┌───────v───────┐  ┌───────v───────┐  ┌───────v───────┐
-│  GPT 5.1      │  │  Memory       │  │  Git          │
+│  Gemini 3     │  │  Memory       │  │  Git          │
 │  Provider     │  │  Service      │  │  Intelligence │
 │  (src/llm/)   │  │  (src/memory/)│  │  (src/git/)   │
 └───────────────┘  └───────┬───────┘  └───────────────┘
@@ -43,29 +43,29 @@ Mira is an AI coding assistant with a Rust backend that uses:
 
 ## Core Components
 
-### 1. GPT 5.1 Provider (`src/llm/provider/gpt5.rs`)
+### 1. Gemini 3 Pro Provider (`src/llm/provider/gemini3.rs`)
 
-The LLM provider handles all GPT 5.1 API interactions.
+The LLM provider handles all Gemini 3 Pro API interactions.
 
 **Key Features:**
-- Variable reasoning effort: `Minimum`, `Medium`, `High`
-- Tool calling via OpenAI Chat Completions API format
+- Variable thinking levels: `Low`, `High`
+- Tool calling via Gemini Function Calling format
 - Streaming support via Server-Sent Events (SSE)
 - Response caching integration
+- Thought signature handling for multi-turn function calls
 
 **Usage:**
 ```rust
-let provider = Gpt5Provider::new(api_key, model, ReasoningEffort::Medium)?;
-let response = provider.complete(messages, reasoning_effort).await?;
-let stream = provider.complete_stream(messages, reasoning_effort).await?;
+let provider = Gemini3Provider::new(api_key, model, ThinkingLevel::High)?;
+let response = provider.chat(messages, thinking_level).await?;
+let stream = provider.stream(messages, thinking_level).await?;
 ```
 
 **Tool Format:**
-Tools must be in OpenAI-compatible format:
+Tools use Gemini function declaration format:
 ```json
 {
-  "type": "function",
-  "function": {
+  "functionDeclarations": [{
     "name": "read_file",
     "description": "Read contents of a file",
     "parameters": {
@@ -75,7 +75,7 @@ Tools must be in OpenAI-compatible format:
       },
       "required": ["path"]
     }
-  }
+  }]
 }
 ```
 
@@ -286,13 +286,13 @@ MIRA_ENV=development
 DATABASE_URL=sqlite://data/mira.db
 QDRANT_URL=http://localhost:6334
 
-# GPT 5.1
-OPENAI_API_KEY=sk-...
-GPT5_MODEL=gpt-5.1
-GPT5_REASONING_DEFAULT=medium
+# Gemini 3 Pro
+GOOGLE_API_KEY=...
+GEMINI_MODEL=gemini-3-pro-preview
+GEMINI_THINKING_LEVEL=high
 
 # Embeddings
-OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
 # Budget
 BUDGET_DAILY_LIMIT_USD=5.0
@@ -419,7 +419,7 @@ This section documents how information flows through the system - from storage t
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            GPT 5.1 API CALL                                 │
+│                         GEMINI 3 PRO API CALL                               │
 │                      System Prompt + User Message                           │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -665,7 +665,7 @@ let context_oracle = Arc::new(
 let memory_service = Arc::new(MemoryService::with_oracle(
     sqlite_store.clone(),
     multi_store.clone(),
-    gpt5_provider.clone(),
+    llm_provider.clone(),
     embedding_client.clone(),
     Some(context_oracle.clone()),
 ));

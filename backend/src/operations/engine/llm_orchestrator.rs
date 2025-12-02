@@ -1,5 +1,5 @@
-// backend/src/operations/engine/gpt5_orchestrator.rs
-// GPT 5.1-based orchestration for intelligent code generation and tool execution
+// backend/src/operations/engine/llm_orchestrator.rs
+// LLM orchestration for intelligent code generation and tool execution (Gemini 3 Pro)
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
-use crate::llm::provider::{Gpt5Pricing, Gpt5Provider, Message, ToolCall, ToolCallInfo, ToolCallResponse};
+use crate::llm::provider::{Gemini3Pricing, Gemini3Provider, Message, ToolCall, ToolCallInfo, ToolCallResponse};
 use crate::operations::engine::tool_router::ToolRouter;
 
 use super::events::OperationEngineEvent;
@@ -25,21 +25,21 @@ struct CachedToolResponse {
     finish_reason: String,
 }
 
-/// GPT 5.1 orchestrator for intelligent tool execution
+/// LLM orchestrator for intelligent tool execution (Gemini 3 Pro)
 ///
-/// Uses GPT 5.1 with variable reasoning effort for all operations.
+/// Uses Gemini 3 Pro with variable thinking levels for all operations.
 /// Handles tool calling loop with automatic result feedback.
 /// Integrates with BudgetTracker to track costs and enforce limits.
 /// Integrates with LlmCache to reduce API costs (target 80%+ hit rate).
-pub struct Gpt5Orchestrator {
-    provider: Gpt5Provider,
+pub struct LlmOrchestrator {
+    provider: Gemini3Provider,
     tool_router: Option<Arc<ToolRouter>>,
     budget_tracker: Option<Arc<BudgetTracker>>,
     cache: Option<Arc<LlmCache>>,
 }
 
-impl Gpt5Orchestrator {
-    pub fn new(provider: Gpt5Provider, tool_router: Option<Arc<ToolRouter>>) -> Self {
+impl LlmOrchestrator {
+    pub fn new(provider: Gemini3Provider, tool_router: Option<Arc<ToolRouter>>) -> Self {
         Self {
             provider,
             tool_router,
@@ -50,7 +50,7 @@ impl Gpt5Orchestrator {
 
     /// Create orchestrator with budget tracking and caching
     pub fn with_services(
-        provider: Gpt5Provider,
+        provider: Gemini3Provider,
         tool_router: Option<Arc<ToolRouter>>,
         budget_tracker: Option<Arc<BudgetTracker>>,
         cache: Option<Arc<LlmCache>>,
@@ -84,7 +84,7 @@ impl Gpt5Orchestrator {
             let cost = if from_cache {
                 0.0
             } else {
-                Gpt5Pricing::calculate_cost(tokens_input, tokens_output)
+                Gemini3Pricing::calculate_cost(tokens_input, tokens_output)
             };
 
             tracker
@@ -139,7 +139,7 @@ impl Gpt5Orchestrator {
 
         let messages_json = self.messages_to_json(messages);
         let model = self.provider.model();
-        let reasoning = self.provider.reasoning_effort().as_str();
+        let thinking = self.provider.thinking_level().as_str();
 
         match cache
             .get(
@@ -147,7 +147,7 @@ impl Gpt5Orchestrator {
                 Some(tools),
                 TOOL_SYSTEM_PROMPT,
                 model,
-                Some(reasoning),
+                Some(thinking),
             )
             .await
         {
@@ -165,6 +165,7 @@ impl Gpt5Orchestrator {
                             finish_reason: parsed.finish_reason,
                             tokens_input: cached.tokens_input,
                             tokens_output: cached.tokens_output,
+                            thought_signature: None, // Cached responses don't have signatures
                         })
                     }
                     Err(e) => {
@@ -197,7 +198,7 @@ impl Gpt5Orchestrator {
 
         let messages_json = self.messages_to_json(messages);
         let model = self.provider.model();
-        let reasoning = self.provider.reasoning_effort().as_str();
+        let thinking = self.provider.thinking_level().as_str();
 
         // Serialize response for caching
         let cached_response = CachedToolResponse {
@@ -214,7 +215,7 @@ impl Gpt5Orchestrator {
             }
         };
 
-        let cost = Gpt5Pricing::calculate_cost(response.tokens_input, response.tokens_output);
+        let cost = Gemini3Pricing::calculate_cost(response.tokens_input, response.tokens_output);
 
         if let Err(e) = cache
             .put(
@@ -222,7 +223,7 @@ impl Gpt5Orchestrator {
                 Some(tools),
                 TOOL_SYSTEM_PROMPT,
                 model,
-                Some(reasoning),
+                Some(thinking),
                 &response_json,
                 response.tokens_input,
                 response.tokens_output,
@@ -386,7 +387,7 @@ impl Gpt5Orchestrator {
         let actual_cost = if total_from_cache {
             0.0
         } else {
-            Gpt5Pricing::calculate_cost(total_tokens_input, total_tokens_output)
+            Gemini3Pricing::calculate_cost(total_tokens_input, total_tokens_output)
         };
 
         info!(
@@ -457,16 +458,16 @@ impl Gpt5Orchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::provider::ReasoningEffort;
+    use crate::llm::provider::ThinkingLevel;
 
     #[test]
     fn test_orchestrator_creation() {
-        let provider = Gpt5Provider::new(
+        let provider = Gemini3Provider::new(
             "test-key".to_string(),
-            "gpt-4o".to_string(),
-            ReasoningEffort::Medium,
+            "gemini-3-pro-preview".to_string(),
+            ThinkingLevel::High,
         ).expect("Should create provider");
-        let _orchestrator = Gpt5Orchestrator::new(provider, None);
+        let _orchestrator = LlmOrchestrator::new(provider, None);
 
         // Just verify it compiles and creates
         assert!(true);

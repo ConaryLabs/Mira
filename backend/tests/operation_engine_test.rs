@@ -8,8 +8,8 @@ use mira_backend::config::CONFIG;
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::LlmProvider;
-use mira_backend::llm::provider::OpenAiEmbeddings;
-use mira_backend::llm::provider::gpt5::{Gpt5Provider, ReasoningEffort};
+use mira_backend::llm::provider::GeminiEmbeddings;
+use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -24,11 +24,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-fn create_test_gpt5() -> Gpt5Provider {
-    Gpt5Provider::new(
+fn create_test_gpt5() -> Gemini3Provider {
+    Gemini3Provider::new(
         "test-key".to_string(),
         "gpt-5.1".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create GPT5 provider")
 }
 
@@ -51,16 +51,16 @@ async fn setup_services(
     );
 
     // Create embedding client (won't be used in these tests)
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         "test-key".to_string(),
         "text-embedding-3-large".to_string(),
     ));
 
     // Create LLM provider for MemoryService
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gpt5Provider::new(
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         "test-key".to_string(),
         "gpt-5-preview".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create GPT5 provider"));
 
     // Create MemoryService

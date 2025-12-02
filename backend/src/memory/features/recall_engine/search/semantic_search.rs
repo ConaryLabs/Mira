@@ -9,18 +9,18 @@ use std::sync::Arc;
 use tracing::debug;
 
 use super::super::{RecallConfig, ScoredMemory};
-use crate::llm::provider::OpenAiEmbeddings;
+use crate::llm::provider::GeminiEmbeddings;
 use crate::memory::{core::types::MemoryEntry, storage::qdrant::multi_store::QdrantMultiStore};
 
 #[derive(Clone)]
 pub struct SemanticSearch {
-    embedding_client: Arc<OpenAiEmbeddings>,
+    embedding_client: Arc<GeminiEmbeddings>,
     multi_store: Arc<QdrantMultiStore>,
 }
 
 impl SemanticSearch {
     pub fn new(
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
         Self {

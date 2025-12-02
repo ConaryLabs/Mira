@@ -2,7 +2,7 @@
 // Tests message analysis pipeline - tags, topics, salience, error detection
 // FIXME: All tests require GPT 5.1 response format work
 
-use mira_backend::llm::provider::{LlmProvider, gpt5::{Gpt5Provider, ReasoningEffort}};
+use mira_backend::llm::provider::{LlmProvider, {Gemini3Provider, ThinkingLevel}};
 use mira_backend::memory::features::message_pipeline::MessagePipeline;
 use std::sync::Arc;
 
@@ -456,10 +456,10 @@ fn create_llm_provider() -> Arc<dyn LlmProvider> {
     // Get API key from environment
     let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests");
 
-    Arc::new(Gpt5Provider::new(
+    Arc::new(Gemini3Provider::new(
         api_key,
         "gpt-5.1".to_string(),
-        ReasoningEffort::Medium,
+        ThinkingLevel::High,
     ).expect("Should create GPT5 provider"))
 }
 

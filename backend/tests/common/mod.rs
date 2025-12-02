@@ -8,19 +8,14 @@ pub fn get_test_api_key(env_var: &str) -> String {
     env::var(env_var).unwrap_or_else(|_| "test-key-placeholder".to_string())
 }
 
-/// Get OpenAI API key for tests (from environment or placeholder)
-pub fn openai_api_key() -> String {
-    get_test_api_key("OPENAI_API_KEY")
-}
-
-/// Get GPT 5.1 API key for tests (from environment or placeholder)
-pub fn gpt5_api_key() -> String {
-    get_test_api_key("OPENAI_API_KEY")
+/// Get Google API key for tests (from environment or placeholder)
+pub fn google_api_key() -> String {
+    get_test_api_key("GOOGLE_API_KEY")
 }
 
 /// Check if running with real API keys
 pub fn has_real_api_keys() -> bool {
-    env::var("OPENAI_API_KEY").is_ok()
+    env::var("GOOGLE_API_KEY").is_ok()
 }
 
 /// Skip test if API keys are not available (for integration tests only)
@@ -28,7 +23,7 @@ pub fn has_real_api_keys() -> bool {
 macro_rules! skip_without_api_keys {
     () => {
         if !$crate::common::has_real_api_keys() {
-            eprintln!("Skipping test: OPENAI_API_KEY not set");
+            eprintln!("Skipping test: GOOGLE_API_KEY not set");
             return;
         }
     };

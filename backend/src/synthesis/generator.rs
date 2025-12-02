@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::llm::provider::{Gpt5Provider, Message, ReasoningEffort};
+use crate::llm::provider::{Gemini3Provider, Message, ThinkingLevel};
 use crate::prompt::internal::synthesis as prompts;
 
 use super::storage::SynthesisStorage;
@@ -32,13 +32,13 @@ impl Default for GeneratorConfig {
 
 /// LLM-based tool generator
 pub struct ToolGenerator {
-    llm: Gpt5Provider,
+    llm: Gemini3Provider,
     storage: Arc<SynthesisStorage>,
     config: GeneratorConfig,
 }
 
 impl ToolGenerator {
-    pub fn new(llm: Gpt5Provider, storage: Arc<SynthesisStorage>) -> Self {
+    pub fn new(llm: Gemini3Provider, storage: Arc<SynthesisStorage>) -> Self {
         Self {
             llm,
             storage,
@@ -132,24 +132,23 @@ impl ToolGenerator {
         let mut all_errors = Vec::new();
 
         for attempt in 1..=self.config.max_retries {
-            // Escalate reasoning effort with each attempt
-            let reasoning_effort = match attempt {
-                1 => ReasoningEffort::Minimum,
-                2 => ReasoningEffort::Medium,
-                _ => ReasoningEffort::High,
+            // Escalate thinking level with each attempt
+            let thinking_level = match attempt {
+                1 => ThinkingLevel::Low,
+                _ => ThinkingLevel::High,
             };
 
             info!(
-                "Generation attempt {} for {} with {:?} reasoning",
-                attempt, tool_name, reasoning_effort
+                "Generation attempt {} for {} with {:?} thinking",
+                attempt, tool_name, thinking_level
             );
 
             // Generate code
             let code = if attempt == 1 {
-                self.generate_initial_code(pattern, tool_name, reasoning_effort)
+                self.generate_initial_code(pattern, tool_name, thinking_level)
                     .await?
             } else {
-                self.generate_retry_code(pattern, tool_name, &all_errors, reasoning_effort)
+                self.generate_retry_code(pattern, tool_name, &all_errors, thinking_level)
                     .await?
             };
 
@@ -185,7 +184,7 @@ impl ToolGenerator {
         &self,
         pattern: &ToolPattern,
         tool_name: &str,
-        reasoning_effort: ReasoningEffort,
+        thinking_level: ThinkingLevel,
     ) -> Result<String> {
         let system_prompt = self.get_generation_system_prompt();
         let user_prompt = self.get_initial_generation_prompt(pattern, tool_name);
@@ -194,7 +193,7 @@ impl ToolGenerator {
 
         let response = self
             .llm
-            .complete_with_reasoning(messages, system_prompt, reasoning_effort)
+            .complete_with_thinking(messages, system_prompt, thinking_level)
             .await
             .context("LLM code generation failed")?;
 
@@ -208,7 +207,7 @@ impl ToolGenerator {
         pattern: &ToolPattern,
         tool_name: &str,
         errors: &[String],
-        reasoning_effort: ReasoningEffort,
+        thinking_level: ThinkingLevel,
     ) -> Result<String> {
         let system_prompt = self.get_generation_system_prompt();
         let user_prompt = self.get_retry_generation_prompt(pattern, tool_name, errors);
@@ -217,7 +216,7 @@ impl ToolGenerator {
 
         let response = self
             .llm
-            .complete_with_reasoning(messages, system_prompt, reasoning_effort)
+            .complete_with_thinking(messages, system_prompt, thinking_level)
             .await
             .context("LLM code generation failed")?;
 

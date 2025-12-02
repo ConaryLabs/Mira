@@ -4,7 +4,7 @@
 //! The crown jewel of API optimization - saves 90% of API calls.
 
 use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::OpenAiEmbeddings;
+use crate::llm::provider::GeminiEmbeddings;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::BatchEmbeddingConfig;
 use anyhow::Result;
@@ -13,13 +13,13 @@ use tracing::{debug, info, warn};
 
 /// Manages embedding generation with intelligent batching
 pub struct EmbeddingManager {
-    embedding_client: Arc<OpenAiEmbeddings>,
+    embedding_client: Arc<GeminiEmbeddings>,
     config: BatchEmbeddingConfig,
 }
 
 impl EmbeddingManager {
     /// Creates a new embedding manager with default configuration
-    pub fn new(embedding_client: Arc<OpenAiEmbeddings>) -> Result<Self> {
+    pub fn new(embedding_client: Arc<GeminiEmbeddings>) -> Result<Self> {
         Ok(Self {
             embedding_client,
             config: BatchEmbeddingConfig::default(),
@@ -28,7 +28,7 @@ impl EmbeddingManager {
 
     /// Creates manager with custom batch configuration
     pub fn with_config(
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
         config: BatchEmbeddingConfig,
     ) -> Result<Self> {
         Ok(Self {

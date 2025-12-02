@@ -11,19 +11,19 @@ use tracing::debug;
 
 use super::super::scoring::CompositeScorer;
 use super::super::{RecallConfig, ScoredMemory};
-use crate::llm::{embeddings::EmbeddingHead, provider::OpenAiEmbeddings};
+use crate::llm::{embeddings::EmbeddingHead, provider::GeminiEmbeddings};
 use crate::memory::{core::types::MemoryEntry, storage::qdrant::multi_store::QdrantMultiStore};
 
 #[derive(Clone)]
 pub struct MultiHeadSearch {
-    embedding_client: Arc<OpenAiEmbeddings>,
+    embedding_client: Arc<GeminiEmbeddings>,
     multi_store: Arc<QdrantMultiStore>,
     scorer: CompositeScorer,
 }
 
 impl MultiHeadSearch {
     pub fn new(
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
         multi_store: Arc<QdrantMultiStore>,
     ) -> Self {
         Self {

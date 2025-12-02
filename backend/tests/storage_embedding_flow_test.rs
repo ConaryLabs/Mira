@@ -6,7 +6,7 @@ use chrono::Utc;
 fn init_env() {
     let _ = dotenv::dotenv();
 }
-use mira_backend::llm::{embeddings::EmbeddingHead, provider::OpenAiEmbeddings};
+use mira_backend::llm::{embeddings::EmbeddingHead, provider::GeminiEmbeddings};
 use mira_backend::memory::{
     core::traits::MemoryStore, core::types::MemoryEntry,
     storage::qdrant::multi_store::QdrantMultiStore, storage::sqlite::store::SqliteMemoryStore,
@@ -598,11 +598,11 @@ fn create_test_entry(session_id: &str, role: &str, content: &str) -> MemoryEntry
     }
 }
 
-fn create_embedding_client() -> Arc<OpenAiEmbeddings> {
+fn create_embedding_client() -> Arc<GeminiEmbeddings> {
     init_env();
     let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for tests - ensure backend/.env exists");
 
-    Arc::new(OpenAiEmbeddings::new(
+    Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
         "text-embedding-3-large".to_string(),
     ))

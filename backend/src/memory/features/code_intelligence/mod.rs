@@ -46,7 +46,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::OpenAiEmbeddings;
+use crate::llm::provider::GeminiEmbeddings;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
@@ -54,7 +54,7 @@ use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 pub struct CodeIntelligenceService {
     storage: Arc<CodeIntelligenceStorage>,
     multi_store: Arc<QdrantMultiStore>,
-    embedding_client: Arc<OpenAiEmbeddings>,
+    embedding_client: Arc<GeminiEmbeddings>,
     pool: SqlitePool,
     rust_parser: RustParser,
     typescript_parser: TypeScriptParser,
@@ -68,7 +68,7 @@ impl CodeIntelligenceService {
     pub fn new(
         pool: SqlitePool,
         multi_store: Arc<QdrantMultiStore>,
-        embedding_client: Arc<OpenAiEmbeddings>,
+        embedding_client: Arc<GeminiEmbeddings>,
     ) -> Self {
         let db = Arc::new(pool.clone());
         Self {

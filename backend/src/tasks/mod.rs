@@ -250,9 +250,9 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
 
-            // Use GPT 5.1 provider for message analysis
-            let gpt5_provider = app_state.gpt5_provider.clone();
-            let message_pipeline = MessagePipeline::new(gpt5_provider);
+            // Use Gemini 3 provider for message analysis
+            let llm_provider = app_state.llm_provider.clone();
+            let message_pipeline = MessagePipeline::new(llm_provider);
 
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);

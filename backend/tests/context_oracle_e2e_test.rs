@@ -11,7 +11,7 @@ use chrono::Utc;
 use dotenv::dotenv;
 use mira_backend::budget::BudgetTracker;
 use mira_backend::context_oracle::{ContextConfig, ContextOracle, ContextRequest};
-use mira_backend::llm::provider::{Gpt5Provider, OpenAiEmbeddings, ReasoningEffort};
+use mira_backend::llm::provider::{Gemini3Provider, GeminiEmbeddings, ThinkingLevel};
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
@@ -39,7 +39,7 @@ async fn setup_test_pool() -> SqlitePool {
     pool
 }
 
-fn get_openai_api_key() -> Option<String> {
+fn get_google_api_key() -> Option<String> {
     dotenv().ok();
     std::env::var("OPENAI_API_KEY").ok()
 }
@@ -55,7 +55,7 @@ fn get_qdrant_url() -> String {
 #[tokio::test]
 #[ignore] // Requires real API key and Qdrant
 async fn test_context_oracle_full_flow() {
-    let api_key = match get_openai_api_key() {
+    let api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
             println!("Skipping test: OPENAI_API_KEY not set");
@@ -73,7 +73,7 @@ async fn test_context_oracle_full_flow() {
             .expect("Failed to connect to Qdrant"),
     );
 
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
         "text-embedding-3-large".to_string(),
     ));
@@ -114,7 +114,7 @@ async fn test_context_oracle_full_flow() {
 #[tokio::test]
 #[ignore] // Requires real API key and Qdrant
 async fn test_memory_service_with_oracle() {
-    let api_key = match get_openai_api_key() {
+    let api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
             println!("Skipping test: OPENAI_API_KEY not set");
@@ -135,10 +135,10 @@ async fn test_memory_service_with_oracle() {
 
     // Initialize providers
     let llm_provider = Arc::new(
-        Gpt5Provider::new(api_key.clone(), "gpt-5.1".to_string(), ReasoningEffort::Medium)
+        Gemini3Provider::new(api_key.clone(), "gpt-5.1".to_string(), ThinkingLevel::High)
             .expect("Failed to create GPT provider"),
     );
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
         "text-embedding-3-large".to_string(),
     ));
@@ -194,7 +194,7 @@ async fn test_memory_service_with_oracle() {
 #[tokio::test]
 #[ignore] // Requires real API key
 async fn test_budget_aware_config_with_tracker() {
-    let _api_key = match get_openai_api_key() {
+    let _api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
             println!("Skipping test: OPENAI_API_KEY not set");
@@ -271,7 +271,7 @@ async fn test_budget_aware_config_with_tracker() {
 #[tokio::test]
 #[ignore] // Requires real API key and Qdrant
 async fn test_full_integration_flow() {
-    let api_key = match get_openai_api_key() {
+    let api_key = match get_google_api_key() {
         Some(key) => key,
         None => {
             println!("Skipping test: OPENAI_API_KEY not set");
@@ -294,10 +294,10 @@ async fn test_full_integration_flow() {
     );
 
     let llm_provider = Arc::new(
-        Gpt5Provider::new(api_key.clone(), "gpt-5.1".to_string(), ReasoningEffort::Medium)
+        Gemini3Provider::new(api_key.clone(), "gpt-5.1".to_string(), ThinkingLevel::High)
             .expect("Failed to create GPT provider"),
     );
-    let embedding_client = Arc::new(OpenAiEmbeddings::new(
+    let embedding_client = Arc::new(GeminiEmbeddings::new(
         api_key.clone(),
         "text-embedding-3-large".to_string(),
     ));

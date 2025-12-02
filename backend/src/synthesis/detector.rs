@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::llm::provider::{Gpt5Provider, LlmProvider, Message};
+use crate::llm::provider::{Gemini3Provider, LlmProvider, Message};
 use crate::prompt::internal::synthesis as prompts;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 
@@ -33,7 +33,7 @@ impl Default for DetectorConfig {
 
 /// LLM-based pattern detector
 pub struct PatternDetector {
-    llm: Gpt5Provider,
+    llm: Gemini3Provider,
     code_intelligence: Arc<CodeIntelligenceService>,
     storage: Arc<SynthesisStorage>,
     config: DetectorConfig,
@@ -41,7 +41,7 @@ pub struct PatternDetector {
 
 impl PatternDetector {
     pub fn new(
-        llm: Gpt5Provider,
+        llm: Gemini3Provider,
         code_intelligence: Arc<CodeIntelligenceService>,
         storage: Arc<SynthesisStorage>,
     ) -> Self {

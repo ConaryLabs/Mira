@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::{
-    AppState, config::CONFIG, llm::embeddings::EmbeddingHead, llm::provider::OpenAiEmbeddings,
+    AppState, config::CONFIG, llm::embeddings::EmbeddingHead, llm::provider::GeminiEmbeddings,
     memory::core::types::MemoryEntry, memory::storage::qdrant::multi_store::QdrantMultiStore,
 };
 use chrono::{DateTime, Utc};
@@ -170,7 +170,7 @@ impl BackfillTask {
         &self,
         _pool: &SqlitePool,
         messages: &[MessageForBackfill],
-        embedding_client: &Arc<OpenAiEmbeddings>,
+        embedding_client: &Arc<GeminiEmbeddings>,
         multi_store: &Arc<QdrantMultiStore>,
     ) -> Result<usize> {
         // Collect all texts for batch embedding

@@ -6,15 +6,15 @@ Mira is a next-generation AI coding assistant combining:
 - **Programming Context Oracle** from mira-cli (semantic code understanding, git intelligence, pattern detection)
 - **Personal Memory System** from Mira (user preferences, communication style, learned patterns)
 - **Web-based Interface** for accessibility and collaboration
-- **GPT 5.1** for state-of-the-art reasoning with variable effort levels
+- **Gemini 3 Pro** for state-of-the-art reasoning with variable thinking levels
 
 The result is a well-rounded assistant that understands both your code and you as a developer.
 
 ## Core Architecture
 
 ### LLM Stack
-- **Primary Model**: GPT 5.1 with variable reasoning effort (minimum/medium/high)
-- **Embeddings**: OpenAI text-embedding-3-large (3072 dimensions)
+- **Primary Model**: Gemini 3 Pro with variable thinking levels (low/high)
+- **Embeddings**: Gemini gemini-embedding-001 (3072 dimensions)
 - **Cost Optimization**: 80%+ cache hit rate target, budget tracking with daily/monthly limits
 
 ### Storage Architecture
@@ -260,19 +260,19 @@ Estimated monthly: $132 (vs $825 without cache)
 
 ### Milestone 1: Foundation - COMPLETE
 
-**Goal**: Core schema, GPT 5.1 integration, budget/cache system
+**Goal**: Core schema, Gemini 3 Pro integration, budget/cache system
 
 **Deliverables**:
 - [x] 9 SQL migrations (50+ tables)
 - [x] 3 Qdrant collections setup (code, conversation, git)
-- [x] GPT 5.1 provider implementation
+- [x] Gemini 3 Pro provider implementation
 - [x] Budget tracking module
 - [x] LLM cache module
 - [x] Basic tests (127+ passing)
 
 **Key Files**:
 - `backend/migrations/` - 9 migration files
-- `backend/src/llm/provider/gpt5.rs` - GPT 5.1 provider
+- `backend/src/llm/provider/gemini3.rs` - Gemini 3 Pro provider
 - `backend/src/budget/mod.rs` - Budget tracking
 - `backend/src/cache/mod.rs` - LLM response cache
 - `backend/src/memory/storage/qdrant/multi_store.rs` - Qdrant multi-collection store
@@ -385,7 +385,7 @@ Estimated monthly: $132 (vs $825 without cache)
 - [x] ContextBuilder integration with oracle output
 - [x] Enhanced RecallEngine combining oracle + memory
 - [x] Budget-aware context config selection
-- [x] End-to-end testing with real LLM (GPT 5.1)
+- [x] End-to-end testing with real LLM (Gemini 3 Pro)
 
 **Key Files**:
 - `backend/src/context_oracle/types.rs` - Context types and configs
@@ -421,7 +421,7 @@ Estimated monthly: $132 (vs $825 without cache)
 **E2E Testing**:
 - 4 integration tests in `context_oracle_e2e_test.rs`
 - Tests full flow: Oracle + MemoryService + BudgetTracker
-- Requires real OpenAI API key and Qdrant (run with `--ignored`)
+- Requires real Google API key and Qdrant (run with `--ignored`)
 
 **Commits**:
 - `678998d` - Integrate Context Oracle into AppState and OperationEngine
@@ -530,8 +530,8 @@ Estimated monthly: $132 (vs $825 without cache)
 - **WebSocket**: tokio-tungstenite
 - **Database**: SQLite 3.35+ with sqlx
 - **Vector DB**: Qdrant (localhost:6334 gRPC)
-- **LLM**: GPT 5.1 via OpenAI API
-- **Embeddings**: text-embedding-3-large via OpenAI API
+- **LLM**: Gemini 3 Pro via Google AI API
+- **Embeddings**: gemini-embedding-001 via Google AI API
 
 ### Frontend
 - **Framework**: React 18+ with TypeScript
@@ -602,7 +602,7 @@ Estimated monthly: $132 (vs $825 without cache)
 
 **Milestone 1: Foundation** - Complete
 - 9 SQL migrations (50+ tables)
-- GPT 5.1 provider with variable reasoning effort
+- Gemini 3 Pro provider with variable thinking levels
 - Budget tracking and LLM cache modules
 - 3 Qdrant collections (code, conversation, git)
 - 127+ tests passing
@@ -665,4 +665,4 @@ Estimated monthly: $132 (vs $825 without cache)
 
 ### Architecture
 
-GPT 5.1 single-model with variable reasoning effort (minimum/medium/high). Database schema combines mira-cli's programming context oracle with Mira's personal memory system. All operations routed through the unified Operation Engine. Real-time file watching via notify crate for immediate code intelligence updates.
+Gemini 3 Pro single-model with variable thinking levels (low/high). Database schema combines mira-cli's programming context oracle with Mira's personal memory system. All operations routed through the unified Operation Engine. Real-time file watching via notify crate for immediate code intelligence updates.

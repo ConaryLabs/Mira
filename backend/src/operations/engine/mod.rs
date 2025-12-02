@@ -10,7 +10,7 @@ pub mod events;
 pub mod external_handlers;
 pub mod file_handlers;
 pub mod git_handlers;
-pub mod gpt5_orchestrator;
+pub mod llm_orchestrator;
 pub mod guidelines_handlers;
 pub mod lifecycle;
 pub mod orchestration;
@@ -24,7 +24,7 @@ use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
-use crate::llm::provider::Gpt5Provider;
+use crate::llm::provider::Gemini3Provider;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
 use crate::project::guidelines::ProjectGuidelinesService;
@@ -54,7 +54,7 @@ pub struct OperationEngine {
 impl OperationEngine {
     pub fn new(
         db: Arc<SqlitePool>,
-        gpt5: Gpt5Provider,
+        llm: Gemini3Provider,
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
         git_client: GitClient,
@@ -87,7 +87,7 @@ impl OperationEngine {
 
         // Create tool router for file operations and code intelligence
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let mut tool_router = ToolRouter::new(gpt5.clone(), project_dir, code_intelligence, sudo_service);
+        let mut tool_router = ToolRouter::new(llm.clone(), project_dir, code_intelligence, sudo_service);
 
         // Add project task service if provided
         if let Some(task_service) = project_task_service {
@@ -103,18 +103,18 @@ impl OperationEngine {
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
 
-        // Create GPT 5.1 orchestrator with budget tracking and caching
-        use crate::operations::engine::gpt5_orchestrator::Gpt5Orchestrator;
+        // Create Gemini 3 orchestrator with budget tracking and caching
+        use crate::operations::engine::llm_orchestrator::LlmOrchestrator;
 
-        let gpt5_orchestrator = Gpt5Orchestrator::with_services(
-            gpt5,
+        let llm_orchestrator = LlmOrchestrator::with_services(
+            llm,
             Some(Arc::clone(&tool_router_arc)),
             budget_tracker,
             llm_cache,
         );
 
         let orchestrator = Orchestrator::new(
-            Some(Arc::new(gpt5_orchestrator)),
+            Some(Arc::new(llm_orchestrator)),
             memory_service,
             context_builder,
             context_loader,

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses GPT 5.1 with variable reasoning effort levels, hybrid memory systems (SQLite + Qdrant), real-time WebSocket streaming, and comprehensive code intelligence including semantic graph analysis, git intelligence, and tool synthesis.
+Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses Gemini 3 Pro with variable thinking levels, hybrid memory systems (SQLite + Qdrant), real-time WebSocket streaming, and comprehensive code intelligence including semantic graph analysis, git intelligence, and tool synthesis.
 
 ## Repository Structure
 
@@ -123,12 +123,12 @@ npm run preview
 
 ### Backend Architecture
 
-**GPT 5.1 Single-Model with Variable Reasoning:**
-- **GPT 5.1** handles all operations with variable reasoning effort (minimum/medium/high)
+**Gemini 3 Pro Single-Model with Variable Thinking:**
+- **Gemini 3 Pro** handles all operations with variable thinking levels (low/high)
 - **Budget Management** tracks daily/monthly spending with user-configurable limits
 - **LLM Response Cache** targets 80%+ hit rate for cost optimization (SHA-256 key hashing)
 - **Operation Engine** (`src/operations/engine/`) orchestrates complex workflows with status tracking
-- **Reasoning Effort Selection** adapts model complexity to task requirements
+- **Thinking Level Selection** adapts model complexity to task requirements
 
 **Memory Systems** (`src/memory/`):
 - **Hybrid storage**: SQLite (50+ tables) + Qdrant (3 collections: code, conversation, git)
@@ -148,7 +148,7 @@ npm run preview
 - `src/operations/engine/` - Modular operation orchestration (lifecycle, artifacts, events, status tracking)
 - `src/memory/` - Memory service coordinating SQLite + Qdrant stores
 - `src/memory/features/code_intelligence/` - Semantic graph, call graph, pattern detection
-- `src/llm/provider/` - GPT 5.1 provider with reasoning effort, OpenAI embeddings
+- `src/llm/provider/` - Gemini 3 Pro provider with thinking levels, Gemini embeddings
 - `src/budget/` - Budget tracking with daily/monthly limits
 - `src/cache/` - LLM response cache (SHA-256 hashing, 80%+ hit rate)
 - `src/git/intelligence/` - Commit tracking, co-change analysis, expertise scoring
@@ -195,7 +195,7 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
 - **Qdrant 1.16+** running on `localhost:6334` (gRPC) and `localhost:6333` (HTTP)
-- **API Keys**: OpenAI (GPT 5.1 + embeddings)
+- **API Keys**: Google (Gemini 3 Pro + Gemini embeddings)
 
 ### Starting Qdrant
 
@@ -228,11 +228,11 @@ DATABASE_URL=sqlite://data/mira.db
 # Qdrant (gRPC port)
 QDRANT_URL=http://localhost:6334
 
-# OpenAI (GPT 5.1 + Embeddings)
-OPENAI_API_KEY=sk-...
-GPT5_MODEL=gpt-5.1
-GPT5_REASONING_DEFAULT=medium
-OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+# Google Gemini (Gemini 3 Pro + Embeddings)
+GOOGLE_API_KEY=your-google-api-key
+GEMINI_MODEL=gemini-3-pro-preview
+GEMINI_THINKING_LEVEL=high
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
 # Budget Management
 BUDGET_DAILY_LIMIT_USD=5.0
@@ -263,7 +263,7 @@ The frontend proxies to backend port 3001 (configured in `vite.config.js`).
 **Environment for Tests:**
 - Tests load `backend/.env` via `dotenv::dotenv()` for API keys
 - Qdrant tests require Qdrant running on `localhost:6334` (gRPC)
-- Some tests marked `#[ignore]` require real OpenAI API calls
+- Some tests marked `#[ignore]` require real Gemini API calls
 - Run ignored tests with: `cargo test -- --ignored`
 
 ### Frontend Tests
@@ -278,19 +278,18 @@ Operations are complex multi-step workflows tracked through state transitions. W
 
 1. Define operation kind in `src/operations/types.rs` (`operation_kinds`)
 2. Update operation engine in `src/operations/engine/orchestration.rs`
-3. Add tool schemas in `src/operations/delegation_tools.rs` (use `get_gpt5_tools()`)
+3. Add tool schemas in `src/operations/delegation_tools.rs` (use `get_delegation_tools()`)
 4. Update context building in `src/operations/engine/context.rs`
 5. Emit events via channels for real-time frontend updates
 
-**Tool Schema Format** (OpenAI Chat Completions API):
+**Tool Schema Format** (Gemini Function Declarations):
 ```json
 {
-  "type": "function",
-  "function": {
+  "functionDeclarations": [{
     "name": "tool_name",
     "description": "What the tool does",
     "parameters": { ... }
-  }
+  }]
 }
 ```
 
@@ -317,7 +316,7 @@ Repositories stored in `backend/repos/` (or `backend/test_repos/` for tests).
 
 **When debugging memory issues:**
 - Check `SALIENCE_MIN_FOR_EMBED` threshold (default 0.6)
-- Verify OpenAI API key for embeddings
+- Verify Google API key for embeddings
 - Inspect `EMBED_HEADS` configuration
 - Run `backend/scripts/db-reset-qdrant.sh` if embeddings are corrupted
 
@@ -454,7 +453,7 @@ curl http://localhost:6333/collections
 ## External Dependencies
 
 - **Qdrant** vector database for embeddings (must run separately)
-- **OpenAI API** for GPT 5.1 (LLM) and text-embedding-3-large (embeddings)
+- **Google Gemini API** for Gemini 3 Pro (LLM) and gemini-embedding-001 (embeddings)
 - **SQLite** for structured storage (embedded)
 
 ## Additional Documentation

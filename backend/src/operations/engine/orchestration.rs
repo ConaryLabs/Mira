@@ -1,12 +1,12 @@
 // src/operations/engine/orchestration.rs
-// Main operation orchestration: run_operation method (GPT 5.1)
+// Main operation orchestration: run_operation method (Gemini 3 Pro)
 
 use crate::llm::provider::Message;
 use crate::memory::service::MemoryService;
 use crate::operations::ContextLoader;
 use crate::operations::delegation_tools::get_delegation_tools;
 use crate::operations::engine::{
-    context::ContextBuilder, gpt5_orchestrator::Gpt5Orchestrator,
+    context::ContextBuilder, llm_orchestrator::LlmOrchestrator,
     events::OperationEngineEvent, lifecycle::LifecycleManager,
 };
 
@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 pub struct Orchestrator {
-    gpt5_orchestrator: Option<Arc<Gpt5Orchestrator>>,
+    llm_orchestrator: Option<Arc<LlmOrchestrator>>,
     memory_service: Arc<MemoryService>,
     context_builder: ContextBuilder,
     context_loader: ContextLoader,
@@ -26,14 +26,14 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     pub fn new(
-        gpt5_orchestrator: Option<Arc<Gpt5Orchestrator>>,
+        llm_orchestrator: Option<Arc<LlmOrchestrator>>,
         memory_service: Arc<MemoryService>,
         context_builder: ContextBuilder,
         context_loader: ContextLoader,
         lifecycle_manager: LifecycleManager,
     ) -> Self {
         Self {
-            gpt5_orchestrator,
+            llm_orchestrator,
             memory_service,
             context_builder,
             context_loader,
@@ -187,9 +187,9 @@ impl Orchestrator {
         project_id: Option<&str>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
-        let gpt5 = match &self.gpt5_orchestrator {
+        let llm = match &self.llm_orchestrator {
             Some(orch) => orch,
-            None => return Err(anyhow::anyhow!("GPT 5.1 orchestrator not initialized")),
+            None => return Err(anyhow::anyhow!("LLM orchestrator not initialized")),
         };
 
         // Build messages with system prompt
@@ -198,15 +198,15 @@ impl Orchestrator {
             Message::user(user_content.to_string()),
         ];
 
-        // Build tools for GPT 5.1
+        // Build tools for Gemini 3
         let tools = get_delegation_tools();
 
-        // Execute with GPT 5.1 orchestrator
+        // Execute with LLM orchestrator
         // Use session_id as user_id for budget tracking (they map 1:1 in current design)
-        let response = gpt5
+        let response = llm
             .execute_with_context(session_id, operation_id, messages, tools, project_id, session_id, event_tx)
             .await
-            .context("GPT 5.1 orchestration failed")?;
+            .context("LLM orchestration failed")?;
 
         // Complete operation
         self.lifecycle_manager
