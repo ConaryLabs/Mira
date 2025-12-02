@@ -44,8 +44,9 @@ impl Default for ThinkingLevel {
 // Pricing
 // ============================================================================
 
-/// Gemini 3 Pro pricing (per 1M tokens)
-/// Source: https://ai.google.dev/gemini-api/docs/gemini-3
+/// Gemini 3 Pro Preview pricing (per 1M tokens)
+/// Source: https://ai.google.dev/gemini-api/docs/pricing
+/// Model: gemini-3-pro-preview (released Nov 2025)
 pub struct Gemini3Pricing;
 
 impl Gemini3Pricing {
@@ -322,8 +323,7 @@ impl Gemini3Provider {
         let request_body = serde_json::json!({
             "contents": contents,
             "generationConfig": {
-                "thinkingLevel": thinking_level.as_str(),
-                "temperature": 1.0  // Gemini 3 recommends keeping at 1.0
+                "temperature": 1.0
             }
         });
 
@@ -424,7 +424,6 @@ impl Gemini3Provider {
         let mut request_body = serde_json::json!({
             "contents": contents,
             "generationConfig": {
-                "thinkingLevel": self.default_thinking_level.as_str(),
                 "temperature": 1.0
             }
         });
@@ -585,7 +584,6 @@ impl Gemini3Provider {
                 }]
             }],
             "generationConfig": {
-                "thinkingLevel": self.default_thinking_level.as_str(),
                 "temperature": 1.0,
                 "responseMimeType": "application/json"
             }
@@ -670,7 +668,6 @@ impl Gemini3Provider {
         let mut request_body = serde_json::json!({
             "contents": contents,
             "generationConfig": {
-                "thinkingLevel": thinking_level.as_str(),
                 "temperature": 1.0
             }
         });
@@ -824,7 +821,6 @@ impl LlmProvider for Gemini3Provider {
         let request_body = serde_json::json!({
             "contents": contents,
             "generationConfig": {
-                "thinkingLevel": self.default_thinking_level.as_str(),
                 "temperature": 1.0
             }
         });

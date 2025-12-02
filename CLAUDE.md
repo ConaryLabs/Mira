@@ -251,20 +251,22 @@ The frontend proxies to backend port 3001 (configured in `vite.config.js`).
 
 ### Backend Tests
 
-- **Integration tests** in `backend/tests/` (17 suites, 127+ tests)
-- Tests use in-memory SQLite and fake API keys
+- **Integration tests** in `backend/tests/` (17 suites, 160+ tests)
+- Tests use in-memory SQLite
 - Run `cargo test` before committing
 - Key test files:
   - `operation_engine_test.rs` - Operation orchestration
   - `git_operations_test.rs` - Git integration
-  - `message_pipeline_flow_test.rs` - Message analysis
-  - `e2e_data_flow_test.rs` - End-to-end flows
+  - `message_pipeline_flow_test.rs` - Message analysis (requires real LLM)
+  - `e2e_data_flow_test.rs` - End-to-end flows (requires real LLM)
+  - `rolling_summary_test.rs` - Summarization (requires real LLM)
+  - `context_oracle_e2e_test.rs` - Context oracle (requires real LLM)
 
 **Environment for Tests:**
 - Tests load `backend/.env` via `dotenv::dotenv()` for API keys
+- **`GOOGLE_API_KEY` is required** - tests fail without it (no graceful skip)
 - Qdrant tests require Qdrant running on `localhost:6334` (gRPC)
-- Some tests marked `#[ignore]` require real Gemini API calls
-- Run ignored tests with: `cargo test -- --ignored`
+- LLM integration tests may hit rate limits on free tier (15 req/min)
 
 ### Frontend Tests
 

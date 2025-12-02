@@ -20,7 +20,6 @@ use std::sync::Arc;
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "LLM response format issue - topics field not always returned"]
 async fn test_complete_message_flow() {
     println!("\n=== Starting Complete Message Flow Test ===\n");
 
@@ -359,7 +358,6 @@ async fn test_high_volume_message_flow() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "timestamp precision issue with rapid saves"]
 async fn test_error_recovery() {
     println!("\n=== Testing Error Recovery ===\n");
 
@@ -413,7 +411,6 @@ async fn test_error_recovery() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "LLM response format issue - topics field not always returned"]
 async fn test_code_message_routing() {
     println!("\n=== Testing Code Message Routing ===\n");
 
@@ -483,7 +480,6 @@ fn authenticate(token: &str) -> Result<User, AuthError> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires OpenAI API for real embeddings"]
 async fn test_recall_engine_integration() {
     println!("\n=== Testing Recall Engine Integration ===\n");
 
@@ -582,14 +578,14 @@ async fn setup_full_stack() -> (MemoryService, Arc<GeminiEmbeddings>, Arc<Qdrant
     let _ = dotenv::dotenv();
     let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set");
 
-    // Use actual model from config, fallback to gpt-4o
-    let model = std::env::var("GPT5_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+    // Use actual model from config, fallback to gemini-3-pro-preview
+    let model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-pro-preview".to_string());
 
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         api_key.clone(),
         model,
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider"));
+    ).expect("Should create Gemini provider"));
 
     // Setup embedding client
     let embedding_client = Arc::new(GeminiEmbeddings::new(

@@ -4,6 +4,52 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 31: Real LLM Integration Tests & Gemini 3 Pro Migration (2025-12-02)
+
+**Summary:** Converted 34 mocked LLM tests to real integration tests, fixed Gemini provider issues, and migrated to Gemini 3 Pro Preview.
+
+**Work Completed:**
+
+1. **Removed `#[ignore]` from 34 Tests** (4 files):
+   - `message_pipeline_flow_test.rs` - 10 tests (message analysis, salience, topics, errors)
+   - `e2e_data_flow_test.rs` - 4 tests (complete flow, code routing, recall)
+   - `rolling_summary_test.rs` - 16 tests (rolling summaries, snapshots, triggers)
+   - `context_oracle_e2e_test.rs` - 4 tests (oracle flow, memory service, budget)
+
+2. **Fixed Gemini Provider** (`src/llm/provider/gemini3.rs`):
+   - Removed invalid `thinkingLevel` parameter from 5 locations in `generationConfig`
+   - The Gemini API doesn't support this field - was causing 400 Bad Request errors
+   - Updated pricing documentation to reference `gemini-3-pro-preview`
+
+3. **Migrated to Gemini 3 Pro Preview**:
+   - Updated `.env`: `GEMINI_MODEL=gemini-3-pro-preview`
+   - Updated test file default fallbacks in 3 files
+   - Model released November 2025, pricing: $2/$12 per 1M tokens (input/output)
+
+4. **Updated Test Helpers**:
+   - `tests/common/mod.rs` - API key now required (no placeholder fallback)
+   - Test files use `GEMINI_MODEL` env var with `gemini-3-pro-preview` default
+   - Changed graceful skip pattern to hard fail when API key missing
+
+**Pricing (Gemini 3 Pro Preview)**:
+| Context Size | Input (per 1M) | Output (per 1M) |
+|--------------|----------------|-----------------|
+| ≤ 200k tokens | $2.00 | $12.00 |
+| > 200k tokens | $4.00 | $18.00 |
+
+**Files Modified:**
+- `backend/.env` - Model configuration
+- `backend/src/llm/provider/gemini3.rs` - Removed thinkingLevel, updated docs
+- `backend/tests/common/mod.rs` - Require API key
+- `backend/tests/message_pipeline_flow_test.rs` - 10 tests enabled
+- `backend/tests/e2e_data_flow_test.rs` - 4 tests enabled
+- `backend/tests/rolling_summary_test.rs` - 16 tests enabled
+- `backend/tests/context_oracle_e2e_test.rs` - 4 tests enabled
+
+**Test Status:** All integration tests pass (rate limits may apply on free tier)
+
+---
+
 ## Session 30: Testing Gap Fill (2025-12-02)
 
 **Summary:** Added 191 new tests across 12 files to fill critical testing gaps in frontend stores, hooks, and components.

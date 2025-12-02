@@ -22,6 +22,23 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: Testing & Quality
 
+### Session 31: 2025-12-02
+
+**Summary:** Converted 34 mocked LLM tests to real integration tests, migrated to Gemini 3 Pro Preview.
+
+**Key Outcomes:**
+- Removed `#[ignore]` from 34 tests across 4 test files
+- Fixed Gemini provider - removed invalid `thinkingLevel` parameter (5 locations)
+- Migrated from `gemini-2.0-flash` to `gemini-3-pro-preview` (released Nov 2025)
+- Tests now require `GOOGLE_API_KEY` (no graceful skip)
+
+**Files Modified:**
+- `backend/.env` - Gemini 3 Pro Preview model config
+- `backend/src/llm/provider/gemini3.rs` - Fixed generationConfig
+- `backend/tests/{message_pipeline_flow,e2e_data_flow,rolling_summary,context_oracle_e2e}_test.rs`
+
+---
+
 ### Session 30: 2025-12-02
 
 **Summary:** Added 191 new tests across 12 files to fill critical testing gaps.

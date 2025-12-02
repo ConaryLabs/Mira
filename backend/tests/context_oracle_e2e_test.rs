@@ -48,20 +48,17 @@ fn get_qdrant_url() -> String {
     std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string())
 }
 
+fn get_gemini_model() -> String {
+    std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-pro-preview".to_string())
+}
+
 // ============================================================================
 // End-to-End Tests (require real services)
 // ============================================================================
 
 #[tokio::test]
-#[ignore] // Requires real API key and Qdrant
 async fn test_context_oracle_full_flow() {
-    let api_key = match get_google_api_key() {
-        Some(key) => key,
-        None => {
-            println!("Skipping test: GOOGLE_API_KEY not set");
-            return;
-        }
-    };
+    let api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
 
     let pool = setup_test_pool().await;
     let qdrant_url = get_qdrant_url();
@@ -112,15 +109,8 @@ async fn test_context_oracle_full_flow() {
 }
 
 #[tokio::test]
-#[ignore] // Requires real API key and Qdrant
 async fn test_memory_service_with_oracle() {
-    let api_key = match get_google_api_key() {
-        Some(key) => key,
-        None => {
-            println!("Skipping test: GOOGLE_API_KEY not set");
-            return;
-        }
-    };
+    let api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
 
     let pool = setup_test_pool().await;
     let qdrant_url = get_qdrant_url();
@@ -135,7 +125,7 @@ async fn test_memory_service_with_oracle() {
 
     // Initialize providers
     let llm_provider = Arc::new(
-        Gemini3Provider::new(api_key.clone(), "gpt-5.1".to_string(), ThinkingLevel::High)
+        Gemini3Provider::new(api_key.clone(), get_gemini_model(), ThinkingLevel::High)
             .expect("Failed to create GPT provider"),
     );
     let embedding_client = Arc::new(GeminiEmbeddings::new(
@@ -192,15 +182,8 @@ async fn test_memory_service_with_oracle() {
 }
 
 #[tokio::test]
-#[ignore] // Requires real API key
 async fn test_budget_aware_config_with_tracker() {
-    let _api_key = match get_google_api_key() {
-        Some(key) => key,
-        None => {
-            println!("Skipping test: GOOGLE_API_KEY not set");
-            return;
-        }
-    };
+    let _api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
 
     let pool = setup_test_pool().await;
 
@@ -227,8 +210,8 @@ async fn test_budget_aware_config_with_tracker() {
         .record_request(
             user_id,
             None,
-            "openai",
-            "gpt-5.1",
+            "google",
+            &get_gemini_model(),
             Some("medium"),
             1000,
             500,
@@ -269,15 +252,8 @@ async fn test_budget_aware_config_with_tracker() {
 }
 
 #[tokio::test]
-#[ignore] // Requires real API key and Qdrant
 async fn test_full_integration_flow() {
-    let api_key = match get_google_api_key() {
-        Some(key) => key,
-        None => {
-            println!("Skipping test: GOOGLE_API_KEY not set");
-            return;
-        }
-    };
+    let api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
 
     let pool = setup_test_pool().await;
     let qdrant_url = get_qdrant_url();
@@ -294,7 +270,7 @@ async fn test_full_integration_flow() {
     );
 
     let llm_provider = Arc::new(
-        Gemini3Provider::new(api_key.clone(), "gpt-5.1".to_string(), ThinkingLevel::High)
+        Gemini3Provider::new(api_key.clone(), get_gemini_model(), ThinkingLevel::High)
             .expect("Failed to create GPT provider"),
     );
     let embedding_client = Arc::new(GeminiEmbeddings::new(

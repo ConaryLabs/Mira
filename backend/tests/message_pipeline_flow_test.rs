@@ -1,6 +1,6 @@
 // tests/message_pipeline_flow_test.rs
 // Tests message analysis pipeline - tags, topics, salience, error detection
-// FIXME: All tests require GPT 5.1 response format work
+// Integration tests - require GOOGLE_API_KEY environment variable
 
 use mira_backend::llm::provider::{LlmProvider, {Gemini3Provider, ThinkingLevel}};
 use mira_backend::memory::features::message_pipeline::MessagePipeline;
@@ -11,7 +11,6 @@ use std::sync::Arc;
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_message_analysis_flow() {
     let pipeline = setup_pipeline().await;
 
@@ -64,7 +63,6 @@ async fn test_message_analysis_flow() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_low_value_message_skips_embedding() {
     let pipeline = setup_pipeline().await;
 
@@ -97,7 +95,6 @@ async fn test_low_value_message_skips_embedding() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_high_value_messages_are_embedded() {
     let pipeline = setup_pipeline().await;
 
@@ -134,7 +131,6 @@ async fn test_high_value_messages_are_embedded() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_error_detection_in_messages() {
     let pipeline = setup_pipeline().await;
 
@@ -209,7 +205,6 @@ async fn test_error_detection_in_messages() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_topic_extraction() {
     let pipeline = setup_pipeline().await;
 
@@ -251,7 +246,6 @@ async fn test_topic_extraction() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_programming_language_detection() {
     let pipeline = setup_pipeline().await;
 
@@ -308,7 +302,6 @@ async fn test_programming_language_detection() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_mood_and_intent_analysis() {
     let pipeline = setup_pipeline().await;
 
@@ -341,7 +334,6 @@ async fn test_mood_and_intent_analysis() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_salience_scoring_consistency() {
     let pipeline = setup_pipeline().await;
 
@@ -387,7 +379,6 @@ async fn test_salience_scoring_consistency() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_analysis_version_tracking() {
     let pipeline = setup_pipeline().await;
 
@@ -411,7 +402,6 @@ async fn test_analysis_version_tracking() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "requires GPT 5.1 response format work"]
 async fn test_context_enhanced_analysis() {
     let pipeline = setup_pipeline().await;
 
@@ -455,12 +445,14 @@ fn create_llm_provider() -> Arc<dyn LlmProvider> {
     let _ = dotenv::dotenv();
     // Get API key from environment
     let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set for tests");
+    // Get model from env or use default
+    let model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-pro-preview".to_string());
 
     Arc::new(Gemini3Provider::new(
         api_key,
-        "gpt-5.1".to_string(),
+        model,
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider"))
+    ).expect("Should create Gemini provider"))
 }
 
 // ============================================================================
