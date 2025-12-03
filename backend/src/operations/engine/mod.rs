@@ -24,6 +24,7 @@ use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
+use crate::hooks::HookManager;
 use crate::llm::provider::Gemini3Provider;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
@@ -35,6 +36,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::operations::ContextLoader;
@@ -65,6 +67,7 @@ impl OperationEngine {
         llm_cache: Option<Arc<LlmCache>>,
         project_task_service: Option<Arc<ProjectTaskService>>,
         guidelines_service: Option<Arc<ProjectGuidelinesService>>,
+        hook_manager: Option<Arc<RwLock<HookManager>>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -111,6 +114,7 @@ impl OperationEngine {
             Some(Arc::clone(&tool_router_arc)),
             budget_tracker,
             llm_cache,
+            hook_manager,
         );
 
         let orchestrator = Orchestrator::new(

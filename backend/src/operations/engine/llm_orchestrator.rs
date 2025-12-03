@@ -4,11 +4,12 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
+use crate::hooks::{HookEnv, HookManager, HookTrigger};
 use crate::llm::provider::{Gemini3Pricing, Gemini3Provider, Message, ToolCall, ToolCallInfo, ToolCallResponse};
 use crate::operations::engine::tool_router::ToolRouter;
 
@@ -31,11 +32,13 @@ struct CachedToolResponse {
 /// Handles tool calling loop with automatic result feedback.
 /// Integrates with BudgetTracker to track costs and enforce limits.
 /// Integrates with LlmCache to reduce API costs (target 80%+ hit rate).
+/// Integrates with HookManager to execute pre/post tool hooks.
 pub struct LlmOrchestrator {
     provider: Gemini3Provider,
     tool_router: Option<Arc<ToolRouter>>,
     budget_tracker: Option<Arc<BudgetTracker>>,
     cache: Option<Arc<LlmCache>>,
+    hook_manager: Option<Arc<RwLock<HookManager>>>,
 }
 
 impl LlmOrchestrator {
@@ -45,21 +48,24 @@ impl LlmOrchestrator {
             tool_router,
             budget_tracker: None,
             cache: None,
+            hook_manager: None,
         }
     }
 
-    /// Create orchestrator with budget tracking and caching
+    /// Create orchestrator with budget tracking, caching, and hooks
     pub fn with_services(
         provider: Gemini3Provider,
         tool_router: Option<Arc<ToolRouter>>,
         budget_tracker: Option<Arc<BudgetTracker>>,
         cache: Option<Arc<LlmCache>>,
+        hook_manager: Option<Arc<RwLock<HookManager>>>,
     ) -> Self {
         Self {
             provider,
             tool_router,
             budget_tracker,
             cache,
+            hook_manager,
         }
     }
 
@@ -401,7 +407,7 @@ impl LlmOrchestrator {
         Ok(accumulated_text)
     }
 
-    /// Execute a single tool call
+    /// Execute a single tool call with pre/post hooks
     async fn execute_tool(
         &self,
         operation_id: &str,
@@ -411,6 +417,60 @@ impl LlmOrchestrator {
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<Value> {
         info!("[ORCHESTRATOR] Executing tool: {}", tool_call.name);
+
+        let tool_args_str = serde_json::to_string(&tool_call.arguments).unwrap_or_default();
+
+        // Execute PreToolUse hooks
+        if let Some(hook_manager) = &self.hook_manager {
+            let manager = hook_manager.read().await;
+            let env = HookEnv::for_tool(&tool_call.name, &tool_args_str);
+
+            let (should_continue, hook_results) = manager
+                .execute_hooks(HookTrigger::PreToolUse, Some(&tool_call.name), &env)
+                .await;
+
+            // Log hook results
+            for result in &hook_results {
+                if result.success {
+                    debug!(
+                        "[HOOK] PreToolUse '{}' succeeded in {}ms",
+                        result.hook_name, result.duration_ms
+                    );
+                } else {
+                    warn!(
+                        "[HOOK] PreToolUse '{}' failed: {}",
+                        result.hook_name, result.stderr
+                    );
+                }
+            }
+
+            // If a blocking hook failed, abort tool execution
+            if !should_continue {
+                let blocked_by = hook_results
+                    .iter()
+                    .find(|r| !r.success)
+                    .map(|r| r.hook_name.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let error_result = serde_json::json!({
+                    "success": false,
+                    "error": format!("Tool execution blocked by hook '{}'", blocked_by),
+                    "blocked_by_hook": blocked_by
+                });
+
+                // Emit blocked event
+                let _ = event_tx.send(OperationEngineEvent::ToolExecuted {
+                    operation_id: operation_id.to_string(),
+                    tool_name: tool_call.name.clone(),
+                    tool_type: "file".to_string(),
+                    summary: format!("Blocked by hook '{}'", blocked_by),
+                    success: false,
+                    details: Some(error_result.clone()),
+                }).await;
+
+                return Ok(error_result);
+            }
+        }
 
         // Route to tool router if available
         let (result, success, summary) = if let Some(router) = &self.tool_router {
@@ -440,6 +500,36 @@ impl LlmOrchestrator {
             });
             (error_result, false, "Tool router not available".to_string())
         };
+
+        // Execute PostToolUse hooks
+        if let Some(hook_manager) = &self.hook_manager {
+            let manager = hook_manager.read().await;
+            let result_str = serde_json::to_string(&result).unwrap_or_default();
+            let env = HookEnv::with_result(
+                HookEnv::for_tool(&tool_call.name, &tool_args_str),
+                success,
+                &result_str,
+            );
+
+            let (_should_continue, hook_results) = manager
+                .execute_hooks(HookTrigger::PostToolUse, Some(&tool_call.name), &env)
+                .await;
+
+            // Log hook results (post-hooks don't block, just log)
+            for hr in &hook_results {
+                if hr.success {
+                    debug!(
+                        "[HOOK] PostToolUse '{}' succeeded in {}ms",
+                        hr.hook_name, hr.duration_ms
+                    );
+                } else {
+                    warn!(
+                        "[HOOK] PostToolUse '{}' failed: {}",
+                        hr.hook_name, hr.stderr
+                    );
+                }
+            }
+        }
 
         // Emit tool execution event AFTER execution with actual result
         let _ = event_tx.send(OperationEngineEvent::ToolExecuted {

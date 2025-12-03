@@ -135,6 +135,7 @@ async fn test_operation_engine_lifecycle() {
         None, // llm_cache
         None, // project_task_service
         None, // guidelines_service
+        None, // hook_manager
     );
 
     // Create event channel
@@ -283,6 +284,7 @@ async fn test_operation_cancellation() {
         None, // llm_cache
         None, // project_task_service
         None, // guidelines_service
+        None, // hook_manager
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -381,6 +383,7 @@ async fn test_multiple_operations() {
         None, // llm_cache
         None, // project_task_service
         None, // guidelines_service
+        None, // hook_manager
     );
 
     // Create multiple operations
@@ -469,6 +472,7 @@ async fn test_operation_event_ordering() {
         None, // llm_cache
         None, // project_task_service
         None, // guidelines_service
+        None, // hook_manager
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -560,6 +564,7 @@ async fn test_operation_retrieval() {
         None, // llm_cache
         None, // project_task_service
         None, // guidelines_service
+        None, // hook_manager
     );
 
     // Create operation with specific fields

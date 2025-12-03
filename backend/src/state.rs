@@ -276,6 +276,7 @@ impl AppState {
             Some(llm_cache.clone()),
             Some(project_task_service.clone()),
             Some(guidelines_service.clone()),
+            Some(hook_manager.clone()),
         ));
 
         // Initialize authentication service
