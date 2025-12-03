@@ -161,3 +161,4 @@ test_repos/
 
 # Local Qdrant config (machine-specific)
 /config/config.yaml
+qdrant_storage/
