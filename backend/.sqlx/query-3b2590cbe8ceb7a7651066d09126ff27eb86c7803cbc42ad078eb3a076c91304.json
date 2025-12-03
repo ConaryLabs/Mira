@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE project_guidelines SET last_loaded = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "3b2590cbe8ceb7a7651066d09126ff27eb86c7803cbc42ad078eb3a076c91304"
+}

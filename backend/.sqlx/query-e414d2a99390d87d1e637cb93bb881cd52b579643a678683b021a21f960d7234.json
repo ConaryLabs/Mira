@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO local_changes (project_id, file_path, change_type, old_hash, new_hash, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "e414d2a99390d87d1e637cb93bb881cd52b579643a678683b021a21f960d7234"
+}

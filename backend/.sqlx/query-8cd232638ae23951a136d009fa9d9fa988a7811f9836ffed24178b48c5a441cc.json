@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content_hash FROM project_guidelines WHERE project_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "content_hash",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8cd232638ae23951a136d009fa9d9fa988a7811f9836ffed24178b48c5a441cc"
+}

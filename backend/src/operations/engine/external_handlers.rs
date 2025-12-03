@@ -2,15 +2,26 @@
 // Handlers for external operations (web search, URL fetch, command execution)
 
 use anyhow::{Context, Result};
+use regex::Regex;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::sudo::{AuthorizationDecision, SudoAuditEntry, SudoPermissionService};
+
+// Pre-compiled regex patterns for HTML parsing (compiled once, used many times)
+static RE_RESULT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<a rel="nofollow" class="result__a" href="([^"]+)">([^<]+)</a>"#)
+        .expect("Invalid RE_RESULT regex pattern")
+});
+static RE_SNIPPET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<a class="result__snippet"[^>]*>([^<]+)</a>"#)
+        .expect("Invalid RE_SNIPPET regex pattern")
+});
 
 /// Handles external operations (web, commands)
 pub struct ExternalHandlers {
@@ -25,7 +36,10 @@ impl ExternalHandlers {
             .timeout(Duration::from_secs(30))
             .user_agent("Mira-Bot/1.0")
             .build()
-            .expect("Failed to build HTTP client");
+            .unwrap_or_else(|e| {
+                error!("Failed to build HTTP client with custom settings: {}. Using default client.", e);
+                reqwest::Client::new()
+            });
 
         Self {
             project_dir,
@@ -116,14 +130,9 @@ impl ExternalHandlers {
         let mut results = Vec::new();
 
         // Simple regex-based extraction (not perfect but works)
-        // Look for result blocks in DuckDuckGo HTML
-        let re_result = regex::Regex::new(r#"<a rel="nofollow" class="result__a" href="([^"]+)">([^<]+)</a>"#)
-            .unwrap();
-        let re_snippet = regex::Regex::new(r#"<a class="result__snippet"[^>]*>([^<]+)</a>"#)
-            .unwrap();
-
-        let urls: Vec<_> = re_result.captures_iter(html).collect();
-        let snippets: Vec<_> = re_snippet.captures_iter(html).collect();
+        // Look for result blocks in DuckDuckGo HTML using pre-compiled patterns
+        let urls: Vec<_> = RE_RESULT.captures_iter(html).collect();
+        let snippets: Vec<_> = RE_SNIPPET.captures_iter(html).collect();
 
         for (i, url_capture) in urls.iter().enumerate().take(limit) {
             let url = url_capture.get(1).map(|m| m.as_str()).unwrap_or("");
