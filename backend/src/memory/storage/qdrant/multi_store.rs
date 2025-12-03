@@ -226,7 +226,7 @@ impl QdrantMultiStore {
         Ok(entries)
     }
 
-    /// Search all collections for similar entries
+    /// Search all collections for similar entries (parallelized for performance)
     /// Returns results grouped by head
     pub async fn search_all(
         &self,
@@ -234,24 +234,32 @@ impl QdrantMultiStore {
         embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<(EmbeddingHead, Vec<MemoryEntry>)>> {
-        let heads = [
-            EmbeddingHead::Code,
-            EmbeddingHead::Conversation,
-            EmbeddingHead::Git,
-        ];
+        // Run all 3 collection searches in parallel using tokio::join!
+        let (code_result, conv_result, git_result) = tokio::join!(
+            self.search(EmbeddingHead::Code, session_id, embedding, limit),
+            self.search(EmbeddingHead::Conversation, session_id, embedding, limit),
+            self.search(EmbeddingHead::Git, session_id, embedding, limit)
+        );
 
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(3);
 
-        for head in heads {
-            match self.search(head, session_id, embedding, limit).await {
-                Ok(entries) if !entries.is_empty() => {
-                    results.push((head, entries));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("Failed to search {} collection: {}", head.as_str(), e);
-                }
-            }
+        // Process results, logging errors but continuing
+        match code_result {
+            Ok(entries) if !entries.is_empty() => results.push((EmbeddingHead::Code, entries)),
+            Ok(_) => {}
+            Err(e) => warn!("Failed to search code collection: {}", e),
+        }
+
+        match conv_result {
+            Ok(entries) if !entries.is_empty() => results.push((EmbeddingHead::Conversation, entries)),
+            Ok(_) => {}
+            Err(e) => warn!("Failed to search conversation collection: {}", e),
+        }
+
+        match git_result {
+            Ok(entries) if !entries.is_empty() => results.push((EmbeddingHead::Git, entries)),
+            Ok(_) => {}
+            Err(e) => warn!("Failed to search git collection: {}", e),
         }
 
         Ok(results)
