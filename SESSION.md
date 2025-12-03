@@ -110,11 +110,90 @@ Development session history with progressively detailed entries (recent sessions
 }
 ```
 
-**Test Status:** All 90 tests passing (80 lib + 3 commands + 7 hooks)
+6. **Hooks Integration into OperationEngine** (`src/operations/engine/llm_orchestrator.rs`):
+   - Added `hook_manager: Option<Arc<RwLock<HookManager>>>` field
+   - PreToolUse hooks execute before tool, can block execution
+   - PostToolUse hooks execute after tool with result context
+   - Environment variables: MIRA_TOOL_SUCCESS, MIRA_TOOL_RESULT (for post hooks)
 
-**Next Steps:**
-- Integrate hooks into OperationEngine tool execution
-- Implement Checkpoint/Rewind System
+7. **Checkpoint/Rewind System** (`src/checkpoint/mod.rs` - 550 lines):
+   - `CheckpointManager` with create, list, restore, cleanup methods
+   - `Checkpoint` struct (id, session_id, operation_id, tool_name, description, file_count)
+   - `CheckpointFile` struct (file_path, content, existed, file_hash)
+   - SHA-256 content hashing for verification
+   - Session-scoped with automatic cleanup
+   - Database migration: `checkpoints` + `checkpoint_files` tables
+   - 5 unit tests
+
+8. **Checkpoint Integration** (`src/operations/engine/llm_orchestrator.rs`):
+   - `FILE_MODIFYING_TOOLS` constant defines which tools trigger checkpoints
+   - Automatic checkpoint before: write_file, edit_file, delete_file, move_file, rename_file
+   - Extracts file path from tool arguments
+
+9. **Checkpoint Commands** (`src/api/ws/chat/unified_handler.rs`):
+   - `/checkpoints` - Lists recent checkpoints with timestamps and file counts
+   - `/rewind <id>` - Restores files to checkpoint state (partial ID matching)
+
+10. **MCP Support** (`src/mcp/` - 3 files, ~800 lines):
+    - `mod.rs`: McpManager, McpServer, McpConfig types
+    - `protocol.rs`: JSON-RPC 2.0 message types (request, response, error)
+    - `transport.rs`: StdioTransport for spawned processes
+    - Tool discovery via `tools/list` and execution via `tools/call`
+    - OpenAI-compatible tool format conversion (`mcp__server__tool`)
+    - 10 unit tests
+
+11. **MCP Integration**:
+    - `McpManager` added to AppState
+    - Background connection to configured servers on startup
+    - `/mcp` command lists connected servers and available tools
+    - Config from `.mira/mcp.json` or `~/.mira/mcp.json`
+
+**MCP Configuration Example** (`.mira/mcp.json`):
+```json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem"]
+    }
+  ]
+}
+```
+
+**Files Created:**
+- `backend/src/commands/mod.rs` (~280 lines)
+- `backend/src/hooks/mod.rs` (~420 lines)
+- `backend/src/checkpoint/mod.rs` (~550 lines)
+- `backend/src/mcp/mod.rs` (~350 lines)
+- `backend/src/mcp/protocol.rs` (~180 lines)
+- `backend/src/mcp/transport.rs` (~150 lines)
+- `backend/migrations/20251125000010_checkpoint_system.sql`
+
+**Files Modified:**
+- `backend/src/lib.rs` - Added commands, hooks, checkpoint, mcp modules
+- `backend/src/state.rs` - Added all new services to AppState
+- `backend/src/api/ws/chat/unified_handler.rs` - All new commands
+- `backend/src/operations/engine/mod.rs` - Hook and checkpoint params
+- `backend/src/operations/engine/llm_orchestrator.rs` - Hook/checkpoint execution
+- `backend/Cargo.toml` - Added dirs, sha2, async-trait
+- `backend/.gitignore` - Fixed checkpoint/ pattern
+
+**Test Status:** All 102 tests passing (87 lib + 3 commands + 7 hooks + 5 checkpoint)
+
+**New Built-in Commands:**
+- `/commands` - List custom slash commands
+- `/reload-commands` - Hot-reload commands from disk
+- `/checkpoints` - List session checkpoints
+- `/rewind <id>` - Restore to checkpoint
+- `/mcp` - List MCP servers and tools
+
+**Commits:**
+- `8da8201` - Slash commands system
+- `ff4e573` - Hooks system core module
+- `d11f054` - Hooks integration into OperationEngine
+- `4f84712` - Checkpoint/Rewind system
+- `0ae0431` - MCP support
 
 ---
 

@@ -501,6 +501,72 @@ Estimated monthly: $132 (vs $825 without cache)
 - Budget tracking accuracy
 - End-to-end user workflows
 
+### Milestone 11: Claude Code Feature Parity - COMPLETE
+
+**Goal**: Implement key Claude Code features for improved developer experience
+
+**Deliverables**:
+- [x] Custom Slash Commands (`src/commands/mod.rs`)
+- [x] Hooks System (`src/hooks/mod.rs`)
+- [x] Checkpoint/Rewind System (`src/checkpoint/mod.rs`)
+- [x] MCP Support (`src/mcp/`)
+
+**Key Files**:
+- `backend/src/commands/mod.rs` - CommandRegistry with markdown file loading
+- `backend/src/hooks/mod.rs` - HookManager with pre/post tool execution
+- `backend/src/checkpoint/mod.rs` - CheckpointManager with file state snapshots
+- `backend/src/mcp/mod.rs` - McpManager with JSON-RPC 2.0 protocol
+- `backend/src/mcp/protocol.rs` - JSON-RPC message types
+- `backend/src/mcp/transport.rs` - Stdio transport for MCP servers
+
+**Built-in Commands**:
+- `/commands` - List available slash commands
+- `/reload-commands` - Hot-reload commands from disk
+- `/checkpoints` - List session checkpoints
+- `/rewind <id>` - Restore files to checkpoint state
+- `/mcp` - List MCP servers and tools
+
+**Configuration Files**:
+- `.mira/commands/*.md` - Project slash commands
+- `~/.mira/commands/*.md` - User slash commands
+- `.mira/hooks.json` - Hook configuration
+- `.mira/mcp.json` - MCP server configuration
+
+**Features**:
+
+1. **Slash Commands**:
+   - Markdown files with `$ARGUMENTS` placeholder
+   - Project and user scopes
+   - Recursive namespacing (`git/pr.md` -> `/git:pr`)
+   - Description extraction from headers
+
+2. **Hooks System**:
+   - PreToolUse/PostToolUse triggers
+   - Pattern matching with wildcards (`write_*`)
+   - OnFailure modes: Block, Warn, Ignore
+   - Environment variables for tool context
+
+3. **Checkpoint/Rewind**:
+   - Automatic snapshots before file modifications
+   - SHA-256 content hashing
+   - Session-scoped storage
+   - Partial ID matching for restore
+
+4. **MCP Support**:
+   - JSON-RPC 2.0 over stdio
+   - Tool discovery and execution
+   - OpenAI-compatible format conversion
+   - Background server connection
+
+**Tests**: 25 new tests (3 commands + 7 hooks + 5 checkpoint + 10 MCP)
+
+**Commits**:
+- `8da8201` - Slash commands system
+- `ff4e573` - Hooks system core module
+- `d11f054` - Hooks integration
+- `4f84712` - Checkpoint/Rewind system
+- `0ae0431` - MCP support
+
 ## Success Metrics
 
 ### Technical Metrics
