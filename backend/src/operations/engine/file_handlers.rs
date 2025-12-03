@@ -3,10 +3,46 @@
 
 use anyhow::{Context, Result};
 use glob::glob;
+use regex::Regex;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tokio::fs;
 use tracing::{info, warn};
+
+// Pre-compiled regex patterns for symbol extraction (compiled once at module load)
+// Rust patterns
+static RE_RUST_FN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(pub\s+)?(?:async\s+)?fn\s+(\w+)").expect("Invalid RE_RUST_FN regex")
+});
+static RE_RUST_STRUCT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(pub\s+)?struct\s+(\w+)").expect("Invalid RE_RUST_STRUCT regex")
+});
+static RE_RUST_ENUM: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(pub\s+)?enum\s+(\w+)").expect("Invalid RE_RUST_ENUM regex")
+});
+static RE_RUST_TRAIT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(pub\s+)?trait\s+(\w+)").expect("Invalid RE_RUST_TRAIT regex")
+});
+
+// TypeScript/JavaScript patterns
+static RE_TS_FN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)").expect("Invalid RE_TS_FN regex")
+});
+static RE_TS_CLASS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(?:export\s+)?class\s+(\w+)").expect("Invalid RE_TS_CLASS regex")
+});
+static RE_TS_INTERFACE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(?:export\s+)?interface\s+(\w+)").expect("Invalid RE_TS_INTERFACE regex")
+});
+static RE_TS_TYPE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(?:export\s+)?type\s+(\w+)").expect("Invalid RE_TS_TYPE regex")
+});
+
+// Generic function pattern for other languages
+static RE_GENERIC_FN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*(?:def|function|fn)\s+(\w+)").expect("Invalid RE_GENERIC_FN regex")
+});
 
 /// Handler for file operation tool calls from LLM
 pub struct FileHandlers {
@@ -476,13 +512,8 @@ impl FileHandlers {
 
         match file_type {
             "rs" => {
-                // Rust: fn, struct, impl, trait, enum
-                let fn_regex = regex::Regex::new(r"(?m)^\s*(pub\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
-                let struct_regex = regex::Regex::new(r"(?m)^\s*(pub\s+)?struct\s+(\w+)").unwrap();
-                let enum_regex = regex::Regex::new(r"(?m)^\s*(pub\s+)?enum\s+(\w+)").unwrap();
-                let trait_regex = regex::Regex::new(r"(?m)^\s*(pub\s+)?trait\s+(\w+)").unwrap();
-
-                for cap in fn_regex.captures_iter(&content) {
+                // Rust: fn, struct, impl, trait, enum (using pre-compiled regexes)
+                for cap in RE_RUST_FN.captures_iter(&content) {
                     symbols.push(json!({
                         "type": "function",
                         "name": &cap[2],
@@ -490,7 +521,7 @@ impl FileHandlers {
                     }));
                 }
 
-                for cap in struct_regex.captures_iter(&content) {
+                for cap in RE_RUST_STRUCT.captures_iter(&content) {
                     symbols.push(json!({
                         "type": "struct",
                         "name": &cap[2],
@@ -498,7 +529,7 @@ impl FileHandlers {
                     }));
                 }
 
-                for cap in enum_regex.captures_iter(&content) {
+                for cap in RE_RUST_ENUM.captures_iter(&content) {
                     symbols.push(json!({
                         "type": "enum",
                         "name": &cap[2],
@@ -506,7 +537,7 @@ impl FileHandlers {
                     }));
                 }
 
-                for cap in trait_regex.captures_iter(&content) {
+                for cap in RE_RUST_TRAIT.captures_iter(&content) {
                     symbols.push(json!({
                         "type": "trait",
                         "name": &cap[2],
@@ -515,32 +546,26 @@ impl FileHandlers {
                 }
             }
             "ts" | "tsx" | "js" | "jsx" => {
-                // TypeScript/JavaScript: function, class, interface, type
-                let fn_regex = regex::Regex::new(r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)").unwrap();
-                let class_regex = regex::Regex::new(r"(?m)^\s*(?:export\s+)?class\s+(\w+)").unwrap();
-                let interface_regex = regex::Regex::new(r"(?m)^\s*(?:export\s+)?interface\s+(\w+)").unwrap();
-                let type_regex = regex::Regex::new(r"(?m)^\s*(?:export\s+)?type\s+(\w+)").unwrap();
-
-                for cap in fn_regex.captures_iter(&content) {
+                // TypeScript/JavaScript: function, class, interface, type (using pre-compiled regexes)
+                for cap in RE_TS_FN.captures_iter(&content) {
                     symbols.push(json!({"type": "function", "name": &cap[1]}));
                 }
 
-                for cap in class_regex.captures_iter(&content) {
+                for cap in RE_TS_CLASS.captures_iter(&content) {
                     symbols.push(json!({"type": "class", "name": &cap[1]}));
                 }
 
-                for cap in interface_regex.captures_iter(&content) {
+                for cap in RE_TS_INTERFACE.captures_iter(&content) {
                     symbols.push(json!({"type": "interface", "name": &cap[1]}));
                 }
 
-                for cap in type_regex.captures_iter(&content) {
+                for cap in RE_TS_TYPE.captures_iter(&content) {
                     symbols.push(json!({"type": "type", "name": &cap[1]}));
                 }
             }
             _ => {
-                // Generic: just find function-like patterns
-                let fn_regex = regex::Regex::new(r"(?m)^\s*(?:def|function|fn)\s+(\w+)").unwrap();
-                for cap in fn_regex.captures_iter(&content) {
+                // Generic: just find function-like patterns (using pre-compiled regex)
+                for cap in RE_GENERIC_FN.captures_iter(&content) {
                     symbols.push(json!({"type": "function", "name": &cap[1]}));
                 }
             }
