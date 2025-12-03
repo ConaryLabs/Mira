@@ -547,6 +547,41 @@ Estimated monthly: $132 (vs $825 without cache)
 - **Caching**: In-process LLM cache (SQLite)
 - **Authentication**: JWT tokens
 
+## Milestone 11: Claude Code Feature Parity (In Progress)
+
+**Goal**: Implement key Claude Code features to improve developer workflow
+
+**Features** (in implementation order):
+
+### 1. Custom Slash Commands - COMPLETE
+- [x] `src/commands/mod.rs` - CommandRegistry with load/execute
+- [x] Integration with message router (UnifiedChatHandler)
+- [x] Built-in commands: `/commands`, `/reload-commands`
+- Markdown files in `.mira/commands/` (project) or `~/.mira/commands/` (user)
+- `$ARGUMENTS` placeholder replaced with user input
+- Namespacing via subdirectories: `commands/git/pr.md` -> `/git:pr`
+
+### 2. Hooks System - PLANNED
+- PreToolUse/PostToolUse shell command hooks
+- JSON config in `.mira/hooks.json`
+- Timeout and failure handling (block/warn/ignore)
+- Use cases: pre-commit tests, notifications, logging
+
+### 3. Checkpoint/Rewind System - PLANNED
+- Snapshot file states before each edit
+- SQLite storage for session-level checkpoints
+- `/rewind` command to restore code/conversation
+- Options: restore code only, conversation only, or both
+
+### 4. MCP Support - PLANNED
+- Model Context Protocol (JSON-RPC 2.0)
+- Stdio and HTTP transports
+- Tool schema translation (MCP -> Mira tools)
+- Server lifecycle management
+- Config in `.mira/mcp.json`
+
+---
+
 ## Future Enhancements (Post-V1)
 
 ### Deferred Features

@@ -4,6 +4,87 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 32: Claude Code Feature Parity - Milestone 11 (2025-12-03)
+
+**Summary:** Implementing Claude Code-inspired features: Slash Commands, Hooks, Checkpoint/Rewind, and MCP Support.
+
+**Context:** Compared Claude Code (Dec 2025) features vs Mira. Identified 12 feature gaps. User prioritized 4 features for implementation.
+
+**Feature Gap Analysis:**
+| Feature | Claude Code | Mira | Priority |
+|---------|-------------|------|----------|
+| Custom Slash Commands | .claude/commands/ | None | High |
+| Hooks System | PreToolUse/PostToolUse | None | High |
+| Checkpoint/Rewind | File state snapshots | None | High |
+| MCP Support | JSON-RPC tool protocol | Custom tools | High |
+| Subagents | Separate contexts | Operations | Medium |
+| IDE Integrations | VS Code, JetBrains | Web UI | Low |
+| Plugins | Bundled packages | None | Low |
+
+**Mira Advantages (not in Claude Code):**
+- Semantic graph analysis with concept extraction
+- Call graph with impact analysis
+- Co-change pattern detection
+- Author expertise scoring
+- Historical fix matching
+- Tool synthesis from codebase patterns
+- Reasoning pattern replay
+- Budget tracking with daily/monthly limits
+- LLM response caching (80%+ target)
+- Build error learning
+
+**Work Completed:**
+
+1. **Custom Slash Commands Module** (`src/commands/mod.rs` - 280 lines):
+   - `CommandScope` enum (Project/User)
+   - `SlashCommand` struct with name, path, content, scope, description
+   - `CommandRegistry` with load/execute/parse methods
+   - Recursive directory loading for namespacing (e.g., `git/pr.md` -> `/git:pr`)
+   - `$ARGUMENTS` placeholder replacement
+   - Description extraction from `#` headers
+   - 3 unit tests for load, execute, parse
+
+2. **Integration with AppState** (`src/state.rs`):
+   - Added `command_registry: Arc<RwLock<CommandRegistry>>` field
+   - Loads user commands from `~/.mira/commands/` on startup
+   - Added `dirs` crate for home directory resolution
+
+3. **Message Router Integration** (`src/api/ws/chat/unified_handler.rs`):
+   - Intercepts messages starting with `/`
+   - Expands custom commands before sending to LLM
+   - Built-in `/commands` - lists available commands with descriptions
+   - Built-in `/reload-commands` - hot-reload commands from disk
+   - Sends status update when executing command
+
+**Files Created:**
+- `backend/src/commands/mod.rs` (~280 lines)
+
+**Files Modified:**
+- `backend/src/lib.rs` - Added `commands` module
+- `backend/src/state.rs` - Added CommandRegistry to AppState
+- `backend/src/api/ws/chat/unified_handler.rs` - Slash command handling
+- `backend/Cargo.toml` - Added `dirs` crate
+- `ROADMAP.md` - Added Milestone 11 with 4 features
+- `SESSION.md` - This file
+
+**Test Status:** All 83 tests passing (80 lib + 3 commands)
+
+**Usage:**
+1. Create `.mira/commands/review.md`:
+   ```markdown
+   # Code Review
+   Review this code for issues:
+
+   $ARGUMENTS
+   ```
+2. Use in chat: `/review <paste code here>`
+3. Type `/commands` to see all available commands
+
+**Next Steps:**
+- Implement Hooks System (PreToolUse/PostToolUse)
+
+---
+
 ## Session 31: Real LLM Integration Tests & Gemini 3 Pro Migration (2025-12-02)
 
 **Summary:** Converted 34 mocked LLM tests to real integration tests, fixed Gemini provider issues, and migrated to Gemini 3 Pro Preview.

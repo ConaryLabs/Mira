@@ -12,6 +12,7 @@ use crate::auth::AuthService;
 use crate::budget::BudgetTracker;
 use crate::build::{BuildTracker, ErrorResolver};
 use crate::cache::LlmCache;
+use crate::commands::CommandRegistry;
 use crate::config::CONFIG;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
@@ -83,6 +84,8 @@ pub struct AppState {
     pub synthesis_storage: Arc<SynthesisStorage>,
     // Project task tracking
     pub project_task_service: Arc<ProjectTaskService>,
+    // Custom slash commands
+    pub command_registry: Arc<RwLock<CommandRegistry>>,
 }
 
 impl AppState {
@@ -192,6 +195,14 @@ impl AppState {
         info!("Initializing project task service");
         let project_task_service = Arc::new(ProjectTaskService::new(pool.clone()));
 
+        // Initialize command registry (loads from ~/.mira/commands/)
+        info!("Initializing command registry");
+        let mut command_registry = CommandRegistry::new();
+        if let Err(e) = command_registry.load(None).await {
+            tracing::warn!("Failed to load user commands: {}", e);
+        }
+        let command_registry = Arc::new(RwLock::new(command_registry));
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -293,6 +304,7 @@ impl AppState {
             llm_cache,
             synthesis_storage,
             project_task_service,
+            command_registry,
         })
     }
 }
