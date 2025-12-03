@@ -8,7 +8,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Transport trait for MCP communication
 #[async_trait]
