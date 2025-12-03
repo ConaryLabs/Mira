@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                rf.file_path,\n                rf.language,\n                rf.element_count,\n                rf.complexity_score,\n                rf.ast_analyzed as \"is_analyzed: bool\",\n                rf.function_count,\n                rf.line_count,\n                (SELECT COUNT(*) FROM code_quality_issues cqi\n                 JOIN code_elements ce ON cqi.element_id = ce.id\n                 WHERE ce.file_id = rf.id) as \"quality_issue_count: i64\",\n                CASE\n                    WHEN rf.file_path LIKE '%_test%' OR rf.file_path LIKE '%test_%'\n                         OR rf.file_path LIKE '%/tests/%' OR rf.file_path LIKE '%_spec%'\n                         OR rf.file_path LIKE '%.test.%' OR rf.file_path LIKE '%.spec.%'\n                    THEN 1 ELSE 0\n                END as \"is_test_file: i64\"\n            FROM repository_files rf\n            WHERE rf.project_id = ?\n            ORDER BY rf.file_path\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_path",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "language",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "element_count",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "complexity_score",
+        "ordinal": 3,
+        "type_info": "Float"
+      },
+      {
+        "name": "is_analyzed: bool",
+        "ordinal": 4,
+        "type_info": "Bool"
+      },
+      {
+        "name": "function_count",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "line_count",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "quality_issue_count: i64",
+        "ordinal": 7,
+        "type_info": "Null"
+      },
+      {
+        "name": "is_test_file: i64",
+        "ordinal": 8,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "96d57cc84acd501c2cd4731760afaa9cbf753f43ccd1c39113868088f83589c3"
+}
