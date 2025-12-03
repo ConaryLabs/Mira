@@ -2,12 +2,28 @@
 // Pattern storage and retrieval
 
 use anyhow::{Context, Result};
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use sqlx::{FromRow, SqlitePool};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::types::*;
+
+/// Parse a Unix timestamp into a DateTime<Utc>, falling back to epoch on invalid values.
+/// Logs a warning if the timestamp is invalid.
+fn parse_timestamp(ts: i64) -> DateTime<Utc> {
+    Utc.timestamp_opt(ts, 0)
+        .single()
+        .unwrap_or_else(|| {
+            warn!("Invalid timestamp value: {}, using epoch", ts);
+            DateTime::UNIX_EPOCH
+        })
+}
+
+/// Parse an optional Unix timestamp into an Option<DateTime<Utc>>.
+fn parse_timestamp_opt(ts: Option<i64>) -> Option<DateTime<Utc>> {
+    ts.map(parse_timestamp)
+}
 
 /// Row struct for query_as
 #[derive(FromRow)]
@@ -143,9 +159,9 @@ impl PatternStorage {
                     use_count: r.use_count.unwrap_or(0) as i32,
                     success_count: r.success_count.unwrap_or(0) as i32,
                     cost_savings_usd: r.cost_savings_usd.unwrap_or(0.0),
-                    created_at: Utc.timestamp_opt(r.created_at, 0).unwrap(),
-                    updated_at: Utc.timestamp_opt(r.updated_at, 0).unwrap(),
-                    last_used: r.last_used.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+                    created_at: parse_timestamp(r.created_at),
+                    updated_at: parse_timestamp(r.updated_at),
+                    last_used: parse_timestamp_opt(r.last_used),
                     steps: Vec::new(),
                 };
 
@@ -181,7 +197,7 @@ impl PatternStorage {
                 step_type: StepType::from_str(&r.step_type),
                 description: r.description,
                 rationale: r.rationale,
-                created_at: Utc.timestamp_opt(r.created_at, 0).unwrap(),
+                created_at: parse_timestamp(r.created_at),
             })
             .collect())
     }
@@ -290,9 +306,9 @@ impl PatternStorage {
                 use_count: r.use_count.unwrap_or(0) as i32,
                 success_count: r.success_count.unwrap_or(0) as i32,
                 cost_savings_usd: r.cost_savings_usd.unwrap_or(0.0),
-                created_at: Utc.timestamp_opt(r.created_at, 0).unwrap(),
-                updated_at: Utc.timestamp_opt(r.updated_at, 0).unwrap(),
-                last_used: r.last_used.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+                created_at: parse_timestamp(r.created_at),
+                updated_at: parse_timestamp(r.updated_at),
+                last_used: parse_timestamp_opt(r.last_used),
                 steps: Vec::new(), // Load separately if needed
             });
         }
@@ -338,9 +354,9 @@ impl PatternStorage {
                 use_count: r.use_count.unwrap_or(0) as i32,
                 success_count: r.success_count.unwrap_or(0) as i32,
                 cost_savings_usd: r.cost_savings_usd.unwrap_or(0.0),
-                created_at: Utc.timestamp_opt(r.created_at, 0).unwrap(),
-                updated_at: Utc.timestamp_opt(r.updated_at, 0).unwrap(),
-                last_used: r.last_used.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+                created_at: parse_timestamp(r.created_at),
+                updated_at: parse_timestamp(r.updated_at),
+                last_used: parse_timestamp_opt(r.last_used),
                 steps: Vec::new(),
             });
         }
@@ -447,7 +463,7 @@ impl PatternStorage {
                 outcome_notes: r.outcome_notes,
                 time_saved_ms: r.time_saved_ms,
                 cost_saved_usd: r.cost_saved_usd,
-                used_at: Utc.timestamp_opt(r.used_at, 0).unwrap(),
+                used_at: parse_timestamp(r.used_at),
             })
             .collect())
     }
@@ -577,9 +593,9 @@ impl PatternStorage {
                 use_count: r.use_count.unwrap_or(0) as i32,
                 success_count: r.success_count.unwrap_or(0) as i32,
                 cost_savings_usd: r.cost_savings_usd.unwrap_or(0.0),
-                created_at: Utc.timestamp_opt(r.created_at, 0).unwrap(),
-                updated_at: Utc.timestamp_opt(r.updated_at, 0).unwrap(),
-                last_used: r.last_used.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+                created_at: parse_timestamp(r.created_at),
+                updated_at: parse_timestamp(r.updated_at),
+                last_used: parse_timestamp_opt(r.last_used),
                 steps: Vec::new(),
             };
 

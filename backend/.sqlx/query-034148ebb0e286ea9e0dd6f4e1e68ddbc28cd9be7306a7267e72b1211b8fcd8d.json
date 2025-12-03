@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id FROM git_repo_attachments\n            WHERE project_id = ? AND import_status = 'complete'\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "034148ebb0e286ea9e0dd6f4e1e68ddbc28cd9be7306a7267e72b1211b8fcd8d"
+}
