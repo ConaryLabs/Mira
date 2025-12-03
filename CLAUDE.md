@@ -78,46 +78,59 @@ npm run preview
 
 ## Running the Application
 
-### Backend
+### Service Management (Recommended)
+
+Both backend and frontend run as systemd user services. Use `mira-ctl` to manage them:
 
 ```bash
-cd backend
+# Start/stop/restart services
+mira-ctl start all           # Start both backend and frontend
+mira-ctl stop all            # Stop both services
+mira-ctl restart backend     # Restart just the backend
+mira-ctl restart frontend    # Restart just the frontend
 
-# Development mode
+# Check status
+mira-ctl status              # Show status of both services
+
+# View logs
+mira-ctl logs backend        # Show backend logs
+mira-ctl logs backend -f     # Follow backend logs (live)
+mira-ctl logs frontend -f    # Follow frontend logs
+
+# After code changes
+mira-ctl rebuild             # Build release binary and restart backend
+mira-ctl restart frontend    # Restart frontend (usually auto-reloads)
+```
+
+**Direct systemctl commands also work:**
+```bash
+systemctl --user restart mira-backend
+systemctl --user restart mira-frontend
+systemctl --user status mira-backend
+journalctl --user -u mira-backend -f
+```
+
+### Manual Running (Alternative)
+
+```bash
+# Backend (development mode)
+cd backend
 cargo run
 
-# Production mode (after making changes)
+# Backend (production mode)
 cargo build --release
 ./target/release/mira-backend
 
-# Background mode with logging
-nohup ./target/release/mira-backend > /tmp/mira_backend.log 2>&1 &
-
-# Stop backend
-pkill -f mira-backend
-
-# Check if running
-lsof -i :3001
-```
-
-### Frontend
-
-```bash
+# Frontend
 cd frontend
-
-# Development mode
 npm run dev
-
-# Production mode
-npm run build
-npm run preview
 ```
 
-**Important Notes**:
-- Backend runs on port 3001 (WebSocket server)
-- Frontend dev server proxies to backend on port 3001
-- When making backend code changes, rebuild the release binary and restart the process
-- Use `pkill -f mira-backend` to stop running backend processes before starting a new one
+**Service Details:**
+- Backend: Port 3001 (WebSocket server), auto-restarts on failure
+- Frontend: Port 5173 (Vite dev server), auto-restarts on failure
+- Services are enabled by default (auto-start on login)
+- Service files: `~/.config/systemd/user/mira-{backend,frontend}.service`
 
 ## Architecture
 

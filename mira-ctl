@@ -1,0 +1,160 @@
+#!/bin/bash
+# mira - Service management for Mira backend and frontend
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+    echo "Usage: mira <command> [service]"
+    echo ""
+    echo "Commands:"
+    echo "  start [backend|frontend|all]   Start service(s)"
+    echo "  stop [backend|frontend|all]    Stop service(s)"
+    echo "  restart [backend|frontend|all] Restart service(s)"
+    echo "  status                         Show status of all services"
+    echo "  logs [backend|frontend]        Show logs (use -f for follow)"
+    echo "  build                          Build backend release binary"
+    echo "  rebuild                        Build and restart backend"
+    echo ""
+    echo "Examples:"
+    echo "  mira start all      # Start both services"
+    echo "  mira restart backend # Restart just the backend"
+    echo "  mira logs backend -f # Follow backend logs"
+    echo "  mira rebuild        # Build and restart backend"
+}
+
+start_service() {
+    case "$1" in
+        backend)
+            systemctl --user start mira-backend
+            echo "Backend started on port 3001"
+            ;;
+        frontend)
+            systemctl --user start mira-frontend
+            echo "Frontend started on port 5173"
+            ;;
+        all|"")
+            systemctl --user start mira-backend mira-frontend
+            echo "Backend started on port 3001"
+            echo "Frontend started on port 5173"
+            ;;
+        *)
+            echo "Unknown service: $1"
+            exit 1
+            ;;
+    esac
+}
+
+stop_service() {
+    case "$1" in
+        backend)
+            systemctl --user stop mira-backend
+            echo "Backend stopped"
+            ;;
+        frontend)
+            systemctl --user stop mira-frontend
+            echo "Frontend stopped"
+            ;;
+        all|"")
+            systemctl --user stop mira-backend mira-frontend 2>/dev/null || true
+            echo "Services stopped"
+            ;;
+        *)
+            echo "Unknown service: $1"
+            exit 1
+            ;;
+    esac
+}
+
+restart_service() {
+    case "$1" in
+        backend)
+            systemctl --user restart mira-backend
+            echo "Backend restarted"
+            ;;
+        frontend)
+            systemctl --user restart mira-frontend
+            echo "Frontend restarted"
+            ;;
+        all|"")
+            systemctl --user restart mira-backend mira-frontend
+            echo "Services restarted"
+            ;;
+        *)
+            echo "Unknown service: $1"
+            exit 1
+            ;;
+    esac
+}
+
+show_status() {
+    echo "=== Mira Services Status ==="
+    echo ""
+    systemctl --user status mira-backend --no-pager 2>/dev/null || echo "Backend: not running"
+    echo ""
+    systemctl --user status mira-frontend --no-pager 2>/dev/null || echo "Frontend: not running"
+}
+
+show_logs() {
+    local service="$1"
+    shift
+    case "$service" in
+        backend)
+            journalctl --user -u mira-backend "$@"
+            ;;
+        frontend)
+            journalctl --user -u mira-frontend "$@"
+            ;;
+        *)
+            echo "Specify service: backend or frontend"
+            exit 1
+            ;;
+    esac
+}
+
+build_backend() {
+    echo "Building backend release..."
+    cd "$SCRIPT_DIR/backend"
+    cargo build --release
+    echo "Build complete"
+}
+
+rebuild_backend() {
+    build_backend
+    echo "Restarting backend..."
+    systemctl --user restart mira-backend
+    echo "Backend rebuilt and restarted"
+}
+
+case "$1" in
+    start)
+        start_service "$2"
+        ;;
+    stop)
+        stop_service "$2"
+        ;;
+    restart)
+        restart_service "$2"
+        ;;
+    status)
+        show_status
+        ;;
+    logs)
+        shift
+        show_logs "$@"
+        ;;
+    build)
+        build_backend
+        ;;
+    rebuild)
+        rebuild_backend
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
