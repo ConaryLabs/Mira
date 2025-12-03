@@ -11,6 +11,7 @@ pub mod file_system;
 pub mod git;
 pub mod hooks;
 pub mod llm;
+pub mod mcp;
 pub mod memory;
 pub mod persona;
 pub mod project;

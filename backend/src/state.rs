@@ -16,6 +16,7 @@ use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
 use crate::config::CONFIG;
 use crate::hooks::HookManager;
+use crate::mcp::McpManager;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
@@ -92,6 +93,8 @@ pub struct AppState {
     pub hook_manager: Arc<RwLock<HookManager>>,
     // Checkpoint/Rewind system for file state snapshots
     pub checkpoint_manager: Arc<CheckpointManager>,
+    // MCP (Model Context Protocol) for external tool integration
+    pub mcp_manager: Arc<McpManager>,
 }
 
 impl AppState {
@@ -222,6 +225,20 @@ impl AppState {
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let checkpoint_manager = Arc::new(CheckpointManager::new(pool.clone(), project_dir));
 
+        // Initialize MCP manager (loads from .mira/mcp.json)
+        info!("Initializing MCP manager");
+        let mcp_manager = Arc::new(McpManager::new());
+        if let Err(e) = mcp_manager.load_config(None).await {
+            tracing::warn!("Failed to load MCP config: {}", e);
+        }
+        // Connect to configured MCP servers in background
+        let mcp_clone = mcp_manager.clone();
+        tokio::spawn(async move {
+            if let Err(e) = mcp_clone.connect_all().await {
+                tracing::warn!("Failed to connect to MCP servers: {}", e);
+            }
+        });
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -328,6 +345,7 @@ impl AppState {
             command_registry,
             hook_manager,
             checkpoint_manager,
+            mcp_manager,
         })
     }
 }

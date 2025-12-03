@@ -12,6 +12,7 @@ use crate::api::ws::message::MessageMetadata;
 use crate::api::ws::operations::OperationManager;
 use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
+use crate::mcp::McpManager;
 use crate::state::AppState;
 use tokio::sync::RwLock;
 
@@ -35,6 +36,7 @@ pub struct UnifiedChatHandler {
     operation_manager: Arc<OperationManager>,
     command_registry: Arc<RwLock<CommandRegistry>>,
     checkpoint_manager: Arc<CheckpointManager>,
+    mcp_manager: Arc<McpManager>,
 }
 
 impl UnifiedChatHandler {
@@ -45,6 +47,7 @@ impl UnifiedChatHandler {
             operation_manager,
             command_registry: app_state.command_registry.clone(),
             checkpoint_manager: app_state.checkpoint_manager.clone(),
+            mcp_manager: app_state.mcp_manager.clone(),
         }
     }
 
@@ -251,6 +254,43 @@ impl UnifiedChatHandler {
                     }));
                 }
             }
+        }
+
+        // List MCP servers and tools
+        if content == "/mcp" {
+            let servers = self.mcp_manager.list_servers().await;
+            let tools = self.mcp_manager.get_all_tools().await;
+
+            if servers.is_empty() {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "No MCP servers connected.\n\nTo configure MCP servers, create `.mira/mcp.json`:\n```json\n{\n  \"servers\": [\n    {\n      \"name\": \"example\",\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@anthropic/mcp-server-example\"]\n    }\n  ]\n}\n```",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            let mut output = format!("**MCP Servers ({} connected):**\n\n", servers.len());
+            for server in &servers {
+                let server_tools: Vec<_> = tools.iter().filter(|(s, _)| s == server).collect();
+                output.push_str(&format!("**{}** ({} tools)\n", server, server_tools.len()));
+                for (_, tool) in server_tools {
+                    let desc = tool.description.as_deref().unwrap_or("No description");
+                    output.push_str(&format!("  - `{}`: {}\n", tool.name, desc));
+                }
+                output.push('\n');
+            }
+
+            return Some(json!({
+                "type": "chat_complete",
+                "user_message_id": "",
+                "assistant_message_id": "",
+                "content": output,
+                "artifacts": [],
+                "thinking": null
+            }));
         }
 
         // Rewind to a checkpoint
