@@ -1494,11 +1494,13 @@ info!(
 
 ### Session 35: 2025-12-03
 
-**Summary:** Performance optimizations - parallelized async operations and pre-compiled regex patterns.
+**Summary:** Performance optimizations + comprehensive deployment and API documentation.
 
 **Goals:**
 - Audit performance bottlenecks across backend
 - Implement high-impact optimizations
+- Create deployment documentation
+- Create API documentation
 - Maintain test coverage
 
 **Audit Findings:**
@@ -1527,13 +1529,44 @@ info!(
      - 1 generic function pattern
    - Eliminates regex compilation overhead on each extract_symbols() call
 
+4. **Deployment Documentation** (DEPLOYMENT.md - 612 lines):
+   - Prerequisites and system requirements
+   - Quick start for development
+   - Production deployment (automated + manual)
+   - Docker deployment with docker-compose
+   - Service management (mira-ctl, systemctl)
+   - Configuration reference for all environment variables
+   - Nginx configuration and SSL/TLS setup
+   - Monitoring, logging, and health checks
+   - Troubleshooting common issues
+   - Backup and recovery procedures
+   - Security checklist and architecture overview
+
+5. **API Documentation** (API.md - 849 lines):
+   - Authentication endpoints (login, register, verify)
+   - WebSocket API connection and message format
+   - Client message types (chat, command, project, memory, git, filesystem)
+   - Server message types (stream, chat_complete, status, error)
+   - 18 operation events (started, streaming, delegated, artifact, task, etc.)
+   - Built-in commands (/commands, /checkpoints, /rewind, /mcp)
+   - Error codes and handling
+   - Rate limits and pagination
+   - WebSocket heartbeat
+   - Complete chat flow example with code
+
 **Files Modified:**
 - `backend/src/context_oracle/gatherer.rs` - Parallel gather() with tokio::join!
 - `backend/src/memory/storage/qdrant/multi_store.rs` - Parallel search_all()
 - `backend/src/operations/engine/file_handlers.rs` - LazyLock regex patterns
 
+**Files Created:**
+- `DEPLOYMENT.md` - Comprehensive deployment guide (612 lines)
+- `API.md` - Complete API reference (849 lines)
+
 **Git Commits:**
 - `85437a7` - Perf: Parallelize context gathering and search operations
+- `7ffacf3` - Docs: Add comprehensive DEPLOYMENT.md
+- `5fbd864` - Docs: Add comprehensive API.md
 
 **Performance Impact:**
 | Optimization | Before | After | Improvement |
@@ -1545,5 +1578,15 @@ info!(
 **Testing:**
 - All 102 library tests pass
 - Build succeeds with SQLX_OFFLINE=true
+
+**Milestone 10 Progress:**
+- [x] Error handling improvements (Session 33)
+- [x] Comprehensive logging (Session 34)
+- [x] Performance optimization (Session 35)
+- [x] Deployment documentation (Session 35)
+- [x] API documentation (Session 35)
+- [x] User guide (USERGUIDE.md already exists)
+- [ ] Load testing
+- [ ] Cache performance benchmarks
 
 ---
