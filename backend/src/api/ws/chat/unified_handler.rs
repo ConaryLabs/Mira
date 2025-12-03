@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use crate::api::ws::message::MessageMetadata;
 use crate::api::ws::operations::OperationManager;
@@ -57,11 +57,21 @@ impl UnifiedChatHandler {
         request: ChatRequest,
         ws_tx: mpsc::Sender<Value>,
     ) -> Result<()> {
+        let content_preview: String = request.content.chars().take(50).collect();
+        debug!(
+            session_id = %request.session_id,
+            content_len = request.content.len(),
+            project_id = ?request.project_id,
+            content_preview = %content_preview,
+            "Routing chat request"
+        );
+
         // Check for slash commands
         if let Some(expanded) = self.try_expand_command(&request).await {
             info!(
-                "[SlashCommand] Expanded /{} to prompt",
-                expanded.command_name
+                session_id = %request.session_id,
+                command = %expanded.command_name,
+                "Slash command expanded"
             );
 
             // Send status update about command expansion
@@ -83,20 +93,31 @@ impl UnifiedChatHandler {
 
         // Check for built-in commands
         if let Some(response) = self.handle_builtin_command(&request).await {
+            debug!(
+                session_id = %request.session_id,
+                "Handled as builtin command"
+            );
             let _ = ws_tx.send(response).await;
             return Ok(());
         }
 
         // Regular message - route to OperationEngine
         info!(
-            "[Gemini3] Routing to OperationEngine: {}",
-            request.content.chars().take(50).collect::<String>()
+            session_id = %request.session_id,
+            content_preview = %content_preview,
+            "Routing to OperationEngine"
         );
 
-        let _op_id = self
+        let op_id = self
             .operation_manager
-            .start_operation(request.session_id, request.content, ws_tx)
+            .start_operation(request.session_id.clone(), request.content, ws_tx)
             .await?;
+
+        debug!(
+            session_id = %request.session_id,
+            operation_id = %op_id,
+            "Operation started"
+        );
 
         Ok(())
     }
@@ -106,12 +127,25 @@ impl UnifiedChatHandler {
         let registry = self.command_registry.read().await;
 
         if let Some((command_name, arguments)) = registry.parse_command(&request.content) {
+            debug!(
+                session_id = %request.session_id,
+                command = %command_name,
+                args_len = arguments.len(),
+                "Parsed slash command"
+            );
+
             if let Some(prompt) = registry.execute(&command_name, &arguments) {
                 return Some(ExpandedCommand {
                     command_name,
                     arguments,
                     prompt,
                 });
+            } else {
+                warn!(
+                    session_id = %request.session_id,
+                    command = %command_name,
+                    "Slash command not found in registry"
+                );
             }
         }
 
@@ -122,8 +156,20 @@ impl UnifiedChatHandler {
     async fn handle_builtin_command(&self, request: &ChatRequest) -> Option<Value> {
         let content = request.content.trim();
 
+        // Check if it's a builtin command pattern
+        if !content.starts_with('/') {
+            return None;
+        }
+
+        debug!(
+            session_id = %request.session_id,
+            command = %content,
+            "Checking builtin command"
+        );
+
         // List available commands
         if content == "/commands" || content == "/help-commands" {
+            debug!(session_id = %request.session_id, "Listing available commands");
             let registry = self.command_registry.read().await;
             let commands: Vec<_> = registry
                 .list()
@@ -404,6 +450,7 @@ impl UnifiedChatHandler {
 
     /// Cancel an operation
     pub async fn cancel_operation(&self, operation_id: &str) -> Result<()> {
+        info!(operation_id = %operation_id, "Cancelling operation");
         self.operation_manager.cancel_operation(operation_id).await
     }
 }

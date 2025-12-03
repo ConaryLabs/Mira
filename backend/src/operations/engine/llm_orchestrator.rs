@@ -4,6 +4,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
@@ -301,7 +302,13 @@ impl LlmOrchestrator {
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
-        info!("[ORCHESTRATOR] Executing with LLM (tools + orchestration)");
+        let start_time = Instant::now();
+        info!(
+            operation_id = %operation_id,
+            tool_count = tools.len(),
+            message_count = messages.len(),
+            "Starting LLM orchestration"
+        );
 
         // Check budget before starting
         self.check_budget(user_id).await?;
@@ -311,25 +318,41 @@ impl LlmOrchestrator {
         let mut total_tokens_input: i64 = 0;
         let mut total_tokens_output: i64 = 0;
         let mut total_from_cache = false;
+        let mut total_tool_calls = 0;
 
         for iteration in 1..=max_iterations {
             debug!(
-                "[ORCHESTRATOR] LLM iteration {}/{}",
-                iteration, max_iterations
+                operation_id = %operation_id,
+                iteration = iteration,
+                max_iterations = max_iterations,
+                "LLM iteration"
             );
 
             // Try cache first
             let (response, from_cache) = if let Some(cached) =
                 self.try_cache_get(&messages, &tools).await
             {
+                debug!(operation_id = %operation_id, "Cache hit");
                 (cached, true)
             } else {
+                debug!(operation_id = %operation_id, "Cache miss, calling LLM API");
+                let llm_start = Instant::now();
+
                 // Call LLM with tools
                 let resp = self
                     .provider
                     .call_with_tools(messages.clone(), tools.clone())
                     .await
                     .context("Failed to call LLM")?;
+
+                let llm_duration = llm_start.elapsed();
+                info!(
+                    operation_id = %operation_id,
+                    duration_ms = llm_duration.as_millis() as u64,
+                    tokens_input = resp.tokens_input,
+                    tokens_output = resp.tokens_output,
+                    "LLM API call completed"
+                );
 
                 // Store in cache for future use
                 self.cache_put(&messages, &tools, &resp).await;
@@ -360,11 +383,17 @@ impl LlmOrchestrator {
 
             // Check if we have tool calls
             if response.tool_calls.is_empty() {
-                info!("[ORCHESTRATOR] No tool calls, execution complete");
+                debug!(operation_id = %operation_id, "No tool calls, execution complete");
                 break;
             }
 
-            info!("[ORCHESTRATOR] Processing {} tool calls", response.tool_calls.len());
+            let call_count = response.tool_calls.len();
+            total_tool_calls += call_count;
+            info!(
+                operation_id = %operation_id,
+                tool_call_count = call_count,
+                "Processing tool calls"
+            );
 
             // Add the assistant's message WITH tool_calls to conversation history
             let tool_calls_info: Vec<ToolCallInfo> = response.tool_calls.iter().map(|tc| {
@@ -380,7 +409,14 @@ impl LlmOrchestrator {
 
             // Execute tools and collect results
             for tool_call in response.tool_calls {
+                let tool_start = Instant::now();
                 let result = self.execute_tool(operation_id, &tool_call, project_id, session_id, event_tx).await?;
+                debug!(
+                    operation_id = %operation_id,
+                    tool_name = %tool_call.name,
+                    duration_ms = tool_start.elapsed().as_millis() as u64,
+                    "Tool executed"
+                );
 
                 // Add tool result to conversation with tool_call_id
                 messages.push(Message::tool_result(
@@ -391,7 +427,10 @@ impl LlmOrchestrator {
 
             // Safety check
             if iteration >= max_iterations {
-                warn!("[ORCHESTRATOR] Max iterations reached, stopping");
+                warn!(
+                    operation_id = %operation_id,
+                    "Max iterations reached, stopping"
+                );
                 break;
             }
         }
@@ -412,12 +451,16 @@ impl LlmOrchestrator {
             Gemini3Pricing::calculate_cost(total_tokens_input, total_tokens_output)
         };
 
+        let total_duration = start_time.elapsed();
         info!(
-            "[ORCHESTRATOR] Complete: {} input, {} output tokens, ${:.6} cost{}",
-            total_tokens_input,
-            total_tokens_output,
-            actual_cost,
-            if total_from_cache { " (from cache)" } else { "" }
+            operation_id = %operation_id,
+            duration_ms = total_duration.as_millis() as u64,
+            tokens_input = total_tokens_input,
+            tokens_output = total_tokens_output,
+            tool_calls = total_tool_calls,
+            cost_usd = actual_cost,
+            from_cache = total_from_cache,
+            "LLM orchestration completed"
         );
 
         Ok(accumulated_text)

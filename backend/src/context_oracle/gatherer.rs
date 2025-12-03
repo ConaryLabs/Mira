@@ -108,7 +108,7 @@ impl ContextOracle {
         self
     }
 
-    /// Gather context from all enabled intelligence systems
+    /// Gather context from all enabled intelligence systems (parallelized for performance)
     pub async fn gather(&self, request: &ContextRequest) -> Result<GatheredContext> {
         let start = Instant::now();
         info!(
@@ -116,103 +116,169 @@ impl ContextOracle {
             &request.query[..50.min(request.query.len())]
         );
 
-        let mut context = GatheredContext::empty();
         let config = &request.config;
 
-        // Gather project guidelines first - they provide foundational context
-        if config.include_guidelines {
-            if let Some(guidelines) = self.gather_guidelines(request).await {
-                context.sources_used.push("guidelines".to_string());
-                context.guidelines = Some(guidelines);
+        // Run all context gathering operations in parallel using tokio::join!
+        // Each operation checks its config flag internally and returns None/empty if disabled
+        let (
+            guidelines_result,
+            code_result,
+            semantic_result,
+            call_graph_result,
+            cochange_result,
+            fixes_result,
+            patterns_result,
+            reasoning_result,
+            errors_result,
+            resolutions_result,
+            expertise_result,
+        ) = tokio::join!(
+            // Guidelines
+            async {
+                if config.include_guidelines {
+                    self.gather_guidelines(request).await
+                } else {
+                    None
+                }
+            },
+            // Code context
+            async {
+                if config.include_code_search {
+                    self.gather_code_context(request).await
+                } else {
+                    None
+                }
+            },
+            // Semantic concepts
+            async {
+                if config.include_semantic_concepts {
+                    self.gather_semantic_concepts(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Call graph
+            async {
+                if config.include_call_graph {
+                    self.gather_call_graph_context(request).await
+                } else {
+                    None
+                }
+            },
+            // Co-change suggestions
+            async {
+                if config.include_cochange {
+                    self.gather_cochange_suggestions(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Historical fixes
+            async {
+                if config.include_historical_fixes {
+                    self.gather_historical_fixes(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Design patterns
+            async {
+                if config.include_patterns {
+                    self.gather_design_patterns(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Reasoning patterns
+            async {
+                if config.include_reasoning_patterns {
+                    self.gather_reasoning_patterns(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Build errors
+            async {
+                if config.include_build_errors {
+                    self.gather_build_errors(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Error resolutions
+            async {
+                if config.include_error_resolutions {
+                    self.gather_error_resolutions(request).await
+                } else {
+                    Vec::new()
+                }
+            },
+            // Expertise
+            async {
+                if config.include_expertise {
+                    self.gather_expertise(request).await
+                } else {
+                    Vec::new()
+                }
             }
+        );
+
+        // Assemble the gathered context from parallel results
+        let mut context = GatheredContext::empty();
+
+        if let Some(guidelines) = guidelines_result {
+            context.sources_used.push("guidelines".to_string());
+            context.guidelines = Some(guidelines);
         }
 
-        // Gather code context
-        if config.include_code_search {
-            if let Some(code_ctx) = self.gather_code_context(request).await {
-                context.sources_used.push("code_intelligence".to_string());
-                context.code_context = Some(code_ctx);
-            }
+        if let Some(code_ctx) = code_result {
+            context.sources_used.push("code_intelligence".to_string());
+            context.code_context = Some(code_ctx);
         }
 
-        // Gather semantic concepts
-        if config.include_semantic_concepts {
-            let concepts = self.gather_semantic_concepts(request).await;
-            if !concepts.is_empty() {
-                context.sources_used.push("semantic_graph".to_string());
-                context.semantic_concepts = concepts;
-            }
+        if !semantic_result.is_empty() {
+            context.sources_used.push("semantic_graph".to_string());
+            context.semantic_concepts = semantic_result;
         }
 
-        // Gather call graph context
-        if config.include_call_graph {
-            if let Some(cg_ctx) = self.gather_call_graph_context(request).await {
-                context.sources_used.push("call_graph".to_string());
-                context.call_graph = Some(cg_ctx);
-            }
+        if let Some(cg_ctx) = call_graph_result {
+            context.sources_used.push("call_graph".to_string());
+            context.call_graph = Some(cg_ctx);
         }
 
-        // Gather co-change suggestions
-        if config.include_cochange {
-            let suggestions = self.gather_cochange_suggestions(request).await;
-            if !suggestions.is_empty() {
-                context.sources_used.push("cochange".to_string());
-                context.cochange_suggestions = suggestions;
-            }
+        if !cochange_result.is_empty() {
+            context.sources_used.push("cochange".to_string());
+            context.cochange_suggestions = cochange_result;
         }
 
-        // Gather historical fixes
-        if config.include_historical_fixes {
-            let fixes = self.gather_historical_fixes(request).await;
-            if !fixes.is_empty() {
-                context.sources_used.push("historical_fixes".to_string());
-                context.historical_fixes = fixes;
-            }
+        if !fixes_result.is_empty() {
+            context.sources_used.push("historical_fixes".to_string());
+            context.historical_fixes = fixes_result;
         }
 
-        // Gather design patterns
-        if config.include_patterns {
-            let patterns = self.gather_design_patterns(request).await;
-            if !patterns.is_empty() {
-                context.sources_used.push("design_patterns".to_string());
-                context.design_patterns = patterns;
-            }
+        if !patterns_result.is_empty() {
+            context.sources_used.push("design_patterns".to_string());
+            context.design_patterns = patterns_result;
         }
 
-        // Gather reasoning pattern suggestions
-        if config.include_reasoning_patterns {
-            let patterns = self.gather_reasoning_patterns(request).await;
-            if !patterns.is_empty() {
-                context.sources_used.push("reasoning_patterns".to_string());
-                context.reasoning_patterns = patterns;
-            }
+        if !reasoning_result.is_empty() {
+            context.sources_used.push("reasoning_patterns".to_string());
+            context.reasoning_patterns = reasoning_result;
         }
 
-        // Gather build errors
-        if config.include_build_errors {
-            let errors = self.gather_build_errors(request).await;
-            if !errors.is_empty() {
-                context.sources_used.push("build_errors".to_string());
-                context.build_errors = errors;
-            }
+        if !errors_result.is_empty() {
+            context.sources_used.push("build_errors".to_string());
+            context.build_errors = errors_result;
         }
 
-        // Gather past error resolutions
-        if config.include_error_resolutions {
-            let resolutions = self.gather_error_resolutions(request).await;
-            if !resolutions.is_empty() {
-                context.sources_used.push("error_resolutions".to_string());
-                context.error_resolutions = resolutions;
-            }
+        if !resolutions_result.is_empty() {
+            context.sources_used.push("error_resolutions".to_string());
+            context.error_resolutions = resolutions_result;
         }
 
-        // Gather expertise information
-        if config.include_expertise {
-            let expertise = self.gather_expertise(request).await;
-            if !expertise.is_empty() {
-                context.sources_used.push("expertise".to_string());
-                context.expertise = expertise;
-            }
+        if !expertise_result.is_empty() {
+            context.sources_used.push("expertise".to_string());
+            context.expertise = expertise_result;
         }
 
         // Estimate tokens
