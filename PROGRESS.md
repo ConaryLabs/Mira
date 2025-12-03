@@ -1429,3 +1429,65 @@ Frontend:
 - Build succeeds with SQLX_OFFLINE=true
 
 ---
+
+### Session 34: 2025-12-03
+
+**Summary:** Comprehensive logging improvements - added structured logging with typed fields, timing metrics, and operation tracing.
+
+**Goals:**
+- Audit logging patterns across backend
+- Add structured logging to critical modules
+- Add timing logs for performance debugging
+
+**Audit Findings:**
+- 52% of files (125/239) had zero logging
+- Memory service core was completely dark (0 logs)
+- WebSocket handler had only 2 logs (0.5% coverage)
+- No structured logging fields - all string formatting
+- No trace! or performance timing logs
+- 754 total logging calls (info: 388, debug: 180, warn: 140, error: 46, trace: 0)
+
+**Key Outcomes:**
+- Added structured logging to memory/service/core_service.rs:
+  - Debug logs for function entry with session_id, content_len, project_id
+  - Info logs for successful saves with entry_id
+  - Error context with .context() for better stack traces
+- Added logging to api/ws/chat/unified_handler.rs:
+  - Request routing with session_id, content_preview
+  - Slash command parsing and execution tracking
+  - Operation ID tracking for end-to-end tracing
+- Added timing logs to operations/engine/llm_orchestrator.rs:
+  - LLM API call duration (duration_ms)
+  - Token counts (tokens_input, tokens_output)
+  - Tool execution timing
+  - Cache hit/miss tracking
+  - Total operation metrics (cost_usd, tool_calls)
+
+**Files Modified:**
+- `backend/src/memory/service/core_service.rs` - Structured logging for message saves
+- `backend/src/api/ws/chat/unified_handler.rs` - Request routing and command logs
+- `backend/src/operations/engine/llm_orchestrator.rs` - Timing and metrics logs
+- `backend/src/mcp/transport.rs` - Removed unused warn import
+
+**Git Commits:**
+- `3a80171` - Feat: Add comprehensive structured logging across backend
+
+**Structured Logging Pattern Example:**
+```rust
+info!(
+    operation_id = %operation_id,
+    duration_ms = total_duration.as_millis() as u64,
+    tokens_input = total_tokens_input,
+    tokens_output = total_tokens_output,
+    tool_calls = total_tool_calls,
+    cost_usd = actual_cost,
+    from_cache = total_from_cache,
+    "LLM orchestration completed"
+);
+```
+
+**Testing:**
+- All 102 library tests pass
+- Build succeeds with SQLX_OFFLINE=true
+
+---
