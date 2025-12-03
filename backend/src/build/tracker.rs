@@ -2,12 +2,27 @@
 // Build tracking and storage
 
 use anyhow::{Context, Result};
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::types::*;
+
+/// Parse a Unix timestamp into a DateTime<Utc>, falling back to epoch on invalid values.
+fn parse_timestamp(ts: i64) -> DateTime<Utc> {
+    Utc.timestamp_opt(ts, 0)
+        .single()
+        .unwrap_or_else(|| {
+            warn!("Invalid timestamp value: {}, using epoch", ts);
+            DateTime::UNIX_EPOCH
+        })
+}
+
+/// Parse an optional Unix timestamp into an Option<DateTime<Utc>>.
+fn parse_timestamp_opt(ts: Option<i64>) -> Option<DateTime<Utc>> {
+    ts.map(parse_timestamp)
+}
 
 /// Build tracker stores build runs and errors
 pub struct BuildTracker {
@@ -148,8 +163,8 @@ impl BuildTracker {
             command: r.command,
             exit_code: r.exit_code as i32,
             duration_ms: r.duration_ms,
-            started_at: Utc.timestamp_opt(r.started_at, 0).unwrap(),
-            completed_at: Utc.timestamp_opt(r.completed_at, 0).unwrap(),
+            started_at: parse_timestamp(r.started_at),
+            completed_at: parse_timestamp(r.completed_at),
             error_count: r.error_count.unwrap_or(0) as i32,
             warning_count: r.warning_count.unwrap_or(0) as i32,
             triggered_by: r.triggered_by,
@@ -189,8 +204,8 @@ impl BuildTracker {
                 command: r.command,
                 exit_code: r.exit_code as i32,
                 duration_ms: r.duration_ms,
-                started_at: Utc.timestamp_opt(r.started_at, 0).unwrap(),
-                completed_at: Utc.timestamp_opt(r.completed_at, 0).unwrap(),
+                started_at: parse_timestamp(r.started_at),
+                completed_at: parse_timestamp(r.completed_at),
                 error_count: r.error_count.unwrap_or(0) as i32,
                 warning_count: r.warning_count.unwrap_or(0) as i32,
                 triggered_by: r.triggered_by,
@@ -231,10 +246,10 @@ impl BuildTracker {
                 suggestion: r.suggestion,
                 code_snippet: r.code_snippet,
                 category: ErrorCategory::from_str(&r.category.unwrap_or_default()),
-                first_seen_at: Utc.timestamp_opt(r.first_seen_at, 0).unwrap(),
-                last_seen_at: Utc.timestamp_opt(r.last_seen_at, 0).unwrap(),
+                first_seen_at: parse_timestamp(r.first_seen_at),
+                last_seen_at: parse_timestamp(r.last_seen_at),
                 occurrence_count: r.occurrence_count.unwrap_or(1) as i32,
-                resolved_at: r.resolved_at.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+                resolved_at: parse_timestamp_opt(r.resolved_at),
             })
             .collect())
     }
@@ -273,8 +288,8 @@ impl BuildTracker {
                 suggestion: r.suggestion,
                 code_snippet: r.code_snippet,
                 category: ErrorCategory::from_str(&r.category.unwrap_or_default()),
-                first_seen_at: Utc.timestamp_opt(r.first_seen_at, 0).unwrap(),
-                last_seen_at: Utc.timestamp_opt(r.last_seen_at, 0).unwrap(),
+                first_seen_at: parse_timestamp(r.first_seen_at),
+                last_seen_at: parse_timestamp(r.last_seen_at),
                 occurrence_count: r.occurrence_count.unwrap_or(1) as i32,
                 resolved_at: None,
             })

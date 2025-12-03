@@ -4,9 +4,10 @@
 use anyhow::Result;
 use notify::RecursiveMode;
 use notify_debouncer_full::{Debouncer, RecommendedCache};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -46,7 +47,7 @@ impl WatchRegistry {
     pub fn set_debouncer(&self, debouncer: Arc<parking_lot::Mutex<Debouncer<notify::RecommendedWatcher, RecommendedCache>>>) {
         // Process any pending watches
         let pending = {
-            let mut pending = self.pending_watches.write().unwrap();
+            let mut pending = self.pending_watches.write();
             std::mem::take(&mut *pending)
         };
 
@@ -60,7 +61,7 @@ impl WatchRegistry {
             }
         }
 
-        let mut d = self.debouncer.write().unwrap();
+        let mut d = self.debouncer.write();
         *d = Some(debouncer);
     }
 
@@ -83,8 +84,8 @@ impl WatchRegistry {
 
         // Add to registry
         {
-            let mut repos = self.repositories.write().unwrap();
-            let mut paths = self.path_to_attachment.write().unwrap();
+            let mut repos = self.repositories.write();
+            let mut paths = self.path_to_attachment.write();
 
             repos.insert(
                 attachment_id.clone(),
@@ -99,14 +100,14 @@ impl WatchRegistry {
         }
 
         // Add watch to the debouncer
-        let debouncer_guard = self.debouncer.read().unwrap();
+        let debouncer_guard = self.debouncer.read();
         if let Some(ref debouncer) = *debouncer_guard {
             let mut d = debouncer.lock();
             if let Err(e) = d.watch(&path, RecursiveMode::Recursive) {
                 warn!("Failed to add watch for {:?}: {}", path, e);
                 // Remove from registry on failure
-                let mut repos = self.repositories.write().unwrap();
-                let mut paths = self.path_to_attachment.write().unwrap();
+                let mut repos = self.repositories.write();
+                let mut paths = self.path_to_attachment.write();
                 repos.remove(&attachment_id);
                 paths.remove(&path);
                 return Err(e.into());
@@ -114,7 +115,7 @@ impl WatchRegistry {
             debug!("Added recursive watch for {:?}", path);
         } else {
             // Debouncer not ready yet, add to pending
-            let mut pending = self.pending_watches.write().unwrap();
+            let mut pending = self.pending_watches.write();
             pending.push(path);
             debug!("Added to pending watches (debouncer not ready)");
         }
@@ -127,13 +128,13 @@ impl WatchRegistry {
         info!("Unregistering watch for repository: {}", attachment_id);
 
         let path = {
-            let repos = self.repositories.read().unwrap();
+            let repos = self.repositories.read();
             repos.get(attachment_id).map(|r| r.path.clone())
         };
 
         if let Some(path) = path {
             // Remove watch from debouncer
-            let debouncer_guard = self.debouncer.read().unwrap();
+            let debouncer_guard = self.debouncer.read();
             if let Some(ref debouncer) = *debouncer_guard {
                 let mut d = debouncer.lock();
                 if let Err(e) = d.unwatch(&path) {
@@ -142,8 +143,8 @@ impl WatchRegistry {
             }
 
             // Remove from registry
-            let mut repos = self.repositories.write().unwrap();
-            let mut paths = self.path_to_attachment.write().unwrap();
+            let mut repos = self.repositories.write();
+            let mut paths = self.path_to_attachment.write();
             repos.remove(attachment_id);
             paths.remove(&path);
         }
@@ -155,7 +156,7 @@ impl WatchRegistry {
     ///
     /// Returns (attachment_id, project_id, base_path) if found
     pub fn find_repository_for_path(&self, path: &PathBuf) -> Option<(String, String, PathBuf)> {
-        let repos = self.repositories.read().unwrap();
+        let repos = self.repositories.read();
 
         for repo in repos.values() {
             if path.starts_with(&repo.path) {
@@ -172,7 +173,7 @@ impl WatchRegistry {
 
     /// Mark that a git operation just completed for a repository
     pub fn mark_git_operation(&self, attachment_id: &str) {
-        let mut repos = self.repositories.write().unwrap();
+        let mut repos = self.repositories.write();
         if let Some(repo) = repos.get_mut(attachment_id) {
             repo.last_git_operation = Some(Instant::now());
             debug!("Marked git operation for {}", attachment_id);
@@ -181,7 +182,7 @@ impl WatchRegistry {
 
     /// Check if we're in the git operation cooldown period
     pub fn in_git_cooldown(&self, attachment_id: &str, cooldown_ms: u64) -> bool {
-        let repos = self.repositories.read().unwrap();
+        let repos = self.repositories.read();
         if let Some(repo) = repos.get(attachment_id) {
             if let Some(last_op) = repo.last_git_operation {
                 let elapsed = last_op.elapsed().as_millis() as u64;
@@ -193,13 +194,13 @@ impl WatchRegistry {
 
     /// Get all watched repositories
     pub fn get_all_repositories(&self) -> Vec<WatchedRepository> {
-        let repos = self.repositories.read().unwrap();
+        let repos = self.repositories.read();
         repos.values().cloned().collect()
     }
 
     /// Get count of watched repositories
     pub fn count(&self) -> usize {
-        let repos = self.repositories.read().unwrap();
+        let repos = self.repositories.read();
         repos.len()
     }
 }
