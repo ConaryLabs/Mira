@@ -80,8 +80,41 @@ Development session history with progressively detailed entries (recent sessions
 2. Use in chat: `/review <paste code here>`
 3. Type `/commands` to see all available commands
 
+4. **Hooks System Module** (`src/hooks/mod.rs` - 420 lines):
+   - `HookTrigger` enum (PreToolUse, PostToolUse, PreCommand, PostCommand)
+   - `OnFailure` enum (Block, Warn, Ignore)
+   - `Hook` struct with name, trigger, tool_pattern, command, timeout, on_failure
+   - `HookManager` with load/execute methods
+   - Pattern matching with wildcards (`write_*` matches `write_file`)
+   - Timeout support with configurable duration
+   - Environment variables passed to hooks (MIRA_TOOL_NAME, MIRA_TOOL_ARGS)
+   - 7 unit tests for matching, execution, timeout, env vars
+
+5. **Integration with AppState** (`src/state.rs`):
+   - Added `hook_manager: Arc<RwLock<HookManager>>` field
+   - Loads hooks from `~/.mira/hooks.json` on startup
+
+**Hook Configuration Example** (`.mira/hooks.json`):
+```json
+{
+  "hooks": [
+    {
+      "name": "pre-write-test",
+      "trigger": "pre_tool_use",
+      "tool_pattern": "write_*",
+      "command": "cargo test",
+      "timeout_ms": 60000,
+      "on_failure": "block"
+    }
+  ]
+}
+```
+
+**Test Status:** All 90 tests passing (80 lib + 3 commands + 7 hooks)
+
 **Next Steps:**
-- Implement Hooks System (PreToolUse/PostToolUse)
+- Integrate hooks into OperationEngine tool execution
+- Implement Checkpoint/Rewind System
 
 ---
 

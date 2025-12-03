@@ -561,10 +561,15 @@ Estimated monthly: $132 (vs $825 without cache)
 - `$ARGUMENTS` placeholder replaced with user input
 - Namespacing via subdirectories: `commands/git/pr.md` -> `/git:pr`
 
-### 2. Hooks System - PLANNED
-- PreToolUse/PostToolUse shell command hooks
-- JSON config in `.mira/hooks.json`
-- Timeout and failure handling (block/warn/ignore)
+### 2. Hooks System - IN PROGRESS
+- [x] `src/hooks/mod.rs` - HookManager with config loading and execution
+- [x] HookManager added to AppState
+- [x] PreToolUse/PostToolUse/PreCommand/PostCommand triggers
+- [x] JSON config from `.mira/hooks.json`
+- [x] Timeout and failure handling (block/warn/ignore)
+- [x] Tool pattern matching with wildcards
+- [x] 7 unit tests passing
+- [ ] Integration with OperationEngine for actual tool calls
 - Use cases: pre-commit tests, notifications, logging
 
 ### 3. Checkpoint/Rewind System - PLANNED

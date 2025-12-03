@@ -14,6 +14,7 @@ use crate::build::{BuildTracker, ErrorResolver};
 use crate::cache::LlmCache;
 use crate::commands::CommandRegistry;
 use crate::config::CONFIG;
+use crate::hooks::HookManager;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
@@ -86,6 +87,8 @@ pub struct AppState {
     pub project_task_service: Arc<ProjectTaskService>,
     // Custom slash commands
     pub command_registry: Arc<RwLock<CommandRegistry>>,
+    // Hook system for pre/post tool execution
+    pub hook_manager: Arc<RwLock<HookManager>>,
 }
 
 impl AppState {
@@ -203,6 +206,14 @@ impl AppState {
         }
         let command_registry = Arc::new(RwLock::new(command_registry));
 
+        // Initialize hook manager (loads from ~/.mira/hooks.json)
+        info!("Initializing hook manager");
+        let mut hook_manager = HookManager::new();
+        if let Err(e) = hook_manager.load(None).await {
+            tracing::warn!("Failed to load user hooks: {}", e);
+        }
+        let hook_manager = Arc::new(RwLock::new(hook_manager));
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -305,6 +316,7 @@ impl AppState {
             synthesis_storage,
             project_task_service,
             command_registry,
+            hook_manager,
         })
     }
 }
