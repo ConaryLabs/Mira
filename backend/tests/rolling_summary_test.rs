@@ -46,7 +46,7 @@ async fn create_test_memory_service() -> Arc<MemoryService> {
         api_key.clone(),
         CONFIG.gemini_model.clone(),
         CONFIG.gemini_thinking.clone(),
-    ).expect("Failed to create GPT5 provider"));
+    ).expect("Failed to create LLM provider"));
 
     // Create embedding client - use CONFIG settings
     let embedding_client = Arc::new(GeminiEmbeddings::new(

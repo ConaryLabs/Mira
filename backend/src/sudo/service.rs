@@ -217,7 +217,7 @@ impl SudoPermissionService {
         .bind(command)
         .bind(operation_id)
         .bind(session_id)
-        .bind("gpt5")
+        .bind("llm")
         .bind(reason)
         .bind(now)
         .bind(expires_at)

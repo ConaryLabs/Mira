@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     info!("Starting Mira Backend");
-    info!("Model: GPT 5.1 (with variable reasoning effort)");
+    info!("Model: Gemini (with variable reasoning effort)");
     info!(
         "Tools: {}",
         if CONFIG.enable_chat_tools {

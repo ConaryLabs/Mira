@@ -2,7 +2,7 @@
 // UPDATED: Rewritten to use public API (run_operation) instead of internal methods
 //
 // Phase 6: Operation Engine Integration Tests
-// Tests full orchestration: GPT 5.1 -> Tool execution -> Artifact creation
+// Tests full orchestration: LLM -> Tool execution -> Artifact creation
 
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
@@ -35,13 +35,13 @@ async fn create_test_db() -> Arc<sqlx::SqlitePool> {
     Arc::new(pool)
 }
 
-/// Helper to create test GPT 5.1 provider (uses fake API key)
-fn create_test_gpt5() -> Gemini3Provider {
+/// Helper to create test LLM provider (uses fake API key)
+fn create_test_llm() -> Gemini3Provider {
     Gemini3Provider::new(
-        "test-gpt5-key".to_string(),
-        "gpt-5.1".to_string(),
+        "test-llm-key".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider")
+    ).expect("Should create LLM provider")
 }
 
 /// Setup test services
@@ -69,9 +69,9 @@ async fn setup_services(
 
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         "test-key".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider"));
+    ).expect("Should create LLM provider"));
 
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
@@ -112,14 +112,14 @@ async fn setup_services(
 
 async fn test_operation_engine_with_providers() {
     let db = create_test_db().await;
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -216,14 +216,14 @@ async fn test_operation_engine_with_providers() {
 
 async fn test_operation_lifecycle_complete() {
     let db = create_test_db().await;
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -307,14 +307,14 @@ async fn test_operation_lifecycle_complete() {
 
 async fn test_operation_cancellation() {
     let db = create_test_db().await;
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -388,14 +388,14 @@ async fn test_operation_cancellation() {
 
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = Arc::new(OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,

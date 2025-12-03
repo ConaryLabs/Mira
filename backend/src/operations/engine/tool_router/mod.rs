@@ -1,6 +1,6 @@
 // src/operations/engine/tool_router/mod.rs
 // Tool Router - Routes tool calls to appropriate handlers
-// GPT 5.1 single-model architecture
+// Gemini single-model architecture
 
 mod context_routes;
 mod file_routes;
@@ -79,9 +79,9 @@ impl ToolRouter {
     /// Route a tool call to appropriate handler
     ///
     /// Flow:
-    /// 1. GPT 5.1 calls tool (e.g., "read_project_file")
+    /// 1. LLM calls tool (e.g., "read_project_file")
     /// 2. Router executes via appropriate handler
-    /// 3. Results returned to GPT 5.1
+    /// 3. Results returned to LLM
     pub async fn route_tool_call(&self, tool_name: &str, arguments: Value) -> Result<Value> {
         info!("[ROUTER] Routing tool: {}", tool_name);
 

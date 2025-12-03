@@ -41,11 +41,11 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
     let db = Arc::new(pool);
 
     // Create provider
-    let gpt5 = Gemini3Provider::new(
+    let llm = Gemini3Provider::new(
         common::google_api_key(),
-        "gpt-5.1".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider");
+    ).expect("Should create LLM provider");
 
     // Setup services
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*db).clone()));
@@ -63,9 +63,9 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
 
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         common::google_api_key(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider"));
+    ).expect("Should create LLM provider"));
 
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
@@ -89,7 +89,7 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,

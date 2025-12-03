@@ -1,5 +1,5 @@
 // src/operations/engine/mod.rs
-// Operation Engine - orchestrates coding workflows with GPT 5.1
+// Operation Engine - orchestrates coding workflows with LLM
 // Refactored into focused modules for maintainability
 
 pub mod artifacts;
@@ -47,7 +47,7 @@ use lifecycle::LifecycleManager;
 use orchestration::Orchestrator;
 use tool_router::ToolRouter;
 
-/// Main operation engine with GPT 5.1 architecture
+/// Main operation engine with LLM architecture
 pub struct OperationEngine {
     lifecycle_manager: LifecycleManager,
     artifact_manager: ArtifactManager,
@@ -153,7 +153,7 @@ impl OperationEngine {
 
     /// Execute an operation (main entry point)
     ///
-    /// Routes all requests to GPT 5.1 orchestration
+    /// Routes all requests to LLM orchestration
     pub async fn run_operation(
         &self,
         operation_id: &str,

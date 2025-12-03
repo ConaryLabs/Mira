@@ -127,7 +127,7 @@ impl MessagePipelineResult {
             contains_code: Some(self.analysis.is_code),
             language: self.analysis.programming_lang.clone(),
             programming_lang: self.analysis.programming_lang.clone(),
-            routed_to_heads: None, // GPT-5's routed_to_heads used directly from structured response
+            routed_to_heads: None, // LLM's routed_to_heads used directly from structured response
             // Error tracking fields from analysis
             contains_error: Some(self.analysis.contains_error),
             error_type: self.analysis.error_type.clone(),

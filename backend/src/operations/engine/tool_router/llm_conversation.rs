@@ -32,14 +32,14 @@ pub async fn execute_file_read_conversation(
     let mut response = llm
         .call_with_tools(initial_messages.clone(), tools.clone())
         .await
-        .context("GPT 5.1 file read failed")?;
+        .context("LLM file read failed")?;
 
     let mut all_files = Vec::new();
     let mut conversation = initial_messages;
 
     while !response.tool_calls.is_empty() {
         info!(
-            "[ROUTER] GPT 5.1 requested {} tool call(s)",
+            "[ROUTER] LLM requested {} tool call(s)",
             response.tool_calls.len()
         );
 
@@ -92,13 +92,13 @@ pub async fn execute_file_read_conversation(
             )));
         }
 
-        // Continue conversation with GPT 5.1
+        // Continue conversation with LLM
         response = llm
             .call_with_tools(conversation.clone(), tools.clone())
             .await
-            .context("GPT 5.1 continuation failed")?;
+            .context("LLM continuation failed")?;
 
-        // Break if GPT 5.1 returns text instead of more tool calls
+        // Break if LLM returns text instead of more tool calls
         if response.tool_calls.is_empty() {
             break;
         }

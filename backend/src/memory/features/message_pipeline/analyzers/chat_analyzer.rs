@@ -326,12 +326,12 @@ CRITICAL RULES:
     }
 
     fn extract_json_from_response(&self, response: &str) -> Result<String> {
-        // STRATEGY 0: Handle GPT-5 structured output format
-        // GPT-5 returns: {"output": [{"type": "reasoning", ...}, {"type": "message", "content": [{"type": "output_text", "text": "..."}]}]}
+        // STRATEGY 0: Handle LLM structured output format
+        // LLM returns: {"output": [{"type": "reasoning", ...}, {"type": "message", "content": [{"type": "output_text", "text": "..."}]}]}
         if let Ok(value) = serde_json::from_str::<Value>(response) {
-            // Check for GPT-5 output array format
+            // Check for LLM output array format
             if let Some(output_array) = value.get("output").and_then(|o| o.as_array()) {
-                debug!("Detected GPT-5 structured response format");
+                debug!("Detected LLM structured response format");
 
                 // Find the message object in the output array
                 for item in output_array {
@@ -348,7 +348,7 @@ CRITICAL RULES:
                                         content_item.get("text").and_then(|t| t.as_str())
                                     {
                                         debug!(
-                                            "Extracted JSON from GPT-5 output.content.text: {} chars",
+                                            "Extracted JSON from LLM output.content.text: {} chars",
                                             text.len()
                                         );
                                         return Ok(text.to_string());
@@ -361,8 +361,8 @@ CRITICAL RULES:
                 return Err(anyhow::anyhow!("No content in structured response"));
             }
 
-            // If not GPT-5 format but valid JSON, assume it's already the analysis
-            debug!("Response is already valid JSON (non-GPT-5 structured response)");
+            // If not LLM format but valid JSON, assume it's already the analysis
+            debug!("Response is already valid JSON (non-LLM structured response)");
             return Ok(response.to_string());
         }
 

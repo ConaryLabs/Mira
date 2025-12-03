@@ -24,12 +24,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-fn create_test_gpt5() -> Gemini3Provider {
+fn create_test_llm() -> Gemini3Provider {
     Gemini3Provider::new(
         "test-key".to_string(),
-        "gpt-5.1".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider")
+    ).expect("Should create LLM provider")
 }
 
 async fn setup_services(
@@ -59,9 +59,9 @@ async fn setup_services(
     // Create LLM provider for MemoryService
     let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         "test-key".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
-    ).expect("Should create GPT5 provider"));
+    ).expect("Should create LLM provider"));
 
     // Create MemoryService
     let memory_service = Arc::new(MemoryService::new(
@@ -117,14 +117,14 @@ async fn test_operation_engine_lifecycle() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -267,14 +267,14 @@ async fn test_operation_cancellation() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -367,14 +367,14 @@ async fn test_multiple_operations() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -457,14 +457,14 @@ async fn test_operation_event_ordering() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,
@@ -550,14 +550,14 @@ async fn test_operation_retrieval() {
         .expect("Failed to run migrations");
 
     let db = Arc::new(pool);
-    let gpt5 = create_test_gpt5();
+    let llm =create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
     let engine = OperationEngine::new(
         db.clone(),
-        gpt5,
+        llm,
         memory_service,
         relationship_service,
         git_client,

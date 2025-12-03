@@ -7,7 +7,7 @@ use crate::git::client::{FileNode, FileNodeType};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::memory::service::MemoryService;
-use crate::operations::delegation_tools::get_gpt5_tools;
+use crate::operations::delegation_tools::get_llm_tools;
 use crate::persona::PersonaOverlay;
 use crate::project::ProjectTaskService;
 use crate::prompt::UnifiedPromptBuilder;
@@ -185,7 +185,7 @@ impl ContextBuilder {
         file_tree: Option<&Vec<FileNode>>,
     ) -> String {
         let persona = PersonaOverlay::Default;
-        let tools_json = get_gpt5_tools();
+        let tools_json = get_llm_tools();
 
         let tools: Vec<Tool> = tools_json
             .iter()
@@ -210,7 +210,7 @@ impl ContextBuilder {
         )
     }
 
-    /// Build enriched context string for GPT 5.1 with all available information
+    /// Build enriched context string for LLM with all available information
     pub fn build_enriched_context(
         args: &serde_json::Value,
         file_tree: Option<&Vec<FileNode>>,
@@ -230,7 +230,7 @@ impl ContextBuilder {
     ) -> String {
         let mut enriched_context = String::new();
 
-        // 1. GPT-5's context from tool call (if any)
+        // 1. LLM's context from tool call (if any)
         if let Some(gpt_context) = args.get("context").and_then(|v| v.as_str()) {
             if !gpt_context.is_empty() {
                 enriched_context.push_str("=== TASK CONTEXT ===\n");

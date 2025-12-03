@@ -165,9 +165,9 @@ impl Orchestrator {
             .start_operation(operation_id, event_tx)
             .await?;
 
-        // Use GPT 5.1 orchestration
-        info!("[ENGINE] Using GPT 5.1 orchestration");
-        self.execute_with_gpt5(
+        // Use LLM orchestration
+        info!("[ENGINE] Using LLM orchestration");
+        self.execute_with_llm(
             operation_id,
             session_id,
             user_content,
@@ -178,7 +178,7 @@ impl Orchestrator {
         .await
     }
 
-    async fn execute_with_gpt5(
+    async fn execute_with_llm(
         &self,
         operation_id: &str,
         session_id: &str,

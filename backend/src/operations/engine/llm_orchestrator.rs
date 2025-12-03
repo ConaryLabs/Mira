@@ -113,8 +113,8 @@ impl LlmOrchestrator {
                 .record_request(
                     user_id,
                     Some(operation_id),
-                    "gpt5",
-                    "gpt-5.1",
+                    "gemini",
+                    "gemini-2.5-flash",
                     Some("medium"), // TODO: Track actual reasoning effort
                     tokens_input,
                     tokens_output,
@@ -285,12 +285,12 @@ impl LlmOrchestrator {
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
-        info!("[ORCHESTRATOR] Executing with GPT 5.1");
+        info!("[ORCHESTRATOR] Executing with LLM");
         self.execute_with_tools(user_id, operation_id, messages, tools, project_id, session_id, event_tx)
             .await
     }
 
-    /// Execute using GPT 5.1 with full tool calling loop
+    /// Execute using LLM with full tool calling loop
     async fn execute_with_tools(
         &self,
         user_id: &str,
@@ -301,7 +301,7 @@ impl LlmOrchestrator {
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
-        info!("[ORCHESTRATOR] Executing with GPT 5.1 (tools + orchestration)");
+        info!("[ORCHESTRATOR] Executing with LLM (tools + orchestration)");
 
         // Check budget before starting
         self.check_budget(user_id).await?;
@@ -314,7 +314,7 @@ impl LlmOrchestrator {
 
         for iteration in 1..=max_iterations {
             debug!(
-                "[ORCHESTRATOR] GPT 5.1 iteration {}/{}",
+                "[ORCHESTRATOR] LLM iteration {}/{}",
                 iteration, max_iterations
             );
 
@@ -324,12 +324,12 @@ impl LlmOrchestrator {
             {
                 (cached, true)
             } else {
-                // Call GPT 5.1 with tools
+                // Call LLM with tools
                 let resp = self
                     .provider
                     .call_with_tools(messages.clone(), tools.clone())
                     .await
-                    .context("Failed to call GPT 5.1")?;
+                    .context("Failed to call LLM")?;
 
                 // Store in cache for future use
                 self.cache_put(&messages, &tools, &resp).await;

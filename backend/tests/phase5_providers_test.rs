@@ -1,5 +1,5 @@
 // tests/phase5_providers_test.rs
-// Phase 5: Provider refactoring tests - delegation tools, GPT 5.1
+// Phase 5: Provider refactoring tests - delegation tools, LLM
 
 use mira_backend::operations::{get_delegation_tools, parse_tool_call};
 use serde_json::json;
@@ -192,7 +192,7 @@ fn test_parse_tool_call_invalid_json_arguments() {
 }
 
 // ============================================================================
-// GPT 5.1 Provider Tests
+// LLM Provider Tests
 // ============================================================================
 
 #[test]

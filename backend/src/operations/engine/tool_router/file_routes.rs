@@ -60,7 +60,7 @@ pub async fn route_read_file(
 
     let result = execute_file_read_conversation(llm, file_handlers, messages, tools).await?;
 
-    // Return aggregated results to GPT-5
+    // Return aggregated results to LLM
     Ok(json!({
         "success": true,
         "files_read": result.files.len(),
@@ -109,7 +109,7 @@ pub async fn route_search(
     let response = llm
         .call_with_tools(messages, tools)
         .await
-        .context("GPT 5.1 search failed")?;
+        .context("LLM search failed")?;
 
     // Execute grep tool if called
     if let Some(tool_call) = response.tool_calls.first() {
@@ -168,7 +168,7 @@ pub async fn route_list_files(
     let response = llm
         .call_with_tools(messages, tools)
         .await
-        .context("GPT 5.1 list failed")?;
+        .context("LLM list failed")?;
 
     // Execute list_files tool if called
     if let Some(tool_call) = response.tool_calls.first() {

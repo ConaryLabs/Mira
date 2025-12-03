@@ -1,5 +1,5 @@
 // src/operations/delegation_tools.rs
-// Tool schema definitions for GPT 5.1 tool calling
+// Tool schema definitions for LLM tool calling
 //
 // This file is a thin wrapper around the modular tool definitions in tools/
 // It maintains backward compatibility with existing code that imports from here.
@@ -7,9 +7,9 @@
 use serde_json::Value;
 
 // Re-export from tools module for backward compatibility
-pub use super::tools::{get_delegation_tools, get_gpt5_tools};
+pub use super::tools::{get_delegation_tools, get_llm_tools};
 
-/// Parse tool call arguments from GPT-5 response
+/// Parse tool call arguments from LLM response
 /// Returns (tool_name, parsed_args)
 pub fn parse_tool_call(tool_call: &Value) -> anyhow::Result<(String, Value)> {
     let tool_name = tool_call

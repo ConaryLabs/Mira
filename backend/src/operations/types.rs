@@ -35,7 +35,7 @@ pub mod artifact_kinds {
 /// Event types (stored as strings in DB)
 pub mod event_types {
     pub const STATUS_CHANGE: &str = "status_change";
-    pub const GPT5_ANALYSIS: &str = "gpt5_analysis";
+    pub const LLM_ANALYSIS: &str = "llm_analysis";
     pub const DELEGATION: &str = "delegation";
     pub const LLM_PROGRESS: &str = "llm_progress";
     pub const ARTIFACT_CREATED: &str = "artifact_created";
@@ -117,9 +117,9 @@ pub struct StatusChangePayload {
     pub reason: Option<String>,
 }
 
-/// Payload for GPT-5 analysis events
+/// Payload for LLM analysis events
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Gpt5AnalysisPayload {
+pub struct LlmAnalysisPayload {
     pub analysis: String,
     pub response_id: String,
     pub suggested_approach: String,
@@ -131,7 +131,7 @@ pub struct Gpt5AnalysisPayload {
 /// Payload for delegation events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegationPayload {
-    pub delegated_to: String, // e.g., "gpt-5.1"
+    pub delegated_to: String, // e.g., "gemini"
     pub instructions: DelegationInstructions,
     pub estimated_duration_ms: Option<u64>,
 }
@@ -158,7 +158,7 @@ pub struct ArtifactPayload {
 /// Payload for review feedback events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewFeedbackPayload {
-    pub reviewer: String, // "gpt5"
+    pub reviewer: String, // "llm"
     pub response_id: String,
     pub rating: String, // "excellent", "good", "acceptable", "needs_work", "rejected"
     pub feedback: String,

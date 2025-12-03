@@ -192,7 +192,7 @@ impl WebSocketConnection {
     pub async fn send_connection_ready(&self) -> Result<()> {
         let welcome_msg = format!("Connected to Mira v{}", env!("CARGO_PKG_VERSION"));
         let config_msg = format!(
-            "Model: GPT 5.1 | Tools: {}",
+            "Model: Gemini | Tools: {}",
             if CONFIG.enable_chat_tools {
                 "enabled"
             } else {

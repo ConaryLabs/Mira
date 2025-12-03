@@ -1,5 +1,5 @@
 // src/llm/provider/stream.rs
-// Stream event types for GPT-5 Responses API SSE streaming
+// Stream event types for LLM SSE streaming
 
 use serde_json::Value;
 

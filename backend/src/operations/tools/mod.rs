@@ -1,5 +1,5 @@
 // src/operations/tools/mod.rs
-// Modular tool definitions for GPT 5.1 tool calling
+// Modular tool definitions for LLM tool calling
 //
 // This module organizes tool schemas by domain:
 // - code_generation: Generate, refactor, and debug code
@@ -21,7 +21,7 @@ pub mod skills;
 
 use serde_json::Value;
 
-/// Get all delegation tool schemas for GPT-5
+/// Get all delegation tool schemas for LLM
 /// Includes code generation tools and all analysis tools
 pub fn get_delegation_tools() -> Vec<Value> {
     let mut tools = Vec::new();
@@ -47,9 +47,9 @@ pub fn get_delegation_tools() -> Vec<Value> {
     tools
 }
 
-/// Get tool schemas for GPT 5.1 (executable tools for tool calling loop)
-/// These are the actual tools GPT 5.1 can execute
-pub fn get_gpt5_tools() -> Vec<Value> {
+/// Get tool schemas for LLM (executable tools for tool calling loop)
+/// These are the actual tools the LLM can execute
+pub fn get_llm_tools() -> Vec<Value> {
     let mut tools = Vec::new();
 
     // File operation tools (no code generation - those are for delegation)

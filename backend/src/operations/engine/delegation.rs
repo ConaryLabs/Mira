@@ -1,5 +1,5 @@
 // src/operations/engine/delegation.rs
-// GPT 5.1 delegation for code generation tasks
+// LLM delegation for code generation tasks
 
 use crate::git::client::FileNode;
 use crate::llm::provider::{Gemini3Provider, CodeGenRequest};
@@ -20,8 +20,8 @@ impl DelegationHandler {
         Self { llm }
     }
 
-    /// Delegate to GPT 5.1 with enriched context
-    pub async fn delegate_to_gpt5(
+    /// Delegate to LLM with enriched context
+    pub async fn delegate_to_llm(
         &self,
         tool_name: &str,
         args: serde_json::Value,
@@ -33,12 +33,12 @@ impl DelegationHandler {
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
                 return Err(anyhow::anyhow!(
-                    "Operation cancelled before GPT 5.1 delegation"
+                    "Operation cancelled before LLM delegation"
                 ));
             }
         }
 
-        info!("Delegating {} to GPT 5.1", tool_name);
+        info!("Delegating {} to LLM", tool_name);
 
         // Build enriched context from all sources
         let enriched_context =
@@ -176,7 +176,7 @@ impl DelegationHandler {
                     skill_prompt, task_description, enriched_context
                 );
 
-                info!("[DELEGATION] Executing '{}' skill via GPT 5.1", skill_name);
+                info!("[DELEGATION] Executing '{}' skill via LLM", skill_name);
 
                 CodeGenRequest {
                     path: "skill_output.md".to_string(), // Skills might not produce code
@@ -196,7 +196,7 @@ impl DelegationHandler {
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
                 return Err(anyhow::anyhow!(
-                    "Operation cancelled during GPT 5.1 request"
+                    "Operation cancelled during LLM request"
                 ));
             }
         }

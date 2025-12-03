@@ -45,10 +45,10 @@ fn test_message_conversation_flow() {
 // ============================================================================
 
 #[test]
-fn test_gpt5_provider_clone() {
+fn test_llm_provider_clone() {
     let provider = Gemini3Provider::new(
         "test-key".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
     ).expect("Should create provider");
 
@@ -59,13 +59,13 @@ fn test_gpt5_provider_clone() {
     assert!(true);
 }
 
-// GPT 5.1 is the only LLM provider now
+// Gemini is the only LLM provider now
 
 #[test]
 fn test_provider_clone_independence() {
     let original = Gemini3Provider::new(
         "original-key".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
     ).expect("Should create provider");
 
@@ -84,10 +84,10 @@ fn test_provider_clone_independence() {
 // ============================================================================
 
 #[test]
-fn test_create_gpt5_provider() {
+fn test_create_llm_provider() {
     let provider = Gemini3Provider::new(
         "test-key".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
     ).expect("Should create provider");
 
@@ -96,19 +96,19 @@ fn test_create_gpt5_provider() {
     assert!(true);
 }
 
-// Only GPT 5.1 provider is used now
+// Only Gemini provider is used now
 
 #[test]
 fn test_provider_with_different_configs() {
     let minimal = Gemini3Provider::new(
         "key1".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::Low,
     ).expect("Should create minimal provider");
 
     let maximal = Gemini3Provider::new(
         "key2".to_string(),
-        "gpt-5-preview".to_string(),
+        "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
     ).expect("Should create maximal provider");
 
@@ -124,7 +124,7 @@ fn test_provider_with_different_configs() {
 
 #[test]
 fn test_simple_task_routing() {
-    // Simulate routing logic: simple tasks should go to GPT-5
+    // Simulate routing logic: simple tasks use minimum reasoning effort
     let task_complexity = "simple";
     let should_delegate = matches!(task_complexity, "complex" | "very_complex");
 
