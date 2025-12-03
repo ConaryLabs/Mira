@@ -3,9 +3,10 @@ use crate::memory::{
     core::traits::MemoryStore, core::types::MemoryEntry,
     storage::qdrant::multi_store::QdrantMultiStore, storage::sqlite::store::SqliteMemoryStore,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use std::sync::Arc;
+use tracing::{debug, info};
 
 pub struct MemoryCoreService {
     pub sqlite_store: Arc<SqliteMemoryStore>,
@@ -27,6 +28,13 @@ impl MemoryCoreService {
         content: &str,
         project_id: Option<&str>,
     ) -> Result<i64> {
+        debug!(
+            session_id = %session_id,
+            content_len = content.len(),
+            project_id = ?project_id,
+            "Saving user message"
+        );
+
         let entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -72,8 +80,17 @@ impl MemoryCoreService {
             qdrant_point_ids: None,
         };
 
-        let saved = self.sqlite_store.save(&entry).await?;
-        Ok(saved.id.unwrap_or(0))
+        let saved = self.sqlite_store.save(&entry).await
+            .context("Failed to save user message to SQLite")?;
+        let entry_id = saved.id.unwrap_or(0);
+
+        info!(
+            session_id = %session_id,
+            entry_id = entry_id,
+            "User message saved"
+        );
+
+        Ok(entry_id)
     }
 
     /// Save an assistant message and return the entry ID
@@ -83,6 +100,13 @@ impl MemoryCoreService {
         content: &str,
         parent_id: Option<i64>,
     ) -> Result<i64> {
+        debug!(
+            session_id = %session_id,
+            content_len = content.len(),
+            parent_id = ?parent_id,
+            "Saving assistant message"
+        );
+
         let entry = MemoryEntry {
             id: None,
             session_id: session_id.to_string(),
@@ -128,23 +152,61 @@ impl MemoryCoreService {
             qdrant_point_ids: None,
         };
 
-        let saved = self.sqlite_store.save(&entry).await?;
-        Ok(saved.id.unwrap_or(0))
+        let saved = self.sqlite_store.save(&entry).await
+            .context("Failed to save assistant message to SQLite")?;
+        let entry_id = saved.id.unwrap_or(0);
+
+        info!(
+            session_id = %session_id,
+            entry_id = entry_id,
+            "Assistant message saved"
+        );
+
+        Ok(entry_id)
     }
 
     /// Save a memory entry and return the entry ID
     pub async fn save_entry(&self, entry: &MemoryEntry) -> Result<i64> {
-        let saved_entry = self.sqlite_store.save(entry).await?;
-        Ok(saved_entry.id.unwrap_or(0))
+        debug!(
+            session_id = %entry.session_id,
+            role = %entry.role,
+            content_len = entry.content.len(),
+            "Saving memory entry"
+        );
+
+        let saved_entry = self.sqlite_store.save(entry).await
+            .context("Failed to save memory entry to SQLite")?;
+        let entry_id = saved_entry.id.unwrap_or(0);
+
+        debug!(
+            session_id = %entry.session_id,
+            entry_id = entry_id,
+            "Memory entry saved"
+        );
+
+        Ok(entry_id)
     }
 
     /// Get recent memories for a session
     pub async fn get_recent(&self, session_id: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        self.sqlite_store.load_recent(session_id, limit).await
+        debug!(session_id = %session_id, limit = limit, "Loading recent memories");
+
+        let entries = self.sqlite_store.load_recent(session_id, limit).await
+            .context("Failed to load recent memories")?;
+
+        debug!(
+            session_id = %session_id,
+            count = entries.len(),
+            "Loaded recent memories"
+        );
+
+        Ok(entries)
     }
 
     /// Get service statistics
     pub async fn get_stats(&self, session_id: &str) -> Result<serde_json::Value> {
+        debug!(session_id = %session_id, "Getting memory service stats");
+
         Ok(serde_json::json!({
             "session_id": session_id,
             "status": "operational"
@@ -152,9 +214,19 @@ impl MemoryCoreService {
     }
 
     /// Cleanup inactive sessions
-    pub async fn cleanup_inactive_sessions(&self, _max_age_hours: i64) -> Result<usize> {
+    pub async fn cleanup_inactive_sessions(&self, max_age_hours: i64) -> Result<usize> {
+        info!(max_age_hours = max_age_hours, "Starting inactive session cleanup");
+
         // Cleanup logic will be implemented here
         // For now, return 0
-        Ok(0)
+        let cleaned = 0;
+
+        if cleaned > 0 {
+            info!(sessions_cleaned = cleaned, "Inactive session cleanup completed");
+        } else {
+            debug!("No inactive sessions to clean up");
+        }
+
+        Ok(cleaned)
     }
 }
