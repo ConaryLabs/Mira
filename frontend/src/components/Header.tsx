@@ -4,6 +4,7 @@ import { Folder, Activity, X, LogOut, Brain } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
+import { ChangePasswordModal } from './ChangePasswordModal';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useActivityStore } from '../stores/useActivityStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
@@ -23,6 +24,7 @@ export const Header: React.FC = () => {
     isPanelVisible: isIntelligenceVisible
   } = useCodeIntelligenceStore();
   const [showProjects, setShowProjects] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const { logout } = useAuthStore();
   const user = useCurrentUser();
   const navigate = useNavigate();
@@ -61,11 +63,15 @@ export const Header: React.FC = () => {
 
       {/* Right: Action buttons */}
       <div className="flex items-center gap-2 ml-auto">
-        {/* User info */}
+        {/* User info - clickable to change password */}
         {user && (
-          <div className="px-3 py-1 text-sm text-gray-400">
+          <button
+            onClick={() => setShowChangePassword(true)}
+            className="px-3 py-1 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-md transition-colors"
+            title="Click to change password"
+          >
             {user.displayName || user.username}
-          </div>
+          </button>
         )}
 
         {currentProject && (
@@ -145,6 +151,12 @@ export const Header: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
+      />
     </>
   );
 };

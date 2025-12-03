@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Json, State},
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::{IntoResponse, Response},
     routing::post,
     Router,
@@ -10,7 +10,7 @@ use axum::{
 use std::sync::Arc;
 use tracing::error;
 
-use crate::auth::{LoginRequest, RegisterRequest, AuthResponse, verify_token};
+use crate::auth::{LoginRequest, RegisterRequest, AuthResponse, ChangePasswordRequest, verify_token};
 use crate::state::AppState;
 
 pub fn create_auth_router() -> Router<Arc<AppState>> {
@@ -18,6 +18,7 @@ pub fn create_auth_router() -> Router<Arc<AppState>> {
         .route("/login", post(login))
         .route("/register", post(register))
         .route("/verify", post(verify))
+        .route("/change-password", post(change_password))
 }
 
 async fn login(
@@ -83,10 +84,43 @@ async fn verify(
     }
 }
 
+async fn change_password(
+    State(app_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<serde_json::Value>, AuthError> {
+    // Extract token from Authorization header
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AuthError::Unauthorized("Missing authorization header".to_string()))?;
+
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| AuthError::Unauthorized("Invalid authorization format".to_string()))?;
+
+    // Verify token and get user ID
+    let claims = verify_token(token)
+        .map_err(|_| AuthError::Unauthorized("Invalid token".to_string()))?;
+
+    // Change password
+    app_state.auth_service
+        .change_password(&claims.sub, req)
+        .await
+        .map_err(|e| AuthError::PasswordChangeFailed(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "message": "Password changed successfully"
+    })))
+}
+
 #[derive(Debug)]
 enum AuthError {
     InvalidCredentials(String),
     RegistrationFailed(String),
+    Unauthorized(String),
+    PasswordChangeFailed(String),
 }
 
 impl IntoResponse for AuthError {
@@ -94,6 +128,8 @@ impl IntoResponse for AuthError {
         let (status, message) = match self {
             AuthError::InvalidCredentials(msg) => (StatusCode::UNAUTHORIZED, msg),
             AuthError::RegistrationFailed(msg) => (StatusCode::BAD_REQUEST, msg),
+            AuthError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            AuthError::PasswordChangeFailed(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         error!("Auth error: {}", message);

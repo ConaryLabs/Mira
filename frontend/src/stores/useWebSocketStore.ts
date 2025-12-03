@@ -42,25 +42,48 @@ interface WebSocketStore {
   reset: () => void; // NEW: Reset store state
 }
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001/ws';
+// Dynamically determine WebSocket URL based on current host
+function getDefaultWsUrl(): string {
+  if (typeof window === 'undefined') {
+    return 'ws://localhost:3001/ws';
+  }
+
+  const { protocol, host } = window.location;
+
+  // If running on localhost, use the backend port directly
+  if (host.startsWith('localhost') || host.startsWith('127.0.0.1')) {
+    return 'ws://localhost:3001/ws';
+  }
+
+  // For remote hosts, use the same host with WebSocket protocol
+  // The reverse proxy (nginx) should route /ws to the backend
+  const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${host}/ws`;
+}
+
+const WS_URL = import.meta.env.VITE_WS_URL || getDefaultWsUrl();
 
 // Helper to build WebSocket URL with authentication token
 function buildWsUrl(baseUrl: string): string {
   // Lazy import to avoid circular dependency
   const authStore = (window as any).__authStore;
+
+  // Recalculate base URL in case it wasn't available at module load time
+  const effectiveBaseUrl = baseUrl === 'ws://localhost:3001/ws' ? getDefaultWsUrl() : baseUrl;
+
   if (!authStore) {
     // First time - store not initialized yet
-    return baseUrl;
+    return effectiveBaseUrl;
   }
 
   const token = authStore.getState?.().token;
   if (token) {
-    const url = new URL(baseUrl, window.location.origin);
+    const url = new URL(effectiveBaseUrl, window.location.origin);
     url.searchParams.set('token', token);
     return url.toString().replace(/^http/, 'ws');
   }
 
-  return baseUrl;
+  return effectiveBaseUrl;
 }
 
 // Message types we explicitly handle

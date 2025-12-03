@@ -1590,3 +1590,60 @@ info!(
 - [ ] Cache performance benchmarks
 
 ---
+
+### Session 36: 2025-12-04
+
+**Summary:** Remote access fixes and authentication improvements - enabled mira.conarylabs.com access with dynamic WebSocket URLs and password change functionality.
+
+**Goals:**
+- Fix remote access via mira.conarylabs.com domain
+- Fix authentication system (missing database columns, no seeded user)
+- Add password change functionality
+- Remove default credentials from login page
+
+**Key Outcomes:**
+
+1. **Fixed Vite allowed hosts**:
+   - Added `mira.conarylabs.com` to `server.allowedHosts` in vite.config.js
+   - Required for Vite to accept requests from the custom domain
+
+2. **Fixed database schema mismatch**:
+   - Users table was missing `display_name`, `is_active` columns
+   - Renamed `last_login` to `last_login_at` to match auth models
+   - Created default user (peter) with bcrypt-hashed password
+
+3. **Dynamic WebSocket URL detection**:
+   - WebSocket URL now dynamically determined based on window.location
+   - On localhost: uses `ws://localhost:3001/ws`
+   - On remote hosts: uses `wss://{host}/ws` (proxied through nginx)
+   - Fixes connection failures when accessing via mira.conarylabs.com
+
+4. **Password change feature**:
+   - Backend: New `/api/auth/change-password` endpoint with JWT authentication
+   - Frontend: `ChangePasswordModal` component with validation
+   - Username in header now clickable to open password change modal
+   - Minimum 8 character password requirement
+
+5. **Security improvement**:
+   - Removed default credentials hint from login page
+
+**Files Modified:**
+- `frontend/vite.config.js` - Added allowedHosts
+- `frontend/src/stores/useWebSocketStore.ts` - Dynamic WS URL detection
+- `frontend/src/stores/useAuthStore.ts` - Added changePassword function
+- `frontend/src/pages/Login.tsx` - Removed default credentials text
+- `frontend/src/components/Header.tsx` - Clickable username for password change
+- `backend/src/auth/models.rs` - Added ChangePasswordRequest
+- `backend/src/auth/service.rs` - Added change_password method
+- `backend/src/api/http/auth.rs` - Added /change-password route
+
+**Files Created:**
+- `frontend/src/components/ChangePasswordModal.tsx` - Password change UI
+
+**Database Changes:**
+- Added `display_name TEXT` column to users table
+- Added `is_active INTEGER NOT NULL DEFAULT 1` column to users table
+- Renamed `last_login` to `last_login_at`
+- Seeded default user (applied directly, not via migration)
+
+---

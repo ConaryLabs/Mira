@@ -27,6 +27,7 @@ interface AuthState {
   logout: () => void;
   setUser: (user: User, token: string) => void;
   verifyToken: () => Promise<boolean>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -131,6 +132,37 @@ export const useAuthStore = create<AuthState>()(
           token: null,
           isAuthenticated: false,
         });
+      },
+
+      changePassword: async (currentPassword: string, newPassword: string) => {
+        const { token } = get();
+        if (!token) {
+          return { success: false, error: 'Not authenticated' };
+        }
+
+        try {
+          const response = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              current_password: currentPassword,
+              new_password: newPassword,
+            }),
+          });
+
+          if (!response.ok) {
+            const error = await response.json();
+            return { success: false, error: error.error || 'Failed to change password' };
+          }
+
+          return { success: true };
+        } catch (error) {
+          console.error('Change password error:', error);
+          return { success: false, error: 'An error occurred' };
+        }
       },
 
       setUser: (user: User, token: string) => {

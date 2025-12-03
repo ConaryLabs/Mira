@@ -39,7 +39,9 @@ Mira uses a hybrid API architecture:
 
 ## Authentication
 
-### POST /api/login
+All authentication endpoints are under `/api/auth/`.
+
+### POST /api/auth/login
 
 Authenticate a user and receive a JWT token.
 
@@ -54,9 +56,14 @@ Authenticate a user and receive a JWT token.
 **Response (200):**
 ```json
 {
-  "token": "eyJ...",
-  "user_id": "user-123",
-  "username": "johndoe"
+  "user": {
+    "id": "user-123",
+    "username": "johndoe",
+    "email": "john@example.com",
+    "display_name": "John Doe",
+    "is_active": true
+  },
+  "token": "eyJ..."
 }
 ```
 
@@ -67,7 +74,7 @@ Authenticate a user and receive a JWT token.
 }
 ```
 
-### POST /api/register
+### POST /api/auth/register
 
 Create a new user account.
 
@@ -76,16 +83,22 @@ Create a new user account.
 {
   "username": "string",
   "password": "string",
-  "email": "string (optional)"
+  "email": "string (optional)",
+  "display_name": "string (optional)"
 }
 ```
 
 **Response (200):**
 ```json
 {
-  "token": "eyJ...",
-  "user_id": "user-456",
-  "username": "newuser"
+  "user": {
+    "id": "user-456",
+    "username": "newuser",
+    "email": "new@example.com",
+    "display_name": "New User",
+    "is_active": true
+  },
+  "token": "eyJ..."
 }
 ```
 
@@ -96,7 +109,7 @@ Create a new user account.
 }
 ```
 
-### POST /api/verify
+### POST /api/auth/verify
 
 Verify a JWT token is valid.
 
@@ -113,6 +126,45 @@ Verify a JWT token is valid.
   "valid": true,
   "user_id": "user-123",
   "username": "johndoe"
+}
+```
+
+### POST /api/auth/change-password
+
+Change the authenticated user's password.
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Request:**
+```json
+{
+  "current_password": "string",
+  "new_password": "string (min 8 characters)"
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+**Response (400):**
+```json
+{
+  "error": "Current password is incorrect"
+}
+```
+
+**Response (401):**
+```json
+{
+  "error": "Missing authorization header"
 }
 ```
 
