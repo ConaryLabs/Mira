@@ -12,6 +12,7 @@ use crate::auth::AuthService;
 use crate::budget::BudgetTracker;
 use crate::build::{BuildTracker, ErrorResolver};
 use crate::cache::LlmCache;
+use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
 use crate::config::CONFIG;
 use crate::hooks::HookManager;
@@ -89,6 +90,8 @@ pub struct AppState {
     pub command_registry: Arc<RwLock<CommandRegistry>>,
     // Hook system for pre/post tool execution
     pub hook_manager: Arc<RwLock<HookManager>>,
+    // Checkpoint/Rewind system for file state snapshots
+    pub checkpoint_manager: Arc<CheckpointManager>,
 }
 
 impl AppState {
@@ -214,6 +217,11 @@ impl AppState {
         }
         let hook_manager = Arc::new(RwLock::new(hook_manager));
 
+        // Initialize checkpoint manager for file state snapshots
+        info!("Initializing checkpoint manager");
+        let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let checkpoint_manager = Arc::new(CheckpointManager::new(pool.clone(), project_dir));
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -277,6 +285,7 @@ impl AppState {
             Some(project_task_service.clone()),
             Some(guidelines_service.clone()),
             Some(hook_manager.clone()),
+            Some(checkpoint_manager.clone()),
         ));
 
         // Initialize authentication service
@@ -318,6 +327,7 @@ impl AppState {
             project_task_service,
             command_registry,
             hook_manager,
+            checkpoint_manager,
         })
     }
 }

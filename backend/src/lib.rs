@@ -4,6 +4,7 @@ pub mod api;
 pub mod auth;
 pub mod budget;
 pub mod cache;
+pub mod checkpoint;
 pub mod commands;
 pub mod config;
 pub mod file_system;

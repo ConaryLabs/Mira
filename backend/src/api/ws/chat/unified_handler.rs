@@ -10,6 +10,7 @@ use tracing::info;
 
 use crate::api::ws::message::MessageMetadata;
 use crate::api::ws::operations::OperationManager;
+use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
 use crate::state::AppState;
 use tokio::sync::RwLock;
@@ -33,6 +34,7 @@ struct ExpandedCommand {
 pub struct UnifiedChatHandler {
     operation_manager: Arc<OperationManager>,
     command_registry: Arc<RwLock<CommandRegistry>>,
+    checkpoint_manager: Arc<CheckpointManager>,
 }
 
 impl UnifiedChatHandler {
@@ -42,6 +44,7 @@ impl UnifiedChatHandler {
         Self {
             operation_manager,
             command_registry: app_state.command_registry.clone(),
+            checkpoint_manager: app_state.checkpoint_manager.clone(),
         }
     }
 
@@ -186,6 +189,168 @@ impl UnifiedChatHandler {
                         "user_message_id": "",
                         "assistant_message_id": "",
                         "content": format!("Failed to reload commands: {}", e),
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+            }
+        }
+
+        // List checkpoints for current session
+        if content == "/checkpoints" {
+            match self.checkpoint_manager.list_checkpoints(&request.session_id, 20).await {
+                Ok(checkpoints) => {
+                    if checkpoints.is_empty() {
+                        return Some(json!({
+                            "type": "chat_complete",
+                            "user_message_id": "",
+                            "assistant_message_id": "",
+                            "content": "No checkpoints found for this session.\n\nCheckpoints are automatically created before file modifications.",
+                            "artifacts": [],
+                            "thinking": null
+                        }));
+                    }
+
+                    let mut output = String::from("**Checkpoints (most recent first):**\n\n");
+                    for (i, cp) in checkpoints.iter().enumerate() {
+                        let time = chrono::DateTime::from_timestamp(cp.created_at, 0)
+                            .map(|dt| dt.format("%H:%M:%S").to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        let tool_info = cp.tool_name.as_deref().unwrap_or("manual");
+                        let desc = cp.description.as_deref().unwrap_or("");
+
+                        output.push_str(&format!(
+                            "{}. `{}` - {} ({} files) {}\n",
+                            i + 1,
+                            &cp.id[..8],
+                            time,
+                            cp.file_count,
+                            if !desc.is_empty() { format!("- {}", desc) } else { format!("[{}]", tool_info) }
+                        ));
+                    }
+                    output.push_str("\nUse `/rewind <checkpoint-id>` to restore to a checkpoint.");
+
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": output,
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+                Err(e) => {
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": format!("Failed to list checkpoints: {}", e),
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+            }
+        }
+
+        // Rewind to a checkpoint
+        if content.starts_with("/rewind ") {
+            let checkpoint_id_prefix = content.strip_prefix("/rewind ").unwrap().trim();
+
+            if checkpoint_id_prefix.is_empty() {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "Usage: `/rewind <checkpoint-id>`\n\nUse `/checkpoints` to see available checkpoints.",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            // Find matching checkpoint
+            match self.checkpoint_manager.list_checkpoints(&request.session_id, 100).await {
+                Ok(checkpoints) => {
+                    let matching: Vec<_> = checkpoints
+                        .iter()
+                        .filter(|cp| cp.id.starts_with(checkpoint_id_prefix))
+                        .collect();
+
+                    if matching.is_empty() {
+                        return Some(json!({
+                            "type": "chat_complete",
+                            "user_message_id": "",
+                            "assistant_message_id": "",
+                            "content": format!("No checkpoint found matching '{}'.\n\nUse `/checkpoints` to see available checkpoints.", checkpoint_id_prefix),
+                            "artifacts": [],
+                            "thinking": null
+                        }));
+                    }
+
+                    if matching.len() > 1 {
+                        return Some(json!({
+                            "type": "chat_complete",
+                            "user_message_id": "",
+                            "assistant_message_id": "",
+                            "content": format!("Multiple checkpoints match '{}'. Please be more specific.", checkpoint_id_prefix),
+                            "artifacts": [],
+                            "thinking": null
+                        }));
+                    }
+
+                    let checkpoint = matching[0];
+                    match self.checkpoint_manager.restore_checkpoint(&checkpoint.id).await {
+                        Ok(result) => {
+                            let mut output = format!("**Restored checkpoint `{}`**\n\n", &checkpoint.id[..8]);
+
+                            if !result.files_restored.is_empty() {
+                                output.push_str(&format!("Restored {} file(s):\n", result.files_restored.len()));
+                                for f in &result.files_restored {
+                                    output.push_str(&format!("- {}\n", f));
+                                }
+                            }
+
+                            if !result.files_deleted.is_empty() {
+                                output.push_str(&format!("\nDeleted {} file(s) (didn't exist at checkpoint):\n", result.files_deleted.len()));
+                                for f in &result.files_deleted {
+                                    output.push_str(&format!("- {}\n", f));
+                                }
+                            }
+
+                            if !result.errors.is_empty() {
+                                output.push_str(&format!("\nErrors:\n"));
+                                for e in &result.errors {
+                                    output.push_str(&format!("- {}\n", e));
+                                }
+                            }
+
+                            return Some(json!({
+                                "type": "chat_complete",
+                                "user_message_id": "",
+                                "assistant_message_id": "",
+                                "content": output,
+                                "artifacts": [],
+                                "thinking": null
+                            }));
+                        }
+                        Err(e) => {
+                            return Some(json!({
+                                "type": "chat_complete",
+                                "user_message_id": "",
+                                "assistant_message_id": "",
+                                "content": format!("Failed to restore checkpoint: {}", e),
+                                "artifacts": [],
+                                "thinking": null
+                            }));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": format!("Failed to find checkpoint: {}", e),
                         "artifacts": [],
                         "thinking": null
                     }));

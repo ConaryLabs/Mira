@@ -22,6 +22,7 @@ pub use events::OperationEngineEvent;
 
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
+use crate::checkpoint::CheckpointManager;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::hooks::HookManager;
@@ -68,6 +69,7 @@ impl OperationEngine {
         project_task_service: Option<Arc<ProjectTaskService>>,
         guidelines_service: Option<Arc<ProjectGuidelinesService>>,
         hook_manager: Option<Arc<RwLock<HookManager>>>,
+        checkpoint_manager: Option<Arc<CheckpointManager>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -115,6 +117,7 @@ impl OperationEngine {
             budget_tracker,
             llm_cache,
             hook_manager,
+            checkpoint_manager,
         );
 
         let orchestrator = Orchestrator::new(

@@ -149,8 +149,9 @@ $RECYCLE.BIN/
 mira_cache/
 embeddings_cache/
 *.embedding
-checkpoint/
-checkpoints/
+# Checkpoint data directories (not src/checkpoint/ code)
+/checkpoint/
+/checkpoints/
 mira.db
 data/
 test_repos/

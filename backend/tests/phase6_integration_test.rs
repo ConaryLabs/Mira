@@ -131,6 +131,7 @@ async fn test_operation_engine_with_providers() {
         None, // project_task_service
         None, // guidelines_service
         None, // hook_manager
+        None, // checkpoint_manager
     );
 
     // Create event channel
@@ -234,6 +235,7 @@ async fn test_operation_lifecycle_complete() {
         None, // project_task_service
         None, // guidelines_service
         None, // hook_manager
+        None, // checkpoint_manager
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -324,6 +326,7 @@ async fn test_operation_cancellation() {
         None, // project_task_service
         None, // guidelines_service
         None, // hook_manager
+        None, // checkpoint_manager
     );
 
     let (tx, mut rx) = mpsc::channel(100);

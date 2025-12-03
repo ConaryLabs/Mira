@@ -9,6 +9,7 @@ use tracing::{debug, info, warn};
 
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
+use crate::checkpoint::CheckpointManager;
 use crate::hooks::{HookEnv, HookManager, HookTrigger};
 use crate::llm::provider::{Gemini3Pricing, Gemini3Provider, Message, ToolCall, ToolCallInfo, ToolCallResponse};
 use crate::operations::engine::tool_router::ToolRouter;
@@ -33,12 +34,24 @@ struct CachedToolResponse {
 /// Integrates with BudgetTracker to track costs and enforce limits.
 /// Integrates with LlmCache to reduce API costs (target 80%+ hit rate).
 /// Integrates with HookManager to execute pre/post tool hooks.
+/// Tools that modify files and should trigger checkpoint creation
+const FILE_MODIFYING_TOOLS: &[&str] = &[
+    "write_project_file",
+    "write_file",
+    "edit_project_file",
+    "edit_file",
+    "delete_file",
+    "move_file",
+    "rename_file",
+];
+
 pub struct LlmOrchestrator {
     provider: Gemini3Provider,
     tool_router: Option<Arc<ToolRouter>>,
     budget_tracker: Option<Arc<BudgetTracker>>,
     cache: Option<Arc<LlmCache>>,
     hook_manager: Option<Arc<RwLock<HookManager>>>,
+    checkpoint_manager: Option<Arc<CheckpointManager>>,
 }
 
 impl LlmOrchestrator {
@@ -49,16 +62,18 @@ impl LlmOrchestrator {
             budget_tracker: None,
             cache: None,
             hook_manager: None,
+            checkpoint_manager: None,
         }
     }
 
-    /// Create orchestrator with budget tracking, caching, and hooks
+    /// Create orchestrator with budget tracking, caching, hooks, and checkpoints
     pub fn with_services(
         provider: Gemini3Provider,
         tool_router: Option<Arc<ToolRouter>>,
         budget_tracker: Option<Arc<BudgetTracker>>,
         cache: Option<Arc<LlmCache>>,
         hook_manager: Option<Arc<RwLock<HookManager>>>,
+        checkpoint_manager: Option<Arc<CheckpointManager>>,
     ) -> Self {
         Self {
             provider,
@@ -66,6 +81,7 @@ impl LlmOrchestrator {
             budget_tracker,
             cache,
             hook_manager,
+            checkpoint_manager,
         }
     }
 
@@ -469,6 +485,46 @@ impl LlmOrchestrator {
                 }).await;
 
                 return Ok(error_result);
+            }
+        }
+
+        // Create checkpoint before file-modifying tools
+        if FILE_MODIFYING_TOOLS.contains(&tool_call.name.as_str()) {
+            if let Some(checkpoint_mgr) = &self.checkpoint_manager {
+                // Extract file path from tool arguments
+                let file_path = tool_call.arguments
+                    .get("path")
+                    .or_else(|| tool_call.arguments.get("file_path"))
+                    .and_then(|v| v.as_str());
+
+                if let Some(path) = file_path {
+                    let description = format!("Before {}", tool_call.name);
+                    match checkpoint_mgr
+                        .create_checkpoint(
+                            session_id,
+                            Some(operation_id),
+                            Some(&tool_call.name),
+                            &[path],
+                            Some(&description),
+                        )
+                        .await
+                    {
+                        Ok(checkpoint_id) => {
+                            debug!(
+                                "[CHECKPOINT] Created {} before {} on {}",
+                                &checkpoint_id[..8],
+                                tool_call.name,
+                                path
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "[CHECKPOINT] Failed to create checkpoint for {}: {}",
+                                path, e
+                            );
+                        }
+                    }
+                }
             }
         }
 
