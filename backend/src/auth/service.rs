@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::jwt::create_token;
 use super::password::{hash_password, verify_password};
-use super::models::{User, UserWithPassword, LoginRequest, RegisterRequest, AuthResponse};
+use super::models::{User, UserWithPassword, LoginRequest, RegisterRequest, AuthResponse, ChangePasswordRequest};
 
 pub struct AuthService {
     db: SqlitePool,
@@ -135,6 +135,30 @@ impl AuthService {
 
         sqlx::query("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?")
             .bind(now)
+            .bind(now)
+            .bind(user_id)
+            .execute(&self.db)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn change_password(&self, user_id: &str, req: ChangePasswordRequest) -> Result<()> {
+        let user = self.get_user_by_id(user_id).await?;
+
+        if !verify_password(&req.current_password, &user.password_hash)? {
+            return Err(anyhow!("Current password is incorrect"));
+        }
+
+        if req.new_password.len() < 8 {
+            return Err(anyhow!("New password must be at least 8 characters"));
+        }
+
+        let new_hash = hash_password(&req.new_password)?;
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+            .bind(&new_hash)
             .bind(now)
             .bind(user_id)
             .execute(&self.db)

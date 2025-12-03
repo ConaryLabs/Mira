@@ -178,12 +178,8 @@ export function Login() {
           </form>
 
           {/* Help Text */}
-          <div className="mt-6 text-center text-sm text-gray-400">
-            {mode === 'login' ? (
-              <p>
-                Default credentials: <span className="text-gray-300 font-mono">peter / password123</span>
-              </p>
-            ) : (
+          {mode === 'register' && (
+            <div className="mt-6 text-center text-sm text-gray-400">
               <p>
                 Already have an account?{' '}
                 <button
@@ -194,8 +190,8 @@ export function Login() {
                   Sign in
                 </button>
               </p>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
