@@ -407,6 +407,7 @@ async fn test_multiple_operations_concurrency() {
         None, // project_task_service
         None, // guidelines_service
         None, // hook_manager
+        None, // checkpoint_manager
     ));
 
     let mut handles = vec![];

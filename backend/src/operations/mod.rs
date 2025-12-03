@@ -10,6 +10,7 @@ pub mod file_tools;
 pub mod git_tools;
 pub mod tasks;
 pub mod tool_builder;
+pub mod tools;
 pub mod types;
 
 pub use code_tools::get_code_tools;

@@ -1,91 +1,37 @@
-// backend/src/llm/provider/gemini3.rs
+// src/llm/provider/gemini3/mod.rs
 // Gemini 3 Pro provider using Google AI API
+
+mod codegen;
+mod conversion;
+mod pricing;
+mod response;
+mod types;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
 use std::time::Instant;
 use tracing::{debug, info};
 
-use super::{FunctionCall, LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse};
-use crate::prompt::internal::llm as prompts;
+use super::{FunctionCall, LlmProvider, Message, Response, ToolContext, ToolResponse};
 
-// ============================================================================
-// Thinking Level (replaces ThinkingLevel)
-// ============================================================================
+// Re-export public types
+pub use codegen::build_user_prompt;
+pub use pricing::Gemini3Pricing;
+pub use types::{
+    CodeArtifact, CodeGenRequest, CodeGenResponse, ThinkingLevel, ToolCall, ToolCallResponse,
+};
 
-/// Thinking level for Gemini 3 (only Low and High available)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ThinkingLevel {
-    Low,
-    High,
-}
-
-impl ThinkingLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ThinkingLevel::Low => "low",
-            ThinkingLevel::High => "high",
-        }
-    }
-}
-
-impl Default for ThinkingLevel {
-    fn default() -> Self {
-        ThinkingLevel::High
-    }
-}
-
-// ============================================================================
-// Pricing
-// ============================================================================
-
-/// Gemini 3 Pro Preview pricing (per 1M tokens)
-/// Source: https://ai.google.dev/gemini-api/docs/pricing
-/// Model: gemini-3-pro-preview (released Nov 2025)
-pub struct Gemini3Pricing;
-
-impl Gemini3Pricing {
-    /// Input token price per 1M tokens (USD) - under 200k context
-    const INPUT_PRICE_PER_M: f64 = 2.00;
-    /// Input token price per 1M tokens (USD) - over 200k context
-    const INPUT_PRICE_PER_M_LARGE: f64 = 4.00;
-    /// Output token price per 1M tokens (USD) - under 200k context
-    const OUTPUT_PRICE_PER_M: f64 = 12.00;
-    /// Output token price per 1M tokens (USD) - over 200k context
-    const OUTPUT_PRICE_PER_M_LARGE: f64 = 18.00;
-
-    /// Calculate cost from token usage (standard context)
-    pub fn calculate_cost(tokens_input: i64, tokens_output: i64) -> f64 {
-        let input_cost = (tokens_input as f64 / 1_000_000.0) * Self::INPUT_PRICE_PER_M;
-        let output_cost = (tokens_output as f64 / 1_000_000.0) * Self::OUTPUT_PRICE_PER_M;
-        input_cost + output_cost
-    }
-
-    /// Calculate cost with large context pricing (over 200k tokens)
-    pub fn calculate_cost_large_context(tokens_input: i64, tokens_output: i64) -> f64 {
-        let input_cost = (tokens_input as f64 / 1_000_000.0) * Self::INPUT_PRICE_PER_M_LARGE;
-        let output_cost = (tokens_output as f64 / 1_000_000.0) * Self::OUTPUT_PRICE_PER_M_LARGE;
-        input_cost + output_cost
-    }
-
-    /// Calculate cost with automatic tier selection
-    pub fn calculate_cost_auto(tokens_input: i64, tokens_output: i64) -> f64 {
-        if tokens_input > 200_000 {
-            Self::calculate_cost_large_context(tokens_input, tokens_output)
-        } else {
-            Self::calculate_cost(tokens_input, tokens_output)
-        }
-    }
-}
-
-// ============================================================================
-// Provider
-// ============================================================================
+// Use helper modules
+use codegen::generate_code as codegen_generate;
+use conversion::{messages_to_gemini_contents, tools_to_gemini_format};
+use response::{
+    extract_first_candidate, extract_parts, extract_text_content, extract_token_usage,
+    log_token_usage, log_tool_call_tokens,
+};
 
 /// Gemini 3 Pro provider using Google AI API
 #[derive(Clone)]
@@ -183,127 +129,6 @@ impl Gemini3Provider {
         Ok(())
     }
 
-    /// Convert our Message format to Gemini API format
-    fn messages_to_gemini_contents(messages: &[Message], system: &str) -> Vec<Value> {
-        let mut contents = Vec::new();
-
-        // Add system instruction as first user message if present
-        // Gemini uses systemInstruction separately, but for simplicity we prepend to first user msg
-        let system_text = if !system.is_empty() {
-            Some(system.to_string())
-        } else {
-            None
-        };
-
-        let mut system_added = false;
-
-        for msg in messages {
-            let role = match msg.role.as_str() {
-                "user" => "user",
-                "assistant" => "model",
-                "tool" => "function", // Function response
-                "system" => continue, // Skip system messages, handled separately
-                _ => "user",
-            };
-
-            let mut parts = Vec::new();
-
-            // Add system instruction to first user message
-            if role == "user" && !system_added {
-                if let Some(ref sys) = system_text {
-                    parts.push(serde_json::json!({"text": format!("[System]\n{}\n\n[User]\n", sys)}));
-                }
-                system_added = true;
-            }
-
-            // Handle function responses
-            if msg.role == "tool" {
-                if let Some(ref call_id) = msg.tool_call_id {
-                    contents.push(serde_json::json!({
-                        "role": "function",
-                        "parts": [{
-                            "functionResponse": {
-                                "name": call_id,
-                                "response": {
-                                    "result": msg.content
-                                }
-                            }
-                        }]
-                    }));
-                    continue;
-                }
-            }
-
-            // Add text content
-            if !msg.content.is_empty() {
-                parts.push(serde_json::json!({"text": msg.content}));
-            }
-
-            // Add thought signature if present
-            if let Some(ref sig) = msg.thought_signature {
-                parts.push(serde_json::json!({"thoughtSignature": sig}));
-            }
-
-            // Add function calls if present (for model messages)
-            if let Some(ref tool_calls) = msg.tool_calls {
-                for tc in tool_calls {
-                    parts.push(serde_json::json!({
-                        "functionCall": {
-                            "name": tc.name,
-                            "args": tc.arguments
-                        }
-                    }));
-                }
-            }
-
-            if !parts.is_empty() {
-                contents.push(serde_json::json!({
-                    "role": role,
-                    "parts": parts
-                }));
-            }
-        }
-
-        // If system wasn't added (no user messages), add it as first message
-        if !system_added && system_text.is_some() {
-            contents.insert(
-                0,
-                serde_json::json!({
-                    "role": "user",
-                    "parts": [{"text": system_text.unwrap()}]
-                }),
-            );
-        }
-
-        contents
-    }
-
-    /// Convert OpenAI-format tools to Gemini format
-    fn tools_to_gemini_format(tools: &[Value]) -> Value {
-        let function_declarations: Vec<Value> = tools
-            .iter()
-            .filter_map(|tool| {
-                // Handle OpenAI format: { type: "function", function: { name, description, parameters } }
-                if let Some(func) = tool.get("function") {
-                    Some(serde_json::json!({
-                        "name": func.get("name"),
-                        "description": func.get("description"),
-                        "parameters": func.get("parameters")
-                    }))
-                } else if tool.get("name").is_some() {
-                    // Already in simple format
-                    Some(tool.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        serde_json::json!({
-            "functionDeclarations": function_declarations
-        })
-    }
-
     /// Send a completion request with custom thinking level
     pub async fn complete_with_thinking(
         &self,
@@ -318,7 +143,7 @@ impl Gemini3Provider {
             thinking_level
         );
 
-        let contents = Self::messages_to_gemini_contents(&messages, &system);
+        let contents = messages_to_gemini_contents(&messages, &system);
 
         let request_body = serde_json::json!({
             "contents": contents,
@@ -352,53 +177,11 @@ impl Gemini3Provider {
 
     /// Parse regular chat response
     fn parse_response(&self, response: Value, latency_ms: i64) -> Result<Response> {
-        let candidate = response
-            .get("candidates")
-            .and_then(|c| c.get(0))
-            .ok_or_else(|| anyhow!("No candidates in Gemini response"))?;
+        let candidate = extract_first_candidate(&response)?;
+        let content = extract_text_content(candidate);
+        let tokens = extract_token_usage(&response);
 
-        let content = candidate
-            .get("content")
-            .and_then(|c| c.get("parts"))
-            .and_then(|p| p.get(0))
-            .and_then(|p| p.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let usage = response.get("usageMetadata");
-        let tokens = TokenUsage {
-            input: usage
-                .and_then(|u| u.get("promptTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-            output: usage
-                .and_then(|u| u.get("candidatesTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-            reasoning: usage
-                .and_then(|u| u.get("thoughtsTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-            cached: usage
-                .and_then(|u| u.get("cachedContentTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-        };
-
-        // Log token usage with cache info
-        if tokens.cached > 0 {
-            let cache_percent = (tokens.cached as f64 / tokens.input as f64 * 100.0) as i64;
-            info!(
-                "Gemini 3 response: {} input ({} cached = {}% savings), {} output, {} thinking",
-                tokens.input, tokens.cached, cache_percent, tokens.output, tokens.reasoning
-            );
-        } else {
-            info!(
-                "Gemini 3 response: {} input tokens, {} output tokens, {} thinking tokens (no cache hit)",
-                tokens.input, tokens.output, tokens.reasoning
-            );
-        }
+        log_token_usage("Gemini 3 response", &tokens);
 
         Ok(Response {
             content,
@@ -427,8 +210,8 @@ impl Gemini3Provider {
             .map(|m| m.content.clone())
             .unwrap_or_default();
 
-        let contents = Self::messages_to_gemini_contents(&messages, &system);
-        let gemini_tools = Self::tools_to_gemini_format(&tools);
+        let contents = messages_to_gemini_contents(&messages, &system);
+        let gemini_tools = tools_to_gemini_format(&tools);
 
         let mut request_body = serde_json::json!({
             "contents": contents,
@@ -481,10 +264,7 @@ impl Gemini3Provider {
 
     /// Parse tool calling response
     fn parse_tool_call_response(&self, response: Value) -> Result<ToolCallResponse> {
-        let candidate = response
-            .get("candidates")
-            .and_then(|c| c.get(0))
-            .ok_or_else(|| anyhow!("No candidates in Gemini response"))?;
+        let candidate = extract_first_candidate(&response)?;
 
         let finish_reason = candidate
             .get("finishReason")
@@ -492,10 +272,7 @@ impl Gemini3Provider {
             .unwrap_or("UNKNOWN")
             .to_string();
 
-        let parts = candidate
-            .get("content")
-            .and_then(|c| c.get("parts"))
-            .and_then(|p| p.as_array());
+        let parts = extract_parts(candidate);
 
         let mut content = None;
         let mut tool_calls = Vec::new();
@@ -537,7 +314,7 @@ impl Gemini3Provider {
             }
         }
 
-        // Extract usage
+        // Extract usage using helper
         let usage = response.get("usageMetadata");
         let tokens_input = usage
             .and_then(|u| u.get("promptTokenCount"))
@@ -553,13 +330,7 @@ impl Gemini3Provider {
             .unwrap_or(0);
 
         // Log cache info
-        if tokens_cached > 0 {
-            let cache_percent = (tokens_cached as f64 / tokens_input as f64 * 100.0) as i64;
-            info!(
-                "Gemini 3 tool call: {} input ({} cached = {}% savings), {} output",
-                tokens_input, tokens_cached, cache_percent, tokens_output
-            );
-        }
+        log_tool_call_tokens("Gemini 3 tool call", tokens_input, tokens_output, tokens_cached);
 
         if !tool_calls.is_empty() {
             info!(
@@ -587,97 +358,11 @@ impl Gemini3Provider {
     }
 
     /// Generate code artifact with structured JSON output
-    pub async fn generate_code(&self, request: CodeGenRequest) -> Result<CodeGenResponse> {
-        info!(
-            "Gemini 3: Generating {} code at {}",
-            request.language, request.path
-        );
-
-        let system_prompt = prompts::code_gen_specialist(&request.language);
-        let user_prompt = build_user_prompt(&request);
-
-        debug!("Gemini 3 user prompt:\n{}", user_prompt);
-
-        let request_body = serde_json::json!({
-            "contents": [{
-                "role": "user",
-                "parts": [{
-                    "text": format!("{}\n\n{}", system_prompt, user_prompt)
-                }]
-            }],
-            "generationConfig": {
-                "temperature": 1.0,
-                "responseMimeType": "application/json"
-            }
-        });
-
-        let response = self
-            .client
-            .post(self.api_url("generateContent"))
-            .header("Content-Type", "application/json")
-            .json(&request_body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(anyhow!("Gemini 3 API error {}: {}", status, error_text));
-        }
-
-        let response_json: Value = response.json().await?;
-
-        // Extract content from response
-        let content_str = response_json
-            .get("candidates")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("content"))
-            .and_then(|c| c.get("parts"))
-            .and_then(|p| p.get(0))
-            .and_then(|p| p.get("text"))
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| anyhow!("Invalid Gemini 3 response structure"))?;
-
-        // Parse the JSON content
-        let artifact: CodeArtifact = serde_json::from_str(content_str)?;
-
-        // Extract token usage
-        let usage = response_json.get("usageMetadata");
-        let tokens_input = usage
-            .and_then(|u| u.get("promptTokenCount"))
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0);
-        let tokens_output = usage
-            .and_then(|u| u.get("candidatesTokenCount"))
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0);
-        let tokens_cached = usage
-            .and_then(|u| u.get("cachedContentTokenCount"))
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0);
-
-        if tokens_cached > 0 {
-            let cache_percent = (tokens_cached as f64 / tokens_input as f64 * 100.0) as i64;
-            info!(
-                "Gemini 3: Generated {} lines at {} ({} cached = {}% savings)",
-                artifact.content.lines().count(), artifact.path, tokens_cached, cache_percent
-            );
-        } else {
-            info!(
-                "Gemini 3: Generated {} lines of code at {}",
-                artifact.content.lines().count(),
-                artifact.path
-            );
-        }
-
-        Ok(CodeGenResponse {
-            artifact,
-            tokens_input,
-            tokens_output,
-        })
+    pub async fn generate_code(
+        &self,
+        request: types::CodeGenRequest,
+    ) -> Result<types::CodeGenResponse> {
+        codegen_generate(&self.client, &self.api_url("generateContent"), request).await
     }
 
     /// Send a completion request with tools and custom thinking level
@@ -696,8 +381,8 @@ impl Gemini3Provider {
             thinking_level
         );
 
-        let contents = Self::messages_to_gemini_contents(&messages, &system);
-        let gemini_tools = Self::tools_to_gemini_format(&tools);
+        let contents = messages_to_gemini_contents(&messages, &system);
+        let gemini_tools = tools_to_gemini_format(&tools);
 
         let mut request_body = serde_json::json!({
             "contents": contents,
@@ -740,15 +425,8 @@ impl Gemini3Provider {
 
     /// Parse tool response for LlmProvider trait
     fn parse_tool_response(&self, response: Value, latency_ms: i64) -> Result<ToolResponse> {
-        let candidate = response
-            .get("candidates")
-            .and_then(|c| c.get(0))
-            .ok_or_else(|| anyhow!("No candidates in Gemini response"))?;
-
-        let parts = candidate
-            .get("content")
-            .and_then(|c| c.get("parts"))
-            .and_then(|p| p.as_array());
+        let candidate = extract_first_candidate(&response)?;
+        let parts = extract_parts(candidate);
 
         let mut text_output = String::new();
         let mut function_calls = Vec::new();
@@ -777,27 +455,9 @@ impl Gemini3Provider {
             }
         }
 
-        let usage = response.get("usageMetadata");
-        let tokens = TokenUsage {
-            input: usage
-                .and_then(|u| u.get("promptTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-            output: usage
-                .and_then(|u| u.get("candidatesTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-            reasoning: usage
-                .and_then(|u| u.get("thoughtsTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-            cached: usage
-                .and_then(|u| u.get("cachedContentTokenCount"))
-                .and_then(|t| t.as_i64())
-                .unwrap_or(0),
-        };
+        let tokens = extract_token_usage(&response);
 
-        if tokens.cached > 0 {
+        if tokens.cached > 0 && tokens.input > 0 {
             let cache_percent = (tokens.cached as f64 / tokens.input as f64 * 100.0) as i64;
             info!(
                 "Gemini 3 tool response: {} input ({} cached = {}% savings), {} output, {} function calls",
@@ -861,7 +521,7 @@ impl LlmProvider for Gemini3Provider {
             messages.len()
         );
 
-        let contents = Self::messages_to_gemini_contents(&messages, &system);
+        let contents = messages_to_gemini_contents(&messages, &system);
 
         let request_body = serde_json::json!({
             "contents": contents,
@@ -932,90 +592,4 @@ impl LlmProvider for Gemini3Provider {
 
         Ok(Box::new(Box::pin(text_stream)))
     }
-}
-
-// ============================================================================
-// Supporting Types for Code Generation and Tool Calling
-// ============================================================================
-
-/// Response from tool calling API
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallResponse {
-    pub content: Option<String>,
-    pub tool_calls: Vec<ToolCall>,
-    pub finish_reason: String,
-    pub tokens_input: i64,
-    pub tokens_output: i64,
-    /// Thought signature for multi-turn conversations (MUST be passed back)
-    pub thought_signature: Option<String>,
-}
-
-/// Individual tool call
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-}
-
-/// Request to generate code
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeGenRequest {
-    pub path: String,
-    pub description: String,
-    pub language: String,
-    pub framework: Option<String>,
-    pub dependencies: Vec<String>,
-    pub style_guide: Option<String>,
-    pub context: String,
-}
-
-/// Response from code generation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeGenResponse {
-    pub artifact: CodeArtifact,
-    pub tokens_input: i64,
-    pub tokens_output: i64,
-}
-
-/// Code artifact generated
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeArtifact {
-    pub path: String,
-    pub content: String,
-    pub language: String,
-    #[serde(default)]
-    pub explanation: Option<String>,
-}
-
-/// Build user prompt from request
-pub fn build_user_prompt(request: &CodeGenRequest) -> String {
-    let mut prompt = format!(
-        "Generate a {} file at path: {}\n\n\
-        Description: {}\n\n",
-        request.language, request.path, request.description
-    );
-
-    if let Some(framework) = &request.framework {
-        prompt.push_str(&format!("Framework: {}\n\n", framework));
-    }
-
-    if !request.dependencies.is_empty() {
-        prompt.push_str(&format!(
-            "Dependencies: {}\n\n",
-            request.dependencies.join(", ")
-        ));
-    }
-
-    if let Some(style) = &request.style_guide {
-        prompt.push_str(&format!("Style preferences: {}\n\n", style));
-    }
-
-    if !request.context.is_empty() {
-        prompt.push_str(&format!("Additional context:\n{}\n\n", request.context));
-    }
-
-    prompt.push_str("Remember: Output ONLY the JSON object, no other text.");
-
-    prompt
 }

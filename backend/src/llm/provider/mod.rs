@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::any::Any;
 
+// Gemini 3 provider (modularized)
 pub mod gemini3;
 pub mod gemini_embeddings;
 pub mod stream;
