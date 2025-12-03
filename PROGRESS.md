@@ -1375,3 +1375,57 @@ Frontend:
 4. **Context Injection**: Guidelines automatically included in system prompt via existing Context Oracle integration
 
 ---
+
+## Phase: Production Hardening (Milestone 10)
+
+### Session 33: 2025-12-03
+
+**Summary:** Error handling improvements - eliminated panic risks from RwLock poisoning and timestamp parsing, added graceful fallbacks.
+
+**Goals:**
+- Audit error handling patterns across backend
+- Fix high-priority panic risks (RwLock poisoning, timestamp parsing)
+- Improve error handling in operations/engine module
+
+**Audit Findings:**
+- 264 total unwrap/expect calls in production code
+- High-priority areas identified:
+  - watcher/registry.rs: 17 RwLock unwraps (lock poisoning risk)
+  - patterns/storage.rs: 23 timestamp parsing unwraps
+  - build/tracker.rs: 19 timestamp parsing unwraps
+  - operations/engine: 27 unwraps (mixed patterns)
+
+**Key Outcomes:**
+- Replaced std::sync::RwLock with parking_lot::RwLock in watcher/registry.rs
+  - parking_lot doesn't have poisoning semantics, eliminating panic risk
+  - 17 .unwrap() calls removed, locks now return guards directly
+- Added parse_timestamp() helper functions in patterns/storage.rs and build/tracker.rs
+  - Uses Utc.timestamp_opt().single() for safe parsing
+  - Falls back to UNIX_EPOCH on invalid timestamps
+  - Logs warning when fallback is used
+  - 20+ timestamp unwraps fixed
+- Improved external_handlers.rs:
+  - Used std::sync::LazyLock for pre-compiled regex patterns (no per-call compilation)
+  - Added graceful fallback for HTTP client build failure
+
+**Files Modified:**
+- `backend/src/watcher/registry.rs` - Replaced RwLock with parking_lot::RwLock
+- `backend/src/patterns/storage.rs` - Added parse_timestamp() helper
+- `backend/src/build/tracker.rs` - Added parse_timestamp() helper
+- `backend/src/operations/engine/external_handlers.rs` - LazyLock for regex, HTTP fallback
+- `backend/.sqlx/*` - Regenerated sqlx query cache
+
+**Git Commits:**
+- `2898ac9` - Fix: Improve error handling across backend modules
+
+**Technical Decisions:**
+1. **parking_lot::RwLock over std::sync::RwLock**: parking_lot locks don't implement poisoning, making them simpler and panic-safe. The crate was already a dependency.
+2. **Timestamp Fallback to UNIX_EPOCH**: Invalid timestamps fall back to 1970-01-01 instead of panicking. This allows the application to continue operating with degraded but recoverable data.
+3. **LazyLock for Regex**: Rust's std::sync::LazyLock (stable in 1.80+) used instead of once_cell to avoid adding a dependency. Regex patterns compiled once, used many times.
+4. **HTTP Client Fallback**: If custom client build fails, falls back to default client with logging rather than panicking.
+
+**Testing:**
+- All 102 library tests pass
+- Build succeeds with SQLX_OFFLINE=true
+
+---
