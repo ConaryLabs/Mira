@@ -10,6 +10,10 @@ A comprehensive guide for users and developers of the Mira AI coding assistant.
 - [Projects and Workspaces](#projects-and-workspaces)
 - [Code Intelligence](#code-intelligence)
 - [AI Capabilities](#ai-capabilities)
+- [Slash Commands](#slash-commands)
+- [Hooks System](#hooks-system)
+- [Checkpoint and Rewind](#checkpoint-and-rewind)
+- [MCP Support](#mcp-support)
 - [WebSocket API Reference](#websocket-api-reference)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -380,6 +384,470 @@ Mira has access to 39 built-in tools organized by category.
 | Tool | Description |
 |------|-------------|
 | `activate_skill` | Activate specialized modes: refactoring, testing, debugging, documentation |
+
+### Built-in Commands
+
+Mira provides several built-in slash commands accessible from the chat:
+
+| Command | Description |
+|---------|-------------|
+| `/commands` | List all available custom slash commands |
+| `/reload-commands` | Hot-reload commands from disk |
+| `/checkpoints` | List recent checkpoints for the session |
+| `/rewind <id>` | Restore files to a checkpoint state |
+| `/mcp` | List connected MCP servers and their tools |
+
+---
+
+## Slash Commands
+
+Create custom reusable prompts using markdown files.
+
+### Overview
+
+Slash commands let you define frequently-used prompts that can be invoked with `/command-name`. Commands are markdown files with optional `$ARGUMENTS` placeholders.
+
+### Command Locations
+
+| Location | Scope | Priority |
+|----------|-------|----------|
+| `.mira/commands/` | Project-specific | Higher |
+| `~/.mira/commands/` | User-global | Lower |
+
+Project commands take precedence over user commands with the same name.
+
+### Creating Commands
+
+1. Create a directory: `mkdir -p .mira/commands`
+2. Create a markdown file: `.mira/commands/review.md`
+
+```markdown
+# Code Review
+
+Review the following code for:
+- Security vulnerabilities
+- Performance issues
+- Code style violations
+- Missing error handling
+
+$ARGUMENTS
+```
+
+3. Use in chat: `/review <paste your code here>`
+
+### Command Features
+
+**Arguments**: Use `$ARGUMENTS` as a placeholder for user input:
+```markdown
+# Explain Code
+Explain this code in detail:
+
+$ARGUMENTS
+```
+
+**Description Extraction**: The first `#` header becomes the command description shown in `/commands`.
+
+**Namespacing**: Nested folders create namespaced commands:
+```
+.mira/commands/
+  git/
+    pr.md      -> /git:pr
+    commit.md  -> /git:commit
+  test/
+    unit.md    -> /test:unit
+```
+
+### Example Commands
+
+**Refactor Command** (`.mira/commands/refactor.md`):
+```markdown
+# Refactor Code
+
+Refactor this code to improve:
+1. Readability
+2. Performance
+3. Maintainability
+
+Keep the same functionality. Explain your changes.
+
+$ARGUMENTS
+```
+
+**Test Generator** (`.mira/commands/test.md`):
+```markdown
+# Generate Tests
+
+Generate comprehensive unit tests for:
+
+$ARGUMENTS
+
+Include:
+- Happy path tests
+- Edge cases
+- Error handling tests
+```
+
+### Managing Commands
+
+- `/commands` - View all available commands with descriptions
+- `/reload-commands` - Reload after adding/modifying command files
+
+---
+
+## Hooks System
+
+Execute shell commands before or after tool operations.
+
+### Overview
+
+Hooks let you run custom scripts at specific points in Mira's tool execution pipeline. Use them for:
+- Running tests before file writes
+- Formatting code after edits
+- Logging tool usage
+- Blocking dangerous operations
+
+### Configuration
+
+Create `.mira/hooks.json` (project) or `~/.mira/hooks.json` (user):
+
+```json
+{
+  "hooks": [
+    {
+      "name": "pre-write-test",
+      "trigger": "pre_tool_use",
+      "tool_pattern": "write_*",
+      "command": "cargo test",
+      "timeout_ms": 60000,
+      "on_failure": "block"
+    }
+  ]
+}
+```
+
+### Hook Properties
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `name` | Yes | Unique identifier for the hook |
+| `trigger` | Yes | When to run: `pre_tool_use` or `post_tool_use` |
+| `tool_pattern` | No | Tool name pattern (supports `*` wildcard) |
+| `command` | Yes | Shell command to execute |
+| `timeout_ms` | No | Timeout in milliseconds (default: 30000) |
+| `on_failure` | No | Action on failure: `block`, `warn`, `ignore` (default: `warn`) |
+
+### Trigger Types
+
+| Trigger | Description |
+|---------|-------------|
+| `pre_tool_use` | Runs before tool execution |
+| `post_tool_use` | Runs after tool execution |
+
+### Pattern Matching
+
+Tool patterns support wildcards:
+- `write_*` matches `write_file`, `write_project_file`
+- `git_*` matches all git tools
+- `*` matches all tools
+- Exact name matches specific tool
+
+### Environment Variables
+
+Hooks receive context via environment variables:
+
+| Variable | Available | Description |
+|----------|-----------|-------------|
+| `MIRA_TOOL_NAME` | Both | Name of the tool being executed |
+| `MIRA_TOOL_ARGS` | Both | JSON string of tool arguments |
+| `MIRA_TOOL_SUCCESS` | Post only | "true" or "false" |
+| `MIRA_TOOL_RESULT` | Post only | JSON string of tool result |
+
+### On-Failure Actions
+
+| Action | Description |
+|--------|-------------|
+| `block` | Abort tool execution (pre-hooks only) |
+| `warn` | Log warning, continue execution |
+| `ignore` | Silently continue |
+
+### Example Configurations
+
+**Run Tests Before File Writes:**
+```json
+{
+  "hooks": [
+    {
+      "name": "test-before-write",
+      "trigger": "pre_tool_use",
+      "tool_pattern": "write_*",
+      "command": "npm test",
+      "timeout_ms": 120000,
+      "on_failure": "block"
+    }
+  ]
+}
+```
+
+**Format Code After Edits:**
+```json
+{
+  "hooks": [
+    {
+      "name": "format-after-edit",
+      "trigger": "post_tool_use",
+      "tool_pattern": "edit_*",
+      "command": "prettier --write .",
+      "on_failure": "warn"
+    }
+  ]
+}
+```
+
+**Log All Tool Executions:**
+```json
+{
+  "hooks": [
+    {
+      "name": "log-tools",
+      "trigger": "post_tool_use",
+      "command": "echo \"Tool: $MIRA_TOOL_NAME, Success: $MIRA_TOOL_SUCCESS\" >> /tmp/mira.log",
+      "on_failure": "ignore"
+    }
+  ]
+}
+```
+
+---
+
+## Checkpoint and Rewind
+
+Snapshot file state before modifications for easy rollback.
+
+### Overview
+
+Mira automatically creates checkpoints before modifying files. If something goes wrong, you can rewind to a previous state.
+
+### How It Works
+
+1. **Automatic Snapshots**: Before any file-modifying tool (`write_file`, `edit_file`, `delete_file`, etc.), Mira snapshots the file's current content
+2. **Session-Scoped**: Checkpoints are tied to your session
+3. **SHA-256 Hashing**: File content is hashed for integrity verification
+
+### Using Checkpoints
+
+**List Checkpoints:**
+```
+/checkpoints
+```
+
+Output:
+```
+**Checkpoints (most recent first):**
+
+1. `a1b2c3d4` - 14:32:15 (2 files) - Before write_file
+2. `e5f6g7h8` - 14:30:42 (1 files) - Before edit_file
+3. `i9j0k1l2` - 14:28:10 (3 files) - Before delete_file
+
+Use `/rewind <checkpoint-id>` to restore to a checkpoint.
+```
+
+**Restore a Checkpoint:**
+```
+/rewind a1b2c3d4
+```
+
+You can use partial IDs - Mira will match the prefix:
+```
+/rewind a1b2    # Matches a1b2c3d4
+```
+
+### What Gets Restored
+
+When you rewind:
+- **Existing files**: Content restored to checkpoint state
+- **New files**: Deleted (they didn't exist at checkpoint)
+- **Deleted files**: Recreated with original content
+
+### Checkpoint Details
+
+Each checkpoint records:
+- Session ID
+- Operation ID (which operation triggered it)
+- Tool name (e.g., `write_file`)
+- File paths and content
+- Timestamp
+- SHA-256 hash of content
+
+### Automatic Cleanup
+
+Old checkpoints are automatically cleaned up to prevent storage bloat. Recent checkpoints are preserved per session.
+
+---
+
+## MCP Support
+
+Connect external tools via Model Context Protocol (MCP).
+
+### Overview
+
+MCP (Model Context Protocol) is a standard protocol for tool integration. Mira can connect to MCP servers that provide additional tools, extending its capabilities.
+
+### Configuration
+
+Create `.mira/mcp.json` (project) or `~/.mira/mcp.json` (user):
+
+```json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem"],
+      "env": {
+        "ALLOWED_PATHS": "/home/user/projects"
+      }
+    }
+  ]
+}
+```
+
+### Server Configuration
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `name` | Yes | Unique server identifier |
+| `command` | Yes* | Command to spawn server |
+| `args` | No | Command arguments |
+| `url` | Yes* | HTTP URL for remote servers |
+| `env` | No | Environment variables |
+| `timeout_ms` | No | Request timeout (default: 30000) |
+
+*Either `command` or `url` required.
+
+### Transport Types
+
+**Stdio (Spawned Process):**
+```json
+{
+  "name": "local-server",
+  "command": "node",
+  "args": ["./mcp-server.js"]
+}
+```
+
+**HTTP (Remote Server):**
+```json
+{
+  "name": "remote-server",
+  "url": "http://localhost:3002/mcp"
+}
+```
+
+### Viewing MCP Status
+
+Use `/mcp` to see connected servers and available tools:
+
+```
+/mcp
+```
+
+Output:
+```
+**MCP Servers (2 connected):**
+
+**filesystem** (5 tools)
+  - `read_file`: Read file contents
+  - `write_file`: Write to a file
+  - `list_directory`: List directory contents
+  - `create_directory`: Create a directory
+  - `delete_file`: Delete a file
+
+**github** (3 tools)
+  - `search_repos`: Search GitHub repositories
+  - `get_issues`: Get repository issues
+  - `create_pr`: Create a pull request
+```
+
+### Using MCP Tools
+
+MCP tools are automatically available to Mira. They appear with the naming convention `mcp__<server>__<tool>`:
+
+- `mcp__filesystem__read_file`
+- `mcp__github__search_repos`
+
+Mira will use these tools when appropriate for your requests.
+
+### Popular MCP Servers
+
+| Server | Purpose |
+|--------|---------|
+| `@anthropic/mcp-server-filesystem` | File system operations |
+| `@anthropic/mcp-server-github` | GitHub integration |
+| `@anthropic/mcp-server-sqlite` | SQLite database access |
+| `@anthropic/mcp-server-brave` | Web search via Brave |
+
+### Example Configurations
+
+**Filesystem Access:**
+```json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem"],
+      "env": {
+        "ALLOWED_PATHS": "/home/user/projects,/tmp"
+      }
+    }
+  ]
+}
+```
+
+**GitHub Integration:**
+```json
+{
+  "servers": [
+    {
+      "name": "github",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-github"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_your_token_here"
+      }
+    }
+  ]
+}
+```
+
+**Multiple Servers:**
+```json
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem"]
+    },
+    {
+      "name": "github",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-github"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_xxx"
+      }
+    },
+    {
+      "name": "search",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-brave"],
+      "env": {
+        "BRAVE_API_KEY": "xxx"
+      }
+    }
+  ]
+}
+```
 
 ---
 
@@ -851,4 +1319,4 @@ curl http://localhost:6333/collections
 
 ---
 
-*Last updated: 2025-11-28*
+*Last updated: 2025-12-03*
