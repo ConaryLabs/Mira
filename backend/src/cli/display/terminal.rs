@@ -337,6 +337,85 @@ impl TerminalDisplay {
     pub fn width(&self) -> usize {
         self.term.size().1 as usize
     }
+
+    /// Print a colored diff
+    pub fn print_diff(&self, diff: &str) -> io::Result<()> {
+        println!();
+        for line in diff.lines() {
+            if line.starts_with('+') && !line.starts_with("+++") {
+                println!("{}", style(line).green());
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                println!("{}", style(line).red());
+            } else if line.starts_with('@') {
+                println!("{}", style(line).cyan());
+            } else if line.starts_with("diff") || line.starts_with("index") {
+                println!("{}", self.theme.dim.apply_to(line));
+            } else {
+                println!("{}", line);
+            }
+        }
+        println!();
+        Ok(())
+    }
+
+    /// Print a task list (todo-like display)
+    pub fn print_task_list(&self, tasks: &[(String, bool, Option<String>)]) -> io::Result<()> {
+        println!();
+        for (title, completed, detail) in tasks {
+            let status = if *completed {
+                self.theme.tool_success.apply_to("[x]")
+            } else {
+                self.theme.dim.apply_to("[ ]")
+            };
+            let title_style = if *completed {
+                self.theme.dim.apply_to(title.as_str())
+            } else {
+                self.theme.assistant.apply_to(title.as_str())
+            };
+            print!("  {} {}", status, title_style);
+            if let Some(d) = detail {
+                print!(" {}", self.theme.dim.apply_to(d));
+            }
+            println!();
+        }
+        println!();
+        Ok(())
+    }
+
+    /// Print file content with line numbers
+    pub fn print_file_content(&self, path: &str, content: &str, start_line: usize) -> io::Result<()> {
+        println!();
+        println!("{}", self.theme.tool_name.apply_to(path));
+        println!("{}", self.theme.dim.apply_to("─".repeat(60.min(self.width()))));
+        for (i, line) in content.lines().enumerate() {
+            let line_num = start_line + i;
+            println!(
+                "{} {}",
+                self.theme.dim.apply_to(format!("{:4}│", line_num)),
+                line
+            );
+        }
+        println!();
+        Ok(())
+    }
+
+    /// Print a search result
+    pub fn print_search_result(&self, path: &str, line_num: usize, content: &str, match_text: &str) -> io::Result<()> {
+        print!(
+            "{}{} ",
+            self.theme.highlight.apply_to(path),
+            self.theme.dim.apply_to(format!(":{}", line_num))
+        );
+        // Highlight the match within the content
+        if let Some(pos) = content.find(match_text) {
+            print!("{}", &content[..pos]);
+            print!("{}", self.theme.tool_name.apply_to(match_text));
+            println!("{}", &content[pos + match_text.len()..]);
+        } else {
+            println!("{}", content);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

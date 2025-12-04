@@ -182,6 +182,24 @@ impl StreamingDisplay {
                 }
                 // TODO: Implement approval prompt
             }
+            OperationEvent::ArtifactPreview { path, preview, .. } => {
+                // Check if preview looks like a diff
+                if preview.contains("@@") && (preview.contains("+") || preview.contains("-")) {
+                    self.terminal.print_diff(preview)?;
+                } else if let Some(p) = path {
+                    self.terminal.print_file_content(p, preview, 1)?;
+                }
+            }
+            OperationEvent::TaskCreated { task_id, title, .. } => {
+                // Display task creation
+                println!("  [ ] {}: {}", truncate(task_id, 8), title);
+            }
+            OperationEvent::TaskStarted { task_id, .. } => {
+                println!("  [>] {} started", truncate(task_id, 8));
+            }
+            OperationEvent::TaskCompleted { task_id, .. } => {
+                println!("  [x] {} completed", truncate(task_id, 8));
+            }
             _ => {}
         }
         Ok(())
