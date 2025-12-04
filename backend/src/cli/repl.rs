@@ -119,8 +119,11 @@ impl Repl {
             return self.run_one_shot().await;
         }
 
-        // Handle session resume flags
-        if self.args.should_show_picker() {
+        // Handle session flags
+        if let Some(fork_id) = self.args.fork.clone() {
+            // Fork from existing session
+            self.fork_session(&fork_id).await?;
+        } else if self.args.should_show_picker() {
             // Show session picker
             self.show_session_picker().await?;
         } else if self.args.continue_session {
@@ -321,6 +324,62 @@ impl Repl {
         Ok(())
     }
 
+    /// Fork from an existing session
+    async fn fork_session(&mut self, source_session_id: &str) -> Result<()> {
+        // Find the source session
+        let source = self.session_store.get(source_session_id).await?;
+
+        // Also try prefix match
+        let source = match source {
+            Some(s) => Some(s),
+            None => {
+                let sessions = self.session_store.list(SessionFilter::new()).await?;
+                sessions.into_iter().find(|s| s.id.starts_with(source_session_id))
+            }
+        };
+
+        match source {
+            Some(source_session) => {
+                // Create a new session that inherits the source's backend session
+                // This allows the backend to maintain conversation history
+                let new_backend_id = format!("cli-fork-{}", uuid::Uuid::new_v4());
+                let project_path = self.project.as_ref().map(|p| p.root.clone());
+
+                let mut forked = CliSession::new(new_backend_id.clone(), project_path);
+                forked.name = Some(format!("Fork of {}", source_session.display_name()));
+
+                self.session_store.save(&forked).await?;
+                self.current_session = Some(forked.clone());
+
+                // Tell backend to fork the session (clone conversation history)
+                self.client.set_project_id(Some(new_backend_id));
+
+                // Send fork command to backend
+                let fork_args = serde_json::json!({
+                    "source_session_id": source_session.backend_session_id,
+                });
+                self.client.send_command("fork", Some(fork_args)).await?;
+
+                if self.args.output_format == OutputFormat::Text {
+                    self.display.terminal().print_success(&format!(
+                        "Forked session from: {} (new session: {})",
+                        source_session.display_name(),
+                        forked.id
+                    ))?;
+                }
+            }
+            None => {
+                self.display.terminal().print_error(&format!(
+                    "Session not found: {}",
+                    source_session_id
+                ))?;
+                self.create_new_session().await?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Print session info
     fn print_session_info(&self) -> Result<()> {
         if let Some(ref project) = self.project {
@@ -336,7 +395,9 @@ impl Repl {
             .context("No prompt provided for one-shot mode")?;
 
         // Handle session flags in one-shot mode too
-        if self.args.continue_session {
+        if let Some(fork_id) = self.args.fork.clone() {
+            self.fork_session(&fork_id).await?;
+        } else if self.args.continue_session {
             self.continue_recent_session().await?;
         } else if let Some(session_id) = self.args.get_resume_session_id().map(|s| s.to_string()) {
             self.resume_session(&session_id).await?;
