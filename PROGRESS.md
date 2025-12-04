@@ -1837,3 +1837,90 @@ info!(
 - Build succeeds with no agent-related warnings
 
 ---
+
+### Session 39: 2025-12-04
+
+**Summary:** Implemented Phase 1 of Mira CLI - a Claude Code-style command line interface with REPL, streaming output, and one-shot mode.
+
+**Goals:**
+- Create CLI binary that mimics Claude Code's interface
+- Implement WebSocket client for backend communication
+- Support interactive REPL and one-shot (-p) modes
+- Real-time streaming of LLM responses
+- Foundation for future phases (sessions, commands, agents)
+
+**Key Outcomes:**
+
+1. **CLI Binary Target**:
+   - Added `mira` binary to Cargo.toml alongside `mira-backend`
+   - Entry point at `src/bin/mira.rs`
+   - Release binary at `target/release/mira`
+
+2. **CLI Module Structure** (`src/cli/`):
+   - `args.rs` - clap-based argument parsing with Claude Code-style flags
+   - `config.rs` - Configuration from `~/.mira/config.json`
+   - `ws_client.rs` - WebSocket client with event parsing
+   - `repl.rs` - Interactive REPL loop with readline
+   - `display/terminal.rs` - Colored terminal output with spinners
+   - `display/streaming.rs` - Real-time token streaming display
+
+3. **Supported CLI Flags**:
+   - `-p, --print` - One-shot mode (non-interactive)
+   - `-c, --continue-session` - Continue last session (placeholder)
+   - `-r, --resume` - Resume specific session (placeholder)
+   - `-v, --verbose` - Show tool executions
+   - `--output-format` - text/json/stream-json
+   - `--show-thinking` - Display reasoning tokens
+   - `--backend-url` - WebSocket URL (default: ws://localhost:3001/ws)
+   - `--no-color` - Disable colored output
+
+4. **Event Handling**:
+   - Parses nested `{"type":"data","data":{...}}` format from backend
+   - Handles: operation.started, operation.streaming, operation.completed, operation.failed
+   - Handles: operation.tool_executed, operation.agent_* events
+   - Handles: status, error, connection_ready messages
+
+**Files Created:**
+- `backend/src/bin/mira.rs` - CLI entry point
+- `backend/src/cli/mod.rs` - Module exports
+- `backend/src/cli/args.rs` - Argument definitions (150 lines)
+- `backend/src/cli/config.rs` - Configuration (140 lines)
+- `backend/src/cli/ws_client.rs` - WebSocket client (540 lines)
+- `backend/src/cli/repl.rs` - REPL loop (180 lines)
+- `backend/src/cli/display/mod.rs` - Display module
+- `backend/src/cli/display/terminal.rs` - Terminal output (280 lines)
+- `backend/src/cli/display/streaming.rs` - Streaming display (210 lines)
+
+**Files Modified:**
+- `backend/Cargo.toml` - Added [[bin]] targets, CLI dependencies
+- `backend/src/lib.rs` - Added `pub mod cli;`
+
+**Dependencies Added:**
+- `tokio-tungstenite` - WebSocket client
+- `crossterm` - Terminal control
+- `indicatif` - Progress indicators
+- `console` - Colored output
+- `rustyline` - Line editing
+- `ctrlc` - Signal handling
+
+**Testing:**
+```bash
+# One-shot mode
+./target/release/mira -p "What is the capital of France?"
+# Output: Mira: It's Paris. Obviously.
+
+# With verbose mode
+./target/release/mira -p -v "Hello"
+# Shows connection status and tool executions
+
+# Help
+./target/release/mira --help
+```
+
+**Phase 1 Complete. Remaining Phases:**
+- Phase 2: Session management and project context detection
+- Phase 3: Slash commands and permission prompts
+- Phase 4: Agent system and tool display
+- Phase 5: JSON output modes, session forking, advanced features
+
+---

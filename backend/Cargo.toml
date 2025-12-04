@@ -2,9 +2,18 @@
 name = "mira-backend"
 version = "0.9.0"
 edition = "2024"
+
 [lib]
 name = "mira_backend"
 path = "src/lib.rs"
+
+[[bin]]
+name = "mira"
+path = "src/bin/mira.rs"
+
+[[bin]]
+name = "mira-backend"
+path = "src/main.rs"
 [dependencies]
 # Web framework - WebSocket only
 axum = { version = "0.8", features = ["macros", "ws"] }
@@ -26,7 +35,7 @@ chrono = { version = "0.4.41", features = ["serde"] }
 async-trait = "0.1.88"
 futures = "0.3"
 async-stream = "0.3"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "2"
 lazy_static = "1.5.0"
 # Git integration
@@ -73,8 +82,16 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 bcrypt = "0.17"
 tower-http = { version = "0.6", features = ["cors"] }
 dirs = "6.0.0"
+
+# CLI dependencies
+tokio-tungstenite = "0.28"
+crossterm = "0.28"
+indicatif = "0.17"
+console = "0.15"
+rustyline = "15"
+ctrlc = "3.4"
+
 [dev-dependencies]
 tempfile = "3.8"
-tokio-tungstenite = "0.28"
 url = "2.5.0"
 uuid = { version = "1.8", features = ["v4"] }

@@ -44,6 +44,9 @@ pub mod watcher;
 // Milestone 12 - Agent system (Claude Code-style specialized agents)
 pub mod agents;
 
+// CLI module (for mira binary)
+pub mod cli;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;

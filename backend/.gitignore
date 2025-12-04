@@ -105,8 +105,11 @@ lcov.info
 
 # Qdrant data and binaries (if running locally)
 /data/
-bin/
+/bin/
 .qdrant-initialized
+
+# But allow src/bin/ for CLI binaries
+!src/bin/
 
 # Session data
 sessions/
