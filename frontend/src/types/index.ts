@@ -1,6 +1,18 @@
 // src/types/index.ts
 // SCORCHED EARTH: Only types actually used, no legacy bullshit
 
+// ===== SESSION =====
+export interface Session {
+  id: string;
+  user_id?: string;
+  name?: string;
+  project_path?: string;
+  last_message_preview?: string;
+  message_count: number;
+  created_at: number;  // Unix timestamp
+  last_active: number; // Unix timestamp
+}
+
 // ===== PROJECT =====
 export interface Project {
   id: string;

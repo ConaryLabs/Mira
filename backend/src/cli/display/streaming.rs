@@ -89,6 +89,9 @@ impl StreamingDisplay {
             BackendEvent::Disconnected => {
                 self.terminal.print_warning("Disconnected from backend")?;
             }
+            BackendEvent::SessionData { .. } => {
+                // Session data is handled separately by session management
+            }
         }
         Ok(())
     }
