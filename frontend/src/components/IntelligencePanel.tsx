@@ -77,8 +77,8 @@ export function IntelligencePanel() {
         return <ToolsDashboard />;
       case 'expertise':
         return (
-          <div className="p-4 text-center text-slate-500">
-            <Users className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+          <div className="p-4 text-center text-gray-500 dark:text-slate-500">
+            <Users className="w-8 h-8 mx-auto mb-2 text-gray-400 dark:text-slate-600" />
             <p className="text-sm">Author Expertise</p>
             <p className="text-xs mt-1">Coming soon</p>
           </div>
@@ -90,7 +90,7 @@ export function IntelligencePanel() {
 
   return (
     <div
-      className="flex-shrink-0 bg-slate-900 border-l border-slate-700 flex relative"
+      className="flex-shrink-0 bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 flex relative"
       style={{ width: `${panelWidth}px` }}
     >
       {/* Resize Handle */}
@@ -100,37 +100,37 @@ export function IntelligencePanel() {
         className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors group z-10"
       >
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <GripVertical className="w-4 h-4 text-slate-400" />
+          <GripVertical className="w-4 h-4 text-gray-400 dark:text-slate-400" />
         </div>
       </div>
 
       {/* Panel Content */}
       <div className="flex-1 flex flex-col ml-1">
         {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-700 bg-slate-850">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-850">
           <div className="flex items-center gap-2">
-            <Brain className="w-4 h-4 text-purple-400" />
-            <h2 className="text-sm font-semibold text-slate-200">Intelligence</h2>
+            <Brain className="w-4 h-4 text-purple-500 dark:text-purple-400" />
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-slate-200">Intelligence</h2>
           </div>
           <button
             onClick={hidePanel}
-            className="p-1 hover:bg-slate-700 rounded transition-colors"
+            className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
             title="Close panel"
           >
-            <X className="w-4 h-4 text-slate-400" />
+            <X className="w-4 h-4 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex-shrink-0 flex border-b border-slate-700 bg-slate-850/50">
+        <div className="flex-shrink-0 flex border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-850/50">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2.5 text-xs font-medium transition-colors ${
                 activeTab === tab.id
-                  ? 'text-blue-400 border-b-2 border-blue-400 bg-slate-800/50'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
+                  ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500 dark:border-blue-400 bg-white dark:bg-slate-800/50'
+                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800/30'
               }`}
               title={tab.label}
             >

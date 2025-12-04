@@ -113,19 +113,19 @@ export const ProjectsView: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-900">
+    <div className="h-full flex flex-col bg-gray-50 dark:bg-slate-900">
       {/* Header */}
-      <div className="flex-shrink-0 px-4 py-3 border-b border-slate-700">
+      <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-slate-700">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-200">Projects</h2>
-            <p className="text-sm text-slate-400">{projects.length} total</p>
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-slate-200">Projects</h2>
+            <p className="text-sm text-gray-500 dark:text-slate-400">{projects.length} total</p>
           </div>
           <div className="flex gap-2">
             {currentProject && (
               <button
                 onClick={() => setShowDocuments(true)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors text-sm"
+                className="flex items-center gap-2 px-3 py-1.5 bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded transition-colors text-sm"
               >
                 <FileText size={16} />
                 Documents
@@ -146,9 +146,9 @@ export const ProjectsView: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-4">
         {projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
-            <Folder size={64} className="text-slate-600 mb-4" />
-            <h3 className="text-lg font-medium text-slate-400 mb-2">No Projects Yet</h3>
-            <p className="text-sm text-slate-500 mb-4 max-w-md">
+            <Folder size={64} className="text-gray-400 dark:text-slate-600 mb-4" />
+            <h3 className="text-lg font-medium text-gray-500 dark:text-slate-400 mb-2">No Projects Yet</h3>
+            <p className="text-sm text-gray-400 dark:text-slate-500 mb-4 max-w-md">
               Create your first project to get started with Mira
             </p>
             <button
@@ -167,8 +167,8 @@ export const ProjectsView: React.FC = () => {
                 className={`
                   p-4 rounded-lg border-2 transition-all cursor-pointer
                   ${currentProject?.id === project.id
-                    ? 'border-blue-500 bg-blue-900/20'
-                    : 'border-slate-700 bg-slate-800 hover:border-slate-600'
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                    : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600'
                   }
                 `}
                 onClick={() => selectProject(project)}
@@ -179,11 +179,11 @@ export const ProjectsView: React.FC = () => {
                     {getProjectIcon(project)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-base font-semibold text-slate-200 truncate">
+                    <h3 className="text-base font-semibold text-gray-800 dark:text-slate-200 truncate">
                       {project.name}
                     </h3>
                     {project.description && (
-                      <p className="text-sm text-slate-400 mt-1">
+                      <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
                         {truncateDescription(project.description)}
                       </p>
                     )}
@@ -194,7 +194,7 @@ export const ProjectsView: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                   {getProjectBadge(project)}
                   {project.tags && project.tags.length > 0 && (
-                    <span className="flex items-center gap-1 text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">
+                    <span className="flex items-center gap-1 text-xs bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded">
                       <Tag size={12} />
                       {project.tags[0]}
                       {project.tags.length > 1 && ` +${project.tags.length - 1}`}
@@ -202,20 +202,20 @@ export const ProjectsView: React.FC = () => {
                   )}
                 </div>
 
-                <div className="flex items-center gap-1 text-xs text-slate-500 mb-3">
+                <div className="flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 mb-3">
                   <Clock size={12} />
                   {formatDate(project.updated_at || project.created_at)}
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-2 pt-2 border-t border-slate-700">
+                <div className="flex gap-2 pt-2 border-t border-gray-200 dark:border-slate-700">
                   {!project.has_codebase && !project.has_repository && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         setAttachTarget(project.id);
                       }}
-                      className="flex-1 px-2 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+                      className="flex-1 px-2 py-1.5 text-xs bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded transition-colors"
                     >
                       Attach Codebase
                     </button>
@@ -225,7 +225,7 @@ export const ProjectsView: React.FC = () => {
                       e.stopPropagation();
                       setSettingsTarget({ id: project.id, name: project.name });
                     }}
-                    className="px-2 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors flex items-center gap-1"
+                    className="px-2 py-1.5 text-xs bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded transition-colors flex items-center gap-1"
                     title="Project settings"
                   >
                     <Settings size={12} />
@@ -236,7 +236,7 @@ export const ProjectsView: React.FC = () => {
                       e.stopPropagation();
                       setDeleteTarget({ id: project.id, name: project.name });
                     }}
-                    className="px-2 py-1.5 text-xs bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded transition-colors flex items-center gap-1"
+                    className="px-2 py-1.5 text-xs bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 rounded transition-colors flex items-center gap-1"
                     disabled={deleting === project.id}
                   >
                     <Trash2 size={12} />

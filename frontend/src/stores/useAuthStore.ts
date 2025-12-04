@@ -4,12 +4,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { APP_CONFIG } from '../config/app';
+import { useThemeStore } from './useThemeStore';
 
 interface User {
   id: string;
   username: string;
   displayName: string;
   email?: string;
+  theme_preference?: string;
 }
 
 interface AuthResponse {
@@ -61,6 +63,9 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: true,
           });
 
+          // Initialize theme from user preference
+          useThemeStore.getState().initializeFromUser(data.user.theme_preference);
+
           return true;
         } catch (error) {
           console.error('Login error:', error);
@@ -91,6 +96,9 @@ export const useAuthStore = create<AuthState>()(
             token: data.token,
             isAuthenticated: true,
           });
+
+          // Initialize theme from user preference (new users get light mode)
+          useThemeStore.getState().initializeFromUser(data.user.theme_preference);
 
           return true;
         } catch (error) {

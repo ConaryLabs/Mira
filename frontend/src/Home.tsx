@@ -46,7 +46,7 @@ export function Home() {
   useCodeIntelligenceHandler();  // Code intelligence WebSocket responses
 
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-slate-100">
+    <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-slate-100">
       <Header />
 
       {/* Main content area */}
@@ -68,7 +68,7 @@ export function Home() {
 
           {/* Artifact Panel - Slides in from right */}
           {showArtifacts && (
-            <div className="w-1/2 border-l border-slate-700">
+            <div className="w-1/2 border-l border-gray-200 dark:border-slate-700">
               <ArtifactPanel />
             </div>
           )}

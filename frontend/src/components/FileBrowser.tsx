@@ -40,25 +40,25 @@ interface FileSemanticStats {
 // Color coding for complexity
 function getComplexityColor(score: number | null): string {
   if (score === null) return '';
-  if (score >= 30) return 'text-red-400';
-  if (score >= 15) return 'text-yellow-400';
-  if (score >= 5) return 'text-green-400';
-  return 'text-slate-500';
+  if (score >= 30) return 'text-red-500 dark:text-red-400';
+  if (score >= 15) return 'text-yellow-500 dark:text-yellow-400';
+  if (score >= 5) return 'text-green-500 dark:text-green-400';
+  return 'text-gray-500 dark:text-slate-500';
 }
 
 // Get language icon color
 function getLanguageColor(lang: string | null): string {
-  if (!lang) return 'text-slate-400';
+  if (!lang) return 'text-gray-400 dark:text-slate-400';
   switch (lang.toLowerCase()) {
     case 'rust':
-      return 'text-orange-400';
+      return 'text-orange-500 dark:text-orange-400';
     case 'typescript':
     case 'javascript':
-      return 'text-yellow-400';
+      return 'text-yellow-500 dark:text-yellow-400';
     case 'python':
-      return 'text-blue-400';
+      return 'text-blue-500 dark:text-blue-400';
     default:
-      return 'text-slate-400';
+      return 'text-gray-400 dark:text-slate-400';
   }
 }
 
@@ -102,7 +102,7 @@ function SemanticTags({ stats, showTags }: SemanticTagsProps) {
       {/* Element count */}
       {stats.element_count > 0 && (
         <span
-          className="text-slate-500 text-xs font-mono"
+          className="text-gray-500 dark:text-slate-500 text-xs font-mono"
           title={`${stats.element_count} element${stats.element_count > 1 ? 's' : ''} (${stats.function_count} function${stats.function_count > 1 ? 's' : ''})`}
         >
           {stats.element_count}
@@ -243,8 +243,8 @@ export const FileBrowser: React.FC = () => {
     return (
       <div key={node.path}>
         <div
-          className={`flex items-center gap-1 py-1 px-2 hover:bg-slate-800 cursor-pointer text-sm ${
-            isSelected ? 'bg-blue-600/20 text-blue-300' : 'text-slate-300'
+          className={`flex items-center gap-1 py-1 px-2 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer text-sm ${
+            isSelected ? 'bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-300' : 'text-gray-700 dark:text-slate-300'
           }`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onClick={() => {
@@ -286,17 +286,17 @@ export const FileBrowser: React.FC = () => {
 
   if (!currentProject) {
     return (
-      <div className="p-4 text-slate-500 text-sm">Select a project to browse files</div>
+      <div className="p-4 text-gray-500 dark:text-slate-500 text-sm">Select a project to browse files</div>
     );
   }
 
   if (fileTree.length === 0) {
     return (
-      <div className="p-4 text-slate-500 text-sm">
+      <div className="p-4 text-gray-500 dark:text-slate-500 text-sm">
         <div>No repository attached</div>
         <button
           onClick={loadFileTree}
-          className="mt-2 text-blue-400 hover:text-blue-300"
+          className="mt-2 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
         >
           Refresh
         </button>
@@ -307,16 +307,16 @@ export const FileBrowser: React.FC = () => {
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="flex-shrink-0 flex items-center justify-between px-2 py-1.5 border-b border-slate-700 bg-slate-850">
-        <span className="text-sm font-medium text-slate-300">Files</span>
+      <div className="flex-shrink-0 flex items-center justify-between px-2 py-1.5 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-850">
+        <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Files</span>
         <div className="flex items-center gap-1">
           {/* Toggle semantic tags */}
           <button
             onClick={() => setShowSemanticTags(!showSemanticTags)}
             className={`p-1 rounded transition-colors ${
               showSemanticTags
-                ? 'text-blue-400 hover:bg-slate-700'
-                : 'text-slate-500 hover:bg-slate-700'
+                ? 'text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-700'
+                : 'text-gray-500 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-700'
             }`}
             title={showSemanticTags ? 'Hide semantic tags' : 'Show semantic tags'}
           >
@@ -328,7 +328,7 @@ export const FileBrowser: React.FC = () => {
               loadFileTree();
               loadSemanticStats();
             }}
-            className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors"
+            className="p-1 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
             title="Refresh"
           >
             <RefreshCw size={14} className={loadingStats ? 'animate-spin' : ''} />
@@ -338,15 +338,15 @@ export const FileBrowser: React.FC = () => {
 
       {/* Legend */}
       {showSemanticTags && (
-        <div className="flex-shrink-0 flex items-center gap-3 px-2 py-1 border-b border-slate-700/50 text-xs text-slate-500">
+        <div className="flex-shrink-0 flex items-center gap-3 px-2 py-1 border-b border-gray-200/50 dark:border-slate-700/50 text-xs text-gray-500 dark:text-slate-500">
           <span className="flex items-center gap-1">
-            <TestTube size={10} className="text-cyan-400" /> Test
+            <TestTube size={10} className="text-cyan-500 dark:text-cyan-400" /> Test
           </span>
           <span className="flex items-center gap-1">
-            <AlertTriangle size={10} className="text-yellow-400" /> Issues
+            <AlertTriangle size={10} className="text-yellow-500 dark:text-yellow-400" /> Issues
           </span>
           <span className="flex items-center gap-1">
-            <Zap size={10} className="text-red-400" /> Complex
+            <Zap size={10} className="text-red-500 dark:text-red-400" /> Complex
           </span>
           <span className="flex items-center gap-1">
             <Code2 size={10} className="text-green-500" /> Analyzed
@@ -357,28 +357,28 @@ export const FileBrowser: React.FC = () => {
       {/* Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* File Tree */}
-        <div className="w-1/3 border-r border-slate-700 overflow-y-auto">
+        <div className="w-1/3 border-r border-gray-200 dark:border-slate-700 overflow-y-auto">
           <div className="py-1">{fileTree.map((node) => renderFileNode(node))}</div>
         </div>
 
         {/* File Content */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <div className="p-4 text-slate-500">Loading...</div>
+            <div className="p-4 text-gray-500 dark:text-slate-500">Loading...</div>
           ) : selectedFile && fileContent ? (
             <div className="h-full flex flex-col">
-              <div className="flex-shrink-0 p-2 border-b border-slate-700 text-sm text-slate-400 flex items-center justify-between">
+              <div className="flex-shrink-0 p-2 border-b border-gray-200 dark:border-slate-700 text-sm text-gray-500 dark:text-slate-400 flex items-center justify-between">
                 <span className="truncate">{selectedFile}</span>
                 {semanticStats.get(selectedFile) && (
                   <div className="flex items-center gap-2 text-xs">
                     {semanticStats.get(selectedFile)?.line_count && (
-                      <span className="text-slate-500">
+                      <span className="text-gray-500 dark:text-slate-500">
                         {semanticStats.get(selectedFile)!.line_count} lines
                       </span>
                     )}
                     {semanticStats.get(selectedFile)?.function_count !== undefined &&
                       semanticStats.get(selectedFile)!.function_count > 0 && (
-                        <span className="text-slate-500">
+                        <span className="text-gray-500 dark:text-slate-500">
                           {semanticStats.get(selectedFile)!.function_count} functions
                         </span>
                       )}
@@ -394,12 +394,12 @@ export const FileBrowser: React.FC = () => {
                   </div>
                 )}
               </div>
-              <pre className="flex-1 p-4 text-sm text-slate-300 overflow-auto">
+              <pre className="flex-1 p-4 text-sm text-gray-700 dark:text-slate-300 overflow-auto bg-gray-50 dark:bg-transparent">
                 <code>{fileContent}</code>
               </pre>
             </div>
           ) : (
-            <div className="p-4 text-slate-500 text-sm">
+            <div className="p-4 text-gray-500 dark:text-slate-500 text-sm">
               Select a file to view its contents
             </div>
           )}

@@ -9,10 +9,10 @@ import { ChatMessage } from './ChatMessage';
 import { ThinkingIndicator } from './ThinkingIndicator';
 
 const EmptyState: React.FC = () => (
-  <div className="flex items-center justify-center h-full text-gray-500">
+  <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
     <div className="text-center">
       <p className="text-lg mb-2">No messages yet</p>
-      <p className="text-sm">Start a conversation to see messages here</p>
+      <p className="text-sm text-gray-400 dark:text-gray-500">Start a conversation to see messages here</p>
     </div>
   </div>
 );

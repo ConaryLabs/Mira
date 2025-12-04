@@ -163,9 +163,9 @@ export const ArtifactPanel: React.FC = () => {
 
   if (artifacts.length === 0) {
     return (
-      <div className="h-full w-full border-l border-gray-700 bg-gray-900 flex flex-col">
+      <div className="h-full w-full border-l border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 flex flex-col">
         <div className="flex-1 flex items-center justify-center p-8 text-center">
-          <div className="text-gray-400">
+          <div className="text-gray-500 dark:text-gray-400">
             <FileText size={48} className="mx-auto mb-4 opacity-50" />
             <h3 className="text-lg font-medium mb-2">No Artifacts Yet</h3>
             <p className="text-sm">
@@ -180,17 +180,17 @@ export const ArtifactPanel: React.FC = () => {
   if (!activeArtifact) return null;
 
   return (
-    <div className="h-full w-full border-l border-gray-700 bg-gray-900 flex flex-col relative">
+    <div className="h-full w-full border-l border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 flex flex-col relative">
       {/* Header with tabs */}
-      <div className="flex-shrink-0 border-b border-gray-700">
+      <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center overflow-x-auto">
           {artifacts.map((artifact) => (
             <div
               key={artifact.id}
               className={`flex items-center gap-2 px-3 py-2 text-sm border-b-2 whitespace-nowrap transition-colors ${
                 artifact.id === activeArtifact.id
-                  ? 'border-blue-500 text-blue-400 bg-blue-900/20'
-                  : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                  ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
               }`}
             >
               <button
@@ -208,7 +208,7 @@ export const ArtifactPanel: React.FC = () => {
                   e.stopPropagation();
                   removeArtifact(artifact.id);
                 }}
-                className="ml-1 p-0.5 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                className="ml-1 p-0.5 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
                 title="Close"
               >
                 <X size={14} />
@@ -218,7 +218,7 @@ export const ArtifactPanel: React.FC = () => {
         </div>
         
         {/* Path editor + action bar */}
-        <div className="px-3 py-2 border-b border-gray-800">
+        <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center justify-between gap-3">
             {/* Editable path */}
             <div className="flex-1 min-w-0">
@@ -229,31 +229,31 @@ export const ArtifactPanel: React.FC = () => {
                   onChange={(e) => setPathInput(e.target.value)}
                   onBlur={handlePathSave}
                   onKeyDown={handlePathKeyDown}
-                  className="w-full px-2 py-1 text-sm bg-gray-800 border border-blue-500 rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full px-2 py-1 text-sm bg-white dark:bg-gray-800 border border-blue-500 rounded text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   autoFocus
                 />
               ) : (
                 <button
                   onClick={handlePathEdit}
-                  className="text-sm text-gray-400 hover:text-gray-200 truncate max-w-full text-left"
+                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 truncate max-w-full text-left"
                   title="Click to edit path"
                 >
                   {activeArtifact.path}
                 </button>
               )}
             </div>
-            
+
             {/* View Mode Toggle */}
-            <div className="flex items-center gap-1 border-r border-gray-700 pr-3 mr-2">
+            <div className="flex items-center gap-1 border-r border-gray-200 dark:border-gray-700 pr-3 mr-2">
               <button
                 onClick={() => setViewMode('diff')}
                 disabled={!hasDiff}
                 className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
                   viewMode === 'diff' && hasDiff
-                    ? 'bg-blue-600/30 text-blue-400 border border-blue-500/50'
+                    ? 'bg-blue-100 dark:bg-blue-600/30 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-500/50'
                     : hasDiff
-                    ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                    : 'text-gray-600 cursor-not-allowed'
+                    ? 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+                    : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
                 }`}
                 title={hasDiff ? 'View diff' : 'No diff available (new file)'}
               >
@@ -264,8 +264,8 @@ export const ArtifactPanel: React.FC = () => {
                 onClick={() => setViewMode('content')}
                 className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
                   viewMode === 'content'
-                    ? 'bg-blue-600/30 text-blue-400 border border-blue-500/50'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    ? 'bg-blue-100 dark:bg-blue-600/30 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-500/50'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}
                 title="View full content"
               >
@@ -281,14 +281,14 @@ export const ArtifactPanel: React.FC = () => {
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
                 onClick={handleCopy}
-                className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
                 title="Copy to clipboard"
               >
                 <Copy size={16} />
               </button>
               <button
                 onClick={handleSave}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-blue-400 hover:text-white hover:bg-blue-600/20 border border-blue-500/30 rounded transition-colors"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-blue-600 dark:text-blue-400 hover:text-white hover:bg-blue-600 dark:hover:bg-blue-600/20 border border-blue-400 dark:border-blue-500/30 rounded transition-colors"
                 title="Save (Cmd/Ctrl+S)"
               >
                 <Save size={14} />
@@ -296,7 +296,7 @@ export const ArtifactPanel: React.FC = () => {
               </button>
               <button
                 onClick={handleApply}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-green-400 hover:text-white hover:bg-green-600/20 border border-green-500/30 rounded transition-colors"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-green-600 dark:text-green-400 hover:text-white hover:bg-green-600 dark:hover:bg-green-600/20 border border-green-400 dark:border-green-500/30 rounded transition-colors"
                 title="Apply to workspace (Cmd/Ctrl+Enter)"
               >
                 <CheckCircle size={14} />
@@ -304,7 +304,7 @@ export const ArtifactPanel: React.FC = () => {
               </button>
               <button
                 onClick={closeArtifacts}
-                className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
                 title="Close panel"
               >
                 <X size={16} />

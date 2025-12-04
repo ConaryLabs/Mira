@@ -23,16 +23,16 @@ export const ToastContainer: React.FC = () => {
   
   const getColorClasses = (type: string) => {
     switch (type) {
-      case 'success': 
-        return 'bg-green-900 border-green-700 text-green-100';
-      case 'error': 
-        return 'bg-red-900 border-red-700 text-red-100';
-      case 'warning': 
-        return 'bg-yellow-900 border-yellow-700 text-yellow-100';
-      case 'info': 
-        return 'bg-blue-900 border-blue-700 text-blue-100';
-      default: 
-        return 'bg-gray-900 border-gray-700 text-gray-100';
+      case 'success':
+        return 'bg-green-100 dark:bg-green-900 border-green-300 dark:border-green-700 text-green-800 dark:text-green-100';
+      case 'error':
+        return 'bg-red-100 dark:bg-red-900 border-red-300 dark:border-red-700 text-red-800 dark:text-red-100';
+      case 'warning':
+        return 'bg-yellow-100 dark:bg-yellow-900 border-yellow-300 dark:border-yellow-700 text-yellow-800 dark:text-yellow-100';
+      case 'info':
+        return 'bg-blue-100 dark:bg-blue-900 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-100';
+      default:
+        return 'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-800 dark:text-gray-100';
     }
   };
   

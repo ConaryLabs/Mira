@@ -29,12 +29,12 @@ function ProgressBar({ value, max, label, showPercentage = true, colorClass }: P
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
-        <span className="text-slate-400">{label}</span>
+        <span className="text-gray-500 dark:text-slate-400">{label}</span>
         {showPercentage && (
-          <span className="text-slate-300">{percentage.toFixed(1)}%</span>
+          <span className="text-gray-700 dark:text-slate-300">{percentage.toFixed(1)}%</span>
         )}
       </div>
-      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+      <div className="h-2 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-300 ${getColorClass()}`}
           style={{ width: `${percentage}%` }}
@@ -55,9 +55,9 @@ interface StatCardProps {
 function StatCard({ label, value, subValue, icon, variant = 'default' }: StatCardProps) {
   const getBgClass = () => {
     switch (variant) {
-      case 'danger': return 'bg-red-900/30 border-red-700/50';
-      case 'warning': return 'bg-yellow-900/30 border-yellow-700/50';
-      default: return 'bg-slate-800/50 border-slate-700/50';
+      case 'danger': return 'bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700/50';
+      case 'warning': return 'bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700/50';
+      default: return 'bg-gray-100 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50';
     }
   };
 
@@ -65,11 +65,11 @@ function StatCard({ label, value, subValue, icon, variant = 'default' }: StatCar
     <div className={`p-3 rounded-lg border ${getBgClass()}`}>
       <div className="flex items-center gap-2 mb-1">
         {icon}
-        <span className="text-xs text-slate-400">{label}</span>
+        <span className="text-xs text-gray-500 dark:text-slate-400">{label}</span>
       </div>
-      <div className="text-lg font-semibold text-slate-100">{value}</div>
+      <div className="text-lg font-semibold text-gray-900 dark:text-slate-100">{value}</div>
       {subValue && (
-        <div className="text-xs text-slate-500">{subValue}</div>
+        <div className="text-xs text-gray-500 dark:text-slate-500">{subValue}</div>
       )}
     </div>
   );
@@ -106,13 +106,13 @@ export function BudgetTracker() {
   if (isLoading) {
     return (
       <div className="p-4 space-y-4">
-        <div className="flex items-center gap-2 text-slate-400">
+        <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
           <DollarSign className="w-4 h-4 animate-pulse" />
           <span className="text-sm">Loading budget data...</span>
         </div>
         <div className="space-y-3">
-          <div className="h-8 bg-slate-800 rounded animate-pulse" />
-          <div className="h-8 bg-slate-800 rounded animate-pulse" />
+          <div className="h-8 bg-gray-200 dark:bg-slate-800 rounded animate-pulse" />
+          <div className="h-8 bg-gray-200 dark:bg-slate-800 rounded animate-pulse" />
         </div>
       </div>
     );
@@ -121,7 +121,7 @@ export function BudgetTracker() {
   if (error) {
     return (
       <div className="p-4">
-        <div className="flex items-center gap-2 text-red-400">
+        <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
           <AlertCircle className="w-4 h-4" />
           <span className="text-sm">Failed to load budget: {error}</span>
         </div>
@@ -132,7 +132,7 @@ export function BudgetTracker() {
   if (!budget) {
     return (
       <div className="p-4">
-        <div className="flex items-center gap-2 text-slate-400">
+        <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
           <DollarSign className="w-4 h-4" />
           <span className="text-sm">No budget data available</span>
         </div>
@@ -144,30 +144,30 @@ export function BudgetTracker() {
     <div className="p-4 space-y-4">
       {/* Header with refresh */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-slate-300">Budget Overview</span>
+        <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Budget Overview</span>
         <button
           onClick={requestBudgetStatus}
           disabled={isLoading}
-          className="p-1 hover:bg-slate-700 rounded transition-colors disabled:opacity-50"
+          className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors disabled:opacity-50"
           title="Refresh budget status"
         >
-          <RefreshCw className={`w-4 h-4 text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-4 h-4 text-gray-500 dark:text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
       {/* Status Banner */}
       {budget.isCritical && (
-        <div className="flex items-center gap-2 p-2 bg-red-900/40 border border-red-700/50 rounded-lg">
-          <AlertTriangle className="w-4 h-4 text-red-400" />
-          <span className="text-xs text-red-300">
+        <div className="flex items-center gap-2 p-2 bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-700/50 rounded-lg">
+          <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400" />
+          <span className="text-xs text-red-700 dark:text-red-300">
             Budget critical! Context gathering reduced to save costs.
           </span>
         </div>
       )}
       {!budget.isCritical && budget.isLow && (
-        <div className="flex items-center gap-2 p-2 bg-yellow-900/40 border border-yellow-700/50 rounded-lg">
-          <AlertTriangle className="w-4 h-4 text-yellow-400" />
-          <span className="text-xs text-yellow-300">
+        <div className="flex items-center gap-2 p-2 bg-yellow-100 dark:bg-yellow-900/40 border border-yellow-300 dark:border-yellow-700/50 rounded-lg">
+          <AlertTriangle className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+          <span className="text-xs text-yellow-700 dark:text-yellow-300">
             Budget running low. Consider reducing usage.
           </span>
         </div>
@@ -216,15 +216,15 @@ export function BudgetTracker() {
       </div>
 
       {/* Context Level Indicator */}
-      <div className="pt-2 border-t border-slate-700">
+      <div className="pt-2 border-t border-gray-200 dark:border-slate-700">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-slate-400">Context Gathering Level</span>
+          <span className="text-gray-500 dark:text-slate-400">Context Gathering Level</span>
           <span className={`font-medium ${
             budget.dailyUsagePercent > 80 || budget.monthlyUsagePercent > 80
-              ? 'text-red-400'
+              ? 'text-red-600 dark:text-red-400'
               : budget.dailyUsagePercent > 40 || budget.monthlyUsagePercent > 40
-                ? 'text-yellow-400'
-                : 'text-green-400'
+                ? 'text-yellow-600 dark:text-yellow-400'
+                : 'text-green-600 dark:text-green-400'
           }`}>
             {budget.dailyUsagePercent > 80 || budget.monthlyUsagePercent > 80
               ? 'Minimal'
@@ -233,7 +233,7 @@ export function BudgetTracker() {
                 : 'Full'}
           </span>
         </div>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-gray-500 dark:text-slate-500">
           {budget.dailyUsagePercent > 80 || budget.monthlyUsagePercent > 80
             ? 'Only essential code intelligence is gathered to conserve budget.'
             : budget.dailyUsagePercent > 40 || budget.monthlyUsagePercent > 40
@@ -244,7 +244,7 @@ export function BudgetTracker() {
 
       {/* Last Updated */}
       {budget.lastUpdated > 0 && (
-        <div className="text-xs text-slate-500 text-right">
+        <div className="text-xs text-gray-500 dark:text-slate-500 text-right">
           Updated {new Date(budget.lastUpdated).toLocaleTimeString()}
         </div>
       )}

@@ -60,26 +60,26 @@ export function CodebaseAttachModal({ projectId, onClose, onAttach }: CodebaseAt
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 w-full max-w-lg">
+      <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6 w-full max-w-lg">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-slate-100">Attach Codebase</h2>
+          <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">Attach Codebase</h2>
           <button
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-700 rounded transition-colors"
+            className="p-1 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
           >
             <X size={20} />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-slate-700">
+        <div className="flex gap-2 mb-6 border-b border-gray-200 dark:border-slate-700">
           <button
             onClick={() => setActiveTab('local')}
             className={`flex items-center gap-2 px-4 py-2 font-medium transition-colors border-b-2 -mb-px ${
               activeTab === 'local'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-300'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
             }`}
           >
             <Folder size={16} />
@@ -89,8 +89,8 @@ export function CodebaseAttachModal({ projectId, onClose, onAttach }: CodebaseAt
             onClick={() => setActiveTab('git')}
             className={`flex items-center gap-2 px-4 py-2 font-medium transition-colors border-b-2 -mb-px ${
               activeTab === 'git'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-300'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
             }`}
           >
             <Github size={16} />
@@ -102,11 +102,11 @@ export function CodebaseAttachModal({ projectId, onClose, onAttach }: CodebaseAt
         <div className="space-y-4">
           {activeTab === 'local' ? (
             <>
-              <p className="text-slate-400 text-sm mb-4">
+              <p className="text-gray-500 dark:text-slate-400 text-sm mb-4">
                 Link this project to a local directory on your machine for file operations.
               </p>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                   Directory Path *
                 </label>
                 <input
@@ -115,21 +115,21 @@ export function CodebaseAttachModal({ projectId, onClose, onAttach }: CodebaseAt
                   onChange={(e) => setLocalPath(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="/home/user/my-project"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-500 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
                   autoFocus
                 />
-                <p className="text-xs text-slate-500 mt-2">
+                <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">
                   Absolute path to the project directory on your local machine
                 </p>
               </div>
             </>
           ) : (
             <>
-              <p className="text-slate-400 text-sm mb-4">
+              <p className="text-gray-500 dark:text-slate-400 text-sm mb-4">
                 Import a Git repository to enable version control and file operations.
               </p>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                   Repository URL *
                 </label>
                 <input
@@ -138,10 +138,10 @@ export function CodebaseAttachModal({ projectId, onClose, onAttach }: CodebaseAt
                   onChange={(e) => setGitUrl(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="https://github.com/username/repo.git"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-500 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
                   autoFocus
                 />
-                <p className="text-xs text-slate-500 mt-2">
+                <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">
                   HTTPS or SSH URL of the repository
                 </p>
               </div>
@@ -167,22 +167,22 @@ export function CodebaseAttachModal({ projectId, onClose, onAttach }: CodebaseAt
           <button
             onClick={handleSubmit}
             disabled={
-              attaching || 
+              attaching ||
               (activeTab === 'local' && !localPath.trim()) ||
               (activeTab === 'git' && !gitUrl.trim())
             }
-            className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:text-slate-500 rounded-lg text-white font-medium transition-colors"
+            className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-slate-700 disabled:text-gray-500 dark:disabled:text-slate-500 rounded-lg text-white font-medium transition-colors"
           >
-            {attaching 
-              ? 'Attaching...' 
-              : activeTab === 'local' 
-                ? 'Attach Directory' 
+            {attaching
+              ? 'Attaching...'
+              : activeTab === 'local'
+                ? 'Attach Directory'
                 : 'Import Repository'
             }
           </button>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 font-medium transition-colors"
+            className="px-4 py-2 bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 rounded-lg text-gray-700 dark:text-slate-300 font-medium transition-colors"
           >
             Cancel
           </button>

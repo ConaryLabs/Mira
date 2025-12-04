@@ -13,7 +13,7 @@ export const ChatArea: React.FC = () => {
       <div className="flex-1 overflow-hidden min-h-0">
         <MessageList />
       </div>
-      <div className="flex-shrink-0 border-t border-slate-700 p-4">
+      <div className="flex-shrink-0 border-t border-gray-200 dark:border-slate-700 p-4">
         <ChatInput />
       </div>
     </div>

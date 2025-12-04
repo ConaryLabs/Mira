@@ -12,6 +12,7 @@ pub struct User {
     pub updated_at: i64,
     pub last_login_at: Option<i64>,
     pub is_active: bool,
+    pub theme_preference: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -25,6 +26,7 @@ pub struct UserWithPassword {
     pub updated_at: i64,
     pub last_login_at: Option<i64>,
     pub is_active: bool,
+    pub theme_preference: Option<String>,
 }
 
 impl From<UserWithPassword> for User {
@@ -38,6 +40,7 @@ impl From<UserWithPassword> for User {
             updated_at: user.updated_at,
             last_login_at: user.last_login_at,
             is_active: user.is_active,
+            theme_preference: user.theme_preference,
         }
     }
 }
@@ -66,4 +69,9 @@ pub struct AuthResponse {
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePreferencesRequest {
+    pub theme_preference: Option<String>,
 }

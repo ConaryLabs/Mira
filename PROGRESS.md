@@ -1647,3 +1647,89 @@ info!(
 - Seeded default user (applied directly, not via migration)
 
 ---
+
+### Session 37: 2025-12-04
+
+**Summary:** Professional light mode implementation with per-user theme persistence - complete frontend theming system.
+
+**Goals:**
+- Add professional light mode that draws less attention in office environments
+- Make light mode the default for new users
+- Save theme preference per user account
+- Update all components for light/dark theme support
+
+**Key Outcomes:**
+
+1. **Backend theme preference storage**:
+   - Added `theme_preference TEXT DEFAULT 'light'` column to users table
+   - Extended User struct with theme_preference field
+   - Added `/api/auth/preferences` POST endpoint for saving theme
+   - JWT-authenticated preference updates
+
+2. **Frontend theme store** (`useThemeStore.ts`):
+   - Zustand store managing theme state ('light' | 'dark')
+   - `toggleTheme()` / `setTheme()` actions
+   - `initializeFromUser()` called on login to load saved preference
+   - Auto-applies `dark` class to `document.documentElement`
+   - Persists to backend via API call
+
+3. **Theme toggle in Header**:
+   - Sun/Moon icons for light/dark mode toggle
+   - Located next to logout button for easy access
+   - Smooth transition between themes
+
+4. **Updated global styles** (`index.css`):
+   - Light mode default via `color-scheme: light`
+   - Dark mode via `.dark` class
+   - Updated scrollbar styling for both themes
+   - Body background and text colors for both themes
+
+5. **Component updates** (~25 files):
+   - Pattern: `bg-X dark:bg-Y text-A dark:text-B border-C dark:border-D`
+   - Layout: Home.tsx, Header.tsx, ChatArea.tsx, ChatInput.tsx
+   - Chat: ChatMessage.tsx, MessageList.tsx, ThinkingIndicator.tsx
+   - Panels: ActivityPanel.tsx, ArtifactPanel.tsx, IntelligencePanel.tsx
+   - Modals: ChangePasswordModal.tsx, CreateProjectModal.tsx, DeleteConfirmModal.tsx, CodebaseAttachModal.tsx
+   - Other: ProjectsView.tsx, FileBrowser.tsx, BudgetTracker.tsx, ToastContainer.tsx, Login.tsx
+
+**Files Modified (Backend):**
+- `backend/src/auth/models.rs` - Added theme_preference, UpdatePreferencesRequest
+- `backend/src/auth/service.rs` - Added update_preferences method
+- `backend/src/api/http/auth.rs` - Added /preferences endpoint
+
+**Files Created (Frontend):**
+- `frontend/src/stores/useThemeStore.ts` - Theme state management
+
+**Files Modified (Frontend):**
+- `frontend/src/stores/useAuthStore.ts` - Theme integration on login
+- `frontend/src/index.css` - Light mode defaults
+- `frontend/src/Home.tsx` - Light/dark classes
+- `frontend/src/pages/Login.tsx` - Light/dark classes
+- `frontend/src/components/Header.tsx` - Theme toggle + light/dark classes
+- `frontend/src/components/ChatArea.tsx` - Light/dark classes
+- `frontend/src/components/ChatInput.tsx` - Light/dark classes
+- `frontend/src/components/ChatMessage.tsx` - Light/dark classes
+- `frontend/src/components/MessageList.tsx` - Light/dark classes
+- `frontend/src/components/ThinkingIndicator.tsx` - Light/dark classes
+- `frontend/src/components/ActivityPanel.tsx` - Light/dark classes
+- `frontend/src/components/ArtifactPanel.tsx` - Light/dark classes
+- `frontend/src/components/IntelligencePanel.tsx` - Light/dark classes
+- `frontend/src/components/ChangePasswordModal.tsx` - Light/dark classes
+- `frontend/src/components/CreateProjectModal.tsx` - Light/dark classes
+- `frontend/src/components/DeleteConfirmModal.tsx` - Light/dark classes
+- `frontend/src/components/CodebaseAttachModal.tsx` - Light/dark classes
+- `frontend/src/components/ProjectsView.tsx` - Light/dark classes
+- `frontend/src/components/FileBrowser.tsx` - Light/dark classes
+- `frontend/src/components/BudgetTracker.tsx` - Light/dark classes
+- `frontend/src/components/ToastContainer.tsx` - Light/dark classes
+
+**Database Changes:**
+- Added `theme_preference TEXT DEFAULT 'light'` column to users table
+
+**Technical Decisions:**
+- Used Tailwind's `darkMode: 'class'` strategy (already configured)
+- Light mode is default for new users (professional office environment)
+- Theme persists server-side for cross-device consistency
+- Applied `dark:` prefix pattern for all theme-sensitive classes
+
+---
