@@ -1733,3 +1733,107 @@ info!(
 - Applied `dark:` prefix pattern for all theme-sensitive classes
 
 ---
+
+### Session 38: 2025-12-04
+
+**Summary:** Implemented Claude Code-style agent system with hybrid execution model - built-in agents run in-process via tokio, custom agents run as subprocesses with IPC protocol.
+
+**Goals:**
+- Research Claude Code's agent deployment patterns
+- Design and implement similar agent system for Mira
+- Support hybrid execution (in-process + subprocess)
+- Add WebSocket events for agent lifecycle
+- Enable custom agents via configuration files
+
+**Key Outcomes:**
+- Created complete agent system with 12 new files (~1,200 lines)
+- 3 built-in agents: explore (read-only), plan (research), general (full access)
+- Hybrid execution: BuiltinAgentExecutor (tokio) + SubprocessAgentExecutor (IPC)
+- AgentRegistry loads agents from built-in + ~/.mira/agents.json + .mira/agents.json
+- Tool access control per agent (ReadOnly, Full, Custom)
+- Thought signatures for Gemini reasoning continuity
+- 5 new WebSocket events for agent lifecycle
+- All 122 tests passing
+
+**Files Created (12 new files):**
+- `backend/src/agents/types.rs` - AgentType, AgentScope, ToolAccess, AgentDefinition, AgentConfig, AgentResult
+- `backend/src/agents/registry.rs` - AgentRegistry for loading and managing agents
+- `backend/src/agents/protocol.rs` - IPC protocol (AgentRequest, AgentResponse) for subprocess agents
+- `backend/src/agents/tool_schema.rs` - Dynamic spawn_agent tool schema builder
+- `backend/src/agents/mod.rs` - AgentManager coordinating registry and dispatcher
+- `backend/src/agents/builtin/mod.rs` - Built-in agent exports
+- `backend/src/agents/builtin/explore.rs` - Explore agent (ReadOnly, 50 iterations, Adaptive thinking)
+- `backend/src/agents/builtin/plan.rs` - Plan agent (ReadOnly, 30 iterations, High thinking)
+- `backend/src/agents/builtin/general.rs` - General agent (Full access, 25 iterations, can spawn sub-agents)
+- `backend/src/agents/executor/mod.rs` - AgentDispatcher, AgentEvent enum, AgentExecutor trait
+- `backend/src/agents/executor/builtin.rs` - BuiltinAgentExecutor (in-process via tokio)
+- `backend/src/agents/executor/subprocess.rs` - SubprocessAgentExecutor (external processes via IPC)
+- `backend/src/operations/tools/agents.rs` - Static spawn_agent/spawn_agents_parallel tool schemas
+
+**Files Modified (5 files):**
+- `backend/src/lib.rs` - Added `pub mod agents;`
+- `backend/src/state.rs` - Added AgentManager to AppState
+- `backend/src/operations/tools/mod.rs` - Added agents module
+- `backend/src/operations/engine/events.rs` - Added 5 agent event types
+- `backend/src/api/ws/operations/stream.rs` - Added agent event serialization
+
+**Documentation Updated:**
+- `API.md` - Added 6 new agent WebSocket events (agent_spawned, agent_progress, agent_streaming, agent_completed, agent_failed)
+- `PROGRESS.md` - This session entry
+
+**Technical Decisions:**
+
+1. **Hybrid Execution Model**:
+   - Built-in agents (explore, plan, general) run in-process using tokio for efficiency
+   - Custom agents run as subprocesses with JSON-RPC style IPC protocol
+   - Tool routing goes through central ToolRouter for consistency
+
+2. **Tool Access Control**:
+   - ReadOnly: Only read operations (read_project_file, search_codebase, git_*, find_*, get_*, web_search, fetch_url)
+   - Full: All tools including write operations
+   - Custom: Explicit whitelist of allowed tools
+
+3. **Thought Signatures**:
+   - Capture Gemini's reasoning state from responses
+   - Pass to next agent turn for reasoning continuity
+   - Stored in AgentConfig and AgentResult
+
+4. **Agent Configuration Format** (`~/.mira/agents.json`):
+```json
+{
+  "agents": [{
+    "id": "custom-agent",
+    "name": "Custom Agent",
+    "description": "Description for LLM",
+    "command": "python",
+    "args": ["-m", "my_agent"],
+    "tool_access": "read_only",
+    "timeout_ms": 300000,
+    "thinking_level": "high"
+  }]
+}
+```
+
+5. **No Agent Nesting**:
+   - Only the general agent can spawn sub-agents
+   - Custom subprocess agents cannot spawn agents (prevents infinite loops)
+
+**Agent Tool Schema:**
+```json
+{
+  "name": "spawn_agent",
+  "parameters": {
+    "agent_id": "explore|plan|general|<custom>",
+    "task": "Task description",
+    "context": "Optional context",
+    "context_files": ["file1.rs", "file2.ts"]
+  }
+}
+```
+
+**Testing:**
+- 20 agent-specific tests passing
+- 122 total library tests passing
+- Build succeeds with no agent-related warnings
+
+---

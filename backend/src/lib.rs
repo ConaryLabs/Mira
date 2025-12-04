@@ -41,6 +41,9 @@ pub mod context_oracle;
 // Milestone 8 - Real-time file watching
 pub mod watcher;
 
+// Milestone 12 - Agent system (Claude Code-style specialized agents)
+pub mod agents;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;

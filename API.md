@@ -716,6 +716,83 @@ Sudo operation denied by user.
 }
 ```
 
+### operation.agent_spawned
+
+Agent spawned for a subtask.
+
+```json
+{
+  "type": "operation.agent_spawned",
+  "operation_id": "op-123",
+  "agent_execution_id": "agent-exec-789",
+  "agent_name": "explore",
+  "task": "Find all error handling patterns in the codebase",
+  "timestamp": 1701619217
+}
+```
+
+### operation.agent_progress
+
+Agent is making progress on its task.
+
+```json
+{
+  "type": "operation.agent_progress",
+  "operation_id": "op-123",
+  "agent_execution_id": "agent-exec-789",
+  "agent_name": "explore",
+  "iteration": 3,
+  "max_iterations": 50,
+  "current_activity": "Iteration 3",
+  "timestamp": 1701619218
+}
+```
+
+### operation.agent_streaming
+
+Agent is streaming content.
+
+```json
+{
+  "type": "operation.agent_streaming",
+  "operation_id": "op-123",
+  "agent_execution_id": "agent-exec-789",
+  "content": "Found 15 error handling patterns...",
+  "timestamp": 1701619219
+}
+```
+
+### operation.agent_completed
+
+Agent completed its task successfully.
+
+```json
+{
+  "type": "operation.agent_completed",
+  "operation_id": "op-123",
+  "agent_execution_id": "agent-exec-789",
+  "agent_name": "explore",
+  "summary": "Found 15 error handling patterns across 8 files...",
+  "iterations_used": 5,
+  "timestamp": 1701619220
+}
+```
+
+### operation.agent_failed
+
+Agent failed to complete its task.
+
+```json
+{
+  "type": "operation.agent_failed",
+  "operation_id": "op-123",
+  "agent_execution_id": "agent-exec-789",
+  "agent_name": "explore",
+  "error": "Tool execution timeout",
+  "timestamp": 1701619221
+}
+```
+
 ---
 
 ## Built-in Commands

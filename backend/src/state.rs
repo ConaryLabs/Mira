@@ -34,6 +34,8 @@ use crate::project::ProjectTaskService;
 use crate::relationship::{FactsService, RelationshipService};
 use crate::sudo::SudoPermissionService;
 use crate::synthesis::storage::SynthesisStorage;
+use crate::agents::AgentManager;
+use crate::operations::engine::tool_router::ToolRouter;
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -95,6 +97,8 @@ pub struct AppState {
     pub checkpoint_manager: Arc<CheckpointManager>,
     // MCP (Model Context Protocol) for external tool integration
     pub mcp_manager: Arc<McpManager>,
+    // Agent system (Claude Code-style specialized agents)
+    pub agent_manager: Arc<AgentManager>,
 }
 
 impl AppState {
@@ -239,6 +243,26 @@ impl AppState {
             }
         });
 
+        // Initialize ToolRouter for AgentManager (separate instance from OperationEngine)
+        let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let agent_tool_router = Arc::new(ToolRouter::new(
+            (*llm_provider).clone(),
+            project_dir,
+            code_intelligence.clone(),
+            None, // Agents don't need sudo service
+        ));
+
+        // Initialize Agent Manager
+        info!("Initializing Agent Manager");
+        let agent_manager = Arc::new(AgentManager::new(
+            llm_provider.clone(),
+            agent_tool_router,
+        ));
+        if let Err(e) = agent_manager.load(None).await {
+            tracing::warn!("Failed to load agents: {}", e);
+        }
+        info!("Agent Manager loaded {} agents", agent_manager.agent_count());
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -346,6 +370,7 @@ impl AppState {
             hook_manager,
             checkpoint_manager,
             mcp_manager,
+            agent_manager,
         })
     }
 }

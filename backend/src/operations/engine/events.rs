@@ -101,4 +101,41 @@ pub enum OperationEngineEvent {
         success: bool,
         details: Option<serde_json::Value>, // Optional structured data
     },
+    /// Agent was spawned for a subtask
+    AgentSpawned {
+        operation_id: String,
+        agent_execution_id: String,
+        agent_name: String,
+        task: String,
+    },
+    /// Agent is making progress
+    AgentProgress {
+        operation_id: String,
+        agent_execution_id: String,
+        agent_name: String,
+        iteration: usize,
+        max_iterations: usize,
+        current_activity: String,
+    },
+    /// Agent streaming content
+    AgentStreaming {
+        operation_id: String,
+        agent_execution_id: String,
+        content: String,
+    },
+    /// Agent completed successfully
+    AgentCompleted {
+        operation_id: String,
+        agent_execution_id: String,
+        agent_name: String,
+        summary: String,
+        iterations_used: usize,
+    },
+    /// Agent failed with error
+    AgentFailed {
+        operation_id: String,
+        agent_execution_id: String,
+        agent_name: String,
+        error: String,
+    },
 }
