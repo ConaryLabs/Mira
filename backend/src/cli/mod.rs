@@ -2,6 +2,7 @@
 // Mira CLI module - provides a Claude Code-style command line interface
 
 pub mod args;
+pub mod commands;
 pub mod config;
 pub mod display;
 pub mod project;

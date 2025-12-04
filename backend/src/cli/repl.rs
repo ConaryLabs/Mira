@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::cli::args::{CliArgs, OutputFormat};
+use crate::cli::commands::CommandLoader;
 use crate::cli::config::CliConfig;
 use crate::cli::display::{StreamingDisplay, TerminalDisplay};
 use crate::cli::project::{build_metadata, ProjectDetector, DetectedProject};
@@ -19,6 +20,7 @@ pub struct Repl {
     /// CLI arguments
     args: CliArgs,
     /// CLI configuration
+    #[allow(dead_code)]
     config: CliConfig,
     /// WebSocket client
     client: MiraClient,
@@ -36,6 +38,8 @@ pub struct Repl {
     current_session: Option<CliSession>,
     /// Detected project context
     project: Option<DetectedProject>,
+    /// Custom command loader
+    command_loader: CommandLoader,
 }
 
 impl Repl {
@@ -89,6 +93,10 @@ impl Repl {
         })
         .context("Failed to set Ctrl+C handler")?;
 
+        // Load custom commands
+        let command_loader = CommandLoader::new()
+            .unwrap_or_default();
+
         Ok(Self {
             args,
             config,
@@ -100,6 +108,7 @@ impl Repl {
             session_store,
             current_session: None,
             project,
+            command_loader,
         })
     }
 
@@ -340,8 +349,20 @@ impl Repl {
             // Connection established
         }
 
+        // Expand custom commands if the prompt starts with /
+        let final_prompt = if prompt.starts_with('/') {
+            let parts: Vec<&str> = prompt.splitn(2, ' ').collect();
+            let cmd_name = parts[0].trim_start_matches('/');
+            let cmd_args = parts.get(1).copied();
+
+            // Try to expand as custom command
+            self.command_loader.expand(cmd_name, cmd_args).unwrap_or(prompt.clone())
+        } else {
+            prompt.clone()
+        };
+
         // Send prompt and receive response
-        self.send_and_receive(&prompt).await?;
+        self.send_and_receive(&final_prompt).await?;
 
         // Update session
         if let Some(ref mut session) = self.current_session {
@@ -391,9 +412,8 @@ impl Repl {
                 Ok(true)
             }
             "/commands" => {
-                // Send to backend to list commands
-                self.client.send_command("commands", None).await?;
-                self.receive_response().await?;
+                // List custom commands
+                self.list_custom_commands()?;
                 Ok(true)
             }
             "/checkpoints" => {
@@ -412,11 +432,45 @@ impl Repl {
                 Ok(true)
             }
             _ => {
-                // Not a built-in command, might be a custom command
-                // Send to backend as chat (it will handle slash commands)
-                Ok(false)
+                // Check for custom command
+                let cmd_name = command.trim_start_matches('/');
+                if let Some(expanded) = self.command_loader.expand(cmd_name, cmd_args) {
+                    // Custom command found - send expanded template as chat
+                    self.send_and_receive(&expanded).await?;
+                    Ok(true)
+                } else {
+                    // Not a built-in or custom command
+                    // Send to backend as chat (it might handle it)
+                    Ok(false)
+                }
             }
         }
+    }
+
+    /// List available custom commands
+    fn list_custom_commands(&self) -> Result<()> {
+        let commands = self.command_loader.list();
+
+        println!("\n  Built-in commands:");
+        println!("    /help, /h, /?     - Show help");
+        println!("    /quit, /q, /exit  - Exit the REPL");
+        println!("    /clear, /cls      - Clear the screen");
+        println!("    /sessions         - List recent sessions");
+        println!("    /session          - Show current session info");
+        println!("    /commands         - List available commands");
+        println!("    /checkpoints      - List conversation checkpoints");
+        println!("    /rewind <id>      - Rewind to a checkpoint");
+
+        if !commands.is_empty() {
+            println!("\n  Custom commands:");
+            for cmd in commands {
+                let args_hint = if cmd.accepts_args { " <args>" } else { "" };
+                println!("    /{}{} - {}", cmd.name, args_hint, cmd.description);
+            }
+        }
+
+        println!();
+        Ok(())
     }
 
     /// List recent sessions
