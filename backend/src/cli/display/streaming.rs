@@ -193,6 +193,43 @@ impl StreamingDisplay {
             BackendEvent::StreamToken(token) => {
                 self.buffer.push_str(token);
             }
+            BackendEvent::OperationEvent(op_event) => match op_event {
+                OperationEvent::Streaming { content, .. } => {
+                    self.buffer.push_str(content);
+                }
+                OperationEvent::Completed { result, .. } => {
+                    let content = if self.buffer.is_empty() {
+                        result.clone().unwrap_or_default()
+                    } else {
+                        self.buffer.clone()
+                    };
+                    let output = JsonOutput {
+                        content,
+                        artifacts: vec![],
+                        thinking: None,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                    self.buffer.clear();
+                }
+                OperationEvent::Failed { error, .. } => {
+                    // Output any accumulated content before the error
+                    if !self.buffer.is_empty() {
+                        let output = JsonOutput {
+                            content: self.buffer.clone(),
+                            artifacts: vec![],
+                            thinking: None,
+                        };
+                        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                        self.buffer.clear();
+                    }
+                    let output = JsonError {
+                        error: error.clone(),
+                        code: "operation_failed".to_string(),
+                    };
+                    eprintln!("{}", serde_json::to_string(&output).unwrap());
+                }
+                _ => {}
+            },
             BackendEvent::ChatComplete {
                 content,
                 artifacts,
@@ -226,6 +263,9 @@ impl StreamingDisplay {
                 delta: delta.clone(),
             }),
             BackendEvent::OperationEvent(op_event) => match op_event {
+                OperationEvent::Streaming { content, .. } => Some(StreamJsonEvent::Token {
+                    delta: content.clone(),
+                }),
                 OperationEvent::ToolExecuted {
                     tool_name,
                     summary,
