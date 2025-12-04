@@ -254,5 +254,84 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::AgentSpawned {
+            operation_id,
+            agent_execution_id,
+            agent_name,
+            task,
+        } => {
+            serde_json::json!({
+                "type": "operation.agent_spawned",
+                "operation_id": operation_id,
+                "agent_execution_id": agent_execution_id,
+                "agent_name": agent_name,
+                "task": task,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::AgentProgress {
+            operation_id,
+            agent_execution_id,
+            agent_name,
+            iteration,
+            max_iterations,
+            current_activity,
+        } => {
+            serde_json::json!({
+                "type": "operation.agent_progress",
+                "operation_id": operation_id,
+                "agent_execution_id": agent_execution_id,
+                "agent_name": agent_name,
+                "iteration": iteration,
+                "max_iterations": max_iterations,
+                "current_activity": current_activity,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::AgentStreaming {
+            operation_id,
+            agent_execution_id,
+            content,
+        } => {
+            serde_json::json!({
+                "type": "operation.agent_streaming",
+                "operation_id": operation_id,
+                "agent_execution_id": agent_execution_id,
+                "content": content,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::AgentCompleted {
+            operation_id,
+            agent_execution_id,
+            agent_name,
+            summary,
+            iterations_used,
+        } => {
+            serde_json::json!({
+                "type": "operation.agent_completed",
+                "operation_id": operation_id,
+                "agent_execution_id": agent_execution_id,
+                "agent_name": agent_name,
+                "summary": summary,
+                "iterations_used": iterations_used,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::AgentFailed {
+            operation_id,
+            agent_execution_id,
+            agent_name,
+            error,
+        } => {
+            serde_json::json!({
+                "type": "operation.agent_failed",
+                "operation_id": operation_id,
+                "agent_execution_id": agent_execution_id,
+                "agent_name": agent_name,
+                "error": error,
+                "timestamp": timestamp
+            })
+        }
     }
 }

@@ -10,6 +10,7 @@
 // - skills: Specialized task handling
 // - project_management: Task and guidelines tracking
 
+pub mod agents;
 pub mod common;
 pub mod code_generation;
 pub mod code_intelligence;
