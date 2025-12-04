@@ -12,7 +12,7 @@ use crate::cli::commands::CommandLoader;
 use crate::cli::config::CliConfig;
 use crate::cli::display::{StreamingDisplay, TerminalDisplay};
 use crate::cli::project::{build_metadata, ProjectDetector, DetectedProject};
-use crate::cli::session::{simple_session_list, CliSession, SessionPicker, SessionStore, SessionFilter};
+use crate::cli::session::{simple_session_list, CliSession, SessionPicker};
 use crate::cli::ws_client::{BackendEvent, MiraClient};
 
 /// REPL state
@@ -32,8 +32,6 @@ pub struct Repl {
     interrupted: Arc<AtomicBool>,
     /// Running flag
     running: bool,
-    /// Session store
-    session_store: SessionStore,
     /// Current session
     current_session: Option<CliSession>,
     /// Detected project context
@@ -50,10 +48,6 @@ impl Repl {
 
         // Ensure directories exist
         CliConfig::ensure_dirs()?;
-
-        // Initialize session store
-        let session_store = SessionStore::new().await
-            .context("Failed to initialize session store")?;
 
         // Detect project context
         let project = if let Some(ref project_path) = args.project {
@@ -105,7 +99,6 @@ impl Repl {
             editor,
             interrupted,
             running: true,
-            session_store,
             current_session: None,
             project,
             command_loader,
@@ -186,10 +179,9 @@ impl Repl {
             // Send to backend
             self.send_and_receive(input).await?;
 
-            // Update session
+            // Update local session tracking (backend handles persistence via update_session_on_message)
             if let Some(ref mut session) = self.current_session {
                 session.update_last_message(input);
-                self.session_store.save(session).await?;
             }
         }
 
@@ -201,7 +193,20 @@ impl Repl {
 
     /// Show session picker
     async fn show_session_picker(&mut self) -> Result<()> {
-        let sessions = self.session_store.list(SessionFilter::new().with_limit(20)).await?;
+        // Get project path for filtering
+        let project_path = self.project.as_ref().map(|p| p.root.to_string_lossy().to_string());
+
+        // List sessions from backend
+        let backend_sessions = self.client.list_sessions(
+            project_path.as_deref(),
+            None,
+            Some(20),
+        ).await?;
+
+        // Convert to CLI sessions
+        let sessions: Vec<CliSession> = backend_sessions.into_iter()
+            .map(CliSession::from_backend)
+            .collect();
 
         if sessions.is_empty() {
             self.display.terminal().print_info("No previous sessions found. Starting new session.")?;
@@ -214,7 +219,7 @@ impl Repl {
             let mut picker = SessionPicker::new(sessions);
             if let Some(session) = picker.show()? {
                 self.current_session = Some(session.clone());
-                self.client.set_project_id(Some(session.backend_session_id.clone()));
+                self.client.set_project_id(Some(session.id.clone()));
                 self.display.terminal().print_success(&format!(
                     "Resumed session: {}",
                     session.display_name()
@@ -234,25 +239,28 @@ impl Repl {
 
     /// Continue the most recent session
     async fn continue_recent_session(&mut self) -> Result<()> {
-        // Try to find session for current project first
-        let session = if let Some(ref project) = self.project {
-            self.session_store
-                .get_most_recent_for_project(&project.root)
-                .await?
+        // Get project path for filtering
+        let project_path = self.project.as_ref().map(|p| p.root.to_string_lossy().to_string());
+
+        // Try to find session for current project first, then fall back to any session
+        let backend_sessions = self.client.list_sessions(
+            project_path.as_deref(),
+            None,
+            Some(1),
+        ).await?;
+
+        // If no project-specific session, try listing all
+        let backend_sessions = if backend_sessions.is_empty() && project_path.is_some() {
+            self.client.list_sessions(None, None, Some(1)).await?
         } else {
-            None
+            backend_sessions
         };
 
-        // Fall back to most recent overall
-        let session = match session {
-            Some(s) => Some(s),
-            None => self.session_store.get_most_recent().await?,
-        };
-
-        match session {
-            Some(session) => {
+        match backend_sessions.into_iter().next() {
+            Some(backend_session) => {
+                let session = CliSession::from_backend(backend_session);
                 self.current_session = Some(session.clone());
-                self.client.set_project_id(Some(session.backend_session_id.clone()));
+                self.client.set_project_id(Some(session.id.clone()));
                 if self.args.output_format == OutputFormat::Text {
                     self.display.terminal().print_success(&format!(
                         "Continuing session: {} ({} messages)",
@@ -275,21 +283,23 @@ impl Repl {
     /// Resume a specific session by ID
     async fn resume_session(&mut self, session_id: &str) -> Result<()> {
         // Try exact match first
-        let session = self.session_store.get(session_id).await?;
+        let backend_session = self.client.get_session(session_id).await;
 
-        // Try prefix match if exact match fails
-        let session = match session {
-            Some(s) => Some(s),
-            None => {
-                let sessions = self.session_store.list(SessionFilter::new()).await?;
+        // If exact match fails, try prefix match
+        let backend_session = match backend_session {
+            Ok(s) => Some(s),
+            Err(_) => {
+                // List sessions and try prefix match
+                let sessions = self.client.list_sessions(None, None, Some(50)).await?;
                 sessions.into_iter().find(|s| s.id.starts_with(session_id))
             }
         };
 
-        match session {
-            Some(session) => {
+        match backend_session {
+            Some(bs) => {
+                let session = CliSession::from_backend(bs);
                 self.current_session = Some(session.clone());
-                self.client.set_project_id(Some(session.backend_session_id.clone()));
+                self.client.set_project_id(Some(session.id.clone()));
                 if self.args.output_format == OutputFormat::Text {
                     self.display.terminal().print_success(&format!(
                         "Resumed session: {}",
@@ -311,60 +321,56 @@ impl Repl {
 
     /// Create a new session
     async fn create_new_session(&mut self) -> Result<()> {
-        // Generate backend session ID
-        let backend_session_id = format!("cli-{}", uuid::Uuid::new_v4());
+        // Get project path for the session
+        let project_path = self.project.as_ref().map(|p| p.root.to_string_lossy().to_string());
 
-        let project_path = self.project.as_ref().map(|p| p.root.clone());
-        let session = CliSession::new(backend_session_id.clone(), project_path);
+        // Create session in backend
+        let backend_session = self.client.create_session(
+            None, // name - will auto-generate
+            project_path.as_deref(),
+        ).await?;
 
-        self.session_store.save(&session).await?;
+        let session = CliSession::from_backend(backend_session);
+        let session_id = session.id.clone();
+
         self.current_session = Some(session);
-        self.client.set_project_id(Some(backend_session_id));
+        self.client.set_project_id(Some(session_id));
 
         Ok(())
     }
 
     /// Fork from an existing session
     async fn fork_session(&mut self, source_session_id: &str) -> Result<()> {
-        // Find the source session
-        let source = self.session_store.get(source_session_id).await?;
+        // Try to fork via backend API
+        let fork_result = self.client.fork_session(source_session_id, None).await;
 
-        // Also try prefix match
-        let source = match source {
-            Some(s) => Some(s),
-            None => {
-                let sessions = self.session_store.list(SessionFilter::new()).await?;
-                sessions.into_iter().find(|s| s.id.starts_with(source_session_id))
+        // If exact match fails, try prefix match
+        let forked_session = match fork_result {
+            Ok(s) => Some(s),
+            Err(_) => {
+                // List sessions and try prefix match
+                let sessions = self.client.list_sessions(None, None, Some(50)).await?;
+                if let Some(source) = sessions.into_iter().find(|s| s.id.starts_with(source_session_id)) {
+                    // Fork from the matched session
+                    self.client.fork_session(&source.id, None).await.ok()
+                } else {
+                    None
+                }
             }
         };
 
-        match source {
-            Some(source_session) => {
-                // Create a new session that inherits the source's backend session
-                // This allows the backend to maintain conversation history
-                let new_backend_id = format!("cli-fork-{}", uuid::Uuid::new_v4());
-                let project_path = self.project.as_ref().map(|p| p.root.clone());
+        match forked_session {
+            Some(backend_session) => {
+                let session = CliSession::from_backend(backend_session);
+                let session_id = session.id.clone();
 
-                let mut forked = CliSession::new(new_backend_id.clone(), project_path);
-                forked.name = Some(format!("Fork of {}", source_session.display_name()));
-
-                self.session_store.save(&forked).await?;
-                self.current_session = Some(forked.clone());
-
-                // Tell backend to fork the session (clone conversation history)
-                self.client.set_project_id(Some(new_backend_id));
-
-                // Send fork command to backend
-                let fork_args = serde_json::json!({
-                    "source_session_id": source_session.backend_session_id,
-                });
-                self.client.send_command("fork", Some(fork_args)).await?;
+                self.current_session = Some(session.clone());
+                self.client.set_project_id(Some(session_id));
 
                 if self.args.output_format == OutputFormat::Text {
                     self.display.terminal().print_success(&format!(
-                        "Forked session from: {} (new session: {})",
-                        source_session.display_name(),
-                        forked.id
+                        "Forked session: {}",
+                        session.display_name()
                     ))?;
                 }
             }
@@ -425,10 +431,9 @@ impl Repl {
         // Send prompt and receive response
         self.send_and_receive(&final_prompt).await?;
 
-        // Update session
+        // Update local session tracking (backend handles persistence via update_session_on_message)
         if let Some(ref mut session) = self.current_session {
             session.update_last_message(&prompt);
-            self.session_store.save(session).await?;
         }
 
         // Close connection
@@ -536,7 +541,10 @@ impl Repl {
 
     /// List recent sessions
     async fn list_sessions(&mut self) -> Result<()> {
-        let sessions = self.session_store.list(SessionFilter::new().with_limit(10)).await?;
+        let backend_sessions = self.client.list_sessions(None, None, Some(10)).await?;
+        let sessions: Vec<CliSession> = backend_sessions.into_iter()
+            .map(CliSession::from_backend)
+            .collect();
         simple_session_list(&sessions);
         Ok(())
     }

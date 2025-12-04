@@ -99,9 +99,14 @@ interface ChatStore {
   addToolExecution: (messageId: string, execution: ToolExecution) => void;
 }
 
+// Generate a new session ID if none exists
+const generateSessionId = (): string => {
+  return 'session-' + crypto.randomUUID();
+};
+
 const initialState = {
   messages: [],
-  currentSessionId: 'peter-eternal',
+  currentSessionId: generateSessionId(),
   isWaitingForResponse: false,
   isStreaming: false,
   streamingContent: '',

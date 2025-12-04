@@ -1924,3 +1924,77 @@ info!(
 - Phase 5: JSON output modes, session forking, advanced features
 
 ---
+
+### Session 40: 2025-12-05
+
+**Summary:** Unified CLI and Frontend session management to use a single backend database, eliminating separate storage systems.
+
+**Goals:**
+- Fix architectural split where CLI used `~/.mira/cli.db` and Frontend used hardcoded "peter-eternal" session
+- Create unified session management APIs accessible by both CLI and Frontend
+- Build session management UI in Frontend
+
+**Key Outcomes:**
+
+1. **Phase 1 - Backend Session APIs:**
+   - Created `chat_sessions` and `session_forks` tables via migration 20251125000011
+   - Added 6 session WebSocket commands in `backend/src/api/ws/session.rs`:
+     - `session.create` - Create new session
+     - `session.list` - List sessions with filtering
+     - `session.get` - Get single session by ID
+     - `session.update` - Update session name
+     - `session.delete` - Delete session
+     - `session.fork` - Fork session with message history copying
+   - Added `update_session_on_message()` for auto-updating session metadata on each message
+
+2. **Phase 2 - CLI Migration:**
+   - Added session methods to `MiraClient` in ws_client.rs (create, list, get, update, delete, fork)
+   - Updated `repl.rs` to use WebSocket APIs instead of local SQLite store
+   - Deprecated `session/store.rs` (local `~/.mira/cli.db`) with `#[allow(dead_code)]`
+   - Added `BackendEvent::SessionData` variant for session responses
+
+3. **Phase 3 - Frontend Session Support:**
+   - Added `Session` type to `types/index.ts`
+   - Created `useSessionOperations.ts` hook with session CRUD operations
+   - Created `SessionsModal.tsx` component with:
+     - Session list grouped by project
+     - Create, rename, fork, delete operations
+     - Relative time display for last_active
+     - Click to switch sessions
+   - Updated `Header.tsx` with session button next to project button
+   - Updated `useChatStore.ts` to generate unique session IDs instead of hardcoded "peter-eternal"
+
+**Files Created:**
+- `backend/migrations/20251125000011_chat_sessions.sql` - Session tables
+- `backend/src/api/ws/session.rs` - Session WebSocket handlers (~515 lines)
+- `frontend/src/hooks/useSessionOperations.ts` - Session operations hook (~160 lines)
+- `frontend/src/components/SessionsModal.tsx` - Session management UI (~240 lines)
+
+**Files Modified:**
+Backend:
+- `src/api/ws/mod.rs` - Added session module
+- `src/api/ws/message.rs` - Added SessionCommand variant
+- `src/api/ws/chat/message_router.rs` - Added session command routing
+- `src/cli/ws_client.rs` - Added session methods to MiraClient
+- `src/cli/repl.rs` - Migrated to WebSocket session APIs
+- `src/cli/session/store.rs` - Deprecated
+- `src/cli/session/types.rs` - Added from_backend() conversion
+- `src/cli/display/streaming.rs` - Added SessionData event handler
+
+Frontend:
+- `src/types/index.ts` - Added Session type
+- `src/components/Header.tsx` - Added session button and modal
+- `src/stores/useChatStore.ts` - Dynamic session ID generation
+
+**Technical Decisions:**
+1. **Session UPSERT**: Sessions auto-created on first message via `update_session_on_message()` with upsert pattern
+2. **Message History Copying**: `session.fork` copies all `memory_entries` from source to new session
+3. **CLI Store Deprecation**: Kept for backward compatibility but marked deprecated
+4. **Dynamic Session IDs**: Frontend generates UUID-based session IDs instead of hardcoded value
+
+**Testing:**
+- Backend: `cargo build` passes with only 1 unrelated warning
+- Frontend: `npm run type-check` passes
+- Services restarted and running
+
+---

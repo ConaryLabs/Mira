@@ -1,15 +1,17 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Folder, Activity, X, LogOut, Brain, Sun, Moon } from 'lucide-react';
+import { Folder, Activity, X, LogOut, Brain, Sun, Moon, MessageSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
+import { SessionsModal } from './SessionsModal';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useActivityStore } from '../stores/useActivityStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { useAuthStore, useCurrentUser } from '../stores/useAuthStore';
 import { useThemeStore } from '../stores/useThemeStore';
+import { useChatStore } from '../stores/useChatStore';
 
 export const Header: React.FC = () => {
   const {
@@ -25,8 +27,10 @@ export const Header: React.FC = () => {
     isPanelVisible: isIntelligenceVisible
   } = useCodeIntelligenceStore();
   const [showProjects, setShowProjects] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const { logout } = useAuthStore();
+  const { currentSessionId } = useChatStore();
   const user = useCurrentUser();
   const navigate = useNavigate();
   const { theme, toggleTheme } = useThemeStore();
@@ -47,8 +51,8 @@ export const Header: React.FC = () => {
   return (
     <>
       <header className="h-14 border-b border-gray-200 dark:border-gray-700 px-4 flex items-center bg-white dark:bg-gray-900">
-        {/* Left: Project indicator - clickable */}
-        <div className="flex items-center gap-4">
+        {/* Left: Project and Session indicators - clickable */}
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setShowProjects(true)}
             className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg border border-gray-300 dark:border-slate-600 transition-colors"
@@ -57,6 +61,17 @@ export const Header: React.FC = () => {
             <Folder size={16} className="text-gray-500 dark:text-slate-400" />
             <span className="text-sm text-gray-700 dark:text-slate-200">
               {currentProject?.name || 'No Project'}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setShowSessions(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg border border-gray-300 dark:border-slate-600 transition-colors"
+            title="Manage Sessions"
+          >
+            <MessageSquare size={16} className="text-gray-500 dark:text-slate-400" />
+            <span className="text-sm text-gray-700 dark:text-slate-200">
+              {currentSessionId ? `Session ${currentSessionId.slice(0, 8)}` : 'New Session'}
             </span>
           </button>
         </div>
@@ -163,6 +178,12 @@ export const Header: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Sessions Modal */}
+      <SessionsModal
+        isOpen={showSessions}
+        onClose={() => setShowSessions(false)}
+      />
 
       {/* Change Password Modal */}
       <ChangePasswordModal

@@ -12,7 +12,7 @@ use super::connection::WebSocketConnection;
 use super::unified_handler::{ChatRequest, UnifiedChatHandler};
 use crate::api::error::ApiError;
 use crate::api::ws::message::{MessageMetadata, WsClientMessage, WsServerMessage};
-use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project};
+use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project, session};
 use crate::state::AppState;
 
 pub struct MessageRouter {
@@ -71,6 +71,9 @@ impl MessageRouter {
             }
             WsClientMessage::DocumentCommand { method, params } => {
                 self.handle_document_command(method, params).await
+            }
+            WsClientMessage::SessionCommand { method, params } => {
+                self.handle_session_command(method, params).await
             }
             _ => {
                 debug!("Ignoring message type");
@@ -302,6 +305,11 @@ impl MessageRouter {
         }
 
         Ok(())
+    }
+
+    async fn handle_session_command(&self, method: String, params: Value) -> Result<()> {
+        let result = session::handle_session_command(&method, params, self.app_state.clone()).await;
+        self.send_result(result, "SESSION").await
     }
 
 }

@@ -72,6 +72,8 @@ impl SessionStore {
     }
 
     /// Save a session (insert or update)
+    /// DEPRECATED: This method is no longer used - sessions are managed via WebSocket API
+    #[allow(dead_code)]
     pub async fn save(&self, session: &CliSession) -> Result<()> {
         let project_path = session.project_path.as_ref().map(|p| p.to_string_lossy().to_string());
         let created_at = session.created_at.timestamp();
@@ -79,8 +81,8 @@ impl SessionStore {
 
         sqlx::query(
             r#"
-            INSERT INTO cli_sessions (id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO cli_sessions (id, name, project_path, last_message, message_count, created_at, last_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 project_path = excluded.project_path,
@@ -92,7 +94,6 @@ impl SessionStore {
         .bind(&session.id)
         .bind(&session.name)
         .bind(&project_path)
-        .bind(&session.backend_session_id)
         .bind(&session.last_message)
         .bind(session.message_count as i64)
         .bind(created_at)
@@ -105,9 +106,11 @@ impl SessionStore {
     }
 
     /// Get a session by ID
+    /// DEPRECATED: Use MiraClient::get_session instead
+    #[allow(dead_code)]
     pub async fn get(&self, id: &str) -> Result<Option<CliSession>> {
         let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active FROM cli_sessions WHERE id = ?",
+            "SELECT id, name, project_path, last_message, message_count, created_at, last_active FROM cli_sessions WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -118,9 +121,11 @@ impl SessionStore {
     }
 
     /// Get the most recent session
+    /// DEPRECATED: Use MiraClient::list_sessions instead
+    #[allow(dead_code)]
     pub async fn get_most_recent(&self) -> Result<Option<CliSession>> {
         let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active FROM cli_sessions ORDER BY last_active DESC LIMIT 1",
+            "SELECT id, name, project_path, last_message, message_count, created_at, last_active FROM cli_sessions ORDER BY last_active DESC LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await
@@ -130,10 +135,12 @@ impl SessionStore {
     }
 
     /// Get the most recent session for a specific project
+    /// DEPRECATED: Use MiraClient::list_sessions with project_path filter
+    #[allow(dead_code)]
     pub async fn get_most_recent_for_project(&self, project_path: &PathBuf) -> Result<Option<CliSession>> {
         let path_str = project_path.to_string_lossy().to_string();
         let row = sqlx::query_as::<_, SessionRow>(
-            "SELECT id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active FROM cli_sessions WHERE project_path = ? ORDER BY last_active DESC LIMIT 1",
+            "SELECT id, name, project_path, last_message, message_count, created_at, last_active FROM cli_sessions WHERE project_path = ? ORDER BY last_active DESC LIMIT 1",
         )
         .bind(&path_str)
         .fetch_optional(&self.pool)
@@ -144,13 +151,15 @@ impl SessionStore {
     }
 
     /// List sessions with optional filtering
+    /// DEPRECATED: Use MiraClient::list_sessions instead
+    #[allow(dead_code)]
     pub async fn list(&self, filter: SessionFilter) -> Result<Vec<CliSession>> {
         let limit = filter.limit.unwrap_or(50) as i64;
 
         let rows = if let Some(ref project_path) = filter.project_path {
             let path_str = project_path.to_string_lossy().to_string();
             sqlx::query_as::<_, SessionRow>(
-                "SELECT id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active FROM cli_sessions WHERE project_path = ? ORDER BY last_active DESC LIMIT ?",
+                "SELECT id, name, project_path, last_message, message_count, created_at, last_active FROM cli_sessions WHERE project_path = ? ORDER BY last_active DESC LIMIT ?",
             )
             .bind(&path_str)
             .bind(limit)
@@ -160,7 +169,7 @@ impl SessionStore {
         } else if let Some(ref search) = filter.search {
             let search_pattern = format!("%{}%", search);
             sqlx::query_as::<_, SessionRow>(
-                "SELECT id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active FROM cli_sessions WHERE name LIKE ? OR last_message LIKE ? ORDER BY last_active DESC LIMIT ?",
+                "SELECT id, name, project_path, last_message, message_count, created_at, last_active FROM cli_sessions WHERE name LIKE ? OR last_message LIKE ? ORDER BY last_active DESC LIMIT ?",
             )
             .bind(&search_pattern)
             .bind(&search_pattern)
@@ -170,7 +179,7 @@ impl SessionStore {
             .context("Failed to list sessions")?
         } else {
             sqlx::query_as::<_, SessionRow>(
-                "SELECT id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active FROM cli_sessions ORDER BY last_active DESC LIMIT ?",
+                "SELECT id, name, project_path, last_message, message_count, created_at, last_active FROM cli_sessions ORDER BY last_active DESC LIMIT ?",
             )
             .bind(limit)
             .fetch_all(&self.pool)
@@ -233,12 +242,12 @@ impl SessionStore {
 }
 
 /// Database row representation
+/// DEPRECATED: This is for the old local CLI session store
 #[derive(sqlx::FromRow)]
 struct SessionRow {
     id: String,
     name: Option<String>,
     project_path: Option<String>,
-    backend_session_id: String,
     last_message: Option<String>,
     message_count: i64,
     created_at: i64,
@@ -251,7 +260,6 @@ impl From<SessionRow> for CliSession {
             id: row.id,
             name: row.name,
             project_path: row.project_path.map(PathBuf::from),
-            backend_session_id: row.backend_session_id,
             last_message: row.last_message,
             message_count: row.message_count as u32,
             created_at: Utc.timestamp_opt(row.created_at, 0).unwrap(),

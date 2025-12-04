@@ -15,5 +15,5 @@ pub use args::{CliArgs, OutputFormat};
 pub use config::CliConfig;
 pub use project::{DetectedProject, ProjectDetector};
 pub use repl::Repl;
-pub use session::{CliSession, SessionStore};
+pub use session::CliSession;
 pub use ws_client::MiraClient;

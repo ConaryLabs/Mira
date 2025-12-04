@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::api::ws::message::{MessageMetadata, WsClientMessage};
+use crate::api::ws::session::ChatSession;
 
 /// Events received from the backend
 #[derive(Debug, Clone)]
@@ -31,6 +32,11 @@ pub enum BackendEvent {
     Error { message: String, code: String },
     /// Connection closed
     Disconnected,
+    /// Session data response
+    SessionData {
+        response_type: String,
+        data: serde_json::Value,
+    },
 }
 
 /// Operation events from backend
@@ -245,11 +251,18 @@ impl MiraClient {
             }
             "connection_ready" => Some(BackendEvent::Connected),
             "data" => {
-                // Data messages contain nested operation events
+                // Data messages contain nested operation events or session data
                 if let Some(inner_data) = json.get("data") {
                     if let Some(inner_type) = inner_data.get("type").and_then(|v| v.as_str()) {
                         if inner_type.starts_with("operation.") {
                             return Self::parse_operation_event(inner_type, inner_data);
+                        }
+                        // Handle session responses
+                        if inner_type.starts_with("session") {
+                            return Some(BackendEvent::SessionData {
+                                response_type: inner_type.to_string(),
+                                data: inner_data.clone(),
+                            });
                         }
                     }
                 }
@@ -525,6 +538,135 @@ impl MiraClient {
             .context("Failed to send close message")?;
         self.connected = false;
         Ok(())
+    }
+
+    // ========================================================================
+    // SESSION MANAGEMENT METHODS
+    // ========================================================================
+
+    /// Send a session command and return the raw JSON response
+    async fn send_session_command(&self, method: &str, params: serde_json::Value) -> Result<()> {
+        let msg = WsClientMessage::SessionCommand {
+            method: method.to_string(),
+            params,
+        };
+
+        self.send_message(&msg).await
+    }
+
+    /// Create a new session
+    pub async fn create_session(
+        &mut self,
+        name: Option<&str>,
+        project_path: Option<&str>,
+    ) -> Result<ChatSession> {
+        self.send_session_command("session.create", serde_json::json!({
+            "name": name,
+            "project_path": project_path,
+        })).await?;
+
+        // Wait for response
+        self.wait_for_session_response("session_created").await
+    }
+
+    /// List sessions with optional filters
+    pub async fn list_sessions(
+        &mut self,
+        project_path: Option<&str>,
+        search: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<ChatSession>> {
+        self.send_session_command("session.list", serde_json::json!({
+            "project_path": project_path,
+            "search": search,
+            "limit": limit,
+        })).await?;
+
+        // Wait for response
+        let data = self.wait_for_session_data("session_list").await?;
+        let sessions: Vec<ChatSession> = serde_json::from_value(
+            data.get("sessions").cloned().unwrap_or(serde_json::json!([]))
+        ).context("Failed to parse sessions")?;
+        Ok(sessions)
+    }
+
+    /// Get a session by ID
+    pub async fn get_session(&mut self, id: &str) -> Result<ChatSession> {
+        self.send_session_command("session.get", serde_json::json!({
+            "id": id,
+        })).await?;
+
+        self.wait_for_session_response("session").await
+    }
+
+    /// Update a session's name
+    pub async fn update_session(&mut self, id: &str, name: Option<&str>) -> Result<ChatSession> {
+        self.send_session_command("session.update", serde_json::json!({
+            "id": id,
+            "name": name,
+        })).await?;
+
+        self.wait_for_session_response("session_updated").await
+    }
+
+    /// Delete a session
+    pub async fn delete_session(&mut self, id: &str) -> Result<()> {
+        self.send_session_command("session.delete", serde_json::json!({
+            "id": id,
+        })).await?;
+
+        // Wait for status response
+        loop {
+            match self.recv().await {
+                Some(BackendEvent::Status { message, .. }) => {
+                    if message.contains("deleted") {
+                        return Ok(());
+                    }
+                }
+                Some(BackendEvent::Error { message, .. }) => {
+                    return Err(anyhow::anyhow!(message));
+                }
+                None => return Err(anyhow::anyhow!("Connection closed")),
+                _ => continue,
+            }
+        }
+    }
+
+    /// Fork a session
+    pub async fn fork_session(&mut self, source_id: &str, name: Option<&str>) -> Result<ChatSession> {
+        self.send_session_command("session.fork", serde_json::json!({
+            "source_id": source_id,
+            "name": name,
+        })).await?;
+
+        self.wait_for_session_response("session_forked").await
+    }
+
+    /// Wait for a session response and extract the session object
+    async fn wait_for_session_response(&mut self, expected_type: &str) -> Result<ChatSession> {
+        let data = self.wait_for_session_data(expected_type).await?;
+        let session: ChatSession = serde_json::from_value(
+            data.get("session").cloned().unwrap_or(serde_json::json!({}))
+        ).context("Failed to parse session")?;
+        Ok(session)
+    }
+
+    /// Wait for a session data response
+    async fn wait_for_session_data(&mut self, expected_type: &str) -> Result<serde_json::Value> {
+        loop {
+            match self.recv().await {
+                Some(BackendEvent::SessionData { response_type, data }) => {
+                    if response_type == expected_type {
+                        return Ok(data);
+                    }
+                }
+                Some(BackendEvent::Error { message, .. }) => {
+                    return Err(anyhow::anyhow!(message));
+                }
+                None => return Err(anyhow::anyhow!("Connection closed")),
+                _ => continue,
+            }
+        }
     }
 }
 
