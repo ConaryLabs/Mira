@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
-use crate::llm::provider::{Gemini3Provider, Message};
+use crate::llm::provider::{Gemini3Provider, Message, ToolCallInfo};
 use super::super::file_handlers::FileHandlers;
 
 /// Result of a multi-turn LLM conversation for file reading
@@ -78,9 +78,19 @@ pub async fn execute_file_read_conversation(
             }
         }
 
-        // Add assistant message with tool calls
-        conversation.push(Message::assistant(
+        // Add assistant message with tool calls AND thought signature
+        let tool_calls_info: Vec<ToolCallInfo> = response.tool_calls.iter().map(|tc| {
+            ToolCallInfo {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+            }
+        }).collect();
+
+        conversation.push(Message::assistant_with_tool_calls_and_signature(
             response.content.clone().unwrap_or_default(),
+            tool_calls_info,
+            response.thought_signature.clone(),
         ));
 
         // Add tool results as user messages

@@ -405,7 +405,11 @@ impl LlmOrchestrator {
             }).collect();
 
             let assistant_content = response.content.clone().unwrap_or_default();
-            messages.push(Message::assistant_with_tool_calls(assistant_content, tool_calls_info));
+            messages.push(Message::assistant_with_tool_calls_and_signature(
+                assistant_content,
+                tool_calls_info,
+                response.thought_signature.clone(),
+            ));
 
             // Execute tools and collect results
             for tool_call in response.tool_calls {
