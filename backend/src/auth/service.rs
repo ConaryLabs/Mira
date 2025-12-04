@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::jwt::create_token;
 use super::password::{hash_password, verify_password};
-use super::models::{User, UserWithPassword, LoginRequest, RegisterRequest, AuthResponse, ChangePasswordRequest};
+use super::models::{User, UserWithPassword, LoginRequest, RegisterRequest, AuthResponse, ChangePasswordRequest, UpdatePreferencesRequest};
 
 pub struct AuthService {
     db: SqlitePool,
@@ -165,5 +165,26 @@ impl AuthService {
             .await?;
 
         Ok(())
+    }
+
+    pub async fn update_preferences(&self, user_id: &str, req: UpdatePreferencesRequest) -> Result<User> {
+        let now = chrono::Utc::now().timestamp();
+
+        if let Some(ref theme) = req.theme_preference {
+            // Validate theme value
+            if theme != "light" && theme != "dark" {
+                return Err(anyhow!("Invalid theme preference. Must be 'light' or 'dark'"));
+            }
+
+            sqlx::query("UPDATE users SET theme_preference = ?, updated_at = ? WHERE id = ?")
+                .bind(theme)
+                .bind(now)
+                .bind(user_id)
+                .execute(&self.db)
+                .await?;
+        }
+
+        let user = self.get_user_by_id(user_id).await?;
+        Ok(user.into())
     }
 }

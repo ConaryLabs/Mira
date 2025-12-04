@@ -81,7 +81,7 @@ export const ChatInput: React.FC = () => {
               : "Select a project to start chatting..."
           }
           disabled={isDisabled}
-          className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-500 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           rows={1}
           style={{ minHeight: '48px', maxHeight: '200px' }}
         />
@@ -90,7 +90,7 @@ export const ChatInput: React.FC = () => {
       <button
         onClick={handleSend}
         disabled={isDisabled || !content.trim()}
-        className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg transition-colors"
+        className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg transition-colors"
         title="Send message (Enter)"
       >
         <Send size={20} className="text-white" />

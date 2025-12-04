@@ -52,25 +52,25 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8">
         {/* Header */}
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-white mb-2">Mira</h1>
-          <p className="text-gray-400">AI-Powered Coding Assistant</p>
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">Mira</h1>
+          <p className="text-gray-600 dark:text-gray-400">AI-Powered Coding Assistant</p>
         </div>
 
         {/* Form Card */}
-        <div className="bg-gray-800 rounded-lg shadow-xl p-8 border border-gray-700">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-8 border border-gray-200 dark:border-gray-700">
           {/* Mode Toggle */}
-          <div className="flex mb-6 bg-gray-700 rounded-lg p-1">
+          <div className="flex mb-6 bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
             <button
               type="button"
               onClick={() => setMode('login')}
               className={`flex-1 py-2 rounded-md font-medium transition-colors ${
                 mode === 'login'
                   ? 'bg-blue-600 text-white'
-                  : 'text-gray-300 hover:text-white'
+                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
               }`}
             >
               Login
@@ -81,7 +81,7 @@ export function Login() {
               className={`flex-1 py-2 rounded-md font-medium transition-colors ${
                 mode === 'register'
                   ? 'bg-blue-600 text-white'
-                  : 'text-gray-300 hover:text-white'
+                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
               }`}
             >
               Register
@@ -90,7 +90,7 @@ export function Login() {
 
           {/* Error Message */}
           {error && (
-            <div className="mb-4 p-3 bg-red-900/20 border border-red-700 rounded-md text-red-400 text-sm">
+            <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-md text-red-700 dark:text-red-400 text-sm">
               {error}
             </div>
           )}
@@ -99,7 +99,7 @@ export function Login() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Username */}
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-1">
+              <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Username
               </label>
               <input
@@ -109,7 +109,7 @@ export function Login() {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoFocus
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="Enter your username"
                 disabled={loading}
               />
@@ -117,7 +117,7 @@ export function Login() {
 
             {/* Password */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-1">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Password
               </label>
               <input
@@ -126,7 +126,7 @@ export function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="Enter your password"
                 disabled={loading}
               />
@@ -136,7 +136,7 @@ export function Login() {
             {mode === 'register' && (
               <>
                 <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-1">
+                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Email (optional)
                   </label>
                   <input
@@ -144,14 +144,14 @@ export function Login() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="your@email.com"
                     disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="displayName" className="block text-sm font-medium text-gray-300 mb-1">
+                  <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Display Name (optional)
                   </label>
                   <input
@@ -159,7 +159,7 @@ export function Login() {
                     type="text"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Your Name"
                     disabled={loading}
                   />
@@ -171,7 +171,7 @@ export function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800"
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-gray-800"
             >
               {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
@@ -179,13 +179,13 @@ export function Login() {
 
           {/* Help Text */}
           {mode === 'register' && (
-            <div className="mt-6 text-center text-sm text-gray-400">
+            <div className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
               <p>
                 Already have an account?{' '}
                 <button
                   type="button"
                   onClick={() => setMode('login')}
-                  className="text-blue-400 hover:text-blue-300"
+                  className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
                 >
                   Sign in
                 </button>

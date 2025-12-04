@@ -10,7 +10,7 @@ use axum::{
 use std::sync::Arc;
 use tracing::error;
 
-use crate::auth::{LoginRequest, RegisterRequest, AuthResponse, ChangePasswordRequest, verify_token};
+use crate::auth::{LoginRequest, RegisterRequest, AuthResponse, ChangePasswordRequest, UpdatePreferencesRequest, User, verify_token};
 use crate::state::AppState;
 
 pub fn create_auth_router() -> Router<Arc<AppState>> {
@@ -19,6 +19,7 @@ pub fn create_auth_router() -> Router<Arc<AppState>> {
         .route("/register", post(register))
         .route("/verify", post(verify))
         .route("/change-password", post(change_password))
+        .route("/preferences", post(update_preferences))
 }
 
 async fn login(
@@ -115,12 +116,41 @@ async fn change_password(
     })))
 }
 
+async fn update_preferences(
+    State(app_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<UpdatePreferencesRequest>,
+) -> Result<Json<User>, AuthError> {
+    // Extract token from Authorization header
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AuthError::Unauthorized("Missing authorization header".to_string()))?;
+
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| AuthError::Unauthorized("Invalid authorization format".to_string()))?;
+
+    // Verify token and get user ID
+    let claims = verify_token(token)
+        .map_err(|_| AuthError::Unauthorized("Invalid token".to_string()))?;
+
+    // Update preferences
+    let user = app_state.auth_service
+        .update_preferences(&claims.sub, req)
+        .await
+        .map_err(|e| AuthError::PreferencesUpdateFailed(e.to_string()))?;
+
+    Ok(Json(user))
+}
+
 #[derive(Debug)]
 enum AuthError {
     InvalidCredentials(String),
     RegistrationFailed(String),
     Unauthorized(String),
     PasswordChangeFailed(String),
+    PreferencesUpdateFailed(String),
 }
 
 impl IntoResponse for AuthError {
@@ -130,6 +160,7 @@ impl IntoResponse for AuthError {
             AuthError::RegistrationFailed(msg) => (StatusCode::BAD_REQUEST, msg),
             AuthError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             AuthError::PasswordChangeFailed(msg) => (StatusCode::BAD_REQUEST, msg),
+            AuthError::PreferencesUpdateFailed(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         error!("Auth error: {}", message);
