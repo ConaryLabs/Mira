@@ -90,6 +90,7 @@ indicatif = "0.17"
 console = "0.15"
 rustyline = "15"
 ctrlc = "3.4"
+atty = "0.2"
 
 [dev-dependencies]
 tempfile = "3.8"
