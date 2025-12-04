@@ -11,8 +11,8 @@ use std::path::PathBuf;
 #[command(version)]
 #[command(about = "AI-powered coding assistant", long_about = None)]
 pub struct CliArgs {
-    /// Initial prompt to send (enables one-shot mode when used with -p)
-    #[arg(trailing_var_arg = true)]
+    /// Prompt to send (use -- before the prompt if it contains flags)
+    #[arg()]
     pub prompt: Vec<String>,
 
     /// Print mode - non-interactive, outputs result and exits
