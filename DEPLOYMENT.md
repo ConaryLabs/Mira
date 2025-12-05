@@ -338,6 +338,13 @@ nginx (reverse proxy, port 80/443)
 | `MIRA_PORT` | `3001` | WebSocket port |
 | `RUST_LOG` | `info` | Log level |
 
+#### Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
+| `RATE_LIMIT_REQUESTS_PER_MINUTE` | `60` | Max requests per minute |
+
 See `backend/.env.example` for complete configuration options.
 
 ---
@@ -434,24 +441,61 @@ INFO mira_backend::operations: LLM orchestration completed
 
 ### Health Checks
 
+The backend provides three health check endpoints:
+
 ```bash
-# Backend health
+# Full health check (DB + Qdrant)
 curl http://localhost:3001/health
+# Returns: {"status":"healthy","db":"ok","qdrant":"ok"}
+
+# Readiness probe (migrations applied)
+curl http://localhost:3001/ready
+# Returns: {"status":"ready","migrations":"applied"}
+
+# Liveness probe (simple ping)
+curl http://localhost:3001/live
+# Returns: {"status":"alive"}
 
 # Qdrant health
 curl http://localhost:6333/health
+```
 
-# Full application (via Nginx)
-curl http://localhost/health
+### Prometheus Metrics
+
+Prometheus metrics are available at `/metrics`:
+
+```bash
+curl http://localhost:3001/metrics
+```
+
+Available metrics:
+- `mira_requests_total` - Total requests by type
+- `mira_request_duration_seconds` - Request latency histogram
+- `mira_llm_calls_total` - LLM API calls by model and status
+- `mira_llm_cache_total` - Cache hit/miss counts
+- `mira_budget_daily_used_usd` - Current daily budget usage
+- `mira_budget_monthly_used_usd` - Current monthly budget usage
+- `mira_active_connections` - Active WebSocket connections
+- `mira_llm_tokens_total` - Token usage by type (prompt/completion/reasoning)
+- `mira_tool_executions_total` - Tool execution counts
+
+### Rate Limiting
+
+Rate limiting is configurable via environment variables:
+
+```bash
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
 ```
 
 ### Metrics to Monitor
 
 - **Response time**: Target < 5s for typical queries
-- **Cache hit rate**: Target > 80%
-- **Daily/monthly spend**: Check budget limits
+- **Cache hit rate**: Target > 80% (`mira_llm_cache_total`)
+- **Daily/monthly spend**: Check budget limits (`mira_budget_*_used_usd`)
 - **Error rate**: Check journalctl for errors
 - **Qdrant memory**: Monitor collection sizes
+- **Active connections**: Monitor WebSocket connections (`mira_active_connections`)
 
 ---
 

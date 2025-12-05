@@ -48,6 +48,9 @@ pub mod agents;
 // CLI module (for mira binary)
 pub mod cli;
 
+// Milestone 10 - Production metrics
+pub mod metrics;
+
 // Export commonly used items
 pub use config::CONFIG;
 pub use state::AppState;

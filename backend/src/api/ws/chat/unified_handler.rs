@@ -14,6 +14,7 @@ use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
 use crate::mcp::McpManager;
 use crate::state::AppState;
+use crate::utils::RateLimiter;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
@@ -37,6 +38,7 @@ pub struct UnifiedChatHandler {
     command_registry: Arc<RwLock<CommandRegistry>>,
     checkpoint_manager: Arc<CheckpointManager>,
     mcp_manager: Arc<McpManager>,
+    rate_limiter: Option<Arc<RateLimiter>>,
 }
 
 impl UnifiedChatHandler {
@@ -52,6 +54,7 @@ impl UnifiedChatHandler {
             command_registry: app_state.command_registry.clone(),
             checkpoint_manager: app_state.checkpoint_manager.clone(),
             mcp_manager: app_state.mcp_manager.clone(),
+            rate_limiter: app_state.rate_limiter.clone(),
         }
     }
 
@@ -61,6 +64,21 @@ impl UnifiedChatHandler {
         request: ChatRequest,
         ws_tx: mpsc::Sender<Value>,
     ) -> Result<()> {
+        // Check rate limit before processing
+        if let Some(ref limiter) = self.rate_limiter {
+            if !limiter.try_acquire() {
+                warn!(session_id = %request.session_id, "Rate limit exceeded");
+                let _ = ws_tx
+                    .send(json!({
+                        "type": "error",
+                        "message": "Rate limit exceeded. Please slow down.",
+                        "code": "RATE_LIMIT_EXCEEDED"
+                    }))
+                    .await;
+                return Ok(());
+            }
+        }
+
         let content_preview: String = request.content.chars().take(50).collect();
         debug!(
             session_id = %request.session_id,
