@@ -143,6 +143,21 @@ npm run dev
 - **Operation Engine** (`src/operations/engine/`) orchestrates complex workflows with status tracking
 - **Thinking Level Selection** adapts model complexity to task requirements
 
+**Gemini 3 Pro API Limits (Tier 1 - Paid):**
+| Metric | Limit |
+|--------|-------|
+| Context Window | 1,000,000 tokens |
+| Max Output | 65,536 tokens |
+| Requests per Minute (RPM) | 50 |
+| Tokens per Minute (TPM) | 1,000,000 |
+| Requests per Day (RPD) | 1,000 |
+
+**Gemini 3 Pro Pricing (per 1M tokens):**
+| Context Size | Input | Output |
+|--------------|-------|--------|
+| < 200k tokens | $2.00 | $12.00 |
+| > 200k tokens | $4.00 | $18.00 |
+
 **Memory Systems** (`src/memory/`):
 - **Hybrid storage**: SQLite (50+ tables) + Qdrant (3 collections: code, conversation, git)
 - **Semantic Code Understanding**: Semantic graph, call graph, design pattern detection
