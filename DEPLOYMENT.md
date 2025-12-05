@@ -47,6 +47,8 @@ This guide covers deploying Mira in development and production environments.
 
 ## Quick Start (Development)
 
+> **Just want to run Mira?** Skip to [Docker Deployment](#docker-deployment) for a simpler setup that doesn't require Rust or Node.js.
+
 ### 1. Clone and Setup
 
 ```bash
@@ -206,19 +208,116 @@ sudo systemctl reload nginx
 
 ## Docker Deployment
 
-### Using Docker Compose
+### Full Stack with Docker Compose (Recommended for Users)
+
+**This is the recommended way for users to run Mira.** Docker Compose bundles everything needed - no Rust, Node.js, or manual setup required.
+
+For **developers** contributing to Mira, see [Quick Start (Development)](#quick-start-development) for the native setup which provides faster iteration.
+
+#### Prerequisites
+
+- Docker 24+ with Docker Compose v2
+- Google API key for Gemini
+
+#### Quick Start
 
 ```bash
-# Start Qdrant only (recommended for development)
-docker-compose up -d
+# 1. Configure environment
+cp .env.example .env
+# Edit .env and add your GOOGLE_API_KEY
+
+# 2. Build and start all services
+docker compose up -d
+
+# 3. Access Mira
+# Frontend: http://localhost:8080 (or port 80 if available)
+# Backend health: http://localhost:3001/health
+# Qdrant dashboard: http://localhost:6333/dashboard
+```
+
+#### Service Architecture
+
+```
+docker-compose.yml runs:
++------------------+     +------------------+     +------------------+
+|     frontend     |     |     backend      |     |      qdrant      |
+|  (nginx:alpine)  | --> |  (rust binary)   | --> | (qdrant:latest)  |
+|    port 8080     |     |    port 3001     |     |  ports 6333/6334 |
++------------------+     +------------------+     +------------------+
+        |                        |                        |
+        v                        v                        v
+   Static files           /data volume              qdrant_data volume
+```
+
+#### Docker Compose Commands
+
+```bash
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f          # All services
+docker compose logs backend -f   # Backend only
+
+# Rebuild after code changes
+docker compose build backend
+docker compose up -d backend
+
+# Stop all services
+docker compose down
+
+# Reset data (fresh start)
+docker compose down
+docker volume rm mira_backend_data mira_qdrant_data
+docker compose up -d
+```
+
+#### Configuration
+
+Environment variables can be set in the root `.env` file:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GOOGLE_API_KEY` | Yes | - | Google API key for Gemini |
+| `RUST_LOG` | No | `info` | Log level (debug, info, warn, error) |
+
+The backend uses `backend/.env.docker` for additional configuration. The docker-compose.yml overrides database and Qdrant URLs for container networking.
+
+#### Persistent Data
+
+Data is stored in Docker volumes:
+- `mira_backend_data`: SQLite database (`/data/mira.db`)
+- `mira_qdrant_data`: Qdrant vector storage
+
+#### Building Images Manually
+
+```bash
+# Build backend
+cd backend
+docker build -t mira-backend .
+
+# Build frontend
+cd frontend
+docker build -t mira-frontend .
+```
+
+#### Notes
+
+- First startup runs database migrations automatically
+- Backend waits for Qdrant health check before starting
+- Frontend proxies `/ws` and `/api` to backend container
+
+### Qdrant Only (Development)
+
+For development, you may want to run only Qdrant in Docker while running backend/frontend natively:
+
+```bash
+# Start just Qdrant
+docker compose up -d qdrant
 
 # Verify Qdrant is running
 curl http://localhost:6333/health
 ```
-
-### Full Docker Deployment (Future)
-
-A full Docker deployment with backend/frontend containers is planned but not yet implemented.
 
 ---
 
