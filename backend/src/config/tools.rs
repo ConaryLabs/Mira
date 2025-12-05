@@ -8,9 +8,6 @@ use serde::{Deserialize, Serialize};
 pub struct ToolsConfig {
     pub enable_chat_tools: bool,
     pub enable_web_search: bool,
-    pub enable_code_interpreter: bool,
-    pub enable_file_search: bool,
-    pub enable_image_generation: bool,
     pub web_search_max_results: usize,
     pub timeout_seconds: u64,
     pub max_iterations: usize,
@@ -21,13 +18,6 @@ impl ToolsConfig {
         Self {
             enable_chat_tools: super::helpers::require_env_parsed("MIRA_ENABLE_CHAT_TOOLS"),
             enable_web_search: super::helpers::require_env_parsed("MIRA_ENABLE_WEB_SEARCH"),
-            enable_code_interpreter: super::helpers::require_env_parsed(
-                "MIRA_ENABLE_CODE_INTERPRETER",
-            ),
-            enable_file_search: super::helpers::require_env_parsed("MIRA_ENABLE_FILE_SEARCH"),
-            enable_image_generation: super::helpers::require_env_parsed(
-                "MIRA_ENABLE_IMAGE_GENERATION",
-            ),
             web_search_max_results: super::helpers::require_env_parsed(
                 "MIRA_WEB_SEARCH_MAX_RESULTS",
             ),
@@ -64,8 +54,6 @@ impl JsonConfig {
 pub struct ResponseConfig {
     pub max_output_tokens: usize,
     pub max_response_tokens: usize,
-    pub token_warning_threshold: usize,
-    pub input_token_warning: usize,
 }
 
 impl ResponseConfig {
@@ -73,8 +61,6 @@ impl ResponseConfig {
         Self {
             max_output_tokens: super::helpers::require_env_parsed("MAX_OUTPUT_TOKENS"),
             max_response_tokens: super::helpers::require_env_parsed("MIRA_MAX_RESPONSE_TOKENS"),
-            token_warning_threshold: super::helpers::require_env_parsed("TOKEN_WARNING_THRESHOLD"),
-            input_token_warning: super::helpers::require_env_parsed("INPUT_TOKEN_WARNING"),
         }
     }
 }

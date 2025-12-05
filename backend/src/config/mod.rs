@@ -36,9 +36,7 @@ pub struct MiraConfig {
     pub tools: tools::ToolsConfig,
     pub json: tools::JsonConfig,
     pub response: tools::ResponseConfig,
-    pub request_cache: caching::RequestCacheConfig,
     pub recent_cache: caching::RecentCacheConfig,
-    pub retry: caching::RetryConfig,
 
     // Flat field aliases for backward compatibility
     pub google_api_key: String,
@@ -80,9 +78,7 @@ impl MiraConfig {
         let tools = tools::ToolsConfig::from_env();
         let json = tools::JsonConfig::from_env();
         let response = tools::ResponseConfig::from_env();
-        let request_cache = caching::RequestCacheConfig::from_env();
         let recent_cache = caching::RecentCacheConfig::from_env();
-        let retry = caching::RetryConfig::from_env();
 
         Self {
             // Flat field aliases
@@ -120,9 +116,7 @@ impl MiraConfig {
             tools,
             json,
             response,
-            request_cache,
             recent_cache,
-            retry,
         }
     }
 

@@ -22,6 +22,33 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 35: 2025-12-05
+
+**Summary:** Configuration cleanup - removed unused env vars and config struct fields.
+
+**Key Outcomes:**
+- Removed 15+ unused environment variables from .env and .env.example
+- Cleaned up Rust config structs to match actual usage
+- Removed `RequestCacheConfig` and `RetryConfig` (loaded but never accessed)
+- Removed unused fields from `ToolsConfig`, `ResponseConfig`, `MemoryConfig`
+
+**Files Modified:**
+- `backend/.env.example` - Removed unused vars, now 210 lines (was 254)
+- `backend/src/config/tools.rs` - Removed `enable_code_interpreter`, `enable_file_search`, `enable_image_generation`, `token_warning_threshold`, `input_token_warning`
+- `backend/src/config/memory.rs` - Removed `rollup_every`, `history_message_cap`, `history_token_limit`, `max_retrieval_tokens`, `recent_message_limit`
+- `backend/src/config/caching.rs` - Removed entire `RequestCacheConfig` and `RetryConfig` structs
+- `backend/src/config/mod.rs` - Removed references to deleted configs
+- `backend/src/memory/core/config.rs` - Removed `rollup_every`
+
+**Removed Environment Variables:**
+- `TOKEN_WARNING_THRESHOLD`, `INPUT_TOKEN_WARNING` (superseded by context budget warnings)
+- `MIRA_HISTORY_MESSAGE_CAP`, `MIRA_HISTORY_TOKEN_LIMIT`, `MIRA_MAX_RETRIEVAL_TOKENS`, `MIRA_RECENT_MESSAGE_LIMIT`
+- `MEM_ROLLUP_EVERY`
+- `MIRA_ENABLE_CODE_INTERPRETER`, `MIRA_ENABLE_FILE_SEARCH`, `MIRA_ENABLE_IMAGE_GENERATION`
+- `MIRA_API_MAX_RETRIES`, `MIRA_API_RETRY_DELAY_MS`, `MIRA_ENABLE_REQUEST_CACHE`, `MIRA_CACHE_TTL_SECONDS`
+
+---
+
 ### Session 34: 2025-12-05
 
 **Summary:** Added current date/time to system context so LLM knows "today's date" without user mentioning it.

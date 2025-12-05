@@ -13,13 +13,9 @@ pub struct MemoryConfig {
     pub embed_min_chars: usize,
     pub dedup_sim_threshold: f32,
     pub salience_min_for_embed: f32,
-    pub rollup_every: usize,
     pub min_salience_for_qdrant: f32,
 
     // Context and retrieval
-    pub history_message_cap: usize,
-    pub history_token_limit: usize,
-    pub max_retrieval_tokens: usize,
     pub context_recent_messages: usize,
     pub context_semantic_matches: usize,
 
@@ -27,7 +23,6 @@ pub struct MemoryConfig {
     pub recall_recent: usize,
     pub recall_semantic: usize,
     pub recall_k_per_head: usize,
-    pub recent_message_limit: usize,
 
     // Embedding heads
     pub embed_heads: Vec<String>,
@@ -74,12 +69,8 @@ impl MemoryConfig {
             salience_min_for_embed: super::helpers::require_env_parsed(
                 "MEM_SALIENCE_MIN_FOR_EMBED",
             ),
-            rollup_every: super::helpers::require_env_parsed("MEM_ROLLUP_EVERY"),
             min_salience_for_qdrant: super::helpers::require_env_parsed("MIN_SALIENCE_FOR_QDRANT"),
 
-            history_message_cap: super::helpers::require_env_parsed("MIRA_HISTORY_MESSAGE_CAP"),
-            history_token_limit: super::helpers::require_env_parsed("MIRA_HISTORY_TOKEN_LIMIT"),
-            max_retrieval_tokens: super::helpers::require_env_parsed("MIRA_MAX_RETRIEVAL_TOKENS"),
             context_recent_messages: super::helpers::require_env_parsed(
                 "MIRA_CONTEXT_RECENT_MESSAGES",
             ),
@@ -90,7 +81,6 @@ impl MemoryConfig {
             recall_recent: super::helpers::require_env_parsed("MIRA_RECALL_RECENT"),
             recall_semantic: super::helpers::require_env_parsed("MIRA_RECALL_SEMANTIC"),
             recall_k_per_head: super::helpers::require_env_parsed("MIRA_RECALL_K_PER_HEAD"),
-            recent_message_limit: super::helpers::require_env_parsed("MIRA_RECENT_MESSAGE_LIMIT"),
 
             embed_heads,
             embed_code_from_chat: std::env::var("MIRA_EMBED_CODE_FROM_CHAT")

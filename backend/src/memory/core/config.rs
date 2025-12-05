@@ -5,8 +5,7 @@ pub struct MemoryConfig {
     pub always_embed_assistant: bool,
     pub embed_min_chars: usize,
     pub dedup_sim_threshold: f32,    // cosine similarity 0..1
-    pub salience_min_for_embed: f32, // FIXED: Changed from u8 to f32 (0.0-1.0 scale)
-    pub rollup_every: usize,         // reserved for your summarizer hook
+    pub salience_min_for_embed: f32, // 0.0-1.0 scale
 }
 
 impl Default for MemoryConfig {
@@ -26,11 +25,7 @@ impl Default for MemoryConfig {
             salience_min_for_embed: std::env::var("MEM_SALIENCE_MIN_FOR_EMBED")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(0.6), // FIXED: 0.6 instead of 6
-            rollup_every: std::env::var("MEM_ROLLUP_EVERY")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(50),
+                .unwrap_or(0.6),
         }
     }
 }
