@@ -24,6 +24,14 @@ Mira is an AI coding assistant powered by Google Gemini with variable thinking l
 - **Real-time Streaming** - WebSocket-based responses with cancellation support
 - **Project Context** - Attaches git repository context to conversations
 
+### Multiple Interfaces
+- **Web UI** - React frontend with Monaco editor and real-time streaming
+- **CLI** - Full-featured command-line interface with feature parity to web UI
+  - Interactive REPL with session management
+  - Streaming responses and sudo approval prompts
+  - Custom slash commands (`.mira/commands/`)
+  - Works in any terminal environment
+
 ### Production Ready
 - **Budget Tracking** - Daily/monthly spending limits with cost visibility
 - **Response Caching** - 80%+ cache hit rate for repeated queries
@@ -75,6 +83,20 @@ npm run dev
 
 # Access at http://localhost:5173
 ```
+
+### Using the CLI
+
+After building the backend, you can also use the CLI:
+
+```bash
+cd backend
+./target/release/mira
+
+# Or with cargo
+cargo run --bin mira
+```
+
+The CLI provides the same features as the web UI in your terminal.
 
 ## Architecture
 
