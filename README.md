@@ -50,13 +50,13 @@ mira/
 ├── backend/          # Rust backend
 │   ├── src/          # Source code
 │   │   ├── api/      # WebSocket handlers
+│   │   ├── cli/      # Command-line interface
 │   │   ├── operations/ # Operation engine
 │   │   ├── memory/   # Memory systems
 │   │   ├── llm/      # LLM providers (Gemini 3 Pro)
 │   │   └── git/      # Git integration + intelligence
 │   ├── tests/        # Integration tests (160+ tests)
-│   ├── migrations/   # Database migrations (9 migrations)
-│   └── README.md     # Detailed backend docs
+│   └── migrations/   # Database migrations (9 migrations)
 │
 └── frontend/         # React + TypeScript frontend
     ├── src/
@@ -117,7 +117,7 @@ mira/
 - **Real-time File Watching** - Automatic code intelligence updates on file changes
 - **Claude Code Feature Parity** - Slash commands, hooks, checkpoint/rewind, MCP support
 - **System Context Detection** - Platform-aware commands (detects OS, package manager, shell, tools)
-- **CLI Interface** - Full command-line interface with sudo approval prompts
+- **CLI Interface** - Full command-line interface with interactive REPL, session management, streaming output, and sudo approval prompts
 - **Time Awareness** - LLM knows current date/time without user mentioning it
 
 ### Production Features
@@ -303,7 +303,7 @@ cd frontend && npm test
 
 ## License
 
-Proprietary
+MIT License - see [LICENSE](./LICENSE) for details.
 
 ## Support
 
