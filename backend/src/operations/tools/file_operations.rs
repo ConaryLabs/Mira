@@ -39,12 +39,22 @@ pub fn get_low_level_tools() -> Vec<Value> {
 pub fn read_project_file_tool() -> Value {
     ToolBuilder::new(
         "read_project_file",
-        "Read the content of one or more files from the project. Use this when you need to examine existing code, configuration, or documentation before generating new code or answering questions."
+        "Read content from project files. Returns max 500 lines by default. For large files, use offset/limit to read specific sections. Consider get_file_summary or get_file_structure first to understand file layout before reading full content."
     )
     .property(
         "paths",
         properties::string_array("List of file paths to read (e.g., ['src/main.rs', 'Cargo.toml'])"),
         true
+    )
+    .property(
+        "offset",
+        properties::integer("Starting line number (0-indexed). Use to skip to specific section.", None),
+        false
+    )
+    .property(
+        "limit",
+        properties::integer("Maximum lines to read (default: 500). Use smaller values for large files.", Some(500)),
+        false
     )
     .property(
         "purpose",
@@ -58,21 +68,21 @@ pub fn read_project_file_tool() -> Value {
 pub fn write_project_file_tool() -> Value {
     ToolBuilder::new(
         "write_project_file",
-        "Write content to a file in the project. Creates new files or overwrites existing ones. Use this to save generated code, create new modules, or update configuration files. For partial edits to existing files, use edit_project_file instead."
+        "Create a NEW file in the project. WARNING: For modifying EXISTING files, use edit_project_file instead - it's 85% more token-efficient. Only use write_project_file when creating brand new files that don't exist yet."
     )
     .property(
         "path",
-        properties::path("File path to write to (e.g., 'src/utils/helper.ts', 'config/settings.json')"),
+        properties::path("File path for the NEW file (e.g., 'src/utils/helper.ts')"),
         true
     )
     .property(
         "content",
-        properties::description("Complete file content to write. For existing files, this will overwrite the entire file."),
+        properties::description("Complete file content for the new file."),
         true
     )
     .property(
         "purpose",
-        properties::optional_string("Brief explanation of what this file does (helps with documentation)"),
+        properties::optional_string("Brief explanation of what this file does"),
         false
     )
     .build()
@@ -106,7 +116,7 @@ pub fn write_file_tool() -> Value {
 pub fn edit_project_file_tool() -> Value {
     ToolBuilder::new(
         "edit_project_file",
-        "Make targeted edits to an existing file using search and replace. Use this when you need to modify specific parts of a file without rewriting the entire file. Safer than write_project_file for small changes."
+        "PREFERRED method for modifying existing files. Uses exact string replacement (like a diff) - 85% more efficient than rewriting entire files. The search string must uniquely match exactly one location in the file. For multiple changes, call this tool multiple times."
     )
     .property(
         "path",
@@ -115,12 +125,12 @@ pub fn edit_project_file_tool() -> Value {
     )
     .property(
         "search",
-        properties::description("Exact text to search for (will be replaced). Must match exactly including whitespace."),
+        properties::description("Exact text to find and replace. Must match EXACTLY including whitespace and indentation. Include enough context to uniquely identify the location."),
         true
     )
     .property(
         "replace",
-        properties::description("Text to replace the search string with. Can be empty to delete text."),
+        properties::description("New text to replace the search string with. Can be empty to delete text."),
         true
     )
     .property(

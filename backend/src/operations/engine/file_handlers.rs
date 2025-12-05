@@ -105,30 +105,136 @@ impl FileHandlers {
         }
     }
 
-    /// Read a file from the project directory
+    /// Read a file from the project directory with optional offset/limit
+    ///
+    /// Efficiency features (Claude Code patterns):
+    /// - Default limit of 500 lines (prevents context bloat)
+    /// - Offset support for reading specific sections
+    /// - Long lines truncated to 500 chars
+    /// - Shows truncation notice with instructions for getting more
     async fn read_file(&self, args: Value) -> Result<Value> {
+        const MAX_READ_LINES: usize = 500;
+        const MAX_LINE_LENGTH: usize = 500;
+        const PREVIEW_HEAD: usize = 100;
+        const PREVIEW_TAIL: usize = 50;
+
         let path = args
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
+        // Parse offset and limit (new params for efficiency)
+        let offset = args
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(MAX_READ_LINES);
+
         let full_path = self.resolve_path(path)?;
-        info!("Reading file: {}", full_path.display());
+        info!("Reading file: {} (offset={}, limit={})", full_path.display(), offset, limit);
 
         let content = fs::read_to_string(&full_path)
             .await
             .with_context(|| format!("Failed to read file: {}", full_path.display()))?;
 
-        let line_count = content.lines().count();
-        let char_count = content.len();
+        let total_lines = content.lines().count();
+        let total_chars = content.len();
 
-        Ok(json!({
+        // Apply offset and limit
+        let lines: Vec<&str> = content.lines().collect();
+        let mut truncated = false;
+        let mut truncation_message = String::new();
+
+        let result_content = if total_lines <= limit && offset == 0 {
+            // File fits within limit, return as-is (with long line truncation)
+            lines.iter()
+                .map(|line| {
+                    if line.len() > MAX_LINE_LENGTH {
+                        format!("{}... [line truncated, {} chars total]", &line[..MAX_LINE_LENGTH], line.len())
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else if offset > 0 || limit < total_lines {
+            // User specified offset/limit - return exactly that range
+            truncated = true;
+            let start = offset.min(total_lines);
+            let end = (offset + limit).min(total_lines);
+            truncation_message = format!(
+                "Showing lines {}-{} of {}. Use offset/limit to read other sections.",
+                start + 1, end, total_lines
+            );
+            lines[start..end]
+                .iter()
+                .map(|line| {
+                    if line.len() > MAX_LINE_LENGTH {
+                        format!("{}... [truncated]", &line[..MAX_LINE_LENGTH])
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            // File exceeds default limit - show head + tail with truncation notice
+            truncated = true;
+            let head: Vec<String> = lines[..PREVIEW_HEAD.min(total_lines)]
+                .iter()
+                .map(|line| {
+                    if line.len() > MAX_LINE_LENGTH {
+                        format!("{}... [truncated]", &line[..MAX_LINE_LENGTH])
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect();
+
+            let tail_start = total_lines.saturating_sub(PREVIEW_TAIL);
+            let tail: Vec<String> = lines[tail_start..]
+                .iter()
+                .map(|line| {
+                    if line.len() > MAX_LINE_LENGTH {
+                        format!("{}... [truncated]", &line[..MAX_LINE_LENGTH])
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect();
+
+            let omitted = total_lines - PREVIEW_HEAD - PREVIEW_TAIL;
+            truncation_message = format!(
+                "File has {} lines. Showing first {} and last {}. {} lines omitted. Use read_file with offset/limit for specific sections.",
+                total_lines, PREVIEW_HEAD, PREVIEW_TAIL, omitted
+            );
+
+            format!(
+                "{}\n\n[... {} lines omitted ...]\n\n{}",
+                head.join("\n"),
+                omitted,
+                tail.join("\n")
+            )
+        };
+
+        let mut result = json!({
             "success": true,
             "path": path,
-            "content": content,
-            "line_count": line_count,
-            "char_count": char_count
-        }))
+            "content": result_content,
+            "total_lines": total_lines,
+            "total_chars": total_chars
+        });
+
+        if truncated {
+            result["truncated"] = json!(true);
+            result["truncation_message"] = json!(truncation_message);
+        }
+
+        Ok(result)
     }
 
     /// Write content to a file in the project directory (or anywhere if unrestricted)
