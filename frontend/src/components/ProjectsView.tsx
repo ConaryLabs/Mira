@@ -2,12 +2,12 @@
 // REFACTORED: Extracted modals and operations into hooks
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, Github, Trash2, Clock, Tag, GitBranch, FileText, Settings } from 'lucide-react';
+import { FolderOpen, Folder, Github, Trash2, Clock, Tag, GitBranch, FileText, Settings } from 'lucide-react';
 import { useAppState } from '../stores/useAppState';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useProjectOperations } from '../hooks/useProjectOperations';
 import { useGitOperations } from '../hooks/useGitOperations';
-import { CreateProjectModal } from './CreateProjectModal';
+import { OpenDirectoryModal } from './OpenDirectoryModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { DocumentsModal } from './documents';
 import { CodebaseAttachModal } from './CodebaseAttachModal';
@@ -20,18 +20,18 @@ export const ProjectsView: React.FC = () => {
 
   // Custom hooks for operations
   const {
-    createProject,
+    openDirectory,
     deleteProject,
     selectProject,
     refreshProjects,
-    creating,
+    opening,
     deleting,
   } = useProjectOperations();
 
   const { attachCodebase, isAttaching } = useGitOperations();
 
   // Modal state
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showOpenModal, setShowOpenModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [attachTarget, setAttachTarget] = useState<string | null>(null);
   const [showDocuments, setShowDocuments] = useState(false);
@@ -132,11 +132,11 @@ export const ProjectsView: React.FC = () => {
               </button>
             )}
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => setShowOpenModal(true)}
               className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors text-sm"
             >
-              <Plus size={16} />
-              New Project
+              <FolderOpen size={16} />
+              Open Directory
             </button>
           </div>
         </div>
@@ -149,14 +149,14 @@ export const ProjectsView: React.FC = () => {
             <Folder size={64} className="text-gray-400 dark:text-slate-600 mb-4" />
             <h3 className="text-lg font-medium text-gray-500 dark:text-slate-400 mb-2">No Projects Yet</h3>
             <p className="text-sm text-gray-400 dark:text-slate-500 mb-4 max-w-md">
-              Create your first project to get started with Mira
+              Open a directory to get started with Mira
             </p>
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => setShowOpenModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
             >
-              <Plus size={18} />
-              Create Project
+              <FolderOpen size={18} />
+              Open Directory
             </button>
           </div>
         ) : (
@@ -250,11 +250,11 @@ export const ProjectsView: React.FC = () => {
       </div>
 
       {/* Modals */}
-      <CreateProjectModal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onCreate={createProject}
-        creating={creating}
+      <OpenDirectoryModal
+        isOpen={showOpenModal}
+        onClose={() => setShowOpenModal(false)}
+        onOpen={openDirectory}
+        opening={opening}
       />
 
       <DeleteConfirmModal

@@ -327,6 +327,7 @@ impl AppState {
             Some(guidelines_service.clone()),
             Some(hook_manager.clone()),
             Some(checkpoint_manager.clone()),
+            Some(project_store.clone()),
         ));
 
         // Initialize authentication service

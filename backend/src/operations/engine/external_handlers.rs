@@ -337,7 +337,15 @@ impl ExternalHandlers {
         let working_dir = args
             .get("working_directory")
             .and_then(|v| v.as_str())
-            .map(|s| self.project_dir.join(s))
+            .map(|s| {
+                let path = PathBuf::from(s);
+                // Use absolute paths directly, otherwise join with project_dir
+                if path.is_absolute() {
+                    path
+                } else {
+                    self.project_dir.join(s)
+                }
+            })
             .unwrap_or_else(|| self.project_dir.clone());
 
         let timeout_secs = args

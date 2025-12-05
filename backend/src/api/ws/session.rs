@@ -381,16 +381,37 @@ pub async fn handle_session_command(
             let req: CreateSessionRequest = serde_json::from_value(params)
                 .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
 
-            let session = create_session(pool, req.name, req.project_path, req.user_id)
+            // Auto-provision project from path if provided
+            let project_id = if let Some(ref path) = req.project_path {
+                match app_state
+                    .project_store
+                    .get_or_create_by_path(path, req.user_id.clone())
+                    .await
+                {
+                    Ok(project) => {
+                        info!("Auto-provisioned project {} for path: {}", project.id, path);
+                        Some(project.id)
+                    }
+                    Err(e) => {
+                        info!("Could not auto-provision project for path {}: {}", path, e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let session = create_session(pool, req.name, req.project_path.clone(), req.user_id)
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to create session: {}", e)))?;
 
-            info!("Created session {}", session.id);
+            info!("Created session {} (project_id: {:?})", session.id, project_id);
 
             Ok(WsServerMessage::Data {
                 data: json!({
                     "type": "session_created",
-                    "session": session
+                    "session": session,
+                    "project_id": project_id
                 }),
                 request_id: None,
             })

@@ -6,6 +6,7 @@ pub mod types;
 
 // Re-export for easy use elsewhere
 pub use guidelines::{ProjectGuidelines, ProjectGuidelinesService};
+pub use store::ProjectStore;
 pub use tasks::{
     NewProjectTask, ProjectTask, ProjectTaskService, ProjectTaskStatus, TaskContext, TaskPriority,
     TaskSession,

@@ -22,8 +22,14 @@ use crate::{
 #[derive(Debug, Deserialize)]
 struct CreateProjectRequest {
     name: String,
+    path: String,
     description: Option<String>,
     tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenDirectoryRequest {
+    path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,10 +131,15 @@ pub async fn handle_project_command(
                 return Err(ApiError::bad_request("Project name cannot be empty"));
             }
 
+            if req.path.trim().is_empty() {
+                return Err(ApiError::bad_request("Project path cannot be empty"));
+            }
+
             let project = app_state
                 .project_store
                 .create_project(
                     req.name,
+                    req.path,
                     req.description,
                     req.tags,
                     Some("peter".to_string()),
@@ -141,6 +152,8 @@ pub async fn handle_project_command(
                 request_id: None,
             })
         }
+
+        "project.open_directory" => open_directory(params, app_state).await,
 
         "project.list" => {
             let projects = app_state
@@ -356,6 +369,138 @@ pub async fn handle_project_command(
     }
 
     result
+}
+
+// ============================================================================
+// OPEN DIRECTORY - Claude Code style project opening
+// ============================================================================
+
+/// Open a directory as a project (get-or-create pattern)
+/// This is the primary way to work with projects - provide a directory path
+/// and Mira will auto-create the project if it doesn't exist.
+async fn open_directory(params: Value, app_state: Arc<AppState>) -> ApiResult<WsServerMessage> {
+    info!("Opening directory as project");
+
+    let req: OpenDirectoryRequest = serde_json::from_value(params)
+        .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+    if req.path.trim().is_empty() {
+        return Err(ApiError::bad_request("Directory path cannot be empty"));
+    }
+
+    // Validate path exists and is a directory
+    let path = std::path::Path::new(&req.path);
+    if !path.exists() {
+        return Err(ApiError::bad_request(format!(
+            "Directory does not exist: {}",
+            req.path
+        )));
+    }
+    if !path.is_dir() {
+        return Err(ApiError::bad_request(format!(
+            "Path is not a directory: {}",
+            req.path
+        )));
+    }
+
+    // Block system directories for security
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| ApiError::bad_request(format!("Invalid path: {}", e)))?;
+    let path_str = canonical.to_string_lossy();
+
+    let blocked = ["/", "/etc", "/usr", "/bin", "/var", "/sbin", "/lib", "/boot"];
+    if blocked.contains(&path_str.as_ref()) {
+        return Err(ApiError::bad_request(
+            "System directories are not allowed as project roots",
+        ));
+    }
+
+    // Get or create project by path
+    let project = app_state
+        .project_store
+        .get_or_create_by_path(&req.path, Some("peter".to_string()))
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to open directory: {}", e)))?;
+
+    // Check if project already has a local directory attachment
+    let attachments = app_state
+        .git_client
+        .store
+        .list_project_attachments(&project.id)
+        .await
+        .unwrap_or_default();
+
+    // Local directories have empty repo_url
+    let has_local_attachment = attachments.iter().any(|a| a.repo_url.is_empty());
+
+    // Auto-attach local directory if not already attached
+    if !has_local_attachment {
+        if let Err(e) = app_state
+            .git_client
+            .store
+            .attach_local_directory(&project.id, &project.path)
+            .await
+        {
+            error!(
+                "Failed to auto-attach local directory for project {}: {}",
+                project.id, e
+            );
+            // Don't fail - project was created, attachment can be retried
+        } else {
+            info!(
+                "Auto-attached local directory for project {}: {}",
+                project.id, project.path
+            );
+        }
+    }
+
+    // Detect project characteristics
+    let detected = detect_project_info(&project.path);
+
+    info!(
+        "Opened project '{}' at path: {}",
+        project.name, project.path
+    );
+
+    Ok(WsServerMessage::Data {
+        data: json!({
+            "type": "directory_opened",
+            "project": project_to_json(&project),
+            "detected": detected
+        }),
+        request_id: None,
+    })
+}
+
+/// Detect project characteristics (git, MIRA.md, CLAUDE.md, etc.)
+fn detect_project_info(path: &str) -> serde_json::Value {
+    let path = std::path::Path::new(path);
+
+    let has_git = path.join(".git").exists();
+    let has_mira_md = path.join("MIRA.md").exists();
+    let has_claude_md = path.join("CLAUDE.md").exists();
+    let has_package_json = path.join("package.json").exists();
+    let has_cargo_toml = path.join("Cargo.toml").exists();
+    let has_pyproject_toml = path.join("pyproject.toml").exists();
+    let has_go_mod = path.join("go.mod").exists();
+
+    json!({
+        "is_git_repo": has_git,
+        "has_mira_md": has_mira_md,
+        "has_claude_md": has_claude_md,
+        "project_type": if has_cargo_toml {
+            "rust"
+        } else if has_package_json {
+            "node"
+        } else if has_pyproject_toml {
+            "python"
+        } else if has_go_mod {
+            "go"
+        } else {
+            "unknown"
+        }
+    })
 }
 
 // ============================================================================

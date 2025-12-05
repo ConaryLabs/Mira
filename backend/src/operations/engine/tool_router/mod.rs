@@ -16,7 +16,7 @@ use tracing::info;
 use crate::llm::provider::Gemini3Provider;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::project::guidelines::ProjectGuidelinesService;
-use crate::project::ProjectTaskService;
+use crate::project::{ProjectStore, ProjectTaskService};
 use crate::sudo::SudoPermissionService;
 use super::{
     code_handlers::CodeHandlers, external_handlers::ExternalHandlers,
@@ -34,6 +34,7 @@ pub struct ToolRouter {
     code_handlers: CodeHandlers,
     project_task_service: Option<Arc<ProjectTaskService>>,
     guidelines_service: Option<Arc<ProjectGuidelinesService>>,
+    project_store: Option<Arc<ProjectStore>>,
     registry: ToolRegistry,
 }
 
@@ -60,6 +61,7 @@ impl ToolRouter {
             code_handlers: CodeHandlers::new(code_intelligence),
             project_task_service: None,
             guidelines_service: None,
+            project_store: None,
             registry: ToolRegistry::new(),
         }
     }
@@ -67,6 +69,12 @@ impl ToolRouter {
     /// Set the project task service for task management
     pub fn with_project_task_service(mut self, service: Arc<ProjectTaskService>) -> Self {
         self.project_task_service = Some(service);
+        self
+    }
+
+    /// Set the project store for dynamic path resolution
+    pub fn with_project_store(mut self, store: Arc<ProjectStore>) -> Self {
+        self.project_store = Some(store);
         self
     }
 
@@ -161,8 +169,54 @@ impl ToolRouter {
             _ => {}
         }
 
+        // For external handlers (command execution), inject project path as working directory
+        if let Some(route) = self.registry.get_route(tool_name) {
+            if matches!(route.handler_type, HandlerType::External) {
+                let enhanced_args = self.inject_project_path(arguments, project_id).await;
+                return self.execute_registered_route(route, enhanced_args).await;
+            }
+        }
+
         // Delegate to regular routing for other tools
         self.route_tool_call(tool_name, arguments).await
+    }
+
+    /// Inject project path into arguments for external tools
+    async fn inject_project_path(&self, mut arguments: Value, project_id: Option<&str>) -> Value {
+        // Only inject if we have a project_id and project_store
+        if let (Some(pid), Some(store)) = (project_id, &self.project_store) {
+            // Look up project path
+            match store.get_project(pid).await {
+                Ok(Some(project)) => {
+                    // Only inject if working_directory not already specified
+                    if arguments.get("working_directory").is_none() {
+                        if let Some(obj) = arguments.as_object_mut() {
+                            obj.insert(
+                                "working_directory".to_string(),
+                                serde_json::Value::String(project.path.clone()),
+                            );
+                            info!(
+                                "[ROUTER] Injected project path as working_directory: {}",
+                                project.path
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {
+                    info!(
+                        "[ROUTER] Project {} not found, using default working directory",
+                        pid
+                    );
+                }
+                Err(e) => {
+                    info!(
+                        "[ROUTER] Failed to look up project {}: {}, using default",
+                        pid, e
+                    );
+                }
+            }
+        }
+        arguments
     }
 
     /// Execute a route from the registry

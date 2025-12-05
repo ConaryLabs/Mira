@@ -5,7 +5,9 @@
 pub mod stream;
 
 use crate::operations::{OperationEngine, OperationEngineEvent};
+use crate::project::ProjectStore;
 use anyhow::Result;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -14,13 +16,17 @@ use tokio_util::sync::CancellationToken;
 /// Manages active operations and their cancellation tokens
 pub struct OperationManager {
     engine: Arc<OperationEngine>,
+    pool: SqlitePool,
+    project_store: Arc<ProjectStore>,
     active_operations: Arc<tokio::sync::RwLock<HashMap<String, CancellationToken>>>,
 }
 
 impl OperationManager {
-    pub fn new(engine: Arc<OperationEngine>) -> Self {
+    pub fn new(engine: Arc<OperationEngine>, pool: SqlitePool, project_store: Arc<ProjectStore>) -> Self {
         Self {
             engine,
+            pool,
+            project_store,
             active_operations: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
@@ -33,6 +39,9 @@ impl OperationManager {
         message: String,
         ws_tx: mpsc::Sender<serde_json::Value>,
     ) -> Result<String> {
+        // Look up session to get project_path, then resolve to project_id
+        let project_id = self.resolve_project_id(&session_id).await;
+
         // 1. Create operation
         let op = self
             .engine
@@ -62,7 +71,6 @@ impl OperationManager {
         });
 
         // 5. Spawn operation task
-        // PHASE 8: Call new run_operation signature with session_id and user_content
         let engine = self.engine.clone();
         let op_id = op.id.clone();
         let session = session_id.clone();
@@ -71,14 +79,13 @@ impl OperationManager {
         let active_ops = self.active_operations.clone();
 
         tokio::spawn(async move {
-            // PHASE 8: New signature - passes session_id, user_content directly
-            // Engine will handle context loading and message storage internally
+            // Pass project_id for dynamic working directory resolution
             let result = engine
                 .run_operation(
                     &op_id,
                     &session,
                     &user_message,
-                    None, // No project_id for now
+                    project_id.as_deref(),
                     Some(cancel),
                     &event_tx,
                 )
@@ -98,6 +105,39 @@ impl OperationManager {
         });
 
         Ok(op.id)
+    }
+
+    /// Resolve project_id from session's project_path
+    async fn resolve_project_id(&self, session_id: &str) -> Option<String> {
+        // Look up session to get project_path
+        let session_result: Result<Option<(Option<String>,)>, _> = sqlx::query_as(
+            "SELECT project_path FROM chat_sessions WHERE id = ?"
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await;
+
+        if let Ok(Some((Some(project_path),))) = session_result {
+            // Look up or create project by path
+            match self.project_store.get_or_create_by_path(&project_path, None).await {
+                Ok(project) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        project_id = %project.id,
+                        "Resolved project from session path"
+                    );
+                    return Some(project.id);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        error = %e,
+                        "Could not resolve project from session path"
+                    );
+                }
+            }
+        }
+        None
     }
 
     /// Cancel an active operation

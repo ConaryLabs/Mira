@@ -22,6 +22,7 @@ impl ProjectStore {
     pub async fn create_project(
         &self,
         name: String,
+        path: String,
         description: Option<String>,
         tags: Option<Vec<String>>,
         owner: Option<String>,
@@ -34,23 +35,25 @@ impl ProjectStore {
 
         sqlx::query(
             r#"
-            INSERT INTO projects (id, name, description, tags, owner, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO projects (id, name, path, description, tags, owner_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(&name)
+        .bind(&path)
         .bind(&description)
         .bind(&tags_json)
         .bind(&owner)
-        .bind(now.naive_utc())
-        .bind(now.naive_utc())
+        .bind(now.timestamp())
+        .bind(now.timestamp())
         .execute(&self.pool)
         .await?;
 
         Ok(Project {
             id,
             name,
+            path,
             description,
             tags,
             owner,
@@ -62,7 +65,7 @@ impl ProjectStore {
     pub async fn get_project(&self, id: &str) -> Result<Option<Project>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, tags, owner, created_at, updated_at
+            SELECT id, name, path, description, tags, owner_id, created_at, updated_at
             FROM projects
             WHERE id = ?
             "#,
@@ -77,10 +80,55 @@ impl ProjectStore {
         }
     }
 
+    pub async fn get_project_by_path(&self, path: &str) -> Result<Option<Project>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, path, description, tags, owner_id, created_at, updated_at
+            FROM projects
+            WHERE path = ?
+            "#,
+        )
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(self.row_to_project(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn get_or_create_by_path(
+        &self,
+        path: &str,
+        owner: Option<String>,
+    ) -> Result<Project> {
+        // Canonicalize path
+        let canonical = std::fs::canonicalize(path)
+            .map_err(|e| anyhow::anyhow!("Invalid path '{}': {}", path, e))?;
+        let path_str = canonical.to_string_lossy().to_string();
+
+        // Check for existing project
+        if let Some(project) = self.get_project_by_path(&path_str).await? {
+            info!("Found existing project for path: {}", path_str);
+            return Ok(project);
+        }
+
+        // Create new project using directory name as project name
+        let dir_name = canonical
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed-project".to_string());
+
+        info!("Creating new project '{}' for path: {}", dir_name, path_str);
+        self.create_project(dir_name, path_str, None, None, owner)
+            .await
+    }
+
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, name, description, tags, owner, created_at, updated_at
+            SELECT id, name, path, description, tags, owner_id, created_at, updated_at
             FROM projects
             ORDER BY updated_at DESC
             "#,
@@ -343,11 +391,12 @@ impl ProjectStore {
     fn row_to_project(&self, row: sqlx::sqlite::SqliteRow) -> Result<Project> {
         let id: String = row.get("id");
         let name: String = row.get("name");
+        let path: String = row.get("path");
         let description: Option<String> = row.get("description");
         let tags_json: Option<String> = row.get("tags");
-        let owner: Option<String> = row.get("owner");
-        let created_at: NaiveDateTime = row.get("created_at");
-        let updated_at: NaiveDateTime = row.get("updated_at");
+        let owner: Option<String> = row.get("owner_id");
+        let created_at: i64 = row.get("created_at");
+        let updated_at: i64 = row.get("updated_at");
 
         let tags = tags_json
             .as_ref()
@@ -356,11 +405,12 @@ impl ProjectStore {
         Ok(Project {
             id,
             name,
+            path,
             description,
             tags,
             owner,
-            created_at: Utc.from_utc_datetime(&created_at),
-            updated_at: Utc.from_utc_datetime(&updated_at),
+            created_at: Utc.timestamp_opt(created_at, 0).unwrap(),
+            updated_at: Utc.timestamp_opt(updated_at, 0).unwrap(),
         })
     }
 

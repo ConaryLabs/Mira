@@ -10,7 +10,7 @@ export const useProjectOperations = () => {
   const { currentProject, setCurrentProject, addToast } = useAppState();
   const { send } = useWebSocketStore();
 
-  const [creating, setCreating] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const refreshProjects = useCallback(() => {
@@ -21,13 +21,44 @@ export const useProjectOperations = () => {
     });
   }, [send]);
 
+  const openDirectory = useCallback(async (path: string) => {
+    if (!path.trim()) {
+      addToast({ message: 'Directory path is required', type: 'error' });
+      return false;
+    }
+
+    setOpening(true);
+    try {
+      await send({
+        type: 'project_command',
+        method: 'project.open_directory',
+        params: {
+          path: path.trim()
+        }
+      });
+
+      const dirName = path.split('/').pop() || path;
+      addToast({ message: `Opened project: ${dirName}`, type: 'success' });
+
+      // Refresh project list
+      setTimeout(refreshProjects, 100);
+      return true;
+    } catch (error) {
+      console.error('Open directory failed:', error);
+      addToast({ message: 'Failed to open directory', type: 'error' });
+      return false;
+    } finally {
+      setOpening(false);
+    }
+  }, [send, addToast, refreshProjects]);
+
   const createProject = useCallback(async (name: string, description?: string) => {
     if (!name.trim()) {
       addToast({ message: 'Project name is required', type: 'error' });
       return false;
     }
 
-    setCreating(true);
+    setOpening(true);
     try {
       await send({
         type: 'project_command',
@@ -48,7 +79,7 @@ export const useProjectOperations = () => {
       addToast({ message: 'Failed to create project', type: 'error' });
       return false;
     } finally {
-      setCreating(false);
+      setOpening(false);
     }
   }, [send, addToast, refreshProjects]);
 
@@ -85,11 +116,12 @@ export const useProjectOperations = () => {
   }, [setCurrentProject]);
 
   return {
+    openDirectory,
     createProject,
     deleteProject,
     selectProject,
     refreshProjects,
-    creating,
+    opening,
     deleting,
   };
 };
