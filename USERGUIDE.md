@@ -22,7 +22,7 @@ A comprehensive guide for users and developers of the Mira AI coding assistant.
 
 ## Introduction
 
-Mira is an AI-powered coding assistant that combines GPT 5.1 with a hybrid memory system (SQLite + Qdrant vector database) for intelligent, context-aware code assistance. Key capabilities include:
+Mira is an AI-powered coding assistant that combines Gemini 3 Pro with a hybrid memory system (SQLite + Qdrant vector database) for intelligent, context-aware code assistance. Key capabilities include:
 
 - **Conversational Coding**: Chat with an AI that understands your codebase
 - **Code Intelligence**: Semantic search, complexity analysis, and pattern detection
@@ -43,8 +43,8 @@ Backend (Rust + Axum)
         |
    +----+----+----+
    |         |    |
-SQLite   Qdrant  GPT 5.1
-(50 tbl) (3 coll) (OpenAI)
+SQLite   Qdrant  Gemini 3 Pro
+(50 tbl) (3 coll) (Google)
 ```
 
 ---
@@ -59,7 +59,7 @@ SQLite   Qdrant  GPT 5.1
 | Node.js | 18+ | Frontend |
 | SQLite | 3.35+ | Structured storage |
 | Qdrant | 1.16+ | Vector embeddings |
-| OpenAI API Key | - | GPT 5.1 + embeddings |
+| Google API Key | - | Gemini 3 Pro + embeddings |
 
 ### Installation
 
@@ -81,7 +81,7 @@ cd backend
 
 # Configure environment
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY=sk-your-key
+# Edit .env and set GOOGLE_API_KEY=your-google-api-key
 
 # Build and run migrations
 cargo build
@@ -1128,13 +1128,13 @@ Key settings in `backend/.env`:
 #### LLM Configuration
 
 ```bash
-# OpenAI API key (required)
-OPENAI_API_KEY=sk-proj-your-key-here
+# Google API key (required)
+GOOGLE_API_KEY=your-google-api-key
 
 # Model settings
-GPT5_MODEL=gpt-5.1
-GPT5_REASONING_DEFAULT=medium  # low, medium, high
-OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+GEMINI_MODEL=gemini-3-pro-preview
+GEMINI_THINKING_LEVEL=high  # low, high
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 ```
 
 #### Budget Management
@@ -1189,17 +1189,16 @@ MIRA_SUMMARIZE_AFTER_MESSAGES=20
 MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT=true
 ```
 
-### Reasoning Effort Levels
+### Thinking Levels
 
-GPT 5.1 supports variable reasoning effort:
+Gemini 3 Pro supports variable thinking levels:
 
 | Level | Use Case | Cost |
 |-------|----------|------|
-| `low` (minimum) | Simple queries, quick answers | Lowest |
-| `medium` | General coding tasks | Moderate |
-| `high` | Complex planning, architecture | Highest |
+| `low` | Simple queries, quick answers | Lower |
+| `high` | Complex planning, architecture | Higher |
 
-Mira automatically selects reasoning effort based on task complexity.
+Mira automatically selects thinking level based on task complexity.
 
 ### Qdrant Configuration
 
@@ -1234,7 +1233,7 @@ kill -9 <PID>
 
 **Missing API key:**
 ```
-Error: OPENAI_API_KEY not set
+Error: GOOGLE_API_KEY not set
 ```
 Ensure `.env` file exists with valid key.
 
@@ -1319,4 +1318,4 @@ curl http://localhost:6333/collections
 
 ---
 
-*Last updated: 2025-12-03*
+*Last updated: 2025-12-05*

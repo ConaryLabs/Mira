@@ -22,6 +22,23 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 34: 2025-12-05
+
+**Summary:** Added current date/time to system context so LLM knows "today's date" without user mentioning it.
+
+**Key Outcomes:**
+- LLM now receives current timestamp in system context prompt
+- Uses `chrono::Local::now()` with timezone-aware formatting
+- Format: "Thursday, December 05, 2025 at 08:22 PM (PST)"
+
+**Files Modified:**
+- `backend/src/prompt/context.rs` - Added current time to `add_system_context()`
+
+**Git Commits:**
+- `f3b9c61` - Feat: Add current date/time to system context for LLM time awareness
+
+---
+
 ### Session 33: 2025-12-05
 
 **Summary:** Added system context gathering for platform-aware LLM commands, CLI sudo approval support, and feature parity documentation.

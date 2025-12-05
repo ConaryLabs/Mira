@@ -169,7 +169,23 @@ npm run dev
 - `src/build/` - Build system integration, error tracking, fix learning
 - `src/patterns/` - Reasoning pattern storage and replay
 - `src/relationship/` - User context and fact storage
+- `src/system/` - System environment detection (OS, package manager, shell, tools)
+- `src/prompt/` - Prompt building with system context, memory, and code intelligence
 - `src/api/ws/chat/` - Chat routing and connection management
+
+**System Context** (`src/system/`):
+- Detects OS (Linux distro from /etc/os-release, macOS via sw_vers, Windows)
+- Identifies primary package manager (apt, brew, dnf, pacman, etc.)
+- Detects shell (bash, zsh, fish, etc.)
+- Scans for available CLI tools (git, docker, node, cargo, python, etc.)
+- Cached at startup via lazy_static for zero-cost runtime access
+- Injected into prompts so LLM uses platform-appropriate commands
+
+**Time Awareness**:
+- Current date/time injected into system context at prompt build time
+- Uses `chrono::Local::now()` with system timezone
+- Format: "Thursday, December 05, 2025 at 08:22 PM (PST)"
+- LLM knows current date without user mentioning it
 
 **Operation Lifecycle:**
 ```
