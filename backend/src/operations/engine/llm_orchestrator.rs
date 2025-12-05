@@ -107,7 +107,7 @@ impl LlmOrchestrator {
             let cost = if from_cache {
                 0.0
             } else {
-                Gemini3Pricing::calculate_cost(tokens_input, tokens_output)
+                Gemini3Pricing::calculate_cost_auto(tokens_input, tokens_output)
             };
 
             tracker
@@ -238,7 +238,7 @@ impl LlmOrchestrator {
             }
         };
 
-        let cost = Gemini3Pricing::calculate_cost(response.tokens_input, response.tokens_output);
+        let cost = Gemini3Pricing::calculate_cost_auto(response.tokens_input, response.tokens_output);
 
         if let Err(e) = cache
             .put(
@@ -452,7 +452,7 @@ impl LlmOrchestrator {
         let actual_cost = if total_from_cache {
             0.0
         } else {
-            Gemini3Pricing::calculate_cost(total_tokens_input, total_tokens_output)
+            Gemini3Pricing::calculate_cost_auto(total_tokens_input, total_tokens_output)
         };
 
         let total_duration = start_time.elapsed();
