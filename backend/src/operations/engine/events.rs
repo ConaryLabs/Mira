@@ -155,4 +155,14 @@ pub enum OperationEngineEvent {
         cost_usd: f64,
         from_cache: bool,
     },
+    /// Thinking status - shows what the AI is currently doing
+    /// Similar to Claude Code's "Opus thinking..." status line
+    Thinking {
+        operation_id: String,
+        status: String,              // "gathering_context", "thinking", "executing_tool"
+        message: String,             // Human-readable status like "Thinking..."
+        tokens_in: i64,              // Cumulative input tokens so far
+        tokens_out: i64,             // Cumulative output tokens so far
+        active_tool: Option<String>, // Currently executing tool (if any)
+    },
 }

@@ -331,6 +331,18 @@ impl LlmOrchestrator {
                 "LLM iteration"
             );
 
+            // Emit thinking status before LLM call
+            let _ = event_tx
+                .send(OperationEngineEvent::Thinking {
+                    operation_id: operation_id.to_string(),
+                    status: "thinking".to_string(),
+                    message: "Thinking...".to_string(),
+                    tokens_in: total_tokens_input,
+                    tokens_out: total_tokens_output,
+                    active_tool: None,
+                })
+                .await;
+
             // Try cache first
             let (response, from_cache) = if let Some(cached) =
                 self.try_cache_get(&messages, &tools).await
@@ -461,6 +473,18 @@ impl LlmOrchestrator {
 
             // Execute tools and collect results
             for tool_call in response.tool_calls {
+                // Emit thinking status for tool execution
+                let _ = event_tx
+                    .send(OperationEngineEvent::Thinking {
+                        operation_id: operation_id.to_string(),
+                        status: "executing_tool".to_string(),
+                        message: format!("Running {}...", tool_call.name),
+                        tokens_in: total_tokens_input,
+                        tokens_out: total_tokens_output,
+                        active_tool: Some(tool_call.name.clone()),
+                    })
+                    .await;
+
                 let tool_start = Instant::now();
                 let result = self.execute_tool(operation_id, &tool_call, project_id, session_id, event_tx).await?;
                 debug!(

@@ -8,7 +8,7 @@ import { useActivityStore } from '../stores/useActivityStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { useSudoStore } from '../stores/useSudoStore';
-import { useUsageStore, PricingTier, WarningLevel } from '../stores/useUsageStore';
+import { useUsageStore, PricingTier, WarningLevel, ThinkingStatusType } from '../stores/useUsageStore';
 import { createArtifact, extractArtifacts } from '../utils/artifact';
 
 export const useWebSocketMessageHandler = () => {
@@ -153,6 +153,9 @@ export const useWebSocketMessageHandler = () => {
 
         // End streaming (this adds the message)
         endStreaming();
+
+        // Clear thinking status
+        useUsageStore.getState().clearThinkingStatus();
 
         // Artifacts should already be added via operation.artifact_completed
         // But if they're in the final message, add them too
@@ -436,6 +439,20 @@ export const useWebSocketMessageHandler = () => {
           message: data.message,
           tokensInput: data.tokens_input,
           threshold: data.threshold,
+          timestamp: data.timestamp || Date.now(),
+        });
+        return;
+      }
+
+      case 'operation.thinking': {
+        console.log('[WS-Global] Thinking status:', data.status, data.message);
+        useUsageStore.getState().setThinkingStatus({
+          operationId: data.operation_id,
+          status: data.status as ThinkingStatusType,
+          message: data.message,
+          tokensIn: data.tokens_in || 0,
+          tokensOut: data.tokens_out || 0,
+          activeTool: data.active_tool || null,
           timestamp: data.timestamp || Date.now(),
         });
         return;

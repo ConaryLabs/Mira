@@ -203,6 +203,24 @@ impl StreamingDisplay {
             OperationEvent::TaskCompleted { task_id, .. } => {
                 println!("  [x] {} completed", truncate(task_id, 8));
             }
+            OperationEvent::Thinking {
+                message,
+                tokens_in,
+                tokens_out,
+                active_tool,
+                ..
+            } => {
+                // Update spinner with thinking status and token count
+                let tokens_total = tokens_in + tokens_out;
+                let status_msg = if let Some(tool) = active_tool {
+                    format!("{} ({})", message, tool)
+                } else if tokens_total > 0 {
+                    format!("{} [{} tokens]", message, tokens_total)
+                } else {
+                    message.clone()
+                };
+                self.terminal.update_spinner(&status_msg);
+            }
             _ => {}
         }
         Ok(())
