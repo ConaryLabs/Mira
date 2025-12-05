@@ -96,7 +96,7 @@ cd backend
 cargo run --bin mira
 ```
 
-The CLI provides the same features as the web UI in your terminal.
+The CLI provides the same features as the web UI in your terminal. See [CLI.md](./CLI.md) for the full command reference.
 
 ## Architecture
 
@@ -142,6 +142,7 @@ See `backend/.env.example` for all options.
 
 | Document | Description |
 |----------|-------------|
+| [CLI.md](./CLI.md) | CLI cheat sheet and reference |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Deployment guide (Docker, systemd, nginx) |
 | [USERGUIDE.md](./USERGUIDE.md) | User and developer guide |
 | [CLAUDE.md](./CLAUDE.md) | Guide for AI assistants |
