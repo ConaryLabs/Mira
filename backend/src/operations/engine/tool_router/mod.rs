@@ -177,6 +177,14 @@ impl ToolRouter {
             }
         }
 
+        // Set file handler's project directory if we have a project_id
+        // This allows file operations to use the project's root path
+        if let (Some(pid), Some(store)) = (project_id, &self.project_store) {
+            if let Ok(Some(project)) = store.get_project(pid).await {
+                self.file_handlers.set_project_dir(PathBuf::from(&project.path));
+            }
+        }
+
         // Delegate to regular routing for other tools
         self.route_tool_call(tool_name, arguments).await
     }
