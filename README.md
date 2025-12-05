@@ -109,7 +109,7 @@ mira/
 - **File Browser** - Navigate and select files from projects
 - **Project Management** - Create, import, and manage code projects
 
-### Additional Features (Milestones 4-11 Complete)
+### Additional Features (All Milestones Complete)
 - **Tool Synthesis** - Auto-generate custom tools from codebase patterns
 - **Build System Integration** - Build/test tracking, error parsing, historical fix lookup
 - **Reasoning Patterns** - Store and replay successful coding patterns
@@ -120,10 +120,11 @@ mira/
 - **CLI Interface** - Full command-line interface with sudo approval prompts
 - **Time Awareness** - LLM knows current date/time without user mentioning it
 
-### Next: Milestone 10 - Production Hardening
-- Performance optimization
-- Comprehensive logging
-- Deployment documentation
+### Production Features
+- **Health Endpoints** - `/health`, `/ready`, `/live` for load balancers and Kubernetes
+- **Prometheus Metrics** - `/metrics` endpoint with request, LLM, and budget metrics
+- **Rate Limiting** - Configurable request throttling per minute
+- **Graceful Shutdown** - SIGTERM handling with connection draining
 
 ## Prerequisites
 

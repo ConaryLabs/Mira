@@ -31,6 +31,7 @@ pub struct MiraConfig {
     pub database: server::DatabaseConfig,
     pub logging: server::LoggingConfig,
     pub session: server::SessionConfig,
+    pub rate_limit: server::RateLimitConfig,
     pub tools: tools::ToolsConfig,
     pub json: tools::JsonConfig,
     pub response: tools::ResponseConfig,
@@ -73,6 +74,7 @@ impl MiraConfig {
         let database = server::DatabaseConfig::from_env();
         let logging = server::LoggingConfig::from_env();
         let session = server::SessionConfig::from_env();
+        let rate_limit = server::RateLimitConfig::from_env();
         let tools = tools::ToolsConfig::from_env();
         let json = tools::JsonConfig::from_env();
         let response = tools::ResponseConfig::from_env();
@@ -111,6 +113,7 @@ impl MiraConfig {
             database,
             logging,
             session,
+            rate_limit,
             tools,
             json,
             response,

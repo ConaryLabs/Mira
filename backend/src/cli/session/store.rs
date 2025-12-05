@@ -81,11 +81,12 @@ impl SessionStore {
 
         sqlx::query(
             r#"
-            INSERT INTO cli_sessions (id, name, project_path, last_message, message_count, created_at, last_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO cli_sessions (id, name, project_path, backend_session_id, last_message, message_count, created_at, last_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 project_path = excluded.project_path,
+                backend_session_id = excluded.backend_session_id,
                 last_message = excluded.last_message,
                 message_count = excluded.message_count,
                 last_active = excluded.last_active
@@ -94,6 +95,7 @@ impl SessionStore {
         .bind(&session.id)
         .bind(&session.name)
         .bind(&project_path)
+        .bind(&session.id) // backend_session_id is the same as id
         .bind(&session.last_message)
         .bind(session.message_count as i64)
         .bind(created_at)
@@ -302,12 +304,12 @@ mod tests {
     async fn test_get_most_recent() {
         let (store, _temp) = create_test_store().await;
 
-        let session1 = CliSession::new("backend-1".to_string(), None);
+        // Create first session with older timestamp
+        let mut session1 = CliSession::new("backend-1".to_string(), None);
+        session1.last_active = chrono::Utc::now() - chrono::Duration::seconds(60);
         store.save(&session1).await.unwrap();
 
-        // Wait a bit to ensure different timestamps
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
+        // Create second session with current timestamp (more recent)
         let session2 = CliSession::new("backend-2".to_string(), None);
         store.save(&session2).await.unwrap();
 

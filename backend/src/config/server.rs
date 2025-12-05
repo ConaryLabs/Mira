@@ -70,3 +70,21 @@ impl SessionConfig {
         }
     }
 }
+
+/// Rate limiting configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub requests_per_minute: u32,
+}
+
+impl RateLimitConfig {
+    pub fn from_env() -> Self {
+        Self {
+            enabled: super::helpers::env_or("RATE_LIMIT_ENABLED", "true") == "true",
+            requests_per_minute: super::helpers::env_or("RATE_LIMIT_REQUESTS_PER_MINUTE", "60")
+                .parse()
+                .unwrap_or(60),
+        }
+    }
+}

@@ -36,6 +36,7 @@ use crate::sudo::SudoPermissionService;
 use crate::synthesis::storage::SynthesisStorage;
 use crate::agents::AgentManager;
 use crate::operations::engine::tool_router::ToolRouter;
+use crate::utils::RateLimiter;
 
 /// Session data for file uploads
 #[derive(Clone)]
@@ -99,6 +100,8 @@ pub struct AppState {
     pub mcp_manager: Arc<McpManager>,
     // Agent system (Claude Code-style specialized agents)
     pub agent_manager: Arc<AgentManager>,
+    // Rate limiter for request throttling
+    pub rate_limiter: Option<Arc<RateLimiter>>,
 }
 
 impl AppState {
@@ -263,6 +266,21 @@ impl AppState {
         }
         info!("Agent Manager loaded {} agents", agent_manager.agent_count());
 
+        // Initialize rate limiter (if enabled in config)
+        let rate_limiter = if CONFIG.rate_limit.enabled {
+            info!("Initializing rate limiter ({} requests/min)", CONFIG.rate_limit.requests_per_minute);
+            match RateLimiter::new(CONFIG.rate_limit.requests_per_minute) {
+                Ok(limiter) => Some(Arc::new(limiter)),
+                Err(e) => {
+                    tracing::warn!("Failed to create rate limiter: {}", e);
+                    None
+                }
+            }
+        } else {
+            info!("Rate limiting disabled");
+            None
+        };
+
         // Initialize Context Oracle with all intelligence services
         info!("Initializing Context Oracle");
         let context_oracle = Arc::new(
@@ -372,6 +390,7 @@ impl AppState {
             checkpoint_manager,
             mcp_manager,
             agent_manager,
+            rate_limiter,
         })
     }
 }

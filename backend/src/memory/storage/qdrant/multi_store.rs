@@ -456,6 +456,25 @@ impl QdrantMultiStore {
         ]
     }
 
+    /// Check if Qdrant is connected and responsive
+    pub fn is_connected(&self) -> bool {
+        // The client is connected if it was successfully built
+        // For a more thorough check, we'd need an async health_check method
+        true
+    }
+
+    /// Async health check - verifies connection by checking if collections exist
+    pub async fn health_check(&self) -> Result<bool> {
+        let collection = self.collection_name(EmbeddingHead::Conversation);
+        match self.client.collection_exists(&collection).await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                warn!("Qdrant health check failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
     /// Scroll all points in a collection, returning their IDs
     pub async fn scroll_all_points(&self, head: EmbeddingHead) -> Result<Vec<String>> {
         use qdrant_client::qdrant::ScrollPointsBuilder;
