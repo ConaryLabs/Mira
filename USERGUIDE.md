@@ -7,6 +7,7 @@ A comprehensive guide for users and developers of the Mira AI coding assistant.
 - [Introduction](#introduction)
 - [Quick Start](#quick-start)
 - [Web Interface](#web-interface)
+- [Command Line Interface](#command-line-interface)
 - [Projects and Workspaces](#projects-and-workspaces)
 - [Code Intelligence](#code-intelligence)
 - [AI Capabilities](#ai-capabilities)
@@ -183,6 +184,188 @@ Access code intelligence features via tabs:
 | Co-change | Files frequently modified together |
 | Builds | Build errors and history |
 | Tools | Synthesized tools and patterns |
+
+---
+
+## Command Line Interface
+
+Mira provides a full-featured command-line interface for terminal-based workflows.
+
+### Installation
+
+The CLI is built as part of the backend:
+
+```bash
+cd backend
+cargo build --release
+```
+
+The binary is located at `target/release/mira`.
+
+### Basic Usage
+
+```bash
+# Start interactive REPL
+mira
+
+# Send a single prompt (non-interactive)
+mira -p "explain this error"
+
+# Continue the most recent session
+mira -c
+
+# Resume a specific session
+mira -r session-id
+
+# Show session picker
+mira -r
+```
+
+### Command Line Options
+
+| Option | Description |
+|--------|-------------|
+| `-p, --print` | Non-interactive mode - send prompt, print response, exit |
+| `-c, --continue` | Continue the most recent conversation |
+| `-r, --resume [ID]` | Resume a session by ID, or show picker if no ID |
+| `--project <PATH>` | Set project root directory (auto-detected if not specified) |
+| `-v, --verbose` | Show tool executions and reasoning |
+| `--show-thinking` | Display thinking/reasoning tokens |
+| `--output-format <FMT>` | Output format: `text`, `json`, `stream-json` |
+| `--tools <LIST>` | Filter available tools (comma-separated) |
+| `--fork <ID>` | Fork from an existing session |
+| `--system-prompt <TEXT>` | Override the system prompt |
+| `--append-system-prompt <TEXT>` | Append to system prompt |
+| `--max-turns <N>` | Maximum turns for non-interactive mode (default: 10) |
+| `--no-color` | Disable colored output |
+| `--backend-url <URL>` | Backend WebSocket URL (default: ws://localhost:3001/ws) |
+
+### Interactive Mode (REPL)
+
+When started without `-p`, Mira runs an interactive REPL:
+
+```
+$ mira
+Mira v0.1.0 - AI Coding Assistant
+Session: abc123 | Project: ~/myproject
+
+> What files handle authentication?
+
+[Response streams here...]
+
+> /commands
+Available commands:
+  /review - Code review prompt
+  /test   - Generate tests
+
+> exit
+```
+
+**REPL Features:**
+- Real-time streaming responses
+- Session persistence across restarts
+- Project context auto-detection (git repos)
+- Slash commands from `.mira/commands/`
+- Sudo approval prompts for dangerous operations
+
+### Session Management
+
+Sessions preserve conversation history:
+
+```bash
+# List recent sessions
+mira -r
+# Shows picker:
+#   1. [abc123] 2 hours ago - "Fix auth bug"
+#   2. [def456] 1 day ago - "Add user validation"
+
+# Resume specific session
+mira -r abc123
+
+# Continue most recent
+mira -c
+
+# Fork a session (creates new session with same history)
+mira --fork abc123
+```
+
+### Project Context
+
+The CLI auto-detects project context from git repositories:
+
+```bash
+# Auto-detect from current directory
+cd ~/myproject
+mira
+
+# Explicitly set project root
+mira --project ~/myproject
+```
+
+When a project is detected:
+- File operations are relative to project root
+- Git history is available for analysis
+- Code intelligence features are enabled
+- Project guidelines are loaded from `.mira/`
+
+### Output Formats
+
+```bash
+# Human-readable (default)
+mira -p "explain this code"
+
+# Structured JSON
+mira -p "explain this code" --output-format json
+
+# Streaming JSON (newline-delimited)
+mira -p "explain this code" --output-format stream-json
+```
+
+JSON output is useful for scripting and integrations.
+
+### Tool Filtering
+
+Restrict which tools the AI can use:
+
+```bash
+# Only allow read operations
+mira --tools read_project_file,search_codebase
+
+# Allow git tools only
+mira --tools "git_*"
+```
+
+### Custom System Prompts
+
+```bash
+# Override system prompt entirely
+mira --system-prompt "You are a Python expert"
+
+# Append to default system prompt
+mira --append-system-prompt "Always use type hints"
+```
+
+### Examples
+
+```bash
+# Quick code explanation
+mira -p "explain src/auth.rs"
+
+# Interactive debugging session
+mira -c
+> I'm seeing an error in the auth module
+> [paste error]
+
+# Generate tests for a file
+mira -p "generate tests for src/utils.rs" --output-format json
+
+# Code review with verbose output
+mira -v -p "review the changes in this PR"
+
+# Fork session for experimentation
+mira --fork abc123
+> Let's try a different approach...
+```
 
 ---
 
