@@ -523,6 +523,7 @@ async fn test_recall_engine_integration() {
         .parallel_recall_context(
             session_id, query, 5,  // recent_count
             10, // semantic_count
+            None, // project_id
         )
         .await
         .expect("Should recall");

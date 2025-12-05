@@ -126,6 +126,7 @@ impl SemanticSearch {
                     recency_score: 0.0, // Not calculated in semantic-only search
                     similarity_score,
                     salience_score,
+                    project_score: 0.0, // Not calculated in semantic-only search
                 }
             })
             .collect();

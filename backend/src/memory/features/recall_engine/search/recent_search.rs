@@ -46,6 +46,7 @@ impl RecentSearch {
                     recency_score,
                     similarity_score: 0.0, // Not applicable for recent search
                     salience_score: 0.0,   // Not used in recent-only search
+                    project_score: 0.0,    // Not used in recent-only search
                 }
             })
             .collect();

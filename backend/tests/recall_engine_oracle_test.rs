@@ -368,9 +368,11 @@ fn test_recall_config_default() {
     assert_eq!(config.recent_count, 10);
     assert_eq!(config.semantic_count, 20);
     assert_eq!(config.k_per_head, 10);
-    assert_eq!(config.recency_weight, 0.3);
-    assert_eq!(config.similarity_weight, 0.5);
-    assert_eq!(config.salience_weight, 0.2);
+    assert_eq!(config.recency_weight, 0.25);
+    assert_eq!(config.similarity_weight, 0.45);
+    assert_eq!(config.salience_weight, 0.15);
+    assert_eq!(config.project_weight, 0.15);
+    assert!(config.current_project_id.is_none());
 }
 
 #[test]
@@ -381,9 +383,12 @@ fn test_recall_config_custom() {
         k_per_head: 8,
         recency_weight: 0.4,
         similarity_weight: 0.4,
-        salience_weight: 0.2,
+        salience_weight: 0.1,
+        project_weight: 0.1,
+        current_project_id: Some("test_project".to_string()),
     };
 
     assert_eq!(config.recent_count, 5);
     assert_eq!(config.semantic_count, 15);
+    assert_eq!(config.current_project_id, Some("test_project".to_string()));
 }

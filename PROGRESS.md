@@ -1998,3 +1998,64 @@ Frontend:
 - Services restarted and running
 
 ---
+
+### Session 41: 2025-12-05
+
+**Summary:** Added project boosting to memory recall - same-project memories now score higher in composite scoring.
+
+**Goals:**
+- Investigate whether Qdrant collections consider active project when matching
+- Implement project-aware memory scoring to prioritize same-project context
+
+**Key Findings (Pre-Implementation):**
+- 3 Qdrant collections exist: code, conversation, git
+- Project ID stored in tags as `"project:xyz"` but **never used** for filtering or boosting
+- Composite scoring was: `0.3×recency + 0.5×similarity + 0.2×salience`
+- Context Oracle IS project-aware, but conversation memory was NOT
+
+**Key Outcomes:**
+
+1. **New Scoring Formula:**
+   ```
+   score = 0.25×recency + 0.45×similarity + 0.15×salience + 0.15×project_match
+   ```
+
+2. **Project Scoring Logic:**
+   - Same project as current: 1.0 (full boost)
+   - Both have no project: 1.0 (match)
+   - Mismatch or unknown: 0.3 (cross-project context allowed but lower weight)
+
+3. **Implementation:**
+   - Added `extract_project_from_tags()` helper to `MemoryEntry`
+   - Added `project_weight` and `current_project_id` to `RecallConfig`
+   - Added `project_score` to `ScoredMemory` struct
+   - Threaded project_id through entire recall chain
+
+**Files Modified:**
+Backend (13 files):
+- `src/memory/core/types.rs` - Added `extract_project_from_tags()` helper
+- `src/memory/features/recall_engine/mod.rs` - Added `project_weight`, `current_project_id` to RecallConfig; `project_score` to ScoredMemory
+- `src/memory/features/recall_engine/scoring/composite_scorer.rs` - Added `calculate_project_score()` method
+- `src/memory/features/recall_engine/search/recent_search.rs` - Added project_score field
+- `src/memory/features/recall_engine/search/semantic_search.rs` - Added project_score field
+- `src/memory/service/recall_engine/coordinator.rs` - Pass project_id to RecallConfig
+- `src/memory/service/mod.rs` - Updated parallel_recall_context signature
+- `src/operations/engine/context.rs` - Updated load_memory_context to accept project_id
+- `src/operations/engine/orchestration.rs` - Pass project_id to load_memory_context
+- `src/api/ws/memory.rs` - Extract and pass project_id in get_context handler
+- `src/cli/session/store.rs` - Fixed unrelated test using old field name
+
+Tests:
+- `tests/recall_engine_oracle_test.rs` - Updated assertions for new defaults
+- `tests/e2e_data_flow_test.rs` - Added project_id parameter
+
+**Technical Decisions:**
+1. **Cross-project context allowed**: Mismatch scores 0.3 instead of 0, allowing relevant cross-project memories to surface
+2. **Weight redistribution**: Reduced other weights proportionally to maintain sum of 1.0
+3. **Tag-based extraction**: Reused existing tag storage pattern (`"project:xyz"`) rather than adding new field
+
+**Testing:**
+- All tests compile and pass
+- RecallConfig tests updated for new defaults
+
+---

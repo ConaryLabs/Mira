@@ -105,10 +105,10 @@ impl Orchestrator {
 
         info!("Stored user message in memory: message_id={}", user_msg_id);
 
-        // Load memory context
+        // Load memory context with project boosting
         let recall_context = self
             .context_builder
-            .load_memory_context(session_id, user_content)
+            .load_memory_context(session_id, user_content, project_id)
             .await?;
 
         // Load project context (file tree + code intelligence) using shared loader
