@@ -8,6 +8,7 @@ import { useActivityStore } from '../stores/useActivityStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { useSudoStore } from '../stores/useSudoStore';
+import { useUsageStore, PricingTier, WarningLevel } from '../stores/useUsageStore';
 import { createArtifact, extractArtifacts } from '../utils/artifact';
 
 export const useWebSocketMessageHandler = () => {
@@ -409,6 +410,34 @@ export const useWebSocketMessageHandler = () => {
       case 'sudo_audit_log': {
         console.log('[WS-Global] Sudo audit log received:', data.entries?.length || 0);
         // For now just log it, could be stored if needed
+        return;
+      }
+
+      // USAGE & PRICING TIER TRACKING
+      case 'operation.usage_info': {
+        console.log('[WS-Global] Usage info:', data.pricing_tier, 'cost:', data.cost_usd);
+        useUsageStore.getState().updateUsage({
+          operationId: data.operation_id,
+          tokensInput: data.tokens_input,
+          tokensOutput: data.tokens_output,
+          pricingTier: data.pricing_tier as PricingTier,
+          costUsd: data.cost_usd,
+          fromCache: data.from_cache,
+          timestamp: data.timestamp || Date.now(),
+        });
+        return;
+      }
+
+      case 'operation.context_warning': {
+        console.log('[WS-Global] Context warning:', data.warning_level, data.message);
+        useUsageStore.getState().setWarning({
+          operationId: data.operation_id,
+          warningLevel: data.warning_level as WarningLevel,
+          message: data.message,
+          tokensInput: data.tokens_input,
+          threshold: data.threshold,
+          timestamp: data.timestamp || Date.now(),
+        });
         return;
       }
 

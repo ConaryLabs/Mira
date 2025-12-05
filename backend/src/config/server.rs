@@ -71,11 +71,17 @@ impl SessionConfig {
     }
 }
 
-/// Rate limiting configuration
+/// Rate limiting configuration with tiered limits based on context size
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
     pub enabled: bool,
+    /// Standard rate limit for requests with <200k context
     pub requests_per_minute: u32,
+    /// Rate limit for large context requests (>200k tokens)
+    /// More conservative to avoid API throttling
+    pub large_context_requests_per_minute: u32,
+    /// Enable tiered rate limiting (different limits for large context)
+    pub tiered_enabled: bool,
 }
 
 impl RateLimitConfig {
@@ -86,6 +92,23 @@ impl RateLimitConfig {
             requests_per_minute: super::helpers::env_or("RATE_LIMIT_REQUESTS_PER_MINUTE", "50")
                 .parse()
                 .unwrap_or(50),
+            // Large context gets half the rate limit by default
+            large_context_requests_per_minute: super::helpers::env_or(
+                "RATE_LIMIT_LARGE_CONTEXT_RPM",
+                "25",
+            )
+            .parse()
+            .unwrap_or(25),
+            tiered_enabled: super::helpers::env_or("RATE_LIMIT_TIERED_ENABLED", "true") == "true",
+        }
+    }
+
+    /// Get the appropriate rate limit based on context size
+    pub fn get_rate_limit(&self, is_large_context: bool) -> u32 {
+        if self.tiered_enabled && is_large_context {
+            self.large_context_requests_per_minute
+        } else {
+            self.requests_per_minute
         }
     }
 }

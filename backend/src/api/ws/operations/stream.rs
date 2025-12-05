@@ -333,5 +333,41 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::ContextWarning {
+            operation_id,
+            warning_level,
+            message,
+            tokens_input,
+            threshold,
+        } => {
+            serde_json::json!({
+                "type": "operation.context_warning",
+                "operation_id": operation_id,
+                "warning_level": warning_level,
+                "message": message,
+                "tokens_input": tokens_input,
+                "threshold": threshold,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::UsageInfo {
+            operation_id,
+            tokens_input,
+            tokens_output,
+            pricing_tier,
+            cost_usd,
+            from_cache,
+        } => {
+            serde_json::json!({
+                "type": "operation.usage_info",
+                "operation_id": operation_id,
+                "tokens_input": tokens_input,
+                "tokens_output": tokens_output,
+                "pricing_tier": pricing_tier,
+                "cost_usd": cost_usd,
+                "from_cache": from_cache,
+                "timestamp": timestamp
+            })
+        }
     }
 }

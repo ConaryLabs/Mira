@@ -14,8 +14,9 @@ pub mod stream;
 
 // Export Gemini providers (primary)
 pub use gemini3::{
-    build_user_prompt, CodeArtifact, CodeGenRequest, CodeGenResponse, Gemini3Pricing,
-    Gemini3Provider, ThinkingLevel, ToolCall, ToolCallResponse,
+    build_user_prompt, CodeArtifact, CodeGenRequest, CodeGenResponse, ContextWarning,
+    CostResult, Gemini3Pricing, Gemini3Provider, PricingTier, ThinkingLevel, ToolCall,
+    ToolCallResponse,
 };
 pub use gemini_embeddings::GeminiEmbeddings;
 pub use stream::StreamEvent;

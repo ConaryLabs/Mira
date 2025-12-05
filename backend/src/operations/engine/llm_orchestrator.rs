@@ -12,7 +12,10 @@ use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
 use crate::checkpoint::CheckpointManager;
 use crate::hooks::{HookEnv, HookManager, HookTrigger};
-use crate::llm::provider::{Gemini3Pricing, Gemini3Provider, Message, ToolCall, ToolCallInfo, ToolCallResponse};
+use crate::llm::provider::{
+    ContextWarning as PricingContextWarning, Gemini3Pricing, Gemini3Provider, Message, ToolCall,
+    ToolCallInfo, ToolCallResponse,
+};
 use crate::operations::engine::tool_router::ToolRouter;
 
 use super::events::OperationEngineEvent;
@@ -368,6 +371,41 @@ impl LlmOrchestrator {
             // Track token usage
             total_tokens_input += response.tokens_input;
             total_tokens_output += response.tokens_output;
+
+            // Emit usage info with pricing tier
+            let cost_result =
+                Gemini3Pricing::calculate_cost_with_info(response.tokens_input, response.tokens_output);
+            let _ = event_tx
+                .send(OperationEngineEvent::UsageInfo {
+                    operation_id: operation_id.to_string(),
+                    tokens_input: response.tokens_input,
+                    tokens_output: response.tokens_output,
+                    pricing_tier: cost_result.tier.as_str().to_string(),
+                    cost_usd: if from_cache { 0.0 } else { cost_result.cost },
+                    from_cache,
+                })
+                .await;
+
+            // Emit context warning if approaching or over threshold
+            if cost_result.warning != PricingContextWarning::None {
+                if let Some(message) = cost_result.warning.message() {
+                    let warning_level = match cost_result.warning {
+                        PricingContextWarning::Approaching => "approaching",
+                        PricingContextWarning::NearThreshold => "near_threshold",
+                        PricingContextWarning::OverThreshold => "over_threshold",
+                        PricingContextWarning::None => "none",
+                    };
+                    let _ = event_tx
+                        .send(OperationEngineEvent::ContextWarning {
+                            operation_id: operation_id.to_string(),
+                            warning_level: warning_level.to_string(),
+                            message: message.to_string(),
+                            tokens_input: response.tokens_input,
+                            threshold: Gemini3Pricing::LARGE_CONTEXT_THRESHOLD,
+                        })
+                        .await;
+                }
+            }
 
             // Stream any text content
             if let Some(content) = &response.content {

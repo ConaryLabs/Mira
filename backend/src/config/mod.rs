@@ -23,6 +23,7 @@ lazy_static! {
 pub struct MiraConfig {
     // Domain configs (organized structure)
     pub gemini: llm::GeminiConfig,
+    pub context_budget: llm::ContextBudgetConfig,
     pub memory: memory::MemoryConfig,
     pub summarization: memory::SummarizationConfig,
     pub qdrant: memory::QdrantConfig,
@@ -66,6 +67,7 @@ impl MiraConfig {
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
 
         let gemini = llm::GeminiConfig::from_env();
+        let context_budget = llm::ContextBudgetConfig::from_env();
         let memory = memory::MemoryConfig::from_env();
         let summarization = memory::SummarizationConfig::from_env();
         let qdrant = memory::QdrantConfig::from_env();
@@ -105,6 +107,7 @@ impl MiraConfig {
 
             // Domain configs
             gemini,
+            context_budget,
             memory,
             summarization,
             qdrant,

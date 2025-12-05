@@ -20,7 +20,7 @@ use super::{FunctionCall, LlmProvider, Message, Response, ToolContext, ToolRespo
 
 // Re-export public types
 pub use codegen::build_user_prompt;
-pub use pricing::Gemini3Pricing;
+pub use pricing::{ContextWarning, CostResult, Gemini3Pricing, PricingTier};
 pub use types::{
     CodeArtifact, CodeGenRequest, CodeGenResponse, ThinkingLevel, ToolCall, ToolCallResponse,
 };

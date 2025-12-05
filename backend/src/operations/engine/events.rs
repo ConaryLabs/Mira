@@ -138,4 +138,21 @@ pub enum OperationEngineEvent {
         agent_name: String,
         error: String,
     },
+    /// Context size warning - approaching or exceeding pricing threshold
+    ContextWarning {
+        operation_id: String,
+        warning_level: String, // "approaching", "near_threshold", "over_threshold"
+        message: String,
+        tokens_input: i64,
+        threshold: i64,
+    },
+    /// LLM usage info - sent after each LLM call with pricing tier information
+    UsageInfo {
+        operation_id: String,
+        tokens_input: i64,
+        tokens_output: i64,
+        pricing_tier: String, // "standard" or "large_context"
+        cost_usd: f64,
+        from_cache: bool,
+    },
 }
