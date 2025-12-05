@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { ArrowDown } from 'lucide-react';
 import { useChatStore, ChatMessage as StoreChatMessage } from '../stores/useChatStore';
+import { useUsageStore } from '../stores/useUsageStore';
 import { ChatMessage } from './ChatMessage';
 import { ThinkingIndicator } from './ThinkingIndicator';
 
@@ -17,10 +18,10 @@ const EmptyState: React.FC = () => (
   </div>
 );
 
-const Footer: React.FC<{ isWaiting: boolean }> = ({ isWaiting }) => {
-  // ThinkingIndicator now reads from the store and handles its own visibility
-  // We still check isWaiting to show the container padding
-  if (!isWaiting) return null;
+const Footer: React.FC<{ showIndicator: boolean }> = ({ showIndicator }) => {
+  // ThinkingIndicator reads from the store and handles its own visibility
+  // We show container when there's thinking activity
+  if (!showIndicator) return null;
 
   return (
     <div className="px-4 py-2">
@@ -35,6 +36,7 @@ export const MessageList: React.FC = () => {
   const streamingContent = useChatStore(state => state.streamingContent);
   const streamingMessageId = useChatStore(state => state.streamingMessageId);
   const isWaitingForResponse = useChatStore(state => state.isWaitingForResponse);
+  const thinkingStatus = useUsageStore(state => state.thinkingStatus);
   
   // DEBUG: Log streaming state changes
   useEffect(() => {
@@ -112,6 +114,15 @@ export const MessageList: React.FC = () => {
     }
   }, [isWaitingForResponse, scrollToBottom]);
 
+  // Auto-scroll when thinking status changes (tool execution, etc.)
+  useEffect(() => {
+    if (thinkingStatus) {
+      setTimeout(() => {
+        scrollToBottom();
+      }, 50);
+    }
+  }, [thinkingStatus, scrollToBottom]);
+
   // Initial scroll to bottom on mount
   useEffect(() => {
     if (displayMessages.length > 0 && virtuosoRef.current) {
@@ -146,7 +157,7 @@ export const MessageList: React.FC = () => {
         atBottomThreshold={50}
         alignToBottom
         components={{
-          Footer: () => <Footer isWaiting={isWaitingForResponse && !isStreaming} />
+          Footer: () => <Footer showIndicator={!!thinkingStatus || (isWaitingForResponse && !isStreaming)} />
         }}
       />
       
