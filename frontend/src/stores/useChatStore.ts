@@ -144,28 +144,47 @@ export const useChatStore = create<ChatStore>()(
       
       startStreaming: () => {
         const streamId = `stream-${Date.now()}`;
-        set({ 
+        const newMessage: ChatMessage = {
+          id: streamId,
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+        };
+
+        set(state => ({ 
           isStreaming: true, 
           streamingContent: '', 
           streamingMessageId: streamId,
           currentStreamingMessageId: streamId,
-        });
+          messages: [...state.messages, newMessage]
+        }));
       },
       
-      appendStreamContent: (content) => set(state => ({ 
-        streamingContent: state.streamingContent + content 
-      })),
+      appendStreamContent: (content) => set(state => {
+        const newContent = state.streamingContent + content;
+        
+        const updatedMessages = state.messages.map(msg => 
+          msg.id === state.streamingMessageId
+            ? { ...msg, content: newContent }
+            : msg
+        );
+
+        return { 
+          streamingContent: newContent,
+          messages: updatedMessages
+        };
+      }),
       
       endStreaming: () => {
-        const { streamingContent, streamingMessageId } = get();
-        if (streamingContent && streamingMessageId) {
+        const { streamingMessageId } = get();
+        if (streamingMessageId) {
           set(state => ({
-            messages: [...state.messages, {
-              id: streamingMessageId,
-              role: 'assistant',
-              content: streamingContent,
-              timestamp: Date.now(),
-            }],
+            messages: state.messages.map(msg => 
+              msg.id === streamingMessageId
+                ? { ...msg, isStreaming: false }
+                : msg
+            ),
             isStreaming: false,
             streamingContent: '',
             streamingMessageId: null,
@@ -175,7 +194,7 @@ export const useChatStore = create<ChatStore>()(
         } else {
           set({ 
             isStreaming: false, 
-            streamingContent: '',
+            streamingContent: '', 
             streamingMessageId: null,
             currentStreamingMessageId: null,
             isWaitingForResponse: false,

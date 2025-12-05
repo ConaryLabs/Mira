@@ -1,7 +1,7 @@
 // src/components/MessageList.tsx
 // FIXED: Display streaming content as a virtual message that updates in real-time
 
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { ArrowDown } from 'lucide-react';
 import { useChatStore, ChatMessage as StoreChatMessage } from '../stores/useChatStore';
@@ -34,7 +34,6 @@ export const MessageList: React.FC = () => {
   const messages = useChatStore(state => state.messages);
   const isStreaming = useChatStore(state => state.isStreaming);
   const streamingContent = useChatStore(state => state.streamingContent);
-  const streamingMessageId = useChatStore(state => state.streamingMessageId);
   const isWaitingForResponse = useChatStore(state => state.isWaitingForResponse);
   const thinkingStatus = useUsageStore(state => state.thinkingStatus);
   
@@ -50,26 +49,8 @@ export const MessageList: React.FC = () => {
   const [atBottom, setAtBottom] = useState(true);
   const lastMessageCountRef = useRef(0);
 
-  // CRITICAL FIX: Create virtual streaming message that updates as chunks arrive
-  const displayMessages = useMemo(() => {
-    if (isStreaming && streamingContent && streamingMessageId) {
-      // DEBUG: Log to verify re-renders
-      console.log('[MessageList] Creating virtual streaming message:', streamingContent.length, 'chars');
-      
-      // Add a virtual message with the streaming content
-      return [
-        ...messages,
-        {
-          id: streamingMessageId,
-          role: 'assistant' as const,
-          content: streamingContent,
-          timestamp: Date.now(),
-          isStreaming: true  // Flag to show streaming cursor
-        }
-      ];
-    }
-    return messages;
-  }, [messages, isStreaming, streamingContent, streamingMessageId]);
+  // Streaming message is now managed directly in the store's message array
+  const displayMessages = messages;
 
   const handleAtBottomStateChange = useCallback((bottom: boolean) => {
     setAtBottom(bottom);

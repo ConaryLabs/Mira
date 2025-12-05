@@ -49,6 +49,31 @@ const FILE_MODIFYING_TOOLS: &[&str] = &[
     "rename_file",
 ];
 
+/// Maximum size for tool results before truncation (Claude Code pattern: 30k chars)
+const MAX_TOOL_RESULT_CHARS: usize = 30000;
+
+/// Truncate large tool results to prevent context bloat
+///
+/// Claude Code limits tool results to ~30k chars. This prevents a single
+/// file read from consuming too much context in subsequent LLM calls.
+fn truncate_tool_result(result: &str) -> String {
+    if result.len() <= MAX_TOOL_RESULT_CHARS {
+        return result.to_string();
+    }
+
+    // Show first 10k and last 10k chars with truncation notice
+    let head_size = 10000;
+    let tail_size = 10000;
+    let omitted = result.len() - head_size - tail_size;
+
+    format!(
+        "{}...\n\n[TRUNCATED: {} characters omitted to save context. Use offset/limit for specific sections.]\n\n...{}",
+        &result[..head_size],
+        omitted,
+        &result[result.len() - tail_size..]
+    )
+}
+
 pub struct LlmOrchestrator {
     provider: Gemini3Provider,
     tool_router: Option<Arc<ToolRouter>>,
@@ -495,10 +520,13 @@ impl LlmOrchestrator {
                 );
 
                 // Add tool result to conversation with tool_call_id and tool_name
+                // Truncate large results to prevent context bloat (Claude Code pattern)
+                let result_str = serde_json::to_string(&result)?;
+                let truncated_result = truncate_tool_result(&result_str);
                 messages.push(Message::tool_result(
                     tool_call.id.clone(),
                     tool_call.name.clone(),
-                    serde_json::to_string(&result)?,
+                    truncated_result,
                 ));
             }
 
