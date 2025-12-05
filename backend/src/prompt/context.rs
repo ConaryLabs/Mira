@@ -14,8 +14,17 @@ use chrono::Utc;
 
 /// Add system environment context to the prompt
 /// This helps the LLM use platform-appropriate commands (apt vs brew vs dnf, etc.)
+/// Also includes current date/time so the LLM knows "today's date" without being told
 pub fn add_system_context(prompt: &mut String, context: &SystemContext) {
     prompt.push_str("[SYSTEM ENVIRONMENT]\n");
+
+    // Current date and time (so LLM knows "today" without being told)
+    let now = chrono::Local::now();
+    prompt.push_str(&format!(
+        "Current time: {} ({})\n",
+        now.format("%A, %B %d, %Y at %I:%M %p"),
+        now.format("%Z")
+    ));
 
     // OS info
     prompt.push_str(&format!(
