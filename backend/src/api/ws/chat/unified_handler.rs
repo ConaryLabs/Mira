@@ -41,7 +41,11 @@ pub struct UnifiedChatHandler {
 
 impl UnifiedChatHandler {
     pub fn new(app_state: Arc<AppState>) -> Self {
-        let operation_manager = Arc::new(OperationManager::new(app_state.operation_engine.clone()));
+        let operation_manager = Arc::new(OperationManager::new(
+            app_state.operation_engine.clone(),
+            app_state.sqlite_pool.clone(),
+            app_state.project_store.clone(),
+        ));
 
         Self {
             operation_manager,

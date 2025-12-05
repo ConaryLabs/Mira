@@ -2059,3 +2059,72 @@ Tests:
 - RecallConfig tests updated for new defaults
 
 ---
+
+### Session 42: 2025-12-05
+
+**Summary:** Rearchitected project management to work like Claude Code - directory-based, work-in-place with dynamic working directories.
+
+**Goals:**
+- Both interfaces (Web and CLI) work identically
+- Work in-place (always work in original directory, no cloning)
+- Full shell access (LLM commands execute in project directory)
+
+**Key Outcomes:**
+
+1. **Auto-Provisioning Projects from Paths:**
+   - Added `get_or_create_by_path()` to ProjectStore
+   - Projects created automatically when opening a directory
+   - Uses directory name as default project name
+
+2. **New API: project.open_directory:**
+   - Validates directory exists and is not a system directory
+   - Detects git repo, MIRA.md, CLAUDE.md, project type
+   - Auto-provisions project and attaches local directory
+   - Returns detected project characteristics
+
+3. **Dynamic Working Directory for Commands:**
+   - ToolRouter now injects `working_directory` from project path
+   - ExternalHandlers execute commands in session's project directory
+   - OperationManager resolves project_id from session's project_path
+
+4. **Frontend: Open Directory Modal:**
+   - Replaced CreateProjectModal with OpenDirectoryModal
+   - Single directory path input instead of name/description
+   - Added openDirectory() method to useProjectOperations hook
+
+**Files Created:**
+- `frontend/src/components/OpenDirectoryModal.tsx` - New directory input modal
+- `frontend/src/components/__tests__/OpenDirectoryModal.test.tsx` - Modal tests
+
+**Files Modified:**
+Backend (8 files):
+- `src/project/store.rs` - Added `get_or_create_by_path()`, `get_project_by_path()`
+- `src/project/mod.rs` - Added `ProjectStore` re-export
+- `src/api/ws/project.rs` - Added `project.open_directory` handler with `detect_project_info()`
+- `src/api/ws/session.rs` - Auto-provisions project on session.create with project_path
+- `src/api/ws/operations/mod.rs` - Added `resolve_project_id()` from session path
+- `src/api/ws/chat/unified_handler.rs` - Pass pool and project_store to OperationManager
+- `src/operations/engine/tool_router/mod.rs` - Added project_store, `inject_project_path()`
+- `src/operations/engine/external_handlers.rs` - Support absolute paths in working_directory
+
+Frontend (3 files):
+- `src/hooks/useProjectOperations.ts` - Added `openDirectory()`, renamed `creating` to `opening`
+- `src/hooks/__tests__/useProjectOperations.test.ts` - Added openDirectory tests
+- `src/components/ProjectsView.tsx` - Switched to OpenDirectoryModal, updated button text
+
+**Security:**
+- Blocks system directories: `/`, `/etc`, `/usr`, `/bin`, `/var`
+- Validates directory exists before creating project
+
+**Technical Decisions:**
+1. **Path as primary identifier**: Directory path is the source of truth, not manually-entered names
+2. **Auto-provisioning**: Projects created transparently when directory is opened
+3. **Session-project linkage**: Sessions store project_path, operations resolve to project_id dynamically
+4. **Cross-interface parity**: CLI and Web both use the same backend APIs
+
+**Testing:**
+- Backend: `cargo build --release` passes
+- Frontend: `npm run type-check` passes
+- All 37 new/modified tests pass
+
+---

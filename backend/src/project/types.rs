@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Project {
     pub id: String,
     pub name: String,
+    pub path: String,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub owner: Option<String>,
@@ -69,6 +70,7 @@ impl std::str::FromStr for ArtifactType {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateProjectRequest {
     pub name: String,
+    pub path: String,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
 }

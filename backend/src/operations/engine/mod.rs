@@ -70,6 +70,7 @@ impl OperationEngine {
         guidelines_service: Option<Arc<ProjectGuidelinesService>>,
         hook_manager: Option<Arc<RwLock<HookManager>>>,
         checkpoint_manager: Option<Arc<CheckpointManager>>,
+        project_store: Option<Arc<crate::project::ProjectStore>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -103,6 +104,12 @@ impl OperationEngine {
         if let Some(guidelines_svc) = guidelines_service {
             tool_router = tool_router.with_guidelines_service(guidelines_svc);
         }
+
+        // Add project store for dynamic working directory resolution
+        if let Some(store) = project_store {
+            tool_router = tool_router.with_project_store(store);
+        }
+
         let tool_router_arc = Arc::new(tool_router);
 
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));

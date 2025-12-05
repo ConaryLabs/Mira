@@ -35,6 +35,101 @@ describe('useProjectOperations', () => {
     } as any);
   });
 
+  describe('openDirectory', () => {
+    it('opens a directory successfully', async () => {
+      const { result } = renderHook(() => useProjectOperations());
+
+      const openPromise = act(async () => {
+        return await result.current.openDirectory('/home/user/project');
+      });
+
+      await waitFor(() => {
+        expect(result.current.opening).toBe(false);
+      });
+
+      expect(await openPromise).toBe(true);
+      expect(mockSend).toHaveBeenCalledWith({
+        type: 'project_command',
+        method: 'project.open_directory',
+        params: {
+          path: '/home/user/project',
+        },
+      });
+      expect(mockAddToast).toHaveBeenCalledWith({
+        message: 'Opened project: project',
+        type: 'success',
+      });
+    });
+
+    it('trims directory path', async () => {
+      const { result } = renderHook(() => useProjectOperations());
+
+      await act(async () => {
+        await result.current.openDirectory('  /home/user/project  ');
+      });
+
+      expect(mockSend).toHaveBeenCalledWith({
+        type: 'project_command',
+        method: 'project.open_directory',
+        params: {
+          path: '/home/user/project',
+        },
+      });
+    });
+
+    it('rejects empty path', async () => {
+      const { result } = renderHook(() => useProjectOperations());
+
+      const success = await act(async () => {
+        return await result.current.openDirectory('   ');
+      });
+
+      expect(success).toBe(false);
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(mockAddToast).toHaveBeenCalledWith({
+        message: 'Directory path is required',
+        type: 'error',
+      });
+    });
+
+    it('handles open failure', async () => {
+      mockSend.mockRejectedValueOnce(new Error('Network error'));
+      const { result } = renderHook(() => useProjectOperations());
+
+      const success = await act(async () => {
+        return await result.current.openDirectory('/home/user/project');
+      });
+
+      expect(success).toBe(false);
+      expect(mockAddToast).toHaveBeenCalledWith({
+        message: 'Failed to open directory',
+        type: 'error',
+      });
+    });
+
+    it('calls refreshProjects after successful open', async () => {
+      vi.useFakeTimers();
+      const { result } = renderHook(() => useProjectOperations());
+
+      await act(async () => {
+        await result.current.openDirectory('/home/user/project');
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+
+      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockSend).toHaveBeenNthCalledWith(2, {
+        type: 'project_command',
+        method: 'project.list',
+        params: {},
+      });
+
+      vi.useRealTimers();
+    });
+  });
+
   describe('createProject', () => {
     it('creates a project successfully', async () => {
       const { result } = renderHook(() => useProjectOperations());
@@ -44,7 +139,7 @@ describe('useProjectOperations', () => {
       });
 
       await waitFor(() => {
-        expect(result.current.creating).toBe(false);
+        expect(result.current.opening).toBe(false);
       });
 
       expect(await createPromise).toBe(true);
@@ -278,24 +373,24 @@ describe('useProjectOperations', () => {
     it('initializes with correct default states', () => {
       const { result } = renderHook(() => useProjectOperations());
 
-      expect(result.current.creating).toBe(false);
+      expect(result.current.opening).toBe(false);
       expect(result.current.deleting).toBe(null);
     });
 
-    it('manages creating state correctly', async () => {
+    it('manages opening state correctly', async () => {
       const { result } = renderHook(() => useProjectOperations());
 
-      expect(result.current.creating).toBe(false);
+      expect(result.current.opening).toBe(false);
 
-      const createPromise = act(async () => {
-        return await result.current.createProject('test');
+      const openPromise = act(async () => {
+        return await result.current.openDirectory('/home/user/project');
       });
 
       await waitFor(() => {
-        expect(result.current.creating).toBe(false);
+        expect(result.current.opening).toBe(false);
       });
 
-      await createPromise;
+      await openPromise;
     });
 
     it('manages deleting state correctly', async () => {
