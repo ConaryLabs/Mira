@@ -125,6 +125,14 @@ pub enum OperationEvent {
         command: String,
         reason: Option<String>,
     },
+    Thinking {
+        operation_id: String,
+        status: String,
+        message: String,
+        tokens_in: i64,
+        tokens_out: i64,
+        active_tool: Option<String>,
+    },
 }
 
 /// Mira WebSocket client
@@ -503,6 +511,38 @@ impl MiraClient {
                     approval_request_id,
                     command,
                     reason,
+                }
+            }
+            "operation.thinking" => {
+                let status = json
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let message = json
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tokens_in = json
+                    .get("tokens_in")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let tokens_out = json
+                    .get("tokens_out")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let active_tool = json
+                    .get("active_tool")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                OperationEvent::Thinking {
+                    operation_id,
+                    status,
+                    message,
+                    tokens_in,
+                    tokens_out,
+                    active_tool,
                 }
             }
             _ => {

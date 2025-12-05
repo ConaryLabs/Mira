@@ -18,8 +18,10 @@ const EmptyState: React.FC = () => (
 );
 
 const Footer: React.FC<{ isWaiting: boolean }> = ({ isWaiting }) => {
+  // ThinkingIndicator now reads from the store and handles its own visibility
+  // We still check isWaiting to show the container padding
   if (!isWaiting) return null;
-  
+
   return (
     <div className="px-4 py-2">
       <ThinkingIndicator />

@@ -369,5 +369,24 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::Thinking {
+            operation_id,
+            status,
+            message,
+            tokens_in,
+            tokens_out,
+            active_tool,
+        } => {
+            serde_json::json!({
+                "type": "operation.thinking",
+                "operation_id": operation_id,
+                "status": status,
+                "message": message,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "active_tool": active_tool,
+                "timestamp": timestamp
+            })
+        }
     }
 }
