@@ -7,6 +7,7 @@ import { useChatStore } from '../stores/useChatStore';
 import { useActivityStore } from '../stores/useActivityStore';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
+import { useSudoStore } from '../stores/useSudoStore';
 import { createArtifact, extractArtifacts } from '../utils/artifact';
 
 export const useWebSocketMessageHandler = () => {
@@ -42,7 +43,7 @@ export const useWebSocketMessageHandler = () => {
       (message) => {
         handleMessage(message);
       },
-      ['data', 'status', 'error']
+      ['data', 'status', 'error', 'sudo_approval_required', 'sudo_approval_response']
     );
 
     return unsubscribe;
@@ -80,7 +81,34 @@ export const useWebSocketMessageHandler = () => {
       case 'heartbeat':
         // Ignore heartbeat messages
         break;
-        
+
+      // SUDO APPROVAL EVENTS
+      case 'sudo_approval_required':
+        console.log('[WS-Global] Sudo approval required:', message.approval_request_id);
+        useSudoStore.getState().addPendingApproval({
+          id: message.approval_request_id,
+          operationId: message.operation_id,
+          sessionId: message.session_id,
+          command: message.command,
+          reason: message.reason,
+          expiresAt: message.expires_at,
+          status: 'pending',
+          timestamp: Date.now(),
+        });
+        break;
+
+      case 'sudo_approval_response':
+        console.log('[WS-Global] Sudo approval response:', message.approval_request_id, message.status);
+        useSudoStore.getState().updateApprovalStatus(
+          message.approval_request_id,
+          message.status as 'approved' | 'denied' | 'expired'
+        );
+        // Remove from pending after a short delay to show the status change
+        setTimeout(() => {
+          useSudoStore.getState().removePendingApproval(message.approval_request_id);
+        }, 2000);
+        break;
+
       default:
         console.log('Unhandled message type:', message.type);
         break;
@@ -326,6 +354,61 @@ export const useWebSocketMessageHandler = () => {
           isLow: data.is_low,
           lastUpdated: data.last_updated || Date.now(),
         });
+        return;
+      }
+
+      // SUDO PERMISSION MANAGEMENT
+      case 'sudo_pending_approvals': {
+        console.log('[WS-Global] Sudo pending approvals:', data.approvals?.length || 0);
+        // Update the store with the list of pending approvals
+        const store = useSudoStore.getState();
+        if (data.approvals) {
+          data.approvals.forEach((approval: any) => {
+            store.addPendingApproval({
+              id: approval.id,
+              operationId: approval.operation_id,
+              sessionId: approval.session_id,
+              command: approval.command,
+              reason: approval.reason,
+              expiresAt: approval.expires_at,
+              status: approval.status,
+              timestamp: approval.created_at * 1000,
+            });
+          });
+        }
+        return;
+      }
+
+      case 'sudo_permissions': {
+        console.log('[WS-Global] Sudo permissions received:', data.permissions?.length || 0);
+        useSudoStore.getState().setPermissions(data.permissions || []);
+        return;
+      }
+
+      case 'sudo_permission_added':
+      case 'sudo_permission_toggled':
+      case 'sudo_permission_updated': {
+        console.log('[WS-Global] Permission changed, refreshing');
+        useSudoStore.getState().fetchPermissions();
+        return;
+      }
+
+      case 'sudo_blocklist': {
+        console.log('[WS-Global] Sudo blocklist received:', data.blocklist?.length || 0);
+        useSudoStore.getState().setBlocklist(data.blocklist || []);
+        return;
+      }
+
+      case 'sudo_blocklist_added':
+      case 'sudo_blocklist_toggled': {
+        console.log('[WS-Global] Blocklist changed, refreshing');
+        useSudoStore.getState().fetchBlocklist();
+        return;
+      }
+
+      case 'sudo_audit_log': {
+        console.log('[WS-Global] Sudo audit log received:', data.entries?.length || 0);
+        // For now just log it, could be stored if needed
         return;
       }
 

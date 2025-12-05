@@ -102,6 +102,7 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
         None, // guidelines_service
         None, // hook_manager
         None, // checkpoint_manager
+        None, // project_store
     );
 
     (engine, db)

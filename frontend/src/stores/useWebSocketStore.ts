@@ -101,6 +101,9 @@ const KNOWN_MESSAGE_TYPES = new Set([
   'terminal_command_complete',
   'terminal_closed',
   'terminal_error',
+  // Sudo approval events
+  'sudo_approval_required',
+  'sudo_approval_response',
   // Operation engine events (can be top-level)
   'operation.started',
   'operation.streaming',
@@ -160,6 +163,17 @@ const KNOWN_DATA_TYPES = new Set([
   'cochange_suggestions',
   'expertise_results',
   'code_search_results',
+
+  // Sudo approval data types
+  'sudo_pending_approvals',
+  'sudo_permissions',
+  'sudo_permission_added',
+  'sudo_permission_toggled',
+  'sudo_permission_updated',
+  'sudo_blocklist',
+  'sudo_blocklist_added',
+  'sudo_blocklist_toggled',
+  'sudo_audit_log',
 
   // Operation engine events (can also be wrapped in data envelope)
   'operation.started',

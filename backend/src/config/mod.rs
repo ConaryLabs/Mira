@@ -11,8 +11,11 @@ pub mod tools;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
+use crate::system::{SystemContext, SystemDetector};
+
 lazy_static! {
     pub static ref CONFIG: MiraConfig = MiraConfig::from_env();
+    pub static ref SYSTEM_CONTEXT: SystemContext = SystemDetector::detect();
 }
 
 /// Main configuration structure - composes all domain configs

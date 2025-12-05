@@ -250,6 +250,38 @@ impl MiraClient {
                 Some(BackendEvent::Error { message, code })
             }
             "connection_ready" => Some(BackendEvent::Connected),
+            "sudo_approval_required" => {
+                // Top-level sudo approval required message
+                let approval_request_id = json
+                    .get("approval_request_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let operation_id = json
+                    .get("operation_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let command = json
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let reason = json
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                Some(BackendEvent::OperationEvent(OperationEvent::SudoApprovalRequired {
+                    operation_id,
+                    approval_request_id,
+                    command,
+                    reason,
+                }))
+            }
+            "sudo_approval_response" => {
+                // Sudo approval response - we can ignore this in CLI as we initiated it
+                None
+            }
             "data" => {
                 // Data messages contain nested operation events or session data
                 if let Some(inner_data) = json.get("data") {
@@ -667,6 +699,35 @@ impl MiraClient {
                 _ => continue,
             }
         }
+    }
+
+    // ========================================================================
+    // SUDO APPROVAL METHODS
+    // ========================================================================
+
+    /// Approve a sudo command request
+    pub async fn approve_sudo_request(&self, approval_request_id: &str) -> Result<()> {
+        let msg = WsClientMessage::SudoCommand {
+            method: "sudo.approve".to_string(),
+            params: serde_json::json!({
+                "approval_request_id": approval_request_id,
+            }),
+        };
+
+        self.send_message(&msg).await
+    }
+
+    /// Deny a sudo command request
+    pub async fn deny_sudo_request(&self, approval_request_id: &str, reason: Option<&str>) -> Result<()> {
+        let msg = WsClientMessage::SudoCommand {
+            method: "sudo.deny".to_string(),
+            params: serde_json::json!({
+                "approval_request_id": approval_request_id,
+                "reason": reason,
+            }),
+        };
+
+        self.send_message(&msg).await
     }
 }
 

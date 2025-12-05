@@ -8,8 +8,37 @@ use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
 use crate::prompt::utils::language_from_extension;
+use crate::system::SystemContext;
 use crate::tools::types::Tool;
 use chrono::Utc;
+
+/// Add system environment context to the prompt
+/// This helps the LLM use platform-appropriate commands (apt vs brew vs dnf, etc.)
+pub fn add_system_context(prompt: &mut String, context: &SystemContext) {
+    prompt.push_str("[SYSTEM ENVIRONMENT]\n");
+
+    // OS info
+    prompt.push_str(&format!(
+        "OS: {} ({})\n",
+        context.os.version, context.os.arch
+    ));
+
+    // Shell
+    prompt.push_str(&format!("Shell: {}\n", context.shell.name));
+
+    // Package manager
+    if let Some(pm) = context.primary_package_manager() {
+        prompt.push_str(&format!("Package manager: {}\n", pm));
+    }
+
+    // Available tools (compact list)
+    if !context.tools.is_empty() {
+        let tool_names: Vec<&str> = context.tools.iter().map(|t| t.name.as_str()).collect();
+        prompt.push_str(&format!("Available tools: {}\n", tool_names.join(", ")));
+    }
+
+    prompt.push_str("\nUse platform-appropriate commands for this system.\n\n");
+}
 
 /// Add tool usage hints with mandatory conversational context
 pub fn add_tool_usage_hints(prompt: &mut String) {

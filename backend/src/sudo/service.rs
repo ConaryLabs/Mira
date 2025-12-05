@@ -14,6 +14,22 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+/// A blocked command pattern from the blocklist
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SudoBlocklistEntry {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub pattern_exact: Option<String>,
+    pub pattern_regex: Option<String>,
+    pub pattern_prefix: Option<String>,
+    pub severity: String,
+    pub is_default: bool,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub notes: Option<String>,
+}
+
 /// Authorization decision for a sudo command
 #[derive(Debug, Clone)]
 pub enum AuthorizationDecision {
@@ -25,6 +41,9 @@ pub enum AuthorizationDecision {
 
     /// Command is denied (no matching permission)
     Denied { reason: String },
+
+    /// Command is blocked by blocklist (never allowed)
+    BlockedByBlocklist { entry: SudoBlocklistEntry },
 }
 
 /// Sudo permission rule from database
@@ -101,6 +120,7 @@ impl SudoPermissionService {
     /// - Allowed: Command matches whitelist and doesn't require approval
     /// - RequiresApproval: Command matches whitelist but needs user confirmation
     /// - Denied: Command doesn't match any permission
+    /// - BlockedByBlocklist: Command matches blocklist and is never allowed
     pub async fn check_authorization(
         &self,
         command: &str,
@@ -108,6 +128,15 @@ impl SudoPermissionService {
         session_id: Option<&str>,
         reason: Option<&str>,
     ) -> Result<AuthorizationDecision> {
+        // Check blocklist FIRST - blocked commands are never allowed
+        if let Some(blocked) = self.check_blocklist(command).await? {
+            warn!(
+                "[SUDO] Command blocked by blocklist entry '{}': {}",
+                blocked.name, command
+            );
+            return Ok(AuthorizationDecision::BlockedByBlocklist { entry: blocked });
+        }
+
         // Fetch all enabled permissions
         let permissions: Vec<SudoPermission> = sqlx::query_as(
             "SELECT * FROM sudo_permissions WHERE enabled = 1"
@@ -403,5 +432,228 @@ impl SudoPermissionService {
         }
 
         Ok(result.rows_affected())
+    }
+
+    /// Check if a command matches the blocklist
+    async fn check_blocklist(&self, command: &str) -> Result<Option<SudoBlocklistEntry>> {
+        let entries: Vec<SudoBlocklistEntry> = sqlx::query_as(
+            "SELECT * FROM sudo_blocklist WHERE enabled = 1"
+        )
+        .fetch_all(&*self.db)
+        .await
+        .context("Failed to fetch blocklist")?;
+
+        for entry in entries {
+            if self.blocklist_matches(&entry, command)? {
+                return Ok(Some(entry));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Check if a command matches a blocklist entry
+    fn blocklist_matches(&self, entry: &SudoBlocklistEntry, command: &str) -> Result<bool> {
+        // Exact match
+        if let Some(ref exact) = entry.pattern_exact {
+            if command == exact {
+                return Ok(true);
+            }
+        }
+
+        // Pattern match (regex)
+        if let Some(ref pattern) = entry.pattern_regex {
+            let regex = Regex::new(pattern)
+                .context(format!("Invalid blocklist regex pattern: {}", pattern))?;
+            if regex.is_match(command) {
+                return Ok(true);
+            }
+        }
+
+        // Prefix match
+        if let Some(ref prefix) = entry.pattern_prefix {
+            if command.starts_with(prefix) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Get all blocklist entries
+    pub async fn get_blocklist(&self) -> Result<Vec<SudoBlocklistEntry>> {
+        let entries: Vec<SudoBlocklistEntry> = sqlx::query_as(
+            "SELECT * FROM sudo_blocklist ORDER BY severity DESC, name ASC"
+        )
+        .fetch_all(&*self.db)
+        .await
+        .context("Failed to fetch blocklist")?;
+
+        Ok(entries)
+    }
+
+    /// Add a new blocklist entry
+    pub async fn add_blocklist_entry(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        pattern_exact: Option<&str>,
+        pattern_regex: Option<&str>,
+        pattern_prefix: Option<&str>,
+        severity: &str,
+        notes: Option<&str>,
+    ) -> Result<i64> {
+        let result = sqlx::query(
+            "INSERT INTO sudo_blocklist
+             (name, description, pattern_exact, pattern_regex, pattern_prefix, severity, is_default, enabled, notes)
+             VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?)"
+        )
+        .bind(name)
+        .bind(description)
+        .bind(pattern_exact)
+        .bind(pattern_regex)
+        .bind(pattern_prefix)
+        .bind(severity)
+        .bind(notes)
+        .execute(&*self.db)
+        .await
+        .context("Failed to add blocklist entry")?;
+
+        info!("[SUDO] Added blocklist entry: {}", name);
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Remove a blocklist entry by ID
+    pub async fn remove_blocklist_entry(&self, id: i64) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM sudo_blocklist WHERE id = ?")
+            .bind(id)
+            .execute(&*self.db)
+            .await
+            .context("Failed to remove blocklist entry")?;
+
+        if result.rows_affected() > 0 {
+            info!("[SUDO] Removed blocklist entry: {}", id);
+        }
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Toggle blocklist entry enabled state
+    pub async fn toggle_blocklist_entry(&self, id: i64, enabled: bool) -> Result<bool> {
+        let result = sqlx::query("UPDATE sudo_blocklist SET enabled = ? WHERE id = ?")
+            .bind(enabled)
+            .bind(id)
+            .execute(&*self.db)
+            .await
+            .context("Failed to toggle blocklist entry")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get all permission rules
+    pub async fn get_permissions(&self) -> Result<Vec<SudoPermission>> {
+        let permissions: Vec<SudoPermission> = sqlx::query_as(
+            "SELECT * FROM sudo_permissions ORDER BY name ASC"
+        )
+        .fetch_all(&*self.db)
+        .await
+        .context("Failed to fetch permissions")?;
+
+        Ok(permissions)
+    }
+
+    /// Add a new permission rule
+    pub async fn add_permission(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        command_exact: Option<&str>,
+        command_pattern: Option<&str>,
+        command_prefix: Option<&str>,
+        requires_approval: bool,
+        notes: Option<&str>,
+    ) -> Result<i64> {
+        let result = sqlx::query(
+            "INSERT INTO sudo_permissions
+             (name, description, command_exact, command_pattern, command_prefix, requires_approval, enabled, notes)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?)"
+        )
+        .bind(name)
+        .bind(description)
+        .bind(command_exact)
+        .bind(command_pattern)
+        .bind(command_prefix)
+        .bind(requires_approval)
+        .bind(notes)
+        .execute(&*self.db)
+        .await
+        .context("Failed to add permission")?;
+
+        info!("[SUDO] Added permission: {}", name);
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Remove a permission rule by ID
+    pub async fn remove_permission(&self, id: i64) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM sudo_permissions WHERE id = ?")
+            .bind(id)
+            .execute(&*self.db)
+            .await
+            .context("Failed to remove permission")?;
+
+        if result.rows_affected() > 0 {
+            info!("[SUDO] Removed permission: {}", id);
+        }
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Toggle permission enabled state
+    pub async fn toggle_permission(&self, id: i64, enabled: bool) -> Result<bool> {
+        let result = sqlx::query("UPDATE sudo_permissions SET enabled = ? WHERE id = ?")
+            .bind(enabled)
+            .bind(id)
+            .execute(&*self.db)
+            .await
+            .context("Failed to toggle permission")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update permission approval requirement
+    pub async fn set_permission_requires_approval(&self, id: i64, requires_approval: bool) -> Result<bool> {
+        let result = sqlx::query("UPDATE sudo_permissions SET requires_approval = ? WHERE id = ?")
+            .bind(requires_approval)
+            .bind(id)
+            .execute(&*self.db)
+            .await
+            .context("Failed to update permission")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update approval request with execution results
+    pub async fn update_approval_with_results(
+        &self,
+        request_id: &str,
+        exit_code: i32,
+        output: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE sudo_approval_requests
+             SET executed_at = ?, exit_code = ?, output = ?, error = ?
+             WHERE id = ?"
+        )
+        .bind(now)
+        .bind(exit_code)
+        .bind(output)
+        .bind(error)
+        .bind(request_id)
+        .execute(&*self.db)
+        .await
+        .context("Failed to update approval with results")?;
+
+        Ok(())
     }
 }

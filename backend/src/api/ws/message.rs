@@ -86,6 +86,10 @@ pub enum WsClientMessage {
         method: String,
         params: serde_json::Value,
     },
+    SudoCommand {
+        method: String,
+        params: serde_json::Value,
+    },
 }
 
 /// Represents all possible messages sent from the server to the client (frontend).
@@ -164,5 +168,30 @@ pub enum WsServerMessage {
     TerminalError {
         session_id: String,
         error: String,
+    },
+
+    /// Sudo approval required - user must approve command before execution
+    #[serde(rename = "sudo_approval_required")]
+    SudoApprovalRequired {
+        approval_request_id: String,
+        operation_id: Option<String>,
+        session_id: String,
+        command: String,
+        reason: Option<String>,
+        expires_at: i64,
+    },
+
+    /// Sudo approval response - command was approved or denied
+    #[serde(rename = "sudo_approval_response")]
+    SudoApprovalResponse {
+        approval_request_id: String,
+        status: String, // "approved", "denied", "expired"
+        command: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
 }

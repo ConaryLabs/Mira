@@ -132,6 +132,7 @@ async fn test_operation_engine_with_providers() {
         None, // guidelines_service
         None, // hook_manager
         None, // checkpoint_manager
+        None, // project_store
     );
 
     // Create event channel
@@ -236,6 +237,7 @@ async fn test_operation_lifecycle_complete() {
         None, // guidelines_service
         None, // hook_manager
         None, // checkpoint_manager
+        None, // project_store
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -327,6 +329,7 @@ async fn test_operation_cancellation() {
         None, // guidelines_service
         None, // hook_manager
         None, // checkpoint_manager
+        None, // project_store
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -408,6 +411,7 @@ async fn test_multiple_operations_concurrency() {
         None, // guidelines_service
         None, // hook_manager
         None, // checkpoint_manager
+        None, // project_store
     ));
 
     let mut handles = vec![];
