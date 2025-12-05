@@ -39,8 +39,3 @@ export function detectLanguage(path: string): string {
     default: return 'plaintext';
   }
 }
-
-/**
- * Alias for backward compatibility with some hooks
- */
-export const inferLanguage = detectLanguage;

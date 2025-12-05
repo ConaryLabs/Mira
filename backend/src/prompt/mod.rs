@@ -12,7 +12,6 @@ pub mod builders;
 pub mod context;
 pub mod internal;
 pub mod types;
-pub mod unified_builder; // Deprecated: kept for backward compatibility
 pub mod utils;
 
 // Primary exports

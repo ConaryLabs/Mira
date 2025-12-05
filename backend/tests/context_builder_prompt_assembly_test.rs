@@ -7,7 +7,7 @@ use mira_backend::git::client::tree_builder::{FileNode, FileNodeType};
 use mira_backend::memory::core::types::MemoryEntry;
 use mira_backend::memory::features::recall_engine::RecallContext;
 use mira_backend::persona::PersonaOverlay;
-use mira_backend::prompt::unified_builder::UnifiedPromptBuilder;
+use mira_backend::prompt::UnifiedPromptBuilder;
 use mira_backend::tools::types::{Tool, ToolFunction};
 use serde_json::json;
 
