@@ -167,10 +167,11 @@ async fn get_context(
     let recent_count = params["recent_count"].as_u64().unwrap_or(10) as usize;
     let semantic_count = params["semantic_count"].as_u64().unwrap_or(5) as usize;
 
+    let project_id = params["project_id"].as_str();
     let context = if let Some(user_text) = params["user_text"].as_str() {
         memory
             .recall_engine
-            .parallel_recall_context(&session_id, user_text, recent_count, semantic_count)
+            .parallel_recall_context(&session_id, user_text, recent_count, semantic_count, project_id)
             .await
             .map_err(|e| ApiError::internal(format!("Failed to build context: {}", e)))?
     } else {

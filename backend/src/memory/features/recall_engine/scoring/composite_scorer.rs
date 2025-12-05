@@ -32,11 +32,14 @@ impl CompositeScorer {
                 let recency_score = self.calculate_recency_score(&entry, now);
                 let similarity_score = self.calculate_similarity_score(&entry, query_embedding);
                 let salience_score = entry.salience.unwrap_or(0.0);
+                let project_score =
+                    self.calculate_project_score(&entry, config.current_project_id.as_deref());
 
                 // Weighted composite score
                 let combined_score = config.recency_weight * recency_score
                     + config.similarity_weight * similarity_score
-                    + config.salience_weight * salience_score;
+                    + config.salience_weight * salience_score
+                    + config.project_weight * project_score;
 
                 ScoredMemory {
                     entry,
@@ -44,6 +47,7 @@ impl CompositeScorer {
                     recency_score,
                     similarity_score,
                     salience_score,
+                    project_score,
                 }
             })
             .collect();
@@ -83,6 +87,27 @@ impl CompositeScorer {
             0.0
         } else {
             dot_product / (norm_a * norm_b)
+        }
+    }
+
+    /// Calculate project match score
+    ///
+    /// Returns 1.0 if entry's project matches current project (or both are None),
+    /// 0.3 otherwise (mismatch allows cross-project context with lower weight)
+    pub fn calculate_project_score(
+        &self,
+        entry: &MemoryEntry,
+        current_project_id: Option<&str>,
+    ) -> f32 {
+        let entry_project = entry.extract_project_from_tags();
+
+        match (entry_project.as_deref(), current_project_id) {
+            // Both have same project - full match
+            (Some(entry_proj), Some(current)) if entry_proj == current => 1.0,
+            // Both have no project - considered a match
+            (None, None) => 1.0,
+            // Mismatch or unknown - lower score but not zero (cross-project context allowed)
+            _ => 0.3,
         }
     }
 }

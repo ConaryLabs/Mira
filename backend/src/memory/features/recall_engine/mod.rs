@@ -71,6 +71,10 @@ pub struct RecallConfig {
     pub similarity_weight: f32,
     /// Weight for salience scoring (0.0 to 1.0)
     pub salience_weight: f32,
+    /// Weight for project match scoring (0.0 to 1.0)
+    pub project_weight: f32,
+    /// Current project ID for project-aware scoring
+    pub current_project_id: Option<String>,
 }
 
 impl Default for RecallConfig {
@@ -79,9 +83,11 @@ impl Default for RecallConfig {
             recent_count: 10,
             semantic_count: 20,
             k_per_head: 10,
-            recency_weight: 0.3,
-            similarity_weight: 0.5,
-            salience_weight: 0.2,
+            recency_weight: 0.25,
+            similarity_weight: 0.45,
+            salience_weight: 0.15,
+            project_weight: 0.15,
+            current_project_id: None,
         }
     }
 }
@@ -111,6 +117,7 @@ pub struct ScoredMemory {
     pub recency_score: f32,
     pub similarity_score: f32,
     pub salience_score: f32,
+    pub project_score: f32,
 }
 
 // ===== NEW CLEAN RECALL ENGINE =====

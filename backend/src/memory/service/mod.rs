@@ -161,9 +161,10 @@ impl MemoryService {
         query: &str,
         recent_count: usize,
         semantic_count: usize,
+        project_id: Option<&str>,
     ) -> anyhow::Result<RecallContext> {
         self.recall_engine
-            .parallel_recall_context(session_id, query, recent_count, semantic_count)
+            .parallel_recall_context(session_id, query, recent_count, semantic_count, project_id)
             .await
     }
 

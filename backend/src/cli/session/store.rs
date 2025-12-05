@@ -295,7 +295,7 @@ mod tests {
         let loaded = store.get(&session.id).await.unwrap();
         assert!(loaded.is_some());
         let loaded = loaded.unwrap();
-        assert_eq!(loaded.backend_session_id, "backend-123");
+        assert_eq!(loaded.id, "backend-123");
     }
 
     #[tokio::test]
@@ -313,7 +313,7 @@ mod tests {
 
         let most_recent = store.get_most_recent().await.unwrap();
         assert!(most_recent.is_some());
-        assert_eq!(most_recent.unwrap().backend_session_id, "backend-2");
+        assert_eq!(most_recent.unwrap().id, "backend-2");
     }
 
     #[tokio::test]

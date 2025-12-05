@@ -123,6 +123,7 @@ impl ContextBuilder {
         &self,
         session_id: &str,
         query: &str,
+        project_id: Option<&str>,
     ) -> Result<RecallContext> {
         debug!("Loading memory context for session: {}", session_id);
 
@@ -131,7 +132,7 @@ impl ContextBuilder {
 
         match self
             .memory_service
-            .parallel_recall_context(session_id, query, recent_count, semantic_count)
+            .parallel_recall_context(session_id, query, recent_count, semantic_count, project_id)
             .await
         {
             Ok(mut context) => {

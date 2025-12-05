@@ -82,11 +82,13 @@ impl RecallEngineCoordinator {
         query: &str,
         recent_count: usize,
         semantic_count: usize,
+        project_id: Option<&str>,
     ) -> Result<RecallContext> {
-        // Use the hybrid search with custom config
+        // Use the hybrid search with custom config including project for boosting
         let config = RecallConfig {
             recent_count,
             semantic_count,
+            current_project_id: project_id.map(|s| s.to_string()),
             ..self.config.clone()
         };
         self.engine
@@ -107,6 +109,7 @@ impl RecallEngineCoordinator {
         let config = RecallConfig {
             recent_count,
             semantic_count,
+            current_project_id: project_id.map(|s| s.to_string()),
             ..self.config.clone()
         };
         self.engine

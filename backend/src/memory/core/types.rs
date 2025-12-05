@@ -148,4 +148,14 @@ impl MemoryEntry {
                 .map(|s| matches!(s.to_lowercase().as_str(), "critical" | "high"))
                 .unwrap_or(false)
     }
+
+    /// Extract project ID from tags (stored as "project:xyz")
+    pub fn extract_project_from_tags(&self) -> Option<String> {
+        self.tags.as_ref().and_then(|tags| {
+            tags.iter()
+                .find(|t| t.starts_with("project:"))
+                .and_then(|t| t.strip_prefix("project:"))
+                .map(|s| s.to_string())
+        })
+    }
 }
