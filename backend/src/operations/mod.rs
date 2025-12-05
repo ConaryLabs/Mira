@@ -13,7 +13,7 @@ pub use context_loader::ContextLoader;
 pub use delegation_tools::{get_delegation_tools, parse_tool_call};
 pub use engine::{OperationEngine, OperationEngineEvent};
 pub use tasks::{OperationTask, TaskManager, TaskProgress, TaskStatus};
-pub use tools::{get_code_tools, get_external_tools, get_file_operation_tools, get_git_tools};
+pub use tools::{get_code_tools, get_external_tools, get_file_low_level_tools, get_file_operation_tools, get_git_tools};
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

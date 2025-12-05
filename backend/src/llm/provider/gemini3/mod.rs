@@ -344,7 +344,9 @@ impl Gemini3Provider {
 
         // Log thought signature for debugging
         if thought_signature.is_some() {
-            debug!("Gemini 3 returned thought signature (must be passed back in next turn)");
+            info!("Gemini 3 returned thought signature (will be passed back in next turn)");
+        } else if !tool_calls.is_empty() {
+            info!("WARNING: Gemini 3 returned tool calls but NO thought_signature - this will cause errors on next turn");
         }
 
         Ok(ToolCallResponse {

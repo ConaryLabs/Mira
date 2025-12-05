@@ -39,6 +39,11 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 
+    /// For tool response messages - the function name that was called
+    /// Required for Gemini API which uses name instead of ID for function responses
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+
     /// For assistant messages that request tool calls
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallInfo>>,
@@ -56,6 +61,7 @@ impl Message {
             role: "user".to_string(),
             content,
             tool_call_id: None,
+            tool_name: None,
             tool_calls: None,
             thought_signature: None,
         }
@@ -66,6 +72,7 @@ impl Message {
             role: "assistant".to_string(),
             content,
             tool_call_id: None,
+            tool_name: None,
             tool_calls: None,
             thought_signature: None,
         }
@@ -76,16 +83,18 @@ impl Message {
             role: "system".to_string(),
             content,
             tool_call_id: None,
+            tool_name: None,
             tool_calls: None,
             thought_signature: None,
         }
     }
 
-    pub fn tool_result(call_id: String, output: String) -> Self {
+    pub fn tool_result(call_id: String, name: String, output: String) -> Self {
         Self {
             role: "tool".to_string(),
             content: output,
             tool_call_id: Some(call_id),
+            tool_name: Some(name),
             tool_calls: None,
             thought_signature: None,
         }
@@ -96,6 +105,7 @@ impl Message {
             role: "assistant".to_string(),
             content,
             tool_call_id: None,
+            tool_name: None,
             tool_calls: Some(tool_calls),
             thought_signature: None,
         }
@@ -112,6 +122,7 @@ impl Message {
             role: "assistant".to_string(),
             content,
             tool_call_id: None,
+            tool_name: None,
             tool_calls: Some(tool_calls),
             thought_signature,
         }
