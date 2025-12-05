@@ -4,6 +4,108 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 34: Time Awareness (2025-12-05)
+
+**Summary:** Added current date/time to LLM system context so the model knows "today's date" without the user mentioning it.
+
+**Problem:** LLMs have a knowledge cutoff and don't inherently know the current date. Users had to explicitly state dates for time-sensitive queries.
+
+**Solution:** Inject current date/time into the system context prompt using `chrono::Local::now()`.
+
+**Work Completed:**
+
+1. **Modified System Context** (`src/prompt/context.rs`):
+   - Added `chrono::Local::now()` call at prompt build time
+   - Format: "Thursday, December 05, 2025 at 08:22 PM (PST)"
+   - Uses system timezone (set to America/Los_Angeles)
+
+**Example Prompt Output:**
+```
+[SYSTEM ENVIRONMENT]
+Current time: Thursday, December 05, 2025 at 08:22 PM (PST)
+OS: Ubuntu 22.04.3 LTS (x86_64)
+Shell: zsh
+Package manager: apt
+Available tools: git, docker, node, npm, python, cargo, rustc
+
+Use platform-appropriate commands for this system.
+```
+
+**Files Modified:**
+- `backend/src/prompt/context.rs` - Added current time to `add_system_context()`
+
+**Build Status:** All tests passing
+
+**Commit:** `f3b9c61`
+
+---
+
+## Session 33: System Context Gathering & CLI Sudo Approval (2025-12-05)
+
+**Summary:** Added system environment detection (OS, package manager, shell, tools) and completed CLI sudo approval prompts. Documented feature parity requirements.
+
+**Work Completed:**
+
+1. **System Context Detection** (`src/system/`):
+   - `types.rs` - SystemContext, OsInfo, PackageManager, ShellInfo, AvailableTool structs
+   - `detector.rs` - Detection logic for OS, package managers, shell, available CLI tools
+   - `mod.rs` - Module entry point
+   - Detects: OS version/arch, apt/brew/dnf/pacman, bash/zsh/fish, git/docker/node/python/cargo/etc.
+
+2. **Lazy Static Cache** (`src/config/mod.rs`):
+   - Added `SYSTEM_CONTEXT: SystemContext` lazy_static
+   - Runs once at startup, cached for lifetime
+
+3. **Prompt Injection** (`src/prompt/context.rs`, `src/prompt/builders.rs`):
+   - Added `add_system_context()` function
+   - Injected after persona in `build_system_prompt()` and `build_code_fix_prompt()`
+
+4. **CLI Sudo Approval** (`src/cli/repl.rs`):
+   - Added `handle_sudo_approval()` method for interactive Y/n prompts
+   - Auto-deny in non-interactive mode (piped stdin) for safety
+   - TTY detection using `atty::is()`
+
+5. **Feature Parity Documentation** (`CLAUDE.md`):
+   - Added CLI Architecture section
+   - Added Feature Parity Requirements section
+   - Added feature parity to Common Pitfalls (#7)
+
+6. **Test Fixes**:
+   - Fixed OperationEngine::new() calls in 3 test files (added missing `project_store` param)
+
+**Example System Context Output:**
+```
+[SYSTEM ENVIRONMENT]
+OS: Ubuntu 22.04.3 LTS (x86_64)
+Shell: zsh
+Package manager: apt
+Available tools: git, docker, node, npm, python, cargo, rustc
+
+Use platform-appropriate commands for this system.
+```
+
+**Files Created:**
+- `backend/src/system/mod.rs`
+- `backend/src/system/types.rs`
+- `backend/src/system/detector.rs`
+
+**Files Modified:**
+- `backend/src/lib.rs` - Added `pub mod system`
+- `backend/src/config/mod.rs` - Added SYSTEM_CONTEXT lazy_static
+- `backend/src/prompt/context.rs` - Added `add_system_context()`
+- `backend/src/prompt/builders.rs` - Inject system context
+- `backend/src/cli/repl.rs` - Sudo approval handling
+- `backend/tests/operation_engine_test.rs` - Fixed tests
+- `backend/tests/artifact_flow_test.rs` - Fixed tests
+- `backend/tests/phase6_integration_test.rs` - Fixed tests
+- `CLAUDE.md` - CLI Architecture, Feature Parity sections
+
+**Build Status:** All tests passing
+
+**Commit:** `1a76895`
+
+---
+
 ## Session 32: Claude Code Feature Parity - Milestone 11 (2025-12-03)
 
 **Summary:** Implementing Claude Code-inspired features: Slash Commands, Hooks, Checkpoint/Rewind, and MCP Support.

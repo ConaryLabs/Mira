@@ -54,7 +54,7 @@ mira/
 │   │   ├── memory/   # Memory systems
 │   │   ├── llm/      # LLM providers (Gemini 3 Pro)
 │   │   └── git/      # Git integration + intelligence
-│   ├── tests/        # Integration tests (127+ tests)
+│   ├── tests/        # Integration tests (160+ tests)
 │   ├── migrations/   # Database migrations (9 migrations)
 │   └── README.md     # Detailed backend docs
 │
@@ -109,35 +109,18 @@ mira/
 - **File Browser** - Navigate and select files from projects
 - **Project Management** - Create, import, and manage code projects
 
-## Upcoming Features
+### Additional Features (Milestones 4-11 Complete)
+- **Tool Synthesis** - Auto-generate custom tools from codebase patterns
+- **Build System Integration** - Build/test tracking, error parsing, historical fix lookup
+- **Reasoning Patterns** - Store and replay successful coding patterns
+- **Context Oracle** - Unified context gathering from all 8 intelligence systems
+- **Real-time File Watching** - Automatic code intelligence updates on file changes
+- **Claude Code Feature Parity** - Slash commands, hooks, checkpoint/rewind, MCP support
+- **System Context Detection** - Platform-aware commands (detects OS, package manager, shell, tools)
+- **CLI Interface** - Full command-line interface with sudo approval prompts
+- **Time Awareness** - LLM knows current date/time without user mentioning it
 
-### Milestone 4: Tool Synthesis
-- Auto-generate custom tools from codebase patterns
-- Tool compilation and execution sandbox
-- Effectiveness tracking and evolution
-
-### Milestone 5: Build System Integration
-- Build/test execution tracking
-- Error parsing and deduplication
-- Resolution tracking with historical fix lookup
-
-### Milestone 6: Reasoning Patterns
-- Store successful coding patterns
-- Pattern matching and replay
-- Success rate tracking and evolution
-
-### Milestone 7: Context Oracle
-- Unified context gathering from all intelligence systems
-- Budget-aware LLM calls
-- Enhanced recall with semantic graph
-
-### Milestone 8: Frontend Integration
-- Semantic search UI
-- Co-change suggestions panel
-- Budget tracking dashboard
-- Tool synthesis dashboard
-
-### Milestone 9: Production Hardening
+### Next: Milestone 10 - Production Hardening
 - Performance optimization
 - Comprehensive logging
 - Deployment documentation
@@ -213,7 +196,7 @@ RUST_LOG=debug cargo run     # With debug logging
 cargo watch -x run           # Hot reload (requires cargo-watch)
 
 # Testing
-cargo test                   # Run all tests (127+ tests)
+cargo test                   # Run all tests (160+ tests)
 cargo test --test git_intelligence_test  # Specific test
 cargo test -- --nocapture    # With output
 
@@ -305,7 +288,7 @@ CACHE_TTL_SECONDS=86400
 
 ## Testing
 
-- **Backend**: 127+ tests across 17 test suites
+- **Backend**: 160+ tests across 17 test suites
 - **Frontend**: 350+ tests with 96% pass rate
 - Run all tests:
 
