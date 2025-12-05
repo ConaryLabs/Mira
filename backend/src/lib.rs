@@ -18,6 +18,7 @@ pub mod project;
 pub mod prompt;
 pub mod state;
 pub mod sudo;
+pub mod system;
 pub mod tasks;
 pub mod tools;
 pub mod utils;

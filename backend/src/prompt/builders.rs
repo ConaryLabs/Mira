@@ -11,6 +11,7 @@
 // see src/prompt/internal.rs instead.
 
 use crate::api::ws::message::MessageMetadata;
+use crate::config::SYSTEM_CONTEXT;
 use crate::git::client::tree_builder::FileNode;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
@@ -48,7 +49,10 @@ impl UnifiedPromptBuilder {
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
 
-        // 2. Context only - no system architecture notes
+        // 2. System environment (OS, shell, package manager, available tools)
+        add_system_context(&mut prompt, &SYSTEM_CONTEXT);
+
+        // 3. Context only - no system architecture notes
         add_project_context(&mut prompt, metadata, project_id);
         add_memory_context(&mut prompt, context);
         add_code_intelligence_context(&mut prompt, code_context); // Code elements
@@ -83,6 +87,9 @@ impl UnifiedPromptBuilder {
         // Keep persona for Mira's direct code fixes
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
+
+        // System environment for platform-appropriate commands
+        add_system_context(&mut prompt, &SYSTEM_CONTEXT);
 
         add_project_context(&mut prompt, metadata, project_id);
         add_memory_context(&mut prompt, context);

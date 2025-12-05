@@ -12,7 +12,7 @@ use super::connection::WebSocketConnection;
 use super::unified_handler::{ChatRequest, UnifiedChatHandler};
 use crate::api::error::ApiError;
 use crate::api::ws::message::{MessageMetadata, WsClientMessage, WsServerMessage};
-use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project, session};
+use crate::api::ws::{code_intelligence, documents, files, filesystem, git, memory, project, session, sudo};
 use crate::state::AppState;
 
 pub struct MessageRouter {
@@ -74,6 +74,9 @@ impl MessageRouter {
             }
             WsClientMessage::SessionCommand { method, params } => {
                 self.handle_session_command(method, params).await
+            }
+            WsClientMessage::SudoCommand { method, params } => {
+                self.handle_sudo_command(method, params).await
             }
             _ => {
                 debug!("Ignoring message type");
@@ -312,4 +315,8 @@ impl MessageRouter {
         self.send_result(result, "SESSION").await
     }
 
+    async fn handle_sudo_command(&self, method: String, params: Value) -> Result<()> {
+        let result = sudo::handle_sudo_command(&method, params, self.app_state.clone()).await;
+        self.send_result(result, "SUDO").await
+    }
 }

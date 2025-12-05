@@ -308,6 +308,44 @@ Operations are complex multi-step workflows tracked through state transitions. W
 }
 ```
 
+### CLI Architecture
+
+The CLI (`backend/src/cli/`) provides a Claude Code-style command line interface that connects to the same backend via WebSocket.
+
+**Key CLI Modules:**
+- `repl.rs` - Interactive REPL loop with session management
+- `ws_client.rs` - WebSocket client with event parsing
+- `display/` - Terminal output handling (streaming, colors, spinners)
+- `session.rs` - Session management and picker
+- `commands/` - Custom slash command loading
+- `project.rs` - Project detection and context building
+
+**CLI Features:**
+- Interactive REPL with streaming responses
+- Session management (create, resume, fork, list)
+- Project context detection (auto-detects git repos)
+- Custom slash commands (`.mira/commands/`)
+- Multiple output formats: text (default), json, stream-json
+- Sudo approval prompts (interactive Y/n)
+
+## Feature Parity Requirements
+
+**CRITICAL: Frontend (Web) and CLI must maintain feature parity.**
+
+When implementing new features:
+1. If the feature is user-facing, implement it in BOTH the frontend and CLI
+2. Backend WebSocket messages should work identically for both clients
+3. Interactive features (like sudo approval) need appropriate UX for each:
+   - Frontend: Inline UI components with buttons
+   - CLI: Terminal prompts with keyboard input
+4. Test both interfaces when adding new functionality
+
+**Current feature parity examples:**
+- Streaming responses: Both support real-time token streaming
+- Session management: Both can create, resume, fork sessions
+- Sudo approval: Frontend shows inline buttons, CLI shows Y/n prompt
+- Tool execution: Both display tool summaries and results
+
 ## Common Pitfalls
 
 1. **Backend port confusion**: The backend runs on port **3001**, not 8080 (some old docs/comments say 8080)
@@ -316,6 +354,7 @@ Operations are complex multi-step workflows tracked through state transitions. W
 4. **Test isolation**: Backend tests use in-memory databases; don't rely on persistent state
 5. **WebSocket protocols**: Two coexisting protocols (legacy chat + operations) - don't confuse them
 6. **Cargo edition**: Set to "2024" in Cargo.toml (non-standard, verify compatibility)
+7. **Feature parity**: New features must work in BOTH frontend and CLI - don't forget either interface
 
 ## Git Integration
 

@@ -401,6 +401,24 @@ impl ExternalHandlers {
                             "exit_code": -1
                         }));
                     }
+                    AuthorizationDecision::BlockedByBlocklist { entry } => {
+                        warn!(
+                            "[EXTERNAL] Command blocked by blocklist '{}' (severity: {}): {}",
+                            entry.name, entry.severity, command
+                        );
+                        return Ok(json!({
+                            "success": false,
+                            "blocked": true,
+                            "error": format!(
+                                "Command blocked: {} (severity: {})",
+                                entry.description.unwrap_or_else(|| entry.name.clone()),
+                                entry.severity
+                            ),
+                            "blocklist_entry": entry.name,
+                            "output": "",
+                            "exit_code": -1
+                        }));
+                    }
                 }
             } else {
                 return Ok(json!({
@@ -415,26 +433,33 @@ impl ExternalHandlers {
         // Regular (non-sudo) command execution
         info!("[EXTERNAL] Executing command: '{}' in {:?}", command, working_dir);
 
-        // Safety check: block dangerous commands (for non-sudo)
-        let dangerous_patterns = [
-            "rm -rf /",
-            "dd if=",
-            "mkfs",
-            "> /dev/",
-            "curl.*|.*sh",
-            "wget.*|.*sh",
-        ];
-
-        for pattern in &dangerous_patterns {
-            if let Ok(re) = regex::Regex::new(pattern) {
-                if re.is_match(command) {
+        // Check blocklist for non-sudo commands too (if sudo service is configured)
+        if let Some(ref sudo_service) = self.sudo_service {
+            // Use a lightweight blocklist check (same logic as check_authorization but just blocklist)
+            match sudo_service
+                .check_authorization(command, operation_id, session_id, reason)
+                .await?
+            {
+                AuthorizationDecision::BlockedByBlocklist { entry } => {
+                    warn!(
+                        "[EXTERNAL] Non-sudo command blocked by blocklist '{}': {}",
+                        entry.name, command
+                    );
                     return Ok(json!({
                         "success": false,
-                        "error": "Command blocked: potentially dangerous operation",
+                        "blocked": true,
+                        "error": format!(
+                            "Command blocked: {} (severity: {})",
+                            entry.description.unwrap_or_else(|| entry.name.clone()),
+                            entry.severity
+                        ),
+                        "blocklist_entry": entry.name,
                         "output": "",
                         "exit_code": -1
                     }));
                 }
+                // For non-sudo commands, we only care about blocklist - ignore other decisions
+                _ => {}
             }
         }
 

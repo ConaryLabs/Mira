@@ -23,6 +23,7 @@ pub mod message;
 pub mod operations;
 pub mod project;
 pub mod session;
+pub mod sudo;
 
 // Re-export key components
 pub use chat::ws_chat_handler;

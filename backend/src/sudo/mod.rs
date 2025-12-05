@@ -6,6 +6,6 @@
 pub mod service;
 
 pub use service::{
-    AuthorizationDecision, SudoApprovalRequest, SudoAuditEntry, SudoPermission,
-    SudoPermissionService,
+    AuthorizationDecision, SudoApprovalRequest, SudoAuditEntry, SudoBlocklistEntry,
+    SudoPermission, SudoPermissionService,
 };

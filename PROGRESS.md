@@ -20,6 +20,41 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ---
 
+## Phase: System Intelligence & CLI Parity
+
+### Session 33: 2025-12-05
+
+**Summary:** Added system context gathering for platform-aware LLM commands, CLI sudo approval support, and feature parity documentation.
+
+**Key Outcomes:**
+- Created `src/system/` module for detecting OS, package manager, shell, and available tools
+- System context injected into prompts so LLM uses correct commands (apt vs brew vs dnf)
+- Added CLI interactive sudo approval prompts (Y/n) with auto-deny for non-interactive mode
+- Documented feature parity requirements in CLAUDE.md
+- Fixed test failures from missing `project_store` parameter (10 occurrences across 3 test files)
+
+**Files Created:**
+- `backend/src/system/mod.rs` - Module entry point
+- `backend/src/system/types.rs` - SystemContext, OsInfo, PackageManager, ShellInfo, AvailableTool
+- `backend/src/system/detector.rs` - Detection logic with unit tests
+
+**Files Modified:**
+- `backend/src/lib.rs` - Added `pub mod system;`
+- `backend/src/config/mod.rs` - Added `SYSTEM_CONTEXT` lazy_static cache
+- `backend/src/prompt/context.rs` - Added `add_system_context()` function
+- `backend/src/prompt/builders.rs` - Inject system context after persona in prompts
+- `backend/src/cli/repl.rs` - Added `handle_sudo_approval()` for interactive CLI prompts
+- `CLAUDE.md` - Added CLI Architecture and Feature Parity Requirements sections
+- `backend/tests/{operation_engine,artifact_flow,phase6_integration}_test.rs` - Fixed OperationEngine::new calls
+
+**Technical Details:**
+- System detection runs once at startup, cached in lazy_static
+- Detects: Linux distro from /etc/os-release, macOS via sw_vers, Windows via cmd /c ver
+- Package managers checked in priority order: apt, dnf, yum, pacman, brew, chocolatey, etc.
+- Tools detected: git, docker, node, npm, python, cargo, rustc, go, java, make, etc.
+
+---
+
 ## Phase: Testing & Quality
 
 ### Session 32: 2025-12-03

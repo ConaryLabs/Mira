@@ -594,6 +594,25 @@ impl Repl {
                 event = self.client.recv() => {
                     match event {
                         Some(event) => {
+                            // Check for sudo approval request BEFORE display handling
+                            if let BackendEvent::OperationEvent(
+                                crate::cli::ws_client::OperationEvent::SudoApprovalRequired {
+                                    approval_request_id,
+                                    command,
+                                    reason,
+                                    ..
+                                }
+                            ) = &event {
+                                // Handle sudo approval interactively
+                                self.handle_sudo_approval(
+                                    approval_request_id,
+                                    command,
+                                    reason.as_deref(),
+                                ).await?;
+                                // Continue waiting for operation completion
+                                continue;
+                            }
+
                             self.display.handle_event(&event)?;
 
                             // Check for completion
@@ -629,6 +648,62 @@ impl Repl {
             }
         }
 
+        Ok(())
+    }
+
+    /// Handle sudo approval request interactively
+    async fn handle_sudo_approval(
+        &mut self,
+        approval_request_id: &str,
+        command: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        use std::io::{self, Write};
+
+        // Stop any spinner
+        self.display.terminal_mut().stop_spinner();
+
+        // Display the approval request
+        println!();
+        self.display.terminal().print_warning("Privileged command requires approval")?;
+        println!();
+        println!("  Command: \x1b[1;33m{}\x1b[0m", command);
+        if let Some(r) = reason {
+            println!("  Reason:  {}", r);
+        }
+        println!();
+
+        // Check if we can prompt interactively
+        if !atty::is(atty::Stream::Stdin) {
+            // Non-interactive mode - auto-deny for safety
+            self.display.terminal().print_error("Auto-denied (non-interactive mode)")?;
+            self.client.deny_sudo_request(
+                approval_request_id,
+                Some("Auto-denied: non-interactive mode cannot prompt for approval"),
+            ).await?;
+            println!();
+            return Ok(());
+        }
+
+        // Prompt for approval
+        print!("  Approve this command? [Y/n]: ");
+        io::stdout().flush()?;
+
+        // Read user input
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+
+        // Process response
+        if input.is_empty() || input == "y" || input == "yes" {
+            self.display.terminal().print_success("Approved")?;
+            self.client.approve_sudo_request(approval_request_id).await?;
+        } else {
+            self.display.terminal().print_error("Denied")?;
+            self.client.deny_sudo_request(approval_request_id, Some("User denied from CLI")).await?;
+        }
+
+        println!();
         Ok(())
     }
 }
