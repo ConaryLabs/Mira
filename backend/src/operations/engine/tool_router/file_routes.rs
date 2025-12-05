@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::llm::provider::{Gemini3Provider, Message};
-use crate::operations::get_file_operation_tools;
+use crate::operations::get_file_low_level_tools;
 use crate::prompt::internal::tool_router as prompts;
 use super::super::file_handlers::FileHandlers;
 use super::llm_conversation::execute_file_read_conversation;
@@ -56,7 +56,7 @@ pub async fn route_read_file(
         Message::user(user_prompt),
     ];
 
-    let tools = get_file_operation_tools();
+    let tools = get_file_low_level_tools();
 
     let result = execute_file_read_conversation(llm, file_handlers, messages, tools).await?;
 
@@ -105,7 +105,7 @@ pub async fn route_search(
         Message::user(user_prompt),
     ];
 
-    let tools = get_file_operation_tools();
+    let tools = get_file_low_level_tools();
     let response = llm
         .call_with_tools(messages, tools)
         .await
@@ -164,7 +164,7 @@ pub async fn route_list_files(
         Message::user(user_prompt),
     ];
 
-    let tools = get_file_operation_tools();
+    let tools = get_file_low_level_tools();
     let response = llm
         .call_with_tools(messages, tools)
         .await

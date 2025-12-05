@@ -37,13 +37,14 @@ pub fn messages_to_gemini_contents(messages: &[Message], system: &str) -> Vec<Va
         }
 
         // Handle function responses
+        // Gemini requires function name (not call ID) in functionResponse
         if msg.role == "tool" {
-            if let Some(ref call_id) = msg.tool_call_id {
+            if let Some(ref name) = msg.tool_name {
                 contents.push(serde_json::json!({
                     "role": "function",
                     "parts": [{
                         "functionResponse": {
-                            "name": call_id,
+                            "name": name,
                             "response": {
                                 "result": msg.content
                             }
@@ -59,21 +60,27 @@ pub fn messages_to_gemini_contents(messages: &[Message], system: &str) -> Vec<Va
             parts.push(serde_json::json!({"text": msg.content}));
         }
 
-        // Add thought signature if present
-        if let Some(ref sig) = msg.thought_signature {
-            parts.push(serde_json::json!({"thoughtSignature": sig}));
-        }
-
         // Add function calls if present (for model messages)
+        // Each functionCall part must include the thoughtSignature if present
         if let Some(ref tool_calls) = msg.tool_calls {
             for tc in tool_calls {
-                parts.push(serde_json::json!({
+                let mut part = serde_json::json!({
                     "functionCall": {
                         "name": tc.name,
                         "args": tc.arguments
                     }
-                }));
+                });
+
+                // Add thought signature to each function call part (required by Gemini API)
+                if let Some(ref sig) = msg.thought_signature {
+                    part["thoughtSignature"] = serde_json::json!(sig);
+                }
+
+                parts.push(part);
             }
+        } else if let Some(ref sig) = msg.thought_signature {
+            // If no function calls but we have a thought signature, add it as separate part
+            parts.push(serde_json::json!({"thoughtSignature": sig}));
         }
 
         if !parts.is_empty() {

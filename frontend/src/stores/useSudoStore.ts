@@ -1,6 +1,7 @@
 // src/stores/useSudoStore.ts
 // State management for sudo approval requests and permissions
 
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { useWebSocketStore } from './useWebSocketStore';
 
@@ -239,8 +240,13 @@ export const useSudoStore = create<SudoStore>((set, get) => ({
 // SELECTOR HOOKS
 // ============================================================================
 
-export const usePendingApprovals = () =>
-  useSudoStore((state) => state.pendingApprovals.filter((r) => r.status === 'pending'));
+export const usePendingApprovals = () => {
+  const pendingApprovals = useSudoStore((state) => state.pendingApprovals);
+  return useMemo(
+    () => pendingApprovals.filter((r) => r.status === 'pending'),
+    [pendingApprovals]
+  );
+};
 
 export const useSudoPermissions = () =>
   useSudoStore((state) => state.permissions);

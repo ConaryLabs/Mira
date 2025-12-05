@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
@@ -342,11 +342,21 @@ impl LlmOrchestrator {
                 let llm_start = Instant::now();
 
                 // Call LLM with tools
-                let resp = self
+                let resp = match self
                     .provider
                     .call_with_tools(messages.clone(), tools.clone())
                     .await
-                    .context("Failed to call LLM")?;
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!(
+                            operation_id = %operation_id,
+                            error = %e,
+                            "LLM API call failed"
+                        );
+                        return Err(e).context("Failed to call LLM");
+                    }
+                };
 
                 let llm_duration = llm_start.elapsed();
                 info!(
@@ -460,9 +470,10 @@ impl LlmOrchestrator {
                     "Tool executed"
                 );
 
-                // Add tool result to conversation with tool_call_id
+                // Add tool result to conversation with tool_call_id and tool_name
                 messages.push(Message::tool_result(
                     tool_call.id.clone(),
+                    tool_call.name.clone(),
                     serde_json::to_string(&result)?,
                 ));
             }
@@ -478,14 +489,17 @@ impl LlmOrchestrator {
         }
 
         // Record total cost for all iterations
-        self.record_cost(
+        // Note: Budget tracking errors are non-fatal - log warning and continue
+        if let Err(e) = self.record_cost(
             user_id,
             operation_id,
             total_tokens_input,
             total_tokens_output,
             total_from_cache,
         )
-        .await?;
+        .await {
+            warn!("Failed to record budget (non-fatal): {}", e);
+        }
 
         let actual_cost = if total_from_cache {
             0.0

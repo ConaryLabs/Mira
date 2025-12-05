@@ -417,9 +417,10 @@ async fn open_directory(params: Value, app_state: Arc<AppState>) -> ApiResult<Ws
     }
 
     // Get or create project by path
+    // Note: owner_id is optional - we don't have user context here
     let project = app_state
         .project_store
-        .get_or_create_by_path(&req.path, Some("peter".to_string()))
+        .get_or_create_by_path(&req.path, None)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to open directory: {}", e)))?;
 

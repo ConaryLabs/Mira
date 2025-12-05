@@ -136,10 +136,8 @@ impl Repl {
             self.print_session_info()?;
         }
 
-        // Wait for connection ready
-        if let Some(BackendEvent::Connected) = self.client.recv().await {
-            // Connection established
-        }
+        // Note: connection_ready is consumed during session operations,
+        // so we don't need to wait for it here. Session success implies connection.
 
         // Main REPL loop
         while self.running {
@@ -411,10 +409,8 @@ impl Repl {
             self.create_new_session().await?;
         }
 
-        // Wait for connection
-        if let Some(BackendEvent::Connected) = self.client.recv().await {
-            // Connection established
-        }
+        // Note: connection_ready is consumed during session operations,
+        // so we don't need to wait for it here. Session success implies connection.
 
         // Expand custom commands if the prompt starts with /
         let final_prompt = if prompt.starts_with('/') {

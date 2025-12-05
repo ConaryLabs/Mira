@@ -244,6 +244,7 @@ impl AgentExecutor for BuiltinAgentExecutor {
 
                     messages.push(Message::tool_result(
                         tool_call.id.clone(),
+                        tool_call.name.clone(),
                         serde_json::json!({
                             "error": format!("Tool '{}' is not allowed for this agent", tool_call.name)
                         })
@@ -285,6 +286,7 @@ impl AgentExecutor for BuiltinAgentExecutor {
                 // Add tool result to messages
                 messages.push(Message::tool_result(
                     tool_call.id.clone(),
+                    tool_call.name.clone(),
                     serde_json::to_string(&result_value)
                         .unwrap_or_else(|_| result_value.to_string()),
                 ));
