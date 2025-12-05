@@ -42,6 +42,63 @@ impl GeminiLimits {
     }
 }
 
+/// Context budget configuration
+/// Controls whether to enforce staying within standard pricing tier
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextBudgetConfig {
+    /// Enforce staying in standard pricing tier (<200k context)
+    /// If true, context will be truncated to avoid large context pricing
+    pub enforce_standard_tier: bool,
+    /// Maximum context tokens (0 = use model maximum)
+    /// If set, context will be truncated to this limit regardless of tier
+    pub max_context_tokens: usize,
+    /// Enable proactive warnings when approaching pricing threshold
+    pub enable_threshold_warnings: bool,
+    /// Custom warning threshold (90% of 200k = 180k by default)
+    pub warning_threshold_percent: u8,
+}
+
+impl Default for ContextBudgetConfig {
+    fn default() -> Self {
+        Self {
+            enforce_standard_tier: false,
+            max_context_tokens: 0, // No limit by default
+            enable_threshold_warnings: true,
+            warning_threshold_percent: 90,
+        }
+    }
+}
+
+impl ContextBudgetConfig {
+    pub fn from_env() -> Self {
+        Self {
+            enforce_standard_tier: super::helpers::env_or("ENFORCE_STANDARD_PRICING_TIER", "false")
+                .parse()
+                .unwrap_or(false),
+            max_context_tokens: super::helpers::env_or("MAX_CONTEXT_TOKENS", "0")
+                .parse()
+                .unwrap_or(0),
+            enable_threshold_warnings: super::helpers::env_or("ENABLE_CONTEXT_WARNINGS", "true")
+                .parse()
+                .unwrap_or(true),
+            warning_threshold_percent: super::helpers::env_or("CONTEXT_WARNING_THRESHOLD_PERCENT", "90")
+                .parse()
+                .unwrap_or(90),
+        }
+    }
+
+    /// Get the effective maximum context tokens
+    pub fn effective_max_context(&self) -> usize {
+        if self.max_context_tokens > 0 {
+            self.max_context_tokens
+        } else if self.enforce_standard_tier {
+            200_000 // Stay under large context threshold
+        } else {
+            1_000_000 // Full model context window
+        }
+    }
+}
+
 /// Gemini 3 configuration with thinking level
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiConfig {

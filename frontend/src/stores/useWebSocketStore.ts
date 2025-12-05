@@ -114,6 +114,8 @@ const KNOWN_MESSAGE_TYPES = new Set([
   'operation.failed',
   'operation.status_changed',
   'operation.tool_executed',
+  'operation.context_warning',
+  'operation.usage_info',
 ]);
 
 const KNOWN_DATA_TYPES = new Set([
@@ -184,6 +186,8 @@ const KNOWN_DATA_TYPES = new Set([
   'operation.completed',
   'operation.failed',
   'operation.status_changed',
+  'operation.context_warning',
+  'operation.usage_info',
 ]);
 
 // Messages we don't need to log (too noisy)
