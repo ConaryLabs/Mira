@@ -6,7 +6,7 @@ use glob::glob;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 use tokio::fs;
 use tracing::{info, warn};
 
@@ -48,12 +48,44 @@ static RE_GENERIC_FN: LazyLock<Regex> = LazyLock::new(|| {
 pub struct FileHandlers {
     /// Base directory for all file operations (project root)
     base_dir: PathBuf,
+    /// Optional project-specific working directory (overrides base_dir when set)
+    /// Uses RwLock for interior mutability - allows updating without &mut self
+    project_dir: RwLock<Option<PathBuf>>,
 }
 
 impl FileHandlers {
     /// Create a new file handlers instance
     pub fn new(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+        Self {
+            base_dir,
+            project_dir: RwLock::new(None),
+        }
+    }
+
+    /// Set the project directory for file operations
+    /// This overrides the default base_dir
+    pub fn set_project_dir(&self, path: PathBuf) {
+        info!("[FileHandlers] Setting project directory: {}", path.display());
+        if let Ok(mut guard) = self.project_dir.write() {
+            *guard = Some(path);
+        }
+    }
+
+    /// Clear the project directory override
+    pub fn clear_project_dir(&self) {
+        if let Ok(mut guard) = self.project_dir.write() {
+            *guard = None;
+        }
+    }
+
+    /// Get the effective base directory (project_dir if set, else base_dir)
+    fn effective_base_dir(&self) -> PathBuf {
+        if let Ok(guard) = self.project_dir.read() {
+            if let Some(ref path) = *guard {
+                return path.clone();
+            }
+        }
+        self.base_dir.clone()
     }
 
     /// Execute a file operation tool call
@@ -231,10 +263,11 @@ impl FileHandlers {
             for entry in glob(&glob_pattern)
                 .with_context(|| format!("Invalid glob pattern: {}", glob_pattern))?
             {
+                let base = self.effective_base_dir();
                 match entry {
                     Ok(path) => {
                         if path.is_file() {
-                            if let Some(rel_path) = path.strip_prefix(&self.base_dir).ok() {
+                            if let Some(rel_path) = path.strip_prefix(base).ok() {
                                 files.push(rel_path.display().to_string());
                             }
                         }
@@ -248,6 +281,7 @@ impl FileHandlers {
                 .await
                 .with_context(|| format!("Failed to read directory: {}", dir_path.display()))?;
 
+            let base = self.effective_base_dir();
             while let Some(entry) = entries
                 .next_entry()
                 .await
@@ -255,7 +289,7 @@ impl FileHandlers {
             {
                 let path = entry.path();
                 if path.is_file() {
-                    if let Some(rel_path) = path.strip_prefix(&self.base_dir).ok() {
+                    if let Some(rel_path) = path.strip_prefix(&base).ok() {
                         files.push(rel_path.display().to_string());
                     }
                 } else if recursive && path.is_dir() {
@@ -273,7 +307,7 @@ impl FileHandlers {
 
                     // Recursively list subdirectories
                     let sub_args = json!({
-                        "directory": path.strip_prefix(&self.base_dir)
+                        "directory": path.strip_prefix(&base)
                             .unwrap_or(&path)
                             .display()
                             .to_string(),
@@ -359,7 +393,7 @@ impl FileHandlers {
                         for (line_num, line) in content.lines().enumerate() {
                             if regex.is_match(line) {
                                 let rel_path = path
-                                    .strip_prefix(&self.base_dir)
+                                    .strip_prefix(self.effective_base_dir())
                                     .unwrap_or(&path)
                                     .display()
                                     .to_string();
@@ -387,9 +421,10 @@ impl FileHandlers {
         }))
     }
 
-    /// Resolve a relative path to an absolute path within base_dir
+    /// Resolve a relative path to an absolute path within the effective base directory
     fn resolve_path(&self, path: &str) -> Result<PathBuf> {
         let path = Path::new(path);
+        let base = self.effective_base_dir();
 
         // Prevent directory traversal attacks
         if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
@@ -399,10 +434,10 @@ impl FileHandlers {
             ));
         }
 
-        let full_path = self.base_dir.join(path);
+        let full_path = base.join(path);
 
-        // Ensure the resolved path is still within base_dir
-        if !full_path.starts_with(&self.base_dir) {
+        // Ensure the resolved path is still within base directory
+        if !full_path.starts_with(&base) {
             return Err(anyhow::anyhow!(
                 "Path outside project directory: {}",
                 path.display()
