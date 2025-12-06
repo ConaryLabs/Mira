@@ -319,8 +319,23 @@ impl OpenAIProvider {
         response: ResponsesResponse,
         latency_ms: i64,
     ) -> Result<ToolResponse> {
-        // Get text output
-        let text_output = response.output_text.clone().unwrap_or_default();
+        // Get text output - try output_text first, then extract from output array
+        let text_output = if let Some(text) = response.output_text.clone() {
+            text
+        } else {
+            // Extract from output array (fallback for when output_text is not populated)
+            let mut text = String::new();
+            for item in &response.output {
+                if let OutputItem::Message { content, .. } = item {
+                    for c in content {
+                        if let OutputContent::OutputText { text: t, .. } = c {
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+            text
+        };
 
         // Extract function calls from output (including native tool calls)
         let function_calls: Vec<FunctionCall> = response
