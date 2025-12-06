@@ -138,7 +138,8 @@ export const MessageList: React.FC = () => {
         atBottomThreshold={50}
         alignToBottom
         components={{
-          Footer: () => <Footer showIndicator={!!thinkingStatus || (isWaitingForResponse && !isStreaming)} />
+          // Only show ThinkingIndicator when NOT streaming (avoid duplicate indicators)
+          Footer: () => <Footer showIndicator={!isStreaming && (!!thinkingStatus || isWaitingForResponse)} />
         }}
       />
       
