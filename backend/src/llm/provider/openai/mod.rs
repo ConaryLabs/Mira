@@ -19,7 +19,12 @@ use super::{FunctionCall, LlmProvider, Message, Response, TokenUsage, ToolContex
 // Re-export public types
 pub use embeddings::{OpenAIEmbeddingModel, OpenAIEmbeddings};
 pub use pricing::{CostResult, OpenAIPricing};
-pub use types::{OpenAIModel, ReasoningConfig, ReasoningEffort};
+pub use types::{
+    OpenAIModel, ReasoningConfig, ReasoningEffort,
+    // Native tool types
+    NativeToolType, PatchOperation, PatchOpType, ShellResult,
+    native_apply_patch_tool, native_shell_tool,
+};
 
 // Use types for Responses API
 use types::{
@@ -142,8 +147,9 @@ impl OpenAIProvider {
     }
 
     /// Convert tools to Responses API format
+    /// Automatically adds native apply_patch and shell tools for code/agentic tiers
     fn tools_to_responses(&self, tools: &[Value]) -> Vec<ResponsesTool> {
-        tools
+        let mut responses_tools: Vec<ResponsesTool> = tools
             .iter()
             .filter_map(|tool| {
                 // Extract function declarations from Gemini-style tool format
@@ -170,7 +176,16 @@ impl OpenAIProvider {
                 None
             })
             .flatten()
-            .collect()
+            .collect();
+
+        // Add native tools for Code and Agentic tiers
+        // These are GPT-5.1 built-in tools with 35% fewer failures for file ops
+        if self.model == OpenAIModel::Gpt51CodexMax {
+            responses_tools.push(native_apply_patch_tool());
+            responses_tools.push(native_shell_tool());
+        }
+
+        responses_tools
     }
 
     /// Validate API key with a minimal request
@@ -298,6 +313,7 @@ impl OpenAIProvider {
     }
 
     /// Parse tool calling response from Responses API
+    /// Handles both custom function calls and native tools (apply_patch, shell)
     fn parse_tool_response(
         &self,
         response: ResponsesResponse,
@@ -306,31 +322,54 @@ impl OpenAIProvider {
         // Get text output
         let text_output = response.output_text.clone().unwrap_or_default();
 
-        // Extract function calls from output
+        // Extract function calls from output (including native tool calls)
         let function_calls: Vec<FunctionCall> = response
             .output
             .iter()
             .filter_map(|item| {
-                if let OutputItem::FunctionCall {
-                    id,
-                    call_id,
-                    name,
-                    arguments,
-                } = item
-                {
-                    // Parse arguments from JSON string
-                    let args: Value = serde_json::from_str(arguments).unwrap_or_else(|e| {
-                        warn!("Failed to parse tool call arguments: {} - {}", e, arguments);
-                        Value::Object(serde_json::Map::new())
-                    });
+                match item {
+                    OutputItem::FunctionCall {
+                        id,
+                        call_id,
+                        name,
+                        arguments,
+                    } => {
+                        // Parse arguments from JSON string
+                        let args: Value = serde_json::from_str(arguments).unwrap_or_else(|e| {
+                            warn!("Failed to parse tool call arguments: {} - {}", e, arguments);
+                            Value::Object(serde_json::Map::new())
+                        });
 
-                    Some(FunctionCall {
-                        id: id.clone().unwrap_or_else(|| call_id.clone()),
-                        name: name.clone(),
-                        arguments: args,
-                    })
-                } else {
-                    None
+                        Some(FunctionCall {
+                            id: id.clone().unwrap_or_else(|| call_id.clone()),
+                            name: name.clone(),
+                            arguments: args,
+                        })
+                    }
+                    OutputItem::ApplyPatchCall { id, call_id, patch } => {
+                        // Convert native apply_patch to FunctionCall format
+                        // The tool router will handle the V4A patch parsing
+                        debug!("Native apply_patch call: {} bytes", patch.len());
+                        Some(FunctionCall {
+                            id: id.clone().unwrap_or_else(|| call_id.clone()),
+                            name: "__native_apply_patch".to_string(),
+                            arguments: serde_json::json!({ "patch": patch }),
+                        })
+                    }
+                    OutputItem::ShellCall { id, call_id, command, workdir, timeout } => {
+                        // Convert native shell to FunctionCall format
+                        debug!("Native shell call: {:?}", command);
+                        Some(FunctionCall {
+                            id: id.clone().unwrap_or_else(|| call_id.clone()),
+                            name: "__native_shell".to_string(),
+                            arguments: serde_json::json!({
+                                "command": command,
+                                "workdir": workdir,
+                                "timeout": timeout.unwrap_or(120)
+                            }),
+                        })
+                    }
+                    _ => None,
                 }
             })
             .collect();

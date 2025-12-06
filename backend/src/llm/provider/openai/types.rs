@@ -279,13 +279,36 @@ pub enum OutputItem {
         #[serde(default)]
         status: String,
     },
-    /// Function call from model
+    /// Function call from model (custom tools)
     FunctionCall {
         #[serde(default)]
         id: Option<String>,
         call_id: String,
         name: String,
         arguments: String,
+    },
+    /// Native apply_patch call from model (GPT-5.1 built-in file editing)
+    /// Uses V4A diff format for reliable file operations
+    ApplyPatchCall {
+        #[serde(default)]
+        id: Option<String>,
+        call_id: String,
+        /// V4A format patch content
+        patch: String,
+    },
+    /// Native shell call from model (GPT-5.1 built-in command execution)
+    ShellCall {
+        #[serde(default)]
+        id: Option<String>,
+        call_id: String,
+        /// Command to execute
+        command: Vec<String>,
+        /// Working directory (optional)
+        #[serde(default)]
+        workdir: Option<String>,
+        /// Timeout in seconds (default 120)
+        #[serde(default)]
+        timeout: Option<u32>,
     },
     /// Catch-all for unknown output types
     #[serde(other)]
@@ -538,4 +561,270 @@ pub struct DeltaFunction {
     pub name: Option<String>,
     #[serde(default)]
     pub arguments: Option<String>,
+}
+
+// ============================================================================
+// Native Tool Types (GPT-5.1 Built-in Tools)
+// ============================================================================
+
+/// Native tool type identifiers for Responses API
+/// These are built-in tools that GPT-5.1 knows how to use natively
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeToolType {
+    /// File editing with V4A diff format - 35% fewer failures than custom tools
+    ApplyPatch,
+    /// Command execution with proper timeout handling
+    Shell,
+}
+
+impl NativeToolType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NativeToolType::ApplyPatch => "apply_patch",
+            NativeToolType::Shell => "shell",
+        }
+    }
+}
+
+/// Create a native apply_patch tool definition
+pub fn native_apply_patch_tool() -> ResponsesTool {
+    ResponsesTool {
+        tool_type: "apply_patch".to_string(),
+        name: None,
+        description: None,
+        parameters: None,
+    }
+}
+
+/// Create a native shell tool definition
+pub fn native_shell_tool() -> ResponsesTool {
+    ResponsesTool {
+        tool_type: "shell".to_string(),
+        name: None,
+        description: None,
+        parameters: None,
+    }
+}
+
+/// Parsed V4A patch operation from apply_patch_call
+#[derive(Debug, Clone)]
+pub struct PatchOperation {
+    /// File path
+    pub path: String,
+    /// Operation type
+    pub op_type: PatchOpType,
+    /// File content (for create) or diff hunks (for update)
+    pub content: String,
+}
+
+/// V4A patch operation type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchOpType {
+    /// Create a new file
+    Create,
+    /// Update existing file with diff
+    Update,
+    /// Delete a file
+    Delete,
+}
+
+impl PatchOperation {
+    /// Parse V4A format patch into operations
+    /// V4A format:
+    /// *** Begin Patch
+    /// *** Add File: path/to/new/file.txt
+    /// content here
+    /// *** Update File: path/to/existing.txt
+    /// @@ -start,count +start,count @@
+    ///  context
+    /// -removed
+    /// +added
+    /// *** Delete File: path/to/delete.txt
+    /// *** End Patch
+    pub fn parse_v4a(patch: &str) -> Vec<PatchOperation> {
+        let mut operations = Vec::new();
+        let mut current_path: Option<String> = None;
+        let mut current_type: Option<PatchOpType> = None;
+        let mut current_content = String::new();
+        let mut in_patch = false;
+
+        for line in patch.lines() {
+            let trimmed = line.trim();
+
+            if trimmed == "*** Begin Patch" {
+                in_patch = true;
+                continue;
+            }
+
+            if trimmed == "*** End Patch" {
+                // Save last operation
+                if let (Some(path), Some(op_type)) = (current_path.take(), current_type.take()) {
+                    operations.push(PatchOperation {
+                        path,
+                        op_type,
+                        content: std::mem::take(&mut current_content),
+                    });
+                }
+                break;
+            }
+
+            if !in_patch {
+                continue;
+            }
+
+            // Check for file operation headers
+            if let Some(path) = trimmed.strip_prefix("*** Add File: ") {
+                // Save previous operation
+                if let (Some(p), Some(t)) = (current_path.take(), current_type.take()) {
+                    operations.push(PatchOperation {
+                        path: p,
+                        op_type: t,
+                        content: std::mem::take(&mut current_content),
+                    });
+                }
+                current_path = Some(path.to_string());
+                current_type = Some(PatchOpType::Create);
+                current_content.clear();
+            } else if let Some(path) = trimmed.strip_prefix("*** Update File: ") {
+                if let (Some(p), Some(t)) = (current_path.take(), current_type.take()) {
+                    operations.push(PatchOperation {
+                        path: p,
+                        op_type: t,
+                        content: std::mem::take(&mut current_content),
+                    });
+                }
+                current_path = Some(path.to_string());
+                current_type = Some(PatchOpType::Update);
+                current_content.clear();
+            } else if let Some(path) = trimmed.strip_prefix("*** Delete File: ") {
+                if let (Some(p), Some(t)) = (current_path.take(), current_type.take()) {
+                    operations.push(PatchOperation {
+                        path: p,
+                        op_type: t,
+                        content: std::mem::take(&mut current_content),
+                    });
+                }
+                current_path = Some(path.to_string());
+                current_type = Some(PatchOpType::Delete);
+                current_content.clear();
+            } else if current_path.is_some() {
+                // Accumulate content
+                if !current_content.is_empty() {
+                    current_content.push('\n');
+                }
+                current_content.push_str(line);
+            }
+        }
+
+        operations
+    }
+}
+
+/// Result of executing a shell command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellResult {
+    /// Standard output
+    pub stdout: String,
+    /// Standard error
+    pub stderr: String,
+    /// Exit code
+    pub exit_code: i32,
+    /// Whether command timed out
+    pub timed_out: bool,
+}
+
+impl ShellResult {
+    /// Format result for sending back to model
+    pub fn to_output(&self, max_length: usize) -> String {
+        let mut output = String::new();
+
+        if !self.stdout.is_empty() {
+            output.push_str(&truncate_output(&self.stdout, max_length / 2));
+        }
+
+        if !self.stderr.is_empty() {
+            if !output.is_empty() {
+                output.push_str("\n\n[stderr]\n");
+            }
+            output.push_str(&truncate_output(&self.stderr, max_length / 2));
+        }
+
+        if self.timed_out {
+            output.push_str("\n\n[TIMEOUT]");
+        }
+
+        if output.is_empty() {
+            output = format!("[exit code: {}]", self.exit_code);
+        }
+
+        output
+    }
+}
+
+/// Truncate output to max length with indicator
+fn truncate_output(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...[truncated]", &s[..max_len])
+    }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_v4a_create() {
+        let patch = r#"*** Begin Patch
+*** Add File: src/new_file.rs
+fn main() {
+    println!("Hello");
+}
+*** End Patch"#;
+
+        let ops = PatchOperation::parse_v4a(patch);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].path, "src/new_file.rs");
+        assert_eq!(ops[0].op_type, PatchOpType::Create);
+        assert!(ops[0].content.contains("fn main()"));
+    }
+
+    #[test]
+    fn test_parse_v4a_update() {
+        let patch = r#"*** Begin Patch
+*** Update File: src/lib.rs
+@@ -10,3 +10,4 @@
+ existing line
+-old line
++new line
++another new line
+*** End Patch"#;
+
+        let ops = PatchOperation::parse_v4a(patch);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].path, "src/lib.rs");
+        assert_eq!(ops[0].op_type, PatchOpType::Update);
+        assert!(ops[0].content.contains("-old line"));
+        assert!(ops[0].content.contains("+new line"));
+    }
+
+    #[test]
+    fn test_parse_v4a_multiple() {
+        let patch = r#"*** Begin Patch
+*** Add File: new.txt
+content
+*** Update File: existing.txt
+@@ -1,1 +1,1 @@
+-old
++new
+*** Delete File: remove.txt
+*** End Patch"#;
+
+        let ops = PatchOperation::parse_v4a(patch);
+        assert_eq!(ops.len(), 3);
+        assert_eq!(ops[0].op_type, PatchOpType::Create);
+        assert_eq!(ops[1].op_type, PatchOpType::Update);
+        assert_eq!(ops[2].op_type, PatchOpType::Delete);
+    }
 }
