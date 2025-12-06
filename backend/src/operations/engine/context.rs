@@ -184,6 +184,7 @@ impl ContextBuilder {
         context: &RecallContext,
         code_context: Option<&Vec<MemoryEntry>>,
         file_tree: Option<&Vec<FileNode>>,
+        project_id: Option<&str>,
     ) -> String {
         let persona = PersonaOverlay::Default;
         let tools_json = get_llm_tools();
@@ -205,7 +206,7 @@ impl ContextBuilder {
             context,
             Some(&tools),
             None, // metadata
-            None, // project_id
+            project_id,
             code_context.map(|v| &**v),
             file_tree.map(|v| &**v),
         )

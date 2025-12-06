@@ -170,25 +170,38 @@ pub fn add_project_context(
     metadata: Option<&MessageMetadata>,
     project_id: Option<&str>,
 ) {
-    if let Some(meta) = metadata {
-        if let Some(project_name) = &meta.project_name {
-            prompt.push_str(&format!("[ACTIVE PROJECT: {}]\n", project_name));
+    // Check if we have a project (from metadata name or project_id)
+    let project_name = metadata.and_then(|m| m.project_name.as_deref());
+    let has_project = project_name.is_some() || project_id.is_some();
 
-            if meta.request_repo_context == Some(true) {
-                prompt.push_str("The user wants you to be aware of the repository context ");
-                prompt.push_str("and code structure when responding. ");
-            }
-
-            prompt.push_str("\n\n");
-        }
-    } else if let Some(proj_id) = project_id {
-        prompt.push_str(&format!(
-            "[ACTIVE PROJECT: {}]\n\
-                When the user refers to 'the project' or asks project-related questions, \
-                they mean this project.\n\n",
-            proj_id
-        ));
+    if !has_project {
+        return;
     }
+
+    // Use project name if available, otherwise use ID
+    let display_name = project_name.unwrap_or_else(|| project_id.unwrap_or("attached project"));
+
+    prompt.push_str(&format!("[ACTIVE PROJECT: {}]\n", display_name));
+
+    // Explain project tools - this is crucial so Mira knows she has access
+    prompt.push_str("You have full access to this project's files and code. ");
+    prompt.push_str("All project tools operate relative to the project root:\n");
+    prompt.push_str("- read_project_file: Read files (use relative paths like 'src/main.rs')\n");
+    prompt.push_str("- edit_project_file: Edit existing files with precise replacements\n");
+    prompt.push_str("- write_project_file: Create new files\n");
+    prompt.push_str("- search_codebase: Search code patterns across the project\n");
+    prompt.push_str("- list_project_files: Browse project structure\n");
+    prompt.push_str("- run_command: Execute commands in the project directory\n");
+    prompt.push_str("Do NOT ask the user for file paths - use these tools to explore and find what you need.\n");
+
+    if let Some(meta) = metadata {
+        if meta.request_repo_context == Some(true) {
+            prompt.push_str("The user wants you to be aware of the repository context ");
+            prompt.push_str("and code structure when responding.\n");
+        }
+    }
+
+    prompt.push_str("\n");
 }
 
 /// Add memory context (recent and semantic) to the prompt
