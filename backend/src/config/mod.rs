@@ -23,6 +23,7 @@ lazy_static! {
 pub struct MiraConfig {
     // Domain configs (organized structure)
     pub gemini: llm::GeminiConfig,
+    pub openai: llm::OpenAIConfig,
     pub context_budget: llm::ContextBudgetConfig,
     pub memory: memory::MemoryConfig,
     pub summarization: memory::SummarizationConfig,
@@ -40,6 +41,7 @@ pub struct MiraConfig {
 
     // Flat field aliases for backward compatibility
     pub google_api_key: String,
+    pub openai_api_key: String,
     pub gemini_model: String,
     pub gemini_embedding_model: String,
     pub gemini_thinking: llm::ThinkingLevel,
@@ -65,6 +67,7 @@ impl MiraConfig {
         dotenv::dotenv().ok(); // Don't panic if .env doesn't exist (for production)
 
         let gemini = llm::GeminiConfig::from_env();
+        let openai = llm::OpenAIConfig::from_env();
         let context_budget = llm::ContextBudgetConfig::from_env();
         let memory = memory::MemoryConfig::from_env();
         let summarization = memory::SummarizationConfig::from_env();
@@ -83,6 +86,7 @@ impl MiraConfig {
         Self {
             // Flat field aliases
             google_api_key: gemini.api_key.clone(),
+            openai_api_key: openai.api_key.clone(),
             gemini_model: gemini.model.clone(),
             gemini_embedding_model: gemini.embedding_model.clone(),
             gemini_thinking: gemini.default_thinking_level.clone(),
@@ -103,6 +107,7 @@ impl MiraConfig {
 
             // Domain configs
             gemini,
+            openai,
             context_budget,
             memory,
             summarization,
