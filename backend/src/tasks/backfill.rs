@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::{
-    AppState, config::CONFIG, llm::embeddings::EmbeddingHead, llm::provider::GeminiEmbeddings,
+    AppState, config::CONFIG, llm::embeddings::EmbeddingHead, llm::provider::EmbeddingProvider,
     memory::core::types::MemoryEntry, memory::storage::qdrant::multi_store::QdrantMultiStore,
 };
 use chrono::{DateTime, Utc};
@@ -25,7 +25,7 @@ impl BackfillTask {
         info!("Starting embedding backfill task");
 
         let pool = &self.app_state.sqlite_store.pool;
-        let embedding_client = &self.app_state.embedding_client;
+        let embedding_client: Arc<dyn EmbeddingProvider> = self.app_state.openai_embedding_client.clone();
         let multi_store = &self.app_state.memory_service.get_multi_store();
 
         // Find all messages that need embeddings
@@ -46,7 +46,7 @@ impl BackfillTask {
         const BATCH_SIZE: usize = 100;
         for chunk in messages.chunks(BATCH_SIZE) {
             match self
-                .process_batch(pool, chunk, embedding_client, multi_store)
+                .process_batch(pool, chunk, &embedding_client, multi_store)
                 .await
             {
                 Ok(stored_count) => {
@@ -170,7 +170,7 @@ impl BackfillTask {
         &self,
         _pool: &SqlitePool,
         messages: &[MessageForBackfill],
-        embedding_client: &Arc<GeminiEmbeddings>,
+        embedding_client: &Arc<dyn EmbeddingProvider>,
         multi_store: &Arc<QdrantMultiStore>,
     ) -> Result<usize> {
         // Collect all texts for batch embedding

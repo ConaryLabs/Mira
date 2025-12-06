@@ -11,15 +11,20 @@ pub enum ModelTier {
     /// Cost: $0.25/$2 per 1M tokens
     Fast,
 
-    /// Voice tier: GPT-5.1 (low reasoning effort)
+    /// Voice tier: GPT-5.1 (medium reasoning effort)
     /// Use for: user-facing chat, explanations, Mira's personality
     /// Cost: $1.25/$10 per 1M tokens
     Voice,
 
-    /// Thinker tier: GPT-5.1 (high reasoning effort)
-    /// Use for: complex reasoning, architecture, multi-file changes
-    /// Cost: $1.25/$10 per 1M tokens (more output due to reasoning)
-    Thinker,
+    /// Code tier: GPT-5.1-Codex-Max (high reasoning effort)
+    /// Use for: code generation, refactoring, complex code tasks
+    /// Cost: $1.25/$10 per 1M tokens
+    Code,
+
+    /// Agentic tier: GPT-5.1-Codex-Max (xhigh reasoning effort)
+    /// Use for: long-running autonomous tasks, migrations, large refactors
+    /// Cost: $1.25/$10 per 1M tokens (can run for 24+ hours)
+    Agentic,
 }
 
 impl ModelTier {
@@ -27,7 +32,8 @@ impl ModelTier {
         match self {
             ModelTier::Fast => "fast",
             ModelTier::Voice => "voice",
-            ModelTier::Thinker => "thinker",
+            ModelTier::Code => "code",
+            ModelTier::Agentic => "agentic",
         }
     }
 
@@ -36,7 +42,8 @@ impl ModelTier {
         match self {
             ModelTier::Fast => "Fast (GPT-5.1 Mini)",
             ModelTier::Voice => "Voice (GPT-5.1)",
-            ModelTier::Thinker => "Thinker (GPT-5.1 High)",
+            ModelTier::Code => "Code (GPT-5.1-Codex-Max)",
+            ModelTier::Agentic => "Agentic (GPT-5.1-Codex-Max XHigh)",
         }
     }
 
@@ -45,7 +52,8 @@ impl ModelTier {
         match self {
             ModelTier::Fast => 1.0,
             ModelTier::Voice => 5.0,   // ~5x more expensive than Fast
-            ModelTier::Thinker => 7.0, // ~7x (same model as Voice, but more output from reasoning)
+            ModelTier::Code => 5.0,    // Same pricing as Voice (Codex-Max is $1.25/$10)
+            ModelTier::Agentic => 7.0, // More output due to xhigh reasoning
         }
     }
 }
@@ -82,6 +90,9 @@ pub struct RoutingTask {
 
     /// Explicit tier override (if user requested specific tier)
     pub tier_override: Option<ModelTier>,
+
+    /// Whether this is a long-running task (routes to Agentic tier)
+    pub is_long_running: bool,
 }
 
 impl RoutingTask {
@@ -94,6 +105,7 @@ impl RoutingTask {
             file_count: 0,
             is_user_facing: true,
             tier_override: None,
+            is_long_running: false,
         }
     }
 
@@ -106,6 +118,7 @@ impl RoutingTask {
             file_count: 0,
             is_user_facing: false, // Tool calls are typically background
             tier_override: None,
+            is_long_running: false,
         }
     }
 
@@ -118,6 +131,7 @@ impl RoutingTask {
             file_count: 0,
             is_user_facing: true,
             tier_override: None,
+            is_long_running: false,
         }
     }
 
@@ -148,6 +162,12 @@ impl RoutingTask {
         self.tier_override = Some(tier);
         self
     }
+
+    /// Mark as long-running task (routes to Agentic tier)
+    pub fn with_long_running(mut self, long_running: bool) -> Self {
+        self.is_long_running = long_running;
+        self
+    }
 }
 
 impl Default for RoutingTask {
@@ -163,9 +183,11 @@ pub struct RoutingStats {
     pub fast_requests: u64,
     /// Requests routed to Voice tier
     pub voice_requests: u64,
-    /// Requests routed to Thinker tier
-    pub thinker_requests: u64,
-    /// Estimated cost savings (vs all Thinker)
+    /// Requests routed to Code tier
+    pub code_requests: u64,
+    /// Requests routed to Agentic tier
+    pub agentic_requests: u64,
+    /// Estimated cost savings (vs all Agentic)
     pub estimated_savings_usd: f64,
 }
 
@@ -174,23 +196,25 @@ impl RoutingStats {
         match tier {
             ModelTier::Fast => self.fast_requests += 1,
             ModelTier::Voice => self.voice_requests += 1,
-            ModelTier::Thinker => self.thinker_requests += 1,
+            ModelTier::Code => self.code_requests += 1,
+            ModelTier::Agentic => self.agentic_requests += 1,
         }
 
-        // Estimate savings: (thinker_cost - actual_cost) for each request
+        // Estimate savings: (agentic_cost - actual_cost) for each request
         // Simplified: assume 10k tokens per request
         let tokens = if tokens > 0 { tokens } else { 10_000 };
-        let thinker_cost = (tokens as f64 / 1_000_000.0) * 4.0; // $4/M input for Thinker
+        let agentic_cost = (tokens as f64 / 1_000_000.0) * 4.0; // ~$4/M for Agentic (with reasoning)
         let actual_cost = match tier {
             ModelTier::Fast => (tokens as f64 / 1_000_000.0) * 0.25,
             ModelTier::Voice => (tokens as f64 / 1_000_000.0) * 1.25,
-            ModelTier::Thinker => thinker_cost,
+            ModelTier::Code => (tokens as f64 / 1_000_000.0) * 1.25,
+            ModelTier::Agentic => agentic_cost,
         };
-        self.estimated_savings_usd += thinker_cost - actual_cost;
+        self.estimated_savings_usd += agentic_cost - actual_cost;
     }
 
     pub fn total_requests(&self) -> u64 {
-        self.fast_requests + self.voice_requests + self.thinker_requests
+        self.fast_requests + self.voice_requests + self.code_requests + self.agentic_requests
     }
 
     pub fn fast_percentage(&self) -> f64 {

@@ -8,10 +8,12 @@
 //! - Duplicate detection via SHA-256 hashing
 //! - WebSocket-based upload with progress tracking
 
+use crate::llm::provider::EmbeddingProvider;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 
 mod chunker;
@@ -83,11 +85,15 @@ pub struct DocumentProcessor {
 
 impl DocumentProcessor {
     /// Create a new document processor with database connections
-    pub fn new(sqlite_pool: sqlx::SqlitePool, qdrant_client: qdrant_client::Qdrant) -> Self {
+    pub fn new(
+        sqlite_pool: sqlx::SqlitePool,
+        qdrant_client: qdrant_client::Qdrant,
+        embedding_client: Arc<dyn EmbeddingProvider>,
+    ) -> Self {
         Self {
             parser: DocumentParser::new(),
             chunker: DocumentChunker::new(),
-            storage: DocumentStorage::new(sqlite_pool, qdrant_client),
+            storage: DocumentStorage::new(sqlite_pool, qdrant_client, embedding_client),
             max_file_size: 100 * 1024 * 1024, // 100MB limit
         }
     }

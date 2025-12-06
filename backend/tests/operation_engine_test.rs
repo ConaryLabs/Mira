@@ -123,9 +123,10 @@ async fn test_operation_engine_lifecycle() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
-    // Create model router for tests (use same provider for all tiers)
+    // Create model router for tests (use same provider for all 4 tiers)
     let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
@@ -284,9 +285,10 @@ async fn test_operation_cancellation() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
-    // Create model router for tests (use same provider for all tiers)
+    // Create model router for tests (use same provider for all 4 tiers)
     let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
@@ -395,9 +397,10 @@ async fn test_multiple_operations() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
-    // Create model router for tests (use same provider for all tiers)
+    // Create model router for tests (use same provider for all 4 tiers)
     let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
@@ -496,9 +499,10 @@ async fn test_operation_event_ordering() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
-    // Create model router for tests (use same provider for all tiers)
+    // Create model router for tests (use same provider for all 4 tiers)
     let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
@@ -600,9 +604,10 @@ async fn test_operation_retrieval() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
-    // Create model router for tests (use same provider for all tiers)
+    // Create model router for tests (use same provider for all 4 tiers)
     let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),

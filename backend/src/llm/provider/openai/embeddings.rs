@@ -2,9 +2,12 @@
 // OpenAI Embeddings provider using text-embedding-3-large
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+
+use crate::llm::provider::EmbeddingProvider;
 
 /// OpenAI Embedding models
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +200,34 @@ impl OpenAIEmbeddings {
         );
 
         Ok(embeddings)
+    }
+
+    /// Get the dimensions of the embedding model
+    pub fn dimensions(&self) -> usize {
+        if self.model.contains("large") {
+            3072
+        } else {
+            1536
+        }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for OpenAIEmbeddings {
+    fn name(&self) -> &str {
+        "openai-embedding"
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions()
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text).await
+    }
+
+    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch(texts).await
     }
 }
 

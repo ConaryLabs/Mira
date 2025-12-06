@@ -1,8 +1,7 @@
 // src/memory/features/document_processing/storage.rs
 //! Storage layer for documents in SQLite and Qdrant
 
-use crate::config::CONFIG;
-use crate::llm::provider::GeminiEmbeddings;
+use crate::llm::provider::EmbeddingProvider;
 use anyhow::Result;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
@@ -42,18 +41,16 @@ pub struct DocumentSearchResult {
 pub struct DocumentStorage {
     sqlite_pool: SqlitePool,
     qdrant_client: Qdrant,
-    embedding_client: Arc<GeminiEmbeddings>,
+    embedding_client: Arc<dyn EmbeddingProvider>,
 }
 
 impl DocumentStorage {
-    /// Create a new document storage handler
-    pub fn new(sqlite_pool: SqlitePool, qdrant_client: Qdrant) -> Self {
-        // Create the embedding client - simple and clean
-        let embedding_client = Arc::new(GeminiEmbeddings::new(
-            CONFIG.google_api_key.clone(),
-            CONFIG.gemini_embedding_model.clone(),
-        ));
-
+    /// Create a new document storage handler with an embedding client
+    pub fn new(
+        sqlite_pool: SqlitePool,
+        qdrant_client: Qdrant,
+        embedding_client: Arc<dyn EmbeddingProvider>,
+    ) -> Self {
         Self {
             sqlite_pool,
             qdrant_client,

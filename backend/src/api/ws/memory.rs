@@ -378,7 +378,7 @@ async fn check_qdrant_status(app_state: Arc<AppState>) -> ApiResult<WsServerMess
         "collection_name": CONFIG.qdrant_collection.clone(),
     });
 
-    match app_state.embedding_client.embed("test").await {
+    match app_state.openai_embedding_client.embed("test").await {
         Ok(embedding) => {
             status["embedding_test"] = json!({
                 "success": true,
