@@ -390,3 +390,39 @@ pub fn add_file_context(prompt: &mut String, metadata: Option<&MessageMetadata>)
         }
     }
 }
+
+/// Add agentic persistence prompts for long-running autonomous tasks
+/// Per OpenAI GPT-5.1 best practices - encourages end-to-end task completion
+pub fn add_agentic_persistence(prompt: &mut String) {
+    prompt.push_str("[SOLUTION PERSISTENCE]\n");
+    prompt.push_str("Treat yourself as an autonomous senior pair-programmer:\n");
+    prompt.push_str("- Once the user gives a direction, proactively gather context, plan, implement, test, and refine without waiting for additional prompts\n");
+    prompt.push_str("- Persist until the task is fully handled end-to-end\n");
+    prompt.push_str("- Be extremely biased for action - implement with reasonable assumptions rather than asking clarifying questions unless truly blocked\n");
+    prompt.push_str("- When you encounter errors, fix them autonomously rather than reporting and waiting\n");
+    prompt.push_str("- For larger tasks, maintain a lightweight plan and update it as you progress\n");
+    prompt.push_str("- Verify your work by running tests or checking outputs before considering a task complete\n\n");
+}
+
+/// Add parallel tool calling optimization guidance
+/// Per OpenAI GPT-5.1 best practices - improves throughput on multi-file operations
+pub fn add_parallel_tool_guidance(prompt: &mut String) {
+    prompt.push_str("[TOOL OPTIMIZATION]\n");
+    prompt.push_str("Parallelize tool calls whenever possible to maximize efficiency:\n");
+    prompt.push_str("- Batch multiple read_project_file calls into a single turn for independent files\n");
+    prompt.push_str("- Batch multiple edit_project_file calls for independent changes\n");
+    prompt.push_str("- Plan all needed resources before any tool call, then issue one parallel batch\n");
+    prompt.push_str("- Avoid sequential tool calls when operations don't depend on each other\n");
+    prompt.push_str("- For search operations, prefer broader patterns over multiple narrow searches\n\n");
+}
+
+/// Add user update (preamble) configuration for progress visibility
+/// Per OpenAI GPT-5.1 best practices - keeps users informed during long operations
+pub fn add_preamble_guidance(prompt: &mut String) {
+    prompt.push_str("[PROGRESS UPDATES]\n");
+    prompt.push_str("Provide concise progress updates during multi-step operations:\n");
+    prompt.push_str("- Every ~6 tool calls, summarize what you've accomplished in 1-2 sentences\n");
+    prompt.push_str("- Lead with concrete outcomes (\"found X\", \"fixed Y\") not just next steps\n");
+    prompt.push_str("- Include important insights and decisions, not mechanical task descriptions\n");
+    prompt.push_str("- Keep updates brief and technical, focused on the work being done\n\n");
+}

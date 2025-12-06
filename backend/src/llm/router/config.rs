@@ -16,7 +16,7 @@ pub struct RouterConfig {
     /// File count threshold for upgrading to Code tier
     pub code_file_threshold: usize,
 
-    /// Model name for Fast tier (default: gpt-5.1-mini)
+    /// Model name for Fast tier (default: gpt-5.1-codex-mini)
     pub fast_model: String,
 
     /// Model name for Voice tier (default: gpt-5.1)
@@ -41,7 +41,7 @@ impl Default for RouterConfig {
             enabled: true,
             code_token_threshold: 50_000,
             code_file_threshold: 3,
-            fast_model: "gpt-5.1-mini".to_string(),
+            fast_model: "gpt-5.1-codex-mini".to_string(),
             voice_model: "gpt-5.1".to_string(),
             code_model: "gpt-5.1-codex-max".to_string(),
             agentic_model: "gpt-5.1-codex-max".to_string(),
@@ -120,7 +120,7 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.code_token_threshold, 50_000);
         assert_eq!(config.code_file_threshold, 3);
-        assert_eq!(config.fast_model, "gpt-5.1-mini");
+        assert_eq!(config.fast_model, "gpt-5.1-codex-mini");
         assert_eq!(config.voice_model, "gpt-5.1");
         assert_eq!(config.code_model, "gpt-5.1-codex-max");
         assert_eq!(config.agentic_model, "gpt-5.1-codex-max");

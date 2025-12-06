@@ -49,8 +49,9 @@ impl OpenAIProvider {
     }
 
     /// Create a new OpenAI provider for GPT-5.1 Codex Mini (Fast tier)
+    /// Uses "none" reasoning for lowest latency and cost
     pub fn gpt51_mini(api_key: String) -> Result<Self> {
-        Self::with_reasoning(api_key, OpenAIModel::Gpt51Mini, ReasoningEffort::Medium)
+        Self::with_reasoning(api_key, OpenAIModel::Gpt51Mini, ReasoningEffort::None)
     }
 
     /// Create a new OpenAI provider for GPT-5.1-Codex-Max (Code tier)
@@ -585,7 +586,8 @@ mod tests {
     fn test_codex_models() {
         let fast = OpenAIProvider::gpt51_mini("test-key".to_string()).unwrap();
         assert_eq!(fast.model().as_str(), "gpt-5.1-codex-mini");
-        assert_eq!(fast.reasoning_effort(), Some(ReasoningEffort::Medium));
+        // Fast tier uses "none" reasoning for lowest latency/cost
+        assert_eq!(fast.reasoning_effort(), Some(ReasoningEffort::None));
 
         let code = OpenAIProvider::codex_max("test-key".to_string()).unwrap();
         assert_eq!(code.model().as_str(), "gpt-5.1-codex-max");

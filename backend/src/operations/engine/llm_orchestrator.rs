@@ -140,7 +140,7 @@ impl LlmOrchestrator {
         if let Some(tracker) = &self.budget_tracker {
             // Get model from tier for cost calculation
             let (model, provider_name, model_name) = match tier {
-                ModelTier::Fast => (OpenAIModel::Gpt51Mini, "openai", "gpt-5.1-mini"),
+                ModelTier::Fast => (OpenAIModel::Gpt51Mini, "openai", "gpt-5.1-codex-mini"),
                 ModelTier::Voice => (OpenAIModel::Gpt51, "openai", "gpt-5.1"),
                 ModelTier::Code => (OpenAIModel::Gpt51CodexMax, "openai", "gpt-5.1-codex-max"),
                 ModelTier::Agentic => (OpenAIModel::Gpt51CodexMax, "openai", "gpt-5.1-codex-max"),
