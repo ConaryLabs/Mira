@@ -1,6 +1,6 @@
 // src/operations/engine/tool_router/mod.rs
 // Tool Router - Routes tool calls to appropriate handlers
-// Gemini single-model architecture
+// OpenAI GPT-5.1 multi-model architecture (December 2025)
 
 mod context_routes;
 mod file_routes;
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::llm::provider::Gemini3Provider;
+use crate::llm::provider::LlmProvider;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::{ProjectStore, ProjectTaskService};
@@ -27,7 +27,7 @@ use registry::{HandlerType, ToolRegistry};
 
 /// Routes tool calls to appropriate handlers
 pub struct ToolRouter {
-    llm: Gemini3Provider,
+    llm: Arc<dyn LlmProvider>,
     file_handlers: FileHandlers,
     external_handlers: ExternalHandlers,
     git_handlers: GitHandlers,
@@ -41,7 +41,7 @@ pub struct ToolRouter {
 impl ToolRouter {
     /// Create a new tool router
     pub fn new(
-        llm: Gemini3Provider,
+        llm: Arc<dyn LlmProvider>,
         project_dir: PathBuf,
         code_intelligence: Arc<CodeIntelligenceService>,
         sudo_service: Option<Arc<SudoPermissionService>>,

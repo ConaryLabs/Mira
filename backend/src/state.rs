@@ -1,5 +1,5 @@
 // src/state.rs
-// Application state - Gemini 3 Pro powered
+// Application state - OpenAI GPT-5.1 powered (December 2025)
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -21,7 +21,7 @@ use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
-use crate::llm::provider::{Gemini3Provider, OpenAIEmbeddings, OpenAIProvider};
+use crate::llm::provider::{LlmProvider, OpenAIEmbeddings, OpenAIProvider};
 use crate::llm::router::{ModelRouter, RouterConfig};
 use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::memory::service::MemoryService;
@@ -59,7 +59,8 @@ pub struct AppState {
     pub guidelines_service: Arc<ProjectGuidelinesService>,
     pub git_store: GitStore,
     pub git_client: GitClient,
-    pub llm_provider: Arc<Gemini3Provider>,
+    /// Primary LLM provider (Voice tier - GPT-5.1)
+    pub llm_provider: Arc<dyn LlmProvider>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub semantic_graph: Arc<SemanticGraphService>,
@@ -122,41 +123,28 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
 
-        // Initialize Gemini 3 Pro provider (primary LLM)
-        info!("Initializing Gemini 3 Pro provider");
-        let llm_provider = Arc::new(
-            Gemini3Provider::new(
-                CONFIG.google_api_key.clone(),
-                CONFIG.gemini_model.clone(),
-                CONFIG.gemini_thinking.clone(),
-            )
-            .expect("Failed to create Gemini 3 provider"),
-        );
-
-        // Initialize OpenAI embeddings client (primary embeddings)
-        info!("Initializing OpenAI embeddings client");
-        let openai_embedding_client = Arc::new(OpenAIEmbeddings::new(
-            CONFIG.openai_api_key.clone(),
-        ));
-
         // Initialize OpenAI providers for model routing (4 tiers)
-        info!("Initializing OpenAI providers for model routing");
-        let fast_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+        // All tiers use OpenAI GPT-5.1 family via Responses API
+        info!("Initializing OpenAI GPT-5.1 providers (Fast/Voice/Code/Agentic tiers)");
+        let fast_provider: Arc<dyn LlmProvider> = Arc::new(
             OpenAIProvider::gpt51_mini(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 Mini provider"),
+                .expect("Failed to create GPT-5.1 Codex Mini (Fast tier)"),
         );
-        let voice_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+        let voice_provider: Arc<dyn LlmProvider> = Arc::new(
             OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 provider"),
+                .expect("Failed to create GPT-5.1 (Voice tier)"),
         );
-        let code_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+        let code_provider: Arc<dyn LlmProvider> = Arc::new(
             OpenAIProvider::codex_max(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1-Codex-Max Code provider"),
+                .expect("Failed to create GPT-5.1 Codex Max (Code tier)"),
         );
-        let agentic_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+        let agentic_provider: Arc<dyn LlmProvider> = Arc::new(
             OpenAIProvider::codex_max_agentic(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1-Codex-Max Agentic provider"),
+                .expect("Failed to create GPT-5.1 Codex Max (Agentic tier)"),
         );
+
+        // Primary LLM provider is Voice tier (GPT-5.1 for user-facing interactions)
+        let llm_provider = voice_provider.clone();
 
         // Initialize Model Router (Fast/Voice/Code/Agentic tiers)
         info!("Initializing Model Router");
@@ -166,6 +154,12 @@ impl AppState {
             code_provider,
             agentic_provider,
             RouterConfig::from_env(),
+        ));
+
+        // Initialize OpenAI embeddings client (text-embedding-3-large)
+        info!("Initializing OpenAI embeddings client");
+        let openai_embedding_client = Arc::new(OpenAIEmbeddings::new(
+            CONFIG.openai_api_key.clone(),
         ));
 
         // Initialize Qdrant multi-store
@@ -281,7 +275,7 @@ impl AppState {
         // Initialize ToolRouter for AgentManager (separate instance from OperationEngine)
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let agent_tool_router = Arc::new(ToolRouter::new(
-            (*llm_provider).clone(),
+            llm_provider.clone(),
             project_dir,
             code_intelligence.clone(),
             None, // Agents don't need sudo service
@@ -329,7 +323,7 @@ impl AppState {
                 .with_pattern_matcher(pattern_matcher.clone()),
         );
 
-        // Memory service uses Gemini 3 for analysis with OpenAI embeddings and Context Oracle
+        // Memory service uses OpenAI GPT-5.1 for analysis with OpenAI embeddings and Context Oracle
         let memory_service = Arc::new(MemoryService::with_oracle(
             sqlite_store.clone(),
             multi_store.clone(),
@@ -360,11 +354,11 @@ impl AppState {
         info!("Initializing sudo permission service");
         let sudo_service = Arc::new(SudoPermissionService::new(Arc::new(pool.clone())));
 
-        // OperationEngine with Gemini 3 architecture and Context Oracle
-        info!("Initializing OperationEngine with Gemini 3 and Context Oracle");
+        // OperationEngine with OpenAI GPT-5.1 and Context Oracle
+        info!("Initializing OperationEngine with OpenAI GPT-5.1 and Context Oracle");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
-            (*llm_provider).clone(), // For ToolRouter
+            llm_provider.clone(),    // For ToolRouter
             model_router.clone(),    // For LlmOrchestrator with multi-tier routing
             memory_service.clone(),
             relationship_service.clone(),
@@ -385,7 +379,7 @@ impl AppState {
         info!("Initializing authentication service");
         let auth_service = Arc::new(AuthService::new(pool.clone()));
 
-        info!("Application state initialized successfully with Gemini 3 Pro");
+        info!("Application state initialized successfully with OpenAI GPT-5.1");
 
         Ok(Self {
             sqlite_store,

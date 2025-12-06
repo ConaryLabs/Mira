@@ -3,8 +3,10 @@
 // Phase 7: Routing and Message Integration Tests
 // Tests: Message helpers, provider routing, LLM message flow, cloning
 
+mod common;
+
 use mira_backend::llm::provider::Message;
-use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
+use mira_backend::llm::provider::OpenAIProvider;
 
 // ============================================================================
 // Message Helper Tests
@@ -46,11 +48,8 @@ fn test_message_conversation_flow() {
 
 #[test]
 fn test_llm_provider_clone() {
-    let provider = Gemini3Provider::new(
-        "test-key".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create provider");
+    let provider = OpenAIProvider::gpt51(common::openai_api_key())
+        .expect("Should create provider");
 
     // Should compile and clone successfully (compile-time test)
     let _cloned = provider.clone();
@@ -59,15 +58,12 @@ fn test_llm_provider_clone() {
     assert!(true);
 }
 
-// Gemini is the only LLM provider now
+// OpenAI is the LLM provider now
 
 #[test]
 fn test_provider_clone_independence() {
-    let original = Gemini3Provider::new(
-        "original-key".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create provider");
+    let original = OpenAIProvider::gpt51(common::openai_api_key())
+        .expect("Should create provider");
 
     let cloned = original.clone();
 
@@ -85,36 +81,28 @@ fn test_provider_clone_independence() {
 
 #[test]
 fn test_create_llm_provider() {
-    let provider = Gemini3Provider::new(
-        "test-key".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create provider");
+    let provider = OpenAIProvider::gpt51(common::openai_api_key())
+        .expect("Should create provider");
 
     // If this compiles, provider construction works
     drop(provider);
     assert!(true);
 }
 
-// Only Gemini provider is used now
+// OpenAI is the LLM provider now
 
 #[test]
 fn test_provider_with_different_configs() {
-    let minimal = Gemini3Provider::new(
-        "key1".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::Low,
-    ).expect("Should create minimal provider");
+    // Test different GPT-5.1 model variants
+    let fast = OpenAIProvider::gpt51_mini(common::openai_api_key())
+        .expect("Should create fast provider");
 
-    let maximal = Gemini3Provider::new(
-        "key2".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create maximal provider");
+    let voice = OpenAIProvider::gpt51(common::openai_api_key())
+        .expect("Should create voice provider");
 
     // Both should construct successfully
-    drop(minimal);
-    drop(maximal);
+    drop(fast);
+    drop(voice);
     assert!(true);
 }
 

@@ -13,8 +13,7 @@ use crate::agents::types::{
     AgentArtifact, AgentConfig, AgentDefinition, AgentResult, AgentToolCall,
     ThinkingLevelPreference,
 };
-use crate::llm::provider::gemini3::{Gemini3Provider, ThinkingLevel, ToolCallResponse};
-use crate::llm::provider::{Message, ToolCallInfo};
+use crate::llm::provider::{LlmProvider, Message, ToolCallInfo};
 use crate::operations::engine::tool_router::ToolRouter;
 use crate::operations::tools;
 
@@ -22,12 +21,12 @@ use super::{AgentEvent, AgentExecutor};
 
 /// Executor for built-in agents running in-process
 pub struct BuiltinAgentExecutor {
-    llm_provider: Arc<Gemini3Provider>,
+    llm_provider: Arc<dyn LlmProvider>,
     tool_router: Arc<ToolRouter>,
 }
 
 impl BuiltinAgentExecutor {
-    pub fn new(llm_provider: Arc<Gemini3Provider>, tool_router: Arc<ToolRouter>) -> Self {
+    pub fn new(llm_provider: Arc<dyn LlmProvider>, tool_router: Arc<ToolRouter>) -> Self {
         Self {
             llm_provider,
             tool_router,
@@ -51,13 +50,13 @@ impl BuiltinAgentExecutor {
             .collect()
     }
 
-    /// Determine thinking level based on preference (for future use)
+    /// Determine reasoning effort based on preference (maps to OpenAI reasoning effort)
     #[allow(dead_code)]
-    fn get_thinking_level(&self, preference: &ThinkingLevelPreference) -> ThinkingLevel {
+    fn get_thinking_level(&self, preference: &ThinkingLevelPreference) -> &'static str {
         match preference {
-            ThinkingLevelPreference::Low => ThinkingLevel::Low,
-            ThinkingLevelPreference::High => ThinkingLevel::High,
-            ThinkingLevelPreference::Adaptive => ThinkingLevel::High, // Default to high for complex tasks
+            ThinkingLevelPreference::Low => "medium",
+            ThinkingLevelPreference::High => "high",
+            ThinkingLevelPreference::Adaptive => "high", // Default to high for complex tasks
         }
     }
 
@@ -178,45 +177,49 @@ impl AgentExecutor for BuiltinAgentExecutor {
             )
             .await;
 
-            // Call LLM with tools
-            let response: ToolCallResponse = self
+            // Call LLM with tools using generic provider trait
+            let response = self
                 .llm_provider
-                .call_with_tools(messages.clone(), tools.clone())
+                .chat_with_tools(
+                    messages.clone(),
+                    definition.system_prompt.clone(),
+                    tools.clone(),
+                    None,
+                )
                 .await
                 .context("LLM call failed")?;
 
-            total_tokens_input += response.tokens_input;
-            total_tokens_output += response.tokens_output;
+            total_tokens_input += response.tokens.input;
+            total_tokens_output += response.tokens.output;
 
-            // Capture thought signature for continuity
-            thought_signature = response.thought_signature.clone();
+            // Note: thought_signature is not supported by generic LlmProvider
+            // OpenAI doesn't have equivalent feature, so we skip this
+            let _ = &thought_signature; // Silence unused warning
 
             // Accumulate response content
-            if let Some(content) = &response.content {
-                if !content.is_empty() {
-                    accumulated_response.push_str(content);
+            if !response.text_output.is_empty() {
+                accumulated_response.push_str(&response.text_output);
 
-                    // Emit streaming event
-                    Self::emit_event(
-                        &event_tx,
-                        AgentEvent::Streaming {
-                            agent_execution_id: agent_execution_id.clone(),
-                            content: content.clone(),
-                        },
-                    )
-                    .await;
-                }
+                // Emit streaming event
+                Self::emit_event(
+                    &event_tx,
+                    AgentEvent::Streaming {
+                        agent_execution_id: agent_execution_id.clone(),
+                        content: response.text_output.clone(),
+                    },
+                )
+                .await;
             }
 
             // No more tool calls - we're done
-            if response.tool_calls.is_empty() {
+            if response.function_calls.is_empty() {
                 debug!("[AGENT:{}] No more tool calls, completing", definition.id);
                 break;
             }
 
-            // Build assistant message with tool calls and thought signature
+            // Build assistant message with tool calls
             let tool_calls_info: Vec<ToolCallInfo> = response
-                .tool_calls
+                .function_calls
                 .iter()
                 .map(|tc| ToolCallInfo {
                     id: tc.id.clone(),
@@ -225,14 +228,13 @@ impl AgentExecutor for BuiltinAgentExecutor {
                 })
                 .collect();
 
-            messages.push(Message::assistant_with_tool_calls_and_signature(
-                response.content.clone().unwrap_or_default(),
+            messages.push(Message::assistant_with_tool_calls(
+                response.text_output.clone(),
                 tool_calls_info,
-                response.thought_signature.clone(),
             ));
 
             // Execute tool calls
-            for tool_call in &response.tool_calls {
+            for tool_call in &response.function_calls {
                 let tool_start = Instant::now();
 
                 // Check if tool is allowed for this agent

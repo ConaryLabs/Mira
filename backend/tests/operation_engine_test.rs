@@ -8,8 +8,7 @@ use mira_backend::config::CONFIG;
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::LlmProvider;
-use mira_backend::llm::provider::GeminiEmbeddings;
-use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
+use mira_backend::llm::provider::{OpenAIEmbeddings, OpenAIProvider};
 use mira_backend::llm::router::{ModelRouter, RouterConfig};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
@@ -25,12 +24,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-fn create_test_llm() -> Gemini3Provider {
-    Gemini3Provider::new(
-        "test-key".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create LLM provider")
+mod common;
+
+fn create_test_llm() -> Arc<dyn LlmProvider> {
+    Arc::new(
+        OpenAIProvider::gpt51(common::openai_api_key())
+            .expect("Should create LLM provider")
+    )
 }
 
 async fn setup_services(
@@ -51,18 +51,13 @@ async fn setup_services(
             .expect("Failed to connect to Qdrant - ensure Qdrant is running on port 6334"),
     );
 
-    // Create embedding client (won't be used in these tests)
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
-        "test-key".to_string(),
-        "gemini-embedding-001".to_string(),
+    // Create embedding client with real API key
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
+        common::openai_api_key(),
     ));
 
     // Create LLM provider for MemoryService
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
-        "test-key".to_string(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create LLM provider"));
+    let llm_provider = create_test_llm();
 
     // Create MemoryService
     let memory_service = Arc::new(MemoryService::new(
@@ -124,18 +119,17 @@ async fn test_operation_engine_lifecycle() {
         setup_services(db.clone()).await;
 
     // Create model router for tests (use same provider for all 4 tiers)
-    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
         RouterConfig::default(),
     ));
 
     let engine = OperationEngine::new(
         db.clone(),
-        llm,
+        llm.clone(),
         model_router,
         memory_service,
         relationship_service,
@@ -189,7 +183,7 @@ async fn test_operation_engine_lifecycle() {
     // Drain and verify events
     let mut got_started = false;
     let mut got_status_change = false;
-    let mut got_failed = false;
+    let mut got_completed_or_failed = false;
 
     while let Ok(event) = rx.try_recv() {
         match event {
@@ -212,8 +206,13 @@ async fn test_operation_engine_lifecycle() {
                 error,
             } => {
                 assert_eq!(operation_id, op.id);
-                got_failed = true;
+                got_completed_or_failed = true;
                 println!("✓ Received Failed event: {}", error);
+            }
+            OperationEngineEvent::Completed { operation_id, .. } => {
+                assert_eq!(operation_id, op.id);
+                got_completed_or_failed = true;
+                println!("✓ Received Completed event");
             }
             _ => {}
         }
@@ -224,7 +223,7 @@ async fn test_operation_engine_lifecycle() {
         got_status_change,
         "Should have received StatusChanged event"
     );
-    assert!(got_failed, "Should have failed with fake API keys");
+    assert!(got_completed_or_failed, "Should have completed or failed");
 
     // Verify database state
     let updated_op = engine
@@ -286,18 +285,17 @@ async fn test_operation_cancellation() {
         setup_services(db.clone()).await;
 
     // Create model router for tests (use same provider for all 4 tiers)
-    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
         RouterConfig::default(),
     ));
 
     let engine = OperationEngine::new(
         db.clone(),
-        llm,
+        llm.clone(),
         model_router,
         memory_service,
         relationship_service,
@@ -398,18 +396,17 @@ async fn test_multiple_operations() {
         setup_services(db.clone()).await;
 
     // Create model router for tests (use same provider for all 4 tiers)
-    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
         RouterConfig::default(),
     ));
 
     let engine = OperationEngine::new(
         db.clone(),
-        llm,
+        llm.clone(),
         model_router,
         memory_service,
         relationship_service,
@@ -500,18 +497,17 @@ async fn test_operation_event_ordering() {
         setup_services(db.clone()).await;
 
     // Create model router for tests (use same provider for all 4 tiers)
-    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
         RouterConfig::default(),
     ));
 
     let engine = OperationEngine::new(
         db.clone(),
-        llm,
+        llm.clone(),
         model_router,
         memory_service,
         relationship_service,
@@ -605,18 +601,17 @@ async fn test_operation_retrieval() {
         setup_services(db.clone()).await;
 
     // Create model router for tests (use same provider for all 4 tiers)
-    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
     let model_router = Arc::new(ModelRouter::new(
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
         RouterConfig::default(),
     ));
 
     let engine = OperationEngine::new(
         db.clone(),
-        llm,
+        llm.clone(),
         model_router,
         memory_service,
         relationship_service,

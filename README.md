@@ -2,7 +2,7 @@
 
 **AI-Powered Coding Assistant with Hybrid Memory**
 
-Mira is an AI coding assistant powered by Google Gemini with variable thinking levels, backed by a comprehensive memory system and real-time streaming architecture. It remembers your codebase, understands your patterns, and helps you code more effectively.
+Mira is an AI coding assistant powered by OpenAI GPT-5.1 with multi-tier model routing, backed by a comprehensive memory system and real-time streaming architecture. It remembers your codebase, understands your patterns, and helps you code more effectively.
 
 ## Features
 
@@ -51,7 +51,7 @@ cd Mira
 
 # Configure your API key
 cp .env.example .env
-# Edit .env and add your GOOGLE_API_KEY
+# Edit .env and add your OPENAI_API_KEY
 
 # Start all services
 docker compose up -d
@@ -59,7 +59,7 @@ docker compose up -d
 # Access Mira at http://localhost:8080
 ```
 
-**Get a Google API key**: https://makersuite.google.com/app/apikey
+**Get an OpenAI API key**: https://platform.openai.com/api-keys
 
 ### Option 2: Development Setup
 
@@ -72,7 +72,7 @@ docker run -d -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
 # 2. Setup backend
 cd backend
 cp .env.example .env
-# Edit .env with your GOOGLE_API_KEY
+# Edit .env with your OPENAI_API_KEY
 cargo build --release
 ./target/release/mira-backend
 
@@ -104,7 +104,7 @@ The CLI provides the same features as the web UI in your terminal. See [CLI.md](
 +------------------+     +------------------+     +------------------+
 |     Frontend     |     |     Backend      |     |     Qdrant       |
 |   React + Vite   | <-> |   Rust + Axum    | <-> |  Vector Search   |
-|   Monaco Editor  |     |   Gemini 3 Pro   |     |   3 Collections  |
+|   Monaco Editor  |     |  OpenAI GPT-5.1  |     |   3 Collections  |
 +------------------+     +--------+---------+     +------------------+
                                   |
                          +--------v---------+
@@ -117,7 +117,7 @@ The CLI provides the same features as the web UI in your terminal. See [CLI.md](
 
 ### Docker Deployment
 - Docker 24+ with Docker Compose v2
-- Google API key (Gemini)
+- OpenAI API key (GPT-5.1)
 
 ### Development
 - Rust 1.91+
@@ -131,8 +131,8 @@ Key environment variables (set in `.env`):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_API_KEY` | Yes | Google API key for Gemini |
-| `GEMINI_THINKING_LEVEL` | No | `low` or `high` (default: high) |
+| `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-5.1 |
+| `MODEL_ROUTER_ENABLED` | No | Enable 4-tier model routing (default: true) |
 | `BUDGET_DAILY_LIMIT_USD` | No | Daily spending limit (default: 5.0) |
 | `BUDGET_MONTHLY_LIMIT_USD` | No | Monthly spending limit (default: 150.0) |
 
@@ -150,7 +150,7 @@ See `backend/.env.example` for all options.
 
 ## Technology Stack
 
-**Backend**: Rust, Axum, Tokio, SQLite, Qdrant, Google Gemini
+**Backend**: Rust, Axum, Tokio, SQLite, Qdrant, OpenAI GPT-5.1
 
 **Frontend**: React 18, TypeScript, Vite, Zustand, Monaco Editor, Tailwind CSS
 

@@ -6,8 +6,10 @@ use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 
+mod common;
+
 use mira_backend::llm::embeddings::EmbeddingHead;
-use mira_backend::llm::provider::GeminiEmbeddings;
+use mira_backend::llm::provider::OpenAIEmbeddings;
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
@@ -195,13 +197,10 @@ async fn setup_test_db() -> SqlitePool {
     pool
 }
 
-fn setup_embedding_client() -> Arc<GeminiEmbeddings> {
+fn setup_embedding_client() -> Arc<OpenAIEmbeddings> {
     init_env();
-    let api_key = std::env::var("GOOGLE_API_KEY").unwrap_or_else(|_| "test-key".to_string());
-    Arc::new(GeminiEmbeddings::new(
-        api_key,
-        "gemini-embedding-001".to_string(),
-    ))
+    let api_key = common::openai_api_key();
+    Arc::new(OpenAIEmbeddings::new(api_key))
 }
 
 async fn setup_qdrant() -> Arc<QdrantMultiStore> {
@@ -216,11 +215,11 @@ async fn setup_qdrant() -> Arc<QdrantMultiStore> {
 
 // ============================================================================
 // TEST 1: Parse and Embed Code Elements
-// NOTE: Requires real Gemini API + Qdrant
+// NOTE: Requires real OpenAI API + Qdrant
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires Gemini API + Qdrant"]
+#[ignore = "integration test - requires OpenAI API + Qdrant"]
 async fn test_parse_and_embed_code_elements() -> Result<()> {
     println!("\n=== Testing Code Element Parsing and Embedding ===\n");
 
@@ -377,7 +376,7 @@ async fn test_parse_and_embed_code_elements() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires Gemini API + Qdrant"]
+#[ignore = "integration test - requires OpenAI API + Qdrant"]
 async fn test_semantic_search_code_elements() -> Result<()> {
     println!("\n=== Testing Semantic Search for Code Elements ===\n");
 
@@ -495,7 +494,7 @@ async fn test_semantic_search_code_elements() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires Gemini API + Qdrant"]
+#[ignore = "integration test - requires OpenAI API + Qdrant"]
 async fn test_invalidation_on_file_change() -> Result<()> {
     println!("\n=== Testing Invalidation on File Change ===\n");
 
@@ -609,7 +608,7 @@ async fn test_invalidation_on_file_change() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "integration test - requires Gemini API + Qdrant"]
+#[ignore = "integration test - requires OpenAI API + Qdrant"]
 async fn test_search_different_element_types() -> Result<()> {
     println!("\n=== Testing Search for Structs and Functions ===\n");
 

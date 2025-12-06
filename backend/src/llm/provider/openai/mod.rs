@@ -1,7 +1,6 @@
 // src/llm/provider/openai/mod.rs
-// OpenAI GPT-5.1 provider implementation
+// OpenAI GPT-5.1 provider implementation using Responses API (December 2025)
 
-mod conversion;
 pub mod embeddings;
 pub mod pricing;
 pub mod types;
@@ -22,18 +21,21 @@ pub use embeddings::{OpenAIEmbeddingModel, OpenAIEmbeddings};
 pub use pricing::{CostResult, OpenAIPricing};
 pub use types::{OpenAIModel, ReasoningConfig, ReasoningEffort};
 
-// Use helper modules
-use conversion::{messages_to_openai, tools_to_openai};
-use types::{ChatCompletionRequest, ChatCompletionResponse, ErrorResponse};
+// Use types for Responses API
+use types::{
+    ErrorResponse, InputItem, MessageContent, OutputContent, OutputItem,
+    ResponsesInput, ResponsesRequest, ResponsesResponse, ResponsesStreamEvent,
+    ResponsesTool,
+};
 
-/// OpenAI GPT-5.1 provider
+/// OpenAI GPT-5.1 provider using Responses API
 #[derive(Clone)]
 pub struct OpenAIProvider {
     client: Client,
     api_key: String,
     model: OpenAIModel,
     timeout: Duration,
-    /// Reasoning effort for models that support it (Codex-Max)
+    /// Reasoning effort for all models
     reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -43,12 +45,12 @@ impl OpenAIProvider {
 
     /// Create a new OpenAI provider for GPT-5.1
     pub fn gpt51(api_key: String) -> Result<Self> {
-        Self::new(api_key, OpenAIModel::Gpt51)
+        Self::with_reasoning(api_key, OpenAIModel::Gpt51, ReasoningEffort::Medium)
     }
 
-    /// Create a new OpenAI provider for GPT-5.1 Mini
+    /// Create a new OpenAI provider for GPT-5.1 Codex Mini (Fast tier)
     pub fn gpt51_mini(api_key: String) -> Result<Self> {
-        Self::new(api_key, OpenAIModel::Gpt51Mini)
+        Self::with_reasoning(api_key, OpenAIModel::Gpt51Mini, ReasoningEffort::Medium)
     }
 
     /// Create a new OpenAI provider for GPT-5.1-Codex-Max (Code tier)
@@ -118,30 +120,78 @@ impl OpenAIProvider {
         self.reasoning_effort.map(|effort| ReasoningConfig { effort })
     }
 
-    /// Validate API key
+    /// Convert internal messages to Responses API input format
+    fn messages_to_input(&self, messages: &[Message], system: &str) -> ResponsesInput {
+        let mut items: Vec<InputItem> = Vec::new();
+
+        // Add messages as input items
+        for msg in messages {
+            let role = msg.role.clone();
+            let content = MessageContent::Text(msg.content.clone());
+
+            items.push(InputItem::Message { role, content });
+        }
+
+        // If no messages, use system as input
+        if items.is_empty() {
+            return ResponsesInput::Text(system.to_string());
+        }
+
+        ResponsesInput::Items(items)
+    }
+
+    /// Convert tools to Responses API format
+    fn tools_to_responses(&self, tools: &[Value]) -> Vec<ResponsesTool> {
+        tools
+            .iter()
+            .filter_map(|tool| {
+                // Extract function declarations from Gemini-style tool format
+                if let Some(declarations) = tool.get("functionDeclarations") {
+                    if let Some(arr) = declarations.as_array() {
+                        return Some(arr.iter().filter_map(|decl| {
+                            let name = decl.get("name")?.as_str()?.to_string();
+                            let description = decl
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let parameters = decl.get("parameters").cloned();
+
+                            Some(ResponsesTool {
+                                tool_type: "function".to_string(),
+                                name: Some(name),
+                                description: Some(description),
+                                parameters,
+                            })
+                        }).collect::<Vec<_>>());
+                    }
+                }
+                None
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// Validate API key with a minimal request
     pub async fn validate_api_key(&self) -> Result<()> {
         debug!("Validating OpenAI API key");
 
-        let request = ChatCompletionRequest {
+        let request = ResponsesRequest {
             model: self.model.as_str().to_string(),
-            messages: vec![types::ChatMessage {
-                role: "user".to_string(),
-                content: Some("test".to_string()),
-                tool_calls: None,
-                tool_call_id: None,
-                name: None,
-            }],
+            input: ResponsesInput::Text("test".to_string()),
+            instructions: None,
             tools: None,
             tool_choice: None,
-            temperature: None,
-            max_tokens: Some(1),
+            max_output_tokens: Some(1),
             stream: None,
-            reasoning: self.build_reasoning_config(),
+            store: Some(false),
+            reasoning: None,
+            previous_response_id: None,
         };
 
         let response = self
             .client
-            .post(format!("{}/chat/completions", Self::BASE_URL))
+            .post(format!("{}/responses", Self::BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&request)
@@ -163,17 +213,16 @@ impl OpenAIProvider {
         Ok(())
     }
 
-    /// Send a chat completion request
-    async fn send_request(&self, request: &ChatCompletionRequest) -> Result<ChatCompletionResponse> {
+    /// Send a Responses API request
+    async fn send_request(&self, request: &ResponsesRequest) -> Result<ResponsesResponse> {
         debug!(
-            "Sending request to OpenAI {} with {} messages",
+            "Sending Responses API request to OpenAI {} model",
             self.model,
-            request.messages.len()
         );
 
         let response = self
             .client
-            .post(format!("{}/chat/completions", Self::BASE_URL))
+            .post(format!("{}/responses", Self::BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .timeout(self.timeout)
@@ -197,30 +246,46 @@ impl OpenAIProvider {
             return Err(anyhow!("OpenAI API returned {}: {}", status, error_text));
         }
 
-        let response_body: ChatCompletionResponse = response.json().await?;
+        let response_body: ResponsesResponse = response.json().await?;
         Ok(response_body)
     }
 
-    /// Parse response into internal format
-    fn parse_response(&self, response: ChatCompletionResponse, latency_ms: i64) -> Result<Response> {
-        let choice = response
-            .choices
-            .first()
-            .ok_or_else(|| anyhow!("No choices in response"))?;
-
-        let content = choice.message.content.clone().unwrap_or_default();
+    /// Parse Responses API response into internal format
+    fn parse_response(&self, response: ResponsesResponse, latency_ms: i64) -> Result<Response> {
+        // Try output_text first (convenience field)
+        let content = if let Some(text) = response.output_text {
+            text
+        } else {
+            // Extract from output array
+            let mut text = String::new();
+            for item in &response.output {
+                if let OutputItem::Message { content, .. } = item {
+                    for c in content {
+                        if let OutputContent::OutputText { text: t, .. } = c {
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+            text
+        };
 
         let usage = response.usage.as_ref();
+        let reasoning_tokens = usage
+            .and_then(|u| u.output_tokens_details.as_ref())
+            .map(|d| d.reasoning_tokens)
+            .unwrap_or(0);
+
         let tokens = TokenUsage {
-            input: usage.map(|u| u.prompt_tokens).unwrap_or(0),
-            output: usage.map(|u| u.completion_tokens).unwrap_or(0),
-            reasoning: 0,
+            input: usage.map(|u| u.input_tokens).unwrap_or(0),
+            output: usage.map(|u| u.output_tokens).unwrap_or(0),
+            reasoning: reasoning_tokens,
             cached: 0,
         };
 
         debug!(
-            "OpenAI {} response: {} input, {} output tokens",
-            self.model, tokens.input, tokens.output
+            "OpenAI {} response: {} input, {} output tokens ({}ms)",
+            self.model, tokens.input, tokens.output, latency_ms
         );
 
         Ok(Response {
@@ -231,50 +296,54 @@ impl OpenAIProvider {
         })
     }
 
-    /// Parse tool calling response
+    /// Parse tool calling response from Responses API
     fn parse_tool_response(
         &self,
-        response: ChatCompletionResponse,
+        response: ResponsesResponse,
         latency_ms: i64,
     ) -> Result<ToolResponse> {
-        let choice = response
-            .choices
-            .first()
-            .ok_or_else(|| anyhow!("No choices in response"))?;
+        // Get text output
+        let text_output = response.output_text.clone().unwrap_or_default();
 
-        let text_output = choice.message.content.clone().unwrap_or_default();
-
-        // Extract function calls
-        let function_calls = if let Some(ref tool_calls) = choice.message.tool_calls {
-            tool_calls
-                .iter()
-                .filter_map(|tc| {
+        // Extract function calls from output
+        let function_calls: Vec<FunctionCall> = response
+            .output
+            .iter()
+            .filter_map(|item| {
+                if let OutputItem::FunctionCall {
+                    id,
+                    call_id,
+                    name,
+                    arguments,
+                } = item
+                {
                     // Parse arguments from JSON string
-                    let arguments: Value = serde_json::from_str(&tc.function.arguments)
-                        .unwrap_or_else(|e| {
-                            warn!(
-                                "Failed to parse tool call arguments: {} - {}",
-                                e, tc.function.arguments
-                            );
-                            Value::Object(serde_json::Map::new())
-                        });
+                    let args: Value = serde_json::from_str(arguments).unwrap_or_else(|e| {
+                        warn!("Failed to parse tool call arguments: {} - {}", e, arguments);
+                        Value::Object(serde_json::Map::new())
+                    });
 
                     Some(FunctionCall {
-                        id: tc.id.clone(),
-                        name: tc.function.name.clone(),
-                        arguments,
+                        id: id.clone().unwrap_or_else(|| call_id.clone()),
+                        name: name.clone(),
+                        arguments: args,
                     })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         let usage = response.usage.as_ref();
+        let reasoning_tokens = usage
+            .and_then(|u| u.output_tokens_details.as_ref())
+            .map(|d| d.reasoning_tokens)
+            .unwrap_or(0);
+
         let tokens = TokenUsage {
-            input: usage.map(|u| u.prompt_tokens).unwrap_or(0),
-            output: usage.map(|u| u.completion_tokens).unwrap_or(0),
-            reasoning: 0,
+            input: usage.map(|u| u.input_tokens).unwrap_or(0),
+            output: usage.map(|u| u.output_tokens).unwrap_or(0),
+            reasoning: reasoning_tokens,
             cached: 0,
         };
 
@@ -323,17 +392,19 @@ impl LlmProvider for OpenAIProvider {
     async fn chat(&self, messages: Vec<Message>, system: String) -> Result<Response> {
         let start = Instant::now();
 
-        let openai_messages = messages_to_openai(&messages, &system);
+        let input = self.messages_to_input(&messages, &system);
 
-        let request = ChatCompletionRequest {
+        let request = ResponsesRequest {
             model: self.model.as_str().to_string(),
-            messages: openai_messages,
+            input,
+            instructions: if system.is_empty() { None } else { Some(system) },
             tools: None,
             tool_choice: None,
-            temperature: Some(0.7),
-            max_tokens: None,
+            max_output_tokens: None,
             stream: None,
+            store: Some(false),
             reasoning: self.build_reasoning_config(),
+            previous_response_id: None,
         };
 
         let response = self.send_request(&request).await?;
@@ -351,29 +422,30 @@ impl LlmProvider for OpenAIProvider {
     ) -> Result<ToolResponse> {
         let start = Instant::now();
 
-        let openai_messages = messages_to_openai(&messages, &system);
-        let openai_tools = tools_to_openai(&tools);
+        let input = self.messages_to_input(&messages, &system);
+        let responses_tools = self.tools_to_responses(&tools);
 
         info!(
-            "OpenAI {} chat_with_tools: {} messages, {} tools",
+            "OpenAI {} chat_with_tools: {} tools",
             self.model,
-            openai_messages.len(),
-            openai_tools.len()
+            responses_tools.len()
         );
 
-        let request = ChatCompletionRequest {
+        let request = ResponsesRequest {
             model: self.model.as_str().to_string(),
-            messages: openai_messages,
-            tools: if openai_tools.is_empty() {
+            input,
+            instructions: if system.is_empty() { None } else { Some(system) },
+            tools: if responses_tools.is_empty() {
                 None
             } else {
-                Some(openai_tools)
+                Some(responses_tools)
             },
             tool_choice: Some(serde_json::json!("auto")),
-            temperature: Some(0.7),
-            max_tokens: None,
+            max_output_tokens: None,
             stream: None,
+            store: Some(false),
             reasoning: self.build_reasoning_config(),
+            previous_response_id: None,
         };
 
         let response = self.send_request(&request).await?;
@@ -387,22 +459,24 @@ impl LlmProvider for OpenAIProvider {
         messages: Vec<Message>,
         system: String,
     ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin>> {
-        let openai_messages = messages_to_openai(&messages, &system);
+        let input = self.messages_to_input(&messages, &system);
 
-        let request = ChatCompletionRequest {
+        let request = ResponsesRequest {
             model: self.model.as_str().to_string(),
-            messages: openai_messages,
+            input,
+            instructions: if system.is_empty() { None } else { Some(system) },
             tools: None,
             tool_choice: None,
-            temperature: Some(0.7),
-            max_tokens: None,
+            max_output_tokens: None,
             stream: Some(true),
+            store: Some(false),
             reasoning: self.build_reasoning_config(),
+            previous_response_id: None,
         };
 
         let response = self
             .client
-            .post(format!("{}/chat/completions", Self::BASE_URL))
+            .post(format!("{}/responses", Self::BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .timeout(self.timeout)
@@ -416,33 +490,37 @@ impl LlmProvider for OpenAIProvider {
             return Err(anyhow!("OpenAI streaming failed ({}): {}", status, error_text));
         }
 
-        // Convert byte stream to text stream
+        // Convert byte stream to text stream, parsing SSE events
         let byte_stream = response.bytes_stream();
 
-        // Buffer for accumulating partial SSE data
         let stream = byte_stream
             .filter_map(|result| async move {
                 match result {
                     Ok(bytes) => {
                         let text = String::from_utf8_lossy(&bytes);
-                        // Parse SSE format: "data: {...}\n\n"
                         let mut content = String::new();
+
+                        // Parse SSE format for Responses API
+                        // Events are: event: <type>\ndata: <json>
                         for line in text.lines() {
                             if let Some(data) = line.strip_prefix("data: ") {
                                 if data == "[DONE]" {
                                     continue;
                                 }
-                                if let Ok(chunk) =
-                                    serde_json::from_str::<types::ChatCompletionChunk>(data)
+                                // Try to parse as ResponsesStreamEvent
+                                if let Ok(event) =
+                                    serde_json::from_str::<ResponsesStreamEvent>(data)
                                 {
-                                    if let Some(choice) = chunk.choices.first() {
-                                        if let Some(ref c) = choice.delta.content {
-                                            content.push_str(c);
+                                    // Handle response.output_text.delta events
+                                    if event.event_type == "response.output_text.delta" {
+                                        if let Some(delta) = &event.delta {
+                                            content.push_str(delta);
                                         }
                                     }
                                 }
                             }
                         }
+
                         if content.is_empty() {
                             None
                         } else {
@@ -501,5 +579,20 @@ mod tests {
         let cost = provider.calculate_cost(&tokens);
         // GPT-5.1: 0.1 * $1.25 + 0.01 * $10 = $0.225
         assert!((cost - 0.225).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_codex_models() {
+        let fast = OpenAIProvider::gpt51_mini("test-key".to_string()).unwrap();
+        assert_eq!(fast.model().as_str(), "gpt-5.1-codex-mini");
+        assert_eq!(fast.reasoning_effort(), Some(ReasoningEffort::Medium));
+
+        let code = OpenAIProvider::codex_max("test-key".to_string()).unwrap();
+        assert_eq!(code.model().as_str(), "gpt-5.1-codex-max");
+        assert_eq!(code.reasoning_effort(), Some(ReasoningEffort::High));
+
+        let agentic = OpenAIProvider::codex_max_agentic("test-key".to_string()).unwrap();
+        assert_eq!(agentic.model().as_str(), "gpt-5.1-codex-max");
+        assert_eq!(agentic.reasoning_effort(), Some(ReasoningEffort::XHigh));
     }
 }

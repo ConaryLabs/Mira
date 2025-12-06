@@ -3,9 +3,10 @@
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::llm::provider::{Gemini3Provider, Message};
+use crate::llm::provider::{LlmProvider, Message};
 use crate::operations::get_file_low_level_tools;
 use crate::prompt::internal::tool_router as prompts;
 use super::super::file_handlers::FileHandlers;
@@ -15,7 +16,7 @@ use super::llm_conversation::execute_file_read_conversation;
 ///
 /// Supports reading multiple files in one call (optimized for token usage)
 pub async fn route_read_file(
-    llm: &Gemini3Provider,
+    llm: &Arc<dyn LlmProvider>,
     file_handlers: &FileHandlers,
     args: Value,
 ) -> Result<Value> {
@@ -75,7 +76,7 @@ pub async fn route_read_file(
 
 /// Route search_codebase to grep_files tool
 pub async fn route_search(
-    llm: &Gemini3Provider,
+    llm: &Arc<dyn LlmProvider>,
     file_handlers: &FileHandlers,
     args: Value,
 ) -> Result<Value> {
@@ -107,12 +108,12 @@ pub async fn route_search(
 
     let tools = get_file_low_level_tools();
     let response = llm
-        .call_with_tools(messages, tools)
+        .chat_with_tools(messages, system_prompt.to_string(), tools, None)
         .await
         .context("LLM search failed")?;
 
     // Execute grep tool if called
-    if let Some(tool_call) = response.tool_calls.first() {
+    if let Some(tool_call) = response.function_calls.first() {
         if tool_call.name == "grep_files" {
             return file_handlers
                 .execute_tool(&tool_call.name, tool_call.arguments.clone())
@@ -132,7 +133,7 @@ pub async fn route_search(
 
 /// Route list_project_files to list_files tool
 pub async fn route_list_files(
-    llm: &Gemini3Provider,
+    llm: &Arc<dyn LlmProvider>,
     file_handlers: &FileHandlers,
     args: Value,
 ) -> Result<Value> {
@@ -166,12 +167,12 @@ pub async fn route_list_files(
 
     let tools = get_file_low_level_tools();
     let response = llm
-        .call_with_tools(messages, tools)
+        .chat_with_tools(messages, system_prompt.to_string(), tools, None)
         .await
         .context("LLM list failed")?;
 
     // Execute list_files tool if called
-    if let Some(tool_call) = response.tool_calls.first() {
+    if let Some(tool_call) = response.function_calls.first() {
         if tool_call.name == "list_files" {
             return file_handlers
                 .execute_tool(&tool_call.name, tool_call.arguments.clone())

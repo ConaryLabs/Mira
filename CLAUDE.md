@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses Gemini 3 Pro with variable thinking levels, hybrid memory systems (SQLite + Qdrant), real-time WebSocket streaming, and comprehensive code intelligence including semantic graph analysis, git intelligence, and tool synthesis.
+Mira is an AI-powered coding assistant with a **Rust backend** and **React + TypeScript frontend** in a monorepo structure. The backend uses OpenAI GPT-5.1 family with multi-tier routing, hybrid memory systems (SQLite + Qdrant), real-time WebSocket streaming, and comprehensive code intelligence including semantic graph analysis, git intelligence, and tool synthesis.
 
 ## Repository Structure
 
@@ -136,27 +136,12 @@ npm run dev
 
 ### Backend Architecture
 
-**Gemini 3 Pro Single-Model with Variable Thinking:**
-- **Gemini 3 Pro** handles all operations with variable thinking levels (low/high)
+**OpenAI GPT-5.1 Multi-Model Routing:**
+- **4-tier model routing** intelligently routes tasks to optimal model tier
 - **Budget Management** tracks daily/monthly spending with user-configurable limits
 - **LLM Response Cache** targets 80%+ hit rate for cost optimization (SHA-256 key hashing)
 - **Operation Engine** (`src/operations/engine/`) orchestrates complex workflows with status tracking
-- **Thinking Level Selection** adapts model complexity to task requirements
-
-**Gemini 3 Pro API Limits (Tier 1 - Paid):**
-| Metric | Limit |
-|--------|-------|
-| Context Window | 1,000,000 tokens |
-| Max Output | 65,536 tokens |
-| Requests per Minute (RPM) | 50 |
-| Tokens per Minute (TPM) | 1,000,000 |
-| Requests per Day (RPD) | 1,000 |
-
-**Gemini 3 Pro Pricing (per 1M tokens):**
-| Context Size | Input | Output |
-|--------------|-------|--------|
-| < 200k tokens | $2.00 | $12.00 |
-| > 200k tokens | $4.00 | $18.00 |
+- **OpenAI Responses API** uses the new `/v1/responses` endpoint (not legacy Chat Completions)
 
 **Multi-Model Routing (OpenAI GPT-5.1 Family):**
 
@@ -193,7 +178,7 @@ Routing rules:
 - `src/operations/engine/` - Modular operation orchestration (lifecycle, artifacts, events, status tracking)
 - `src/memory/` - Memory service coordinating SQLite + Qdrant stores
 - `src/memory/features/code_intelligence/` - Semantic graph, call graph, pattern detection
-- `src/llm/provider/` - LLM providers: Gemini 3 Pro, OpenAI GPT-5.1 family, embeddings
+- `src/llm/provider/` - OpenAI GPT-5.1 providers (Responses API) and embeddings (text-embedding-3-large)
 - `src/llm/router/` - Multi-model routing: Fast/Voice/Code/Agentic tiers with task classification
 - `src/budget/` - Budget tracking with daily/monthly limits
 - `src/cache/` - LLM response cache (SHA-256 hashing, 80%+ hit rate)
@@ -257,7 +242,7 @@ PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
 - **Node.js 18+** (frontend)
 - **SQLite 3.35+** (backend database)
 - **Qdrant 1.16+** running on `localhost:6334` (gRPC) and `localhost:6333` (HTTP)
-- **API Keys**: Google (Gemini 3 Pro + Gemini embeddings)
+- **API Keys**: OpenAI (GPT-5.1 family + text-embedding-3-large)
 
 ### Starting Qdrant
 
@@ -290,12 +275,7 @@ DATABASE_URL=sqlite://data/mira.db
 # Qdrant (gRPC port)
 QDRANT_URL=http://localhost:6334
 
-# Google Gemini (Gemini 3 Pro for primary LLM)
-GOOGLE_API_KEY=your-google-api-key
-GEMINI_MODEL=gemini-3-pro-preview
-GEMINI_THINKING_LEVEL=high
-
-# OpenAI (Multi-Model Routing + Embeddings)
+# OpenAI (GPT-5.1 family + embeddings)
 OPENAI_API_KEY=your-openai-api-key
 
 # Model Router Configuration (4-tier routing)
@@ -337,9 +317,9 @@ The frontend proxies to backend port 3001 (configured in `vite.config.js`).
 
 **Environment for Tests:**
 - Tests load `backend/.env` via `dotenv::dotenv()` for API keys
-- **`GOOGLE_API_KEY` is required** - tests fail without it (no graceful skip)
+- **`OPENAI_API_KEY` is required** - tests fail without it (no graceful skip)
 - Qdrant tests require Qdrant running on `localhost:6334` (gRPC)
-- LLM integration tests may hit rate limits on free tier (15 req/min)
+- LLM integration tests make real API calls to OpenAI
 
 ### Frontend Tests
 
@@ -357,14 +337,13 @@ Operations are complex multi-step workflows tracked through state transitions. W
 4. Update context building in `src/operations/engine/context.rs`
 5. Emit events via channels for real-time frontend updates
 
-**Tool Schema Format** (Gemini Function Declarations):
+**Tool Schema Format** (OpenAI Function Calling):
 ```json
 {
-  "functionDeclarations": [{
-    "name": "tool_name",
-    "description": "What the tool does",
-    "parameters": { ... }
-  }]
+  "type": "function",
+  "name": "tool_name",
+  "description": "What the tool does",
+  "parameters": { ... }
 }
 ```
 
@@ -430,7 +409,7 @@ Repositories stored in `backend/repos/` (or `backend/test_repos/` for tests).
 
 **When debugging memory issues:**
 - Check `SALIENCE_MIN_FOR_EMBED` threshold (default 0.6)
-- Verify Google API key for embeddings
+- Verify OpenAI API key for embeddings (uses text-embedding-3-large)
 - Inspect `EMBED_HEADS` configuration
 - Run `backend/scripts/db-reset-qdrant.sh` if embeddings are corrupted
 
@@ -567,7 +546,7 @@ curl http://localhost:6333/collections
 ## External Dependencies
 
 - **Qdrant** vector database for embeddings (must run separately)
-- **Google Gemini API** for Gemini 3 Pro (LLM) and gemini-embedding-001 (embeddings)
+- **OpenAI API** for GPT-5.1 family (LLM) and text-embedding-3-large (embeddings)
 - **SQLite** for structured storage (embedded)
 
 ## Additional Documentation

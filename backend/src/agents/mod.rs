@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use crate::llm::provider::gemini3::Gemini3Provider;
+use crate::llm::provider::LlmProvider;
 use crate::operations::engine::tool_router::ToolRouter;
 
 pub use executor::{AgentDispatcher, AgentEvent};
@@ -37,7 +37,7 @@ pub struct AgentManager {
 
 impl AgentManager {
     /// Create a new agent manager
-    pub fn new(llm_provider: Arc<Gemini3Provider>, tool_router: Arc<ToolRouter>) -> Self {
+    pub fn new(llm_provider: Arc<dyn LlmProvider>, tool_router: Arc<ToolRouter>) -> Self {
         let builtin_executor = Arc::new(executor::builtin::BuiltinAgentExecutor::new(
             Arc::clone(&llm_provider),
             Arc::clone(&tool_router),

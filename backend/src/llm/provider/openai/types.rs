@@ -1,15 +1,15 @@
 // src/llm/provider/openai/types.rs
-// Type definitions for OpenAI GPT-5.1 provider
+// Type definitions for OpenAI Responses API (December 2025)
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// OpenAI model variants
+/// OpenAI model variants (all use Responses API)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OpenAIModel {
     /// GPT-5.1 - Main model for voice/chat tier
     Gpt51,
-    /// GPT-5.1 Mini - Fast tier for simple tasks
+    /// GPT-5.1-Codex-Mini - Fast tier for simple tasks
     Gpt51Mini,
     /// GPT-5.1-Codex-Max - Code tier for code-heavy tasks and agentic tier for long-running
     Gpt51CodexMax,
@@ -54,7 +54,7 @@ impl OpenAIModel {
     pub fn as_str(&self) -> &'static str {
         match self {
             OpenAIModel::Gpt51 => "gpt-5.1",
-            OpenAIModel::Gpt51Mini => "gpt-5.1-mini",
+            OpenAIModel::Gpt51Mini => "gpt-5.1-codex-mini",
             OpenAIModel::Gpt51CodexMax => "gpt-5.1-codex-max",
         }
     }
@@ -63,8 +63,8 @@ impl OpenAIModel {
     pub fn display_name(&self) -> &'static str {
         match self {
             OpenAIModel::Gpt51 => "GPT-5.1",
-            OpenAIModel::Gpt51Mini => "GPT-5.1 Mini",
-            OpenAIModel::Gpt51CodexMax => "GPT-5.1-Codex-Max",
+            OpenAIModel::Gpt51Mini => "GPT-5.1 Codex Mini",
+            OpenAIModel::Gpt51CodexMax => "GPT-5.1 Codex Max",
         }
     }
 
@@ -90,7 +90,8 @@ impl OpenAIModel {
 
     /// Check if this model supports reasoning effort configuration
     pub fn supports_reasoning(&self) -> bool {
-        matches!(self, OpenAIModel::Gpt51CodexMax)
+        // All GPT-5.1 models support reasoning effort
+        true
     }
 }
 
@@ -106,7 +107,242 @@ impl std::fmt::Display for OpenAIModel {
     }
 }
 
-/// OpenAI chat completion request
+// ============================================================================
+// Responses API Types (December 2025)
+// All GPT-5.1 models use /v1/responses endpoint
+// ============================================================================
+
+/// OpenAI Responses API request
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponsesRequest {
+    pub model: String,
+    /// Input can be a string or array of input items
+    pub input: ResponsesInput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ResponsesTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    /// Reasoning configuration for reasoning-capable models
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
+    /// Reference to previous response for conversation chaining
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+}
+
+/// Input type for Responses API - can be a simple string or array of items
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResponsesInput {
+    /// Simple string input
+    Text(String),
+    /// Array of input items (messages, function outputs, etc.)
+    Items(Vec<InputItem>),
+}
+
+/// Input item types for Responses API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InputItem {
+    /// Message input with role and content
+    Message {
+        role: String,
+        content: MessageContent,
+    },
+    /// Function call output (response to a tool call)
+    FunctionCallOutput {
+        call_id: String,
+        output: String,
+    },
+}
+
+/// Message content - can be a string or array of content parts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    /// Simple text content
+    Text(String),
+    /// Array of content parts (for multimodal)
+    Parts(Vec<ContentPart>),
+}
+
+/// Content part for multimodal messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    /// Text content
+    InputText { text: String },
+    /// Image content
+    InputImage { image_url: String },
+    /// File content
+    InputFile { file_id: String },
+}
+
+/// Tool definition for Responses API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesTool {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
+}
+
+/// OpenAI Responses API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesResponse {
+    pub id: String,
+    #[serde(default)]
+    pub object: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub status: String,
+    /// Array of output items (messages, function calls, etc.)
+    #[serde(default)]
+    pub output: Vec<OutputItem>,
+    /// Convenience field with just the text output
+    #[serde(default)]
+    pub output_text: Option<String>,
+    #[serde(default)]
+    pub usage: Option<ResponsesUsage>,
+    #[serde(default)]
+    pub error: Option<ResponsesError>,
+}
+
+/// Output item types from Responses API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutputItem {
+    /// Message output from assistant
+    Message {
+        id: String,
+        role: String,
+        content: Vec<OutputContent>,
+        #[serde(default)]
+        status: String,
+    },
+    /// Function call from model
+    FunctionCall {
+        #[serde(default)]
+        id: Option<String>,
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// Catch-all for unknown output types
+    #[serde(other)]
+    Unknown,
+}
+
+/// Output content types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutputContent {
+    /// Text output
+    OutputText {
+        text: String,
+        #[serde(default)]
+        annotations: Vec<Value>,
+        #[serde(default)]
+        logprobs: Vec<Value>,
+    },
+    /// Catch-all for unknown content types
+    #[serde(other)]
+    Unknown,
+}
+
+/// Token usage for Responses API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    #[serde(default)]
+    pub input_tokens_details: Option<InputTokensDetails>,
+    #[serde(default)]
+    pub output_tokens_details: Option<OutputTokensDetails>,
+}
+
+/// Detailed input token breakdown
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: i64,
+}
+
+/// Detailed output token breakdown
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: i64,
+}
+
+/// Error in response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesError {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// Streaming event from Responses API
+/// Events include: response.created, response.in_progress, response.output_item.added,
+/// response.content_part.added, response.output_text.delta, response.output_text.done,
+/// response.content_part.done, response.output_item.done, response.completed
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResponsesStreamEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(default)]
+    pub sequence_number: i64,
+    #[serde(default)]
+    pub response: Option<ResponsesResponse>,
+    /// Text delta for response.output_text.delta events
+    #[serde(default)]
+    pub delta: Option<String>,
+    #[serde(default)]
+    pub item: Option<Value>,
+    #[serde(default)]
+    pub part: Option<Value>,
+    /// Full text for response.output_text.done events
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// OpenAI API error response
+#[derive(Debug, Clone, Deserialize)]
+pub struct ErrorResponse {
+    pub error: ErrorDetail,
+}
+
+/// Error detail
+#[derive(Debug, Clone, Deserialize)]
+pub struct ErrorDetail {
+    pub message: String,
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub code: Option<String>,
+}
+
+// ============================================================================
+// Legacy Chat Completions Types (kept for compatibility during transition)
+// These will be removed once all code migrates to Responses API
+// ============================================================================
+
+/// OpenAI chat completion request (legacy - use ResponsesRequest)
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatCompletionRequest {
     pub model: String,
@@ -121,12 +357,11 @@ pub struct ChatCompletionRequest {
     pub max_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-    /// Reasoning effort configuration (Codex-Max models only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
 }
 
-/// Chat message for OpenAI API
+/// Chat message for legacy API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -156,7 +391,7 @@ pub struct FunctionCallMessage {
     pub arguments: String,
 }
 
-/// Tool definition for OpenAI
+/// Tool definition for legacy API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     #[serde(rename = "type")]
@@ -172,7 +407,7 @@ pub struct FunctionDefinition {
     pub parameters: Value,
 }
 
-/// OpenAI chat completion response
+/// OpenAI chat completion response (legacy)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionResponse {
     pub id: String,
@@ -201,7 +436,7 @@ pub struct ResponseMessage {
     pub tool_calls: Option<Vec<ToolCallMessage>>,
 }
 
-/// Token usage
+/// Token usage (legacy format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: i64,
@@ -209,7 +444,7 @@ pub struct Usage {
     pub total_tokens: i64,
 }
 
-/// Streaming chunk
+/// Streaming chunk (legacy)
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatCompletionChunk {
     pub id: String,
@@ -257,19 +492,4 @@ pub struct DeltaFunction {
     pub name: Option<String>,
     #[serde(default)]
     pub arguments: Option<String>,
-}
-
-/// OpenAI API error response
-#[derive(Debug, Clone, Deserialize)]
-pub struct ErrorResponse {
-    pub error: ErrorDetail,
-}
-
-/// Error detail
-#[derive(Debug, Clone, Deserialize)]
-pub struct ErrorDetail {
-    pub message: String,
-    #[serde(rename = "type")]
-    pub error_type: String,
-    pub code: Option<String>,
 }

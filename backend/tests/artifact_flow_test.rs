@@ -10,8 +10,7 @@ use mira_backend::config::CONFIG;
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::LlmProvider;
-use mira_backend::llm::provider::GeminiEmbeddings;
-use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
+use mira_backend::llm::provider::{OpenAIEmbeddings, OpenAIProvider};
 use mira_backend::llm::router::{ModelRouter, RouterConfig};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
@@ -41,12 +40,11 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
 
     let db = Arc::new(pool);
 
-    // Create provider
-    let llm = Gemini3Provider::new(
-        common::google_api_key(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create LLM provider");
+    // Create provider using OpenAI with real API key
+    let llm: Arc<dyn LlmProvider> = Arc::new(
+        OpenAIProvider::gpt51(common::openai_api_key())
+            .expect("Should create LLM provider")
+    );
 
     // Setup services
     let sqlite_store = Arc::new(SqliteMemoryStore::new((*db).clone()));
@@ -57,16 +55,12 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
             .unwrap_or_else(|_| panic!("Qdrant not available")),
     );
 
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
-        common::google_api_key(),
-        "gemini-embedding-001".to_string(),
+    // Create embedding client with real API key
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
+        common::openai_api_key(),
     ));
 
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
-        common::google_api_key(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create LLM provider"));
+    let llm_provider = llm.clone();
 
     let memory_service = Arc::new(MemoryService::new(
         sqlite_store,
@@ -89,22 +83,17 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
     ));
 
     // Create model router for tests (use same provider for all 4 tiers)
-    let llm_arc: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
-        common::google_api_key(),
-        "gemini-2.5-flash".to_string(),
-        ThinkingLevel::High,
-    ).expect("Should create LLM provider"));
     let model_router = Arc::new(ModelRouter::new(
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
-        llm_arc.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
+        llm.clone(),
         RouterConfig::default(),
     ));
 
     let engine = OperationEngine::new(
         db.clone(),
-        llm,
+        llm.clone(),
         model_router,
         memory_service,
         relationship_service,

@@ -1,11 +1,13 @@
 // tests/e2e_data_flow_test.rs
 // End-to-end integration test: Message → Analysis → Storage → Embedding → Retrieval
 
+mod common;
+
 use chrono::Utc;
 use mira_backend::{
     llm::{
         embeddings::EmbeddingHead,
-        provider::{LlmProvider, GeminiEmbeddings, {Gemini3Provider, ThinkingLevel}},
+        provider::{LlmProvider, OpenAIEmbeddings, OpenAIProvider},
     },
     memory::{
         core::types::MemoryEntry, service::MemoryService,
@@ -561,7 +563,7 @@ async fn test_recall_engine_integration() {
 // Helper Functions
 // ============================================================================
 
-async fn setup_full_stack() -> (MemoryService, Arc<GeminiEmbeddings>, Arc<QdrantMultiStore>) {
+async fn setup_full_stack() -> (MemoryService, Arc<OpenAIEmbeddings>, Arc<QdrantMultiStore>) {
     // Setup database
     let db_pool = setup_test_db().await;
     let sqlite_store = Arc::new(SqliteMemoryStore::new(db_pool));
@@ -575,23 +577,17 @@ async fn setup_full_stack() -> (MemoryService, Arc<GeminiEmbeddings>, Arc<Qdrant
             .expect("Should connect to Qdrant"),
     );
 
-    // Load .env and setup LLM provider
-    let _ = dotenv::dotenv();
-    let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set");
+    // Get OpenAI API key
+    let api_key = common::openai_api_key();
 
-    // Use actual model from config, fallback to gemini-3-pro-preview
-    let model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-pro-preview".to_string());
-
-    let llm_provider: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
-        api_key.clone(),
-        model,
-        ThinkingLevel::High,
-    ).expect("Should create Gemini provider"));
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(
+        OpenAIProvider::gpt51(api_key.clone())
+            .expect("Should create OpenAI provider")
+    );
 
     // Setup embedding client
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
         api_key.clone(),
-        "gemini-embedding-001".to_string(),
     ));
 
     // Create memory service
