@@ -1,5 +1,5 @@
 // src/api/ws/chat/unified_handler.rs
-// Gemini 3 chat handler - routes messages to OperationEngine with slash command support
+// Chat handler - routes messages to OperationEngine with slash command and dual-session support
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -12,7 +12,9 @@ use crate::api::ws::message::MessageMetadata;
 use crate::api::ws::operations::OperationManager;
 use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
+use crate::llm::router::{ModelRouter, RoutingTask};
 use crate::mcp::McpManager;
+use crate::session::{CodexSpawner, InjectionService, SessionManager};
 use crate::state::AppState;
 use crate::utils::RateLimiter;
 use tokio::sync::RwLock;
@@ -39,6 +41,11 @@ pub struct UnifiedChatHandler {
     checkpoint_manager: Arc<CheckpointManager>,
     mcp_manager: Arc<McpManager>,
     rate_limiter: Option<Arc<RateLimiter>>,
+    // Dual-session architecture (Voice + Codex)
+    model_router: Arc<ModelRouter>,
+    session_manager: Arc<SessionManager>,
+    codex_spawner: Arc<CodexSpawner>,
+    injection_service: Arc<InjectionService>,
 }
 
 impl UnifiedChatHandler {
@@ -55,6 +62,11 @@ impl UnifiedChatHandler {
             checkpoint_manager: app_state.checkpoint_manager.clone(),
             mcp_manager: app_state.mcp_manager.clone(),
             rate_limiter: app_state.rate_limiter.clone(),
+            // Dual-session architecture
+            model_router: app_state.model_router.clone(),
+            session_manager: app_state.session_manager.clone(),
+            codex_spawner: app_state.codex_spawner.clone(),
+            injection_service: app_state.injection_service.clone(),
         }
     }
 
@@ -123,11 +135,150 @@ impl UnifiedChatHandler {
             return Ok(());
         }
 
-        // Regular message - route to OperationEngine
+        // Dual-session architecture: Check for pending Codex injections
+        if let Ok(injections) = self
+            .injection_service
+            .get_pending_injections(&request.session_id)
+            .await
+        {
+            if !injections.is_empty() {
+                info!(
+                    session_id = %request.session_id,
+                    count = injections.len(),
+                    "Found pending Codex injections"
+                );
+
+                // Notify frontend about completed background work
+                for injection in &injections {
+                    let _ = ws_tx
+                        .send(json!({
+                            "type": "codex_injection",
+                            "injection_type": injection.injection_type.as_str(),
+                            "source_session_id": injection.source_session_id,
+                            "content": injection.content,
+                            "metadata": injection.metadata,
+                        }))
+                        .await;
+                }
+
+                // Acknowledge injections after sending
+                let _ = self
+                    .injection_service
+                    .acknowledge_all(&request.session_id)
+                    .await;
+            }
+        }
+
+        // Dual-session architecture: Check if we should spawn a Codex session
+        let routing_task = RoutingTask::user_chat()
+            .with_tokens(request.content.len() as i64 * 4); // Rough token estimate
+
+        if let Some(trigger) = self
+            .model_router
+            .classifier()
+            .should_spawn_codex(&routing_task, &request.content)
+        {
+            info!(
+                session_id = %request.session_id,
+                trigger_type = trigger.trigger_type(),
+                "Detected Codex-worthy task, spawning background session"
+            );
+
+            // Get project path from metadata if available
+            let project_path = request
+                .metadata
+                .as_ref()
+                .and_then(|m| m.file_path.clone());
+
+            // Build context summary from recent conversation (simplified for now)
+            let voice_context = Some(format!(
+                "User requested: {}",
+                request.content.chars().take(500).collect::<String>()
+            ));
+
+            // Spawn Codex session in background
+            match self
+                .codex_spawner
+                .spawn(
+                    &request.session_id,
+                    &request.content,
+                    trigger.clone(),
+                    voice_context,
+                    project_path,
+                )
+                .await
+            {
+                Ok((codex_session_id, _event_rx)) => {
+                    // Send Voice acknowledgment to user
+                    let _ = ws_tx
+                        .send(json!({
+                            "type": "codex_spawned",
+                            "voice_session_id": request.session_id,
+                            "codex_session_id": codex_session_id,
+                            "task_description": request.content,
+                            "trigger_type": trigger.trigger_type(),
+                        }))
+                        .await;
+
+                    // Also send a chat response acknowledging the background work
+                    let acknowledgment = match &trigger {
+                        crate::session::CodexSpawnTrigger::RouterDetection { confidence, .. } => {
+                            format!(
+                                "I've started working on this in the background (confidence: {:.0}%). \
+                                 You can continue chatting while I work on it. \
+                                 I'll let you know when it's complete.",
+                                confidence * 100.0
+                            )
+                        }
+                        crate::session::CodexSpawnTrigger::UserRequest { .. } => {
+                            "Got it! I've started the background work as requested. \
+                             You can continue chatting while I work on it."
+                                .to_string()
+                        }
+                        crate::session::CodexSpawnTrigger::ComplexTask {
+                            estimated_tokens,
+                            file_count,
+                            ..
+                        } => {
+                            format!(
+                                "This looks like a complex task (~{} tokens, {} files). \
+                                 I've started working on it in the background. \
+                                 You can continue chatting while I work on it.",
+                                estimated_tokens, file_count
+                            )
+                        }
+                    };
+
+                    let _ = ws_tx
+                        .send(json!({
+                            "type": "chat_complete",
+                            "user_message_id": "",
+                            "assistant_message_id": "",
+                            "content": acknowledgment,
+                            "artifacts": [],
+                            "thinking": null,
+                            "codex_session_id": codex_session_id,
+                        }))
+                        .await;
+
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        session_id = %request.session_id,
+                        error = %e,
+                        "Failed to spawn Codex session, falling back to Voice"
+                    );
+                    // Fall through to normal Voice handling
+                }
+            }
+        }
+
+        // Regular message - route to OperationEngine (Voice tier)
         info!(
             session_id = %request.session_id,
             content_preview = %content_preview,
-            "Routing to OperationEngine"
+            "Routing to OperationEngine (Voice tier)"
         );
 
         let op_id = self

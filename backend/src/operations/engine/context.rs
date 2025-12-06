@@ -12,6 +12,7 @@ use crate::persona::PersonaOverlay;
 use crate::project::ProjectTaskService;
 use crate::prompt::UnifiedPromptBuilder;
 use crate::relationship::service::RelationshipService;
+use crate::session::{CodexSessionInfo, InjectionService, SessionInjection, SessionManager};
 use crate::tools::types::Tool;
 
 use anyhow::Result;
@@ -23,6 +24,8 @@ pub struct ContextBuilder {
     relationship_service: Arc<RelationshipService>,
     context_oracle: Option<Arc<ContextOracle>>,
     project_task_service: Option<Arc<ProjectTaskService>>,
+    session_manager: Option<Arc<SessionManager>>,
+    injection_service: Option<Arc<InjectionService>>,
 }
 
 impl ContextBuilder {
@@ -35,6 +38,8 @@ impl ContextBuilder {
             relationship_service,
             context_oracle: None,
             project_task_service: None,
+            session_manager: None,
+            injection_service: None,
         }
     }
 
@@ -47,6 +52,18 @@ impl ContextBuilder {
     /// Add ProjectTaskService for task context injection
     pub fn with_project_task_service(mut self, service: Arc<ProjectTaskService>) -> Self {
         self.project_task_service = Some(service);
+        self
+    }
+
+    /// Add SessionManager for dual-session awareness
+    pub fn with_session_manager(mut self, manager: Arc<SessionManager>) -> Self {
+        self.session_manager = Some(manager);
+        self
+    }
+
+    /// Add InjectionService for Codex completion summaries
+    pub fn with_injection_service(mut self, service: Arc<InjectionService>) -> Self {
+        self.injection_service = Some(service);
         self
     }
 
@@ -67,6 +84,111 @@ impl ContextBuilder {
             Err(e) => {
                 warn!("[ENGINE] Failed to load task context: {}", e);
                 None
+            }
+        }
+    }
+
+    /// Load active Codex sessions for a Voice session
+    pub async fn load_active_codex_sessions(
+        &self,
+        voice_session_id: &str,
+    ) -> Vec<CodexSessionInfo> {
+        let Some(manager) = &self.session_manager else {
+            return vec![];
+        };
+
+        match manager.get_active_codex_sessions(voice_session_id).await {
+            Ok(sessions) => {
+                if !sessions.is_empty() {
+                    info!(
+                        "[ENGINE] Found {} active Codex sessions for Voice session {}",
+                        sessions.len(),
+                        voice_session_id
+                    );
+                }
+                sessions
+            }
+            Err(e) => {
+                warn!("[ENGINE] Failed to load active Codex sessions: {}", e);
+                vec![]
+            }
+        }
+    }
+
+    /// Load pending Codex injections (completion summaries, progress, errors)
+    pub async fn load_pending_injections(
+        &self,
+        voice_session_id: &str,
+    ) -> Vec<SessionInjection> {
+        let Some(service) = &self.injection_service else {
+            return vec![];
+        };
+
+        match service.get_pending_injections(voice_session_id).await {
+            Ok(injections) => {
+                if !injections.is_empty() {
+                    info!(
+                        "[ENGINE] Found {} pending Codex injections for Voice session {}",
+                        injections.len(),
+                        voice_session_id
+                    );
+                }
+                injections
+            }
+            Err(e) => {
+                warn!("[ENGINE] Failed to load pending injections: {}", e);
+                vec![]
+            }
+        }
+    }
+
+    /// Format Codex context for inclusion in system prompt
+    pub fn format_codex_context(
+        active_sessions: &[CodexSessionInfo],
+        pending_injections: &[SessionInjection],
+    ) -> Option<String> {
+        let service = InjectionService::new(sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap());
+
+        let mut parts: Vec<String> = Vec::new();
+
+        // Format pending injections
+        if let Some(injections_text) = service.format_for_prompt(pending_injections) {
+            parts.push(injections_text);
+        }
+
+        // Format active sessions
+        if !active_sessions.is_empty() {
+            let mut active_text = String::from("## Active Background Work\n");
+            for session in active_sessions {
+                active_text.push_str(&format!(
+                    "- **{}**: {} (tokens used: {}, running for {}s)\n",
+                    session.task_description,
+                    session.current_activity.as_deref().unwrap_or("working..."),
+                    session.tokens_used,
+                    session.started_at
+                ));
+            }
+            parts.push(active_text);
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        }
+    }
+
+    /// Acknowledge all pending injections (call after they've been shown to user)
+    pub async fn acknowledge_injections(&self, voice_session_id: &str) -> u64 {
+        let Some(service) = &self.injection_service else {
+            return 0;
+        };
+
+        match service.acknowledge_all(voice_session_id).await {
+            Ok(count) => count,
+            Err(e) => {
+                warn!("[ENGINE] Failed to acknowledge injections: {}", e);
+                0
             }
         }
     }
