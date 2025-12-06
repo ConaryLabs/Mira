@@ -27,6 +27,7 @@ use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::hooks::HookManager;
 use crate::llm::provider::Gemini3Provider;
+use crate::llm::router::ModelRouter;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
 use crate::project::guidelines::ProjectGuidelinesService;
@@ -57,7 +58,8 @@ pub struct OperationEngine {
 impl OperationEngine {
     pub fn new(
         db: Arc<SqlitePool>,
-        llm: Gemini3Provider,
+        llm: Gemini3Provider, // Used by ToolRouter for tool-specific LLM calls
+        model_router: Arc<ModelRouter>, // Used by LlmOrchestrator for multi-tier routing
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,
         git_client: GitClient,
@@ -115,11 +117,11 @@ impl OperationEngine {
         let artifact_manager = ArtifactManager::new(Arc::clone(&db));
         let lifecycle_manager = LifecycleManager::new(Arc::clone(&db), Arc::clone(&memory_service));
 
-        // Create Gemini 3 orchestrator with budget tracking and caching
+        // Create LLM orchestrator with multi-tier routing, budget tracking and caching
         use crate::operations::engine::llm_orchestrator::LlmOrchestrator;
 
         let llm_orchestrator = LlmOrchestrator::with_services(
-            llm,
+            model_router,
             Some(Arc::clone(&tool_router_arc)),
             budget_tracker,
             llm_cache,

@@ -12,6 +12,7 @@ use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::LlmProvider;
 use mira_backend::llm::provider::GeminiEmbeddings;
 use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
+use mira_backend::llm::router::{ModelRouter, RouterConfig};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -87,9 +88,23 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
         embedding_client.clone(),
     ));
 
+    // Create model router for tests (use same provider for all tiers)
+    let llm_arc: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
+        common::google_api_key(),
+        "gemini-2.5-flash".to_string(),
+        ThinkingLevel::High,
+    ).expect("Should create LLM provider"));
+    let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
+        llm_arc.clone(),
+        llm_arc.clone(),
+        RouterConfig::default(),
+    ));
+
     let engine = OperationEngine::new(
         db.clone(),
         llm,
+        model_router,
         memory_service,
         relationship_service,
         git_client,

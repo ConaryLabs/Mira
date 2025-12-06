@@ -8,6 +8,7 @@ use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
 use mira_backend::llm::provider::{Gemini3Provider, ThinkingLevel};
 use mira_backend::llm::provider::{LlmProvider, GeminiEmbeddings};
+use mira_backend::llm::router::{ModelRouter, RouterConfig};
 use mira_backend::memory::features::code_intelligence::CodeIntelligenceService;
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -117,9 +118,19 @@ async fn test_operation_engine_with_providers() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
+    // Create model router for tests (use same provider for all tiers)
+    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
+    let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
+        llm_arc.clone(),
+        llm_arc.clone(),
+        RouterConfig::default(),
+    ));
+
     let engine = OperationEngine::new(
         db.clone(),
         llm,
+        model_router,
         memory_service,
         relationship_service,
         git_client,
@@ -222,9 +233,19 @@ async fn test_operation_lifecycle_complete() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
+    // Create model router for tests (use same provider for all tiers)
+    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
+    let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
+        llm_arc.clone(),
+        llm_arc.clone(),
+        RouterConfig::default(),
+    ));
+
     let engine = OperationEngine::new(
         db.clone(),
         llm,
+        model_router,
         memory_service,
         relationship_service,
         git_client,
@@ -314,9 +335,19 @@ async fn test_operation_cancellation() {
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
+    // Create model router for tests (use same provider for all tiers)
+    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
+    let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
+        llm_arc.clone(),
+        llm_arc.clone(),
+        RouterConfig::default(),
+    ));
+
     let engine = OperationEngine::new(
         db.clone(),
         llm,
+        model_router,
         memory_service,
         relationship_service,
         git_client,
@@ -391,14 +422,24 @@ async fn test_operation_cancellation() {
 
 async fn test_multiple_operations_concurrency() {
     let db = create_test_db().await;
-    let llm =create_test_llm();
+    let llm = create_test_llm();
 
     let (memory_service, relationship_service, git_client, code_intelligence) =
         setup_services(db.clone()).await;
 
+    // Create model router for tests (use same provider for all tiers)
+    let llm_arc: Arc<dyn LlmProvider> = Arc::new(create_test_llm());
+    let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
+        llm_arc.clone(),
+        llm_arc.clone(),
+        RouterConfig::default(),
+    ));
+
     let engine = Arc::new(OperationEngine::new(
         db.clone(),
         llm,
+        model_router,
         memory_service,
         relationship_service,
         git_client,
