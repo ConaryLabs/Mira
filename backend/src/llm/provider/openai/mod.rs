@@ -2,6 +2,7 @@
 // OpenAI GPT-5.1 provider implementation
 
 mod conversion;
+pub mod embeddings;
 pub mod pricing;
 pub mod types;
 
@@ -17,6 +18,7 @@ use tracing::{debug, info, warn};
 use super::{FunctionCall, LlmProvider, Message, Response, TokenUsage, ToolContext, ToolResponse};
 
 // Re-export public types
+pub use embeddings::{OpenAIEmbeddingModel, OpenAIEmbeddings};
 pub use pricing::{CostResult, OpenAIPricing};
 pub use types::OpenAIModel;
 
