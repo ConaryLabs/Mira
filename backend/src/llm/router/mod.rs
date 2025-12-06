@@ -95,6 +95,11 @@ impl ModelRouter {
         &self.config
     }
 
+    /// Get the task classifier (for Codex spawn detection)
+    pub fn classifier(&self) -> &TaskClassifier {
+        &self.classifier
+    }
+
     /// Route a task to the appropriate provider
     pub fn route(&self, task: &RoutingTask) -> Arc<dyn LlmProvider> {
         let request_id = self.request_count.fetch_add(1, Ordering::Relaxed);

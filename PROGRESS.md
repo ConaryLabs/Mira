@@ -22,6 +22,37 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 38: 2025-12-06
+
+**Summary:** Completed dual-session integration - Codex detection, context builder, and chat handler routing.
+
+**Key Outcomes:**
+- Added `should_spawn_codex()` to TaskClassifier for automatic Codex detection
+- Updated ContextBuilder with SessionManager and InjectionService for Codex awareness
+- Modified UnifiedChatHandler for dual-session routing (detect -> spawn -> acknowledge)
+- Voice sessions now receive pending Codex injections and notify frontend
+- Chat requests that match Codex patterns auto-spawn background sessions
+
+**Files Modified:**
+- `backend/src/llm/router/classifier.rs` - Added Codex spawn detection with pattern matching and complexity heuristics
+- `backend/src/llm/router/mod.rs` - Added `classifier()` accessor method
+- `backend/src/operations/engine/context.rs` - Added Codex-aware context loading methods
+- `backend/src/api/ws/chat/unified_handler.rs` - Dual-session routing with injection delivery
+
+**Technical Details:**
+- Pattern detection: "implement", "refactor", "fix bug", "add feature", "migrate", etc.
+- Confidence scoring: base 0.5 + 0.1 per pattern + complexity bonuses
+- Minimum confidence threshold: 0.7 for Codex spawn
+- Token threshold: 100k for automatic Codex escalation
+- File count threshold: 5 files for Codex escalation
+- Frontend receives `codex_injection` and `codex_spawned` WebSocket messages
+
+**Tests Added:**
+- 6 new classifier tests for Codex spawn detection
+- All 215 tests pass
+
+---
+
 ### Session 37: 2025-12-06
 
 **Summary:** Implemented dual-session architecture (Voice + Codex) with OpenAI compaction support.
