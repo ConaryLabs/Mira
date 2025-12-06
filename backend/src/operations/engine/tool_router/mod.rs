@@ -125,6 +125,14 @@ impl ToolRouter {
                 file_routes::route_file_structure(&self.file_handlers, arguments).await
             }
 
+            // Native GPT-5.1 tools (Responses API built-in tools)
+            "__native_apply_patch" => {
+                file_routes::route_native_apply_patch(&self.file_handlers, arguments).await
+            }
+            "__native_shell" => {
+                self.route_native_shell(arguments).await
+            }
+
             // Context-dependent tools - require route_tool_call_with_context
             "manage_project_task" => Err(anyhow::anyhow!(
                 "manage_project_task requires context - use route_tool_call_with_context"
@@ -244,5 +252,56 @@ impl ToolRouter {
                 self.external_handlers.execute_tool(&route.internal_name, arguments).await
             }
         }
+    }
+
+    /// Route native shell command from GPT-5.1
+    ///
+    /// Converts the native shell format to our execute_command handler:
+    /// - command: Vec<String> (first element is binary, rest are args)
+    /// - workdir: Optional working directory
+    /// - timeout: Timeout in seconds (default 120)
+    async fn route_native_shell(&self, arguments: Value) -> Result<Value> {
+        use serde_json::json;
+
+        let command = arguments
+            .get("command")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'command' array"))?;
+
+        if command.is_empty() {
+            return Err(anyhow::anyhow!("Empty command array"));
+        }
+
+        // Join command parts into a single string for execute_command
+        let command_str = command
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let workdir = arguments
+            .get("workdir")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let timeout = arguments
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(120);
+
+        info!(
+            "[ROUTER] Native shell: {} (timeout: {}s)",
+            command_str, timeout
+        );
+
+        let exec_args = json!({
+            "command": command_str,
+            "working_directory": workdir,
+            "timeout_ms": timeout * 1000
+        });
+
+        self.external_handlers
+            .execute_tool("execute_command", exec_args)
+            .await
     }
 }
