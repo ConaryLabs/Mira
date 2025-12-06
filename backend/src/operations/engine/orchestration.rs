@@ -137,6 +137,7 @@ impl Orchestrator {
                 &recall_context,
                 code_context.as_ref(),
                 file_tree.as_ref(),
+                project_id,
             )
             .await;
 
