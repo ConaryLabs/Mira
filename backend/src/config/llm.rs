@@ -104,7 +104,7 @@ impl ContextBudgetConfig {
 pub struct OpenAIConfig {
     pub enabled: bool,
     pub api_key: String,
-    /// Model for Fast tier (default: gpt-5.1-mini) - file ops, search
+    /// Model for Fast tier (default: gpt-5.1-codex-mini) - file ops, search
     pub fast_model: String,
     /// Model for Voice tier (default: gpt-5.1) - user chat, explanations
     pub voice_model: String,
@@ -128,7 +128,7 @@ impl OpenAIConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
             api_key: super::helpers::env_or("OPENAI_API_KEY", ""),
-            fast_model: super::helpers::env_or("MODEL_FAST", "gpt-5.1-mini"),
+            fast_model: super::helpers::env_or("MODEL_FAST", "gpt-5.1-codex-mini"),
             voice_model: super::helpers::env_or("MODEL_VOICE", "gpt-5.1"),
             code_model: super::helpers::env_or("MODEL_CODE", "gpt-5.1-codex-max"),
             agentic_model: super::helpers::env_or("MODEL_AGENTIC", "gpt-5.1-codex-max"),

@@ -16,7 +16,12 @@ use crate::git::client::tree_builder::FileNode;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
-use crate::prompt::context::*;
+use crate::prompt::context::{
+    add_code_fix_requirements, add_code_intelligence_context, add_file_context,
+    add_memory_context, add_project_context, add_repository_structure, add_system_context,
+    add_tool_context, add_tool_usage_hints, add_agentic_persistence, add_parallel_tool_guidance,
+    add_preamble_guidance,
+};
 use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
 use crate::prompt::utils::is_code_related;
 use crate::tools::types::Tool;
@@ -63,6 +68,15 @@ impl UnifiedPromptBuilder {
         // 3. Light tool usage hints (if code-related)
         if is_code_related(metadata) {
             add_tool_usage_hints(&mut prompt);
+            // GPT-5.1 best practices: parallel tool calling for efficiency
+            add_parallel_tool_guidance(&mut prompt);
+        }
+
+        // 4. Agentic persistence for complex tasks
+        // Always include for code-related conversations to encourage end-to-end completion
+        if is_code_related(metadata) {
+            add_agentic_persistence(&mut prompt);
+            add_preamble_guidance(&mut prompt);
         }
 
         prompt

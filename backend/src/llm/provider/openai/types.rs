@@ -19,6 +19,9 @@ pub enum OpenAIModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    /// No reasoning tokens - fastest, lowest cost (GPT-5.1's new mode)
+    /// Best for: file ops, search, simple queries, low-latency use cases
+    None,
     /// Quick reasoning for simple tasks
     Medium,
     /// Standard reasoning for most tasks
@@ -37,6 +40,7 @@ impl Default for ReasoningEffort {
 impl std::fmt::Display for ReasoningEffort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ReasoningEffort::None => write!(f, "none"),
             ReasoningEffort::Medium => write!(f, "medium"),
             ReasoningEffort::High => write!(f, "high"),
             ReasoningEffort::XHigh => write!(f, "xhigh"),
@@ -48,6 +52,48 @@ impl std::fmt::Display for ReasoningEffort {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningConfig {
     pub effort: ReasoningEffort,
+}
+
+/// User updates (preamble) configuration for agentic workflows
+/// Controls how the model provides progress updates during long-running tasks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreambleConfig {
+    /// How often to provide updates (every N tool calls, default: 6)
+    pub frequency: u32,
+    /// Verbosity level: "concise" or "detailed"
+    pub verbosity: PreambleVerbosity,
+    /// Tone: "technical" or "friendly"
+    pub tone: PreambleTone,
+}
+
+/// Preamble verbosity options
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PreambleVerbosity {
+    /// 1-2 sentences with concrete outcomes
+    Concise,
+    /// Full context with reasoning
+    Detailed,
+}
+
+/// Preamble tone options
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PreambleTone {
+    /// Technical, direct communication
+    Technical,
+    /// Conversational, friendly updates
+    Friendly,
+}
+
+impl Default for PreambleConfig {
+    fn default() -> Self {
+        Self {
+            frequency: 6,
+            verbosity: PreambleVerbosity::Concise,
+            tone: PreambleTone::Technical,
+        }
+    }
 }
 
 impl OpenAIModel {
