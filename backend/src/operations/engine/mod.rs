@@ -26,7 +26,7 @@ use crate::checkpoint::CheckpointManager;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::hooks::HookManager;
-use crate::llm::provider::Gemini3Provider;
+use crate::llm::provider::LlmProvider;
 use crate::llm::router::ModelRouter;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
@@ -58,7 +58,7 @@ pub struct OperationEngine {
 impl OperationEngine {
     pub fn new(
         db: Arc<SqlitePool>,
-        llm: Gemini3Provider, // Used by ToolRouter for tool-specific LLM calls
+        llm: Arc<dyn LlmProvider>, // Used by ToolRouter for tool-specific LLM calls
         model_router: Arc<ModelRouter>, // Used by LlmOrchestrator for multi-tier routing
         memory_service: Arc<MemoryService>,
         relationship_service: Arc<RelationshipService>,

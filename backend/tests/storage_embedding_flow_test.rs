@@ -3,10 +3,9 @@
 
 use chrono::Utc;
 
-fn init_env() {
-    let _ = dotenv::dotenv();
-}
-use mira_backend::llm::{embeddings::EmbeddingHead, provider::GeminiEmbeddings};
+mod common;
+
+use mira_backend::llm::{embeddings::EmbeddingHead, provider::OpenAIEmbeddings};
 use mira_backend::memory::{
     core::traits::MemoryStore, core::types::MemoryEntry,
     storage::qdrant::multi_store::QdrantMultiStore, storage::sqlite::store::SqliteMemoryStore,
@@ -598,13 +597,9 @@ fn create_test_entry(session_id: &str, role: &str, content: &str) -> MemoryEntry
     }
 }
 
-fn create_embedding_client() -> Arc<GeminiEmbeddings> {
-    init_env();
-    let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set for tests - ensure backend/.env exists");
-
-    Arc::new(GeminiEmbeddings::new(
-        api_key.clone(),
-        "gemini-embedding-001".to_string(),
+fn create_embedding_client() -> Arc<OpenAIEmbeddings> {
+    Arc::new(OpenAIEmbeddings::new(
+        common::openai_api_key(),
     ))
 }
 

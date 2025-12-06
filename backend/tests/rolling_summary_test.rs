@@ -2,9 +2,10 @@
 // Rolling summary generation and retrieval tests - REWRITTEN for current schema
 // Tests SummarizationEngine's ability to create and manage rolling summaries
 
+mod common;
+
 use mira_backend::config::CONFIG;
-use mira_backend::llm::provider::GeminiEmbeddings;
-use mira_backend::llm::provider::Gemini3Provider;
+use mira_backend::llm::provider::{LlmProvider, OpenAIEmbeddings, OpenAIProvider};
 use mira_backend::memory::{
     features::memory_types::SummaryType,
     service::MemoryService,
@@ -40,18 +41,16 @@ async fn create_test_memory_service() -> Arc<MemoryService> {
             .expect("Failed to create Qdrant multi-store"),
     );
 
-    // Create LLM provider - use Gemini3Provider with CONFIG settings
-    let api_key = CONFIG.google_api_key.clone();
-    let llm_provider = Arc::new(Gemini3Provider::new(
-        api_key.clone(),
-        CONFIG.gemini_model.clone(),
-        CONFIG.gemini_thinking.clone(),
-    ).expect("Failed to create LLM provider"));
+    // Create LLM provider - use OpenAI GPT-5.1
+    let api_key = common::openai_api_key();
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(
+        OpenAIProvider::gpt51(api_key.clone())
+            .expect("Failed to create LLM provider")
+    );
 
-    // Create embedding client - use CONFIG settings
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
-        CONFIG.google_api_key.clone(),
-        CONFIG.gemini_embedding_model.clone(),
+    // Create embedding client - use OpenAI
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
+        api_key.clone(),
     ));
 
     Arc::new(MemoryService::new(

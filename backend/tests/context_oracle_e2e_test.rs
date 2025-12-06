@@ -2,16 +2,17 @@
 // End-to-end tests for Context Oracle with real LLM integration
 //
 // These tests require:
-// - Valid GOOGLE_API_KEY in .env
+// - Valid OPENAI_API_KEY in .env
 // - Qdrant running on localhost:6334 (gRPC)
 //
 // Run with: cargo test --test context_oracle_e2e_test -- --ignored --nocapture
 
+mod common;
+
 use chrono::Utc;
-use dotenv::dotenv;
 use mira_backend::budget::BudgetTracker;
 use mira_backend::context_oracle::{ContextConfig, ContextOracle, ContextRequest};
-use mira_backend::llm::provider::{Gemini3Provider, GeminiEmbeddings, ThinkingLevel};
+use mira_backend::llm::provider::{LlmProvider, OpenAIEmbeddings, OpenAIProvider};
 use mira_backend::memory::service::MemoryService;
 use mira_backend::memory::storage::qdrant::multi_store::QdrantMultiStore;
 use mira_backend::memory::storage::sqlite::store::SqliteMemoryStore;
@@ -39,17 +40,12 @@ async fn setup_test_pool() -> SqlitePool {
     pool
 }
 
-fn get_google_api_key() -> Option<String> {
-    dotenv().ok();
-    std::env::var("GOOGLE_API_KEY").ok()
+fn get_openai_api_key() -> String {
+    common::openai_api_key()
 }
 
 fn get_qdrant_url() -> String {
     std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string())
-}
-
-fn get_gemini_model() -> String {
-    std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-pro-preview".to_string())
 }
 
 // ============================================================================
@@ -58,7 +54,7 @@ fn get_gemini_model() -> String {
 
 #[tokio::test]
 async fn test_context_oracle_full_flow() {
-    let api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
+    let api_key = get_openai_api_key();
 
     let pool = setup_test_pool().await;
     let qdrant_url = get_qdrant_url();
@@ -70,9 +66,8 @@ async fn test_context_oracle_full_flow() {
             .expect("Failed to connect to Qdrant"),
     );
 
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
         api_key.clone(),
-        "gemini-embedding-001".to_string(),
     ));
 
     let code_intelligence = Arc::new(
@@ -110,7 +105,7 @@ async fn test_context_oracle_full_flow() {
 
 #[tokio::test]
 async fn test_memory_service_with_oracle() {
-    let api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
+    let api_key = get_openai_api_key();
 
     let pool = setup_test_pool().await;
     let qdrant_url = get_qdrant_url();
@@ -124,13 +119,12 @@ async fn test_memory_service_with_oracle() {
     );
 
     // Initialize providers
-    let llm_provider = Arc::new(
-        Gemini3Provider::new(api_key.clone(), get_gemini_model(), ThinkingLevel::High)
-            .expect("Failed to create GPT provider"),
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(
+        OpenAIProvider::gpt51(api_key.clone())
+            .expect("Failed to create LLM provider"),
     );
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
         api_key.clone(),
-        "gemini-embedding-001".to_string(),
     ));
 
     let code_intelligence = Arc::new(
@@ -183,7 +177,7 @@ async fn test_memory_service_with_oracle() {
 
 #[tokio::test]
 async fn test_budget_aware_config_with_tracker() {
-    let _api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
+    let _api_key = get_openai_api_key();
 
     let pool = setup_test_pool().await;
 
@@ -210,8 +204,8 @@ async fn test_budget_aware_config_with_tracker() {
         .record_request(
             user_id,
             None,
-            "google",
-            &get_gemini_model(),
+            "openai",
+            "gpt-5.1",
             Some("medium"),
             1000,
             500,
@@ -253,7 +247,7 @@ async fn test_budget_aware_config_with_tracker() {
 
 #[tokio::test]
 async fn test_full_integration_flow() {
-    let api_key = get_google_api_key().expect("GOOGLE_API_KEY must be set for tests");
+    let api_key = get_openai_api_key();
 
     let pool = setup_test_pool().await;
     let qdrant_url = get_qdrant_url();
@@ -269,13 +263,12 @@ async fn test_full_integration_flow() {
             .expect("Failed to connect to Qdrant"),
     );
 
-    let llm_provider = Arc::new(
-        Gemini3Provider::new(api_key.clone(), get_gemini_model(), ThinkingLevel::High)
-            .expect("Failed to create GPT provider"),
+    let llm_provider: Arc<dyn LlmProvider> = Arc::new(
+        OpenAIProvider::gpt51(api_key.clone())
+            .expect("Failed to create LLM provider"),
     );
-    let embedding_client = Arc::new(GeminiEmbeddings::new(
+    let embedding_client = Arc::new(OpenAIEmbeddings::new(
         api_key.clone(),
-        "gemini-embedding-001".to_string(),
     ));
 
     let code_intelligence = Arc::new(

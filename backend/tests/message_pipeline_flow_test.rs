@@ -1,8 +1,10 @@
 // tests/message_pipeline_flow_test.rs
 // Tests message analysis pipeline - tags, topics, salience, error detection
-// Integration tests - require GOOGLE_API_KEY environment variable
+// Integration tests - require OPENAI_API_KEY environment variable
 
-use mira_backend::llm::provider::{LlmProvider, {Gemini3Provider, ThinkingLevel}};
+mod common;
+
+use mira_backend::llm::provider::{LlmProvider, OpenAIProvider};
 use mira_backend::memory::features::message_pipeline::MessagePipeline;
 use std::sync::Arc;
 
@@ -441,18 +443,12 @@ async fn setup_pipeline() -> MessagePipeline {
 }
 
 fn create_llm_provider() -> Arc<dyn LlmProvider> {
-    // Load .env file
-    let _ = dotenv::dotenv();
-    // Get API key from environment
-    let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set for tests");
-    // Get model from env or use default
-    let model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-pro-preview".to_string());
+    let api_key = common::openai_api_key();
 
-    Arc::new(Gemini3Provider::new(
-        api_key,
-        model,
-        ThinkingLevel::High,
-    ).expect("Should create Gemini provider"))
+    Arc::new(
+        OpenAIProvider::gpt51(api_key)
+            .expect("Should create OpenAI provider")
+    )
 }
 
 // ============================================================================

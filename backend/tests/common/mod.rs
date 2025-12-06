@@ -2,8 +2,28 @@
 // Shared test utilities and configuration
 
 use std::env;
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+/// Initialize test environment (loads .env file)
+fn init() {
+    INIT.call_once(|| {
+        dotenv::dotenv().ok();
+    });
+}
+
+/// Get OpenAI API key for tests - REQUIRED, panics if not set
+pub fn openai_api_key() -> String {
+    init();
+    env::var("OPENAI_API_KEY").expect(
+        "OPENAI_API_KEY environment variable is required for tests. \
+         Set it to run integration tests against the real LLM."
+    )
+}
 
 /// Get Google API key for tests - REQUIRED, panics if not set
+#[allow(dead_code)]
 pub fn google_api_key() -> String {
     env::var("GOOGLE_API_KEY").expect(
         "GOOGLE_API_KEY environment variable is required for tests. \
@@ -13,5 +33,5 @@ pub fn google_api_key() -> String {
 
 /// Check if running with real API keys
 pub fn has_real_api_keys() -> bool {
-    env::var("GOOGLE_API_KEY").is_ok()
+    env::var("OPENAI_API_KEY").is_ok()
 }
