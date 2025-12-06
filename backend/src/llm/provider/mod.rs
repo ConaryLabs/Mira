@@ -12,6 +12,9 @@ pub mod gemini3;
 pub mod gemini_embeddings;
 pub mod stream;
 
+// OpenAI GPT-5.1 provider
+pub mod openai;
+
 // Export Gemini providers (primary)
 pub use gemini3::{
     build_user_prompt, CodeArtifact, CodeGenRequest, CodeGenResponse, ContextWarning,
@@ -20,6 +23,9 @@ pub use gemini3::{
 };
 pub use gemini_embeddings::GeminiEmbeddings;
 pub use stream::StreamEvent;
+
+// Export OpenAI provider
+pub use openai::{OpenAIModel, OpenAIPricing, OpenAIProvider};
 
 /// Tool call information for assistant messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
