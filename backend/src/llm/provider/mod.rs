@@ -24,8 +24,8 @@ pub use gemini3::{
 pub use gemini_embeddings::GeminiEmbeddings;
 pub use stream::StreamEvent;
 
-// Export OpenAI provider
-pub use openai::{OpenAIModel, OpenAIPricing, OpenAIProvider};
+// Export OpenAI provider and embeddings
+pub use openai::{OpenAIEmbeddingModel, OpenAIEmbeddings, OpenAIModel, OpenAIPricing, OpenAIProvider};
 
 /// Tool call information for assistant messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
