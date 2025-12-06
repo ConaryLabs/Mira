@@ -21,7 +21,8 @@ use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
-use crate::llm::provider::{Gemini3Provider, GeminiEmbeddings};
+use crate::llm::provider::{Gemini3Provider, GeminiEmbeddings, OpenAIEmbeddings, OpenAIProvider};
+use crate::llm::router::{ModelRouter, RouterConfig};
 use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -102,6 +103,10 @@ pub struct AppState {
     pub agent_manager: Arc<AgentManager>,
     // Rate limiter for request throttling
     pub rate_limiter: Option<Arc<RateLimiter>>,
+    // Model router for multi-tier LLM routing (Fast/Voice/Thinker)
+    pub model_router: Arc<ModelRouter>,
+    // OpenAI embeddings (text-embedding-3-large, 3072 dimensions)
+    pub openai_embedding_client: Arc<OpenAIEmbeddings>,
 }
 
 impl AppState {
@@ -129,11 +134,41 @@ impl AppState {
             .expect("Failed to create Gemini 3 provider"),
         );
 
-        // Initialize Gemini embeddings client
+        // Initialize Gemini embeddings client (legacy, kept for backward compatibility)
         info!("Initializing Gemini embeddings client");
         let embedding_client = Arc::new(GeminiEmbeddings::new(
             CONFIG.google_api_key.clone(),
             CONFIG.gemini_embedding_model.clone(),
+        ));
+
+        // Initialize OpenAI embeddings client (primary embeddings)
+        info!("Initializing OpenAI embeddings client");
+        let openai_embedding_client = Arc::new(OpenAIEmbeddings::new(
+            CONFIG.openai_api_key.clone(),
+        ));
+
+        // Initialize OpenAI providers for model routing
+        info!("Initializing OpenAI providers for model routing");
+        let fast_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+            OpenAIProvider::gpt51_mini(CONFIG.openai_api_key.clone())
+                .expect("Failed to create GPT-5.1 Mini provider"),
+        );
+        let voice_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+            OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
+                .expect("Failed to create GPT-5.1 provider"),
+        );
+        let thinker_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+            OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
+                .expect("Failed to create GPT-5.1 Thinker provider"),
+        );
+
+        // Initialize Model Router (Fast/Voice/Thinker tiers)
+        info!("Initializing Model Router");
+        let model_router = Arc::new(ModelRouter::new(
+            fast_provider,
+            voice_provider,
+            thinker_provider,
+            RouterConfig::from_env(),
         ));
 
         // Initialize Qdrant multi-store
@@ -391,6 +426,8 @@ impl AppState {
             mcp_manager,
             agent_manager,
             rate_limiter,
+            model_router,
+            openai_embedding_client,
         })
     }
 }

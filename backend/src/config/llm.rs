@@ -99,6 +99,46 @@ impl ContextBudgetConfig {
     }
 }
 
+/// OpenAI GPT-5.1 configuration for multi-tier routing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIConfig {
+    pub enabled: bool,
+    pub api_key: String,
+    /// Model for Fast tier (default: gpt-5.1-mini)
+    pub fast_model: String,
+    /// Model for Voice tier (default: gpt-5.1)
+    pub voice_model: String,
+    /// Model for Thinker tier (default: gpt-5.1)
+    pub thinker_model: String,
+    /// Embedding model (default: text-embedding-3-large)
+    pub embedding_model: String,
+}
+
+impl OpenAIConfig {
+    pub fn from_env() -> Self {
+        Self {
+            enabled: std::env::var("USE_OPENAI")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            api_key: super::helpers::env_or("OPENAI_API_KEY", ""),
+            fast_model: super::helpers::env_or("OPENAI_FAST_MODEL", "gpt-5.1-mini"),
+            voice_model: super::helpers::env_or("OPENAI_VOICE_MODEL", "gpt-5.1"),
+            thinker_model: super::helpers::env_or("OPENAI_THINKER_MODEL", "gpt-5.1"),
+            embedding_model: super::helpers::env_or("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.enabled && self.api_key.is_empty() {
+            return Err(anyhow::anyhow!(
+                "OPENAI_API_KEY is required when OpenAI is enabled"
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Gemini 3 configuration with thinking level
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiConfig {
