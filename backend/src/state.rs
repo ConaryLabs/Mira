@@ -367,7 +367,8 @@ impl AppState {
         info!("Initializing OperationEngine with Gemini 3 and Context Oracle");
         let operation_engine = Arc::new(OperationEngine::new(
             Arc::new(pool.clone()),
-            (*llm_provider).clone(),
+            (*llm_provider).clone(), // For ToolRouter
+            model_router.clone(),    // For LlmOrchestrator with multi-tier routing
             memory_service.clone(),
             relationship_service.clone(),
             git_client.clone(),
