@@ -32,7 +32,6 @@ pub struct MiraConfig {
     pub server: server::ServerConfig,
     pub database: server::DatabaseConfig,
     pub logging: server::LoggingConfig,
-    pub session: server::SessionConfig,
     pub rate_limit: server::RateLimitConfig,
     pub tools: tools::ToolsConfig,
     pub json: tools::JsonConfig,
@@ -47,7 +46,6 @@ pub struct MiraConfig {
     pub gemini_thinking: llm::ThinkingLevel,
     pub qdrant_url: String,
     pub qdrant_collection: String,
-    pub session_id: String,
     pub enable_chat_tools: bool,
     pub embed_heads: Vec<String>,
     pub context_recent_messages: usize,
@@ -76,7 +74,6 @@ impl MiraConfig {
         let server = server::ServerConfig::from_env();
         let database = server::DatabaseConfig::from_env();
         let logging = server::LoggingConfig::from_env();
-        let session = server::SessionConfig::from_env();
         let rate_limit = server::RateLimitConfig::from_env();
         let tools = tools::ToolsConfig::from_env();
         let json = tools::JsonConfig::from_env();
@@ -92,7 +89,6 @@ impl MiraConfig {
             gemini_thinking: gemini.default_thinking_level.clone(),
             qdrant_url: qdrant.url.clone(),
             qdrant_collection: qdrant.collection.clone(),
-            session_id: session.session_id.clone(),
             enable_chat_tools: tools.enable_chat_tools,
             embed_heads: memory.embed_heads.clone(),
             context_recent_messages: memory.context_recent_messages,
@@ -116,7 +112,6 @@ impl MiraConfig {
             server,
             database,
             logging,
-            session,
             rate_limit,
             tools,
             json,

@@ -21,8 +21,8 @@ use crate::operations::engine::tool_router::ToolRouter;
 
 use super::events::OperationEngineEvent;
 
-/// System prompt for tool-calling operations
-const TOOL_SYSTEM_PROMPT: &str = "You are an intelligent coding assistant.";
+/// Fallback system prompt for tool-calling operations (only used if no system message provided)
+const FALLBACK_SYSTEM_PROMPT: &str = "You are an intelligent coding assistant.";
 
 /// Cached tool response format (serialized for storage)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -201,6 +201,7 @@ impl LlmOrchestrator {
         messages: &[Message],
         tools: &[Value],
         tier: ModelTier,
+        system_prompt: &str,
     ) -> Option<ToolResponse> {
         use crate::llm::provider::TokenUsage;
 
@@ -213,7 +214,7 @@ impl LlmOrchestrator {
             .get(
                 &messages_json,
                 Some(tools),
-                TOOL_SYSTEM_PROMPT,
+                system_prompt,
                 model,
                 None, // No thinking level for OpenAI
             )
@@ -265,6 +266,7 @@ impl LlmOrchestrator {
         tools: &[Value],
         response: &ToolResponse,
         tier: ModelTier,
+        system_prompt: &str,
     ) {
         let Some(cache) = &self.cache else {
             return;
@@ -300,7 +302,7 @@ impl LlmOrchestrator {
             .put(
                 &messages_json,
                 Some(tools),
-                TOOL_SYSTEM_PROMPT,
+                system_prompt,
                 tier.as_str(), // Model tier as cache key
                 None, // No thinking level for OpenAI
                 &response_json,
@@ -366,6 +368,27 @@ impl LlmOrchestrator {
             "Starting LLM orchestration"
         );
 
+        // Extract system prompt from first message if it's a system message
+        // This preserves the persona from src/persona/default.rs
+        let (system_prompt, conversation_messages) = if !messages.is_empty()
+            && messages[0].role == "system"
+        {
+            let system = messages[0].content.clone();
+            let rest = messages[1..].to_vec();
+            (system, rest)
+        } else {
+            // Fallback to generic prompt if no system message provided
+            warn!(
+                operation_id = %operation_id,
+                "No system message in messages, using fallback prompt"
+            );
+            (FALLBACK_SYSTEM_PROMPT.to_string(), messages.clone())
+        };
+
+        // Use conversation messages (without system) for the message array
+        // The system prompt is passed separately to the LLM API
+        messages = conversation_messages;
+
         // Check budget before starting
         self.check_budget(user_id).await?;
 
@@ -402,7 +425,7 @@ impl LlmOrchestrator {
 
             // Try cache first
             let (response, from_cache) = if let Some(cached) =
-                self.try_cache_get(&messages, &tools, current_tier).await
+                self.try_cache_get(&messages, &tools, current_tier, &system_prompt).await
             {
                 debug!(operation_id = %operation_id, "Cache hit");
                 (cached, true)
@@ -413,11 +436,11 @@ impl LlmOrchestrator {
                 // Get the provider from the router
                 let provider = self.router.get_provider(current_tier);
 
-                // Call LLM with tools using the generic trait
+                // Call LLM with tools using the system prompt (preserves persona)
                 let resp = match provider
                     .chat_with_tools(
                         messages.clone(),
-                        TOOL_SYSTEM_PROMPT.to_string(),
+                        system_prompt.clone(),
                         tools.clone(),
                         None, // No special context needed
                     )
@@ -445,7 +468,7 @@ impl LlmOrchestrator {
                 );
 
                 // Store in cache for future use
-                self.cache_put(&messages, &tools, &resp, current_tier).await;
+                self.cache_put(&messages, &tools, &resp, current_tier, &system_prompt).await;
 
                 (resp, false)
             };

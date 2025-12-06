@@ -22,6 +22,31 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 36: 2025-12-06
+
+**Summary:** Fixed persona consistency - all personality now flows from single source (`src/persona/default.rs`).
+
+**Key Outcomes:**
+- Fixed `LlmOrchestrator` to use persona from messages instead of hardcoded generic prompt
+- Removed unused `SessionConfig` (with `session_id` and `default_persona` fields)
+- Updated ROADMAP.md to replace stale Gemini references with OpenAI GPT-5.1
+- Verified agent prompts (explore, plan, general) are internal-only sub-agents
+
+**Files Modified:**
+- `backend/src/operations/engine/llm_orchestrator.rs` - Extract system prompt from messages, preserves persona
+- `backend/src/config/server.rs` - Removed `SessionConfig` struct
+- `backend/src/config/mod.rs` - Removed `session` field and `session_id` flat field
+- `backend/.env.example`, `backend/.env.docker` - Removed `MIRA_SESSION_ID`, `MIRA_DEFAULT_PERSONA`
+- `ROADMAP.md` - Updated Vision, LLM Stack, Tech Stack sections for OpenAI GPT-5.1
+
+**Technical Details:**
+- `LlmOrchestrator.execute_with_tools()` now extracts system prompt from first message
+- System prompt (with persona) passed to `chat_with_tools()` and cache operations
+- Fallback prompt only used if no system message provided (logs warning)
+- Architecture confirmed: User -> Mira (persona) -> [agents] -> results -> Mira (persona) -> User
+
+---
+
 ### Session 35: 2025-12-05
 
 **Summary:** Configuration cleanup - removed unused env vars and config struct fields.
