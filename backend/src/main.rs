@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
 
     info!("Starting Mira Backend");
-    info!("Model: Gemini (with variable reasoning effort)");
+    info!("Model: OpenAI GPT-5.1 (4-tier routing)");
     info!(
         "Tools: {}",
         if CONFIG.enable_chat_tools {
