@@ -1,5 +1,5 @@
 // src/config/mod.rs
-// Central configuration for Mira backend - Gemini 3 Pro powered
+// Central configuration for Mira backend - OpenAI GPT-5.1 powered
 
 pub mod caching;
 pub mod helpers;
@@ -127,7 +127,7 @@ impl MiraConfig {
 
     /// Validate config on startup
     pub fn validate(&self) -> anyhow::Result<()> {
-        self.gemini.validate()?;
+        self.openai.validate()?;
         Ok(())
     }
 
