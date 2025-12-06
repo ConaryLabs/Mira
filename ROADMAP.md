@@ -756,10 +756,394 @@ Estimated monthly: $132 (vs $825 without cache)
 
 ### Next Steps
 
-All milestones complete. Future enhancements:
-- Performance optimization via load testing
-- Additional MCP server integrations
-- Extended agent capabilities
+**Milestone 13: Multi-Model Routing** - IN PROGRESS
+
+See detailed plan below.
+
+---
+
+## Milestone 13: Multi-Model Routing
+
+### Goal
+
+Implement Claude Code-style multi-model routing with three tiers:
+- **Fast**: GPT-5.1 Mini ($0.25/$2) - File ops, search, simple tasks
+- **Voice**: GPT-5.1 ($1.25/$10) - User-facing chat, personality, main interactions
+- **Thinker**: Gemini 3 Pro ($2-4/$12-18) - Complex reasoning, architecture, multi-file changes
+
+### Expected Outcome
+
+| Metric | Current (Single Model) | After Multi-Model |
+|--------|------------------------|-------------------|
+| Simple task cost | $2-4/M tokens | $0.25/M tokens |
+| Average cost/operation | ~$1-2 | ~$0.30-0.50 |
+| That $9.24 refactor | $9.24 | ~$0.50-1.00 |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       ModelRouter                                │
+├─────────────────────────────────────────────────────────────────┤
+│  TaskClassifier → ModelTier → Provider Selection                │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│  FAST TIER    │  │  VOICE TIER   │  │ THINKER TIER  │
+│  OpenAI       │  │   OpenAI      │  │   Gemini      │
+│  GPT-5.1 Mini │  │   GPT-5.1     │  │   3 Pro       │
+└───────────────┘  └───────────────┘  └───────────────┘
+```
+
+### Phase 1: OpenAI Provider (Foundation)
+
+**Goal**: Add OpenAI as a second LLM provider alongside Gemini
+
+**Files to Create**:
+- `backend/src/llm/provider/openai/mod.rs` - OpenAI provider module
+- `backend/src/llm/provider/openai/types.rs` - Request/response types
+- `backend/src/llm/provider/openai/conversion.rs` - Message format conversion
+- `backend/src/llm/provider/openai/pricing.rs` - GPT-5.1 pricing calculation
+
+**Files to Modify**:
+- `backend/src/llm/provider/mod.rs` - Export OpenAI provider
+- `backend/.env` - Add OPENAI_API_KEY
+
+**Implementation Details**:
+
+```rust
+// backend/src/llm/provider/openai/mod.rs
+pub struct OpenAIProvider {
+    client: reqwest::Client,
+    api_key: String,
+    model: OpenAIModel,
+    timeout: Duration,
+}
+
+pub enum OpenAIModel {
+    Gpt51,       // gpt-5.1 - Voice tier
+    Gpt51Mini,   // gpt-5.1-mini - Fast tier
+}
+
+impl OpenAIProvider {
+    pub fn gpt51() -> Self { ... }
+    pub fn gpt51_mini() -> Self { ... }
+}
+
+#[async_trait]
+impl LlmProvider for OpenAIProvider {
+    fn name(&self) -> &'static str { "openai" }
+    async fn chat(...) -> Result<Response> { ... }
+    async fn chat_with_tools(...) -> Result<ToolResponse> { ... }
+}
+```
+
+**API Endpoint**: `https://api.openai.com/v1/chat/completions`
+
+**Tool Format Conversion**:
+- Gemini uses `functionDeclarations` format
+- OpenAI uses `tools` array with `function` type
+- Conversion layer in `conversion.rs`
+
+**Deliverables**:
+- [ ] OpenAI provider implementing LlmProvider trait
+- [ ] Tool calling support (OpenAI format)
+- [ ] Streaming support
+- [ ] Pricing calculation for GPT-5.1 and GPT-5.1 Mini
+- [ ] Unit tests for provider
+
+### Phase 2: Model Router
+
+**Goal**: Intelligent routing of tasks to appropriate models
+
+**Files to Create**:
+- `backend/src/llm/router/mod.rs` - Main router module
+- `backend/src/llm/router/classifier.rs` - Task classification logic
+- `backend/src/llm/router/config.rs` - Routing configuration
+
+**Files to Modify**:
+- `backend/src/llm/mod.rs` - Export router
+- `backend/src/state.rs` - Add router to AppState
+
+**Implementation Details**:
+
+```rust
+// backend/src/llm/router/mod.rs
+pub enum ModelTier {
+    Fast,    // GPT-5.1 Mini - simple tasks
+    Voice,   // GPT-5.1 - user chat
+    Thinker, // Gemini 3 Pro - complex reasoning
+}
+
+pub struct ModelRouter {
+    fast_provider: Arc<dyn LlmProvider>,    // OpenAI GPT-5.1 Mini
+    voice_provider: Arc<dyn LlmProvider>,   // OpenAI GPT-5.1
+    thinker_provider: Arc<dyn LlmProvider>, // Gemini 3 Pro
+    classifier: TaskClassifier,
+}
+
+impl ModelRouter {
+    /// Route a task to the appropriate model
+    pub async fn route(&self, task: &Task) -> Arc<dyn LlmProvider> {
+        match self.classifier.classify(task) {
+            ModelTier::Fast => self.fast_provider.clone(),
+            ModelTier::Voice => self.voice_provider.clone(),
+            ModelTier::Thinker => self.thinker_provider.clone(),
+        }
+    }
+
+    /// Force a specific tier (for explicit routing)
+    pub fn get_provider(&self, tier: ModelTier) -> Arc<dyn LlmProvider> { ... }
+}
+```
+
+**Task Classification Rules**:
+
+```rust
+// backend/src/llm/router/classifier.rs
+pub struct TaskClassifier;
+
+impl TaskClassifier {
+    pub fn classify(&self, task: &Task) -> ModelTier {
+        // FAST tier tasks (GPT-5.1 Mini)
+        let fast_tasks = [
+            "list_project_files",
+            "search_codebase",
+            "get_file_summary",
+            "get_file_structure",
+            "grep_files",
+            "count_lines",
+        ];
+
+        // THINKER tier tasks (Gemini 3 Pro)
+        let thinker_tasks = [
+            "architecture",
+            "refactor_multi_file",
+            "debug_complex",
+            "design_pattern",
+            "impact_analysis",
+        ];
+
+        // Complexity heuristics
+        if task.estimated_tokens > 50000 { return ModelTier::Thinker; }
+        if task.involves_multiple_files() { return ModelTier::Thinker; }
+        if fast_tasks.contains(&task.tool_name) { return ModelTier::Fast; }
+        if thinker_tasks.contains(&task.operation_kind) { return ModelTier::Thinker; }
+
+        // Default: Voice tier for user-facing chat
+        ModelTier::Voice
+    }
+}
+```
+
+**Deliverables**:
+- [ ] ModelRouter with 3 provider tiers
+- [ ] TaskClassifier with heuristics
+- [ ] Configuration via .env
+- [ ] Fallback logic (if Fast fails, try Voice)
+- [ ] Metrics tracking per tier
+
+### Phase 3: Integration
+
+**Goal**: Wire router into existing operation engine
+
+**Files to Modify**:
+- `backend/src/state.rs` - Initialize router with all providers
+- `backend/src/operations/engine/llm_orchestrator.rs` - Use router instead of direct provider
+- `backend/src/operations/engine/context.rs` - Add tier hints to context
+- `backend/src/budget/mod.rs` - Track costs per provider
+
+**Implementation Details**:
+
+```rust
+// backend/src/state.rs
+pub struct AppState {
+    // Existing...
+    pub model_router: Arc<ModelRouter>,
+}
+
+impl AppState {
+    pub async fn new(config: &Config) -> Result<Self> {
+        // Initialize providers
+        let openai_mini = Arc::new(OpenAIProvider::gpt51_mini());
+        let openai_voice = Arc::new(OpenAIProvider::gpt51());
+        let gemini_thinker = Arc::new(Gemini3Provider::new(config)?);
+
+        let model_router = Arc::new(ModelRouter::new(
+            openai_mini,    // Fast
+            openai_voice,   // Voice
+            gemini_thinker, // Thinker
+        ));
+
+        // ...
+    }
+}
+```
+
+```rust
+// backend/src/operations/engine/llm_orchestrator.rs
+impl LlmOrchestrator {
+    pub async fn execute_tool(&self, tool_call: &ToolCall) -> Result<Value> {
+        // Classify the task
+        let task = Task::from_tool_call(tool_call);
+
+        // Route to appropriate model
+        let provider = self.router.route(&task).await;
+
+        // Execute with selected provider
+        let response = provider.chat_with_tools(...).await?;
+
+        // Track cost by provider
+        self.budget_tracker.record_usage(
+            provider.name(),
+            &response.tokens,
+        ).await?;
+
+        Ok(response)
+    }
+}
+```
+
+**Deliverables**:
+- [ ] Router integration in AppState
+- [ ] LlmOrchestrator using router
+- [ ] Per-provider cost tracking
+- [ ] Logging of routing decisions
+- [ ] Graceful degradation on provider failure
+
+### Phase 4: Voice & Personality
+
+**Goal**: Ensure Mira maintains consistent personality through GPT-5.1
+
+**Files to Modify**:
+- `backend/src/prompt/system.rs` - Mira's personality prompt
+- `backend/src/api/ws/chat/handler.rs` - Use Voice tier for chat
+
+**Implementation Details**:
+
+The Voice tier (GPT-5.1) handles all direct user interactions:
+- Chat responses
+- Explanations
+- Status updates
+- Error messages
+
+```rust
+// Explicit Voice tier for user-facing chat
+let response = model_router
+    .get_provider(ModelTier::Voice)
+    .chat(messages, system_prompt)
+    .await?;
+```
+
+Mira's personality is defined in the system prompt and should be consistent:
+- Helpful and knowledgeable
+- Concise but thorough
+- Remembers user preferences (via memory system)
+- Professional tone
+
+**Deliverables**:
+- [ ] Chat handler explicitly uses Voice tier
+- [ ] System prompt optimized for GPT-5.1
+- [ ] Personality consistency tests
+
+### Phase 5: Testing & Validation
+
+**Goal**: Comprehensive testing of multi-model system
+
+**Files to Create**:
+- `backend/tests/model_router_test.rs` - Router unit tests
+- `backend/tests/multi_model_e2e_test.rs` - End-to-end tests
+
+**Test Cases**:
+1. **Classification tests**: Verify correct tier assignment
+2. **Provider tests**: Each provider works independently
+3. **Routing tests**: Tasks go to correct providers
+4. **Fallback tests**: Graceful degradation
+5. **Cost tests**: Verify cost savings vs single model
+6. **Personality tests**: Voice consistency
+
+**Validation Metrics**:
+- [ ] Fast tier used for 60%+ of tool calls
+- [ ] Cost reduction of 70%+ on file operations
+- [ ] No personality drift in user chat
+- [ ] Latency acceptable (<2s for Fast, <5s for Voice, <30s for Thinker)
+
+### Configuration
+
+**Environment Variables**:
+
+```bash
+# backend/.env additions
+
+# OpenAI Configuration
+OPENAI_API_KEY=sk-...
+OPENAI_TIMEOUT=120
+
+# Model Routing
+MODEL_ROUTER_ENABLED=true
+MODEL_FAST=gpt-5.1-mini
+MODEL_VOICE=gpt-5.1
+MODEL_THINKER=gemini-3-pro-preview
+
+# Routing Thresholds
+ROUTE_THINKER_TOKEN_THRESHOLD=50000
+ROUTE_THINKER_FILE_COUNT=3
+```
+
+### Migration Strategy
+
+**Rollout Plan**:
+1. Deploy with `MODEL_ROUTER_ENABLED=false` (existing behavior)
+2. Enable for Fast tier only (lowest risk)
+3. Enable Voice tier (monitor personality)
+4. Full multi-model routing
+
+**Rollback**:
+- Set `MODEL_ROUTER_ENABLED=false` to revert to Gemini-only
+
+### Cost Projections
+
+**Current (Gemini 3 Pro only)**:
+- Simple file list: ~$0.50 (10k tokens @ $4/M + $12/M output)
+- Code refactor: ~$2-5 (50k+ tokens)
+- Full session: ~$5-15
+
+**After Multi-Model**:
+- Simple file list: ~$0.02 (GPT-5.1 Mini @ $0.25/$2)
+- Code refactor: ~$0.50-1 (GPT-5.1 @ $1.25/$10)
+- Complex architecture: ~$2-5 (Gemini 3 Pro, same as before)
+- Full session: ~$1-3
+
+**Savings**: 60-80% cost reduction on typical sessions
+
+### Timeline Estimate
+
+| Phase | Scope | Complexity |
+|-------|-------|------------|
+| Phase 1: OpenAI Provider | New provider, types, tests | Medium |
+| Phase 2: Model Router | Router, classifier, config | Medium |
+| Phase 3: Integration | Wire into existing code | Medium |
+| Phase 4: Voice & Personality | Prompt tuning, chat routing | Low |
+| Phase 5: Testing | Tests, validation, metrics | Medium |
+
+### Dependencies
+
+**New Crates** (if needed):
+- None - reuse existing `reqwest` for HTTP
+
+**API Keys Required**:
+- `OPENAI_API_KEY` - OpenAI API access
+
+### Success Criteria
+
+- [ ] All 3 providers working independently
+- [ ] Router correctly classifying 90%+ of tasks
+- [ ] Cost reduction of 60%+ on typical sessions
+- [ ] No degradation in response quality
+- [ ] Mira personality consistent across interactions
+- [ ] Graceful fallback on provider failures
 
 ### Architecture
 
