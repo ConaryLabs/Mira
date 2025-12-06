@@ -55,22 +55,6 @@ impl LoggingConfig {
     }
 }
 
-/// Session configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionConfig {
-    pub session_id: String,
-    pub default_persona: String,
-}
-
-impl SessionConfig {
-    pub fn from_env() -> Self {
-        Self {
-            session_id: super::helpers::require_env("MIRA_SESSION_ID"),
-            default_persona: super::helpers::require_env("MIRA_DEFAULT_PERSONA"),
-        }
-    }
-}
-
 /// Rate limiting configuration with tiered limits based on context size
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {

@@ -6,15 +6,19 @@ Mira is a next-generation AI coding assistant combining:
 - **Programming Context Oracle** from mira-cli (semantic code understanding, git intelligence, pattern detection)
 - **Personal Memory System** from Mira (user preferences, communication style, learned patterns)
 - **Web-based Interface** for accessibility and collaboration
-- **Gemini 3 Pro** for state-of-the-art reasoning with variable thinking levels
+- **OpenAI GPT-5.1 Family** with 4-tier intelligent routing (Fast/Voice/Code/Agentic)
 
 The result is a well-rounded assistant that understands both your code and you as a developer.
 
 ## Core Architecture
 
 ### LLM Stack
-- **Primary Model**: Gemini 3 Pro with variable thinking levels (low/high)
-- **Embeddings**: Gemini gemini-embedding-001 (3072 dimensions)
+- **Primary Models**: OpenAI GPT-5.1 family with 4-tier intelligent routing
+  - Fast: GPT-5.1 Mini (file ops, search, simple queries)
+  - Voice: GPT-5.1 (user chat, explanations, personality)
+  - Code: GPT-5.1-Codex-Max (code generation, refactoring, tests)
+  - Agentic: GPT-5.1-Codex-Max (long-running autonomous tasks)
+- **Embeddings**: OpenAI text-embedding-3-large (3072 dimensions)
 - **Cost Optimization**: 80%+ cache hit rate target, budget tracking with daily/monthly limits
 
 ### Storage Architecture
@@ -260,19 +264,19 @@ Estimated monthly: $132 (vs $825 without cache)
 
 ### Milestone 1: Foundation - COMPLETE
 
-**Goal**: Core schema, Gemini 3 Pro integration, budget/cache system
+**Goal**: Core schema, LLM integration, budget/cache system
 
 **Deliverables**:
 - [x] 9 SQL migrations (50+ tables)
 - [x] 3 Qdrant collections setup (code, conversation, git)
-- [x] Gemini 3 Pro provider implementation
+- [x] LLM provider implementation (migrated to OpenAI in Milestone 13)
 - [x] Budget tracking module
 - [x] LLM cache module
 - [x] Basic tests (127+ passing)
 
 **Key Files**:
 - `backend/migrations/` - 9 migration files
-- `backend/src/llm/provider/gemini3.rs` - Gemini 3 Pro provider
+- `backend/src/llm/provider/openai/` - OpenAI GPT-5.1 provider
 - `backend/src/budget/mod.rs` - Budget tracking
 - `backend/src/cache/mod.rs` - LLM response cache
 - `backend/src/memory/storage/qdrant/multi_store.rs` - Qdrant multi-collection store
@@ -385,7 +389,7 @@ Estimated monthly: $132 (vs $825 without cache)
 - [x] ContextBuilder integration with oracle output
 - [x] Enhanced RecallEngine combining oracle + memory
 - [x] Budget-aware context config selection
-- [x] End-to-end testing with real LLM (Gemini 3 Pro)
+- [x] End-to-end testing with real LLM
 
 **Key Files**:
 - `backend/src/context_oracle/types.rs` - Context types and configs
@@ -606,8 +610,8 @@ Estimated monthly: $132 (vs $825 without cache)
 - **WebSocket**: tokio-tungstenite
 - **Database**: SQLite 3.35+ with sqlx
 - **Vector DB**: Qdrant (localhost:6334 gRPC)
-- **LLM**: Gemini 3 Pro via Google AI API
-- **Embeddings**: gemini-embedding-001 via Google AI API
+- **LLM**: OpenAI GPT-5.1 family via Responses API
+- **Embeddings**: OpenAI text-embedding-3-large
 
 ### Frontend
 - **Framework**: React 18+ with TypeScript
@@ -678,7 +682,7 @@ Estimated monthly: $132 (vs $825 without cache)
 
 **Milestone 1: Foundation** - Complete
 - 9 SQL migrations (50+ tables)
-- Gemini 3 Pro provider with variable thinking levels
+- LLM provider (migrated to OpenAI GPT-5.1 in Milestone 13)
 - Budget tracking and LLM cache modules
 - 3 Qdrant collections (code, conversation, git)
 - 127+ tests passing
@@ -806,7 +810,7 @@ Fallback Chain: Fast → Voice → Code → Agentic
 
 ### Phase 1: OpenAI Provider (Foundation) ✓ COMPLETE
 
-**Goal**: Add OpenAI as a second LLM provider alongside Gemini
+**Goal**: Migrate from Gemini to OpenAI GPT-5.1 family as the primary LLM provider
 
 **Files Created**:
 - `backend/src/llm/provider/openai/mod.rs` - OpenAI provider module
@@ -1135,4 +1139,4 @@ MODEL_ROUTER_FALLBACK=true
 
 ### Architecture
 
-Gemini 3 Pro single-model with variable thinking levels (low/high). Database schema combines mira-cli's programming context oracle with Mira's personal memory system. All operations routed through the unified Operation Engine. Real-time file watching via notify crate for immediate code intelligence updates.
+OpenAI GPT-5.1 family with 4-tier intelligent routing (Fast/Voice/Code/Agentic). Database schema combines mira-cli's programming context oracle with Mira's personal memory system. All operations routed through the unified Operation Engine. Real-time file watching via notify crate for immediate code intelligence updates.
