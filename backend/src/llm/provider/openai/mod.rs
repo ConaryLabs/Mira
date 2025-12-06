@@ -427,6 +427,143 @@ impl OpenAIProvider {
     pub fn calculate_cost(&self, tokens: &TokenUsage) -> f64 {
         OpenAIPricing::calculate_cost(self.model, tokens.input, tokens.output)
     }
+
+    /// Chat with tools, continuing from a previous response.
+    ///
+    /// This enables OpenAI's automatic compaction feature for long-running sessions.
+    /// When `previous_response_id` is provided, OpenAI will automatically prune
+    /// older context while preserving salient information when approaching the
+    /// context limit.
+    ///
+    /// Returns `ToolResponse` which includes the new `id` that should be stored
+    /// and passed as `previous_response_id` in the next call.
+    ///
+    /// Usage:
+    /// - For Voice sessions: Pass previous response ID for conversation continuity
+    /// - For Codex sessions: Critical for long-running tasks (multi-hour, millions of tokens)
+    pub async fn chat_with_tools_continuing(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        tools: Vec<Value>,
+        previous_response_id: Option<String>,
+    ) -> Result<ToolResponse> {
+        let start = Instant::now();
+
+        let input = self.messages_to_input(&messages, &system);
+        let responses_tools = self.tools_to_responses(&tools);
+
+        info!(
+            "OpenAI {} chat_with_tools_continuing: {} tools, prev_id: {:?}",
+            self.model,
+            responses_tools.len(),
+            previous_response_id.as_ref().map(|id| &id[..id.len().min(12)])
+        );
+
+        let request = ResponsesRequest {
+            model: self.model.as_str().to_string(),
+            input,
+            instructions: if system.is_empty() { None } else { Some(system) },
+            tools: if responses_tools.is_empty() {
+                None
+            } else {
+                Some(responses_tools)
+            },
+            tool_choice: Some(serde_json::json!("auto")),
+            max_output_tokens: None,
+            stream: None,
+            store: Some(true), // Store for compaction continuity
+            reasoning: self.build_reasoning_config(),
+            previous_response_id,
+        };
+
+        let response = self.send_request(&request).await?;
+        let latency_ms = start.elapsed().as_millis() as i64;
+
+        self.parse_tool_response(response, latency_ms)
+    }
+
+    /// Stream with continuation from previous response.
+    ///
+    /// Like `chat_with_tools_continuing` but for streaming responses.
+    /// Useful for Voice sessions where streaming is preferred for UX.
+    pub async fn stream_continuing(
+        &self,
+        messages: Vec<Message>,
+        system: String,
+        previous_response_id: Option<String>,
+    ) -> Result<Box<dyn futures::Stream<Item = Result<String>> + Send + Unpin>> {
+        let input = self.messages_to_input(&messages, &system);
+
+        let request = ResponsesRequest {
+            model: self.model.as_str().to_string(),
+            input,
+            instructions: if system.is_empty() { None } else { Some(system) },
+            tools: None,
+            tool_choice: None,
+            max_output_tokens: None,
+            stream: Some(true),
+            store: Some(true), // Store for compaction continuity
+            reasoning: self.build_reasoning_config(),
+            previous_response_id,
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/responses", Self::BASE_URL))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .timeout(self.timeout)
+            .json(&request)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow!("OpenAI streaming failed ({}): {}", status, error_text));
+        }
+
+        // Convert byte stream to text stream, parsing SSE events
+        let byte_stream = response.bytes_stream();
+
+        let stream = byte_stream
+            .filter_map(|result| async move {
+                match result {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let mut content = String::new();
+
+                        for line in text.lines() {
+                            if let Some(data) = line.strip_prefix("data: ") {
+                                if data == "[DONE]" {
+                                    continue;
+                                }
+                                if let Ok(event) =
+                                    serde_json::from_str::<ResponsesStreamEvent>(data)
+                                {
+                                    if event.event_type == "response.output_text.delta" {
+                                        if let Some(delta) = &event.delta {
+                                            content.push_str(delta);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if content.is_empty() {
+                            None
+                        } else {
+                            Some(Ok(content))
+                        }
+                    }
+                    Err(e) => Some(Err(anyhow!("Stream error: {}", e))),
+                }
+            })
+            .boxed();
+
+        Ok(Box::new(stream))
+    }
 }
 
 #[async_trait]

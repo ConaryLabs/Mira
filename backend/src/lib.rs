@@ -45,6 +45,9 @@ pub mod watcher;
 // Milestone 12 - Agent system (Claude Code-style specialized agents)
 pub mod agents;
 
+// Milestone 14 - Dual-session architecture (Voice + Codex)
+pub mod session;
+
 // CLI module (for mira binary)
 pub mod cli;
 

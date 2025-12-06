@@ -37,6 +37,7 @@ use crate::sudo::SudoPermissionService;
 use crate::synthesis::storage::SynthesisStorage;
 use crate::agents::AgentManager;
 use crate::operations::engine::tool_router::ToolRouter;
+use crate::session::{SessionManager, InjectionService, CodexSpawner};
 use crate::utils::RateLimiter;
 
 /// Session data for file uploads
@@ -107,6 +108,10 @@ pub struct AppState {
     pub model_router: Arc<ModelRouter>,
     // OpenAI embeddings (text-embedding-3-large, 3072 dimensions)
     pub openai_embedding_client: Arc<OpenAIEmbeddings>,
+    // Dual-session architecture (Voice + Codex)
+    pub session_manager: Arc<SessionManager>,
+    pub injection_service: Arc<InjectionService>,
+    pub codex_spawner: Arc<CodexSpawner>,
 }
 
 impl AppState {
@@ -285,7 +290,7 @@ impl AppState {
         info!("Initializing Agent Manager");
         let agent_manager = Arc::new(AgentManager::new(
             llm_provider.clone(),
-            agent_tool_router,
+            agent_tool_router.clone(),
         ));
         if let Err(e) = agent_manager.load(None).await {
             tracing::warn!("Failed to load agents: {}", e);
@@ -379,6 +384,23 @@ impl AppState {
         info!("Initializing authentication service");
         let auth_service = Arc::new(AuthService::new(pool.clone()));
 
+        // Initialize dual-session architecture (Voice + Codex)
+        info!("Initializing dual-session architecture");
+        let session_manager = Arc::new(SessionManager::new(pool.clone()));
+        let injection_service = Arc::new(InjectionService::new(pool.clone()));
+
+        // Create Codex-specific provider (Agentic tier with xhigh reasoning)
+        let codex_provider = Arc::new(
+            OpenAIProvider::codex_max_agentic(CONFIG.openai_api_key.clone())
+                .expect("Failed to create GPT-5.1 Codex Max for CodexSpawner"),
+        );
+        let codex_spawner = Arc::new(CodexSpawner::new(
+            codex_provider,
+            agent_tool_router.clone(),
+            session_manager.clone(),
+            injection_service.clone(),
+        ));
+
         info!("Application state initialized successfully with OpenAI GPT-5.1");
 
         Ok(Self {
@@ -419,6 +441,9 @@ impl AppState {
             rate_limiter,
             model_router,
             openai_embedding_client,
+            session_manager,
+            injection_service,
+            codex_spawner,
         })
     }
 }

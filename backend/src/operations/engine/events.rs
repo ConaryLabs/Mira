@@ -138,6 +138,37 @@ pub enum OperationEngineEvent {
         agent_name: String,
         error: String,
     },
+    /// Codex session was spawned for background code work
+    CodexSpawned {
+        voice_session_id: String,
+        codex_session_id: String,
+        task_description: String,
+        trigger: String, // "router_detection", "user_request", "complex_task"
+    },
+    /// Codex session is making progress
+    CodexProgress {
+        voice_session_id: String,
+        codex_session_id: String,
+        iteration: u32,
+        current_activity: String,
+        tokens_used: i64,
+    },
+    /// Codex session completed successfully
+    CodexCompleted {
+        voice_session_id: String,
+        codex_session_id: String,
+        summary: String,
+        files_changed: Vec<String>,
+        duration_seconds: i64,
+        tokens_total: i64,
+        cost_usd: f64,
+    },
+    /// Codex session failed with error
+    CodexFailed {
+        voice_session_id: String,
+        codex_session_id: String,
+        error: String,
+    },
     /// Context size warning - approaching or exceeding pricing threshold
     ContextWarning {
         operation_id: String,

@@ -333,6 +333,72 @@ pub fn event_to_json(event: OperationEngineEvent) -> Value {
                 "timestamp": timestamp
             })
         }
+        OperationEngineEvent::CodexSpawned {
+            voice_session_id,
+            codex_session_id,
+            task_description,
+            trigger,
+        } => {
+            serde_json::json!({
+                "type": "codex.spawned",
+                "voice_session_id": voice_session_id,
+                "codex_session_id": codex_session_id,
+                "task_description": task_description,
+                "trigger": trigger,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::CodexProgress {
+            voice_session_id,
+            codex_session_id,
+            iteration,
+            current_activity,
+            tokens_used,
+        } => {
+            serde_json::json!({
+                "type": "codex.progress",
+                "voice_session_id": voice_session_id,
+                "codex_session_id": codex_session_id,
+                "iteration": iteration,
+                "current_activity": current_activity,
+                "tokens_used": tokens_used,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::CodexCompleted {
+            voice_session_id,
+            codex_session_id,
+            summary,
+            files_changed,
+            duration_seconds,
+            tokens_total,
+            cost_usd,
+        } => {
+            serde_json::json!({
+                "type": "codex.completed",
+                "voice_session_id": voice_session_id,
+                "codex_session_id": codex_session_id,
+                "summary": summary,
+                "files_changed": files_changed,
+                "duration_seconds": duration_seconds,
+                "tokens_total": tokens_total,
+                "cost_usd": cost_usd,
+                "timestamp": timestamp
+            })
+        }
+        OperationEngineEvent::CodexFailed {
+            voice_session_id,
+            codex_session_id,
+            error,
+        } => {
+            serde_json::json!({
+                "type": "codex.failed",
+                "voice_session_id": voice_session_id,
+                "codex_session_id": codex_session_id,
+                "error": error,
+                "timestamp": timestamp
+            })
+        }
         OperationEngineEvent::ContextWarning {
             operation_id,
             warning_level,

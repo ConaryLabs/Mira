@@ -22,6 +22,45 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 37: 2025-12-06
+
+**Summary:** Implemented dual-session architecture (Voice + Codex) with OpenAI compaction support.
+
+**Key Outcomes:**
+- Created `session` module with full Voice/Codex session management
+- Added `chat_with_tools_continuing()` to OpenAI provider for compaction via `previous_response_id`
+- Voice sessions are eternal with rolling summaries; Codex sessions are discrete task-scoped
+- Codex sessions can run for hours with automatic context compaction
+- Completion summaries inject from Codex back into Voice session memory
+
+**Files Created:**
+- `backend/migrations/20251125000014_dual_session.sql` - Schema for dual-session architecture
+- `backend/src/session/mod.rs` - Session module exports
+- `backend/src/session/types.rs` - SessionType, CodexStatus, CodexSpawnTrigger, InjectionType
+- `backend/src/session/manager.rs` - SessionManager for Voice/Codex lifecycle
+- `backend/src/session/injection.rs` - InjectionService for Codex-to-Voice summaries
+- `backend/src/session/codex_spawner.rs` - CodexSpawner for background execution with compaction
+
+**Files Modified:**
+- `backend/src/lib.rs` - Added session module
+- `backend/src/state.rs` - Wired SessionManager, InjectionService, CodexSpawner into AppState
+- `backend/src/llm/provider/openai/mod.rs` - Added `chat_with_tools_continuing()` and `stream_continuing()`
+- `backend/src/operations/engine/events.rs` - Added CodexSpawned, CodexProgress, CodexCompleted, CodexFailed
+- `backend/src/api/ws/operations/stream.rs` - JSON serialization for Codex events
+
+**Technical Details:**
+- `previous_response_id` enables OpenAI's automatic compaction for long-running sessions
+- Codex sessions track response IDs in database for crash recovery
+- CodexSpawner runs tool loops in background via `tokio::spawn`
+- All 19 session-related tests pass
+
+**Remaining Work:**
+- Router detection to auto-spawn Codex for code-heavy tasks
+- UnifiedChatHandler dual-session routing
+- Context builder with pending Codex injections
+
+---
+
 ### Session 36: 2025-12-06
 
 **Summary:** Fixed persona consistency - all personality now flows from single source (`src/persona/default.rs`).
