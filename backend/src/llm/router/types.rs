@@ -225,4 +225,43 @@ impl RoutingStats {
             (self.fast_requests as f64 / total as f64) * 100.0
         }
     }
+
+    /// Get percentage routed to Voice tier
+    pub fn voice_percentage(&self) -> f64 {
+        let total = self.total_requests();
+        if total == 0 { 0.0 } else { (self.voice_requests as f64 / total as f64) * 100.0 }
+    }
+
+    /// Get percentage routed to Code tier
+    pub fn code_percentage(&self) -> f64 {
+        let total = self.total_requests();
+        if total == 0 { 0.0 } else { (self.code_requests as f64 / total as f64) * 100.0 }
+    }
+
+    /// Get percentage routed to Agentic tier
+    pub fn agentic_percentage(&self) -> f64 {
+        let total = self.total_requests();
+        if total == 0 { 0.0 } else { (self.agentic_requests as f64 / total as f64) * 100.0 }
+    }
+
+    /// Calculate total estimated cost for all requests
+    pub fn total_cost_usd(&self) -> f64 {
+        // Using average 10k tokens per request pricing
+        let fast_cost = (self.fast_requests as f64) * 0.0025;      // $0.25/M * 10k
+        let voice_cost = (self.voice_requests as f64) * 0.0125;    // $1.25/M * 10k
+        let code_cost = (self.code_requests as f64) * 0.0125;      // $1.25/M * 10k
+        let agentic_cost = (self.agentic_requests as f64) * 0.04;  // $4.00/M * 10k
+        fast_cost + voice_cost + code_cost + agentic_cost
+    }
+
+    /// Calculate what cost would have been if all requests used Agentic tier
+    pub fn baseline_cost_usd(&self) -> f64 {
+        (self.total_requests() as f64) * 0.04  // All at Agentic pricing
+    }
+
+    /// Calculate savings percentage vs all-Agentic baseline
+    pub fn savings_percentage(&self) -> f64 {
+        let baseline = self.baseline_cost_usd();
+        if baseline == 0.0 { 0.0 } else { (self.estimated_savings_usd / baseline) * 100.0 }
+    }
 }
