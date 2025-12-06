@@ -980,16 +980,16 @@ impl LlmOrchestrator {
 - [x] Logging of routing decisions (via tracing)
 - [x] Graceful degradation via fallback chain
 
-### Phase 4: Voice & Personality (IN PROGRESS)
+### Phase 4: Voice & Personality (COMPLETE)
 
 **Goal**: Ensure Mira maintains consistent personality through GPT-5.1 Voice tier
 
-**Files to Modify**:
-- `backend/src/prompt/system.rs` - Mira's personality prompt
-- `backend/src/api/ws/chat/handler.rs` - Explicitly use Voice tier for chat
-- `backend/src/api/ws/chat/unified_handler.rs` - Route user chat to Voice
+**Files Modified**:
+- `backend/src/persona/default.rs` - Streamlined persona for GPT-5.1
+- `backend/src/prompt/context.rs` - Optimized context builders
+- `backend/src/llm/router/classifier.rs` - Verified Voice tier for user chat
 
-**Implementation Details**:
+**Implementation Details** (Completed):
 
 The Voice tier (GPT-5.1) handles all direct user interactions:
 - Chat responses
@@ -1109,7 +1109,7 @@ MODEL_ROUTER_FALLBACK=true
 | Phase 1: OpenAI Provider | New provider, types, tests | ✓ Complete |
 | Phase 2: Model Router | Router, classifier, config | ✓ Complete |
 | Phase 3: Integration | Wire into existing code | ✓ Complete |
-| Phase 4: Voice & Personality | Prompt tuning, chat routing | In Progress |
+| Phase 4: Voice & Personality | Prompt tuning, chat routing | Complete |
 | Phase 5: Testing | Tests, validation, metrics | Pending |
 
 ### Dependencies
