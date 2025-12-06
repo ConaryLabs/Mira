@@ -80,6 +80,7 @@ impl DocumentHandler {
         let processor = Arc::new(DocumentProcessor::new(
             state.sqlite_pool.clone(),
             qdrant_client,
+            state.openai_embedding_client.clone(),
         ));
 
         Self { state, processor }
@@ -244,6 +245,7 @@ impl DocumentHandler {
         let storage = crate::memory::features::document_processing::DocumentStorage::new(
             self.state.sqlite_pool.clone(),
             qdrant_client,
+            self.state.openai_embedding_client.clone(),
         );
 
         let documents = storage.list_documents(&params.project_id).await?;

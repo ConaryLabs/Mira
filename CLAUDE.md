@@ -158,6 +158,23 @@ npm run dev
 | < 200k tokens | $2.00 | $12.00 |
 | > 200k tokens | $4.00 | $18.00 |
 
+**Multi-Model Routing (OpenAI GPT-5.1 Family):**
+
+The model router (`src/llm/router/`) intelligently routes tasks to the optimal model tier:
+
+| Tier | Model | Use Case | Reasoning | Pricing |
+|------|-------|----------|-----------|---------|
+| Fast | GPT-5.1 Mini | File ops, search, simple queries | - | $0.25/$2 per 1M |
+| Voice | GPT-5.1 | User chat, explanations, personality | medium | $1.25/$10 per 1M |
+| Code | GPT-5.1-Codex-Max | Code generation, refactoring, tests | high | $1.25/$10 per 1M |
+| Agentic | GPT-5.1-Codex-Max | Long-running autonomous tasks (24h+) | xhigh | $1.25/$10 per 1M |
+
+Routing rules:
+- **Fast tier**: File listing, grep, search, simple metadata
+- **Voice tier**: User-facing chat, explanations (default)
+- **Code tier**: Architecture, refactoring, code review, >50k tokens, >3 files
+- **Agentic tier**: Full implementations, migrations, large refactors
+
 **Memory Systems** (`src/memory/`):
 - **Hybrid storage**: SQLite (50+ tables) + Qdrant (3 collections: code, conversation, git)
 - **Semantic Code Understanding**: Semantic graph, call graph, design pattern detection
@@ -176,7 +193,8 @@ npm run dev
 - `src/operations/engine/` - Modular operation orchestration (lifecycle, artifacts, events, status tracking)
 - `src/memory/` - Memory service coordinating SQLite + Qdrant stores
 - `src/memory/features/code_intelligence/` - Semantic graph, call graph, pattern detection
-- `src/llm/provider/` - Gemini 3 Pro provider with thinking levels, Gemini embeddings
+- `src/llm/provider/` - LLM providers: Gemini 3 Pro, OpenAI GPT-5.1 family, embeddings
+- `src/llm/router/` - Multi-model routing: Fast/Voice/Code/Agentic tiers with task classification
 - `src/budget/` - Budget tracking with daily/monthly limits
 - `src/cache/` - LLM response cache (SHA-256 hashing, 80%+ hit rate)
 - `src/git/intelligence/` - Commit tracking, co-change analysis, expertise scoring
@@ -272,11 +290,22 @@ DATABASE_URL=sqlite://data/mira.db
 # Qdrant (gRPC port)
 QDRANT_URL=http://localhost:6334
 
-# Google Gemini (Gemini 3 Pro + Embeddings)
+# Google Gemini (Gemini 3 Pro for primary LLM)
 GOOGLE_API_KEY=your-google-api-key
 GEMINI_MODEL=gemini-3-pro-preview
 GEMINI_THINKING_LEVEL=high
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+
+# OpenAI (Multi-Model Routing + Embeddings)
+OPENAI_API_KEY=your-openai-api-key
+
+# Model Router Configuration (4-tier routing)
+MODEL_ROUTER_ENABLED=true
+MODEL_FAST=gpt-5.1-mini           # Fast tier: file ops, search
+MODEL_VOICE=gpt-5.1               # Voice tier: user chat
+MODEL_CODE=gpt-5.1-codex-max      # Code tier: code generation
+MODEL_AGENTIC=gpt-5.1-codex-max   # Agentic tier: long-running tasks
+ROUTE_CODE_TOKEN_THRESHOLD=50000  # Tokens before upgrading to Code tier
+ROUTE_CODE_FILE_COUNT=3           # Files before upgrading to Code tier
 
 # Budget Management
 BUDGET_DAILY_LIMIT_USD=5.0

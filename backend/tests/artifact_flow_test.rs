@@ -88,13 +88,14 @@ async fn setup_test_engine() -> (OperationEngine, Arc<sqlx::SqlitePool>) {
         embedding_client.clone(),
     ));
 
-    // Create model router for tests (use same provider for all tiers)
+    // Create model router for tests (use same provider for all 4 tiers)
     let llm_arc: Arc<dyn LlmProvider> = Arc::new(Gemini3Provider::new(
         common::google_api_key(),
         "gemini-2.5-flash".to_string(),
         ThinkingLevel::High,
     ).expect("Should create LLM provider"));
     let model_router = Arc::new(ModelRouter::new(
+        llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),
         llm_arc.clone(),

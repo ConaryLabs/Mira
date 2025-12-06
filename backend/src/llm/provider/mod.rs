@@ -27,6 +27,8 @@ pub use stream::StreamEvent;
 // Export OpenAI provider and embeddings
 pub use openai::{OpenAIEmbeddingModel, OpenAIEmbeddings, OpenAIModel, OpenAIPricing, OpenAIProvider};
 
+// Export EmbeddingProvider trait for abstraction over different embedding providers
+
 /// Tool call information for assistant messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallInfo {
@@ -215,4 +217,20 @@ pub trait LlmProvider: Send + Sync {
             self.name()
         ))
     }
+}
+
+/// Universal embedding provider interface
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    /// Provider name for logging
+    fn name(&self) -> &str;
+
+    /// Embedding dimensions
+    fn dimensions(&self) -> usize;
+
+    /// Generate embedding for a single text
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
+
+    /// Generate embeddings for a batch of texts
+    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
 }

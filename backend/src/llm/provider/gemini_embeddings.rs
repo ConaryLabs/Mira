@@ -2,9 +2,12 @@
 // Gemini Embeddings provider using Google AI API
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use tracing::{debug, info};
+
+use super::EmbeddingProvider;
 
 /// Gemini Embeddings provider
 /// Uses gemini-embedding-001 model (3072 dimensions, same as OpenAI text-embedding-3-large)
@@ -155,6 +158,25 @@ impl GeminiEmbeddings {
         );
 
         Ok(embeddings)
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for GeminiEmbeddings {
+    fn name(&self) -> &str {
+        "gemini-embedding"
+    }
+
+    fn dimensions(&self) -> usize {
+        3072 // gemini-embedding-001 uses 3072 dimensions
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text).await
+    }
+
+    async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch(texts).await
     }
 }
 

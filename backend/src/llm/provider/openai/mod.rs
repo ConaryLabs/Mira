@@ -20,7 +20,7 @@ use super::{FunctionCall, LlmProvider, Message, Response, TokenUsage, ToolContex
 // Re-export public types
 pub use embeddings::{OpenAIEmbeddingModel, OpenAIEmbeddings};
 pub use pricing::{CostResult, OpenAIPricing};
-pub use types::OpenAIModel;
+pub use types::{OpenAIModel, ReasoningConfig, ReasoningEffort};
 
 // Use helper modules
 use conversion::{messages_to_openai, tools_to_openai};
@@ -33,6 +33,8 @@ pub struct OpenAIProvider {
     api_key: String,
     model: OpenAIModel,
     timeout: Duration,
+    /// Reasoning effort for models that support it (Codex-Max)
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl OpenAIProvider {
@@ -49,8 +51,30 @@ impl OpenAIProvider {
         Self::new(api_key, OpenAIModel::Gpt51Mini)
     }
 
+    /// Create a new OpenAI provider for GPT-5.1-Codex-Max (Code tier)
+    /// Uses "high" reasoning effort for code-focused tasks
+    pub fn codex_max(api_key: String) -> Result<Self> {
+        Self::with_reasoning(api_key, OpenAIModel::Gpt51CodexMax, ReasoningEffort::High)
+    }
+
+    /// Create a new OpenAI provider for GPT-5.1-Codex-Max (Agentic tier)
+    /// Uses "xhigh" reasoning effort for long-running autonomous tasks
+    pub fn codex_max_agentic(api_key: String) -> Result<Self> {
+        Self::with_reasoning(api_key, OpenAIModel::Gpt51CodexMax, ReasoningEffort::XHigh)
+    }
+
     /// Create a new OpenAI provider with specified model
     pub fn new(api_key: String, model: OpenAIModel) -> Result<Self> {
+        Self::with_reasoning_opt(api_key, model, None)
+    }
+
+    /// Create a provider with specified reasoning effort
+    pub fn with_reasoning(api_key: String, model: OpenAIModel, effort: ReasoningEffort) -> Result<Self> {
+        Self::with_reasoning_opt(api_key, model, Some(effort))
+    }
+
+    /// Internal constructor with optional reasoning
+    fn with_reasoning_opt(api_key: String, model: OpenAIModel, reasoning_effort: Option<ReasoningEffort>) -> Result<Self> {
         if api_key.is_empty() {
             return Err(anyhow!("OpenAI API key is required"));
         }
@@ -64,6 +88,7 @@ impl OpenAIProvider {
             api_key,
             model,
             timeout: Duration::from_secs(120),
+            reasoning_effort,
         })
     }
 
@@ -81,6 +106,16 @@ impl OpenAIProvider {
     /// Check if provider is configured
     pub fn is_available(&self) -> bool {
         !self.api_key.is_empty()
+    }
+
+    /// Get reasoning effort (if configured)
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    /// Build reasoning config for API requests
+    fn build_reasoning_config(&self) -> Option<ReasoningConfig> {
+        self.reasoning_effort.map(|effort| ReasoningConfig { effort })
     }
 
     /// Validate API key
@@ -101,6 +136,7 @@ impl OpenAIProvider {
             temperature: None,
             max_tokens: Some(1),
             stream: None,
+            reasoning: self.build_reasoning_config(),
         };
 
         let response = self
@@ -272,9 +308,11 @@ impl OpenAIProvider {
 #[async_trait]
 impl LlmProvider for OpenAIProvider {
     fn name(&self) -> &'static str {
-        match self.model {
-            OpenAIModel::Gpt51 => "openai-gpt51",
-            OpenAIModel::Gpt51Mini => "openai-gpt51-mini",
+        match (self.model, self.reasoning_effort) {
+            (OpenAIModel::Gpt51, _) => "openai-gpt51",
+            (OpenAIModel::Gpt51Mini, _) => "openai-gpt51-mini",
+            (OpenAIModel::Gpt51CodexMax, Some(ReasoningEffort::XHigh)) => "openai-codex-max-agentic",
+            (OpenAIModel::Gpt51CodexMax, _) => "openai-codex-max",
         }
     }
 
@@ -295,6 +333,7 @@ impl LlmProvider for OpenAIProvider {
             temperature: Some(0.7),
             max_tokens: None,
             stream: None,
+            reasoning: self.build_reasoning_config(),
         };
 
         let response = self.send_request(&request).await?;
@@ -334,6 +373,7 @@ impl LlmProvider for OpenAIProvider {
             temperature: Some(0.7),
             max_tokens: None,
             stream: None,
+            reasoning: self.build_reasoning_config(),
         };
 
         let response = self.send_request(&request).await?;
@@ -357,6 +397,7 @@ impl LlmProvider for OpenAIProvider {
             temperature: Some(0.7),
             max_tokens: None,
             stream: Some(true),
+            reasoning: self.build_reasoning_config(),
         };
 
         let response = self

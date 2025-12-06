@@ -11,6 +11,43 @@ pub enum OpenAIModel {
     Gpt51,
     /// GPT-5.1 Mini - Fast tier for simple tasks
     Gpt51Mini,
+    /// GPT-5.1-Codex-Max - Code tier for code-heavy tasks and agentic tier for long-running
+    Gpt51CodexMax,
+}
+
+/// Reasoning effort level for models that support extended thinking
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    /// Quick reasoning for simple tasks
+    Medium,
+    /// Standard reasoning for most tasks
+    High,
+    /// Extended thinking for complex, long-running tasks (Codex-Max only)
+    #[serde(rename = "xhigh")]
+    XHigh,
+}
+
+impl Default for ReasoningEffort {
+    fn default() -> Self {
+        ReasoningEffort::High
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReasoningEffort::Medium => write!(f, "medium"),
+            ReasoningEffort::High => write!(f, "high"),
+            ReasoningEffort::XHigh => write!(f, "xhigh"),
+        }
+    }
+}
+
+/// Reasoning configuration for API requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningConfig {
+    pub effort: ReasoningEffort,
 }
 
 impl OpenAIModel {
@@ -18,6 +55,7 @@ impl OpenAIModel {
         match self {
             OpenAIModel::Gpt51 => "gpt-5.1",
             OpenAIModel::Gpt51Mini => "gpt-5.1-mini",
+            OpenAIModel::Gpt51CodexMax => "gpt-5.1-codex-max",
         }
     }
 
@@ -26,14 +64,18 @@ impl OpenAIModel {
         match self {
             OpenAIModel::Gpt51 => "GPT-5.1",
             OpenAIModel::Gpt51Mini => "GPT-5.1 Mini",
+            OpenAIModel::Gpt51CodexMax => "GPT-5.1-Codex-Max",
         }
     }
 
     /// Get max context window size
+    /// Note: Codex-Max uses compaction for effectively unlimited context,
+    /// but we report 1M as a conservative working limit
     pub fn max_context_tokens(&self) -> i64 {
         match self {
             OpenAIModel::Gpt51 => 272_000,
             OpenAIModel::Gpt51Mini => 400_000,
+            OpenAIModel::Gpt51CodexMax => 1_000_000, // Compaction handles overflow
         }
     }
 
@@ -42,7 +84,13 @@ impl OpenAIModel {
         match self {
             OpenAIModel::Gpt51 => 128_000,
             OpenAIModel::Gpt51Mini => 128_000,
+            OpenAIModel::Gpt51CodexMax => 128_000,
         }
+    }
+
+    /// Check if this model supports reasoning effort configuration
+    pub fn supports_reasoning(&self) -> bool {
+        matches!(self, OpenAIModel::Gpt51CodexMax)
     }
 }
 
@@ -73,6 +121,9 @@ pub struct ChatCompletionRequest {
     pub max_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    /// Reasoning effort configuration (Codex-Max models only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
 }
 
 /// Chat message for OpenAI API

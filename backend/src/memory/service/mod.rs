@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::context_oracle::{ContextConfig, ContextOracle};
-use crate::llm::provider::{GeminiEmbeddings, LlmProvider};
+use crate::llm::provider::{EmbeddingProvider, LlmProvider};
 use crate::memory::{
     features::{
         message_pipeline::MessagePipeline,
@@ -40,7 +40,7 @@ pub struct MemoryService {
     multi_store: Arc<QdrantMultiStore>,
 
     // Keep reference to embedding client for direct embedding operations
-    embedding_client: Arc<GeminiEmbeddings>,
+    embedding_client: Arc<dyn EmbeddingProvider>,
 }
 
 impl MemoryService {
@@ -49,7 +49,7 @@ impl MemoryService {
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
         llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<GeminiEmbeddings>,
+        embedding_client: Arc<dyn EmbeddingProvider>,
     ) -> Self {
         Self::with_oracle(sqlite_store, multi_store, llm_provider, embedding_client, None)
     }
@@ -59,7 +59,7 @@ impl MemoryService {
         sqlite_store: Arc<SqliteMemoryStore>,
         multi_store: Arc<QdrantMultiStore>,
         llm_provider: Arc<dyn LlmProvider>,
-        embedding_client: Arc<GeminiEmbeddings>,
+        embedding_client: Arc<dyn EmbeddingProvider>,
         context_oracle: Option<Arc<ContextOracle>>,
     ) -> Self {
         info!(
@@ -118,7 +118,7 @@ impl MemoryService {
     }
 
     /// Direct access to embedding client for embedding operations
-    pub fn get_embedding_client(&self) -> Arc<GeminiEmbeddings> {
+    pub fn get_embedding_client(&self) -> Arc<dyn EmbeddingProvider> {
         self.embedding_client.clone()
     }
 

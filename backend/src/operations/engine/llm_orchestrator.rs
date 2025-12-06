@@ -35,7 +35,7 @@ struct CachedToolResponse {
 
 /// LLM orchestrator for intelligent tool execution
 ///
-/// Uses ModelRouter for multi-tier routing (Fast/Voice/Thinker).
+/// Uses ModelRouter for multi-tier routing (Fast/Voice/Code/Agentic).
 /// Handles tool calling loop with automatic result feedback.
 /// Integrates with BudgetTracker to track costs and enforce limits.
 /// Integrates with LlmCache to reduce API costs (target 80%+ hit rate).
@@ -78,7 +78,7 @@ fn truncate_tool_result(result: &str) -> String {
 }
 
 pub struct LlmOrchestrator {
-    /// Model router for multi-tier LLM routing (Fast/Voice/Thinker)
+    /// Model router for multi-tier LLM routing (Fast/Voice/Code/Agentic)
     router: Arc<ModelRouter>,
     /// Tool router for dispatching tool calls to handlers
     tool_router: Option<Arc<ToolRouter>>,
@@ -142,7 +142,8 @@ impl LlmOrchestrator {
             let (model, provider_name, model_name) = match tier {
                 ModelTier::Fast => (OpenAIModel::Gpt51Mini, "openai", "gpt-5.1-mini"),
                 ModelTier::Voice => (OpenAIModel::Gpt51, "openai", "gpt-5.1"),
-                ModelTier::Thinker => (OpenAIModel::Gpt51, "openai", "gpt-5.1"),
+                ModelTier::Code => (OpenAIModel::Gpt51CodexMax, "openai", "gpt-5.1-codex-max"),
+                ModelTier::Agentic => (OpenAIModel::Gpt51CodexMax, "openai", "gpt-5.1-codex-max"),
             };
 
             let cost = if from_cache {
@@ -290,7 +291,8 @@ impl LlmOrchestrator {
         // Get model for cost calculation
         let model = match tier {
             ModelTier::Fast => OpenAIModel::Gpt51Mini,
-            ModelTier::Voice | ModelTier::Thinker => OpenAIModel::Gpt51,
+            ModelTier::Voice => OpenAIModel::Gpt51,
+            ModelTier::Code | ModelTier::Agentic => OpenAIModel::Gpt51CodexMax,
         };
         let cost = OpenAIPricing::calculate_cost(model, response.tokens.input, response.tokens.output);
 
@@ -460,7 +462,8 @@ impl LlmOrchestrator {
             // Calculate cost using OpenAI pricing
             let model = match current_tier {
                 ModelTier::Fast => OpenAIModel::Gpt51Mini,
-                ModelTier::Voice | ModelTier::Thinker => OpenAIModel::Gpt51,
+                ModelTier::Voice => OpenAIModel::Gpt51,
+                ModelTier::Code | ModelTier::Agentic => OpenAIModel::Gpt51CodexMax,
             };
             let cost = if from_cache {
                 0.0
@@ -583,7 +586,8 @@ impl LlmOrchestrator {
         // Calculate final cost using OpenAI pricing
         let final_model = match current_tier {
             ModelTier::Fast => OpenAIModel::Gpt51Mini,
-            ModelTier::Voice | ModelTier::Thinker => OpenAIModel::Gpt51,
+            ModelTier::Voice => OpenAIModel::Gpt51,
+            ModelTier::Code | ModelTier::Agentic => OpenAIModel::Gpt51CodexMax,
         };
         let actual_cost = if total_from_cache {
             0.0
@@ -848,9 +852,10 @@ mod tests {
     fn mock_router() -> Arc<ModelRouter> {
         let fast = Arc::new(MockProvider { name: "fast-mock" }) as Arc<dyn LlmProvider>;
         let voice = Arc::new(MockProvider { name: "voice-mock" }) as Arc<dyn LlmProvider>;
-        let thinker = Arc::new(MockProvider { name: "thinker-mock" }) as Arc<dyn LlmProvider>;
+        let code = Arc::new(MockProvider { name: "code-mock" }) as Arc<dyn LlmProvider>;
+        let agentic = Arc::new(MockProvider { name: "agentic-mock" }) as Arc<dyn LlmProvider>;
 
-        Arc::new(ModelRouter::new(fast, voice, thinker, RouterConfig::default()))
+        Arc::new(ModelRouter::new(fast, voice, code, agentic, RouterConfig::default()))
     }
 
     #[test]

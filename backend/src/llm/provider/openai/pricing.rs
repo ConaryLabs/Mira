@@ -35,6 +35,12 @@ impl OpenAIPricing {
     pub const GPT51_MINI_OUTPUT_PRICE_PER_M: f64 = 2.00;
     pub const GPT51_MINI_CACHED_INPUT_PRICE_PER_M: f64 = 0.025; // 90% discount for cached
 
+    // GPT-5.1-Codex-Max pricing (per 1M tokens)
+    // Same as GPT-5.1 base pricing, but optimized for code workloads
+    pub const GPT51_CODEX_MAX_INPUT_PRICE_PER_M: f64 = 1.25;
+    pub const GPT51_CODEX_MAX_OUTPUT_PRICE_PER_M: f64 = 10.00;
+    pub const GPT51_CODEX_MAX_CACHED_INPUT_PRICE_PER_M: f64 = 0.125; // 90% discount for cached
+
     /// Calculate cost for GPT-5.1
     pub fn calculate_cost_gpt51(tokens_input: i64, tokens_output: i64) -> f64 {
         let input_cost = (tokens_input as f64 / 1_000_000.0) * Self::GPT51_INPUT_PRICE_PER_M;
@@ -80,6 +86,31 @@ impl OpenAIPricing {
         input_cost + cached_cost + output_cost
     }
 
+    /// Calculate cost for GPT-5.1-Codex-Max
+    pub fn calculate_cost_codex_max(tokens_input: i64, tokens_output: i64) -> f64 {
+        let input_cost =
+            (tokens_input as f64 / 1_000_000.0) * Self::GPT51_CODEX_MAX_INPUT_PRICE_PER_M;
+        let output_cost =
+            (tokens_output as f64 / 1_000_000.0) * Self::GPT51_CODEX_MAX_OUTPUT_PRICE_PER_M;
+        input_cost + output_cost
+    }
+
+    /// Calculate cost for GPT-5.1-Codex-Max with cached tokens
+    pub fn calculate_cost_codex_max_with_cache(
+        tokens_input: i64,
+        tokens_output: i64,
+        tokens_cached: i64,
+    ) -> f64 {
+        let uncached_input = tokens_input - tokens_cached;
+        let input_cost =
+            (uncached_input as f64 / 1_000_000.0) * Self::GPT51_CODEX_MAX_INPUT_PRICE_PER_M;
+        let cached_cost =
+            (tokens_cached as f64 / 1_000_000.0) * Self::GPT51_CODEX_MAX_CACHED_INPUT_PRICE_PER_M;
+        let output_cost =
+            (tokens_output as f64 / 1_000_000.0) * Self::GPT51_CODEX_MAX_OUTPUT_PRICE_PER_M;
+        input_cost + cached_cost + output_cost
+    }
+
     /// Calculate cost for any model
     pub fn calculate_cost(
         model: OpenAIModel,
@@ -89,6 +120,9 @@ impl OpenAIPricing {
         match model {
             OpenAIModel::Gpt51 => Self::calculate_cost_gpt51(tokens_input, tokens_output),
             OpenAIModel::Gpt51Mini => Self::calculate_cost_gpt51_mini(tokens_input, tokens_output),
+            OpenAIModel::Gpt51CodexMax => {
+                Self::calculate_cost_codex_max(tokens_input, tokens_output)
+            }
         }
     }
 
@@ -106,6 +140,9 @@ impl OpenAIPricing {
             OpenAIModel::Gpt51Mini => {
                 Self::calculate_cost_gpt51_mini_with_cache(tokens_input, tokens_output, tokens_cached)
             }
+            OpenAIModel::Gpt51CodexMax => {
+                Self::calculate_cost_codex_max_with_cache(tokens_input, tokens_output, tokens_cached)
+            }
         };
 
         CostResult {
@@ -122,6 +159,7 @@ impl OpenAIPricing {
         match model {
             OpenAIModel::Gpt51 => Self::GPT51_INPUT_PRICE_PER_M,
             OpenAIModel::Gpt51Mini => Self::GPT51_MINI_INPUT_PRICE_PER_M,
+            OpenAIModel::Gpt51CodexMax => Self::GPT51_CODEX_MAX_INPUT_PRICE_PER_M,
         }
     }
 
@@ -130,6 +168,7 @@ impl OpenAIPricing {
         match model {
             OpenAIModel::Gpt51 => Self::GPT51_OUTPUT_PRICE_PER_M,
             OpenAIModel::Gpt51Mini => Self::GPT51_MINI_OUTPUT_PRICE_PER_M,
+            OpenAIModel::Gpt51CodexMax => Self::GPT51_CODEX_MAX_OUTPUT_PRICE_PER_M,
         }
     }
 }

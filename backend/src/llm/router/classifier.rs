@@ -38,8 +38,9 @@ impl TaskClassifier {
         "write_file",
     ];
 
-    /// Operation kinds that require Thinker tier
-    const THINKER_OPERATIONS: &'static [&'static str] = &[
+    /// Operation kinds that require Code tier (code-focused complex tasks)
+    const CODE_OPERATIONS: &'static [&'static str] = &[
+        // Complex reasoning operations
         "architecture",
         "refactor",
         "refactor_multi_file",
@@ -48,6 +49,19 @@ impl TaskClassifier {
         "impact_analysis",
         "code_review",
         "security_audit",
+        // Code-specific operations
+        "code_generation",
+        "test_generation",
+        "implement_feature",
+        "fix_bug",
+    ];
+
+    /// Operation kinds that require Agentic tier (long-running autonomous tasks)
+    const AGENTIC_OPERATIONS: &'static [&'static str] = &[
+        "full_implementation",
+        "migration",
+        "large_refactor",
+        "codebase_modernization",
     ];
 
     /// Create a new classifier with config
@@ -60,6 +74,18 @@ impl TaskClassifier {
         // Check for explicit override first
         if let Some(tier) = task.tier_override {
             return tier;
+        }
+
+        // Long-running tasks always go to Agentic tier
+        if task.is_long_running {
+            return ModelTier::Agentic;
+        }
+
+        // Check for agentic operations first
+        if let Some(ref op_kind) = task.operation_kind {
+            if Self::AGENTIC_OPERATIONS.iter().any(|o| op_kind.contains(o)) {
+                return ModelTier::Agentic;
+            }
         }
 
         // User-facing chat always uses Voice tier
@@ -75,34 +101,31 @@ impl TaskClassifier {
 
             // Voice tier tools
             if Self::VOICE_TOOLS.iter().any(|t| tool_name.contains(t)) {
-                // But bump to Thinker if context is large
-                if task.estimated_tokens > self.config.thinker_token_threshold {
-                    return ModelTier::Thinker;
+                // But bump to Code if context is large
+                if task.estimated_tokens > self.config.code_token_threshold {
+                    return ModelTier::Code;
                 }
                 return ModelTier::Voice;
             }
         }
 
-        // Check operation kind for complex operations
+        // Check operation kind for code-focused operations
         if let Some(ref op_kind) = task.operation_kind {
-            if Self::THINKER_OPERATIONS
-                .iter()
-                .any(|o| op_kind.contains(o))
-            {
-                return ModelTier::Thinker;
+            if Self::CODE_OPERATIONS.iter().any(|o| op_kind.contains(o)) {
+                return ModelTier::Code;
             }
         }
 
         // Complexity heuristics
 
-        // Large context -> Thinker (needs better reasoning)
-        if task.estimated_tokens > self.config.thinker_token_threshold {
-            return ModelTier::Thinker;
+        // Large context -> Code (needs better reasoning)
+        if task.estimated_tokens > self.config.code_token_threshold {
+            return ModelTier::Code;
         }
 
-        // Multiple files -> Thinker (cross-file understanding needed)
-        if task.file_count > self.config.thinker_file_threshold {
-            return ModelTier::Thinker;
+        // Multiple files -> Code (cross-file understanding needed)
+        if task.file_count > self.config.code_file_threshold {
+            return ModelTier::Code;
         }
 
         // Default: Voice tier for balanced cost/quality
@@ -115,6 +138,16 @@ impl TaskClassifier {
             return "explicit override";
         }
 
+        if task.is_long_running {
+            return "long-running task";
+        }
+
+        if let Some(ref op_kind) = task.operation_kind {
+            if Self::AGENTIC_OPERATIONS.iter().any(|o| op_kind.contains(o)) {
+                return "agentic operation";
+            }
+        }
+
         if task.is_user_facing && task.tool_name.is_none() {
             return "user-facing chat";
         }
@@ -124,7 +157,7 @@ impl TaskClassifier {
                 return "fast-tier tool";
             }
             if Self::VOICE_TOOLS.iter().any(|t| tool_name.contains(t)) {
-                if task.estimated_tokens > self.config.thinker_token_threshold {
+                if task.estimated_tokens > self.config.code_token_threshold {
                     return "voice tool with large context";
                 }
                 return "voice-tier tool";
@@ -132,19 +165,16 @@ impl TaskClassifier {
         }
 
         if let Some(ref op_kind) = task.operation_kind {
-            if Self::THINKER_OPERATIONS
-                .iter()
-                .any(|o| op_kind.contains(o))
-            {
-                return "complex operation";
+            if Self::CODE_OPERATIONS.iter().any(|o| op_kind.contains(o)) {
+                return "code operation";
             }
         }
 
-        if task.estimated_tokens > self.config.thinker_token_threshold {
+        if task.estimated_tokens > self.config.code_token_threshold {
             return "large context";
         }
 
-        if task.file_count > self.config.thinker_file_threshold {
+        if task.file_count > self.config.code_file_threshold {
             return "multi-file operation";
         }
 
@@ -205,25 +235,56 @@ mod tests {
     }
 
     #[test]
-    fn test_thinker_operations() {
+    fn test_code_operations() {
         let classifier = test_classifier();
 
-        let thinker_ops = vec![
+        let code_ops = vec![
             "architecture",
             "refactor_multi_file",
             "debug_complex",
             "code_review",
         ];
 
-        for op in thinker_ops {
+        for op in code_ops {
             let task = RoutingTask::new().with_operation(op);
             assert_eq!(
                 classifier.classify(&task),
-                ModelTier::Thinker,
-                "Operation {} should be Thinker tier",
+                ModelTier::Code,
+                "Operation {} should be Code tier",
                 op
             );
         }
+    }
+
+    #[test]
+    fn test_agentic_operations() {
+        let classifier = test_classifier();
+
+        let agentic_ops = vec![
+            "full_implementation",
+            "migration",
+            "large_refactor",
+            "codebase_modernization",
+        ];
+
+        for op in agentic_ops {
+            let task = RoutingTask::new().with_operation(op);
+            assert_eq!(
+                classifier.classify(&task),
+                ModelTier::Agentic,
+                "Operation {} should be Agentic tier",
+                op
+            );
+        }
+    }
+
+    #[test]
+    fn test_long_running_flag() {
+        let classifier = test_classifier();
+
+        // Even a simple task becomes Agentic when marked as long-running
+        let task = RoutingTask::new().with_long_running(true);
+        assert_eq!(classifier.classify(&task), ModelTier::Agentic);
     }
 
     #[test]
@@ -234,37 +295,41 @@ mod tests {
     }
 
     #[test]
-    fn test_large_context_upgrade_to_thinker() {
+    fn test_large_context_upgrade_to_code() {
         let classifier = test_classifier();
 
         // Voice tool with small context -> Voice
         let task = RoutingTask::from_tool("read_project_file").with_tokens(10_000);
         assert_eq!(classifier.classify(&task), ModelTier::Voice);
 
-        // Voice tool with large context -> Thinker
+        // Voice tool with large context -> Code
         let task = RoutingTask::from_tool("read_project_file").with_tokens(100_000);
-        assert_eq!(classifier.classify(&task), ModelTier::Thinker);
+        assert_eq!(classifier.classify(&task), ModelTier::Code);
     }
 
     #[test]
-    fn test_multi_file_upgrade_to_thinker() {
+    fn test_multi_file_upgrade_to_code() {
         let classifier = test_classifier();
 
         // Few files -> default (Voice)
         let task = RoutingTask::new().with_files(2);
         assert_eq!(classifier.classify(&task), ModelTier::Voice);
 
-        // Many files -> Thinker
+        // Many files -> Code
         let task = RoutingTask::new().with_files(5);
-        assert_eq!(classifier.classify(&task), ModelTier::Thinker);
+        assert_eq!(classifier.classify(&task), ModelTier::Code);
     }
 
     #[test]
     fn test_explicit_override() {
         let classifier = test_classifier();
 
-        // Fast tool but forced to Thinker
-        let task = RoutingTask::from_tool("list_project_files").with_tier(ModelTier::Thinker);
-        assert_eq!(classifier.classify(&task), ModelTier::Thinker);
+        // Fast tool but forced to Code
+        let task = RoutingTask::from_tool("list_project_files").with_tier(ModelTier::Code);
+        assert_eq!(classifier.classify(&task), ModelTier::Code);
+
+        // Fast tool but forced to Agentic
+        let task = RoutingTask::from_tool("list_project_files").with_tier(ModelTier::Agentic);
+        assert_eq!(classifier.classify(&task), ModelTier::Agentic);
     }
 }

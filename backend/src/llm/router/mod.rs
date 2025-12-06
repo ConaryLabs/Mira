@@ -21,15 +21,18 @@ pub use types::{ModelTier, RoutingStats, RoutingTask};
 ///
 /// Tiers (all OpenAI):
 /// - Fast: GPT-5.1 Mini - file ops, search, simple queries
-/// - Voice: GPT-5.1 (low reasoning) - user chat, explanations, Mira's personality
-/// - Thinker: GPT-5.1 (high reasoning) - complex reasoning, architecture
+/// - Voice: GPT-5.1 - user chat, explanations, Mira's personality
+/// - Code: GPT-5.1-Codex-Max (high reasoning) - code generation, refactoring
+/// - Agentic: GPT-5.1-Codex-Max (xhigh reasoning) - long-running autonomous tasks
 pub struct ModelRouter {
     /// Fast tier provider (GPT-5.1 Mini)
     fast_provider: Arc<dyn LlmProvider>,
     /// Voice tier provider (GPT-5.1)
     voice_provider: Arc<dyn LlmProvider>,
-    /// Thinker tier provider (GPT-5.1 High)
-    thinker_provider: Arc<dyn LlmProvider>,
+    /// Code tier provider (GPT-5.1-Codex-Max)
+    code_provider: Arc<dyn LlmProvider>,
+    /// Agentic tier provider (GPT-5.1-Codex-Max with xhigh reasoning)
+    agentic_provider: Arc<dyn LlmProvider>,
     /// Task classifier
     classifier: TaskClassifier,
     /// Configuration
@@ -41,27 +44,30 @@ pub struct ModelRouter {
 }
 
 impl ModelRouter {
-    /// Create a new model router with all three providers
+    /// Create a new model router with all four providers
     pub fn new(
         fast_provider: Arc<dyn LlmProvider>,
         voice_provider: Arc<dyn LlmProvider>,
-        thinker_provider: Arc<dyn LlmProvider>,
+        code_provider: Arc<dyn LlmProvider>,
+        agentic_provider: Arc<dyn LlmProvider>,
         config: RouterConfig,
     ) -> Self {
         let classifier = TaskClassifier::new(config.clone());
 
         info!(
-            "ModelRouter initialized: Fast={}, Voice={}, Thinker={}, enabled={}",
+            "ModelRouter initialized: Fast={}, Voice={}, Code={}, Agentic={}, enabled={}",
             fast_provider.name(),
             voice_provider.name(),
-            thinker_provider.name(),
+            code_provider.name(),
+            agentic_provider.name(),
             config.enabled
         );
 
         Self {
             fast_provider,
             voice_provider,
-            thinker_provider,
+            code_provider,
+            agentic_provider,
             classifier,
             config,
             stats: RwLock::new(RoutingStats::default()),
@@ -73,9 +79,10 @@ impl ModelRouter {
     pub fn with_providers(
         fast: Arc<dyn LlmProvider>,
         voice: Arc<dyn LlmProvider>,
-        thinker: Arc<dyn LlmProvider>,
+        code: Arc<dyn LlmProvider>,
+        agentic: Arc<dyn LlmProvider>,
     ) -> Self {
-        Self::new(fast, voice, thinker, RouterConfig::from_env())
+        Self::new(fast, voice, code, agentic, RouterConfig::from_env())
     }
 
     /// Check if router is enabled
@@ -134,7 +141,8 @@ impl ModelRouter {
         match tier {
             ModelTier::Fast => self.fast_provider.clone(),
             ModelTier::Voice => self.voice_provider.clone(),
-            ModelTier::Thinker => self.thinker_provider.clone(),
+            ModelTier::Code => self.code_provider.clone(),
+            ModelTier::Agentic => self.agentic_provider.clone(),
         }
     }
 
@@ -148,9 +156,14 @@ impl ModelRouter {
         self.fast_provider.clone()
     }
 
-    /// Get provider for complex reasoning
-    pub fn thinker(&self) -> Arc<dyn LlmProvider> {
-        self.thinker_provider.clone()
+    /// Get provider for code-focused tasks
+    pub fn code(&self) -> Arc<dyn LlmProvider> {
+        self.code_provider.clone()
+    }
+
+    /// Get provider for long-running agentic tasks
+    pub fn agentic(&self) -> Arc<dyn LlmProvider> {
+        self.agentic_provider.clone()
     }
 
     /// Get routing statistics
@@ -168,20 +181,14 @@ impl ModelRouter {
     /// Get a summary of routing activity
     pub fn summary(&self) -> String {
         let stats = self.stats();
+        let total = stats.total_requests();
         format!(
-            "Routing: {} total ({:.1}% fast, {:.1}% voice, {:.1}% thinker), est. savings: ${:.2}",
-            stats.total_requests(),
+            "Routing: {} total ({:.1}% fast, {:.1}% voice, {:.1}% code, {:.1}% agentic), est. savings: ${:.2}",
+            total,
             stats.fast_percentage(),
-            if stats.total_requests() > 0 {
-                (stats.voice_requests as f64 / stats.total_requests() as f64) * 100.0
-            } else {
-                0.0
-            },
-            if stats.total_requests() > 0 {
-                (stats.thinker_requests as f64 / stats.total_requests() as f64) * 100.0
-            } else {
-                0.0
-            },
+            if total > 0 { (stats.voice_requests as f64 / total as f64) * 100.0 } else { 0.0 },
+            if total > 0 { (stats.code_requests as f64 / total as f64) * 100.0 } else { 0.0 },
+            if total > 0 { (stats.agentic_requests as f64 / total as f64) * 100.0 } else { 0.0 },
             stats.estimated_savings_usd
         )
     }
@@ -189,7 +196,7 @@ impl ModelRouter {
     /// Route with fallback on failure
     ///
     /// If the primary tier fails and fallback is enabled, try the next tier up.
-    /// Fast -> Voice -> Thinker
+    /// Fast -> Voice -> Code -> Agentic
     pub async fn route_with_fallback<F, T>(&self, task: &RoutingTask, operation: F) -> Result<T>
     where
         F: Fn(Arc<dyn LlmProvider>) -> futures::future::BoxFuture<'static, Result<T>>,
@@ -205,11 +212,12 @@ impl ModelRouter {
                     return Err(e);
                 }
 
-                // Try fallback: Fast -> Voice -> Thinker
+                // Try fallback: Fast -> Voice -> Code -> Agentic
                 let fallback_tier = match primary_tier {
                     ModelTier::Fast => Some(ModelTier::Voice),
-                    ModelTier::Voice => Some(ModelTier::Thinker),
-                    ModelTier::Thinker => None,
+                    ModelTier::Voice => Some(ModelTier::Code),
+                    ModelTier::Code => Some(ModelTier::Agentic),
+                    ModelTier::Agentic => None,
                 };
 
                 if let Some(tier) = fallback_tier {
@@ -293,9 +301,10 @@ mod tests {
     fn test_router() -> ModelRouter {
         let fast = Arc::new(MockProvider { name: "fast-mock" }) as Arc<dyn LlmProvider>;
         let voice = Arc::new(MockProvider { name: "voice-mock" }) as Arc<dyn LlmProvider>;
-        let thinker = Arc::new(MockProvider { name: "thinker-mock" }) as Arc<dyn LlmProvider>;
+        let code = Arc::new(MockProvider { name: "code-mock" }) as Arc<dyn LlmProvider>;
+        let agentic = Arc::new(MockProvider { name: "agentic-mock" }) as Arc<dyn LlmProvider>;
 
-        ModelRouter::new(fast, voice, thinker, RouterConfig::default())
+        ModelRouter::new(fast, voice, code, agentic, RouterConfig::default())
     }
 
     #[test]
@@ -319,13 +328,25 @@ mod tests {
     }
 
     #[test]
-    fn test_router_routes_complex_to_thinker() {
+    fn test_router_routes_complex_to_code() {
         let router = test_router();
 
         let task = RoutingTask::new().with_operation("architecture");
         let provider = router.route(&task);
 
-        assert_eq!(provider.name(), "thinker-mock");
+        assert_eq!(provider.name(), "code-mock");
+    }
+
+    #[test]
+    fn test_router_routes_long_running_to_agentic() {
+        let router = test_router();
+
+        let task = RoutingTask::new()
+            .with_operation("full_implementation")
+            .with_long_running(true);
+        let provider = router.route(&task);
+
+        assert_eq!(provider.name(), "agentic-mock");
     }
 
     #[test]
@@ -341,7 +362,7 @@ mod tests {
         let stats = router.stats();
         assert_eq!(stats.fast_requests, 2);
         assert_eq!(stats.voice_requests, 1);
-        assert_eq!(stats.thinker_requests, 1);
+        assert_eq!(stats.code_requests, 1);
         assert_eq!(stats.total_requests(), 4);
     }
 
@@ -349,12 +370,13 @@ mod tests {
     fn test_router_disabled() {
         let fast = Arc::new(MockProvider { name: "fast-mock" }) as Arc<dyn LlmProvider>;
         let voice = Arc::new(MockProvider { name: "voice-mock" }) as Arc<dyn LlmProvider>;
-        let thinker = Arc::new(MockProvider { name: "thinker-mock" }) as Arc<dyn LlmProvider>;
+        let code = Arc::new(MockProvider { name: "code-mock" }) as Arc<dyn LlmProvider>;
+        let agentic = Arc::new(MockProvider { name: "agentic-mock" }) as Arc<dyn LlmProvider>;
 
         let mut config = RouterConfig::default();
         config.enabled = false;
 
-        let router = ModelRouter::new(fast, voice, thinker, config);
+        let router = ModelRouter::new(fast, voice, code, agentic, config);
 
         // Even fast tools should go to Voice when disabled
         let task = RoutingTask::from_tool("list_project_files");
@@ -369,6 +391,7 @@ mod tests {
 
         assert_eq!(router.fast().name(), "fast-mock");
         assert_eq!(router.voice().name(), "voice-mock");
-        assert_eq!(router.thinker().name(), "thinker-mock");
+        assert_eq!(router.code().name(), "code-mock");
+        assert_eq!(router.agentic().name(), "agentic-mock");
     }
 }

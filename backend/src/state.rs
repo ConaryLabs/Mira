@@ -21,7 +21,7 @@ use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
 use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
-use crate::llm::provider::{Gemini3Provider, GeminiEmbeddings, OpenAIEmbeddings, OpenAIProvider};
+use crate::llm::provider::{Gemini3Provider, OpenAIEmbeddings, OpenAIProvider};
 use crate::llm::router::{ModelRouter, RouterConfig};
 use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::memory::service::MemoryService;
@@ -60,7 +60,6 @@ pub struct AppState {
     pub git_store: GitStore,
     pub git_client: GitClient,
     pub llm_provider: Arc<Gemini3Provider>,
-    pub embedding_client: Arc<GeminiEmbeddings>,
     pub memory_service: Arc<MemoryService>,
     pub code_intelligence: Arc<CodeIntelligenceService>,
     pub semantic_graph: Arc<SemanticGraphService>,
@@ -103,7 +102,7 @@ pub struct AppState {
     pub agent_manager: Arc<AgentManager>,
     // Rate limiter for request throttling
     pub rate_limiter: Option<Arc<RateLimiter>>,
-    // Model router for multi-tier LLM routing (Fast/Voice/Thinker)
+    // Model router for multi-tier LLM routing (Fast/Voice/Code/Agentic)
     pub model_router: Arc<ModelRouter>,
     // OpenAI embeddings (text-embedding-3-large, 3072 dimensions)
     pub openai_embedding_client: Arc<OpenAIEmbeddings>,
@@ -134,20 +133,13 @@ impl AppState {
             .expect("Failed to create Gemini 3 provider"),
         );
 
-        // Initialize Gemini embeddings client (legacy, kept for backward compatibility)
-        info!("Initializing Gemini embeddings client");
-        let embedding_client = Arc::new(GeminiEmbeddings::new(
-            CONFIG.google_api_key.clone(),
-            CONFIG.gemini_embedding_model.clone(),
-        ));
-
         // Initialize OpenAI embeddings client (primary embeddings)
         info!("Initializing OpenAI embeddings client");
         let openai_embedding_client = Arc::new(OpenAIEmbeddings::new(
             CONFIG.openai_api_key.clone(),
         ));
 
-        // Initialize OpenAI providers for model routing
+        // Initialize OpenAI providers for model routing (4 tiers)
         info!("Initializing OpenAI providers for model routing");
         let fast_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
             OpenAIProvider::gpt51_mini(CONFIG.openai_api_key.clone())
@@ -157,28 +149,33 @@ impl AppState {
             OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
                 .expect("Failed to create GPT-5.1 provider"),
         );
-        let thinker_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
-            OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 Thinker provider"),
+        let code_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+            OpenAIProvider::codex_max(CONFIG.openai_api_key.clone())
+                .expect("Failed to create GPT-5.1-Codex-Max Code provider"),
+        );
+        let agentic_provider: Arc<dyn crate::llm::provider::LlmProvider> = Arc::new(
+            OpenAIProvider::codex_max_agentic(CONFIG.openai_api_key.clone())
+                .expect("Failed to create GPT-5.1-Codex-Max Agentic provider"),
         );
 
-        // Initialize Model Router (Fast/Voice/Thinker tiers)
+        // Initialize Model Router (Fast/Voice/Code/Agentic tiers)
         info!("Initializing Model Router");
         let model_router = Arc::new(ModelRouter::new(
             fast_provider,
             voice_provider,
-            thinker_provider,
+            code_provider,
+            agentic_provider,
             RouterConfig::from_env(),
         ));
 
         // Initialize Qdrant multi-store
         let multi_store = Arc::new(QdrantMultiStore::new(&CONFIG.qdrant_url, "mira").await?);
 
-        // Initialize code intelligence service with embedding support
+        // Initialize code intelligence service with OpenAI embeddings
         let code_intelligence = Arc::new(CodeIntelligenceService::new(
             pool.clone(),
             multi_store.clone(),
-            embedding_client.clone(),
+            openai_embedding_client.clone(),
         ));
 
         // Initialize semantic graph service for concept-based code search
@@ -332,12 +329,12 @@ impl AppState {
                 .with_pattern_matcher(pattern_matcher.clone()),
         );
 
-        // Memory service uses Gemini 3 for analysis with Context Oracle for code intelligence
+        // Memory service uses Gemini 3 for analysis with OpenAI embeddings and Context Oracle
         let memory_service = Arc::new(MemoryService::with_oracle(
             sqlite_store.clone(),
             multi_store.clone(),
             llm_provider.clone(),
-            embedding_client.clone(),
+            openai_embedding_client.clone(),
             Some(context_oracle.clone()),
         ));
 
@@ -398,7 +395,6 @@ impl AppState {
             git_store,
             git_client,
             llm_provider,
-            embedding_client,
             memory_service,
             code_intelligence,
             semantic_graph,
