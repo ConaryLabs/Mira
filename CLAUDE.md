@@ -554,7 +554,7 @@ curl http://localhost:6333/collections
 - `backend/README.md` - Comprehensive backend documentation
 - `backend/WHITEPAPER.md` - Detailed architectural reference
 - `backend/.env.example` - Environment variable template
-- `PROGRESS.md` - **Session progress log (UPDATE AT END OF EACH SESSION)** - Tracks detailed technical progress by milestone/phase including goals, outcomes, files changed, git commits, and technical decisions
+- `SESSION.md` - **Session log (UPDATE AT END OF EACH SESSION)** - Add commit hash and brief summary
 - `HOUSECLEANING_SUMMARY.md` - Complete report of November 2025 refactoring effort
 - `ISSUES_TO_CREATE.md` - Catalogued technical debt items for future work
 - `frontend/docs/STATE_BOUNDARIES.md` - Frontend state management architecture
