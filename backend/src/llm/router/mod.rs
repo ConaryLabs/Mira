@@ -85,6 +85,17 @@ impl ModelRouter {
         Self::new(fast, voice, code, agentic, RouterConfig::from_env())
     }
 
+    /// Create router with a single mock provider for all tiers (for testing)
+    pub fn with_mock(mock_provider: Arc<dyn LlmProvider>) -> Self {
+        Self::new(
+            mock_provider.clone(),
+            mock_provider.clone(),
+            mock_provider.clone(),
+            mock_provider,
+            RouterConfig::default(),
+        )
+    }
+
     /// Check if router is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled

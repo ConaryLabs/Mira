@@ -6,6 +6,7 @@ pub mod helpers;
 pub mod llm;
 pub mod memory;
 pub mod server;
+pub mod testing;
 pub mod tools;
 
 use lazy_static::lazy_static;
@@ -37,6 +38,7 @@ pub struct MiraConfig {
     pub json: tools::JsonConfig,
     pub response: tools::ResponseConfig,
     pub recent_cache: caching::RecentCacheConfig,
+    pub testing: testing::TestingConfig,
 
     // Flat field aliases for backward compatibility
     pub google_api_key: String,
@@ -80,6 +82,7 @@ impl MiraConfig {
         let json = tools::JsonConfig::from_env();
         let response = tools::ResponseConfig::from_env();
         let recent_cache = caching::RecentCacheConfig::from_env();
+        let testing = testing::TestingConfig::from_env();
 
         Self {
             // Flat field aliases
@@ -119,6 +122,7 @@ impl MiraConfig {
             json,
             response,
             recent_cache,
+            testing,
         }
     }
 
