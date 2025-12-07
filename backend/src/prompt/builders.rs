@@ -18,7 +18,8 @@ use crate::memory::features::recall_engine::RecallContext;
 use crate::persona::PersonaOverlay;
 use crate::prompt::context::{
     add_code_fix_requirements, add_code_intelligence_context, add_file_context,
-    add_memory_context, add_project_context, add_repository_structure, add_system_context,
+    add_memory_context, add_project_context, add_repository_structure,
+    add_system_environment, add_current_time, add_system_context,
     add_tool_context, add_tool_usage_hints, add_agentic_persistence, add_parallel_tool_guidance,
     add_preamble_guidance,
 };
@@ -39,6 +40,11 @@ impl UnifiedPromptBuilder {
     ///
     /// USES PERSONA: Yes - personality injected from persona/default.rs
     /// USE CASE: Primary user-facing conversations
+    ///
+    /// CACHE OPTIMIZATION: OpenAI caches prompt prefixes >1024 tokens at 50% discount.
+    /// This function orders content to maximize cache hits:
+    /// - STATIC section (cacheable): persona, system env, tools, guidelines (~1500+ tokens)
+    /// - DYNAMIC section (not cached): timestamp, project, memory, code context
     pub fn build_system_prompt(
         persona: &PersonaOverlay,
         context: &RecallContext,
@@ -50,34 +56,54 @@ impl UnifiedPromptBuilder {
     ) -> String {
         let mut prompt = String::new();
 
-        // 1. Core personality - pure, unmodified
+        // ================================================================
+        // STATIC SECTION (cacheable prefix - OpenAI caches >1024 tokens)
+        // This section should exceed 1024 tokens for optimal cache hits.
+        // Content here is stable within a session.
+        // ================================================================
+
+        // 1. Core personality - pure, unmodified (static)
         prompt.push_str(persona.prompt());
         prompt.push_str("\n\n");
 
-        // 2. System environment (OS, shell, package manager, available tools)
-        add_system_context(&mut prompt, &SYSTEM_CONTEXT);
+        // 2. System environment - OS, shell, tools (static within session)
+        add_system_environment(&mut prompt, &SYSTEM_CONTEXT);
 
-        // 3. Context only - no system architecture notes
-        add_project_context(&mut prompt, metadata, project_id);
-        add_memory_context(&mut prompt, context);
-        add_code_intelligence_context(&mut prompt, code_context); // Code elements
-        add_repository_structure(&mut prompt, file_tree); // Repo structure
+        // 3. Tool definitions (static within session)
         add_tool_context(&mut prompt, tools);
-        add_file_context(&mut prompt, metadata);
 
-        // 3. Light tool usage hints (if code-related)
+        // 4. Tool usage hints and guidelines (static)
         if is_code_related(metadata) {
             add_tool_usage_hints(&mut prompt);
-            // GPT-5.1 best practices: parallel tool calling for efficiency
             add_parallel_tool_guidance(&mut prompt);
-        }
-
-        // 4. Agentic persistence for complex tasks
-        // Always include for code-related conversations to encourage end-to-end completion
-        if is_code_related(metadata) {
             add_agentic_persistence(&mut prompt);
             add_preamble_guidance(&mut prompt);
         }
+
+        // ================================================================
+        // DYNAMIC SECTION (not cached - changes per request)
+        // Content below this point varies and won't benefit from caching.
+        // ================================================================
+
+        prompt.push_str("--- CONTEXT ---\n\n");
+
+        // 5. Current timestamp (dynamic - changes every minute)
+        add_current_time(&mut prompt);
+
+        // 6. Project context (dynamic - varies by project)
+        add_project_context(&mut prompt, metadata, project_id);
+
+        // 7. Memory context (dynamic - varies by conversation)
+        add_memory_context(&mut prompt, context);
+
+        // 8. Code intelligence from semantic search (dynamic)
+        add_code_intelligence_context(&mut prompt, code_context);
+
+        // 9. Repository structure (dynamic - varies by project)
+        add_repository_structure(&mut prompt, file_tree);
+
+        // 10. File context (dynamic - varies by file being viewed)
+        add_file_context(&mut prompt, metadata);
 
         prompt
     }

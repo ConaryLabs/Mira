@@ -32,9 +32,44 @@ impl ToolBuilder {
         self
     }
 
-    /// Build the final tool schema
-    /// OpenAI Chat Completions format (nested function object)
+    /// Build the final tool schema with strict mode enabled (default)
+    ///
+    /// OpenAI Structured Outputs (December 2025 best practice):
+    /// - `strict: true` ensures model output always conforms to schema
+    /// - `additionalProperties: false` required for strict mode
+    /// - Near-zero tool call parsing errors
+    ///
+    /// Use `build_relaxed()` if strict mode causes issues with complex schemas.
     pub fn build(self) -> Value {
+        let mut properties_obj = serde_json::Map::new();
+        for (name, schema) in self.properties {
+            properties_obj.insert(name, schema);
+        }
+
+        json!({
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties_obj,
+                    "required": self.required,
+                    "additionalProperties": false
+                }
+            }
+        })
+    }
+
+    /// Build tool schema without strict mode
+    ///
+    /// Use this fallback if strict mode causes issues with:
+    /// - Complex nested schemas
+    /// - Optional properties with defaults
+    /// - Dynamic or union types
+    #[allow(dead_code)]
+    pub fn build_relaxed(self) -> Value {
         let mut properties_obj = serde_json::Map::new();
         for (name, schema) in self.properties {
             properties_obj.insert(name, schema);

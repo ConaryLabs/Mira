@@ -22,6 +22,36 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 40: 2025-12-06
+
+**Summary:** Optimized OpenAI integration with prompt caching, cached token tracking, and structured outputs.
+
+**Git Commits:**
+- `2d6683c` - Feat: OpenAI optimization - prompt caching, cached tokens, strict mode
+
+**Details:**
+- Implemented 3 key OpenAI optimizations per December 2025 best practices
+- Cached token tracking: Extract `cached_tokens` from response.usage.input_tokens_details
+- Prompt caching: Reordered prompts to place static content (>1024 tokens) first
+- Structured outputs: Added `strict: true` to tool definitions for schema conformance
+
+**Files Modified:**
+- `backend/src/llm/provider/openai/mod.rs` - Cached tokens in parse_response/parse_tool_response + tool conversion
+- `backend/src/llm/provider/openai/types.rs` - Added `strict: Option<bool>` to ResponsesTool
+- `backend/src/prompt/builders.rs` - Reordered prompt sections (static first, then dynamic)
+- `backend/src/prompt/context.rs` - Split `add_system_context` into `add_system_environment` + `add_current_time`
+- `backend/src/operations/tool_builder.rs` - Added `strict: true` + `build_relaxed()` fallback
+
+**Expected Impact:**
+- 50% cost reduction on cached input tokens (OpenAI automatic prefix caching)
+- 80% latency reduction on cached requests
+- Near-zero tool call parsing errors (structured outputs guarantee schema compliance)
+- Better cache hit visibility via token tracking logs
+
+**Test Status:** All 215+ tests pass
+
+---
+
 ### Session 39: 2025-12-06
 
 **Summary:** Added comprehensive integration tests for dual-session architecture with real LLM validation.
