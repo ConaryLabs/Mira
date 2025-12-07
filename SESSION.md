@@ -4,6 +4,71 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 40: OpenAI Integration Optimization (2025-12-06)
+
+**Summary:** Optimized Mira's OpenAI integration following December 2025 best practices for prompt caching, token tracking, and structured outputs.
+
+**Problem:** While the core OpenAI GPT-5.1 integration was solid, we weren't taking advantage of several optimization features:
+1. Cached token tracking was always reporting 0 (missing 50% cost savings visibility)
+2. Prompt structure placed dynamic content early, breaking OpenAI's automatic prefix caching
+3. Tool schemas lacked `strict: true` for structured outputs (allowing non-conforming responses)
+
+**Solution:** Implemented 3 key optimizations across the codebase.
+
+**Work Completed:**
+
+1. **Cached Token Tracking** (`src/llm/provider/openai/mod.rs`):
+   - Extract `cached_tokens` from `response.usage.input_tokens_details.cached_tokens`
+   - Updated both `parse_response()` and `parse_tool_response()`
+   - Updated debug logs: `{} input ({} cached), {} output tokens`
+
+2. **Prompt Structure for Cache Optimization** (`src/prompt/`):
+   - Split `add_system_context()` into:
+     - `add_system_environment()` - static content (OS, shell, tools)
+     - `add_current_time()` - dynamic timestamp
+   - Reordered `build_system_prompt()` for optimal caching:
+     ```
+     STATIC (cacheable prefix >1024 tokens):
+     1. Persona
+     2. System environment
+     3. Tool definitions
+     4. Tool hints/guidelines
+
+     --- CONTEXT --- (boundary marker)
+
+     DYNAMIC (not cached):
+     5. Current timestamp
+     6. Project context
+     7. Memory context
+     8. Code intelligence
+     9. Repository structure
+     10. File context
+     ```
+
+3. **Structured Outputs** (`src/operations/tool_builder.rs`, `src/llm/provider/openai/`):
+   - Added `strict: true` to tool definitions (default in `build()`)
+   - Added `additionalProperties: false` to parameter schemas
+   - Added `build_relaxed()` fallback for complex schemas
+   - Updated `ResponsesTool` struct with `strict: Option<bool>` field
+   - Updated `tools_to_responses()` to handle both formats and preserve strict flag
+
+**Files Modified:**
+- `backend/src/llm/provider/openai/mod.rs` - Cached tokens + tool conversion
+- `backend/src/llm/provider/openai/types.rs` - ResponsesTool strict field
+- `backend/src/prompt/builders.rs` - Prompt reordering
+- `backend/src/prompt/context.rs` - Split system context functions
+- `backend/src/operations/tool_builder.rs` - Strict mode + fallback
+
+**Expected Benefits:**
+- 50% cost reduction on cached input tokens (OpenAI automatic caching)
+- 80% latency reduction on cached requests
+- Near-zero tool call parsing errors (structured outputs)
+- Better visibility into cache hit rates via token tracking
+
+**Test Status:** All 215+ tests passing
+
+---
+
 ## Session 39: Dual-Session Integration Testing (2025-12-06)
 
 **Summary:** Added comprehensive integration tests for dual-session architecture (Voice + Codex), including real LLM tests.

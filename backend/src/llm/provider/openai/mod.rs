@@ -147,12 +147,37 @@ impl OpenAIProvider {
     }
 
     /// Convert tools to Responses API format
+    /// Handles both OpenAI Chat Completions format (from ToolBuilder) and Gemini format
     /// Automatically adds native apply_patch and shell tools for code/agentic tiers
     fn tools_to_responses(&self, tools: &[Value]) -> Vec<ResponsesTool> {
         let mut responses_tools: Vec<ResponsesTool> = tools
             .iter()
             .filter_map(|tool| {
-                // Extract function declarations from Gemini-style tool format
+                // Format 1: OpenAI Chat Completions format (from ToolBuilder)
+                // { "type": "function", "function": { "name": ..., "strict": true, ... } }
+                if tool.get("type").and_then(|t| t.as_str()) == Some("function") {
+                    if let Some(func) = tool.get("function") {
+                        let name = func.get("name")?.as_str()?.to_string();
+                        let description = func
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let parameters = func.get("parameters").cloned();
+                        let strict = func.get("strict").and_then(|s| s.as_bool());
+
+                        return Some(vec![ResponsesTool {
+                            tool_type: "function".to_string(),
+                            name: Some(name),
+                            description: Some(description),
+                            parameters,
+                            strict,
+                        }]);
+                    }
+                }
+
+                // Format 2: Gemini-style tool format (legacy)
+                // { "functionDeclarations": [{ "name": ..., ... }] }
                 if let Some(declarations) = tool.get("functionDeclarations") {
                     if let Some(arr) = declarations.as_array() {
                         return Some(arr.iter().filter_map(|decl| {
@@ -169,6 +194,7 @@ impl OpenAIProvider {
                                 name: Some(name),
                                 description: Some(description),
                                 parameters,
+                                strict: Some(true), // Enable strict by default for legacy format
                             })
                         }).collect::<Vec<_>>());
                     }
@@ -291,17 +317,21 @@ impl OpenAIProvider {
             .and_then(|u| u.output_tokens_details.as_ref())
             .map(|d| d.reasoning_tokens)
             .unwrap_or(0);
+        let cached_tokens = usage
+            .and_then(|u| u.input_tokens_details.as_ref())
+            .map(|d| d.cached_tokens)
+            .unwrap_or(0);
 
         let tokens = TokenUsage {
             input: usage.map(|u| u.input_tokens).unwrap_or(0),
             output: usage.map(|u| u.output_tokens).unwrap_or(0),
             reasoning: reasoning_tokens,
-            cached: 0,
+            cached: cached_tokens,
         };
 
         debug!(
-            "OpenAI {} response: {} input, {} output tokens ({}ms)",
-            self.model, tokens.input, tokens.output, latency_ms
+            "OpenAI {} response: {} input ({} cached), {} output tokens ({}ms)",
+            self.model, tokens.input, tokens.cached, tokens.output, latency_ms
         );
 
         Ok(Response {
@@ -394,19 +424,24 @@ impl OpenAIProvider {
             .and_then(|u| u.output_tokens_details.as_ref())
             .map(|d| d.reasoning_tokens)
             .unwrap_or(0);
+        let cached_tokens = usage
+            .and_then(|u| u.input_tokens_details.as_ref())
+            .map(|d| d.cached_tokens)
+            .unwrap_or(0);
 
         let tokens = TokenUsage {
             input: usage.map(|u| u.input_tokens).unwrap_or(0),
             output: usage.map(|u| u.output_tokens).unwrap_or(0),
             reasoning: reasoning_tokens,
-            cached: 0,
+            cached: cached_tokens,
         };
 
         debug!(
-            "OpenAI {} tool response: {} calls, {} input, {} output tokens",
+            "OpenAI {} tool response: {} calls, {} input ({} cached), {} output tokens",
             self.model,
             function_calls.len(),
             tokens.input,
+            tokens.cached,
             tokens.output
         );
 

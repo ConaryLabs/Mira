@@ -243,6 +243,10 @@ pub struct ResponsesTool {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Value>,
+    /// Enable strict mode for structured outputs (near-zero parsing errors)
+    /// When true, model output always conforms to the parameter schema
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
 }
 
 /// OpenAI Responses API response
@@ -593,6 +597,7 @@ pub fn native_apply_patch_tool() -> ResponsesTool {
         name: None,
         description: None,
         parameters: None,
+        strict: None, // Native tools have their own semantics
     }
 }
 
@@ -603,6 +608,7 @@ pub fn native_shell_tool() -> ResponsesTool {
         name: None,
         description: None,
         parameters: None,
+        strict: None, // Native tools have their own semantics
     }
 }
 

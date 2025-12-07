@@ -12,41 +12,60 @@ use crate::system::SystemContext;
 use crate::tools::types::Tool;
 use chrono::Utc;
 
-/// Add system environment context to the prompt
+/// Add static system environment context to the prompt (cacheable prefix)
 /// This helps the LLM use platform-appropriate commands (apt vs brew vs dnf, etc.)
-/// Also includes current date/time so the LLM knows "today's date" without being told
-pub fn add_system_context(prompt: &mut String, context: &SystemContext) {
+///
+/// CACHE OPTIMIZATION: This function contains ONLY static content that doesn't
+/// change within a session. OpenAI caches prompt prefixes >1024 tokens at 50% discount.
+/// Keep this in the static section of the prompt for optimal cache hits.
+pub fn add_system_environment(prompt: &mut String, context: &SystemContext) {
     prompt.push_str("[SYSTEM ENVIRONMENT]\n");
 
-    // Current date and time (so LLM knows "today" without being told)
-    let now = chrono::Local::now();
-    prompt.push_str(&format!(
-        "Current time: {} ({})\n",
-        now.format("%A, %B %d, %Y at %I:%M %p"),
-        now.format("%Z")
-    ));
-
-    // OS info
+    // OS info (static within session)
     prompt.push_str(&format!(
         "OS: {} ({})\n",
         context.os.version, context.os.arch
     ));
 
-    // Shell
+    // Shell (static within session)
     prompt.push_str(&format!("Shell: {}\n", context.shell.name));
 
-    // Package manager
+    // Package manager (static within session)
     if let Some(pm) = context.primary_package_manager() {
         prompt.push_str(&format!("Package manager: {}\n", pm));
     }
 
-    // Available tools (compact list)
+    // Available tools (static within session)
     if !context.tools.is_empty() {
         let tool_names: Vec<&str> = context.tools.iter().map(|t| t.name.as_str()).collect();
         prompt.push_str(&format!("Available tools: {}\n", tool_names.join(", ")));
     }
 
     prompt.push_str("\nUse platform-appropriate commands for this system.\n\n");
+}
+
+/// Add current timestamp to the prompt (dynamic - must be after static content)
+///
+/// CACHE OPTIMIZATION: This function contains DYNAMIC content that changes every minute.
+/// Place this AFTER the static prefix (>1024 tokens) so it doesn't break cache hits.
+pub fn add_current_time(prompt: &mut String) {
+    let now = chrono::Local::now();
+    prompt.push_str(&format!(
+        "[CURRENT TIME: {} ({})]\n\n",
+        now.format("%A, %B %d, %Y at %I:%M %p"),
+        now.format("%Z")
+    ));
+}
+
+/// Add system environment context to the prompt (legacy - combines static + dynamic)
+/// Kept for backward compatibility with code_fix_prompt and other callers.
+///
+/// NOTE: For new code, prefer add_system_environment() + add_current_time() separately
+/// to maximize prompt cache hits.
+#[allow(dead_code)]
+pub fn add_system_context(prompt: &mut String, context: &SystemContext) {
+    add_system_environment(prompt, context);
+    add_current_time(prompt);
 }
 
 /// Add tool usage hints - streamlined for GPT-5.1's robust tool calling
