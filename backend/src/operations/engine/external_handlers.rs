@@ -25,7 +25,7 @@ static RE_SNIPPET: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Handles external operations (web, commands)
 pub struct ExternalHandlers {
-    project_dir: PathBuf,
+    project_dir: std::sync::RwLock<PathBuf>,
     http_client: reqwest::Client,
     sudo_service: Option<Arc<SudoPermissionService>>,
 }
@@ -42,7 +42,7 @@ impl ExternalHandlers {
             });
 
         Self {
-            project_dir,
+            project_dir: std::sync::RwLock::new(project_dir),
             http_client,
             sudo_service: None,
         }
@@ -52,6 +52,15 @@ impl ExternalHandlers {
     pub fn with_sudo_service(mut self, sudo_service: Arc<SudoPermissionService>) -> Self {
         self.sudo_service = Some(sudo_service);
         self
+    }
+
+    /// Update the project directory for command execution
+    /// This allows commands with relative paths to resolve correctly
+    pub fn set_project_dir(&self, path: PathBuf) {
+        info!("[ExternalHandlers] Setting project directory: {}", path.display());
+        if let Ok(mut dir) = self.project_dir.write() {
+            *dir = path;
+        }
     }
 
     /// Execute an external tool call
@@ -334,6 +343,11 @@ impl ExternalHandlers {
             .get("reason")
             .and_then(|v| v.as_str());
 
+        // Get the current project directory from the RwLock
+        let current_project_dir = self.project_dir.read()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| PathBuf::from("."));
+
         let working_dir = args
             .get("working_directory")
             .and_then(|v| v.as_str())
@@ -343,10 +357,10 @@ impl ExternalHandlers {
                 if path.is_absolute() {
                     path
                 } else {
-                    self.project_dir.join(s)
+                    current_project_dir.join(s)
                 }
             })
-            .unwrap_or_else(|| self.project_dir.clone());
+            .unwrap_or_else(|| current_project_dir.clone());
 
         let timeout_secs = args
             .get("timeout_seconds")

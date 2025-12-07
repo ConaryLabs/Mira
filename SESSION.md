@@ -6,6 +6,37 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 45: 2025-12-07
+
+**Summary:** Implemented mira-test CLI and testing framework (Phase 1).
+
+**New Testing Infrastructure (`src/testing/`):**
+- `harness/client.rs` - TestClient with WebSocket event capture, `send_and_capture()` method
+- `harness/assertions.rs` - 15+ assertion types (ToolExecuted, ResponseContains, FileExists, etc.)
+- `harness/runner.rs` - ScenarioRunner with setup/teardown, step execution, result aggregation
+- `scenarios/types.rs` - TestScenario, TestStep, ExpectedEvent, result types
+- `scenarios/parser.rs` - YAML parser with template variables (`{{uuid}}`, `{{timestamp}}`)
+
+**CLI Binary (`src/bin/mira_test.rs`):**
+```bash
+mira-test run ./scenarios/           # Run all scenarios
+mira-test list ./scenarios/          # List available scenarios
+mira-test validate ./scenarios/      # Validate YAML syntax
+mira-test run --tags smoke           # Filter by tags
+```
+
+**Sample Scenarios (`scenarios/`):**
+- `smoke_test.yaml` - Basic greeting + file read test
+- `file_operations.yaml` - File creation and reading tests
+
+**Bug Fix:** Fixed `execute_command` using wrong project directory (ExternalHandlers issue).
+
+**Dependencies Added:** `serde_yaml` for YAML parsing.
+
+**Files Changed:** `Cargo.toml`, `lib.rs`, `external_handlers.rs`, `tool_router/mod.rs`, new testing module
+
+---
+
 ## Session 44: 2025-12-07 (`6ba7252`)
 
 **Summary:** Fixed conversation history bug and refactored context architecture for coherent memory strategy.

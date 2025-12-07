@@ -186,11 +186,13 @@ impl ToolRouter {
             }
         }
 
-        // Set file handler's project directory if we have a project_id
-        // This allows file operations to use the project's root path
+        // Set file and external handler's project directory if we have a project_id
+        // This allows file operations and commands to use the project's root path
         if let (Some(pid), Some(store)) = (project_id, &self.project_store) {
             if let Ok(Some(project)) = store.get_project(pid).await {
-                self.file_handlers.set_project_dir(PathBuf::from(&project.path));
+                let project_path = PathBuf::from(&project.path);
+                self.file_handlers.set_project_dir(project_path.clone());
+                self.external_handlers.set_project_dir(project_path);
             }
         }
 
@@ -210,29 +212,35 @@ impl ToolRouter {
         system_access_mode: &SystemAccessMode,
         session_id: &str,
     ) -> Result<Value> {
-        // Configure file handlers based on access mode
+        // Configure file and external handlers based on access mode
         match system_access_mode {
             SystemAccessMode::Project => {
                 // Default behavior: restrict to project directory only
                 // Set project dir if available
                 if let (Some(pid), Some(store)) = (project_id, &self.project_store) {
                     if let Ok(Some(project)) = store.get_project(pid).await {
-                        self.file_handlers.set_project_dir(PathBuf::from(&project.path));
+                        let project_path = PathBuf::from(&project.path);
+                        self.file_handlers.set_project_dir(project_path.clone());
                         self.file_handlers.set_access_mode(SystemAccessMode::Project);
+                        // Also set external handlers project dir for command execution
+                        self.external_handlers.set_project_dir(project_path);
                     }
                 }
             }
             SystemAccessMode::Home => {
                 // Allow access to home directory and below
                 if let Some(home) = dirs::home_dir() {
-                    self.file_handlers.set_project_dir(home);
+                    self.file_handlers.set_project_dir(home.clone());
                     self.file_handlers.set_access_mode(SystemAccessMode::Home);
+                    self.external_handlers.set_project_dir(home);
                 }
             }
             SystemAccessMode::System => {
                 // Allow unrestricted filesystem access
-                self.file_handlers.set_project_dir(PathBuf::from("/"));
+                let root = PathBuf::from("/");
+                self.file_handlers.set_project_dir(root.clone());
                 self.file_handlers.set_access_mode(SystemAccessMode::System);
+                self.external_handlers.set_project_dir(root);
             }
         }
 
