@@ -4,6 +4,47 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 41: Activity Panel Real-Time Display Fix (2025-12-06)
+
+**Summary:** Fixed Activity Panel to display real-time activity (tool executions, agents, background tasks) like Claude Code.
+
+**Problem:** The Activity Panel UI existed and was well-designed, but had critical wiring gaps:
+1. `operation.tool_executed` events received but never stored (handler never called `addToolExecution()`)
+2. Agent events (`operation.agent_*`) had no handlers
+3. Codex events (`codex.*`) had no handlers
+4. Panel required manual opening
+
+**Solution:** Added missing event handlers in WebSocket message handler and auto-open behavior.
+
+**Work Completed:**
+
+1. **Tool Execution Handler** (`useWebSocketMessageHandler.ts`):
+   - Fixed `operation.tool_executed` to call `addToolExecution(streamingMessageId, {...})`
+   - Extracts toolName, toolType, summary, success, details, timestamp
+
+2. **Agent Event Handlers** (`useWebSocketMessageHandler.ts`):
+   - `operation.agent_spawned` - Creates tool execution entry with type 'agent'
+   - `operation.agent_progress` - Logs progress (could update entry if needed)
+   - `operation.agent_completed` - Creates completion entry with iterations used
+   - `operation.agent_failed` - Creates failure entry with error message
+
+3. **Codex Event Handlers** (`useWebSocketMessageHandler.ts`):
+   - `codex.spawned` - Creates tool execution with type 'codex'
+   - `codex.progress` - Logs progress
+   - `codex.completed` - Creates completion entry with summary
+   - `codex.failed` - Creates failure entry with error
+
+4. **Auto-Open Panel** (`useActivityStore.ts`):
+   - `setCurrentOperation()` now sets `isPanelVisible: true`
+
+**Files Modified:**
+- `frontend/src/hooks/useWebSocketMessageHandler.ts` - Added ~130 lines of event handlers
+- `frontend/src/stores/useActivityStore.ts` - Added auto-open on activity start
+
+**Build Status:** TypeScript passes, frontend builds successfully
+
+---
+
 ## Session 40: OpenAI Integration Optimization (2025-12-06)
 
 **Summary:** Optimized Mira's OpenAI integration following December 2025 best practices for prompt caching, token tracking, and structured outputs.

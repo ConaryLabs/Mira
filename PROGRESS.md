@@ -22,6 +22,32 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 41: 2025-12-06
+
+**Summary:** Fixed Activity Panel to display real-time tool executions, agent events, and codex background tasks.
+
+**Git Commits:**
+- (pending) - Fix: Wire Activity Panel to display real-time activity
+
+**Details:**
+- Fixed critical bug: WebSocket handler received `operation.tool_executed` events but never called `addToolExecution()`
+- Added handlers for all agent lifecycle events (spawned, progress, completed, failed)
+- Added handlers for all codex background task events (spawned, progress, completed, failed)
+- Activity Panel now auto-opens when operations start
+
+**Files Modified:**
+- `frontend/src/hooks/useWebSocketMessageHandler.ts` - Added ~130 lines of event handlers
+- `frontend/src/stores/useActivityStore.ts` - Added auto-open panel on activity start
+
+**What Was Broken:**
+- ToolExecutionsSection always empty (handler never stored tool executions)
+- Agent/Codex events had no handlers at all
+- Panel required manual opening
+
+**Build Status:** TypeScript check passes, frontend builds successfully
+
+---
+
 ### Session 40: 2025-12-06
 
 **Summary:** Optimized OpenAI integration with prompt caching, cached token tracking, and structured outputs.
