@@ -14,6 +14,8 @@ export interface Toast {
   timestamp: number;
 }
 
+export type SystemAccessMode = 'project' | 'home' | 'system';
+
 interface AppState {
   // UI State
   showArtifacts: boolean;
@@ -42,9 +44,12 @@ interface AppState {
   // Rate Limiting
   canSendMessage: boolean;
   rateLimitUntil: number | null;
-  
+
   // Toast Notifications
   toasts: Toast[];
+
+  // System Access Mode (temporary elevated filesystem access)
+  systemAccessMode: SystemAccessMode;
   
   // Actions - UI
   setShowArtifacts: (show: boolean) => void;
@@ -83,7 +88,10 @@ interface AppState {
   addToast: (toast: Omit<Toast, 'id' | 'timestamp'>) => void;
   removeToast: (id: string) => void;
   clearToasts: () => void;
-  
+
+  // Actions - System Access
+  setSystemAccessMode: (mode: SystemAccessMode) => void;
+
   // Actions - Reset
   reset: () => void;
 }
@@ -170,6 +178,9 @@ const initialState = {
 
   // Toasts
   toasts: [],
+
+  // System Access (defaults to project-only, resets on page reload)
+  systemAccessMode: 'project' as SystemAccessMode,
 };
 
 export const useAppState = create<AppState>()(
@@ -340,7 +351,10 @@ export const useAppState = create<AppState>()(
       })),
       
       clearToasts: () => set({ toasts: [] }),
-      
+
+      // ===== System Access Actions =====
+      setSystemAccessMode: (mode) => set({ systemAccessMode: mode }),
+
       // ===== Reset Action =====
       reset: () => {
         set({

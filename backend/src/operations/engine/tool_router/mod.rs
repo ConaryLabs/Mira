@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
+use crate::api::ws::message::SystemAccessMode;
 use crate::llm::provider::LlmProvider;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::project::guidelines::ProjectGuidelinesService;
@@ -195,6 +196,53 @@ impl ToolRouter {
 
         // Delegate to regular routing for other tools
         self.route_tool_call(tool_name, arguments).await
+    }
+
+    /// Route a tool call with access mode control
+    ///
+    /// This is the primary entry point that enforces filesystem access restrictions
+    /// based on the user's selected access mode (project, home, or system).
+    pub async fn route_tool_call_with_access_mode(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+        project_id: Option<&str>,
+        system_access_mode: &SystemAccessMode,
+        session_id: &str,
+    ) -> Result<Value> {
+        // Configure file handlers based on access mode
+        match system_access_mode {
+            SystemAccessMode::Project => {
+                // Default behavior: restrict to project directory only
+                // Set project dir if available
+                if let (Some(pid), Some(store)) = (project_id, &self.project_store) {
+                    if let Ok(Some(project)) = store.get_project(pid).await {
+                        self.file_handlers.set_project_dir(PathBuf::from(&project.path));
+                        self.file_handlers.set_access_mode(SystemAccessMode::Project);
+                    }
+                }
+            }
+            SystemAccessMode::Home => {
+                // Allow access to home directory and below
+                if let Some(home) = dirs::home_dir() {
+                    self.file_handlers.set_project_dir(home);
+                    self.file_handlers.set_access_mode(SystemAccessMode::Home);
+                }
+            }
+            SystemAccessMode::System => {
+                // Allow unrestricted filesystem access
+                self.file_handlers.set_project_dir(PathBuf::from("/"));
+                self.file_handlers.set_access_mode(SystemAccessMode::System);
+            }
+        }
+
+        info!(
+            "[ROUTER] Routing {} with access_mode={:?}",
+            tool_name, system_access_mode
+        );
+
+        // Delegate to context-aware routing
+        self.route_tool_call_with_context(tool_name, arguments, project_id, session_id).await
     }
 
     /// Inject project path into arguments for external tools

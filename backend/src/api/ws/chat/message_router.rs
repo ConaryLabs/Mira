@@ -46,9 +46,10 @@ impl MessageRouter {
             WsClientMessage::Chat {
                 content,
                 project_id,
+                system_access_mode,
                 metadata,
             } => {
-                self.handle_chat_message(content, project_id, metadata)
+                self.handle_chat_message(content, project_id, system_access_mode, metadata)
                     .await
             }
             WsClientMessage::ProjectCommand { method, params } => {
@@ -89,17 +90,19 @@ impl MessageRouter {
         &self,
         content: String,
         project_id: Option<String>,
+        system_access_mode: crate::api::ws::message::SystemAccessMode,
         metadata: Option<MessageMetadata>,
     ) -> Result<()> {
         info!(
-            "Processing chat message from {} (routing via LLM) with session_id: {}",
-            self.addr, self.session_id
+            "Processing chat message from {} (routing via LLM) with session_id: {}, access_mode: {:?}",
+            self.addr, self.session_id, system_access_mode
         );
 
         let request = ChatRequest {
             session_id: self.session_id.clone(),
             content,
             project_id,
+            system_access_mode,
             metadata,
         };
 

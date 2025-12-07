@@ -20,6 +20,7 @@ pub mod tool_router;
 
 pub use events::OperationEngineEvent;
 
+use crate::api::ws::message::SystemAccessMode;
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
 use crate::checkpoint::CheckpointManager;
@@ -169,6 +170,7 @@ impl OperationEngine {
         session_id: &str,
         user_content: &str,
         project_id: Option<&str>,
+        system_access_mode: SystemAccessMode,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
@@ -178,6 +180,7 @@ impl OperationEngine {
                 session_id,
                 user_content,
                 project_id,
+                system_access_mode,
                 cancel_token,
                 event_tx,
             )
