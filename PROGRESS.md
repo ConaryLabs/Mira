@@ -27,7 +27,7 @@ This file tracks detailed technical progress for the Mira project, organized by 
 **Summary:** Fixed Activity Panel to display real-time tool executions, agent events, and codex background tasks.
 
 **Git Commits:**
-- (pending) - Fix: Wire Activity Panel to display real-time activity
+- `a85dbf4` - Fix: Wire Activity Panel to display real-time activity
 
 **Details:**
 - Fixed critical bug: WebSocket handler received `operation.tool_executed` events but never called `addToolExecution()`
