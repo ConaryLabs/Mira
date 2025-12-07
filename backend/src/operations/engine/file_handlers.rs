@@ -10,6 +10,8 @@ use std::sync::{LazyLock, RwLock};
 use tokio::fs;
 use tracing::{info, warn};
 
+use crate::api::ws::message::SystemAccessMode;
+
 // Pre-compiled regex patterns for symbol extraction (compiled once at module load)
 // Rust patterns
 static RE_RUST_FN: LazyLock<Regex> = LazyLock::new(|| {
@@ -51,6 +53,8 @@ pub struct FileHandlers {
     /// Optional project-specific working directory (overrides base_dir when set)
     /// Uses RwLock for interior mutability - allows updating without &mut self
     project_dir: RwLock<Option<PathBuf>>,
+    /// Access mode controlling filesystem restrictions
+    access_mode: RwLock<SystemAccessMode>,
 }
 
 impl FileHandlers {
@@ -59,6 +63,7 @@ impl FileHandlers {
         Self {
             base_dir,
             project_dir: RwLock::new(None),
+            access_mode: RwLock::new(SystemAccessMode::Project),
         }
     }
 
@@ -75,6 +80,23 @@ impl FileHandlers {
     pub fn clear_project_dir(&self) {
         if let Ok(mut guard) = self.project_dir.write() {
             *guard = None;
+        }
+    }
+
+    /// Set the access mode for filesystem restrictions
+    pub fn set_access_mode(&self, mode: SystemAccessMode) {
+        info!("[FileHandlers] Setting access mode: {:?}", mode);
+        if let Ok(mut guard) = self.access_mode.write() {
+            *guard = mode;
+        }
+    }
+
+    /// Get the current access mode
+    fn get_access_mode(&self) -> SystemAccessMode {
+        if let Ok(guard) = self.access_mode.read() {
+            guard.clone()
+        } else {
+            SystemAccessMode::Project
         }
     }
 
@@ -527,30 +549,80 @@ impl FileHandlers {
         }))
     }
 
-    /// Resolve a relative path to an absolute path within the effective base directory
+    /// Resolve a path based on the current access mode
+    ///
+    /// Access modes:
+    /// - Project: Paths must be within the project directory (base_dir/project_dir)
+    /// - Home: Paths must be within the user's home directory
+    /// - System: Any absolute path is allowed (no restrictions)
     fn resolve_path(&self, path: &str) -> Result<PathBuf> {
         let path = Path::new(path);
+        let access_mode = self.get_access_mode();
+
+        // Handle absolute paths
+        if path.is_absolute() {
+            return self.validate_absolute_path(path, &access_mode);
+        }
+
+        // Handle relative paths
         let base = self.effective_base_dir();
 
-        // Prevent directory traversal attacks
-        if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-            return Err(anyhow::anyhow!(
-                "Path traversal not allowed: {}",
-                path.display()
-            ));
+        // In Project mode, prevent directory traversal attacks
+        if access_mode == SystemAccessMode::Project {
+            if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                return Err(anyhow::anyhow!(
+                    "Path traversal not allowed in project mode: {}",
+                    path.display()
+                ));
+            }
         }
 
         let full_path = base.join(path);
 
-        // Ensure the resolved path is still within base directory
-        if !full_path.starts_with(&base) {
-            return Err(anyhow::anyhow!(
-                "Path outside project directory: {}",
-                path.display()
-            ));
+        // Validate the resolved path based on access mode
+        self.validate_absolute_path(&full_path, &access_mode)
+    }
+
+    /// Validate an absolute path based on access mode restrictions
+    fn validate_absolute_path(&self, path: &Path, access_mode: &SystemAccessMode) -> Result<PathBuf> {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+        match access_mode {
+            SystemAccessMode::Project => {
+                // Must be within the effective base directory
+                let base = self.effective_base_dir();
+                if !canonical.starts_with(&base) {
+                    return Err(anyhow::anyhow!(
+                        "Path outside project directory (access mode: project): {}. Base: {}",
+                        canonical.display(),
+                        base.display()
+                    ));
+                }
+            }
+            SystemAccessMode::Home => {
+                // Must be within the user's home directory
+                let home = dirs::home_dir().ok_or_else(|| {
+                    anyhow::anyhow!("Cannot determine home directory")
+                })?;
+                if !canonical.starts_with(&home) {
+                    return Err(anyhow::anyhow!(
+                        "Path outside home directory (access mode: home): {}. Home: {}",
+                        canonical.display(),
+                        home.display()
+                    ));
+                }
+            }
+            SystemAccessMode::System => {
+                // Allow any path - but still validate it exists or can be created
+                // No restrictions on System mode
+                info!(
+                    "[FileHandlers] System mode: allowing access to {}",
+                    canonical.display()
+                );
+            }
         }
 
-        Ok(full_path)
+        Ok(canonical)
     }
 
     /// Summarize a file without reading full content (token optimization)

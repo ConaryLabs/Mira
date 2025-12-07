@@ -1,6 +1,7 @@
 // src/operations/engine/orchestration.rs
 // Main operation orchestration: run_operation method (Gemini 3 Pro)
 
+use crate::api::ws::message::SystemAccessMode;
 use crate::llm::provider::Message;
 use crate::memory::service::MemoryService;
 use crate::operations::ContextLoader;
@@ -51,6 +52,7 @@ impl Orchestrator {
         session_id: &str,
         user_content: &str,
         project_id: Option<&str>,
+        system_access_mode: SystemAccessMode,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
@@ -61,6 +63,7 @@ impl Orchestrator {
                 session_id,
                 user_content,
                 project_id,
+                system_access_mode,
                 cancel_token,
                 event_tx,
             )
@@ -88,6 +91,7 @@ impl Orchestrator {
         session_id: &str,
         user_content: &str,
         project_id: Option<&str>,
+        system_access_mode: SystemAccessMode,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
@@ -167,13 +171,14 @@ impl Orchestrator {
             .await?;
 
         // Use LLM orchestration
-        info!("[ENGINE] Using LLM orchestration");
+        info!("[ENGINE] Using LLM orchestration with access_mode={:?}", system_access_mode);
         self.execute_with_llm(
             operation_id,
             session_id,
             user_content,
             system_prompt,
             project_id,
+            system_access_mode,
             event_tx,
         )
         .await
@@ -186,6 +191,7 @@ impl Orchestrator {
         user_content: &str,
         system_prompt: String,
         project_id: Option<&str>,
+        system_access_mode: SystemAccessMode,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
         let llm = match &self.llm_orchestrator {
@@ -205,7 +211,16 @@ impl Orchestrator {
         // Execute with LLM orchestrator
         // Use session_id as user_id for budget tracking (they map 1:1 in current design)
         let response = llm
-            .execute_with_context(session_id, operation_id, messages, tools, project_id, session_id, event_tx)
+            .execute_with_context(
+                session_id,
+                operation_id,
+                messages,
+                tools,
+                project_id,
+                system_access_mode,
+                session_id,
+                event_tx,
+            )
             .await
             .context("LLM orchestration failed")?;
 

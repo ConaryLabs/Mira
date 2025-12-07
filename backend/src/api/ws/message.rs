@@ -31,6 +31,16 @@ pub struct TextSelection {
     pub text: Option<String>,
 }
 
+/// System access mode for filesystem operations
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemAccessMode {
+    #[default]
+    Project,  // Only project directory
+    Home,     // Home directory and subdirectories
+    System,   // Full filesystem access
+}
+
 /// Represents all possible messages sent from the client (frontend) to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -38,6 +48,8 @@ pub enum WsClientMessage {
     Chat {
         content: String,
         project_id: Option<String>,
+        #[serde(default)]
+        system_access_mode: SystemAccessMode,
         metadata: Option<MessageMetadata>,
     },
     Command {

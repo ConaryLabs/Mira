@@ -5,7 +5,7 @@
 import { useCallback } from 'react';
 import { useWebSocketStore } from '../stores/useWebSocketStore';
 import { useChatStore } from '../stores/useChatStore';
-import { useAppState, useArtifactState } from '../stores/useAppState';
+import { useAppState, useArtifactState, SystemAccessMode } from '../stores/useAppState';
 import { useCurrentUser } from '../stores/useAuthStore';
 import { detectLanguage } from '../utils/language';
 
@@ -13,7 +13,7 @@ export const useChatMessaging = () => {
   const send = useWebSocketStore(state => state.send);
   const addMessage = useChatStore(state => state.addMessage);
   const setWaitingForResponse = useChatStore(state => state.setWaitingForResponse);
-  const { currentProject, modifiedFiles, currentBranch } = useAppState();
+  const { currentProject, modifiedFiles, currentBranch, systemAccessMode } = useAppState();
   const { activeArtifact } = useArtifactState();
   const user = useCurrentUser();
 
@@ -43,15 +43,16 @@ export const useChatMessaging = () => {
       type: 'chat',
       content: trimmedContent,
       project_id: currentProject?.id || null,
+      system_access_mode: systemAccessMode,
       metadata: {
         session_id: user?.id || 'anonymous',
         timestamp: Date.now(),
-        
+
         // FILE CONTEXT (use path instead of linkedFile)
         file_path: activeArtifact?.path || null,
-        file_content: activeArtifact?.content || null, 
+        file_content: activeArtifact?.content || null,
         language: activeArtifact ? detectLanguage(activeArtifact.path) : null,
-        
+
         // PROJECT CONTEXT
         has_repository: currentProject?.has_repository || false,
         current_branch: currentBranch || 'main',
@@ -76,7 +77,7 @@ export const useChatMessaging = () => {
       // Clear waiting state on error
       setWaitingForResponse(false);
     }
-  }, [send, currentProject, activeArtifact, modifiedFiles, currentBranch, addMessage, setWaitingForResponse]);
+  }, [send, currentProject, activeArtifact, modifiedFiles, currentBranch, systemAccessMode, addMessage, setWaitingForResponse]);
 
   const addSystemMessage = useCallback((content: string) => {
     addMessage({

@@ -9,6 +9,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
+use crate::api::ws::message::SystemAccessMode;
 use crate::budget::BudgetTracker;
 use crate::cache::LlmCache;
 use crate::checkpoint::CheckpointManager;
@@ -328,9 +329,18 @@ impl LlmOrchestrator {
         tools: Vec<Value>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
-        // Use default context (no project_id or session_id)
-        self.execute_with_context(user_id, operation_id, messages, tools, None, operation_id, event_tx)
-            .await
+        // Use default context (no project_id or session_id, default access mode)
+        self.execute_with_context(
+            user_id,
+            operation_id,
+            messages,
+            tools,
+            None,
+            SystemAccessMode::default(),
+            operation_id,
+            event_tx,
+        )
+        .await
     }
 
     /// Execute a request with tool calling support and project context
@@ -341,12 +351,22 @@ impl LlmOrchestrator {
         messages: Vec<Message>,
         tools: Vec<Value>,
         project_id: Option<&str>,
+        system_access_mode: SystemAccessMode,
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
-        info!("[ORCHESTRATOR] Executing with LLM");
-        self.execute_with_tools(user_id, operation_id, messages, tools, project_id, session_id, event_tx)
-            .await
+        info!("[ORCHESTRATOR] Executing with LLM, access_mode={:?}", system_access_mode);
+        self.execute_with_tools(
+            user_id,
+            operation_id,
+            messages,
+            tools,
+            project_id,
+            system_access_mode,
+            session_id,
+            event_tx,
+        )
+        .await
     }
 
     /// Execute using LLM with full tool calling loop
@@ -357,6 +377,7 @@ impl LlmOrchestrator {
         mut messages: Vec<Message>,
         tools: Vec<Value>,
         project_id: Option<&str>,
+        system_access_mode: SystemAccessMode,
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<String> {
@@ -563,7 +584,7 @@ impl LlmOrchestrator {
                     .await;
 
                 let tool_start = Instant::now();
-                let result = self.execute_tool(operation_id, func_call, project_id, session_id, event_tx).await?;
+                let result = self.execute_tool(operation_id, func_call, project_id, &system_access_mode, session_id, event_tx).await?;
                 debug!(
                     operation_id = %operation_id,
                     tool_name = %func_call.name,
@@ -640,6 +661,7 @@ impl LlmOrchestrator {
         operation_id: &str,
         func_call: &FunctionCall,
         project_id: Option<&str>,
+        system_access_mode: &SystemAccessMode,
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<Value> {
@@ -742,7 +764,7 @@ impl LlmOrchestrator {
         // Route to tool router if available
         let (result, success, summary) = if let Some(router) = &self.tool_router {
             // Use context-aware routing for tools that need project/session info
-            match router.route_tool_call_with_context(&func_call.name, func_call.arguments.clone(), project_id, session_id).await {
+            match router.route_tool_call_with_access_mode(&func_call.name, func_call.arguments.clone(), project_id, system_access_mode, session_id).await {
                 Ok(result) => {
                     // Check if result indicates success (some tools return success: false in response)
                     let is_success = result.get("success")

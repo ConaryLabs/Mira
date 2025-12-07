@@ -1,16 +1,17 @@
 // frontend/src/components/IntelligencePanel.tsx
-// Main panel for code intelligence features: budget, search, co-change, build errors, tools, etc.
+// Main panel for code intelligence features: budget, search, co-change, build errors, tools, permissions, etc.
 
 import React, { useRef, useEffect, useState } from 'react';
-import { X, Brain, GripVertical, DollarSign, Search, GitBranch, AlertTriangle, Wrench, Users } from 'lucide-react';
+import { X, Brain, GripVertical, DollarSign, Search, GitBranch, AlertTriangle, Wrench, Shield } from 'lucide-react';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { BudgetTracker } from './BudgetTracker';
 import { SemanticSearch } from './SemanticSearch';
 import { CoChangeSuggestions } from './CoChangeSuggestions';
 import { BuildErrorsPanel } from './BuildErrorsPanel';
 import { ToolsDashboard } from './ToolsDashboard';
+import { PermissionsPanel } from './PermissionsPanel';
 
-type TabId = 'budget' | 'search' | 'cochange' | 'builds' | 'tools' | 'expertise';
+type TabId = 'budget' | 'search' | 'cochange' | 'builds' | 'tools' | 'permissions';
 
 interface Tab {
   id: TabId;
@@ -24,7 +25,7 @@ const TABS: Tab[] = [
   { id: 'cochange', label: 'Co-Change', icon: <GitBranch className="w-4 h-4" /> },
   { id: 'builds', label: 'Builds', icon: <AlertTriangle className="w-4 h-4" /> },
   { id: 'tools', label: 'Tools', icon: <Wrench className="w-4 h-4" /> },
-  { id: 'expertise', label: 'Experts', icon: <Users className="w-4 h-4" /> },
+  { id: 'permissions', label: 'Access', icon: <Shield className="w-4 h-4" /> },
 ];
 
 export function IntelligencePanel() {
@@ -35,7 +36,7 @@ export function IntelligencePanel() {
 
   const resizeHandleRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(320);
+  const [panelWidth, setPanelWidth] = useState(380);
 
   // Handle panel resize
   useEffect(() => {
@@ -43,7 +44,7 @@ export function IntelligencePanel() {
 
     const handleMouseMove = (e: MouseEvent) => {
       const newWidth = window.innerWidth - e.clientX;
-      setPanelWidth(Math.max(280, Math.min(600, newWidth)));
+      setPanelWidth(Math.max(340, Math.min(700, newWidth)));
     };
 
     const handleMouseUp = () => {
@@ -75,14 +76,8 @@ export function IntelligencePanel() {
         return <BuildErrorsPanel />;
       case 'tools':
         return <ToolsDashboard />;
-      case 'expertise':
-        return (
-          <div className="p-4 text-center text-gray-500 dark:text-slate-500">
-            <Users className="w-8 h-8 mx-auto mb-2 text-gray-400 dark:text-slate-600" />
-            <p className="text-sm">Author Expertise</p>
-            <p className="text-xs mt-1">Coming soon</p>
-          </div>
-        );
+      case 'permissions':
+        return <PermissionsPanel />;
       default:
         return null;
     }

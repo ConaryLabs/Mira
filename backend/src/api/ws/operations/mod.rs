@@ -4,6 +4,7 @@
 
 pub mod stream;
 
+use crate::api::ws::message::SystemAccessMode;
 use crate::operations::{OperationEngine, OperationEngineEvent};
 use crate::project::ProjectStore;
 use anyhow::Result;
@@ -38,6 +39,7 @@ impl OperationManager {
         session_id: String,
         message: String,
         project_id: Option<String>,
+        system_access_mode: SystemAccessMode,
         ws_tx: mpsc::Sender<serde_json::Value>,
     ) -> Result<String> {
         // Use provided project_id, or try to resolve from session's project_path
@@ -81,15 +83,23 @@ impl OperationManager {
         let user_message = message.clone();
         let cancel = cancel_token.clone();
         let active_ops = self.active_operations.clone();
+        let access_mode = system_access_mode;
 
         tokio::spawn(async move {
-            // Pass project_id for dynamic working directory resolution
+            tracing::info!(
+                operation_id = %op_id,
+                access_mode = ?access_mode,
+                "Starting operation with system access mode"
+            );
+
+            // Pass project_id and system_access_mode for dynamic path resolution and enforcement
             let result = engine
                 .run_operation(
                     &op_id,
                     &session,
                     &user_message,
                     project_id.as_deref(),
+                    access_mode,
                     Some(cancel),
                     &event_tx,
                 )

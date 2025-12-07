@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::api::ws::message::MessageMetadata;
+use crate::api::ws::message::{MessageMetadata, SystemAccessMode};
 use crate::api::ws::operations::OperationManager;
 use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
@@ -23,6 +23,7 @@ use tokio::sync::RwLock;
 pub struct ChatRequest {
     pub content: String,
     pub project_id: Option<String>,
+    pub system_access_mode: SystemAccessMode,
     pub metadata: Option<MessageMetadata>,
     pub session_id: String,
 }
@@ -120,7 +121,13 @@ impl UnifiedChatHandler {
             // Route the expanded prompt to OperationEngine
             let _op_id = self
                 .operation_manager
-                .start_operation(request.session_id, expanded.prompt, request.project_id, ws_tx)
+                .start_operation(
+                    request.session_id,
+                    expanded.prompt,
+                    request.project_id,
+                    request.system_access_mode,
+                    ws_tx,
+                )
                 .await?;
 
             return Ok(());
@@ -285,7 +292,13 @@ impl UnifiedChatHandler {
 
         let op_id = self
             .operation_manager
-            .start_operation(request.session_id.clone(), request.content, request.project_id.clone(), ws_tx)
+            .start_operation(
+                request.session_id.clone(),
+                request.content,
+                request.project_id.clone(),
+                request.system_access_mode,
+                ws_tx,
+            )
             .await?;
 
         debug!(

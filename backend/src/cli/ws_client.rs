@@ -560,6 +560,7 @@ impl MiraClient {
         let msg = WsClientMessage::Chat {
             content: content.to_string(),
             project_id: self.project_id.clone(),
+            system_access_mode: Default::default(), // CLI defaults to project-only access
             metadata,
         };
 

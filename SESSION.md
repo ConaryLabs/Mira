@@ -6,6 +6,30 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 43: 2025-12-07
+
+**Summary:** Full system access mode enforcement - allows user to expand Mira's filesystem access beyond project directory.
+
+**Features:**
+1. **Permissions Panel UI** - New "Access" tab in Intelligence Panel with three sub-tabs:
+   - Access: Toggle filesystem mode (project/home/system)
+   - Sudo Rules: View and manage sudo permissions
+   - Blocklist: View blocked commands
+
+2. **SystemAccessMode Enum** - Three levels of filesystem access:
+   - `Project` (default): Restricted to project directory only
+   - `Home`: Access to `~/` and subdirectories
+   - `System`: Full filesystem access (no restrictions)
+
+3. **Full Backend Enforcement** - Access mode passed through entire chain:
+   - Frontend → WebSocket → OperationManager → OperationEngine → Orchestrator → LlmOrchestrator → ToolRouter → FileHandlers
+
+**Files Changed:**
+- Backend: `message.rs`, `message_router.rs`, `unified_handler.rs`, `operations/mod.rs`, `engine/mod.rs`, `orchestration.rs`, `llm_orchestrator.rs`, `tool_router/mod.rs`, `file_handlers.rs`, `ws_client.rs`
+- Frontend: `useAppState.ts`, `useChatMessaging.ts`, `PermissionsPanel.tsx`, `IntelligencePanel.tsx`, `useCodeIntelligenceStore.ts`
+
+---
+
 ## Session 42: 2025-12-07 (`0872bed`)
 
 **Summary:** Fixed project root scoping, multi-turn tool calling, and strict mode schemas.
