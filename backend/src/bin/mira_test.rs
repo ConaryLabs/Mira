@@ -11,6 +11,7 @@ use tracing_subscriber::FmtSubscriber;
 use mira_backend::testing::harness::runner::{RunSummary, RunnerConfig, ScenarioRunner};
 use mira_backend::testing::scenarios::parser::ScenarioParser;
 use mira_backend::testing::dashboard::app::run_dashboard;
+use mira_backend::testing::reporters::{OutputFormat, get_reporter};
 
 #[derive(Parser)]
 #[command(name = "mira-test")]
@@ -55,6 +56,18 @@ enum Commands {
         /// Filter by name pattern
         #[arg(long)]
         name: Option<String>,
+
+        /// Output format: console, json, junit
+        #[arg(long, short, default_value = "console")]
+        output: String,
+
+        /// Run scenarios in parallel
+        #[arg(long)]
+        parallel: bool,
+
+        /// Maximum concurrent scenarios (default: 4, 0 = unlimited)
+        #[arg(long, default_value = "4")]
+        max_parallel: usize,
     },
 
     /// List available scenarios
@@ -103,6 +116,9 @@ async fn main() -> Result<()> {
             fail_fast,
             tags,
             name,
+            output,
+            parallel,
+            max_parallel,
         } => {
             run_scenarios(
                 path,
@@ -112,6 +128,9 @@ async fn main() -> Result<()> {
                 fail_fast,
                 tags,
                 name,
+                output,
+                parallel,
+                max_parallel,
                 cli.verbose,
             )
             .await
@@ -133,10 +152,22 @@ async fn run_scenarios(
     fail_fast: bool,
     tags: Option<String>,
     name: Option<String>,
+    output_format: String,
+    parallel: bool,
+    max_parallel: usize,
     verbose: bool,
 ) -> Result<()> {
-    info!("Mira Test Runner");
-    info!("================");
+    // Parse output format
+    let format = OutputFormat::from_str(&output_format).unwrap_or_else(|| {
+        eprintln!("Warning: Unknown output format '{}', using console", output_format);
+        OutputFormat::Console
+    });
+
+    // Only show info logs for console format
+    if format == OutputFormat::Console {
+        info!("Mira Test Runner");
+        info!("================");
+    }
 
     // Load scenarios
     let mut scenarios = if path.is_dir() {
@@ -146,7 +177,9 @@ async fn run_scenarios(
     };
 
     if scenarios.is_empty() {
-        println!("No scenarios found at {}", path.display());
+        if format == OutputFormat::Console {
+            println!("No scenarios found at {}", path.display());
+        }
         return Ok(());
     }
 
@@ -161,11 +194,15 @@ async fn run_scenarios(
     }
 
     if scenarios.is_empty() {
-        println!("No scenarios match the specified filters");
+        if format == OutputFormat::Console {
+            println!("No scenarios match the specified filters");
+        }
         return Ok(());
     }
 
-    info!("Found {} scenario(s)", scenarios.len());
+    if format == OutputFormat::Console {
+        info!("Found {} scenario(s)", scenarios.len());
+    }
 
     // Configure runner
     let config = RunnerConfig {
@@ -174,6 +211,8 @@ async fn run_scenarios(
         mock_mode: mock,
         fail_fast,
         verbose,
+        parallel,
+        max_parallel,
     };
 
     let runner = ScenarioRunner::new(config);
@@ -181,58 +220,13 @@ async fn run_scenarios(
     // Run scenarios
     let results = runner.run_scenarios(&scenarios).await;
 
-    // Print results
-    println!();
-    println!("RESULTS");
-    println!("-------");
-
-    for result in &results {
-        let status = if result.passed { "PASS" } else { "FAIL" };
-        println!(
-            "[{}] {} ({}ms)",
-            status, result.scenario_name, result.duration_ms
-        );
-
-        for step in &result.step_results {
-            let step_status = if step.skipped {
-                "SKIP"
-            } else if step.passed {
-                "PASS"
-            } else {
-                "FAIL"
-            };
-
-            println!("  [{}] {}", step_status, step.step_name);
-
-            if !step.tool_executions.is_empty() && verbose {
-                println!("    Tools: {}", step.tool_executions.join(", "));
-            }
-
-            for assertion in &step.assertion_results {
-                if !assertion.passed || verbose {
-                    let a_status = if assertion.passed { "PASS" } else { "FAIL" };
-                    println!(
-                        "    [{}] {}: {}",
-                        a_status, assertion.assertion_type, assertion.message
-                    );
-                }
-            }
-
-            if let Some(ref error) = step.error {
-                println!("    Error: {}", error);
-            }
-        }
-
-        if let Some(ref error) = result.error {
-            println!("  Error: {}", error);
-        }
-    }
-
-    // Print summary
-    let summary = RunSummary::from_results(&results);
-    summary.print();
+    // Generate and print report using the selected reporter
+    let reporter = get_reporter(format);
+    let report = reporter.report(&results, verbose);
+    println!("{}", report);
 
     // Exit with appropriate code
+    let summary = RunSummary::from_results(&results);
     if summary.failed > 0 {
         std::process::exit(1);
     }

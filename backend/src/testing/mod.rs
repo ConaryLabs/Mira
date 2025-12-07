@@ -4,6 +4,7 @@
 pub mod dashboard;
 pub mod harness;
 pub mod mock_llm;
+pub mod reporters;
 pub mod scenarios;
 
 // Re-export main types for convenience
@@ -11,3 +12,4 @@ pub use harness::{TestClient, CapturedEvent, CapturedEvents, TestContext, Assert
 pub use mock_llm::{MockLlmProvider, Recording, RecordedExchange, RequestMatcher};
 pub use scenarios::{TestScenario, TestStep};
 pub use dashboard::{DashboardApp, DashboardState};
+pub use reporters::{OutputFormat, Reporter, get_reporter};
