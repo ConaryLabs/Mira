@@ -247,11 +247,10 @@ async fn trigger_rolling_summary(
     memory: &Arc<crate::memory::MemoryService>,
 ) -> ApiResult<WsServerMessage> {
     let session_id = get_session_id(params["session_id"].as_str());
-    let window_size = params["window_size"].as_u64().unwrap_or(10) as usize;
 
     let message = memory
         .summarization_engine
-        .create_rolling_summary(&session_id, window_size)
+        .create_rolling_summary(&session_id)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to create rolling summary: {}", e)))?;
 

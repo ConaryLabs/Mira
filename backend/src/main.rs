@@ -63,6 +63,16 @@ async fn main() -> anyhow::Result<()> {
         }
     );
 
+    // Sanity-check embedding dimensions between Qdrant and embedding config
+    if CONFIG.qdrant.embedding_dim != CONFIG.embedding.dimensions {
+        eprintln!(
+            "FATAL: QDRANT_EMBEDDING_DIM ({}) != MIRA_EMBED_DIMENSIONS ({}). Fix your config or you WILL corrupt embeddings.",
+            CONFIG.qdrant.embedding_dim,
+            CONFIG.embedding.dimensions
+        );
+        std::process::exit(1);
+    }
+
     let pool = SqlitePoolOptions::new()
         .max_connections(CONFIG.sqlite_max_connections as u32)
         .connect(&CONFIG.database_url)

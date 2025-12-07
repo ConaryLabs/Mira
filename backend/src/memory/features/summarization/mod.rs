@@ -17,13 +17,15 @@ use storage::SummaryStorage;
 use strategies::{RollingSummaryStrategy, SnapshotSummaryStrategy};
 use triggers::BackgroundTriggers;
 
+const ROLLING_WINDOW_SIZE: usize = 100;
+
 /// Clean, focused SummarizationEngine with modular architecture
 /// Delegates all operations to specialized strategy modules
 pub struct SummarizationEngine {
     // Strategy modules
     rolling_strategy: RollingSummaryStrategy,
     snapshot_strategy: SnapshotSummaryStrategy,
-    storage: SummaryStorage, // Private - access via public methods
+    storage: SummaryStorage,
     triggers: BackgroundTriggers,
 
     // Core dependencies
@@ -32,7 +34,6 @@ pub struct SummarizationEngine {
 
 impl SummarizationEngine {
     /// Creates new summarization engine with all strategy modules
-    /// Takes both LlmProvider (for summary generation) and EmbeddingProvider (for embeddings)
     pub fn new(
         llm_provider: Arc<dyn LlmProvider>,
         embedding_client: Arc<dyn EmbeddingProvider>,
@@ -54,71 +55,58 @@ impl SummarizationEngine {
         session_id: &str,
         message_count: usize,
     ) -> Result<Option<String>> {
-        // Check if we should create a summary
+        // Check if we should create a summary (every 100 messages)
         let summary_type = self.triggers.should_create_summary(message_count);
 
         if let Some(summary_type) = summary_type {
-            let window_size = match summary_type {
-                SummaryType::Rolling10 => 10,
-                SummaryType::Rolling100 => 100,
-                SummaryType::Snapshot => return Ok(None), // Snapshots are manual only
-            };
+            match summary_type {
+                SummaryType::Rolling => {
+                    // Load messages
+                    let messages = self
+                        .sqlite_store
+                        .load_recent(session_id, ROLLING_WINDOW_SIZE)
+                        .await?;
 
-            // Load messages using the trait
-            let messages = self
-                .sqlite_store
-                .load_recent(session_id, window_size)
-                .await?;
+                    // Create summary
+                    let summary = self
+                        .rolling_strategy
+                        .create_summary(session_id, &messages)
+                        .await?;
 
-            // Create summary via rolling strategy
-            let summary = self
-                .rolling_strategy
-                .create_summary(session_id, &messages, window_size)
-                .await?;
+                    // Store the summary
+                    self.storage
+                        .store_summary(session_id, &summary, summary_type, messages.len())
+                        .await?;
 
-            // Store the summary
-            self.storage
-                .store_summary(session_id, &summary, summary_type, messages.len())
-                .await?;
-
-            // FIXED: Return actual summary text, not status message
-            Ok(Some(summary))
+                    Ok(Some(summary))
+                }
+                SummaryType::Snapshot => Ok(None), // Snapshots are manual only
+            }
         } else {
             Ok(None)
         }
     }
 
     /// Manual trigger for rolling summary (API/WebSocket calls)
-    pub async fn create_rolling_summary(
-        &self,
-        session_id: &str,
-        window_size: usize,
-    ) -> Result<String> {
-        let summary_type = if window_size == 100 {
-            SummaryType::Rolling100
-        } else {
-            SummaryType::Rolling10
-        };
-
+    pub async fn create_rolling_summary(&self, session_id: &str) -> Result<String> {
         let messages = self
             .sqlite_store
-            .load_recent(session_id, window_size)
+            .load_recent(session_id, ROLLING_WINDOW_SIZE)
             .await?;
 
         let summary = self
             .rolling_strategy
-            .create_summary(session_id, &messages, window_size)
+            .create_summary(session_id, &messages)
             .await?;
 
         self.storage
-            .store_summary(session_id, &summary, summary_type, messages.len())
+            .store_summary(session_id, &summary, SummaryType::Rolling, messages.len())
             .await?;
 
-        // FIXED: Return actual summary text, not status message
         Ok(summary)
     }
 
-    /// Manual trigger for snapshot summary (API/WebSocket calls)  
+    /// Manual trigger for snapshot summary (API/WebSocket calls)
     pub async fn create_snapshot_summary(
         &self,
         session_id: &str,
@@ -143,27 +131,22 @@ impl SummarizationEngine {
         Ok(summary)
     }
 
-    /// Get the most recent rolling summary (100-message) for a session
-    /// Public accessor for coordinator to use
+    /// Get the most recent rolling summary for a session
     pub async fn get_rolling_summary(&self, session_id: &str) -> Result<Option<String>> {
         let summaries = self.storage.get_latest_summaries(session_id).await?;
 
-        // FIXED: Look for rolling_100 first, fallback to rolling_10
         let rolling_summary = summaries
             .iter()
-            .find(|s| s.summary_type == "rolling_100")
-            .or_else(|| summaries.iter().find(|s| s.summary_type == "rolling_10"))
+            .find(|s| s.summary_type == "rolling")
             .map(|s| s.summary_text.clone());
 
         Ok(rolling_summary)
     }
 
     /// Get the most recent snapshot summary for a session
-    /// Public accessor for coordinator to use
     pub async fn get_session_summary(&self, session_id: &str) -> Result<Option<String>> {
         let summaries = self.storage.get_latest_summaries(session_id).await?;
 
-        // Find the snapshot summary
         let session_summary = summaries
             .iter()
             .find(|s| s.summary_type == "snapshot")
@@ -174,6 +157,6 @@ impl SummarizationEngine {
 
     /// Stats for monitoring
     pub fn get_stats(&self) -> String {
-        "SummarizationEngine: Rolling (10/100) + Snapshot strategies enabled".to_string()
+        "SummarizationEngine: Rolling (100-msg) + Snapshot strategies enabled".to_string()
     }
 }

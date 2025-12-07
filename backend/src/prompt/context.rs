@@ -10,7 +10,6 @@ use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
 use crate::prompt::utils::language_from_extension;
 use crate::system::SystemContext;
 use crate::tools::types::Tool;
-use chrono::Utc;
 
 /// Add static system environment context to the prompt (cacheable prefix)
 /// This helps the LLM use platform-appropriate commands (apt vs brew vs dnf, etc.)
@@ -240,33 +239,13 @@ pub fn add_memory_context(prompt: &mut String, context: &RecallContext) {
         }
     }
 
-    if context.recent.is_empty() && context.semantic.is_empty() {
+    // Note: Recent conversation messages are now included in the LLM message array,
+    // not duplicated here in the system prompt. Only semantic memories go here.
+    if context.semantic.is_empty() {
         return;
     }
 
     prompt.push_str("[MEMORY]\n");
-
-    // Recent messages
-    if !context.recent.is_empty() {
-        prompt.push_str("Recent conversation:\n");
-
-        for entry in &context.recent {
-            let time_ago = Utc::now().signed_duration_since(entry.timestamp);
-            let time_str = if time_ago.num_minutes() < 60 {
-                format!("{}m ago", time_ago.num_minutes())
-            } else if time_ago.num_hours() < 24 {
-                format!("{}h ago", time_ago.num_hours())
-            } else {
-                format!("{}d ago", time_ago.num_days())
-            };
-
-            prompt.push_str(&format!(
-                "[{}] {} ({})\n",
-                entry.role, entry.content, time_str
-            ));
-        }
-        prompt.push('\n');
-    }
 
     // Semantic memories - filter by salience >= 0.6
     if !context.semantic.is_empty() {

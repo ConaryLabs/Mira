@@ -18,6 +18,7 @@ pub struct MemoryConfig {
     // Context and retrieval
     pub context_recent_messages: usize,
     pub context_semantic_matches: usize,
+    pub llm_message_history_limit: usize, // Max messages to include in LLM message array
 
     // Recall configuration
     pub recall_recent: usize,
@@ -77,6 +78,9 @@ impl MemoryConfig {
             context_semantic_matches: super::helpers::require_env_parsed(
                 "MIRA_CONTEXT_SEMANTIC_MATCHES",
             ),
+            llm_message_history_limit: super::helpers::require_env_parsed(
+                "MIRA_LLM_MESSAGE_HISTORY_LIMIT",
+            ),
 
             recall_recent: super::helpers::require_env_parsed("MIRA_RECALL_RECENT"),
             recall_semantic: super::helpers::require_env_parsed("MIRA_RECALL_SEMANTIC"),
@@ -116,9 +120,8 @@ pub struct SummarizationConfig {
     pub output_tokens: usize,
     pub summarize_after_messages: usize,
 
-    // Rolling summaries
-    pub rolling_10: bool,
-    pub rolling_100: bool,
+    // Rolling summaries (100-message window)
+    pub rolling_enabled: bool,
     pub use_rolling_in_context: bool,
     pub max_age_hours: u32,
     pub min_gap: usize,
@@ -134,8 +137,7 @@ impl SummarizationConfig {
                 "MIRA_SUMMARIZE_AFTER_MESSAGES",
             ),
 
-            rolling_10: super::helpers::require_env_parsed("MIRA_SUMMARY_ROLLING_10"),
-            rolling_100: super::helpers::require_env_parsed("MIRA_SUMMARY_ROLLING_100"),
+            rolling_enabled: super::helpers::require_env_parsed("MIRA_SUMMARY_ROLLING_ENABLED"),
             use_rolling_in_context: super::helpers::require_env_parsed(
                 "MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT",
             ),
@@ -145,7 +147,7 @@ impl SummarizationConfig {
     }
 
     pub fn is_rolling_enabled(&self) -> bool {
-        self.rolling_10 || self.rolling_100
+        self.rolling_enabled
     }
 }
 

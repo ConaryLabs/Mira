@@ -168,6 +168,16 @@ Routing rules:
 - **Recall Engine**: Combines recent messages + semantic search + rolling summaries + code intelligence
 - **Context Gathering**: Assembles recent messages, semantic results, file trees, and code intelligence before each LLM call
 
+**Context Architecture** (conversation memory):
+
+| Layer | Purpose | Config | Approx Tokens |
+|-------|---------|--------|---------------|
+| **LLM Message Array** | Direct conversation turns | `MIRA_LLM_MESSAGE_HISTORY_LIMIT=12` | ~3-5K |
+| **Rolling Summary** | Compressed older history (every 100 msgs) | `MIRA_SUMMARY_ROLLING_ENABLED=true` | ~2.5K |
+| **Semantic Search** | Relevant memories from any time | `MIRA_CONTEXT_SEMANTIC_MATCHES=10` | ~1-2K |
+
+Key insight: Recent messages go in the message array (what LLM responds to), rolling summaries handle compression for older context, semantic search surfaces relevant distant memories.
+
 **WebSocket Protocol** (`src/api/ws/`):
 - Two coexisting protocols: legacy chat + operations
 - Real-time streaming with cancellation support

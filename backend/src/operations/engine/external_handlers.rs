@@ -355,6 +355,26 @@ impl ExternalHandlers {
             .unwrap_or(30)
             .min(300); // Max 5 minutes
 
+        // Guard against self-restart commands that would kill the running backend service
+        // and tear down the current orchestration session mid-tool-call. These are better
+        // handled either via a delayed restart helper or by running the command manually.
+        let lower_command = command.to_ascii_lowercase();
+        let is_self_restart = lower_command.contains("mira-backend")
+            && (lower_command.contains("systemctl") || lower_command.contains("service"))
+            && (lower_command.contains("restart") || lower_command.contains("stop") || lower_command.contains("reload"));
+
+        if is_self_restart {
+            warn!("[EXTERNAL] Blocking self-restart command to avoid killing active backend session: '{}'", command);
+            return Ok(json!({
+                "success": false,
+                "blocked": true,
+                "error": "Command would restart or stop the Mira backend service and interrupt the current session. Run this manually or use a delayed restart helper.",
+                "blocklist_entry": "self_restart_protection",
+                "output": "",
+                "exit_code": -1
+            }));
+        }
+
         // Handle sudo commands
         if use_sudo {
             if let Some(ref sudo_service) = self.sudo_service {

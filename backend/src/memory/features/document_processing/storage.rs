@@ -1,6 +1,7 @@
 // src/memory/features/document_processing/storage.rs
 //! Storage layer for documents in SQLite and Qdrant
 
+use crate::config::SYSTEM_CONTEXT;
 use crate::llm::provider::EmbeddingProvider;
 use anyhow::Result;
 use qdrant_client::Qdrant;
@@ -42,6 +43,7 @@ pub struct DocumentStorage {
     sqlite_pool: SqlitePool,
     qdrant_client: Qdrant,
     embedding_client: Arc<dyn EmbeddingProvider>,
+    qdrant_collection: String,
 }
 
 impl DocumentStorage {
@@ -50,12 +52,49 @@ impl DocumentStorage {
         sqlite_pool: SqlitePool,
         qdrant_client: Qdrant,
         embedding_client: Arc<dyn EmbeddingProvider>,
+        qdrant_collection: String,
     ) -> Self {
         Self {
             sqlite_pool,
             qdrant_client,
             embedding_client,
+            qdrant_collection,
         }
+    }
+
+    /// Get a stable system identifier from /etc/machine-id or fallback to hostname
+    fn get_system_id() -> String {
+        // Try /etc/machine-id first (Linux standard)
+        if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+
+        // Try macOS host UUID
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = stdout.lines().find(|l| l.contains("IOPlatformUUID")) {
+                if let Some(uuid) = line.split('"').nth(3) {
+                    return uuid.to_string();
+                }
+            }
+        }
+
+        // Fallback to hostname via command
+        if let Ok(output) = std::process::Command::new("hostname").output() {
+            let hostname = String::from_utf8_lossy(&output.stdout);
+            let trimmed = hostname.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+
+        "unknown-system".to_string()
     }
 
     /// Find document by hash to detect duplicates
@@ -175,6 +214,13 @@ impl DocumentStorage {
     async fn store_embeddings(&self, document: &super::ProcessedDocument) -> Result<()> {
         let mut points = Vec::new();
 
+        // Get system metadata for payload enrichment
+        let system_id = Self::get_system_id();
+        let mira_env = std::env::var("MIRA_ENV").unwrap_or_else(|_| "development".to_string());
+        let os_type = SYSTEM_CONTEXT.os.os_type.clone();
+        let os_version = SYSTEM_CONTEXT.os.version.clone();
+        let ingested_at = chrono::Utc::now().timestamp();
+
         // Generate embeddings for each chunk
         for (idx, chunk) in document.chunks.iter().enumerate() {
             // Generate embedding for chunk content
@@ -194,6 +240,15 @@ impl DocumentStorage {
                 payload.insert("page_number".to_string(), (page as i64).into());
             }
 
+            // Add system metadata for filtering and context-aware search
+            payload.insert("system_id".to_string(), system_id.clone().into());
+            payload.insert("env".to_string(), mira_env.clone().into());
+            payload.insert("os_type".to_string(), os_type.clone().into());
+            payload.insert("os_version".to_string(), os_version.clone().into());
+            payload.insert("ingested_at".to_string(), ingested_at.into());
+            payload.insert("source_kind".to_string(), "uploaded_doc".into());
+            payload.insert("ingested_via".to_string(), "web_ui".into());
+
             // Create point for Qdrant with matching chunk ID
             let point = PointStruct {
                 id: Some(chunk.id.clone().into()),
@@ -207,7 +262,7 @@ impl DocumentStorage {
 
         // Batch insert points into Qdrant "documents" collection using builder
         if !points.is_empty() {
-            let upsert_operation = UpsertPointsBuilder::new("documents", points).build();
+            let upsert_operation = UpsertPointsBuilder::new(&self.qdrant_collection, points).build();
             self.qdrant_client.upsert_points(upsert_operation).await?;
         }
 
@@ -231,7 +286,7 @@ impl DocumentStorage {
         let search_result = self
             .qdrant_client
             .search_points(SearchPoints {
-                collection_name: "documents".to_string(),
+                collection_name: self.qdrant_collection.clone(),
                 vector: query_embedding.into(),
                 filter: Some(filter),
                 limit: limit as u64,
@@ -405,8 +460,8 @@ impl DocumentStorage {
             let point_ids: Vec<qdrant_client::qdrant::PointId> =
                 chunk_ids.iter().map(|id| id.clone().into()).collect();
 
-            // Delete from Qdrant "documents" collection
-            let delete_operation = DeletePointsBuilder::new("documents")
+            // Delete from Qdrant collection
+            let delete_operation = DeletePointsBuilder::new(&self.qdrant_collection)
                 .points(point_ids)
                 .build();
 

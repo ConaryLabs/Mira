@@ -246,6 +246,7 @@ impl DocumentHandler {
             self.state.sqlite_pool.clone(),
             qdrant_client,
             self.state.openai_embedding_client.clone(),
+            CONFIG.qdrant.collection.clone(),
         );
 
         let documents = storage.list_documents(&params.project_id).await?;
