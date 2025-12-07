@@ -51,6 +51,9 @@ pub mod session;
 // CLI module (for mira binary)
 pub mod cli;
 
+// Testing infrastructure (mira-test binary)
+pub mod testing;
+
 // Milestone 10 - Production metrics
 pub mod metrics;
 
