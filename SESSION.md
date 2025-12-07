@@ -4,6 +4,60 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 39: Dual-Session Integration Testing (2025-12-06)
+
+**Summary:** Added comprehensive integration tests for dual-session architecture (Voice + Codex), including real LLM tests.
+
+**Problem:** The dual-session architecture (Voice + Codex) was fully implemented but lacked integration tests to verify the end-to-end flow.
+
+**Solution:** Created `dual_session_test.rs` with 17 tests covering unit and LLM integration scenarios.
+
+**Work Completed:**
+
+1. **Unit Tests (12 tests)**:
+   - `test_voice_session_creation` - Voice session lifecycle
+   - `test_codex_session_lifecycle` - Codex spawn/complete/parent lookup
+   - `test_codex_session_failure` - Error handling for failed Codex sessions
+   - `test_codex_spawn_detection_*` - Pattern detection for "implement", "refactor", multi-pattern, no-trigger (5 tests)
+   - `test_injection_*` - Injection completion flow, progress and error injection (2 tests)
+   - `test_full_dual_session_flow` - Complete unit test flow
+
+2. **LLM Integration Tests (5 tests)**:
+   - `test_llm_codex_tool_calling` - Real tool calling with Codex-Max provider
+   - `test_llm_codex_compaction_support` - Response ID chaining for compaction
+   - `test_llm_codex_tool_loop` - Multi-iteration tool execution loop
+   - `test_llm_voice_personality` - Voice tier personality response
+   - `test_llm_dual_session_e2e` - Complete Voice->Codex->Injection flow with real LLM
+
+3. **Bug Fix**:
+   - Added `#[allow(dead_code)]` to `session_manager` field in `UnifiedChatHandler` (field is used by `codex_spawner` internally)
+
+**Key Validations:**
+- Compaction chain works (response IDs differ between calls)
+- Codex generates real code (factorial function example)
+- Injection formatting correct ("Background Work Updates" header)
+- Voice tier maintains personality with detailed responses
+- Tool loop terminates properly after task completion
+
+**Files Created:**
+- `backend/tests/dual_session_test.rs` (~1000 lines, 17 tests)
+
+**Files Modified:**
+- `backend/src/api/ws/chat/unified_handler.rs` - Added `#[allow(dead_code)]` annotation
+
+**Test Status:** All 17 tests passing (12 unit + 5 LLM)
+
+**Run Commands:**
+```bash
+# Unit tests only
+cargo test --test dual_session_test
+
+# LLM tests only (requires OPENAI_API_KEY)
+cargo test --test dual_session_test llm -- --nocapture
+```
+
+---
+
 ## Session 34: Time Awareness (2025-12-05)
 
 **Summary:** Added current date/time to LLM system context so the model knows "today's date" without the user mentioning it.

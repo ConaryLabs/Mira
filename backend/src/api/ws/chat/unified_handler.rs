@@ -43,6 +43,7 @@ pub struct UnifiedChatHandler {
     rate_limiter: Option<Arc<RateLimiter>>,
     // Dual-session architecture (Voice + Codex)
     model_router: Arc<ModelRouter>,
+    #[allow(dead_code)] // Used by codex_spawner internally
     session_manager: Arc<SessionManager>,
     codex_spawner: Arc<CodexSpawner>,
     injection_service: Arc<InjectionService>,

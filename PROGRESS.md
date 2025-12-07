@@ -22,6 +22,35 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 39: 2025-12-06
+
+**Summary:** Added comprehensive integration tests for dual-session architecture with real LLM validation.
+
+**Git Commits:**
+- `f8d32a9` - Test: Add dual-session integration tests with LLM validation
+
+**Details:**
+- Created `backend/tests/dual_session_test.rs` with 17 tests
+- 12 unit tests: SessionManager lifecycle, TaskClassifier patterns, InjectionService flow
+- 5 LLM tests: Tool calling, compaction support, tool loop, personality, E2E flow
+- Fixed `session_manager` dead code warning in UnifiedChatHandler
+- Validated compaction chain (response IDs differ between calls)
+- Verified Codex generates real code and injection formatting works
+
+**Files Created:**
+- `backend/tests/dual_session_test.rs` (~1000 lines)
+
+**Files Modified:**
+- `backend/src/api/ws/chat/unified_handler.rs` - Added `#[allow(dead_code)]`
+
+**Test Commands:**
+```bash
+cargo test --test dual_session_test           # Unit tests
+cargo test --test dual_session_test llm -- --nocapture  # LLM tests
+```
+
+---
+
 ### Session 38: 2025-12-06
 
 **Summary:** Completed dual-session integration - Codex detection, context builder, and chat handler routing.
