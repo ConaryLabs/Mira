@@ -56,9 +56,8 @@ pub struct SummaryRequest {
 /// Types of summaries that can be generated
 #[derive(Debug, Clone, Copy)]
 pub enum SummaryType {
-    Rolling10,  // 10-message rolling summary
-    Rolling100, // 100-message mega summary
-    Snapshot,   // On-demand snapshot summary
+    Rolling, // 100-message rolling summary
+    Snapshot, // On-demand snapshot summary
 }
 
 /// Record structure for summary retrieval from rolling_summaries table
@@ -75,8 +74,7 @@ impl SummaryRecord {
     /// Convert to display-friendly format
     pub fn to_display(&self) -> String {
         let summary_type = match self.summary_type.as_str() {
-            "rolling_10" => "10-msg",
-            "rolling_100" => "100-msg",
+            "rolling" => "Rolling",
             "snapshot" => "Snapshot",
             _ => &self.summary_type,
         };

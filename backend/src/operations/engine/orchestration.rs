@@ -179,6 +179,7 @@ impl Orchestrator {
             system_prompt,
             project_id,
             system_access_mode,
+            &recall_context,
             event_tx,
         )
         .await
@@ -188,10 +189,11 @@ impl Orchestrator {
         &self,
         operation_id: &str,
         session_id: &str,
-        user_content: &str,
+        _user_content: &str, // Now included in recall_context.recent
         system_prompt: String,
         project_id: Option<&str>,
         system_access_mode: SystemAccessMode,
+        recall_context: &crate::memory::features::recall_engine::RecallContext,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
     ) -> Result<()> {
         let llm = match &self.llm_orchestrator {
@@ -199,11 +201,35 @@ impl Orchestrator {
             None => return Err(anyhow::anyhow!("LLM orchestrator not initialized")),
         };
 
-        // Build messages with system prompt
-        let messages = vec![
-            Message::system(system_prompt),
-            Message::user(user_content.to_string()),
-        ];
+        // Build messages with system prompt and conversation history
+        // Limit to configured amount - rolling summaries handle older context
+        let history_limit = crate::config::CONFIG.llm_message_history_limit;
+        let mut messages = vec![Message::system(system_prompt)];
+
+        // Take only the most recent N messages from recall_context.recent
+        // The current user message was already saved and is included in recent,
+        // so we don't need to add it separately
+        let recent_slice = if recall_context.recent.len() > history_limit {
+            &recall_context.recent[recall_context.recent.len() - history_limit..]
+        } else {
+            &recall_context.recent[..]
+        };
+
+        for entry in recent_slice {
+            match entry.role.as_str() {
+                "user" => messages.push(Message::user(entry.content.clone())),
+                "assistant" => messages.push(Message::assistant(entry.content.clone())),
+                _ => {} // Skip system messages or unknown roles
+            }
+        }
+
+        info!(
+            "[ENGINE] Built {} messages for LLM (1 system + {} of {} history, limit={})",
+            messages.len(),
+            recent_slice.len(),
+            recall_context.recent.len(),
+            history_limit
+        );
 
         // Build tools for Gemini 3
         let tools = get_delegation_tools();

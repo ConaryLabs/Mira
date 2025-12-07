@@ -11,24 +11,15 @@ impl BackgroundTriggers {
         Self
     }
 
-    /// Determines if summary should be triggered based on message count and thresholds
+    /// Determines if summary should be triggered based on message count
+    /// Rolling summaries are created every 100 messages
     pub fn should_create_summary(&self, message_count: usize) -> Option<SummaryType> {
-        // Rolling 10-message summaries
-        if message_count > 0 && message_count % 10 == 0 {
-            info!(
-                "Background trigger: Creating 10-message summary at count {}",
-                message_count
-            );
-            return Some(SummaryType::Rolling10);
-        }
-
-        // Rolling 100-message mega-summaries
         if message_count > 0 && message_count % 100 == 0 {
             info!(
-                "Background trigger: Creating 100-message mega-summary at count {}",
+                "Background trigger: Creating rolling summary at count {}",
                 message_count
             );
-            return Some(SummaryType::Rolling100);
+            return Some(SummaryType::Rolling);
         }
 
         debug!("No summary trigger at message count {}", message_count);
@@ -40,8 +31,6 @@ impl BackgroundTriggers {
         &self,
         _last_summary_time: Option<chrono::DateTime<chrono::Utc>>,
     ) -> bool {
-        // Placeholder for time-based summary triggers
-        // Could add logic like "create summary every 30 minutes of activity"
         false
     }
 }

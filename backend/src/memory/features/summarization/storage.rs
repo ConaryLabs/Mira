@@ -46,8 +46,7 @@ impl SummaryStorage {
         message_count: usize,
     ) -> Result<i64> {
         let type_str = match summary_type {
-            SummaryType::Rolling10 => "rolling_10",
-            SummaryType::Rolling100 => "rolling_100",
+            SummaryType::Rolling => "rolling",
             SummaryType::Snapshot => "snapshot",
         };
 

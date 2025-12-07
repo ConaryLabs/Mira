@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 
+use crate::config::CONFIG;
+
 mod chunker;
 mod parser;
 mod storage;
@@ -90,10 +92,12 @@ impl DocumentProcessor {
         qdrant_client: qdrant_client::Qdrant,
         embedding_client: Arc<dyn EmbeddingProvider>,
     ) -> Self {
+        let qdrant_collection = CONFIG.qdrant.collection.clone();
+
         Self {
             parser: DocumentParser::new(),
             chunker: DocumentChunker::new(),
-            storage: DocumentStorage::new(sqlite_pool, qdrant_client, embedding_client),
+            storage: DocumentStorage::new(sqlite_pool, qdrant_client, embedding_client, qdrant_collection),
             max_file_size: 100 * 1024 * 1024, // 100MB limit
         }
     }

@@ -8,7 +8,9 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-/// Handles all rolling summary operations (10-message and 100-message windows)
+const ROLLING_WINDOW_SIZE: usize = 100;
+
+/// Handles rolling summary operations (100-message windows)
 pub struct RollingSummaryStrategy {
     llm_provider: Arc<dyn LlmProvider>,
 }
@@ -18,36 +20,33 @@ impl RollingSummaryStrategy {
         Self { llm_provider }
     }
 
-    /// Creates rolling summary for specified window size
+    /// Creates rolling summary for the last 100 messages
     pub async fn create_summary(
         &self,
         session_id: &str,
         messages: &[MemoryEntry],
-        window_size: usize,
     ) -> Result<String> {
-        if messages.len() < window_size / 2 {
+        if messages.len() < ROLLING_WINDOW_SIZE / 2 {
             return Err(anyhow::anyhow!(
-                "Insufficient messages for {}-window summary",
-                window_size
+                "Insufficient messages for rolling summary (need at least {})",
+                ROLLING_WINDOW_SIZE / 2
             ));
         }
 
         let content = self.build_content(messages)?;
-        let prompt = self.build_prompt(&content, window_size);
+        let prompt = self.build_prompt(&content);
 
         info!(
-            "Creating {}-message rolling summary for session {}",
-            window_size, session_id
+            "Creating rolling summary for session {} ({} messages)",
+            session_id,
+            messages.len()
         );
 
         let messages = vec![Message::user(prompt)];
 
-        // FIXED: Remove None argument - .chat() now takes only 2 args
-        let response = self.llm_provider
-            .chat(
-                messages,
-                prompts::ROLLING_SUMMARIZER.to_string(),
-            )
+        let response = self
+            .llm_provider
+            .chat(messages, prompts::ROLLING_SUMMARIZER.to_string())
             .await?;
 
         Ok(response.content)
@@ -55,16 +54,9 @@ impl RollingSummaryStrategy {
 
     /// Determines if rolling summary should be created based on message count
     pub fn should_create(&self, message_count: usize) -> Option<SummaryType> {
-        // Every 10 messages - lightweight rolling summary
-        if message_count > 0 && message_count % 10 == 0 {
-            return Some(SummaryType::Rolling10);
+        if message_count > 0 && message_count % ROLLING_WINDOW_SIZE == 0 {
+            return Some(SummaryType::Rolling);
         }
-
-        // Every 100 messages - comprehensive mega-summary
-        if message_count > 0 && message_count % 100 == 0 {
-            return Some(SummaryType::Rolling100);
-        }
-
         None
     }
 
@@ -92,11 +84,9 @@ impl RollingSummaryStrategy {
         Ok(content)
     }
 
-    // PHASE 2: ENHANCED PROMPTS WITH TECHNICAL + PERSONAL BALANCE
-    fn build_prompt(&self, content: &str, window_size: usize) -> String {
-        match window_size {
-            100 => format!(
-                "Create a comprehensive, detailed summary of the last {} messages. This captures both the TECHNICAL work AND the RELATIONSHIP - how we communicate, what matters to the user, and the vibe of our conversations.
+    fn build_prompt(&self, content: &str) -> String {
+        format!(
+            "Create a comprehensive, detailed summary of the last {} messages. This captures both the TECHNICAL work AND the RELATIONSHIP - how we communicate, what matters to the user, and the vibe of our conversations.
 
 **TECHNICAL CONTENT:**
 
@@ -164,36 +154,7 @@ Write in natural, conversational prose. Use bullet points within sections. Be sp
 ===== CONVERSATION TO SUMMARIZE =====
 
 {}",
-                window_size, content
-            ),
-            10 => format!(
-                "Create a detailed rolling summary of the last {} messages. Capture both what was discussed technically AND the vibe/mood of the conversation.
-
-**Technical:**
-- Main topics discussed
-- Specific files, functions, or code elements mentioned
-- Decisions made or approaches chosen
-- Any issues encountered or errors debugged
-
-**Personal/Relational:**
-- How were they feeling? (frustrated, excited, tired, focused, etc.)
-- What was the communication style? (casual, serious, joking, etc.)
-- Any personal context shared?
-- What kind of support did they need?
-
-Be specific with technical details but don't forget the human element.
-
-**Target Length:** 400-600 tokens
-
-===== CONVERSATION TO SUMMARIZE =====
-
-{}",
-                window_size, content
-            ),
-            _ => format!(
-                "Summarize the last {} messages, preserving both technical details and the relationship/mood:\n\n{}",
-                window_size, content
-            ),
-        }
+            ROLLING_WINDOW_SIZE, content
+        )
     }
 }

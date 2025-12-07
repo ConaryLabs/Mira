@@ -6,6 +6,40 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 44: 2025-12-07
+
+**Summary:** Fixed conversation history bug and refactored context architecture for coherent memory strategy.
+
+**Bug Fix - Repeating Responses:**
+- Root cause: `orchestration.rs` only passed 2 messages to LLM (system + current user), ignoring 50 loaded conversation history messages
+- Fix: Convert `recall_context.recent` entries to proper Message objects in the message array
+
+**Context Architecture Refactor:**
+- Added `MIRA_LLM_MESSAGE_HISTORY_LIMIT=12` - caps message array to 12 recent turns
+- Removed duplicate recent messages from system prompt (now in message array)
+- Removed `Rolling10` summary entirely - redundant with 12-message history
+- Simplified to single `SummaryType::Rolling` (100-message window)
+- Renamed config: `MIRA_SUMMARY_ROLLING_10/100` → `MIRA_SUMMARY_ROLLING_ENABLED`
+
+**New Context Architecture:**
+
+| Layer | Purpose | Config |
+|-------|---------|--------|
+| LLM Message Array | Direct conversation turns | 12 messages |
+| Rolling Summary | Compressed older history | Every 100 messages |
+| Semantic Search | Relevant distant memories | 10 matches |
+
+**Files Changed:**
+- `orchestration.rs` - Pass recall_context, build message array with history limit
+- `context.rs` - Remove duplicate recent messages from system prompt
+- `memory_types.rs` - Simplify SummaryType enum (Rolling, Snapshot)
+- `config/memory.rs` - Add `llm_message_history_limit`, remove `rolling_10/100`
+- `summarization/` - Remove Rolling10 strategy, simplify to single window size
+- `.env`, `.env.example` - Update config names
+- `CLAUDE.md` - Document context architecture
+
+---
+
 ## Session 43: 2025-12-07 (`de26fdc`)
 
 **Summary:** Full system access mode enforcement - allows user to expand Mira's filesystem access beyond project directory.
