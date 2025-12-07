@@ -2,7 +2,9 @@
 // Scenario execution engine
 
 use anyhow::{Context, Result};
+use futures::stream::{self, StreamExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
@@ -30,6 +32,12 @@ pub struct RunnerConfig {
 
     /// Verbose output
     pub verbose: bool,
+
+    /// Run scenarios in parallel
+    pub parallel: bool,
+
+    /// Maximum concurrent scenarios (0 = unlimited)
+    pub max_parallel: usize,
 }
 
 impl Default for RunnerConfig {
@@ -40,6 +48,8 @@ impl Default for RunnerConfig {
             mock_mode: false,
             fail_fast: false,
             verbose: false,
+            parallel: false,
+            max_parallel: 4,
         }
     }
 }
@@ -316,8 +326,17 @@ impl ScenarioRunner {
         }
     }
 
-    /// Run multiple scenarios
+    /// Run multiple scenarios (sequentially or in parallel)
     pub async fn run_scenarios(&self, scenarios: &[TestScenario]) -> Vec<ScenarioResult> {
+        if self.config.parallel && !self.config.fail_fast {
+            self.run_scenarios_parallel(scenarios).await
+        } else {
+            self.run_scenarios_sequential(scenarios).await
+        }
+    }
+
+    /// Run scenarios sequentially
+    async fn run_scenarios_sequential(&self, scenarios: &[TestScenario]) -> Vec<ScenarioResult> {
         let mut results = Vec::new();
 
         for scenario in scenarios {
@@ -330,6 +349,35 @@ impl ScenarioRunner {
                 break;
             }
         }
+
+        results
+    }
+
+    /// Run scenarios in parallel with concurrency limit
+    async fn run_scenarios_parallel(&self, scenarios: &[TestScenario]) -> Vec<ScenarioResult> {
+        let concurrency = if self.config.max_parallel == 0 {
+            scenarios.len()
+        } else {
+            self.config.max_parallel
+        };
+
+        info!("Running {} scenarios in parallel (max concurrency: {})", scenarios.len(), concurrency);
+
+        // Clone config for sharing across tasks
+        let config = Arc::new(self.config.clone());
+
+        // Create futures for all scenarios
+        let results: Vec<ScenarioResult> = stream::iter(scenarios.iter().cloned())
+            .map(|scenario| {
+                let config = Arc::clone(&config);
+                async move {
+                    let runner = ScenarioRunner { config: (*config).clone() };
+                    runner.run_scenario(&scenario).await
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
 
         results
     }
