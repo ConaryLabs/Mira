@@ -6,7 +6,7 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 43: 2025-12-07
+## Session 43: 2025-12-07 (`de26fdc`)
 
 **Summary:** Full system access mode enforcement - allows user to expand Mira's filesystem access beyond project directory.
 
