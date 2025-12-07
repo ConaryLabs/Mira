@@ -6,7 +6,7 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 45: 2025-12-07
+## Session 45: 2025-12-07 (`b74c2c7`)
 
 **Summary:** Implemented mira-test CLI and testing framework (Phase 1).
 

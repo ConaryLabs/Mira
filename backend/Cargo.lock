@@ -2452,6 +2452,7 @@ dependencies = [
  "git2",
  "glob",
  "governor",
+ "hex",
  "html-escape",
  "indicatif",
  "jsonwebtoken",
