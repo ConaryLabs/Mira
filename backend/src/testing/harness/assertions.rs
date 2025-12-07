@@ -418,6 +418,7 @@ impl Assertion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::ws_client::{BackendEvent, OperationEvent};
     use crate::testing::harness::client::CapturedEvent;
     use std::time::Instant;
 
