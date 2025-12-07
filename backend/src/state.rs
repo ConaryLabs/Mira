@@ -23,6 +23,7 @@ use crate::git::intelligence::{CochangeService, ExpertiseService, FixService};
 use crate::git::store::GitStore;
 use crate::llm::provider::{LlmProvider, OpenAIEmbeddings, OpenAIProvider};
 use crate::llm::router::{ModelRouter, RouterConfig};
+use crate::testing::mock_llm::{MockLlmProvider, MatchStrategy};
 use crate::memory::features::code_intelligence::{CodeIntelligenceService, SemanticGraphService};
 use crate::memory::service::MemoryService;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
@@ -128,38 +129,67 @@ impl AppState {
         // Validate config
         CONFIG.validate()?;
 
-        // Initialize OpenAI providers for model routing (4 tiers)
-        // All tiers use OpenAI GPT-5.1 family via Responses API
-        info!("Initializing OpenAI GPT-5.1 providers (Fast/Voice/Code/Agentic tiers)");
-        let fast_provider: Arc<dyn LlmProvider> = Arc::new(
-            OpenAIProvider::gpt51_mini(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 Codex Mini (Fast tier)"),
-        );
-        let voice_provider: Arc<dyn LlmProvider> = Arc::new(
-            OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 (Voice tier)"),
-        );
-        let code_provider: Arc<dyn LlmProvider> = Arc::new(
-            OpenAIProvider::codex_max(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 Codex Max (Code tier)"),
-        );
-        let agentic_provider: Arc<dyn LlmProvider> = Arc::new(
-            OpenAIProvider::codex_max_agentic(CONFIG.openai_api_key.clone())
-                .expect("Failed to create GPT-5.1 Codex Max (Agentic tier)"),
-        );
+        // Initialize LLM providers - either mock or real OpenAI
+        let (llm_provider, model_router): (Arc<dyn LlmProvider>, Arc<ModelRouter>) =
+            if CONFIG.testing.mock_mode {
+                // Mock mode: use MockLlmProvider for testing without API costs
+                info!("Mock mode enabled - using MockLlmProvider");
 
-        // Primary LLM provider is Voice tier (GPT-5.1 for user-facing interactions)
-        let llm_provider = voice_provider.clone();
+                let strategy = match CONFIG.testing.match_strategy.as_str() {
+                    "exact" => MatchStrategy::ExactHash,
+                    "last_user" => MatchStrategy::LastUserMessage,
+                    "fuzzy" => MatchStrategy::Fuzzy { threshold: 0.8 },
+                    _ => MatchStrategy::Sequential,
+                };
 
-        // Initialize Model Router (Fast/Voice/Code/Agentic tiers)
-        info!("Initializing Model Router");
-        let model_router = Arc::new(ModelRouter::new(
-            fast_provider,
-            voice_provider,
-            code_provider,
-            agentic_provider,
-            RouterConfig::from_env(),
-        ));
+                let mock_provider: Arc<dyn LlmProvider> = if let Some(ref path) = CONFIG.testing.recording_path {
+                    info!("Loading mock recordings from: {}", path.display());
+                    Arc::new(
+                        MockLlmProvider::from_file(path, strategy)
+                            .expect("Failed to load mock recordings")
+                    )
+                } else {
+                    info!("Using empty mock provider (no recordings)");
+                    Arc::new(MockLlmProvider::empty().with_strict_mode(false))
+                };
+
+                let router = Arc::new(ModelRouter::with_mock(mock_provider.clone()));
+                (mock_provider, router)
+            } else {
+                // Production mode: use OpenAI GPT-5.1 providers
+                info!("Initializing OpenAI GPT-5.1 providers (Fast/Voice/Code/Agentic tiers)");
+                let fast_provider: Arc<dyn LlmProvider> = Arc::new(
+                    OpenAIProvider::gpt51_mini(CONFIG.openai_api_key.clone())
+                        .expect("Failed to create GPT-5.1 Codex Mini (Fast tier)"),
+                );
+                let voice_provider: Arc<dyn LlmProvider> = Arc::new(
+                    OpenAIProvider::gpt51(CONFIG.openai_api_key.clone())
+                        .expect("Failed to create GPT-5.1 (Voice tier)"),
+                );
+                let code_provider: Arc<dyn LlmProvider> = Arc::new(
+                    OpenAIProvider::codex_max(CONFIG.openai_api_key.clone())
+                        .expect("Failed to create GPT-5.1 Codex Max (Code tier)"),
+                );
+                let agentic_provider: Arc<dyn LlmProvider> = Arc::new(
+                    OpenAIProvider::codex_max_agentic(CONFIG.openai_api_key.clone())
+                        .expect("Failed to create GPT-5.1 Codex Max (Agentic tier)"),
+                );
+
+                // Primary LLM provider is Voice tier (GPT-5.1 for user-facing interactions)
+                let primary = voice_provider.clone();
+
+                // Initialize Model Router (Fast/Voice/Code/Agentic tiers)
+                info!("Initializing Model Router");
+                let router = Arc::new(ModelRouter::new(
+                    fast_provider,
+                    voice_provider,
+                    code_provider,
+                    agentic_provider,
+                    RouterConfig::from_env(),
+                ));
+
+                (primary, router)
+            };
 
         // Initialize OpenAI embeddings client (text-embedding-3-large)
         info!("Initializing OpenAI embeddings client");

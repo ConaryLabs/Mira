@@ -7,4 +7,4 @@ pub mod matcher;
 
 pub use provider::MockLlmProvider;
 pub use recording::{Recording, RecordedExchange, RecordingStorage};
-pub use matcher::RequestMatcher;
+pub use matcher::{RequestMatcher, MatchStrategy};
