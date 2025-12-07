@@ -259,6 +259,134 @@ export const useWebSocketMessageHandler = () => {
         return;
       }
 
+      // TOOL EXECUTION TRACKING
+      case 'operation.tool_executed': {
+        console.log('[WS-Global] Tool executed:', data.tool_name, data.success ? 'success' : 'failed');
+
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: data.tool_name,
+            toolType: data.tool_type || 'general',
+            summary: data.summary || `Executed ${data.tool_name}`,
+            success: data.success ?? true,
+            details: data.details,
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      // AGENT EXECUTION EVENTS
+      case 'operation.agent_spawned': {
+        console.log('[WS-Global] Agent spawned:', data.agent_name, 'task:', data.task);
+        // Display as a tool execution for now (agents show in activity panel)
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: `Agent: ${data.agent_name}`,
+            toolType: 'agent',
+            summary: data.task || 'Agent started',
+            success: true,
+            details: { agent_execution_id: data.agent_execution_id },
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      case 'operation.agent_progress': {
+        console.log('[WS-Global] Agent progress:', data.agent_name, data.current_activity);
+        // Could update the agent entry if needed
+        return;
+      }
+
+      case 'operation.agent_completed': {
+        console.log('[WS-Global] Agent completed:', data.agent_name, data.summary);
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: `Agent: ${data.agent_name}`,
+            toolType: 'agent',
+            summary: data.summary || 'Agent completed',
+            success: true,
+            details: { iterations_used: data.iterations_used },
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      case 'operation.agent_failed': {
+        console.log('[WS-Global] Agent failed:', data.agent_name, data.error);
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: `Agent: ${data.agent_name}`,
+            toolType: 'agent',
+            summary: data.error || 'Agent failed',
+            success: false,
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      // CODEX (BACKGROUND TASK) EVENTS
+      case 'codex.spawned': {
+        console.log('[WS-Global] Codex spawned:', data.codex_session_id, data.task_description);
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: 'Background Task',
+            toolType: 'codex',
+            summary: data.task_description || 'Background task started',
+            success: true,
+            details: {
+              codex_session_id: data.codex_session_id,
+              trigger: data.trigger
+            },
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      case 'codex.progress': {
+        console.log('[WS-Global] Codex progress:', data.current_activity, 'tokens:', data.tokens_used);
+        // Could update progress indicator if needed
+        return;
+      }
+
+      case 'codex.completed': {
+        console.log('[WS-Global] Codex completed:', data.summary);
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: 'Background Task',
+            toolType: 'codex',
+            summary: data.summary || 'Background task completed',
+            success: true,
+            details: {
+              files_changed: data.files_changed,
+              duration_seconds: data.duration_seconds,
+              tokens_total: data.tokens_total,
+              cost_usd: data.cost_usd,
+            },
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
+      case 'codex.failed': {
+        console.log('[WS-Global] Codex failed:', data.error);
+        if (streamingMessageId) {
+          addToolExecution(streamingMessageId, {
+            toolName: 'Background Task',
+            toolType: 'codex',
+            summary: data.error || 'Background task failed',
+            success: false,
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
       // LEGACY: Old artifact_created format
       case 'artifact_created': {
         console.log('[WS-Global] Legacy artifact created:', data.artifact);

@@ -51,7 +51,11 @@ export const useActivityStore = create<ActivityStore>((set, get) => ({
 
   // Operation tracking
   setCurrentOperation: (operationId, messageId) => {
-    set({ currentOperationId: operationId, currentMessageId: messageId });
+    set({
+      currentOperationId: operationId,
+      currentMessageId: messageId,
+      isPanelVisible: true, // Auto-open panel when activity starts
+    });
   },
 
   clearCurrentOperation: () => {
