@@ -10,6 +10,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use mira_backend::testing::harness::runner::{RunSummary, RunnerConfig, ScenarioRunner};
 use mira_backend::testing::scenarios::parser::ScenarioParser;
+use mira_backend::testing::dashboard::app::run_dashboard;
 
 #[derive(Parser)]
 #[command(name = "mira-test")]
@@ -71,6 +72,13 @@ enum Commands {
         /// Path to scenario file or directory
         path: PathBuf,
     },
+
+    /// Launch observability dashboard
+    Dashboard {
+        /// Backend WebSocket URL
+        #[arg(long, default_value = "ws://localhost:3001/ws")]
+        backend_url: String,
+    },
 }
 
 #[tokio::main]
@@ -110,6 +118,10 @@ async fn main() -> Result<()> {
         }
         Commands::List { path, tags } => list_scenarios(path, tags),
         Commands::Validate { path } => validate_scenarios(path),
+        Commands::Dashboard { backend_url } => {
+            info!("Launching dashboard...");
+            run_dashboard(&backend_url).await
+        }
     }
 }
 
