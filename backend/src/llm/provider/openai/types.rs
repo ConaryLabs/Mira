@@ -203,6 +203,12 @@ pub enum InputItem {
         role: String,
         content: MessageContent,
     },
+    /// Function call from assistant (what model requested)
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
     /// Function call output (response to a tool call)
     FunctionCallOutput {
         call_id: String,

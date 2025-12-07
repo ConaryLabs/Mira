@@ -22,6 +22,47 @@ This file tracks detailed technical progress for the Mira project, organized by 
 
 ## Phase: System Intelligence & CLI Parity
 
+### Session 42: 2025-12-07
+
+**Summary:** Fixed project root scoping and OpenAI Responses API multi-turn tool calling.
+
+**Details:**
+
+**Fix 1: Project Root Scoping**
+- Project tools (list_project_files, read_project_file, search_codebase) were scoped to `/backend/` instead of full project root
+- Root cause: `project_id` from frontend chat request was ignored by UnifiedChatHandler
+- Fix: Pass `project_id` through to OperationManager.start_operation()
+- Now tools correctly use project path from database (e.g., `/home/peter/projects/Mira`)
+
+**Fix 2: OpenAI Responses API Multi-Turn Tool Calling**
+- "No tool call found for function call output" error on multi-turn tool calls
+- Root cause: Responses API requires `function_call` items BEFORE `function_call_output` items
+- Fix: Added InputItem::FunctionCall variant, updated messages_to_input() to emit function calls from assistant messages
+
+**Fix 3: Strict Mode Tool Schemas**
+- OpenAI strict mode requires ALL properties in `required` array (not just user-specified ones)
+- Fixed ToolBuilder to include all property names in required array
+- Removed unsupported features: defaults, format validators (uri)
+- Fixed nested object schemas in agent tools
+
+**Fix 4: Empty Message Spam Prevention**
+- Added guards in useChatMessaging.ts and useWebSocketStore.ts to block empty chat messages
+- Prevents console spam and wasted API calls
+
+**Files Modified:**
+- `backend/src/api/ws/chat/unified_handler.rs` - Pass project_id to start_operation
+- `backend/src/api/ws/operations/mod.rs` - Accept project_id parameter in start_operation
+- `backend/src/llm/provider/openai/mod.rs` - Handle FunctionCall items in messages_to_input
+- `backend/src/llm/provider/openai/types.rs` - Add InputItem::FunctionCall variant
+- `backend/src/operations/tool_builder.rs` - Fix strict mode: all props required, no defaults
+- `backend/src/operations/tools/agents.rs` - Fix nested schemas for strict mode
+- `backend/src/operations/tools/external.rs` - Fix environment param type for strict mode
+- `backend/migrations/20251125000001_foundation.sql` - Schema alignment for new laptop
+- `frontend/src/hooks/useChatMessaging.ts` - Block empty message sends
+- `frontend/src/stores/useWebSocketStore.ts` - Block empty chat messages at WebSocket layer
+
+---
+
 ### Session 41: 2025-12-06
 
 **Summary:** Fixed Activity Panel to display real-time tool executions, agent events, and codex background tasks.

@@ -37,10 +37,14 @@ impl OperationManager {
         &self,
         session_id: String,
         message: String,
+        project_id: Option<String>,
         ws_tx: mpsc::Sender<serde_json::Value>,
     ) -> Result<String> {
-        // Look up session to get project_path, then resolve to project_id
-        let project_id = self.resolve_project_id(&session_id).await;
+        // Use provided project_id, or try to resolve from session's project_path
+        let project_id = match project_id {
+            Some(id) => Some(id),
+            None => self.resolve_project_id(&session_id).await,
+        };
 
         // 1. Create operation
         let op = self

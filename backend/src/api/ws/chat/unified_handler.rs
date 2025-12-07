@@ -120,7 +120,7 @@ impl UnifiedChatHandler {
             // Route the expanded prompt to OperationEngine
             let _op_id = self
                 .operation_manager
-                .start_operation(request.session_id, expanded.prompt, ws_tx)
+                .start_operation(request.session_id, expanded.prompt, request.project_id, ws_tx)
                 .await?;
 
             return Ok(());
@@ -278,13 +278,14 @@ impl UnifiedChatHandler {
         // Regular message - route to OperationEngine (Voice tier)
         info!(
             session_id = %request.session_id,
+            project_id = ?request.project_id,
             content_preview = %content_preview,
             "Routing to OperationEngine (Voice tier)"
         );
 
         let op_id = self
             .operation_manager
-            .start_operation(request.session_id.clone(), request.content, ws_tx)
+            .start_operation(request.session_id.clone(), request.content, request.project_id.clone(), ws_tx)
             .await?;
 
         debug!(

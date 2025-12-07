@@ -68,10 +68,7 @@ pub fn execute_command_tool() -> Value {
     )
     .property(
         "environment",
-        serde_json::json!({
-            "type": "object",
-            "description": "Optional environment variables to set (e.g., {\"NODE_ENV\": \"development\"})"
-        }),
+        properties::optional_string("Optional environment variables as JSON string (e.g., '{\"NODE_ENV\": \"development\"}')"),
         false
     )
     .build()

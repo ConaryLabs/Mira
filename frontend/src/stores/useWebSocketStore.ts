@@ -305,25 +305,31 @@ export const useWebSocketStore = create<WebSocketStore>()(
     
     send: async (message: any) => {
       const { socket, connectionState } = get();
-      
+
+      // Block empty chat messages
+      if (message.type === 'chat' && !message.content?.trim()) {
+        console.warn('[WS] Blocked empty chat message - stack trace:', new Error().stack);
+        return;
+      }
+
       if (connectionState !== 'connected' || !socket) {
-        set(state => ({ 
-          messageQueue: [...state.messageQueue, message] 
+        set(state => ({
+          messageQueue: [...state.messageQueue, message]
         }));
         return;
       }
-      
+
       try {
         const messageStr = JSON.stringify(message);
         socket.send(messageStr);
-        
+
         if (message.type !== 'heartbeat' && message.method !== 'memory.get_recent') {
-          console.log('[WS] Sent:', message.type, message.method || '');
+          console.log('[WS] Sent:', message.type, message.content?.substring(0, 50) || message.method || '');
         }
       } catch (error) {
         console.error('[WS] Failed to send message:', error);
-        set(state => ({ 
-          messageQueue: [...state.messageQueue, message] 
+        set(state => ({
+          messageQueue: [...state.messageQueue, message]
         }));
       }
     },
