@@ -6,7 +6,7 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 44: 2025-12-07
+## Session 44: 2025-12-07 (`6ba7252`)
 
 **Summary:** Fixed conversation history bug and refactored context architecture for coherent memory strategy.
 
