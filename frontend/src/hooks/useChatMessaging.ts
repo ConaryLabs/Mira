@@ -18,14 +18,21 @@ export const useChatMessaging = () => {
   const user = useCurrentUser();
 
   const handleSend = useCallback(async (content: string) => {
+    // Guard against empty messages
+    const trimmedContent = content?.trim();
+    if (!trimmedContent) {
+      console.warn('[useChatMessaging] Blocked empty message send');
+      return;
+    }
+
     // Add user message immediately
     const userMessage = {
       id: `user-${Date.now()}`,
       role: 'user' as const,
-      content,
+      content: trimmedContent,
       timestamp: Date.now()
     };
-    
+
     addMessage(userMessage);
     
     // Set waiting state BEFORE sending
@@ -34,7 +41,7 @@ export const useChatMessaging = () => {
     // Build message with full context
     const message = {
       type: 'chat',
-      content,
+      content: trimmedContent,
       project_id: currentProject?.id || null,
       metadata: {
         session_id: user?.id || 'anonymous',

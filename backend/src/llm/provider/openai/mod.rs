@@ -132,6 +132,41 @@ impl OpenAIProvider {
 
         // Add messages as input items
         for msg in messages {
+            // Tool results use FunctionCallOutput format
+            if msg.role == "tool" {
+                if let Some(ref call_id) = msg.tool_call_id {
+                    items.push(InputItem::FunctionCallOutput {
+                        call_id: call_id.clone(),
+                        output: msg.content.clone(),
+                    });
+                    continue;
+                }
+            }
+
+            // Assistant messages with tool calls need special handling
+            if msg.role == "assistant" {
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    // First add the assistant message if it has content
+                    if !msg.content.is_empty() {
+                        items.push(InputItem::Message {
+                            role: "assistant".to_string(),
+                            content: MessageContent::Text(msg.content.clone()),
+                        });
+                    }
+
+                    // Then add each function call
+                    for tc in tool_calls {
+                        items.push(InputItem::FunctionCall {
+                            call_id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            arguments: tc.arguments.to_string(),
+                        });
+                    }
+                    continue;
+                }
+            }
+
+            // Regular messages (user, assistant without tool calls, system)
             let role = msg.role.clone();
             let content = MessageContent::Text(msg.content.clone());
 

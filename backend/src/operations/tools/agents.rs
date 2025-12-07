@@ -27,6 +27,7 @@ fn spawn_agent_tool() -> Value {
                              creating technical plans, exploring options.\n\
                            - `general`: General-purpose coding assistant with full capabilities. Use for implementing \
                              features, fixing bugs, refactoring code, running commands.",
+            "strict": true,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -49,7 +50,8 @@ fn spawn_agent_tool() -> Value {
                         "description": "Specific file paths the agent should focus on"
                     }
                 },
-                "required": ["agent_id", "task"]
+                "required": ["agent_id", "task", "context", "context_files"],
+                "additionalProperties": false
             }
         }
     })
@@ -64,6 +66,7 @@ fn spawn_agents_parallel_tool() -> Value {
             "description": "Spawn multiple specialized agents to work in parallel on independent tasks. \
                            Returns when all agents complete. Use this when you have multiple independent \
                            subtasks that can be executed concurrently.",
+            "strict": true,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -92,11 +95,13 @@ fn spawn_agents_parallel_tool() -> Value {
                                     "description": "Files for this agent to focus on"
                                 }
                             },
-                            "required": ["agent_id", "task"]
+                            "required": ["agent_id", "task", "context", "context_files"],
+                            "additionalProperties": false
                         }
                     }
                 },
-                "required": ["agents"]
+                "required": ["agents"],
+                "additionalProperties": false
             }
         }
     })

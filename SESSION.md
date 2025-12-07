@@ -4,6 +4,86 @@ Development session history with progressively detailed entries (recent sessions
 
 ---
 
+## Session 42: Project Root Scoping & Multi-Turn Tool Calling Fix (2025-12-07)
+
+**Summary:** Fixed two critical issues: project tools were scoped to `/backend/` only instead of full project root, and multi-turn tool calling was failing with OpenAI Responses API.
+
+**Problem 1 - Project Root Scoping:**
+- Project tools (list_project_files, read_project_file, search_codebase) only worked within `/backend/` directory
+- Users couldn't list or read frontend files when project root was `/home/peter/projects/Mira`
+
+**Root Cause 1:**
+- Frontend sends `project_id` in chat message
+- `UnifiedChatHandler` was ignoring it, only passing `session_id` and `content` to `OperationManager`
+- `OperationManager` tried to resolve project_id from session's `project_path`, but sessions weren't persisted
+
+**Solution 1:**
+- Updated `OperationManager::start_operation()` to accept `project_id` parameter
+- Updated `UnifiedChatHandler` to pass `request.project_id` to start_operation
+
+**Problem 2 - Multi-Turn Tool Calling:**
+- "No tool call found for function call output with call_id" error after tool execution
+- Tools executed successfully but follow-up LLM call failed
+
+**Root Cause 2:**
+- OpenAI Responses API requires `function_call` items BEFORE `function_call_output` items
+- Our `messages_to_input()` was only emitting `function_call_output` without the preceding `function_call`
+
+**Solution 2:**
+- Added `InputItem::FunctionCall` variant to types.rs
+- Updated `messages_to_input()` to emit `FunctionCall` items from assistant messages with tool_calls
+
+**Problem 3 - Strict Mode Tool Schemas:**
+- OpenAI strict mode was failing due to invalid schemas
+
+**Root Cause 3:**
+- Strict mode requires ALL properties in `required` array, not just user-specified ones
+- Defaults and format validators (uri) not supported in strict mode
+
+**Solution 3:**
+- Fixed ToolBuilder to include all property names in required array
+- Removed defaults from integer/number/boolean properties
+- Removed uri format from URL property
+- Fixed nested object schemas in agent tools
+
+**Work Completed:**
+
+1. **Project ID Flow** (`unified_handler.rs`, `operations/mod.rs`):
+   - Pass `project_id` from ChatRequest to OperationManager.start_operation()
+   - Use provided project_id, fallback to session resolution
+
+2. **Responses API Format** (`openai/mod.rs`, `openai/types.rs`):
+   - Added `InputItem::FunctionCall` variant with call_id, name, arguments
+   - Handle assistant messages with tool_calls: emit FunctionCall items before FunctionCallOutput
+
+3. **Strict Mode Fixes** (`tool_builder.rs`, `agents.rs`, `external.rs`):
+   - All properties now required in strict mode
+   - Removed unsupported defaults and format validators
+   - Fixed nested object schemas
+
+4. **Empty Message Prevention** (`useChatMessaging.ts`, `useWebSocketStore.ts`):
+   - Block empty chat messages at both React hook and WebSocket layers
+
+**Files Modified:**
+- `backend/src/api/ws/chat/unified_handler.rs`
+- `backend/src/api/ws/operations/mod.rs`
+- `backend/src/llm/provider/openai/mod.rs`
+- `backend/src/llm/provider/openai/types.rs`
+- `backend/src/operations/tool_builder.rs`
+- `backend/src/operations/tools/agents.rs`
+- `backend/src/operations/tools/external.rs`
+- `backend/migrations/20251125000001_foundation.sql`
+- `frontend/src/hooks/useChatMessaging.ts`
+- `frontend/src/stores/useWebSocketStore.ts`
+
+**Test Verification:**
+- Sent chat message with project_id via websocat
+- `list_project_files` now correctly lists `frontend/src/` (104 files)
+- `read_project_file` successfully reads `frontend/src/main.tsx`
+- Multi-turn tool calling works without errors
+
+---
+
 ## Session 41: Activity Panel Real-Time Display Fix (2025-12-06)
 
 **Summary:** Fixed Activity Panel to display real-time activity (tool executions, agents, background tasks) like Claude Code.

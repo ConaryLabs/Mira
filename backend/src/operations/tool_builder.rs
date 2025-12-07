@@ -37,15 +37,19 @@ impl ToolBuilder {
     /// OpenAI Structured Outputs (December 2025 best practice):
     /// - `strict: true` ensures model output always conforms to schema
     /// - `additionalProperties: false` required for strict mode
+    /// - ALL properties must be in `required` array for strict mode
     /// - Near-zero tool call parsing errors
     ///
     /// Use `build_relaxed()` if strict mode causes issues with complex schemas.
     pub fn build(self) -> Value {
         let mut properties_obj = serde_json::Map::new();
+        let mut all_property_names: Vec<String> = Vec::new();
         for (name, schema) in self.properties {
+            all_property_names.push(name.clone());
             properties_obj.insert(name, schema);
         }
 
+        // Strict mode requires ALL properties in the required array
         json!({
             "type": "function",
             "function": {
@@ -55,7 +59,7 @@ impl ToolBuilder {
                 "parameters": {
                     "type": "object",
                     "properties": properties_obj,
-                    "required": self.required,
+                    "required": all_property_names,
                     "additionalProperties": false
                 }
             }
@@ -110,36 +114,27 @@ pub mod properties {
         })
     }
 
-    /// Integer property with optional default
-    pub fn integer(description: &str, default: Option<i64>) -> Value {
-        let mut schema = json!({
+    /// Integer property (no defaults - strict mode doesn't support them)
+    pub fn integer(description: &str, _default: Option<i64>) -> Value {
+        json!({
             "type": "integer",
             "description": description
-        });
-        if let Some(d) = default {
-            schema["default"] = json!(d);
-        }
-        schema
+        })
     }
 
-    /// Number (float) property with optional default
-    pub fn number(description: &str, default: Option<f64>) -> Value {
-        let mut schema = json!({
+    /// Number (float) property (no defaults - strict mode doesn't support them)
+    pub fn number(description: &str, _default: Option<f64>) -> Value {
+        json!({
             "type": "number",
             "description": description
-        });
-        if let Some(d) = default {
-            schema["default"] = json!(d);
-        }
-        schema
+        })
     }
 
-    /// Boolean property with default
-    pub fn boolean(description: &str, default: bool) -> Value {
+    /// Boolean property (no defaults - strict mode doesn't support them)
+    pub fn boolean(description: &str, _default: bool) -> Value {
         json!({
             "type": "boolean",
-            "description": description,
-            "default": default
+            "description": description
         })
     }
 
@@ -180,12 +175,11 @@ pub mod properties {
         string(description)
     }
 
-    /// URL property
+    /// URL property (no format validation - strict mode doesn't support uri format)
     pub fn url(description: &str) -> Value {
         json!({
             "type": "string",
-            "format": "uri",
-            "description": description
+            "description": format!("{} (must be a valid URL)", description)
         })
     }
 
