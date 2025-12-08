@@ -38,6 +38,9 @@ impl BudgetTracker {
     }
 
     /// Record a budget entry for an LLM request
+    ///
+    /// `tokens_cached` tracks how many input tokens were served from OpenAI's prompt cache
+    /// (90% discount). This enables accurate cost tracking and cache effectiveness analysis.
     pub async fn record_request(
         &self,
         user_id: &str,
@@ -47,6 +50,7 @@ impl BudgetTracker {
         reasoning_effort: Option<&str>,
         tokens_input: i64,
         tokens_output: i64,
+        tokens_cached: i64,
         cost_usd: f64,
         from_cache: bool,
     ) -> Result<()> {
@@ -56,9 +60,9 @@ impl BudgetTracker {
             r#"
             INSERT INTO budget_tracking (
                 user_id, operation_id, provider, model, reasoning_effort,
-                tokens_input, tokens_output, cost_usd, from_cache, timestamp
+                tokens_input, tokens_output, tokens_cached, cost_usd, from_cache, timestamp
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(user_id)
@@ -68,15 +72,23 @@ impl BudgetTracker {
         .bind(reasoning_effort)
         .bind(tokens_input)
         .bind(tokens_output)
+        .bind(tokens_cached)
         .bind(cost_usd)
         .bind(from_cache)
         .bind(timestamp)
         .execute(&self.db)
         .await?;
 
+        // Calculate savings from cached tokens for logging
+        let cache_savings_pct = if tokens_input > 0 && tokens_cached > 0 {
+            (tokens_cached as f64 / tokens_input as f64) * 90.0 // 90% discount on cached
+        } else {
+            0.0
+        };
+
         debug!(
-            "Recorded budget entry: user={}, provider={}, model={}, cost=${:.4}, from_cache={}",
-            user_id, provider, model, cost_usd, from_cache
+            "Recorded budget entry: user={}, provider={}, model={}, cost=${:.4}, cached={}/{} tokens ({:.1}% savings), from_cache={}",
+            user_id, provider, model, cost_usd, tokens_cached, tokens_input, cache_savings_pct, from_cache
         );
 
         Ok(())

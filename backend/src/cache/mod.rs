@@ -1,8 +1,19 @@
 // backend/src/cache/mod.rs
 
-//! LLM response cache for cost optimization
+//! LLM caching for cost optimization
 //!
-//! Caches LLM responses using SHA-256 key hashing with TTL support.
+//! Two-level caching strategy:
+//! 1. Application cache: Full LLM response caching (exact request match)
+//! 2. Session cache state: Track what was sent to enable OpenAI prompt caching
+//!
+//! OpenAI prompt caching provides 90% discount on cached input tokens.
+//! Session cache state enables incremental context updates to maximize cache hits.
+
+pub mod session_state;
+pub mod session_state_store;
+
+pub use session_state::{ContextHashes, FileContentHash, SessionCacheState};
+pub use session_state_store::{CacheAggregateStats, SessionCacheStore};
 
 use anyhow::Result;
 use chrono::Utc;

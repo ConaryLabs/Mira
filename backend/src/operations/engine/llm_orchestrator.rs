@@ -129,12 +129,16 @@ impl LlmOrchestrator {
     }
 
     /// Record cost after an LLM call
+    ///
+    /// Uses cache-aware pricing that accounts for OpenAI's 90% discount on cached tokens.
+    /// `tokens_cached` comes from the response's `usage.input_tokens_details.cached_tokens`.
     async fn record_cost(
         &self,
         user_id: &str,
         operation_id: &str,
         tokens_input: i64,
         tokens_output: i64,
+        tokens_cached: i64,
         tier: ModelTier,
         from_cache: bool,
     ) -> Result<()> {
@@ -147,11 +151,19 @@ impl LlmOrchestrator {
                 ModelTier::Agentic => (OpenAIModel::Gpt51CodexMax, "openai", "gpt-5.1-codex-max"),
             };
 
-            let cost = if from_cache {
-                0.0
+            // Use cache-aware pricing that applies 90% discount to cached tokens
+            let cost_result = if from_cache {
+                // Application cache hit - no API call made
+                crate::llm::provider::openai::pricing::CostResult {
+                    cost: 0.0,
+                    model,
+                    tokens_input,
+                    tokens_output,
+                    tokens_cached,
+                }
             } else {
-                // Use OpenAI pricing for all tiers
-                OpenAIPricing::calculate_cost(model, tokens_input, tokens_output)
+                // Calculate cost with OpenAI prompt cache discount
+                OpenAIPricing::calculate_cost_with_info(model, tokens_input, tokens_output, tokens_cached)
             };
 
             tracker
@@ -163,14 +175,22 @@ impl LlmOrchestrator {
                     Some(tier.as_str()),
                     tokens_input,
                     tokens_output,
-                    cost,
+                    tokens_cached,
+                    cost_result.cost,
                     from_cache,
                 )
                 .await?;
 
+            // Log with cache savings visibility
+            let cache_hit_pct = if tokens_input > 0 {
+                (tokens_cached as f64 / tokens_input as f64) * 100.0
+            } else {
+                0.0
+            };
+
             debug!(
-                "Recorded budget: {} input, {} output, ${:.6} cost ({})",
-                tokens_input, tokens_output, cost, model_name
+                "Recorded budget: {} input ({} cached, {:.1}% hit), {} output, ${:.6} cost ({})",
+                tokens_input, tokens_cached, cache_hit_pct, tokens_output, cost_result.cost, model_name
             );
         }
         Ok(())
@@ -420,6 +440,7 @@ impl LlmOrchestrator {
         let max_iterations = 10; // Safety limit
         let mut total_tokens_input: i64 = 0;
         let mut total_tokens_output: i64 = 0;
+        let mut total_tokens_cached: i64 = 0; // Track OpenAI prompt cache hits
         let mut total_from_cache = false;
         let mut total_tool_calls = 0;
 
@@ -499,20 +520,27 @@ impl LlmOrchestrator {
                 total_from_cache = true;
             }
 
-            // Track token usage
+            // Track token usage including OpenAI prompt cache hits
             total_tokens_input += response.tokens.input;
             total_tokens_output += response.tokens.output;
+            total_tokens_cached += response.tokens.cached;
 
-            // Calculate cost using OpenAI pricing
+            // Calculate cost using cache-aware OpenAI pricing (90% discount on cached tokens)
             let model = match current_tier {
                 ModelTier::Fast => OpenAIModel::Gpt51Mini,
                 ModelTier::Voice => OpenAIModel::Gpt51,
                 ModelTier::Code | ModelTier::Agentic => OpenAIModel::Gpt51CodexMax,
             };
             let cost = if from_cache {
-                0.0
+                0.0 // Application cache hit - no API call
             } else {
-                OpenAIPricing::calculate_cost(model, response.tokens.input, response.tokens.output)
+                // Use cache-aware pricing that applies 90% discount to cached tokens
+                OpenAIPricing::calculate_cost_with_info(
+                    model,
+                    response.tokens.input,
+                    response.tokens.output,
+                    response.tokens.cached,
+                ).cost
             };
 
             // Emit usage info
@@ -613,13 +641,14 @@ impl LlmOrchestrator {
             }
         }
 
-        // Record total cost for all iterations
+        // Record total cost for all iterations with cache-aware pricing
         // Note: Budget tracking errors are non-fatal - log warning and continue
         if let Err(e) = self.record_cost(
             user_id,
             operation_id,
             total_tokens_input,
             total_tokens_output,
+            total_tokens_cached,
             current_tier,
             total_from_cache,
         )
@@ -627,16 +656,29 @@ impl LlmOrchestrator {
             warn!("Failed to record budget (non-fatal): {}", e);
         }
 
-        // Calculate final cost using OpenAI pricing
+        // Calculate final cost using cache-aware OpenAI pricing
         let final_model = match current_tier {
             ModelTier::Fast => OpenAIModel::Gpt51Mini,
             ModelTier::Voice => OpenAIModel::Gpt51,
             ModelTier::Code | ModelTier::Agentic => OpenAIModel::Gpt51CodexMax,
         };
         let actual_cost = if total_from_cache {
-            0.0
+            0.0 // Application cache hit
         } else {
-            OpenAIPricing::calculate_cost(final_model, total_tokens_input, total_tokens_output)
+            // Use cache-aware pricing (90% discount on cached tokens)
+            OpenAIPricing::calculate_cost_with_info(
+                final_model,
+                total_tokens_input,
+                total_tokens_output,
+                total_tokens_cached,
+            ).cost
+        };
+
+        // Calculate cache hit rate for logging
+        let cache_hit_pct = if total_tokens_input > 0 {
+            (total_tokens_cached as f64 / total_tokens_input as f64) * 100.0
+        } else {
+            0.0
         };
 
         let total_duration = start_time.elapsed();
@@ -644,6 +686,8 @@ impl LlmOrchestrator {
             operation_id = %operation_id,
             duration_ms = total_duration.as_millis() as u64,
             tokens_input = total_tokens_input,
+            tokens_cached = total_tokens_cached,
+            cache_hit_pct = format!("{:.1}%", cache_hit_pct),
             tokens_output = total_tokens_output,
             tool_calls = total_tool_calls,
             cost_usd = actual_cost,
