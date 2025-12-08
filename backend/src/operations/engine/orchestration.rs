@@ -133,10 +133,10 @@ impl Orchestrator {
             )
             .await;
 
-        // Build system prompt with full context
-        let mut system_prompt = self
+        // Build system prompt with cache awareness for incremental context
+        let cache_result = self
             .context_builder
-            .build_system_prompt(
+            .build_system_prompt_cached(
                 session_id,
                 &recall_context,
                 code_context.as_ref(),
@@ -144,6 +144,8 @@ impl Orchestrator {
                 project_id,
             )
             .await;
+
+        let mut system_prompt = cache_result.prompt;
 
         // Append Context Oracle intelligence to system prompt if available
         if let Some(oracle) = &oracle_context {
@@ -171,8 +173,11 @@ impl Orchestrator {
             .await?;
 
         // Use LLM orchestration
-        info!("[ENGINE] Using LLM orchestration with access_mode={:?}", system_access_mode);
-        self.execute_with_llm(
+        info!(
+            "[ENGINE] Using LLM orchestration with access_mode={:?}, cached_sections={}",
+            system_access_mode, cache_result.cached_sections
+        );
+        let result = self.execute_with_llm(
             operation_id,
             session_id,
             user_content,
@@ -182,7 +187,21 @@ impl Orchestrator {
             &recall_context,
             event_tx,
         )
-        .await
+        .await;
+
+        // Update session cache state after LLM call (regardless of success/failure)
+        // This stores the context hashes so next call can use incremental markers
+        self.context_builder
+            .update_cache_state(
+                session_id,
+                cache_result.static_prefix_hash,
+                cache_result.static_prefix_tokens,
+                cache_result.context_hashes,
+                0, // cached_tokens - tracked separately in LlmOrchestrator logs
+            )
+            .await;
+
+        result
     }
 
     async fn execute_with_llm(
