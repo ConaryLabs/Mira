@@ -11,6 +11,7 @@ use tracing::{debug, info, warn};
 
 use crate::api::ws::message::{SystemAccessMode, WsClientMessage};
 use crate::cli::ws_client::{BackendEvent, OperationEvent};
+use serde_json::json;
 
 /// A captured event with metadata
 #[derive(Debug, Clone)]
@@ -215,12 +216,16 @@ pub struct TestClient {
     event_rx: mpsc::Receiver<BackendEvent>,
     /// Current project ID
     project_id: Option<String>,
+    /// Current session ID (for isolated testing)
+    session_id: Option<String>,
     /// Connection status
     connected: bool,
     /// Default timeout for operations
     timeout: Duration,
     /// Event log for the current operation
     event_log: Vec<CapturedEvent>,
+    /// System access mode for file operations
+    access_mode: SystemAccessMode,
 }
 
 impl TestClient {
@@ -280,9 +285,11 @@ impl TestClient {
             sender,
             event_rx,
             project_id: None,
+            session_id: None,
             connected: true,
             timeout,
             event_log: Vec::new(),
+            access_mode: SystemAccessMode::Project, // Default to Project mode
         })
     }
 
@@ -295,6 +302,139 @@ impl TestClient {
     /// Set the timeout for operations
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout;
+    }
+
+    /// Create a new session with project path for isolated testing
+    /// Returns the session ID on success
+    pub async fn create_session(&mut self, name: Option<&str>, project_path: Option<&str>) -> Result<String> {
+        info!("[TestClient] Creating session with project_path: {:?}", project_path);
+
+        // Send session.create command
+        let msg = WsClientMessage::SessionCommand {
+            method: "session.create".to_string(),
+            params: json!({
+                "name": name,
+                "project_path": project_path,
+            }),
+        };
+
+        let json_str = serde_json::to_string(&msg)?;
+        {
+            let mut sender = self.sender.lock().await;
+            sender.send(Message::Text(json_str.into())).await?;
+        }
+
+        // Wait for session_created response
+        let start = Instant::now();
+        let timeout = Duration::from_secs(10);
+
+        loop {
+            tokio::select! {
+                event = self.event_rx.recv() => {
+                    match event {
+                        Some(BackendEvent::SessionData { response_type, data }) => {
+                            if response_type == "session_created" {
+                                // Extract session ID from response
+                                if let Some(session) = data.get("session") {
+                                    if let Some(id) = session.get("id").and_then(|v| v.as_str()) {
+                                        info!("[TestClient] Session created: {}", id);
+                                        self.session_id = Some(id.to_string());
+                                        return Ok(id.to_string());
+                                    }
+                                }
+                                return Err(anyhow::anyhow!("Session created but ID not found in response"));
+                            }
+                            // Not the response we're waiting for, continue
+                            continue;
+                        }
+                        Some(BackendEvent::Error { message, .. }) => {
+                            return Err(anyhow::anyhow!("Session creation failed: {}", message));
+                        }
+                        Some(_) => {
+                            // Continue waiting for session response
+                            continue;
+                        }
+                        None => {
+                            return Err(anyhow::anyhow!("Event channel closed while creating session"));
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(timeout.saturating_sub(start.elapsed())) => {
+                    return Err(anyhow::anyhow!("Timeout creating session"));
+                }
+            }
+        }
+    }
+
+    /// Set the session ID for subsequent operations
+    pub fn set_session(&mut self, session_id: String) {
+        info!("[TestClient] Using session: {}", session_id);
+        self.session_id = Some(session_id);
+    }
+
+    /// Set the system access mode for file operations
+    pub fn set_access_mode(&mut self, mode: SystemAccessMode) {
+        info!("[TestClient] Setting access mode: {:?}", mode);
+        self.access_mode = mode;
+    }
+
+    /// Register a directory as a project and get its ID
+    /// This allows tools to access files within that directory
+    pub async fn register_project(&mut self, path: &str, _name: Option<&str>) -> Result<String> {
+        info!("[TestClient] Registering project at path: {}", path);
+
+        // Send project.open_directory command (uses get-or-create pattern)
+        let msg = WsClientMessage::ProjectCommand {
+            method: "project.open_directory".to_string(),
+            params: json!({
+                "path": path,
+            }),
+        };
+
+        let json_str = serde_json::to_string(&msg)?;
+        {
+            let mut sender = self.sender.lock().await;
+            sender.send(Message::Text(json_str.into())).await?;
+        }
+
+        // Wait for response with project ID
+        let start = Instant::now();
+        let timeout = Duration::from_secs(10);
+
+        loop {
+            tokio::select! {
+                event = self.event_rx.recv() => {
+                    match event {
+                        Some(BackendEvent::SessionData { response_type, data }) => {
+                            // project.open_directory returns "directory_opened"
+                            if response_type == "directory_opened" {
+                                if let Some(project) = data.get("project") {
+                                    if let Some(id) = project.get("id").and_then(|v| v.as_str()) {
+                                        info!("[TestClient] Project registered with ID: {}", id);
+                                        self.project_id = Some(id.to_string());
+                                        // Use Project mode since we now have a registered project
+                                        self.access_mode = SystemAccessMode::Project;
+                                        return Ok(id.to_string());
+                                    }
+                                }
+                                return Err(anyhow::anyhow!("Directory opened but project ID not found"));
+                            }
+                            continue;
+                        }
+                        Some(BackendEvent::Error { message, .. }) => {
+                            return Err(anyhow::anyhow!("Project registration failed: {}", message));
+                        }
+                        Some(_) => continue,
+                        None => {
+                            return Err(anyhow::anyhow!("Event channel closed while registering project"));
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(timeout.saturating_sub(start.elapsed())) => {
+                    return Err(anyhow::anyhow!("Timeout registering project"));
+                }
+            }
+        }
     }
 
     /// Send a chat message and capture all events until completion
@@ -313,11 +453,12 @@ impl TestClient {
         // Clear event log
         self.event_log.clear();
 
-        // Send the message
+        // Send the message with session_id for isolation
         let msg = WsClientMessage::Chat {
             content: prompt.to_string(),
             project_id: self.project_id.clone(),
-            system_access_mode: SystemAccessMode::default(),
+            session_id: self.session_id.clone(),
+            system_access_mode: self.access_mode.clone(),
             metadata: None,
         };
 
@@ -457,6 +598,24 @@ impl crate::cli::ws_client::MiraClient {
                     if let Some(inner_type) = inner_data.get("type").and_then(|v| v.as_str()) {
                         if inner_type.starts_with("operation.") {
                             return Self::parse_operation_event_static(inner_type, inner_data);
+                        }
+                        // Handle session responses
+                        if inner_type.starts_with("session") {
+                            return Some(BackendEvent::SessionData {
+                                response_type: inner_type.to_string(),
+                                data: inner_data.clone(),
+                            });
+                        }
+                        // Handle project responses (directory_opened, project_created, etc.)
+                        if inner_type.starts_with("directory")
+                            || inner_type.starts_with("project")
+                            || inner_type.starts_with("artifact")
+                            || inner_type.starts_with("guidelines")
+                        {
+                            return Some(BackendEvent::SessionData {
+                                response_type: inner_type.to_string(),
+                                data: inner_data.clone(),
+                            });
                         }
                     }
                 }

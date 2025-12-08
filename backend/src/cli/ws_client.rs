@@ -148,6 +148,8 @@ pub struct MiraClient {
     event_rx: mpsc::Receiver<BackendEvent>,
     /// Current project ID
     project_id: Option<String>,
+    /// Current session ID (for message routing)
+    session_id: Option<String>,
     /// Connection status
     connected: bool,
 }
@@ -200,6 +202,7 @@ impl MiraClient {
             sender,
             event_rx,
             project_id: None,
+            session_id: None,
             connected: true,
         })
     }
@@ -299,6 +302,17 @@ impl MiraClient {
                         }
                         // Handle session responses
                         if inner_type.starts_with("session") {
+                            return Some(BackendEvent::SessionData {
+                                response_type: inner_type.to_string(),
+                                data: inner_data.clone(),
+                            });
+                        }
+                        // Handle project responses (directory_opened, project_created, etc.)
+                        if inner_type.starts_with("directory")
+                            || inner_type.starts_with("project")
+                            || inner_type.starts_with("artifact")
+                            || inner_type.starts_with("guidelines")
+                        {
                             return Some(BackendEvent::SessionData {
                                 response_type: inner_type.to_string(),
                                 data: inner_data.clone(),
@@ -560,6 +574,7 @@ impl MiraClient {
         let msg = WsClientMessage::Chat {
             content: content.to_string(),
             project_id: self.project_id.clone(),
+            session_id: self.session_id.clone(),
             system_access_mode: Default::default(), // CLI defaults to project-only access
             metadata,
         };

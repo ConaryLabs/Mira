@@ -48,6 +48,10 @@ pub enum WsClientMessage {
     Chat {
         content: String,
         project_id: Option<String>,
+        /// Optional session ID to use instead of connection's default session.
+        /// This allows clients to create isolated sessions for testing.
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         system_access_mode: SystemAccessMode,
         metadata: Option<MessageMetadata>,
