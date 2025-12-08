@@ -7,7 +7,7 @@
 use anyhow::Result;
 use chrono::{TimeZone, Utc};
 use sqlx::{Row, SqlitePool};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::session_state::{ContextHashes, FileContentHash, SessionCacheState};
 

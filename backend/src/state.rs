@@ -11,7 +11,7 @@ use tracing::info;
 use crate::auth::AuthService;
 use crate::budget::BudgetTracker;
 use crate::build::{BuildTracker, ErrorResolver};
-use crate::cache::LlmCache;
+use crate::cache::{LlmCache, SessionCacheStore};
 use crate::checkpoint::CheckpointManager;
 use crate::commands::CommandRegistry;
 use crate::config::CONFIG;
@@ -89,6 +89,8 @@ pub struct AppState {
     pub budget_tracker: Arc<BudgetTracker>,
     // LLM response cache
     pub llm_cache: Arc<LlmCache>,
+    // Session cache state for LLM-side prompt caching optimization
+    pub session_cache_store: Arc<SessionCacheStore>,
     // Tool synthesis
     pub synthesis_storage: Arc<SynthesisStorage>,
     // Project task tracking
@@ -259,6 +261,10 @@ impl AppState {
             .unwrap_or(86400);
         let llm_cache = Arc::new(LlmCache::new(pool.clone(), cache_enabled, cache_ttl));
 
+        // Initialize session cache store for LLM-side prompt caching
+        info!("Initializing session cache store");
+        let session_cache_store = Arc::new(SessionCacheStore::new(pool.clone()));
+
         // Initialize pattern services (needed for context oracle)
         info!("Initializing pattern services");
         let pattern_storage = Arc::new(PatternStorage::new(Arc::new(pool.clone())));
@@ -408,6 +414,7 @@ impl AppState {
             Some(hook_manager.clone()),
             Some(checkpoint_manager.clone()),
             Some(project_store.clone()),
+            Some(session_cache_store.clone()),
         ));
 
         // Initialize authentication service
@@ -461,6 +468,7 @@ impl AppState {
             context_oracle,
             budget_tracker,
             llm_cache,
+            session_cache_store,
             synthesis_storage,
             project_task_service,
             command_registry,

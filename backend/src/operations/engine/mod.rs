@@ -22,7 +22,7 @@ pub use events::OperationEngineEvent;
 
 use crate::api::ws::message::SystemAccessMode;
 use crate::budget::BudgetTracker;
-use crate::cache::LlmCache;
+use crate::cache::{LlmCache, SessionCacheStore};
 use crate::checkpoint::CheckpointManager;
 use crate::context_oracle::ContextOracle;
 use crate::git::client::GitClient;
@@ -74,6 +74,7 @@ impl OperationEngine {
         hook_manager: Option<Arc<RwLock<HookManager>>>,
         checkpoint_manager: Option<Arc<CheckpointManager>>,
         project_store: Option<Arc<crate::project::ProjectStore>>,
+        session_cache_store: Option<Arc<SessionCacheStore>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -90,6 +91,11 @@ impl OperationEngine {
         let project_task_service_for_context = project_task_service.clone();
         if let Some(task_service) = project_task_service_for_context {
             context_builder = context_builder.with_project_task_service(task_service);
+        }
+
+        // Add SessionCacheStore for LLM-side prompt caching optimization
+        if let Some(cache_store) = session_cache_store {
+            context_builder = context_builder.with_session_cache_store(cache_store);
         }
 
         let context_loader = ContextLoader::new(git_client.clone(), Arc::clone(&code_intelligence));

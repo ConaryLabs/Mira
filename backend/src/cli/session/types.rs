@@ -162,8 +162,11 @@ mod tests {
             user_id: None,
             name: Some("Test Session".to_string()),
             project_path: Some("/home/user/project".to_string()),
+            branch: Some("main".to_string()),
             last_message_preview: Some("Hello".to_string()),
             message_count: 5,
+            status: "active".to_string(),
+            last_commit_hash: None,
             created_at: 1700000000,
             last_active: 1700001000,
         };
