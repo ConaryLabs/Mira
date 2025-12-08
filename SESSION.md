@@ -6,6 +6,42 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 48: 2025-12-08 (`1fa592a`)
+
+**Summary:** Added `run_tests` delegation tool for agentic development loop.
+
+**Agentic Testing Loop:**
+The LLM can now self-correct by running tests, analyzing failures, fixing code, and re-running:
+```
+LLM writes code → run_tests → sees failures → fixes code → rebuild → run_tests → repeat until green
+```
+
+**New Tool: run_tests**
+- Tool schema in `src/operations/tools/external.rs`
+- Handler in `src/operations/engine/external_handlers.rs`
+- Registered in `src/operations/engine/tool_router/registry.rs`
+
+**Parameters:**
+- `scenario` - Specific test file (e.g., `smoke_test.yaml`)
+- `tags` - Filter by tags (e.g., `smoke,fast`)
+- `mock` - Run in mock mode (instant, no LLM calls)
+- `timeout_seconds` - Max wait time (default 300s)
+
+**Return Format:**
+```json
+{
+  "success": false,
+  "all_tests_passed": false,
+  "summary": "2 test(s) failed",
+  "failures": [
+    {"scenario": "...", "step": "...", "error": "..."}
+  ],
+  "suggestion": "Review failures, fix code, rebuild, run tests again."
+}
+```
+
+---
+
 ## Session 47: 2025-12-08 (`1fedca5`)
 
 **Summary:** Implemented mock mode for mira-test framework + test file cleanup.
