@@ -22,17 +22,20 @@ fn test_tool_builder_creates_valid_schema() {
     let function = &tool["function"];
     assert_eq!(function["name"], "test_tool");
     assert_eq!(function["description"], "A test tool");
+    assert_eq!(function["strict"], true); // Strict mode enabled
 
     // Verify parameters
     let params = &function["parameters"];
     assert_eq!(params["type"], "object");
     assert!(params["properties"].is_object());
     assert!(params["required"].is_array());
+    assert_eq!(params["additionalProperties"], false); // Required for strict mode
 
-    // Verify required field
+    // In strict mode, ALL properties are required
     let required = params["required"].as_array().unwrap();
-    assert_eq!(required.len(), 1);
-    assert_eq!(required[0], "name");
+    assert_eq!(required.len(), 2); // Both name and optional
+    assert!(required.contains(&json!("name")));
+    assert!(required.contains(&json!("optional")));
 
     // Verify properties
     let props = &params["properties"];
@@ -82,14 +85,16 @@ fn test_properties_string_array() {
 
 #[test]
 fn test_properties_boolean_with_default() {
+    // Note: In strict mode, defaults are not supported by OpenAI
+    // The default parameter is accepted but ignored
     let prop = properties::boolean("Enable feature", true);
 
     assert_eq!(prop["type"], "boolean");
     assert_eq!(prop["description"], "Enable feature");
-    assert_eq!(prop["default"], true);
+    // Strict mode doesn't include defaults - they're not supported
 
     let prop_false = properties::boolean("Disable feature", false);
-    assert_eq!(prop_false["default"], false);
+    assert_eq!(prop_false["type"], "boolean");
 }
 
 #[test]
@@ -118,7 +123,9 @@ fn test_builder_multiple_required_fields() {
 }
 
 #[test]
-fn test_builder_optional_fields_not_in_required() {
+fn test_builder_all_fields_required_in_strict_mode() {
+    // In strict mode, ALL properties are added to required array
+    // The `required` parameter in .property() is informational only
     let tool = ToolBuilder::new("optional_test", "Test")
         .property("required1", json!({"type": "string"}), true)
         .property("optional1", json!({"type": "string"}), false)
@@ -128,17 +135,22 @@ fn test_builder_optional_fields_not_in_required() {
     let required = tool["function"]["parameters"]["required"]
         .as_array()
         .unwrap();
-    assert_eq!(required.len(), 1);
-    assert_eq!(required[0], "required1");
+    // Strict mode: ALL 3 properties are in required
+    assert_eq!(required.len(), 3);
+    assert!(required.contains(&json!("required1")));
+    assert!(required.contains(&json!("optional1")));
+    assert!(required.contains(&json!("optional2")));
 
-    // Verify optional fields exist in properties
+    // Verify all fields exist in properties
     let props = &tool["function"]["parameters"]["properties"];
+    assert!(props["required1"].is_object());
     assert!(props["optional1"].is_object());
     assert!(props["optional2"].is_object());
 }
 
 #[test]
-fn test_builder_no_required_fields() {
+fn test_builder_all_properties_required_in_strict_mode() {
+    // In strict mode, even "optional" properties must be in required array
     let tool = ToolBuilder::new("all_optional", "Test")
         .property("opt1", json!({"type": "string"}), false)
         .property("opt2", json!({"type": "number"}), false)
@@ -147,7 +159,10 @@ fn test_builder_no_required_fields() {
     let required = tool["function"]["parameters"]["required"]
         .as_array()
         .unwrap();
-    assert_eq!(required.len(), 0);
+    // Strict mode: ALL properties are required
+    assert_eq!(required.len(), 2);
+    assert!(required.contains(&json!("opt1")));
+    assert!(required.contains(&json!("opt2")));
 }
 
 #[test]
@@ -184,12 +199,13 @@ fn test_builder_fluent_api_chaining() {
             .len(),
         4
     );
+    // Strict mode: ALL 4 properties are required
     assert_eq!(
         tool["function"]["parameters"]["required"]
             .as_array()
             .unwrap()
             .len(),
-        2
+        4
     );
 }
 
