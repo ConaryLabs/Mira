@@ -1,12 +1,12 @@
 #!/bin/bash
-# mira - Service management for Mira backend and frontend
+# mira-ctl - Service management for Mira backend and frontend
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MIRA_DIR="/home/peter/Mira"
 
 usage() {
-    echo "Usage: mira <command> [service]"
+    echo "Usage: mira-ctl <command> [service]"
     echo ""
     echo "Commands:"
     echo "  start [backend|frontend|all]   Start service(s)"
@@ -18,10 +18,10 @@ usage() {
     echo "  rebuild                        Build and restart backend"
     echo ""
     echo "Examples:"
-    echo "  mira start all      # Start both services"
-    echo "  mira restart backend # Restart just the backend"
-    echo "  mira logs backend -f # Follow backend logs"
-    echo "  mira rebuild        # Build and restart backend"
+    echo "  mira-ctl start all      # Start both services"
+    echo "  mira-ctl restart backend # Restart just the backend"
+    echo "  mira-ctl logs backend -f # Follow backend logs"
+    echo "  mira-ctl rebuild        # Build and restart backend"
 }
 
 start_service() {
@@ -115,8 +115,8 @@ show_logs() {
 
 build_backend() {
     echo "Building backend release..."
-    cd "$SCRIPT_DIR/backend"
-    cargo build --release
+    cd "$MIRA_DIR/backend"
+    DATABASE_URL="sqlite://data/mira.db" cargo build --release
     echo "Build complete"
 }
 

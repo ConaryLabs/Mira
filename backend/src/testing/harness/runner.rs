@@ -92,8 +92,33 @@ impl ScenarioRunner {
             }
         };
 
-        // Set project if specified
-        client.set_project(scenario.setup.project_id.clone());
+        // Create an isolated session for this test run
+        let project_path = project_dir.to_string_lossy().to_string();
+        let session_name = format!("test-{}", uuid::Uuid::new_v4());
+        match client.create_session(Some(&session_name), Some(&project_path)).await {
+            Ok(session_id) => {
+                info!("Created isolated session: {} ({})", session_name, session_id);
+            }
+            Err(e) => {
+                error!("Failed to create session: {}", e);
+                result.fail_with_error(format!("Session creation failed: {}", e));
+                self.cleanup(&scenario.cleanup, &project_dir).await;
+                return result;
+            }
+        }
+
+        // Register the project directory so tools can access it
+        match client.register_project(&project_path, Some("Test Project")).await {
+            Ok(project_id) => {
+                info!("Registered project with ID: {}", project_id);
+            }
+            Err(e) => {
+                error!("Failed to register project: {}", e);
+                result.fail_with_error(format!("Project registration failed: {}", e));
+                self.cleanup(&scenario.cleanup, &project_dir).await;
+                return result;
+            }
+        }
 
         // Run each step
         for step in &scenario.steps {
@@ -144,8 +169,15 @@ impl ScenarioRunner {
         let timeout = Duration::from_secs(step.timeout_seconds);
         client.set_timeout(timeout);
 
+        // Inject project directory context into the prompt
+        let prompt_with_context = format!(
+            "[Project directory: {}]\n\n{}",
+            project_dir.display(),
+            step.prompt
+        );
+
         // Send prompt and capture events
-        let events = match client.send_and_capture(&step.prompt).await {
+        let events = match client.send_and_capture(&prompt_with_context).await {
             Ok(e) => e,
             Err(e) => {
                 error!("Step '{}' failed to execute: {}", step.name, e);
