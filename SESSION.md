@@ -6,6 +6,37 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 47: 2025-12-08 (`1fedca5`)
+
+**Summary:** Implemented mock mode for mira-test framework + test file cleanup.
+
+**Mock Mode Implementation:**
+- Added `MockResponse` type with `text` and `tool_calls` fields
+- Runner generates fake events when `--mock` flag is set
+- No WebSocket connection needed in mock mode
+- Tests run in 0ms (vs ~3min with real LLM)
+
+**Test File Cleanup:**
+- Removed 4 outdated/narrow test files (-1,236 lines):
+  - `phase5_providers_test.rs` - Narrow tool parsing
+  - `phase6_integration_test.rs` - Broken (outdated API)
+  - `phase7_routing_test.rs` - Trivial Message helpers
+  - `embedding_cleanup_test.rs` - Narrow cleanup tests
+
+**Reporters Verified:**
+- Console (default) - Human readable
+- JSON (`--output json`) - Machine parseable
+- JUnit (`--output junit`) - CI integration (GitHub Actions, etc.)
+
+**Usage:**
+```bash
+mira-test run scenarios/ --mock        # Fast mock mode
+mira-test run scenarios/ --output json # JSON output
+mira-test run scenarios/ --output junit # JUnit XML
+```
+
+---
+
 ## Session 46: 2025-12-07 (`f94da70`)
 
 **Summary:** Fixed test framework session isolation + added 4 new test scenarios.
