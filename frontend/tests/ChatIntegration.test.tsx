@@ -31,6 +31,15 @@ vi.mock('../src/stores/useAppState', async () => {
   };
 });
 
+// Mock auth store to provide test user
+vi.mock('../src/stores/useAuthStore', () => ({
+  useCurrentUser: vi.fn(() => ({ id: 'test-user', username: 'test-user' })),
+  useAuthStore: vi.fn(() => ({
+    user: { id: 'test-user', username: 'test-user' },
+    isAuthenticated: true,
+  })),
+}));
+
 // CRITICAL FIX: Mock Virtuoso to render all items
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({ data, itemContent, components }: any) => {
@@ -54,7 +63,7 @@ beforeEach(() => {
   
   // Reset stores to initial state
   useChatStore.getState().clearMessages();
-  useChatStore.getState().setSessionId('peter-eternal'); // FIXED: Use actual session ID
+  // Session ID now comes from auth store (mocked as 'test-user')
   useChatStore.getState().setWaitingForResponse(false);
   
   // Mock WebSocket send
@@ -365,8 +374,8 @@ describe('Chat Integration Tests', () => {
       }, { timeout: 1000 });
       
       const call = mockSend.mock.calls[0][0];
-      // FIXED: Uses peter-eternal from config, not custom-session
-      expect(call.metadata?.session_id).toBe('peter-eternal');
+      // Uses test user ID from mocked auth store
+      expect(call.metadata?.session_id).toBe('test-user');
     });
   });
   

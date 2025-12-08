@@ -62,7 +62,14 @@ async fn handle_socket(socket: WebSocket, app_state: Arc<AppState>, addr: std::n
     let connection_start = Instant::now();
     let (sender, mut receiver) = socket.split();
 
-    let session_id = user_id.clone().unwrap_or_else(|| "peter-eternal".to_string());
+    // Create eternal session ID tied to authenticated user, or anonymous fallback
+    let session_id = match &user_id {
+        Some(uid) => format!("{}-eternal", uid),
+        None => {
+            warn!("No authenticated user - using anonymous session");
+            format!("anonymous-{}", uuid::Uuid::new_v4())
+        }
+    };
     info!("WebSocket client connected from {} with session_id: {}", addr, session_id);
 
     let last_activity = Arc::new(Mutex::new(Instant::now()));
