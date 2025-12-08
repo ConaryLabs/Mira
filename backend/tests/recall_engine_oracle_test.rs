@@ -13,63 +13,16 @@ use std::sync::Arc;
 
 async fn setup_test_pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
-        .max_connections(1)
+        .max_connections(5)
         .connect(":memory:")
         .await
         .expect("Failed to create in-memory pool");
 
-    // Create minimal schema for tests
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS memory_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            response_id TEXT,
-            parent_id INTEGER,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            tags TEXT,
-            mood TEXT,
-            intensity REAL,
-            salience REAL,
-            original_salience REAL,
-            intent TEXT,
-            topics TEXT,
-            summary TEXT,
-            relationship_impact TEXT,
-            contains_code INTEGER,
-            language TEXT,
-            programming_lang TEXT,
-            analyzed_at TEXT,
-            analysis_version INTEGER,
-            routed_to_heads TEXT,
-            last_recalled TEXT,
-            recall_count INTEGER,
-            contains_error INTEGER,
-            error_type TEXT,
-            error_severity TEXT,
-            error_file TEXT,
-            model_version TEXT,
-            prompt_tokens INTEGER,
-            completion_tokens INTEGER,
-            reasoning_tokens INTEGER,
-            total_tokens INTEGER,
-            latency_ms INTEGER,
-            generation_time_ms INTEGER,
-            finish_reason TEXT,
-            tool_calls TEXT,
-            temperature REAL,
-            max_tokens INTEGER,
-            embedding BLOB,
-            embedding_heads TEXT,
-            qdrant_point_ids TEXT
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .expect("Failed to create memory_entries table");
+    // Use proper migrations instead of manual schema
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
 
     pool
 }

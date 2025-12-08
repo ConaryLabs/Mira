@@ -4,6 +4,7 @@
 // Tests operation lifecycle, event emission, and database state tracking
 // without relying on internal lifecycle methods.
 
+use mira_backend::api::ws::message::SystemAccessMode;
 use mira_backend::config::CONFIG;
 use mira_backend::git::client::GitClient;
 use mira_backend::git::store::GitStore;
@@ -144,6 +145,7 @@ async fn test_operation_engine_lifecycle() {
         None, // hook_manager
         None, // checkpoint_manager
         None, // project_store
+        None, // session_cache_store
     );
 
     // Create event channel
@@ -173,6 +175,7 @@ async fn test_operation_engine_lifecycle() {
             "test-session-123",
             "Create a hello world function",
             None, // no project
+            SystemAccessMode::Project,
             None, // no cancel token
             &tx,
         )
@@ -310,6 +313,7 @@ async fn test_operation_cancellation() {
         None, // hook_manager
         None, // checkpoint_manager
         None, // project_store
+        None, // session_cache_store
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -337,6 +341,7 @@ async fn test_operation_cancellation() {
             "test-session-456",
             "This will be cancelled",
             None,
+            SystemAccessMode::Project,
             Some(cancel_token),
             &tx,
         )
@@ -421,6 +426,7 @@ async fn test_multiple_operations() {
         None, // hook_manager
         None, // checkpoint_manager
         None, // project_store
+        None, // session_cache_store
     );
 
     // Create multiple operations
@@ -448,6 +454,7 @@ async fn test_multiple_operations() {
                 &session_id,
                 &format!("Operation {}", i),
                 None,
+                SystemAccessMode::Project,
                 None,
                 &tx,
             )
@@ -522,6 +529,7 @@ async fn test_operation_event_ordering() {
         None, // hook_manager
         None, // checkpoint_manager
         None, // project_store
+        None, // session_cache_store
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -542,6 +550,7 @@ async fn test_operation_event_ordering() {
             "test-session",
             "Test event ordering",
             None,
+            SystemAccessMode::Project,
             None,
             &tx,
         )
@@ -626,6 +635,7 @@ async fn test_operation_retrieval() {
         None, // hook_manager
         None, // checkpoint_manager
         None, // project_store
+        None, // session_cache_store
     );
 
     // Create operation with specific fields
