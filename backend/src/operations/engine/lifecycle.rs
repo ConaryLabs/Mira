@@ -33,7 +33,7 @@ impl LifecycleManager {
         sqlx::query!(
             r#"
             INSERT INTO operations (
-                id, session_id, kind, status, created_at, user_message,
+                id, session_id, operation_kind, status, created_at, user_message,
                 delegate_calls
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -320,7 +320,7 @@ impl LifecycleManager {
     pub async fn get_operation(&self, operation_id: &str) -> Result<Operation> {
         let row = sqlx::query!(
             r#"
-            SELECT id, session_id, kind, status, created_at, started_at, completed_at,
+            SELECT id, session_id, operation_kind, status, created_at, started_at, completed_at,
                    user_message, delegate_calls, result, error
             FROM operations
             WHERE id = ?
@@ -333,7 +333,7 @@ impl LifecycleManager {
         Ok(Operation {
             id: row.id.unwrap_or_else(|| operation_id.to_string()),
             session_id: row.session_id,
-            kind: row.kind.unwrap_or_default(),
+            kind: row.operation_kind.unwrap_or_default(),
             status: row.status,
             created_at: row.created_at,
             started_at: row.started_at,

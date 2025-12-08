@@ -25,7 +25,8 @@ use uuid::Uuid;
 pub struct Operation {
     pub id: String,
     pub session_id: String,
-    pub kind: String,   // e.g., "code_generation", "refactor", etc.
+    #[sqlx(rename = "operation_kind")]
+    pub kind: String,   // e.g., "code_generation", "refactor", etc. (maps to operation_kind column)
     pub status: String, // e.g., "pending", "completed", "failed"
 
     // Timing
