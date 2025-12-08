@@ -1,0 +1,39 @@
+# scenarios/mock_test.yaml
+# Test scenario using mock responses (no backend needed)
+
+name: "Mock Test"
+description: "Test mock mode without backend connection"
+tags: ["mock", "fast"]
+timeout_seconds: 30
+
+setup:
+  create_files:
+    - path: "test.txt"
+      content: "Hello World"
+
+steps:
+  - name: "Mock greeting"
+    prompt: "Say hello"
+    mock_response:
+      text: "Hello! How can I help you today?"
+    assertions:
+      - type: completed_successfully
+      - type: response_contains
+        text: "Hello"
+
+  - name: "Mock tool execution"
+    prompt: "List the files"
+    mock_response:
+      text: "Found 1 file: test.txt"
+      tool_calls:
+        - name: "list_project_files"
+          result: "test.txt"
+          success: true
+    assertions:
+      - type: completed_successfully
+      - type: tool_executed
+        tool_name: list_project_files
+        success: true
+
+cleanup:
+  remove_project: true

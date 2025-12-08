@@ -131,6 +131,45 @@ pub struct TestStep {
     /// Reason for skipping
     #[serde(default)]
     pub skip_reason: Option<String>,
+
+    /// Mock response for this step (used in mock mode)
+    #[serde(default)]
+    pub mock_response: Option<MockResponse>,
+}
+
+/// Mock response for a test step
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MockResponse {
+    /// Text response from the LLM
+    #[serde(default)]
+    pub text: String,
+
+    /// Tool calls to simulate
+    #[serde(default)]
+    pub tool_calls: Vec<MockToolCall>,
+}
+
+/// A simulated tool call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MockToolCall {
+    /// Tool name
+    pub name: String,
+
+    /// Tool arguments
+    #[serde(default)]
+    pub args: serde_json::Value,
+
+    /// Tool result
+    #[serde(default)]
+    pub result: String,
+
+    /// Whether the tool succeeded
+    #[serde(default = "default_true")]
+    pub success: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_step_timeout() -> u64 {
