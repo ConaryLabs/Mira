@@ -6,6 +6,37 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 46: 2025-12-07 (`e0ca0fa`)
+
+**Summary:** Fixed test framework session isolation - tests now run with clean context.
+
+**Session Isolation Implementation:**
+- Added `session_id` field to `WsClientMessage::Chat` for per-message routing
+- `message_router.rs` uses message session_id if provided, falls back to connection default
+- `TestClient.create_session()` creates unique session with `project_path`
+- `runner.rs` creates isolated session before each test run
+
+**Key Changes:**
+- `api/ws/message.rs` - Added optional `session_id` to Chat message
+- `api/ws/chat/message_router.rs` - Route to message session_id if provided
+- `cli/ws_client.rs` - Added `session_id` field to MiraClient
+- `testing/harness/client.rs` - Session creation, event parsing for project responses
+- `testing/harness/runner.rs` - Create session per test with project_path
+- `scenarios/smoke_test.yaml` - Simplified to tool-based assertions
+
+**Also Fixed:**
+- `mira-ctl` script path issues (hardcoded `MIRA_DIR=/home/peter/Mira`)
+- `.env` missing `MIRA_LLM_MESSAGE_HISTORY_LIMIT` and old rolling summary vars
+
+**Test Results:**
+```
+[PASS] Smoke Test (16665ms)
+  [PASS] Simple greeting - 4 events
+  [PASS] Basic tool use - list_project_files executed
+```
+
+---
+
 ## Session 45: 2025-12-07 (`b74c2c7`)
 
 **Summary:** Implemented mira-test CLI and testing framework (Phase 1).
