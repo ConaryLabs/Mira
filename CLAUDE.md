@@ -312,7 +312,67 @@ The frontend proxies to backend port 3001 (configured in `vite.config.js`).
 
 ## Testing Strategy
 
-### Backend Tests
+### Scenario Tests (mira-test CLI)
+
+End-to-end scenario testing via the `mira-test` binary:
+
+```bash
+cd backend
+
+# Run all scenarios
+cargo run --bin mira-test -- run ./scenarios/
+
+# Run specific scenario
+cargo run --bin mira-test -- run ./scenarios/smoke_test.yaml
+
+# List available scenarios
+cargo run --bin mira-test -- list ./scenarios/
+
+# Validate YAML syntax
+cargo run --bin mira-test -- validate ./scenarios/
+
+# Filter by tags
+cargo run --bin mira-test -- run ./scenarios/ --tags smoke
+```
+
+**Scenario Format** (`scenarios/*.yaml`):
+```yaml
+name: "Test Name"
+description: "What this tests"
+tags: ["smoke", "tools"]
+timeout_seconds: 120
+
+setup:
+  create_files:
+    - path: "test.txt"
+      content: "Hello"
+
+steps:
+  - name: "Step name"
+    prompt: "User message to send"
+    timeout_seconds: 60
+    assertions:
+      - type: completed_successfully
+      - type: tool_executed
+        tool_name: list_project_files
+        success: true
+      - type: response_contains
+        text: "expected text"
+
+cleanup:
+  remove_project: true
+```
+
+**Session Isolation:** Each test run creates an isolated session with its own conversation history. The `session_id` is passed in Chat messages to route to the correct context.
+
+**Available Assertions:**
+- `completed_successfully` - Operation finished without error
+- `tool_executed` - Specific tool was called with expected success
+- `response_contains` - Response includes expected text
+- `file_exists` / `file_contains` - File system checks
+- `event_received` - Specific event type was emitted
+
+### Backend Unit/Integration Tests
 
 - **Integration tests** in `backend/tests/` (17 suites, 160+ tests)
 - Tests use in-memory SQLite
