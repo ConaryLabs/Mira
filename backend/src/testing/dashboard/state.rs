@@ -114,7 +114,11 @@ impl DisplayEvent {
                 format!("Preview: {} - {}", path_str, preview_short)
             }
             OperationEvent::ArtifactCompleted { artifact, .. } => {
-                format!("Artifact completed")
+                let path = artifact
+                    .get("file_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("inline");
+                format!("Artifact completed: {}", path)
             }
             OperationEvent::TaskCreated { title, .. } => {
                 format!("Task: {}", title)

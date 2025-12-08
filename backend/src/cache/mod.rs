@@ -19,9 +19,10 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, info, warn};
+
+use crate::utils::sha256_hash;
 
 /// LLM response cache for cost optimization
 pub struct LlmCache {
@@ -91,11 +92,7 @@ impl LlmCache {
         };
 
         let json = serde_json::to_string(&key_data)?;
-        let mut hasher = Sha256::new();
-        hasher.update(json.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
-
-        Ok(hash)
+        Ok(sha256_hash(&json))
     }
 
     /// Get a cached response if available and not expired

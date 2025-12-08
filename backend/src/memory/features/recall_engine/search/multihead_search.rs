@@ -33,7 +33,7 @@ impl MultiHeadSearch {
         }
     }
 
-    /// Multi-head search across specific embedding heads - same logic as original
+    /// Multi-head search across specific embedding heads
     pub async fn search(
         &self,
         session_id: &str,
@@ -47,24 +47,53 @@ impl MultiHeadSearch {
             query
         );
 
+        if heads.is_empty() {
+            debug!("MultiHeadSearch: No heads specified, returning empty results");
+            return Ok(vec![]);
+        }
+
         // Generate query embedding with explicit type
         let embedding: Vec<f32> = self.embedding_client.embed(query).await?;
 
-        // Calculate per-head limit
-        let k_per_head = limit / heads.len().max(1);
+        // Calculate per-head limit (at least 1)
+        let k_per_head = (limit / heads.len()).max(1);
 
-        // Search all heads (this returns results from all available heads, not just specified ones)
-        // TODO: In the future, we might want to add head filtering to QdrantMultiStore
-        let results_with_heads = self
-            .multi_store
-            .search_all(session_id, &embedding, k_per_head)
-            .await?;
-
-        // Flatten results from all heads
-        let all_results: Vec<MemoryEntry> = results_with_heads
-            .into_iter()
-            .flat_map(|(_, entries)| entries)
+        // Search only the specified heads in parallel
+        let search_futures: Vec<_> = heads
+            .iter()
+            .map(|head| {
+                let multi_store = self.multi_store.clone();
+                let session_id = session_id.to_string();
+                let embedding = embedding.clone();
+                let head = *head;
+                async move {
+                    let result = multi_store
+                        .search(head, &session_id, &embedding, k_per_head)
+                        .await;
+                    (head, result)
+                }
+            })
             .collect();
+
+        let results = futures::future::join_all(search_futures).await;
+
+        // Flatten results from searched heads only
+        let mut all_results: Vec<MemoryEntry> = Vec::new();
+        for (head, result) in results {
+            match result {
+                Ok(entries) => {
+                    debug!(
+                        "MultiHeadSearch: Found {} results from {:?} head",
+                        entries.len(),
+                        head
+                    );
+                    all_results.extend(entries);
+                }
+                Err(e) => {
+                    debug!("MultiHeadSearch: Error searching {:?} head: {}", head, e);
+                }
+            }
+        }
 
         // Score and rank using default balanced config
         let config = RecallConfig::default();
@@ -86,8 +115,9 @@ impl MultiHeadSearch {
         scored.truncate(limit);
 
         debug!(
-            "MultiHeadSearch: Found {} deduplicated results",
-            scored.len()
+            "MultiHeadSearch: Found {} deduplicated results from {} heads",
+            scored.len(),
+            heads.len()
         );
         Ok(scored)
     }

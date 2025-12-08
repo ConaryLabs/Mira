@@ -5,8 +5,9 @@
 pub mod analyzers;
 
 use anyhow::Result;
+use sqlx::SqlitePool;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::llm::provider::LlmProvider;
 use crate::memory::storage::sqlite::core::MessageAnalysis;
@@ -16,13 +17,26 @@ use self::analyzers::unified::UnifiedAnalyzer;
 /// Main MessagePipeline - coordinates analysis
 pub struct MessagePipeline {
     analyzer: UnifiedAnalyzer,
+    pool: Option<SqlitePool>,
 }
 
 impl MessagePipeline {
-    /// Create new message pipeline
+    /// Create new message pipeline (without database - batch processing disabled)
     pub fn new(llm_provider: Arc<dyn LlmProvider>) -> Self {
         let analyzer = UnifiedAnalyzer::new(llm_provider);
-        Self { analyzer }
+        Self {
+            analyzer,
+            pool: None,
+        }
+    }
+
+    /// Create message pipeline with database pool (enables batch processing)
+    pub fn with_pool(llm_provider: Arc<dyn LlmProvider>, pool: SqlitePool) -> Self {
+        let analyzer = UnifiedAnalyzer::new(llm_provider);
+        Self {
+            analyzer,
+            pool: Some(pool),
+        }
     }
 
     /// Create message pipeline with custom configuration
@@ -31,7 +45,23 @@ impl MessagePipeline {
         analyzer_config: AnalyzerConfig,
     ) -> Self {
         let analyzer = UnifiedAnalyzer::with_config(llm_provider, analyzer_config);
-        Self { analyzer }
+        Self {
+            analyzer,
+            pool: None,
+        }
+    }
+
+    /// Create message pipeline with custom configuration and database pool
+    pub fn with_config_and_pool(
+        llm_provider: Arc<dyn LlmProvider>,
+        analyzer_config: AnalyzerConfig,
+        pool: SqlitePool,
+    ) -> Self {
+        let analyzer = UnifiedAnalyzer::with_config(llm_provider, analyzer_config);
+        Self {
+            analyzer,
+            pool: Some(pool),
+        }
     }
 
     /// Main analysis entry point
@@ -82,9 +112,124 @@ impl MessagePipeline {
     }
 
     /// Process pending messages in batch
-    pub async fn process_pending_messages(&self, _session_id: &str) -> Result<usize> {
-        // TODO: Implement batch processing once storage layer is integrated
-        Ok(0)
+    ///
+    /// Finds messages in memory_entries that don't have corresponding message_analysis
+    /// records, analyzes them, and stores the results.
+    pub async fn process_pending_messages(&self, session_id: &str) -> Result<usize> {
+        let pool = match &self.pool {
+            Some(p) => p,
+            None => {
+                debug!("No database pool available for batch processing");
+                return Ok(0);
+            }
+        };
+
+        // Find pending messages (those without analysis)
+        let pending_messages = sqlx::query!(
+            r#"
+            SELECT m.id, m.content, m.role
+            FROM memory_entries m
+            LEFT JOIN message_analysis ma ON m.id = ma.memory_entry_id
+            WHERE m.session_id = ? AND ma.id IS NULL
+            ORDER BY m.created_at ASC
+            LIMIT 10
+            "#,
+            session_id
+        )
+        .fetch_all(pool)
+        .await?;
+
+        if pending_messages.is_empty() {
+            return Ok(0);
+        }
+
+        info!(
+            "Processing {} pending messages for session {}",
+            pending_messages.len(),
+            session_id
+        );
+
+        let mut processed_count = 0;
+
+        for msg in pending_messages {
+            let msg_id = msg.id.unwrap_or(0);
+            let content = msg.content;
+            let role = msg.role;
+
+            // Skip very short messages
+            if content.len() < 10 {
+                debug!("Skipping short message {}", msg_id);
+                continue;
+            }
+
+            // Analyze the message
+            match self.analyze_message(&content, &role, None).await {
+                Ok(result) => {
+                    // Convert to storage format
+                    let analysis = result.to_storage_analysis();
+
+                    // Store the analysis
+                    let topics_json =
+                        serde_json::to_string(&analysis.topics.unwrap_or_default()).ok();
+                    let routed_heads_json = analysis
+                        .routed_to_heads
+                        .and_then(|h| serde_json::to_string(&h).ok());
+                    let analyzed_at = chrono::Utc::now().timestamp();
+
+                    match sqlx::query!(
+                        r#"
+                        INSERT INTO message_analysis (
+                            memory_entry_id, mood, intensity, salience, original_salience,
+                            intent, topics, summary, relationship_impact, language,
+                            contains_code, contains_error, error_type, error_severity,
+                            error_file, programming_lang, routed_to_heads, analyzed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                        msg_id,
+                        analysis.mood,
+                        analysis.intensity,
+                        analysis.salience,
+                        analysis.original_salience,
+                        analysis.intent,
+                        topics_json,
+                        analysis.summary,
+                        analysis.relationship_impact,
+                        analysis.language,
+                        analysis.contains_code,
+                        analysis.contains_error,
+                        analysis.error_type,
+                        analysis.error_severity,
+                        analysis.error_file,
+                        analysis.programming_lang,
+                        routed_heads_json,
+                        analyzed_at,
+                    )
+                    .execute(pool)
+                    .await
+                    {
+                        Ok(_) => {
+                            processed_count += 1;
+                            debug!("Stored analysis for message {}", msg_id);
+                        }
+                        Err(e) => {
+                            warn!("Failed to store analysis for message {}: {}", msg_id, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to analyze message {}: {}", msg_id, e);
+                }
+            }
+        }
+
+        if processed_count > 0 {
+            info!(
+                "Processed {} messages for session {}",
+                processed_count, session_id
+            );
+        }
+
+        Ok(processed_count)
     }
 
     /// Quick content classification without full analysis

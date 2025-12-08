@@ -191,7 +191,7 @@ Key insight: Recent messages go in the message array (what LLM responds to), rol
 - `src/llm/provider/` - OpenAI GPT-5.1 providers (Responses API) and embeddings (text-embedding-3-large)
 - `src/llm/router/` - Multi-model routing: Fast/Voice/Code/Agentic tiers with task classification
 - `src/budget/` - Budget tracking with daily/monthly limits
-- `src/cache/` - LLM response cache (SHA-256 hashing, 80%+ hit rate)
+- `src/cache/` - LLM response cache (SHA-256 hashing, 80%+ hit rate), session cache state tracking
 - `src/git/intelligence/` - Commit tracking, co-change analysis, expertise scoring
 - `src/synthesis/` - Tool pattern detection and auto-generation
 - `src/build/` - Build system integration, error tracking, fix learning
@@ -200,6 +200,10 @@ Key insight: Recent messages go in the message array (what LLM responds to), rol
 - `src/system/` - System environment detection (OS, package manager, shell, tools)
 - `src/prompt/` - Prompt building with system context, memory, and code intelligence
 - `src/api/ws/chat/` - Chat routing and connection management
+- `src/session/` - Dual-session architecture (Voice eternal + Codex discrete)
+- `src/session/completion.rs` - Session completion detection (git commits, inactivity, explicit phrases)
+- `src/session/summary_generator.rs` - LLM-powered session summary generation
+- `src/utils/` - Centralized utilities (SHA-256 hashing, rate limiting, timeouts, timestamps)
 
 **System Context** (`src/system/`):
 - Detects OS (Linux distro from /etc/os-release, macOS via sw_vers, Windows)

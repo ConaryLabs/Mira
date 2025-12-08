@@ -294,31 +294,83 @@ impl CodeHandlers {
         }
     }
 
-    /// Analyze dependencies (placeholder - needs DB query implementation)
+    /// Analyze dependencies for a project
     async fn analyze_dependencies(&self, args: Value) -> Result<Value> {
         let project_id = args
             .get("project_id")
             .and_then(|v| v.as_str())
             .context("Missing project_id parameter")?;
-        let _file_path = args.get("file_path").and_then(|v| v.as_str());
-        let _group_by = args
+        let file_path = args.get("file_path").and_then(|v| v.as_str());
+        let group_by = args
             .get("group_by")
             .and_then(|v| v.as_str())
             .unwrap_or("type");
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<i32>().ok());
 
         info!("[CODE] Analyzing dependencies for project: {}", project_id);
 
-        // TODO: Implement dependency analysis using external_dependencies table
-        // For now, return placeholder
-        Ok(json!({
-            "success": true,
-            "message": "Dependency analysis coming soon",
-            "dependencies": {
-                "npm_packages": [],
-                "local_imports": [],
-                "std_lib": []
+        // Get dependencies from database
+        match self
+            .code_intelligence
+            .get_project_dependencies(project_id, file_path, limit)
+            .await
+        {
+            Ok(deps) => {
+                // Group dependencies by type
+                let mut grouped: std::collections::HashMap<String, Vec<Value>> =
+                    std::collections::HashMap::new();
+
+                for dep in &deps {
+                    let dep_type = dep.dependency_type.clone().unwrap_or_else(|| "unknown".to_string());
+                    let key = match group_by {
+                        "file" => dep.file_path.clone().unwrap_or_else(|| "unknown".to_string()),
+                        _ => dep_type.clone(), // Default: group by type
+                    };
+
+                    let entry = grouped.entry(key).or_default();
+                    entry.push(json!({
+                        "name": dep.dependency_name,
+                        "type": dep_type,
+                        "import_path": dep.import_path,
+                        "file_path": dep.file_path,
+                        "imported_symbols": dep.imported_symbols,
+                        "is_glob_import": dep.is_glob_import,
+                    }));
+                }
+
+                // Get stats for summary
+                let stats = self
+                    .code_intelligence
+                    .get_project_dependency_stats(project_id)
+                    .await
+                    .unwrap_or_default();
+
+                let stats_json: Vec<Value> = stats
+                    .iter()
+                    .map(|(dtype, count)| json!({"type": dtype, "count": count}))
+                    .collect();
+
+                Ok(json!({
+                    "success": true,
+                    "count": deps.len(),
+                    "grouped_by": group_by,
+                    "dependencies": grouped,
+                    "stats": stats_json,
+                    "message": format!("Found {} dependencies in project", deps.len())
+                }))
             }
-        }))
+            Err(e) => {
+                warn!("[CODE] Failed to analyze dependencies: {}", e);
+                Ok(json!({
+                    "success": false,
+                    "error": e.to_string(),
+                    "dependencies": {}
+                }))
+            }
+        }
     }
 
     /// Get complexity hotspots
@@ -388,31 +440,101 @@ impl CodeHandlers {
         }
     }
 
-    /// Get quality issues (placeholder - needs full implementation)
+    /// Get quality issues for a project
     async fn get_quality_issues(&self, args: Value) -> Result<Value> {
         let project_id = args
             .get("project_id")
             .and_then(|v| v.as_str())
             .context("Missing project_id parameter")?;
-        let _file_path = args.get("file_path").and_then(|v| v.as_str());
-        let _severity = args.get("severity").and_then(|v| v.as_str());
-        let _issue_type = args.get("issue_type").and_then(|v| v.as_str());
-        let _limit = args
+        let file_path = args.get("file_path").and_then(|v| v.as_str());
+        let severity = args.get("severity").and_then(|v| v.as_str());
+        let issue_type = args.get("issue_type").and_then(|v| v.as_str());
+        let include_resolved = args
+            .get("include_resolved")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(false);
+        let limit = args
             .get("limit")
             .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(50);
+            .and_then(|s| s.parse::<i32>().ok());
 
         info!("[CODE] Getting quality issues for project: {}", project_id);
 
-        // TODO: Query code_quality_issues table
-        // For now, return placeholder
-        Ok(json!({
-            "success": true,
-            "count": 0,
-            "issues": [],
-            "message": "Quality issue analysis coming soon"
-        }))
+        // Get quality issues from database
+        match self
+            .code_intelligence
+            .get_project_quality_issues(
+                project_id,
+                file_path,
+                severity,
+                issue_type,
+                include_resolved,
+                limit,
+            )
+            .await
+        {
+            Ok(issues) => {
+                // Format issues for response
+                let formatted_issues: Vec<Value> = issues
+                    .iter()
+                    .map(|issue| {
+                        json!({
+                            "id": issue.id,
+                            "file_path": issue.file_path,
+                            "issue_type": issue.issue_type,
+                            "severity": issue.severity,
+                            "title": issue.title,
+                            "description": issue.description.clone().or(issue.message.clone()),
+                            "line_start": issue.line_start,
+                            "line_end": issue.line_end,
+                            "suggested_fix": issue.suggested_fix,
+                            "fix_confidence": issue.fix_confidence,
+                            "is_auto_fixable": issue.is_auto_fixable,
+                            "resolved": issue.resolved,
+                        })
+                    })
+                    .collect();
+
+                // Get stats for summary
+                let stats = self
+                    .code_intelligence
+                    .get_project_quality_stats(project_id)
+                    .await
+                    .unwrap_or_default();
+
+                // Group stats by severity
+                let mut severity_counts: std::collections::HashMap<String, i64> =
+                    std::collections::HashMap::new();
+                let mut type_counts: std::collections::HashMap<String, i64> =
+                    std::collections::HashMap::new();
+
+                for (itype, sev, count) in &stats {
+                    *severity_counts.entry(sev.clone()).or_default() += count;
+                    *type_counts.entry(itype.clone()).or_default() += count;
+                }
+
+                Ok(json!({
+                    "success": true,
+                    "count": issues.len(),
+                    "issues": formatted_issues,
+                    "summary": {
+                        "by_severity": severity_counts,
+                        "by_type": type_counts,
+                        "total_unresolved": stats.iter().map(|(_, _, c)| c).sum::<i64>(),
+                    },
+                    "message": format!("Found {} quality issue(s)", issues.len())
+                }))
+            }
+            Err(e) => {
+                warn!("[CODE] Failed to get quality issues: {}", e);
+                Ok(json!({
+                    "success": false,
+                    "error": e.to_string(),
+                    "issues": []
+                }))
+            }
+        }
     }
 
     /// Get file symbols
@@ -522,7 +644,7 @@ impl CodeHandlers {
             .get("project_id")
             .and_then(|v| v.as_str())
             .context("Missing project_id parameter")?;
-        let _file_path = args.get("file_path").and_then(|v| v.as_str());
+        let file_path_filter = args.get("file_path").and_then(|v| v.as_str());
 
         info!("[CODE] Finding tests for: {}", element_name);
 
@@ -537,6 +659,12 @@ impl CodeHandlers {
                 let tests: Vec<Value> = elements
                     .iter()
                     .filter(|e| e.is_test)
+                    // Apply optional file path filter
+                    .filter(|e| {
+                        file_path_filter
+                            .map(|fp| e.full_path.contains(fp))
+                            .unwrap_or(true)
+                    })
                     .map(|e| {
                         json!({
                             "name": e.name,

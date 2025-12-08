@@ -8,8 +8,9 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+
+use crate::utils::sha256_hash;
 
 /// Default TTL window for assuming OpenAI cache is still warm (5 minutes)
 pub const DEFAULT_CACHE_WARM_WINDOW_SECS: i64 = 300;
@@ -141,14 +142,12 @@ impl SessionCacheState {
 
     /// Generate SHA-256 hash for content
     pub fn hash_content(content: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        format!("{:x}", hasher.finalize())
+        sha256_hash(content)
     }
 
     /// Estimate token count for content (rough approximation: 4 chars per token)
     pub fn estimate_tokens(content: &str) -> i64 {
-        (content.len() as f64 / 4.0).ceil() as i64
+        crate::utils::hash::estimate_tokens(content)
     }
 }
 

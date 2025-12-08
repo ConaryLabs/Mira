@@ -250,9 +250,10 @@ impl TaskManager {
         tokio::spawn(async move {
             info!("Analysis processor started (interval: {:?})", interval);
 
-            // Use Gemini 3 provider for message analysis
+            // Use LLM provider for message analysis with database pool for batch processing
             let llm_provider = app_state.llm_provider.clone();
-            let message_pipeline = MessagePipeline::new(llm_provider);
+            let pool = app_state.sqlite_pool.clone();
+            let message_pipeline = MessagePipeline::with_pool(llm_provider, pool);
 
             let mut interval_timer = time::interval(interval);
             interval_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
