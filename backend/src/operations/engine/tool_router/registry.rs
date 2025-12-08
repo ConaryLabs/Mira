@@ -96,12 +96,13 @@ impl ToolRegistry {
         }
     }
 
-    /// Register external tools (3 tools)
+    /// Register external tools (4 tools)
     fn register_external_tools(&mut self) {
         let external_tools = [
             ("web_search", "web_search_internal"),
             ("fetch_url", "fetch_url_internal"),
             ("execute_command", "execute_command_internal"),
+            ("run_tests", "run_tests_internal"),
         ];
 
         for (tool_name, internal_name) in external_tools {

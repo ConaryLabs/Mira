@@ -69,6 +69,7 @@ impl ExternalHandlers {
             "web_search_internal" => self.web_search(args).await,
             "fetch_url_internal" => self.fetch_url(args).await,
             "execute_command_internal" => self.execute_command(args).await,
+            "run_tests_internal" => self.run_tests(args).await,
             _ => Err(anyhow::anyhow!("Unknown external tool: {}", tool_name)),
         }
     }
@@ -704,5 +705,163 @@ impl ExternalHandlers {
         };
 
         Ok(result)
+    }
+
+    /// Run the mira-test test suite
+    /// Returns structured JSON with pass/fail status and failure details for the agentic loop
+    async fn run_tests(&self, args: Value) -> Result<Value> {
+        let scenario = args.get("scenario").and_then(|v| v.as_str());
+        let tags = args.get("tags").and_then(|v| v.as_str());
+        let mock_mode = args.get("mock").and_then(|v| v.as_bool()).unwrap_or(false);
+        let timeout_secs = args
+            .get("timeout_seconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300)
+            .min(600);
+
+        info!(
+            "[EXTERNAL] Running tests: scenario={:?}, tags={:?}, mock={}, timeout={}s",
+            scenario, tags, mock_mode, timeout_secs
+        );
+
+        // Build the mira-test command
+        let mut cmd_parts = vec!["./target/release/mira-test".to_string(), "run".to_string()];
+
+        // Add scenario directory or specific file
+        if let Some(s) = scenario {
+            cmd_parts.push(format!("scenarios/{}", s));
+        } else {
+            cmd_parts.push("scenarios/".to_string());
+        }
+
+        // Add flags
+        cmd_parts.push("--output".to_string());
+        cmd_parts.push("json".to_string());
+
+        if mock_mode {
+            cmd_parts.push("--mock".to_string());
+        }
+
+        if let Some(t) = tags {
+            cmd_parts.push("--tags".to_string());
+            cmd_parts.push(t.to_string());
+        }
+
+        let command = cmd_parts.join(" ");
+
+        // Execute from the backend directory
+        let backend_dir = PathBuf::from("/home/peter/Mira/backend");
+
+        info!("[EXTERNAL] Executing test command: {} in {:?}", command, backend_dir);
+
+        let command_future = Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .current_dir(&backend_dir)
+            .output();
+
+        match timeout(Duration::from_secs(timeout_secs), command_future).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let exit_code = output.status.code().unwrap_or(-1);
+                let success = output.status.success();
+
+                // Try to parse the JSON output from mira-test
+                let test_results: Value = serde_json::from_str(&stdout).unwrap_or_else(|_| {
+                    json!({
+                        "parse_error": "Could not parse test output as JSON",
+                        "raw_output": stdout
+                    })
+                });
+
+                // Build a structured response for the LLM
+                let response = if success {
+                    json!({
+                        "success": true,
+                        "all_tests_passed": true,
+                        "summary": "All tests passed",
+                        "results": test_results,
+                        "exit_code": exit_code
+                    })
+                } else {
+                    // Extract failure details to help the LLM fix issues
+                    let failures = self.extract_test_failures(&test_results);
+                    json!({
+                        "success": false,
+                        "all_tests_passed": false,
+                        "summary": format!("{} test(s) failed", failures.len()),
+                        "failures": failures,
+                        "results": test_results,
+                        "stderr": stderr,
+                        "exit_code": exit_code,
+                        "suggestion": "Review the failures above, fix the code, rebuild if needed, and run tests again."
+                    })
+                };
+
+                Ok(response)
+            }
+            Ok(Err(e)) => {
+                warn!("[EXTERNAL] Test execution failed: {}", e);
+                Ok(json!({
+                    "success": false,
+                    "error": format!("Test execution failed: {}", e),
+                    "suggestion": "Check if mira-test binary exists (run 'cargo build --release' in backend/)"
+                }))
+            }
+            Err(_) => {
+                warn!("[EXTERNAL] Tests timed out after {}s", timeout_secs);
+                Ok(json!({
+                    "success": false,
+                    "error": format!("Tests timed out after {} seconds", timeout_secs),
+                    "suggestion": "Consider running specific scenarios instead of all tests, or using --mock mode"
+                }))
+            }
+        }
+    }
+
+    /// Extract failure details from test results for LLM analysis
+    fn extract_test_failures(&self, results: &Value) -> Vec<Value> {
+        let mut failures = Vec::new();
+
+        // Handle the JSON reporter format from mira-test
+        if let Some(scenarios) = results.get("scenarios").and_then(|v| v.as_array()) {
+            for scenario in scenarios {
+                let passed = scenario.get("passed").and_then(|v| v.as_bool()).unwrap_or(true);
+                if !passed {
+                    let scenario_name = scenario.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+                    // Get step failures
+                    if let Some(steps) = scenario.get("steps").and_then(|v| v.as_array()) {
+                        for step in steps {
+                            let step_passed = step.get("passed").and_then(|v| v.as_bool()).unwrap_or(true);
+                            if !step_passed {
+                                let step_name = step.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let error = step.get("error").and_then(|v| v.as_str());
+                                let assertions = step.get("assertion_results");
+
+                                failures.push(json!({
+                                    "scenario": scenario_name,
+                                    "step": step_name,
+                                    "error": error,
+                                    "assertion_results": assertions
+                                }));
+                            }
+                        }
+                    }
+
+                    // Check for scenario-level error
+                    if let Some(error) = scenario.get("error").and_then(|v| v.as_str()) {
+                        failures.push(json!({
+                            "scenario": scenario_name,
+                            "step": null,
+                            "error": error
+                        }));
+                    }
+                }
+            }
+        }
+
+        failures
     }
 }
