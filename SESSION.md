@@ -6,6 +6,54 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 49: 2025-12-08 (`baf4643`)
+
+**Summary:** Project session architecture with auto-resume and commit checkpoint tracking.
+
+**Session Architecture:**
+- **Eternal sessions:** `{user_id}-eternal` for general chat (per-user)
+- **Project sessions:** Per user+project+branch with auto-resume capability
+- **Session lifecycle:** active -> committed -> archived
+
+**Database Changes:**
+- Added `branch`, `status`, `last_commit_hash` columns to `chat_sessions`
+- Created `session_checkpoints` table for commit tracking
+- Migration: `20251208053335_project_session_tracking.sql`
+
+**New Session API:**
+- `session.find_or_create_project` - Auto-resume or create project session
+  - Params: `user_id`, `project_path`, `branch`
+  - Returns existing active session or creates new one
+  - Response includes `resumed: true/false` flag
+
+**Session Functions (session.rs):**
+- `find_or_create_project_session()` - Core auto-resume logic
+- `record_session_checkpoint()` - Record commit within session
+- `mark_session_committed()` - Transition session to committed status
+- `archive_session()` - Archive completed sessions
+
+**Flow:**
+```
+WebSocket connects -> eternal session created
+User opens project -> session.find_or_create_project
+  -> Returns existing active session (resume) OR creates new
+Chat messages include session_id -> routed to correct session
+User commits -> record_session_checkpoint()
+Session complete -> mark_session_committed() or archive_session()
+```
+
+**Frontend Test Fix:**
+- Added auth store mock to `ChatIntegration.test.tsx`
+- Tests now use `test-user` session ID instead of `anonymous`
+
+**Files Changed:**
+- `backend/src/api/ws/session.rs` - ChatSession struct, checkpoint functions, find_or_create handler
+- `backend/src/api/ws/chat/mod.rs` - User-based eternal session ID
+- `backend/migrations/20251208053335_project_session_tracking.sql`
+- `frontend/tests/ChatIntegration.test.tsx` - Auth store mock
+
+---
+
 ## Session 48: 2025-12-08 (`caf63b3`)
 
 **Summary:** Added `run_tests` delegation tool + removed hardcoded session.
