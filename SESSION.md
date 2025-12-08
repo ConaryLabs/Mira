@@ -6,9 +6,9 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 46: 2025-12-07 (`e0ca0fa`)
+## Session 46: 2025-12-07 (`600c90f`)
 
-**Summary:** Fixed test framework session isolation - tests now run with clean context.
+**Summary:** Fixed test framework session isolation + added 4 new test scenarios.
 
 **Session Isolation Implementation:**
 - Added `session_id` field to `WsClientMessage::Chat` for per-message routing
@@ -16,13 +16,19 @@ Development session log. Recent sessions have full details; older sessions are c
 - `TestClient.create_session()` creates unique session with `project_path`
 - `runner.rs` creates isolated session before each test run
 
+**New Test Scenarios:**
+- `code_search.yaml` - Tests grep/search_codebase tools (3 steps)
+- `git_operations.yaml` - Tests git init, status, log commands (3 steps)
+- `multi_turn.yaml` - Tests conversation context retention (2 steps)
+- `file_operations.yaml` - File creation and reading (3 steps)
+
 **Key Changes:**
 - `api/ws/message.rs` - Added optional `session_id` to Chat message
 - `api/ws/chat/message_router.rs` - Route to message session_id if provided
 - `cli/ws_client.rs` - Added `session_id` field to MiraClient
 - `testing/harness/client.rs` - Session creation, event parsing for project responses
 - `testing/harness/runner.rs` - Create session per test with project_path
-- `scenarios/smoke_test.yaml` - Simplified to tool-based assertions
+- `scenarios/` - 5 scenario files (smoke_test + 4 new)
 
 **Also Fixed:**
 - `mira-ctl` script path issues (hardcoded `MIRA_DIR=/home/peter/Mira`)
@@ -30,9 +36,12 @@ Development session log. Recent sessions have full details; older sessions are c
 
 **Test Results:**
 ```
-[PASS] Smoke Test (16665ms)
-  [PASS] Simple greeting - 4 events
-  [PASS] Basic tool use - list_project_files executed
+[PASS] Code Search (31968ms)
+[PASS] File Operations (32867ms)
+[PASS] Git Operations (78041ms)
+[PASS] Multi-Turn Conversation (26462ms)
+[PASS] Smoke Test (14907ms)
+Total: 5 scenarios, 13 steps
 ```
 
 ---
