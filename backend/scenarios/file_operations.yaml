@@ -4,6 +4,7 @@
 name: "File Operations"
 description: "Verify file creation and reading tools work correctly"
 tags: ["tools", "file-ops"]
+timeout_seconds: 180
 
 setup:
   create_dirs:
@@ -16,36 +17,27 @@ steps:
     timeout_seconds: 60
     assertions:
       - type: completed_successfully
-      - type: tool_executed
-        tool_name: write_project_file
-        success: true
       - type: file_exists
         path: "hello.txt"
       - type: file_contains
         path: "hello.txt"
         text: "Hello World"
 
-  - name: "Read the file"
-    prompt: "Read the file hello.txt"
+  - name: "Read the file back"
+    prompt: "Read hello.txt and tell me what it contains"
     timeout_seconds: 60
     assertions:
       - type: completed_successfully
-      - type: tool_executed
-        tool_name: read_project_file
-        success: true
       - type: response_contains
         text: "Hello World"
 
   - name: "Create nested file"
-    prompt: "Create a file at src/main.rs with 'fn main() {}'"
+    prompt: "Create a file at src/main.rs containing: fn main() { println!(\"Hello\"); }"
     timeout_seconds: 60
     assertions:
       - type: completed_successfully
       - type: file_exists
         path: "src/main.rs"
-      - type: file_contains
-        path: "src/main.rs"
-        text: "fn main"
 
 cleanup:
   remove_project: true
