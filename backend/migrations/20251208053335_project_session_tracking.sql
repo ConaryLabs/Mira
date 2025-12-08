@@ -1,13 +1,13 @@
 -- backend/migrations/20251208053335_project_session_tracking.sql
 -- Add branch tracking and status to chat_sessions for project-based sessions
--- Note: These columns may already exist from manual application
 
--- Add columns if they don't exist (SQLite doesn't have IF NOT EXISTS for columns)
--- These are applied manually if needed
-
+-- Add new columns for project session tracking
 -- branch: Track which git branch the session is for
 -- status: Track session lifecycle (active, committed, archived)
 -- last_commit_hash: Track the last commit made in this session
+ALTER TABLE chat_sessions ADD COLUMN branch TEXT;
+ALTER TABLE chat_sessions ADD COLUMN status TEXT DEFAULT 'active';
+ALTER TABLE chat_sessions ADD COLUMN last_commit_hash TEXT;
 
 -- Indices for efficient lookup
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_project_branch
