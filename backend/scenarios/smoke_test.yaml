@@ -1,7 +1,7 @@
 # scenarios/smoke_test.yaml
 # Basic smoke test to verify the testing framework works
 # NOTE: Until session isolation is implemented, tests share context with
-# the "peter-eternal" session which may have prior conversation history.
+# the user's eternal session which may have prior conversation history.
 
 name: "Smoke Test"
 description: "Verify basic Mira operation - completes without errors"

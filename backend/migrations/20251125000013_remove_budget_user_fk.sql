@@ -1,6 +1,6 @@
 -- backend/migrations/20251125000013_remove_budget_user_fk.sql
 -- Remove FK constraint on budget_tracking.user_id
--- The user_id field now stores session_id (like "peter-eternal") which doesn't map to users table
+-- The user_id field now stores session_id (like "{username}-eternal") which doesn't map to users table
 
 -- SQLite doesn't support DROP FOREIGN KEY, so we recreate the table
 

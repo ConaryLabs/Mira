@@ -15,7 +15,8 @@ use crate::{
     state::AppState,
 };
 
-const DEFAULT_SESSION: &str = "peter-eternal";
+// No default session - require session_id or use anonymous
+const ANONYMOUS_SESSION: &str = "anonymous";
 
 #[derive(Debug, Deserialize)]
 struct ImportMemoryData {
@@ -32,7 +33,7 @@ struct ImportMemoryData {
 fn get_session_id(session_id: Option<&str>) -> String {
     session_id
         .map(String::from)
-        .unwrap_or_else(|| DEFAULT_SESSION.to_string())
+        .unwrap_or_else(|| ANONYMOUS_SESSION.to_string())
 }
 
 pub async fn handle_memory_command(
