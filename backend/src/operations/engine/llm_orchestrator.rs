@@ -674,12 +674,18 @@ impl LlmOrchestrator {
             ).cost
         };
 
-        // Calculate cache hit rate for logging
+        // Calculate cache hit rate and cost savings for logging
         let cache_hit_pct = if total_tokens_input > 0 {
             (total_tokens_cached as f64 / total_tokens_input as f64) * 100.0
         } else {
             0.0
         };
+
+        // Calculate savings from OpenAI prompt caching (90% discount on cached tokens)
+        // Without caching: full input price for all tokens
+        // With caching: full price for non-cached + 10% price for cached
+        let cost_without_cache = OpenAIPricing::calculate_cost(final_model, total_tokens_input, total_tokens_output);
+        let cost_savings = cost_without_cache - actual_cost;
 
         let total_duration = start_time.elapsed();
         info!(
@@ -690,7 +696,8 @@ impl LlmOrchestrator {
             cache_hit_pct = format!("{:.1}%", cache_hit_pct),
             tokens_output = total_tokens_output,
             tool_calls = total_tool_calls,
-            cost_usd = actual_cost,
+            cost_usd = format!("{:.6}", actual_cost),
+            cost_saved = format!("{:.6}", cost_savings),
             from_cache = total_from_cache,
             tier = current_tier.as_str(),
             "LLM orchestration completed"

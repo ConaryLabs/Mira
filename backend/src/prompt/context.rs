@@ -2,6 +2,7 @@
 // Context building functions for system prompts
 
 use crate::api::ws::message::MessageMetadata;
+use crate::cache::{ContextHashes, FileContentHash, SessionCacheState};
 use crate::config::CONFIG;
 use crate::git::client::tree_builder::{FileNode, FileNodeType};
 use crate::memory::core::types::MemoryEntry;
@@ -10,6 +11,7 @@ use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
 use crate::prompt::utils::language_from_extension;
 use crate::system::SystemContext;
 use crate::tools::types::Tool;
+use chrono::Utc;
 
 /// Add static system environment context to the prompt (cacheable prefix)
 /// This helps the LLM use platform-appropriate commands (apt vs brew vs dnf, etc.)
@@ -436,4 +438,257 @@ pub fn add_preamble_guidance(prompt: &mut String) {
     prompt.push_str("- Lead with concrete outcomes (\"found X\", \"fixed Y\") not just next steps\n");
     prompt.push_str("- Include important insights and decisions, not mechanical task descriptions\n");
     prompt.push_str("- Keep updates brief and technical, focused on the work being done\n\n");
+}
+
+// ================================================================
+// CACHE-AWARE CONTEXT BUILDING
+// Functions for incremental context updates to maximize OpenAI cache hits
+// ================================================================
+
+/// Generate content for project context section and return its hash
+pub fn build_project_context_content(
+    metadata: Option<&MessageMetadata>,
+    project_id: Option<&str>,
+) -> Option<String> {
+    let project_name = metadata.and_then(|m| m.project_name.as_deref());
+    let has_project = project_name.is_some() || project_id.is_some();
+
+    if !has_project {
+        return None;
+    }
+
+    let mut content = String::new();
+    let display_name = project_name.unwrap_or_else(|| project_id.unwrap_or("attached project"));
+
+    content.push_str(&format!("[ACTIVE PROJECT: {}]\n", display_name));
+    content.push_str("You have full access to this project's files and code. ");
+    content.push_str("All project tools operate relative to the project root:\n");
+    content.push_str("- read_project_file: Read files (use relative paths like 'src/main.rs')\n");
+    content.push_str("- edit_project_file: Edit existing files with precise replacements\n");
+    content.push_str("- write_project_file: Create new files\n");
+    content.push_str("- search_codebase: Search code patterns across the project\n");
+    content.push_str("- list_project_files: Browse project structure\n");
+    content.push_str("- run_command: Execute commands in the project directory\n");
+    content.push_str("Do NOT ask the user for file paths - use these tools to explore and find what you need.\n");
+
+    if let Some(meta) = metadata {
+        if meta.request_repo_context == Some(true) {
+            content.push_str("The user wants you to be aware of the repository context ");
+            content.push_str("and code structure when responding.\n");
+        }
+    }
+
+    content.push('\n');
+    Some(content)
+}
+
+/// Generate content for memory context section and return it
+pub fn build_memory_context_content(context: &RecallContext) -> Option<String> {
+    let mut content = String::new();
+    let mut has_content = false;
+
+    // Add summaries if config enabled
+    if CONFIG.use_rolling_summaries_in_context {
+        if let Some(session) = &context.session_summary {
+            content.push_str("\n[SESSION HISTORY]\n");
+            content.push_str(session);
+            content.push_str("\n\n");
+            has_content = true;
+        }
+
+        if let Some(rolling) = &context.rolling_summary {
+            content.push_str("[RECENT (last 100 messages)]\n");
+            content.push_str(rolling);
+            content.push_str("\n\n");
+            has_content = true;
+        }
+    }
+
+    // Semantic memories
+    if !context.semantic.is_empty() {
+        let important_memories: Vec<_> = context
+            .semantic
+            .iter()
+            .filter(|m| m.salience.unwrap_or(0.0) >= 0.6)
+            .collect();
+
+        if !important_memories.is_empty() {
+            content.push_str("[MEMORY]\n");
+            content.push_str("Key memories that might be relevant:\n");
+            for memory in important_memories {
+                let mem_content = if let Some(summary) = &memory.summary {
+                    summary.clone()
+                } else {
+                    memory
+                        .content
+                        .split('.')
+                        .next()
+                        .unwrap_or(&memory.content)
+                        .to_string()
+                };
+
+                let salience = memory.salience.unwrap_or(0.0);
+                content.push_str(&format!("- {} (importance: {:.1})\n", mem_content, salience));
+            }
+            content.push('\n');
+            has_content = true;
+        }
+    }
+
+    if has_content {
+        Some(content)
+    } else {
+        None
+    }
+}
+
+/// Generate content for code intelligence context section
+pub fn build_code_intelligence_content(code_context: Option<&[MemoryEntry]>) -> Option<String> {
+    let entries = code_context?;
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut content = String::new();
+    content.push_str("[CODE CONTEXT]\n");
+
+    for entry in entries {
+        let entry_content = &entry.content;
+        if let Some((file_part, element_part)) = entry_content.split_once(':') {
+            content.push_str(&format!("- {}: {}\n", file_part.trim(), element_part.trim()));
+        } else {
+            content.push_str(&format!("- {}\n", entry_content));
+        }
+    }
+
+    content.push_str("Use these paths exactly. Use search_code for more.\n\n");
+    Some(content)
+}
+
+/// Generate content for file context section (includes repo structure and file content)
+pub fn build_file_context_content(
+    metadata: Option<&MessageMetadata>,
+    file_tree: Option<&[FileNode]>,
+) -> Option<String> {
+    let mut content = String::new();
+    let mut has_content = false;
+
+    // Repository structure
+    if let Some(tree) = file_tree {
+        if !tree.is_empty() {
+            content.push_str("[REPO STRUCTURE]\n");
+
+            let dirs: Vec<_> = tree
+                .iter()
+                .filter(|n| matches!(n.node_type, FileNodeType::Directory))
+                .take(20)
+                .collect();
+
+            let files: Vec<_> = tree
+                .iter()
+                .filter(|n| matches!(n.node_type, FileNodeType::File))
+                .take(30)
+                .collect();
+
+            for dir in dirs {
+                content.push_str(&format!("  {}/\n", dir.path));
+            }
+            for file in files {
+                content.push_str(&format!("  {}\n", file.path));
+            }
+
+            content.push('\n');
+            has_content = true;
+        }
+    }
+
+    // File context from metadata
+    if let Some(meta) = metadata {
+        if let Some(path) = &meta.file_path {
+            content.push_str(&format!("[VIEWING FILE: {}]\n", path));
+
+            if let Some(lang) = &meta.language {
+                content.push_str(&format!("Language: {}\n", lang));
+            }
+
+            if let Some(file_content) = &meta.file_content {
+                content.push_str("Current file content:\n");
+                content.push_str("```\n");
+                content.push_str(file_content);
+                content.push_str("\n```\n");
+            }
+
+            content.push_str("The user expects you to be aware of what's in this file.\n");
+            has_content = true;
+        }
+
+        if let Some(repo_id) = &meta.repo_id {
+            content.push_str(&format!("[REPOSITORY: {}]\n", repo_id));
+            has_content = true;
+        }
+
+        if let Some(selection) = &meta.selection {
+            if selection.start_line != selection.end_line {
+                content.push_str(&format!(
+                    "[SELECTED LINES: {}-{}]\n",
+                    selection.start_line, selection.end_line
+                ));
+
+                if let Some(text) = &selection.text {
+                    content.push_str(&format!("```\n{}\n```\n", text));
+                }
+                has_content = true;
+            }
+        }
+
+        if has_content {
+            content.push('\n');
+        }
+    }
+
+    if has_content {
+        Some(content)
+    } else {
+        None
+    }
+}
+
+/// Add context section with cache awareness
+/// If cache is warm and hash matches, emits a compact marker instead of full content
+pub fn add_cached_context_section(
+    prompt: &mut String,
+    section_name: &str,
+    content: Option<&str>,
+    cache_state: Option<&SessionCacheState>,
+    new_hashes: &mut ContextHashes,
+) -> bool {
+    let Some(content) = content else {
+        return false;
+    };
+
+    let content_hash = SessionCacheState::hash_content(content);
+
+    // Check if we can use cached reference
+    let can_use_cached = cache_state.map_or(false, |state| {
+        state.is_cache_likely_warm() && state.context_hashes.section_matches(section_name, &content_hash)
+    });
+
+    if can_use_cached {
+        // Emit compact marker - LLM understands this from previous context
+        prompt.push_str(&format!("[{}: unchanged from previous context]\n\n", section_name.to_uppercase()));
+    } else {
+        // Emit full content
+        prompt.push_str(content);
+    }
+
+    // Store hash for next comparison (regardless of whether we used cached)
+    match section_name {
+        "project" => new_hashes.project_context = Some(content_hash),
+        "memory" => new_hashes.memory_context = Some(content_hash),
+        "code_intelligence" => new_hashes.code_intelligence = Some(content_hash),
+        "file" => new_hashes.file_context = Some(content_hash),
+        _ => {}
+    }
+
+    can_use_cached
 }

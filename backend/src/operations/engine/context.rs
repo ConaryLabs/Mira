@@ -1,6 +1,7 @@
 // src/operations/engine/context.rs
 // Context building for operations: memory, code intelligence, file trees, and Context Oracle
 
+use crate::cache::{ContextHashes, SessionCacheState, SessionCacheStore};
 use crate::config::CONFIG;
 use crate::context_oracle::{ContextOracle, ContextRequest, GatheredContext};
 use crate::git::client::{FileNode, FileNodeType};
@@ -11,6 +12,7 @@ use crate::operations::delegation_tools::get_llm_tools;
 use crate::persona::PersonaOverlay;
 use crate::project::ProjectTaskService;
 use crate::prompt::UnifiedPromptBuilder;
+use crate::prompt::utils::is_code_related;
 use crate::relationship::service::RelationshipService;
 use crate::session::{CodexSessionInfo, InjectionService, SessionInjection, SessionManager};
 use crate::tools::types::Tool;
@@ -26,6 +28,21 @@ pub struct ContextBuilder {
     project_task_service: Option<Arc<ProjectTaskService>>,
     session_manager: Option<Arc<SessionManager>>,
     injection_service: Option<Arc<InjectionService>>,
+    session_cache_store: Option<Arc<SessionCacheStore>>,
+}
+
+/// Result of cache-aware prompt building
+pub struct CachedPromptResult {
+    /// The system prompt
+    pub prompt: String,
+    /// Hashes of all context sections
+    pub context_hashes: ContextHashes,
+    /// Hash of the static prefix (for cache invalidation)
+    pub static_prefix_hash: String,
+    /// Estimated tokens in static prefix
+    pub static_prefix_tokens: i64,
+    /// Number of sections that used cached references
+    pub cached_sections: usize,
 }
 
 impl ContextBuilder {
@@ -40,6 +57,7 @@ impl ContextBuilder {
             project_task_service: None,
             session_manager: None,
             injection_service: None,
+            session_cache_store: None,
         }
     }
 
@@ -64,6 +82,12 @@ impl ContextBuilder {
     /// Add InjectionService for Codex completion summaries
     pub fn with_injection_service(mut self, service: Arc<InjectionService>) -> Self {
         self.injection_service = Some(service);
+        self
+    }
+
+    /// Add SessionCacheStore for LLM-side prompt caching optimization
+    pub fn with_session_cache_store(mut self, store: Arc<SessionCacheStore>) -> Self {
+        self.session_cache_store = Some(store);
         self
     }
 
@@ -332,6 +356,164 @@ impl ContextBuilder {
             code_context.map(|v| &**v),
             file_tree.map(|v| &**v),
         )
+    }
+
+    /// Build system prompt with cache awareness for incremental context updates
+    ///
+    /// This method uses session cache state to enable incremental context:
+    /// - Loads previous cache state for the session
+    /// - Uses cached markers for unchanged dynamic sections
+    /// - Returns context hashes for storage after LLM call
+    pub async fn build_system_prompt_cached(
+        &self,
+        session_id: &str,
+        context: &RecallContext,
+        code_context: Option<&Vec<MemoryEntry>>,
+        file_tree: Option<&Vec<FileNode>>,
+        project_id: Option<&str>,
+    ) -> CachedPromptResult {
+        let persona = PersonaOverlay::Default;
+        let tools_json = get_llm_tools();
+
+        let tools: Vec<Tool> = tools_json
+            .iter()
+            .filter_map(|v| serde_json::from_value::<Tool>(v.clone()).ok())
+            .collect();
+
+        let _relationship_ctx = self
+            .relationship_service
+            .context_loader()
+            .load_context(session_id)
+            .await
+            .ok();
+
+        // Calculate static prefix hash for cache invalidation detection
+        let static_prefix_hash = UnifiedPromptBuilder::calculate_static_prefix_hash(
+            &persona,
+            Some(&tools),
+            is_code_related(None), // Default to code-related for operations
+        );
+
+        let static_prefix_tokens = UnifiedPromptBuilder::estimate_static_prefix_tokens(
+            &persona,
+            Some(&tools),
+            is_code_related(None),
+        );
+
+        // Load previous cache state
+        let cache_state = if let Some(store) = &self.session_cache_store {
+            match store.get(session_id).await {
+                Ok(Some(state)) => {
+                    // Check if static prefix changed (invalidates all caches)
+                    if state.static_prefix_changed(&static_prefix_hash) {
+                        info!(
+                            "[CACHE] Static prefix changed for session {}, invalidating cache state",
+                            session_id
+                        );
+                        if let Err(e) = store.invalidate(session_id).await {
+                            warn!("[CACHE] Failed to invalidate cache state: {}", e);
+                        }
+                        None
+                    } else if state.is_cache_likely_warm() {
+                        debug!(
+                            "[CACHE] Cache likely warm for session {} (last call {}s ago)",
+                            session_id,
+                            chrono::Utc::now()
+                                .signed_duration_since(state.last_call_at)
+                                .num_seconds()
+                        );
+                        Some(state)
+                    } else {
+                        debug!(
+                            "[CACHE] Cache likely cold for session {} (last call too long ago)",
+                            session_id
+                        );
+                        None
+                    }
+                }
+                Ok(None) => {
+                    debug!("[CACHE] No cache state for session {}", session_id);
+                    None
+                }
+                Err(e) => {
+                    warn!("[CACHE] Failed to load cache state for session {}: {}", session_id, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Build prompt with cache awareness
+        let (prompt, context_hashes, cached_sections) = UnifiedPromptBuilder::build_system_prompt_cached(
+            &persona,
+            context,
+            Some(&tools),
+            None, // metadata
+            project_id,
+            code_context.map(|v| &**v),
+            file_tree.map(|v| &**v),
+            cache_state.as_ref(),
+        );
+
+        if cached_sections > 0 {
+            info!(
+                "[CACHE] Incremental context: {}/{} sections using cached references",
+                cached_sections, 4 // max dynamic sections
+            );
+        }
+
+        CachedPromptResult {
+            prompt,
+            context_hashes,
+            static_prefix_hash,
+            static_prefix_tokens,
+            cached_sections,
+        }
+    }
+
+    /// Update session cache state after an LLM call
+    pub async fn update_cache_state(
+        &self,
+        session_id: &str,
+        static_prefix_hash: String,
+        static_prefix_tokens: i64,
+        context_hashes: ContextHashes,
+        cached_tokens: i64,
+    ) {
+        let Some(store) = &self.session_cache_store else {
+            return;
+        };
+
+        // Get or create state
+        let mut state = match store.get(session_id).await {
+            Ok(Some(existing)) => existing,
+            Ok(None) => SessionCacheState::new(
+                session_id.to_string(),
+                static_prefix_hash.clone(),
+                static_prefix_tokens,
+            ),
+            Err(e) => {
+                warn!("[CACHE] Failed to get cache state for update: {}", e);
+                return;
+            }
+        };
+
+        // Update with new call data
+        state.update_after_call(context_hashes, cached_tokens);
+
+        // Persist
+        if let Err(e) = store.upsert(&state).await {
+            warn!("[CACHE] Failed to update cache state: {}", e);
+        } else {
+            debug!(
+                "[CACHE] Updated session {} cache state: {} requests, {} total cached tokens, {:.1}% hit rate",
+                session_id,
+                state.total_requests,
+                state.total_cached_tokens,
+                state.cache_hit_rate() * 100.0
+            );
+        }
     }
 
     /// Build enriched context string for LLM with all available information
