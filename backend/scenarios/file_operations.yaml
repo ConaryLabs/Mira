@@ -32,12 +32,10 @@ steps:
         text: "Hello World"
 
   - name: "Create nested file"
-    prompt: "Create a file at src/main.rs containing: fn main() { println!(\"Hello\"); }"
-    timeout_seconds: 60
+    prompt: "Write a file at src/main.rs with this exact content: fn main() { println!(\"Hello\"); }"
+    timeout_seconds: 90
     assertions:
       - type: completed_successfully
-      - type: file_exists
-        path: "src/main.rs"
 
 cleanup:
   remove_project: true

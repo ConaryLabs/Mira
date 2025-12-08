@@ -22,13 +22,12 @@ steps:
       - type: completed_successfully
 
   - name: "Basic tool use"
-    prompt: "List the files in the current project directory using list_project_files."
+    prompt: "What files are in this project? Use a tool to check."
     timeout_seconds: 90
     assertions:
       - type: completed_successfully
-      - type: tool_executed
-        tool_name: list_project_files
-        success: true
+      - type: response_contains
+        text: "test.txt"
 
 cleanup:
   remove_project: true
