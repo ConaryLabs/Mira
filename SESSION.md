@@ -6,9 +6,9 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 48: 2025-12-08 (`3e0c644`)
+## Session 48: 2025-12-08 (`caf63b3`)
 
-**Summary:** Added `run_tests` delegation tool for agentic development loop.
+**Summary:** Added `run_tests` delegation tool + removed hardcoded session.
 
 **Agentic Testing Loop:**
 The LLM can now self-correct by running tests, analyzing failures, fixing code, and re-running:
@@ -39,6 +39,11 @@ LLM writes code → run_tests → sees failures → fixes code → rebuild → r
   "suggestion": "Review failures, fix code, rebuild, run tests again."
 }
 ```
+
+**Session Refactoring:**
+Removed hardcoded `peter-eternal` session. Session ID now tied to authenticated user:
+- Authenticated: `{user_id}-eternal` (persistent per user)
+- Anonymous: `anonymous-{uuid}` (ephemeral per connection)
 
 ---
 
