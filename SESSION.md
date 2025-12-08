@@ -6,6 +6,57 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 50: 2025-12-08 (`0c81265`)
+
+**Summary:** Codebase audit - wired placeholder functions, centralized utilities, session completion detection.
+
+**Audit Completed:**
+1. **Placeholder Functions Implemented:**
+   - `analyze_dependencies()` - Now queries `external_dependencies` table
+   - `get_quality_issues()` - Now queries `code_quality_issues` table
+   - `process_pending_messages()` - Batch processing with database queries
+
+2. **Multihead Search Fixed:**
+   - `multihead_search.rs` now respects the `heads` parameter instead of searching all heads
+   - Uses parallel futures via `futures::future::join_all`
+
+3. **Centralized Utilities (`src/utils/`):**
+   - `hash.rs` - SHA-256 hashing (`sha256_hash`, `sha256_hash_bytes`, `estimate_tokens`)
+   - `rate_limiter.rs` - Rate limiting with governor crate
+   - `timeout.rs` - Async timeout helper
+   - `timestamp.rs` - Timestamp utilities
+   - Updated `cache/mod.rs` and `cache/session_state.rs` to use centralized hash
+
+4. **Session Completion Detection (`src/session/completion.rs`):**
+   - `CompletionReason` enum (tool_loop_terminated, git_commit, user_explicit, inactivity, etc.)
+   - `CompletionDetector` - Detects completion signals
+   - `CompletionMonitor` - Background monitoring for stale sessions
+   - Git commit detection, explicit phrase detection, inactivity timeout
+
+5. **Summary Generator (`src/session/summary_generator.rs`):**
+   - `SessionArtifacts` - Collects files changed, tool calls, key actions
+   - `SummaryGenerator` - LLM-based and rule-based summary generation
+   - Integrates with `CodexCompletionMetadata` for Voice session injection
+
+6. **Dead Code Cleanup:**
+   - Removed unused imports and parameters
+   - Fixed unused mut warnings
+   - Clarified sudo approval handling in streaming.rs
+
+**Files Changed:**
+- `src/utils/` (NEW) - hash.rs, rate_limiter.rs, timeout.rs, timestamp.rs, mod.rs
+- `src/session/completion.rs` (NEW) - Completion detection
+- `src/session/summary_generator.rs` (NEW) - Summary generation
+- `src/session/mod.rs` - Export new modules
+- `src/cache/mod.rs`, `src/cache/session_state.rs` - Use centralized hash
+- `src/operations/engine/code_handlers.rs` - Implement analyze_dependencies, get_quality_issues
+- `src/memory/features/code_intelligence/storage.rs` - Add query methods
+- `src/memory/features/message_pipeline/mod.rs` - Batch processing
+- `src/memory/features/recall_engine/search/multihead_search.rs` - Fix heads parameter
+- `CLAUDE.md` - Document new modules
+
+---
+
 ## Session 49: 2025-12-08 (`16a6765`)
 
 **Summary:** Project session architecture with auto-resume and commit checkpoint tracking.

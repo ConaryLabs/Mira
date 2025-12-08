@@ -2,7 +2,7 @@
 // Context building functions for system prompts
 
 use crate::api::ws::message::MessageMetadata;
-use crate::cache::{ContextHashes, FileContentHash, SessionCacheState};
+use crate::cache::{ContextHashes, SessionCacheState};
 use crate::config::CONFIG;
 use crate::git::client::tree_builder::{FileNode, FileNodeType};
 use crate::memory::core::types::MemoryEntry;
@@ -11,7 +11,6 @@ use crate::prompt::types::{CodeElement, ErrorContext, QualityIssue};
 use crate::prompt::utils::language_from_extension;
 use crate::system::SystemContext;
 use crate::tools::types::Tool;
-use chrono::Utc;
 
 /// Add static system environment context to the prompt (cacheable prefix)
 /// This helps the LLM use platform-appropriate commands (apt vs brew vs dnf, etc.)

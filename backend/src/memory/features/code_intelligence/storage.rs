@@ -597,6 +597,38 @@ pub struct RepoStats {
     pub high_issues: i64,          // Changed from u32 - matches SQLite INTEGER
 }
 
+/// External dependency with file context (for API responses)
+#[derive(Debug, Clone)]
+pub struct ProjectDependency {
+    pub id: i64,
+    pub project_id: Option<String>,
+    pub file_path: Option<String>,
+    pub dependency_name: Option<String>,
+    pub dependency_type: Option<String>,
+    pub import_path: Option<String>,
+    pub imported_symbols: Vec<String>,
+    pub is_glob_import: bool,
+}
+
+/// Quality issue with file context (for API responses)
+#[derive(Debug, Clone)]
+pub struct ProjectQualityIssue {
+    pub id: i64,
+    pub project_id: Option<String>,
+    pub file_path: Option<String>,
+    pub issue_type: String,
+    pub severity: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub message: Option<String>,
+    pub line_start: Option<i64>,
+    pub line_end: Option<i64>,
+    pub suggested_fix: Option<String>,
+    pub fix_confidence: Option<f64>,
+    pub is_auto_fixable: bool,
+    pub resolved: bool,
+}
+
 /// Semantic stats for a single file
 #[derive(Debug, Clone)]
 pub struct FileSemanticStats {
@@ -658,5 +690,211 @@ impl CodeIntelligenceStorage {
             .collect();
 
         Ok(stats)
+    }
+
+    /// Get all external dependencies for a project
+    pub async fn get_project_dependencies(
+        &self,
+        project_id: &str,
+        file_path: Option<&str>,
+        limit: i32,
+    ) -> Result<Vec<ProjectDependency>> {
+        // Use a single query with optional file_path filter
+        let file_filter = file_path.unwrap_or("%");
+        let use_filter = file_path.is_some();
+
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, project_id, file_path, dependency_name, dependency_type,
+                   import_path, imported_symbols, is_glob_import
+            FROM external_dependencies
+            WHERE project_id = ? AND (? = 0 OR file_path = ?)
+            ORDER BY dependency_type, dependency_name
+            LIMIT ?
+            "#,
+            project_id,
+            use_filter,
+            file_filter,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let deps = rows
+            .into_iter()
+            .map(|r| {
+                let imported_symbols: Vec<String> = r
+                    .imported_symbols
+                    .as_ref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default();
+
+                ProjectDependency {
+                    id: r.id.unwrap_or(0),
+                    project_id: r.project_id,
+                    file_path: r.file_path,
+                    dependency_name: r.dependency_name,
+                    dependency_type: r.dependency_type,
+                    import_path: r.import_path,
+                    imported_symbols,
+                    is_glob_import: r.is_glob_import.unwrap_or(false),
+                }
+            })
+            .collect();
+
+        Ok(deps)
+    }
+
+    /// Get dependency statistics grouped by type for a project
+    pub async fn get_project_dependency_stats(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, i64)>> {
+        let rows = sqlx::query_as::<_, (Option<String>, i64)>(
+            r#"
+            SELECT dependency_type, COUNT(*) as cnt
+            FROM external_dependencies
+            WHERE project_id = ?
+            GROUP BY dependency_type
+            ORDER BY cnt DESC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let stats = rows
+            .into_iter()
+            .filter_map(|(dtype, count)| dtype.map(|d| (d, count)))
+            .collect();
+
+        Ok(stats)
+    }
+
+    /// Get all quality issues for a project
+    pub async fn get_project_quality_issues(
+        &self,
+        project_id: &str,
+        file_path: Option<&str>,
+        severity: Option<&str>,
+        issue_type: Option<&str>,
+        include_resolved: bool,
+        limit: i32,
+    ) -> Result<Vec<ProjectQualityIssue>> {
+        // Build dynamic query based on filters
+        let mut conditions = vec!["project_id = ?".to_string()];
+        let mut params: Vec<String> = vec![project_id.to_string()];
+
+        if let Some(path) = file_path {
+            conditions.push("file_path = ?".to_string());
+            params.push(path.to_string());
+        }
+
+        if let Some(sev) = severity {
+            conditions.push("severity = ?".to_string());
+            params.push(sev.to_string());
+        }
+
+        if let Some(itype) = issue_type {
+            conditions.push("issue_type = ?".to_string());
+            params.push(itype.to_string());
+        }
+
+        if !include_resolved {
+            conditions.push("(resolved = FALSE OR resolved IS NULL)".to_string());
+        }
+
+        let where_clause = conditions.join(" AND ");
+        let query = format!(
+            r#"
+            SELECT id, project_id, file_path, issue_type, severity, title, description,
+                   message, line_start, line_end, suggested_fix, fix_confidence,
+                   is_auto_fixable, resolved
+            FROM code_quality_issues
+            WHERE {}
+            ORDER BY
+                CASE severity
+                    WHEN 'critical' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'medium' THEN 3
+                    WHEN 'low' THEN 4
+                    ELSE 5
+                END,
+                detected_at DESC
+            LIMIT {}
+            "#,
+            where_clause, limit
+        );
+
+        // Use dynamic query execution
+        let rows = sqlx::query_as::<_, (
+            Option<i64>,  // id
+            Option<String>,  // project_id
+            Option<String>,  // file_path
+            String,       // issue_type
+            String,       // severity
+            Option<String>,  // title
+            Option<String>,  // description
+            Option<String>,  // message
+            Option<i64>,  // line_start
+            Option<i64>,  // line_end
+            Option<String>,  // suggested_fix
+            Option<f64>,  // fix_confidence
+            Option<bool>, // is_auto_fixable
+            Option<bool>, // resolved
+        )>(&query)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let issues = rows
+            .into_iter()
+            .map(|r| ProjectQualityIssue {
+                id: r.0.unwrap_or(0),
+                project_id: r.1,
+                file_path: r.2,
+                issue_type: r.3,
+                severity: r.4,
+                title: r.5,
+                description: r.6,
+                message: r.7,
+                line_start: r.8,
+                line_end: r.9,
+                suggested_fix: r.10,
+                fix_confidence: r.11,
+                is_auto_fixable: r.12.unwrap_or(false),
+                resolved: r.13.unwrap_or(false),
+            })
+            .collect();
+
+        Ok(issues)
+    }
+
+    /// Get quality issue statistics for a project
+    pub async fn get_project_quality_stats(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, String, i64)>> {
+        let rows = sqlx::query_as::<_, (String, String, i64)>(
+            r#"
+            SELECT issue_type, severity, COUNT(*) as cnt
+            FROM code_quality_issues
+            WHERE project_id = ? AND (resolved = FALSE OR resolved IS NULL)
+            GROUP BY issue_type, severity
+            ORDER BY
+                CASE severity
+                    WHEN 'critical' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'medium' THEN 3
+                    WHEN 'low' THEN 4
+                    ELSE 5
+                END,
+                cnt DESC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
     }
 }

@@ -153,7 +153,7 @@ impl AgentExecutor for BuiltinAgentExecutor {
         let mut tool_calls_made: Vec<AgentToolCall> = Vec::new();
         let artifacts: Vec<AgentArtifact> = Vec::new();
         let mut accumulated_response = String::new();
-        let mut thought_signature = config.thought_signature.clone();
+        let thought_signature = config.thought_signature.clone();
         let mut current_iteration: usize = 0;
 
         // Tool-calling loop

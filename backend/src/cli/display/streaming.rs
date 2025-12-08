@@ -183,7 +183,8 @@ impl StreamingDisplay {
                 if let Some(r) = reason {
                     println!("  Reason: {}", r);
                 }
-                // TODO: Implement approval prompt
+                // Note: Approval is handled at REPL level before this display handler
+                // This is just a fallback display for non-REPL contexts
             }
             OperationEvent::ArtifactPreview { path, preview, .. } => {
                 // Check if preview looks like a diff

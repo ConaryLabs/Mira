@@ -284,7 +284,7 @@ impl ScenarioRunner {
     }
 
     /// Generate mock events from a MockResponse
-    fn generate_mock_events(&self, mock: &crate::testing::scenarios::types::MockResponse, step_name: &str) -> CapturedEvents {
+    fn generate_mock_events(&self, mock: &crate::testing::scenarios::types::MockResponse, _step_name: &str) -> CapturedEvents {
         use crate::cli::ws_client::{BackendEvent, OperationEvent};
         use crate::testing::harness::client::CapturedEvent;
 

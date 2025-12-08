@@ -15,7 +15,9 @@ pub mod typescript_parser;
 // Core exports
 pub use javascript_parser::JavaScriptParser;
 pub use parser::RustParser;
-pub use storage::{CodeIntelligenceStorage, FileSemanticStats, RepoStats};
+pub use storage::{
+    CodeIntelligenceStorage, FileSemanticStats, ProjectDependency, ProjectQualityIssue, RepoStats,
+};
 pub use types::*;
 pub use typescript_parser::TypeScriptParser;
 
@@ -515,5 +517,55 @@ impl CodeIntelligenceService {
     /// Get semantic stats for all files in a project
     pub async fn get_file_semantic_stats(&self, project_id: &str) -> Result<Vec<FileSemanticStats>> {
         self.storage.get_file_semantic_stats(project_id).await
+    }
+
+    /// Get external dependencies for a project
+    pub async fn get_project_dependencies(
+        &self,
+        project_id: &str,
+        file_path: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<ProjectDependency>> {
+        self.storage
+            .get_project_dependencies(project_id, file_path, limit.unwrap_or(500))
+            .await
+    }
+
+    /// Get dependency statistics grouped by type
+    pub async fn get_project_dependency_stats(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, i64)>> {
+        self.storage.get_project_dependency_stats(project_id).await
+    }
+
+    /// Get quality issues for a project
+    pub async fn get_project_quality_issues(
+        &self,
+        project_id: &str,
+        file_path: Option<&str>,
+        severity: Option<&str>,
+        issue_type: Option<&str>,
+        include_resolved: bool,
+        limit: Option<i32>,
+    ) -> Result<Vec<ProjectQualityIssue>> {
+        self.storage
+            .get_project_quality_issues(
+                project_id,
+                file_path,
+                severity,
+                issue_type,
+                include_resolved,
+                limit.unwrap_or(100),
+            )
+            .await
+    }
+
+    /// Get quality issue statistics for a project
+    pub async fn get_project_quality_stats(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, String, i64)>> {
+        self.storage.get_project_quality_stats(project_id).await
     }
 }

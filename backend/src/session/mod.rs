@@ -17,10 +17,12 @@ pub mod types;
 pub mod manager;
 pub mod injection;
 pub mod codex_spawner;
-// pub mod completion;   // TODO: Implement completion detection
-// pub mod summary_generator; // TODO: Implement summary generation
+pub mod completion;
+pub mod summary_generator;
 
 pub use types::*;
 pub use manager::SessionManager;
 pub use injection::InjectionService;
 pub use codex_spawner::{CodexSpawner, CodexEvent};
+pub use completion::{CompletionDetector, CompletionMonitor, CompletionReason, CompletionSignal};
+pub use summary_generator::{SessionArtifacts, SummaryGenerator};
