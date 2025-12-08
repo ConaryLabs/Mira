@@ -209,6 +209,7 @@ async fn test_budget_aware_config_with_tracker() {
             Some("medium"),
             1000,
             500,
+            0, // tokens_cached
             0.05,
             false,
         )

@@ -62,11 +62,12 @@ async fn test_record_request_updates_totals() {
         .record_request(
             user_id,
             None, // No operation_id needed for budget tests
-            "gemini",
-            "gemini-2.5-pro",
+            "openai",
+            "gpt-5.1",
             Some("high"),
             1000,  // tokens_input
             500,   // tokens_output
+            0,     // tokens_cached
             0.05,  // cost_usd
             false, // from_cache
         )
@@ -78,11 +79,12 @@ async fn test_record_request_updates_totals() {
         .record_request(
             user_id,
             None,
-            "gemini",
-            "gemini-2.5-pro",
+            "openai",
+            "gpt-5.1",
             Some("medium"),
             2000,
             1000,
+            0,     // tokens_cached
             0.10,
             false,
         )
@@ -124,11 +126,12 @@ async fn test_daily_limit_enforcement() {
         .record_request(
             user_id,
             None,
-            "gemini",
-            "gemini-2.5-pro",
+            "openai",
+            "gpt-5.1",
             None,
             5000,
             2500,
+            0,    // tokens_cached
             0.15, // Over the $0.10 limit
             false,
         )
@@ -165,11 +168,12 @@ async fn test_monthly_limit_enforcement() {
             .record_request(
                 user_id,
                 None,
-                "gemini",
-                "gemini-2.5-pro",
+                "openai",
+                "gpt-5.1",
                 None,
                 1000,
                 500,
+                0,    // tokens_cached
                 0.20, // 3 * $0.20 = $0.60 > $0.50 limit
                 false,
             )
@@ -200,11 +204,12 @@ async fn test_cache_hit_rate_tracking() {
             .record_request(
                 user_id,
                 None,
-                "gemini",
-                "gemini-2.5-pro",
+                "openai",
+                "gpt-5.1",
                 None,
                 1000,
                 500,
+                0,    // tokens_cached
                 0.05,
                 false, // not from cache
             )
@@ -218,12 +223,13 @@ async fn test_cache_hit_rate_tracking() {
             .record_request(
                 user_id,
                 None,
-                "gemini",
-                "gemini-2.5-pro",
+                "openai",
+                "gpt-5.1",
                 None,
                 1000,
                 500,
-                0.0, // free - from cache
+                1000, // tokens_cached (all from cache)
+                0.0,  // free - from cache
                 true, // from cache
             )
             .await
@@ -259,11 +265,12 @@ async fn test_check_both_limits() {
         .record_request(
             user_id,
             None,
-            "gemini",
-            "gemini-2.5-pro",
+            "openai",
+            "gpt-5.1",
             None,
             10000,
             5000,
+            0,    // tokens_cached
             5.50, // Over daily limit
             false,
         )
@@ -292,11 +299,12 @@ async fn test_monthly_usage_aggregation() {
             .record_request(
                 user_id,
                 None,
-                "gemini",
-                "gemini-2.5-pro",
+                "openai",
+                "gpt-5.1",
                 Some("high"),
                 1000 * (i + 1) as i64,
                 500 * (i + 1) as i64,
+                if i % 2 == 0 { 1000 * (i + 1) as i64 } else { 0 }, // tokens_cached for cache hits
                 0.10 * (i + 1) as f64, // 0.10, 0.20, 0.30, 0.40, 0.50 = 1.50 total
                 i % 2 == 0, // Alternate cache hits
             )
