@@ -80,44 +80,55 @@ impl ScenarioRunner {
             }
         };
 
-        // Connect to backend
-        let timeout = Duration::from_secs(scenario.timeout_seconds);
-        let mut client = match TestClient::connect_with_timeout(&self.config.backend_url, timeout).await {
-            Ok(c) => c,
-            Err(e) => {
-                error!("Failed to connect to backend: {}", e);
-                result.fail_with_error(format!("Connection failed: {}", e));
-                self.cleanup(&scenario.cleanup, &project_dir).await;
-                return result;
-            }
-        };
+        // In mock mode, we don't connect to backend
+        let mut client: Option<TestClient> = None;
 
-        // Create an isolated session for this test run
-        let project_path = project_dir.to_string_lossy().to_string();
-        let session_name = format!("test-{}", uuid::Uuid::new_v4());
-        match client.create_session(Some(&session_name), Some(&project_path)).await {
-            Ok(session_id) => {
-                info!("Created isolated session: {} ({})", session_name, session_id);
-            }
-            Err(e) => {
-                error!("Failed to create session: {}", e);
-                result.fail_with_error(format!("Session creation failed: {}", e));
-                self.cleanup(&scenario.cleanup, &project_dir).await;
-                return result;
-            }
-        }
+        if !self.config.mock_mode {
+            // Connect to backend
+            let timeout = Duration::from_secs(scenario.timeout_seconds);
+            match TestClient::connect_with_timeout(&self.config.backend_url, timeout).await {
+                Ok(c) => {
+                    client = Some(c);
+                }
+                Err(e) => {
+                    error!("Failed to connect to backend: {}", e);
+                    result.fail_with_error(format!("Connection failed: {}", e));
+                    self.cleanup(&scenario.cleanup, &project_dir).await;
+                    return result;
+                }
+            };
 
-        // Register the project directory so tools can access it
-        match client.register_project(&project_path, Some("Test Project")).await {
-            Ok(project_id) => {
-                info!("Registered project with ID: {}", project_id);
+            // Create an isolated session for this test run
+            let project_path = project_dir.to_string_lossy().to_string();
+            let session_name = format!("test-{}", uuid::Uuid::new_v4());
+            if let Some(ref mut c) = client {
+                match c.create_session(Some(&session_name), Some(&project_path)).await {
+                    Ok(session_id) => {
+                        info!("Created isolated session: {} ({})", session_name, session_id);
+                    }
+                    Err(e) => {
+                        error!("Failed to create session: {}", e);
+                        result.fail_with_error(format!("Session creation failed: {}", e));
+                        self.cleanup(&scenario.cleanup, &project_dir).await;
+                        return result;
+                    }
+                }
+
+                // Register the project directory so tools can access it
+                match c.register_project(&project_path, Some("Test Project")).await {
+                    Ok(project_id) => {
+                        info!("Registered project with ID: {}", project_id);
+                    }
+                    Err(e) => {
+                        error!("Failed to register project: {}", e);
+                        result.fail_with_error(format!("Project registration failed: {}", e));
+                        self.cleanup(&scenario.cleanup, &project_dir).await;
+                        return result;
+                    }
+                }
             }
-            Err(e) => {
-                error!("Failed to register project: {}", e);
-                result.fail_with_error(format!("Project registration failed: {}", e));
-                self.cleanup(&scenario.cleanup, &project_dir).await;
-                return result;
-            }
+        } else {
+            info!("[Mock] Running in mock mode - skipping backend connection");
         }
 
         // Run each step
@@ -134,7 +145,9 @@ impl ScenarioRunner {
         }
 
         // Cleanup phase
-        let _ = client.close().await;
+        if let Some(mut c) = client {
+            let _ = c.close().await;
+        }
         self.cleanup(&scenario.cleanup, &project_dir).await;
 
         result.duration_ms = start.elapsed().as_millis() as u64;
@@ -151,7 +164,7 @@ impl ScenarioRunner {
     /// Run a single step
     async fn run_step(
         &self,
-        client: &mut TestClient,
+        client: &mut Option<TestClient>,
         step: &TestStep,
         project_dir: &Path,
     ) -> StepResult {
@@ -165,25 +178,42 @@ impl ScenarioRunner {
         let start = Instant::now();
         let mut result = StepResult::new(&step.name);
 
-        // Set timeout for this step
-        let timeout = Duration::from_secs(step.timeout_seconds);
-        client.set_timeout(timeout);
-
-        // Inject project directory context into the prompt
-        let prompt_with_context = format!(
-            "[Project directory: {}]\n\n{}",
-            project_dir.display(),
-            step.prompt
-        );
-
-        // Send prompt and capture events
-        let events = match client.send_and_capture(&prompt_with_context).await {
-            Ok(e) => e,
-            Err(e) => {
-                error!("Step '{}' failed to execute: {}", step.name, e);
-                result.fail_with_error(format!("Execution failed: {}", e));
-                return result;
+        // Check for mock mode
+        let events = if self.config.mock_mode {
+            // Use mock response if available
+            if let Some(ref mock) = step.mock_response {
+                info!("[Mock] Using mock response for step '{}'", step.name);
+                self.generate_mock_events(mock, &step.name)
+            } else {
+                // No mock response defined - generate minimal success events
+                info!("[Mock] No mock_response defined, using minimal mock for step '{}'", step.name);
+                self.generate_minimal_mock_events(&step.name)
             }
+        } else if let Some(c) = client {
+            // Real mode - send to backend
+            let timeout = Duration::from_secs(step.timeout_seconds);
+            c.set_timeout(timeout);
+
+            // Inject project directory context into the prompt
+            let prompt_with_context = format!(
+                "[Project directory: {}]\n\n{}",
+                project_dir.display(),
+                step.prompt
+            );
+
+            // Send prompt and capture events
+            match c.send_and_capture(&prompt_with_context).await {
+                Ok(e) => e,
+                Err(e) => {
+                    error!("Step '{}' failed to execute: {}", step.name, e);
+                    result.fail_with_error(format!("Execution failed: {}", e));
+                    return result;
+                }
+            }
+        } else {
+            error!("No client available and not in mock mode");
+            result.fail_with_error("No client available");
+            return result;
         };
 
         result.event_count = events.len();
@@ -251,6 +281,99 @@ impl ScenarioRunner {
         );
 
         result
+    }
+
+    /// Generate mock events from a MockResponse
+    fn generate_mock_events(&self, mock: &crate::testing::scenarios::types::MockResponse, step_name: &str) -> CapturedEvents {
+        use crate::cli::ws_client::{BackendEvent, OperationEvent};
+        use crate::testing::harness::client::CapturedEvent;
+
+        let mut events = Vec::new();
+        let now = Instant::now();
+        let mut seq = 0;
+        let op_id = format!("mock-{}", uuid::Uuid::new_v4());
+
+        // Generate operation started event
+        events.push(CapturedEvent {
+            event: BackendEvent::OperationEvent(OperationEvent::Started {
+                operation_id: op_id.clone(),
+            }),
+            timestamp: now,
+            sequence: seq,
+        });
+        seq += 1;
+
+        // Generate tool execution events
+        for tool in &mock.tool_calls {
+            events.push(CapturedEvent {
+                event: BackendEvent::OperationEvent(OperationEvent::ToolExecuted {
+                    operation_id: op_id.clone(),
+                    tool_name: tool.name.clone(),
+                    tool_type: "mock".to_string(),
+                    summary: tool.result.clone(),
+                    success: tool.success,
+                    duration_ms: 1,
+                }),
+                timestamp: now,
+                sequence: seq,
+            });
+            seq += 1;
+        }
+
+        // Generate text chunk if there's text
+        if !mock.text.is_empty() {
+            events.push(CapturedEvent {
+                event: BackendEvent::StreamToken(mock.text.clone()),
+                timestamp: now,
+                sequence: seq,
+            });
+            seq += 1;
+        }
+
+        // Generate completion event
+        events.push(CapturedEvent {
+            event: BackendEvent::OperationEvent(OperationEvent::Completed {
+                operation_id: op_id,
+                result: Some(mock.text.clone()),
+            }),
+            timestamp: now,
+            sequence: seq,
+        });
+
+        CapturedEvents::new(events)
+    }
+
+    /// Generate minimal mock events for steps without mock_response
+    fn generate_minimal_mock_events(&self, step_name: &str) -> CapturedEvents {
+        use crate::cli::ws_client::{BackendEvent, OperationEvent};
+        use crate::testing::harness::client::CapturedEvent;
+
+        let now = Instant::now();
+        let op_id = format!("mock-{}", step_name);
+        let events = vec![
+            CapturedEvent {
+                event: BackendEvent::OperationEvent(OperationEvent::Started {
+                    operation_id: op_id.clone(),
+                }),
+                timestamp: now,
+                sequence: 0,
+            },
+            CapturedEvent {
+                event: BackendEvent::StreamToken("[Mock response - no mock_response defined]".to_string()),
+                timestamp: now,
+                sequence: 1,
+            },
+            CapturedEvent {
+                event: BackendEvent::OperationEvent(OperationEvent::Completed {
+                    operation_id: op_id,
+                    result: None,
+                }),
+                timestamp: now,
+                sequence: 2,
+            },
+        ];
+
+        CapturedEvents::new(events)
     }
 
     /// Check expected events against captured events
