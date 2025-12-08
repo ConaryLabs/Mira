@@ -6,7 +6,7 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 46: 2025-12-07 (`600c90f`)
+## Session 46: 2025-12-07 (`f94da70`)
 
 **Summary:** Fixed test framework session isolation + added 4 new test scenarios.
 
@@ -34,14 +34,18 @@ Development session log. Recent sessions have full details; older sessions are c
 - `mira-ctl` script path issues (hardcoded `MIRA_DIR=/home/peter/Mira`)
 - `.env` missing `MIRA_LLM_MESSAGE_HISTORY_LIMIT` and old rolling summary vars
 
+**Test Robustness Fix:**
+- Changed from `tool_executed` to `response_contains` assertions
+- Tests verify outcomes, not exact tool usage (reduces LLM variance flakiness)
+
 **Test Results:**
 ```
-[PASS] Code Search (31968ms)
-[PASS] File Operations (32867ms)
-[PASS] Git Operations (78041ms)
-[PASS] Multi-Turn Conversation (26462ms)
-[PASS] Smoke Test (14907ms)
-Total: 5 scenarios, 13 steps
+[PASS] Code Search (26s)
+[PASS] File Operations (28s)
+[PASS] Git Operations (97s)
+[PASS] Multi-Turn Conversation (21s)
+[PASS] Smoke Test (17s)
+Total: 5 scenarios, 13 steps, ~3 min
 ```
 
 ---
