@@ -1,4 +1,4 @@
--- backend/migrations/20251125_002_code_intelligence.sql
+-- backend/migrations/20251209000002_code_intelligence.sql
 -- Code Intelligence: AST, Symbols, Semantic Graph, Pattern Detection
 
 -- ============================================================================
@@ -17,8 +17,6 @@ CREATE TABLE IF NOT EXISTS code_elements (
     visibility TEXT,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
-    line_start INTEGER,
-    line_end INTEGER,
     content TEXT,
     signature TEXT,
     content_hash TEXT,
@@ -71,7 +69,6 @@ CREATE TABLE IF NOT EXISTS external_dependencies (
     import_path TEXT,
     imported_symbols TEXT,
     is_glob_import BOOLEAN DEFAULT FALSE,
-    imported_items TEXT,
     created_at INTEGER DEFAULT (strftime('%s', 'now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
     FOREIGN KEY (element_id) REFERENCES code_elements(id) ON DELETE CASCADE

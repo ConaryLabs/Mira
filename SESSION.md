@@ -6,6 +6,44 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
+## Session 51: 2025-12-10 (`07e90c5`)
+
+**Summary:** Migration consolidation - collapsed 20 migrations into 4 clean files.
+
+**Migration Consolidation:**
+Reduced migration count from 20 separate files to 4 consolidated migrations:
+
+| Migration | Content |
+|-----------|---------|
+| `20251209000001_foundation.sql` | Users, Auth, Projects, Memory, Chat Sessions, Personal Context |
+| `20251209000002_code_intelligence.sql` | AST, Symbols, Semantic Graph, Call Graph, Patterns |
+| `20251209000003_operations.sql` | Git Intelligence, Operations, Artifacts, Documents |
+| `20251209000004_infrastructure.sql` | Build System, Budget, Caching, Tool Synthesis, Sudo |
+
+**Consolidation Details:**
+- All 70+ tables preserved from original migrations
+- Column cleanup applied (removed duplicates from cleanup migration)
+- ALTER TABLE columns integrated directly into CREATE TABLE statements
+- Temporary migration tables excluded (`budget_*_new`)
+- Later additions included (`session_cache_state`, `session_checkpoints`, `session_file_hashes`)
+
+**Verification:**
+- All tests pass
+- SQLx prepare in sync
+- Fresh database migration works
+- Build succeeds
+
+**Files Changed:**
+- `migrations/20251209000001_foundation.sql` (NEW)
+- `migrations/20251209000002_code_intelligence.sql` (NEW)
+- `migrations/20251209000003_operations.sql` (NEW)
+- `migrations/20251209000004_infrastructure.sql` (NEW)
+- `migrations/2025112500000*` (DELETED - 14 files)
+- `migrations/2025120*` (DELETED - 6 files)
+- `.sqlx/` - Updated query cache files
+
+---
+
 ## Session 50: 2025-12-08 (`0c81265`)
 
 **Summary:** Codebase audit - wired placeholder functions, centralized utilities, session completion detection.

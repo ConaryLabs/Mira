@@ -1,5 +1,5 @@
--- backend/migrations/20251125_001_foundation.sql
--- Foundation Tables: Users, Authentication, Projects, Memory, Personal Context
+-- backend/migrations/20251209000001_foundation.sql
+-- Foundation: Users, Auth, Projects, Memory, Chat Sessions, Personal Context
 
 -- ============================================================================
 -- USER & AUTHENTICATION
@@ -37,20 +37,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS user_profile (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL UNIQUE,
-    -- Coding Preferences
     preferred_languages TEXT,
     coding_style TEXT,
     code_verbosity TEXT,
     testing_philosophy TEXT,
     architecture_preferences TEXT,
-    -- Communication Style
     explanation_depth TEXT,
     conversation_style TEXT,
     profanity_comfort TEXT DEFAULT 'none',
-    -- Tech Context
     tech_stack TEXT,
     learning_goals TEXT,
-    -- Metadata
     relationship_started INTEGER NOT NULL,
     last_active INTEGER,
     total_sessions INTEGER DEFAULT 0,
@@ -194,7 +190,6 @@ CREATE TABLE IF NOT EXISTS message_analysis (
     error_severity TEXT,
     error_file TEXT,
     error_line INTEGER,
-    programming_language TEXT,
     programming_lang TEXT,
     routed_to_heads TEXT,
     analyzed_at INTEGER,
@@ -206,7 +201,6 @@ CREATE TABLE IF NOT EXISTS message_analysis (
 CREATE INDEX IF NOT EXISTS idx_message_analysis_salience ON message_analysis(salience);
 CREATE INDEX IF NOT EXISTS idx_message_analysis_intent ON message_analysis(intent);
 CREATE INDEX IF NOT EXISTS idx_message_analysis_error ON message_analysis(contains_error);
-CREATE INDEX IF NOT EXISTS idx_message_analysis_language ON message_analysis(programming_language);
 
 CREATE TABLE IF NOT EXISTS rolling_summaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,3 +282,119 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
 CREATE INDEX IF NOT EXISTS idx_message_embeddings_entry ON message_embeddings(memory_entry_id);
 CREATE INDEX IF NOT EXISTS idx_message_embeddings_type ON message_embeddings(embedding_type);
 CREATE INDEX IF NOT EXISTS idx_message_embeddings_point ON message_embeddings(point_id);
+
+-- ============================================================================
+-- CHAT SESSION METADATA
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    name TEXT,
+    project_path TEXT,
+    last_message_preview TEXT,
+    message_count INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    last_active INTEGER NOT NULL,
+    -- Dual session architecture (Voice eternal vs Codex discrete)
+    session_type TEXT DEFAULT 'voice',
+    parent_session_id TEXT REFERENCES chat_sessions(id),
+    codex_status TEXT DEFAULT NULL,
+    codex_task_description TEXT DEFAULT NULL,
+    openai_response_id TEXT DEFAULT NULL,
+    started_at INTEGER DEFAULT NULL,
+    completed_at INTEGER DEFAULT NULL,
+    -- Project session tracking
+    branch TEXT,
+    status TEXT DEFAULT 'active',
+    last_commit_hash TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_project ON chat_sessions(project_path);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_active ON chat_sessions(last_active DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent ON chat_sessions(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_type ON chat_sessions(session_type);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_codex_status ON chat_sessions(codex_status);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_project_branch ON chat_sessions(user_id, project_path, branch);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_status ON chat_sessions(status);
+
+CREATE TABLE IF NOT EXISTS session_forks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_session_id TEXT NOT NULL,
+    forked_session_id TEXT NOT NULL,
+    fork_point_message_id INTEGER,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (source_session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (forked_session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (fork_point_message_id) REFERENCES memory_entries(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_forks_source ON session_forks(source_session_id);
+CREATE INDEX IF NOT EXISTS idx_session_forks_forked ON session_forks(forked_session_id);
+
+-- ============================================================================
+-- CODEX SESSION LINKS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS codex_session_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    voice_session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    codex_session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    spawn_trigger TEXT NOT NULL,
+    spawn_confidence REAL,
+    voice_context_summary TEXT,
+    completion_summary TEXT,
+    tokens_used_input INTEGER DEFAULT 0,
+    tokens_used_output INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    compaction_count INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    UNIQUE(codex_session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_codex_links_voice ON codex_session_links(voice_session_id);
+CREATE INDEX IF NOT EXISTS idx_codex_links_codex ON codex_session_links(codex_session_id);
+CREATE INDEX IF NOT EXISTS idx_codex_links_active ON codex_session_links(completed_at) WHERE completed_at IS NULL;
+
+-- ============================================================================
+-- SESSION INJECTIONS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS session_injections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    source_session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    injection_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    metadata TEXT,
+    injected_at INTEGER NOT NULL,
+    acknowledged INTEGER DEFAULT 0,
+    acknowledged_at INTEGER,
+    sequence_num INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_injections_target ON session_injections(target_session_id);
+CREATE INDEX IF NOT EXISTS idx_injections_source ON session_injections(source_session_id);
+CREATE INDEX IF NOT EXISTS idx_injections_pending ON session_injections(target_session_id, acknowledged)
+    WHERE acknowledged = 0;
+CREATE INDEX IF NOT EXISTS idx_injections_type ON session_injections(injection_type);
+
+-- ============================================================================
+-- SESSION CHECKPOINTS (Commit tracking)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS session_checkpoints (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    commit_message TEXT,
+    files_changed INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session ON session_checkpoints(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_checkpoints_commit ON session_checkpoints(commit_hash);
