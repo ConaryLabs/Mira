@@ -627,25 +627,6 @@ Estimated monthly: $132 (vs $825 without cache)
 - **Caching**: In-process LLM cache (SQLite)
 - **Authentication**: JWT tokens
 
-## Future Enhancements (Post-V1)
-
-### Deferred Features
-1. ~~**Proactive Monitoring** - Background file watching with suggestions~~ (Implemented in Milestone 8)
-2. **LSP Integration** - Type information from language servers
-3. **Remote Development** - SSH support for remote codebases
-4. **Multi-language AST** - Beyond Rust and TypeScript
-5. **Collaborative Features** - Real-time co-editing
-6. **Team Analytics** - Team-wide expertise tracking
-7. **CI/CD Integration** - Hook into build pipelines
-8. **IDE Extensions** - VSCode, IntelliJ, etc.
-
-### Research Directions
-1. **Multi-modal Code Understanding** - Images, diagrams, architecture docs
-2. **Cross-project Learning** - Learn patterns across user's projects
-3. **Automated Refactoring** - Safe, large-scale refactoring
-4. **Test Generation** - Comprehensive test suites from code
-5. **Documentation Generation** - Auto-generate docs from code + comments
-
 ## Contributing
 
 ### Getting Started
@@ -674,8 +655,8 @@ Estimated monthly: $132 (vs $825 without cache)
 
 ## Status
 
-**Last Updated**: 2025-12-05
-**Current Phase**: All milestones complete
+**Last Updated**: 2025-12-10
+**Status**: V1 Complete (All 13 milestones)
 **Owner**: Peter (Founder)
 
 ### Completed Milestones
@@ -758,11 +739,11 @@ Estimated monthly: $132 (vs $825 without cache)
 - Agent manager with custom agent loading
 - Tool router integration
 
-### Next Steps
-
-**Milestone 13: Multi-Model Routing** - COMPLETE
-
-All 5 phases complete. See detailed implementation below.
+**Milestone 13: Multi-Model Routing** - Complete
+- 4-tier OpenAI GPT-5.1 routing (Fast/Voice/Code/Agentic)
+- Task classifier with automatic tier selection
+- Budget-aware cost tracking per tier
+- See detailed implementation below.
 
 ---
 

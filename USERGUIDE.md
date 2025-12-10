@@ -246,7 +246,7 @@ When started without `-p`, Mira runs an interactive REPL:
 
 ```
 $ mira
-Mira v0.1.0 - AI Coding Assistant
+Mira v1.0.0 - AI Coding Assistant
 Session: abc123 | Project: ~/myproject
 
 > What files handle authentication?
