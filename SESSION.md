@@ -6,9 +6,9 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 52: 2025-12-10 (`ee960f5`)
+## Session 52: 2025-12-10 (`cf27c28`)
 
-**Summary:** Feature parity with OpenAI Codex and Claude Code - CLI commands + Frontend UI.
+**Summary:** Feature parity with OpenAI Codex and Claude Code - CLI commands + Frontend UI (all 3 phases complete).
 
 **Research Phase:**
 - Reviewed OpenAI Codex CLI v0.66.0 changelog (December 2025)
@@ -36,7 +36,7 @@ Development session log. Recent sessions have full details; older sessions are c
 - `session.cancel_agent` - Cancel a Codex session
 - `session.agent_info` - Get Codex session details
 
-**Phase 2: Frontend UI**
+**Phase 2: Background Agents Panel**
 
 **BackgroundAgentsPanel** - Floating panel for agent monitoring:
 - Running/completed/failed status with icons
@@ -50,14 +50,37 @@ Development session log. Recent sessions have full details; older sessions are c
 - Badge showing running agent count
 - Green highlight when panel is open
 
+**Phase 3: Code Review Panel**
+
+**ReviewPanel** - Modal dialog for code review:
+- Target selector: uncommitted, staged, branch comparison, specific commit
+- Base branch input (for branch mode)
+- Commit hash input (for commit mode)
+- Unified diff viewer (uses existing UnifiedDiffView component)
+- Diff stats: additions, deletions, files changed
+- "Request Review" sends diff to LLM for analysis
+- Refresh button to reload diff
+
+**Backend:**
+- `git.diff` WebSocket handler in `api/ws/git.rs`
+- Supports all review targets via git command execution
+
 **Files Changed:**
 - `backend/src/cli/commands/builtin.rs` (NEW) - Command parsing
 - `backend/src/cli/repl.rs` - Command handlers (+260 lines)
 - `backend/src/api/ws/session.rs` - Agent APIs (+125 lines)
+- `backend/src/api/ws/git.rs` - git.diff handler (+65 lines)
 - `frontend/src/stores/useAgentStore.ts` (NEW) - Agent state
+- `frontend/src/stores/useReviewStore.ts` (NEW) - Review state
 - `frontend/src/components/BackgroundAgentsPanel.tsx` (NEW)
-- `frontend/src/components/Header.tsx` - Agents button
-- `frontend/src/Home.tsx` - Panel integration
+- `frontend/src/components/ReviewPanel.tsx` (NEW) - Diff viewer modal
+- `frontend/src/components/Header.tsx` - Agents + Review buttons
+- `frontend/src/Home.tsx` - Panel integrations
+
+**Commits:**
+- `e159120` - Phase 1: CLI commands
+- `4952652` - Phase 2: Background agents panel
+- `cf27c28` - Phase 3: Code review panel
 
 ---
 

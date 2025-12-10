@@ -441,6 +441,25 @@ The CLI (`backend/src/cli/`) provides a Claude Code-style command line interface
 - Multiple output formats: text (default), json, stream-json
 - Sudo approval prompts (interactive Y/n)
 
+**Built-in Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/resume [name\|id]` | Resume session by name, ID, or show picker |
+| `/resume --last` | Resume most recent session |
+| `/review` | Review uncommitted changes (sends diff to LLM) |
+| `/review --branch <base>` | Review against base branch |
+| `/review --staged` | Review staged changes only |
+| `/rename <name>` | Rename current session |
+| `/agents` | List running background agents |
+| `/agents cancel <id>` | Cancel a running agent |
+| `/search <query>` | Web search (DuckDuckGo) |
+| `/status` | Show current session status |
+| `/commands` | List custom slash commands |
+| `/checkpoints` | List file checkpoints |
+| `/rewind <id>` | Rewind to a checkpoint |
+| `/mcp` | List MCP servers |
+
 ## Feature Parity Requirements
 
 **CRITICAL: Frontend (Web) and CLI must maintain feature parity.**
