@@ -1,6 +1,6 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Folder, Activity, X, LogOut, Brain, Sun, Moon, MessageSquare } from 'lucide-react';
+import { Folder, Activity, X, LogOut, Brain, Sun, Moon, MessageSquare, Bot } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
@@ -9,6 +9,7 @@ import { ChangePasswordModal } from './ChangePasswordModal';
 import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useActivityStore } from '../stores/useActivityStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
+import { useAgentStore } from '../stores/useAgentStore';
 import { useAuthStore, useCurrentUser } from '../stores/useAuthStore';
 import { useThemeStore } from '../stores/useThemeStore';
 import { useChatStore } from '../stores/useChatStore';
@@ -26,6 +27,12 @@ export const Header: React.FC = () => {
     togglePanel: toggleIntelligence,
     isPanelVisible: isIntelligenceVisible
   } = useCodeIntelligenceStore();
+  const {
+    togglePanel: toggleAgents,
+    isPanelVisible: isAgentsPanelVisible,
+    agents
+  } = useAgentStore();
+  const runningAgentsCount = agents.filter(a => a.status === 'running').length;
   const [showProjects, setShowProjects] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -119,6 +126,25 @@ export const Header: React.FC = () => {
               title="Toggle Activity Panel"
             >
               <Activity size={16} />
+            </button>
+
+            {/* Background Agents Panel Toggle */}
+            <button
+              type="button"
+              onClick={toggleAgents}
+              className={`relative p-2 rounded-md transition-colors ${
+                isAgentsPanelVisible
+                  ? 'text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`}
+              title="Background Agents"
+            >
+              <Bot size={16} />
+              {runningAgentsCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center text-[10px] font-bold bg-green-500 text-white rounded-full">
+                  {runningAgentsCount}
+                </span>
+              )}
             </button>
           </>
         )}
