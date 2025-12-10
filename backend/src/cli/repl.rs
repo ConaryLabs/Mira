@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::cli::args::{CliArgs, OutputFormat};
-use crate::cli::commands::CommandLoader;
+use crate::cli::commands::{AgentAction, BuiltinCommand, CommandLoader, ReviewTarget};
 use crate::cli::config::CliConfig;
 use crate::cli::display::{StreamingDisplay, TerminalDisplay};
 use crate::cli::project::{build_metadata, ProjectDetector, DetectedProject};
@@ -452,9 +452,14 @@ impl Repl {
         let command = parts[0];
         let cmd_args = parts.get(1).copied();
 
+        // First, try to parse as a new builtin command
+        if let Some(builtin) = BuiltinCommand::parse(input) {
+            return self.handle_builtin_command(builtin).await;
+        }
+
         match command {
             "/help" | "/h" | "/?" => {
-                self.display.terminal().print_help()?;
+                self.print_full_help()?;
                 Ok(true)
             }
             "/quit" | "/q" | "/exit" => {
@@ -507,6 +512,260 @@ impl Repl {
                 }
             }
         }
+    }
+
+    /// Handle new builtin commands
+    async fn handle_builtin_command(&mut self, cmd: BuiltinCommand) -> Result<bool> {
+        match cmd {
+            BuiltinCommand::Resume { target, last } => {
+                self.handle_resume_command(target, last).await?;
+                Ok(true)
+            }
+            BuiltinCommand::Review { target } => {
+                self.handle_review_command(target).await?;
+                Ok(true)
+            }
+            BuiltinCommand::Rename { name } => {
+                self.handle_rename_command(&name).await?;
+                Ok(true)
+            }
+            BuiltinCommand::Agents { action } => {
+                self.handle_agents_command(action).await?;
+                Ok(true)
+            }
+            BuiltinCommand::Search { query, search_type, num_results } => {
+                self.handle_search_command(&query, search_type.as_deref(), num_results).await?;
+                Ok(true)
+            }
+            BuiltinCommand::Status => {
+                self.print_current_session()?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Handle /resume command
+    async fn handle_resume_command(&mut self, target: Option<String>, last: bool) -> Result<()> {
+        if last {
+            // Resume most recent session
+            self.continue_recent_session().await?;
+            self.print_session_info()?;
+            return Ok(());
+        }
+
+        match target {
+            Some(name_or_id) => {
+                // Try to find session by name first, then by ID
+                let backend_sessions = self.client.list_sessions(None, Some(&name_or_id), Some(50)).await?;
+
+                // Check for exact name match
+                let session = backend_sessions.iter()
+                    .find(|s| s.name.as_ref().map(|n| n == &name_or_id).unwrap_or(false))
+                    .or_else(|| backend_sessions.iter().find(|s| s.id.starts_with(&name_or_id)));
+
+                if let Some(bs) = session {
+                    let session = CliSession::from_backend(bs.clone());
+                    self.current_session = Some(session.clone());
+                    self.client.set_project_id(Some(session.id.clone()));
+                    self.display.terminal().print_success(&format!(
+                        "Resumed session: {}",
+                        session.display_name()
+                    ))?;
+                    self.print_session_info()?;
+                } else {
+                    self.display.terminal().print_error(&format!(
+                        "Session not found: {}",
+                        name_or_id
+                    ))?;
+                }
+            }
+            None => {
+                // Show session picker
+                self.show_session_picker().await?;
+                self.print_session_info()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle /review command
+    async fn handle_review_command(&mut self, target: ReviewTarget) -> Result<()> {
+        // Get the diff based on target
+        let (diff, description) = match &target {
+            ReviewTarget::Uncommitted => {
+                let output = std::process::Command::new("git")
+                    .args(["diff", "HEAD"])
+                    .current_dir(self.project.as_ref().map(|p| &p.root).unwrap_or(&std::env::current_dir()?))
+                    .output()
+                    .context("Failed to run git diff")?;
+                (
+                    String::from_utf8_lossy(&output.stdout).to_string(),
+                    "uncommitted changes".to_string()
+                )
+            }
+            ReviewTarget::Branch { base } => {
+                let output = std::process::Command::new("git")
+                    .args(["diff", &format!("{}...HEAD", base)])
+                    .current_dir(self.project.as_ref().map(|p| &p.root).unwrap_or(&std::env::current_dir()?))
+                    .output()
+                    .context("Failed to run git diff")?;
+                (
+                    String::from_utf8_lossy(&output.stdout).to_string(),
+                    format!("changes against {}", base)
+                )
+            }
+            ReviewTarget::Commit { hash } => {
+                let output = std::process::Command::new("git")
+                    .args(["show", hash, "--format="])
+                    .current_dir(self.project.as_ref().map(|p| &p.root).unwrap_or(&std::env::current_dir()?))
+                    .output()
+                    .context("Failed to run git show")?;
+                (
+                    String::from_utf8_lossy(&output.stdout).to_string(),
+                    format!("commit {}", hash)
+                )
+            }
+            ReviewTarget::Staged => {
+                let output = std::process::Command::new("git")
+                    .args(["diff", "--cached"])
+                    .current_dir(self.project.as_ref().map(|p| &p.root).unwrap_or(&std::env::current_dir()?))
+                    .output()
+                    .context("Failed to run git diff --cached")?;
+                (
+                    String::from_utf8_lossy(&output.stdout).to_string(),
+                    "staged changes".to_string()
+                )
+            }
+        };
+
+        if diff.trim().is_empty() {
+            self.display.terminal().print_info(&format!("No {} to review", description))?;
+            return Ok(());
+        }
+
+        // Show diff stats
+        let lines: Vec<&str> = diff.lines().collect();
+        let additions = lines.iter().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
+        let deletions = lines.iter().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+
+        self.display.terminal().print_info(&format!(
+            "Reviewing {}: +{} -{} lines",
+            description, additions, deletions
+        ))?;
+
+        // Send to LLM for review
+        let prompt = format!(
+            "Please review the following code changes ({}).\n\n\
+            Provide:\n\
+            1. A brief summary of what changed\n\
+            2. Any potential issues or bugs\n\
+            3. Suggestions for improvement\n\
+            4. Security considerations if applicable\n\n\
+            ```diff\n{}\n```",
+            description, diff
+        );
+
+        self.send_and_receive(&prompt).await?;
+        Ok(())
+    }
+
+    /// Handle /rename command
+    async fn handle_rename_command(&mut self, name: &str) -> Result<()> {
+        if let Some(ref session) = self.current_session {
+            // Send rename request to backend
+            let args = serde_json::json!({
+                "session_id": session.id,
+                "name": name
+            });
+            self.client.send_command("session.update", Some(args)).await?;
+
+            // Update local session
+            if let Some(ref mut s) = self.current_session {
+                s.name = Some(name.to_string());
+            }
+
+            self.display.terminal().print_success(&format!("Session renamed to: {}", name))?;
+        } else {
+            self.display.terminal().print_error("No active session to rename")?;
+        }
+        Ok(())
+    }
+
+    /// Handle /agents command
+    async fn handle_agents_command(&mut self, action: AgentAction) -> Result<()> {
+        match action {
+            AgentAction::List => {
+                // Get active Codex sessions from backend
+                if let Some(ref session) = self.current_session {
+                    let args = serde_json::json!({
+                        "voice_session_id": session.id
+                    });
+                    self.client.send_command("session.active_agents", Some(args)).await?;
+                    self.receive_response().await?;
+                } else {
+                    self.display.terminal().print_info("No active session")?;
+                }
+            }
+            AgentAction::Cancel { agent_id } => {
+                if agent_id.is_empty() {
+                    self.display.terminal().print_error("Usage: /agents cancel <agent_id>")?;
+                    return Ok(());
+                }
+                let args = serde_json::json!({
+                    "codex_session_id": agent_id
+                });
+                self.client.send_command("session.cancel_agent", Some(args)).await?;
+                self.receive_response().await?;
+            }
+            AgentAction::Show { agent_id } => {
+                if agent_id.is_empty() {
+                    self.display.terminal().print_error("Usage: /agents show <agent_id>")?;
+                    return Ok(());
+                }
+                let args = serde_json::json!({
+                    "codex_session_id": agent_id
+                });
+                self.client.send_command("session.agent_info", Some(args)).await?;
+                self.receive_response().await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle /search command
+    async fn handle_search_command(
+        &mut self,
+        query: &str,
+        search_type: Option<&str>,
+        num_results: Option<usize>,
+    ) -> Result<()> {
+        self.display.terminal().print_info(&format!("Searching: {}", query))?;
+
+        // Build prompt that uses the web_search tool
+        let type_hint = match search_type {
+            Some("docs") | Some("documentation") => " in documentation",
+            Some("github") => " on GitHub",
+            Some("stackoverflow") | Some("so") => " on Stack Overflow",
+            _ => "",
+        };
+
+        let num = num_results.unwrap_or(5);
+
+        let prompt = format!(
+            "Search the web for: \"{}\"{}\n\n\
+            Please provide {} search results with titles, URLs, and brief descriptions.",
+            query, type_hint, num
+        );
+
+        self.send_and_receive(&prompt).await?;
+        Ok(())
+    }
+
+    /// Print full help including builtin commands
+    fn print_full_help(&self) -> Result<()> {
+        self.display.terminal().print_help()?;
+        println!("{}", BuiltinCommand::help());
+        Ok(())
     }
 
     /// List available custom commands

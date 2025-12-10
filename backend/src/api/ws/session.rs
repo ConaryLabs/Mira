@@ -14,6 +14,7 @@ use crate::{
         error::{ApiError, ApiResult},
         ws::message::WsServerMessage,
     },
+    session::types::CodexStatus,
     state::AppState,
 };
 
@@ -73,6 +74,16 @@ struct UpdateSessionRequest {
 struct ForkSessionRequest {
     source_id: String,
     name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActiveAgentsRequest {
+    voice_session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentActionRequest {
+    codex_session_id: String,
 }
 
 // ============================================================================
@@ -713,6 +724,120 @@ pub async fn handle_session_command(
                     "session": session,
                     "project_id": project_id,
                     "resumed": !is_new
+                }),
+                request_id: None,
+            })
+        }
+
+        "session.active_agents" => {
+            let req: ActiveAgentsRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+            let agents = app_state
+                .session_manager
+                .get_active_codex_sessions(&req.voice_session_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to get active agents: {}", e)))?;
+
+            let agent_list: Vec<serde_json::Value> = agents
+                .iter()
+                .map(|a| {
+                    json!({
+                        "id": a.id,
+                        "task": a.task_description,
+                        "status": a.status.as_str(),
+                        "started_at": a.started_at,
+                        "tokens_used": a.tokens_used,
+                        "cost_usd": a.cost_usd,
+                        "compaction_count": a.compaction_count
+                    })
+                })
+                .collect();
+
+            info!("Listed {} active agents for session {}", agents.len(), req.voice_session_id);
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "active_agents",
+                    "agents": agent_list,
+                    "count": agents.len()
+                }),
+                request_id: None,
+            })
+        }
+
+        "session.cancel_agent" => {
+            let req: AgentActionRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+            // Update status to cancelled
+            app_state
+                .session_manager
+                .update_codex_status(&req.codex_session_id, CodexStatus::Cancelled)
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to cancel agent: {}", e)))?;
+
+            info!("Cancelled agent {}", req.codex_session_id);
+
+            Ok(WsServerMessage::Status {
+                message: format!("Agent {} cancelled", req.codex_session_id),
+                detail: None,
+            })
+        }
+
+        "session.agent_info" => {
+            let req: AgentActionRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid request: {}", e)))?;
+
+            // Get codex session info
+            let row: Option<(
+                String,          // codex_status
+                String,          // codex_task_description
+                i64,             // started_at
+                Option<i64>,     // completed_at
+                Option<String>,  // parent_session_id
+            )> = sqlx::query_as(
+                r#"
+                SELECT codex_status, codex_task_description, started_at, completed_at, parent_session_id
+                FROM chat_sessions
+                WHERE id = ? AND session_type = 'codex'
+                "#,
+            )
+            .bind(&req.codex_session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get agent info: {}", e)))?;
+
+            let info = row.ok_or_else(|| ApiError::not_found("Agent not found"))?;
+
+            // Get usage stats from link table
+            let link: Option<(i64, i64, f64, i32, Option<String>)> = sqlx::query_as(
+                r#"
+                SELECT tokens_used_input, tokens_used_output, cost_usd, compaction_count, completion_summary
+                FROM codex_session_links WHERE codex_session_id = ?
+                "#,
+            )
+            .bind(&req.codex_session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to get agent link: {}", e)))?;
+
+            let (tokens_in, tokens_out, cost, compaction, summary) = link.unwrap_or((0, 0, 0.0, 0, None));
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "agent_info",
+                    "id": req.codex_session_id,
+                    "task": info.1,
+                    "status": info.0,
+                    "started_at": info.2,
+                    "completed_at": info.3,
+                    "parent_session_id": info.4,
+                    "tokens_input": tokens_in,
+                    "tokens_output": tokens_out,
+                    "cost_usd": cost,
+                    "compaction_count": compaction,
+                    "completion_summary": summary
                 }),
                 request_id: None,
             })
