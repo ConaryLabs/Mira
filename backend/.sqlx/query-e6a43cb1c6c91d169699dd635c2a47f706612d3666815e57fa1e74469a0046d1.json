@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                        INSERT INTO message_analysis (\n                            memory_entry_id, mood, intensity, salience, original_salience,\n                            intent, topics, summary, relationship_impact, language,\n                            contains_code, contains_error, error_type, error_severity,\n                            error_file, programming_lang, routed_to_heads, analyzed_at\n                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": []
+  },
+  "hash": "e6a43cb1c6c91d169699dd635c2a47f706612d3666815e57fa1e74469a0046d1"
+}

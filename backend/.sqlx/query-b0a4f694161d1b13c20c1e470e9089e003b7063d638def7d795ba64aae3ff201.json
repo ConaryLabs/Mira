@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO operations (\n                id, session_id, operation_kind, status, created_at, user_message,\n                delegate_calls\n            ) VALUES (?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "b0a4f694161d1b13c20c1e470e9089e003b7063d638def7d795ba64aae3ff201"
+}
