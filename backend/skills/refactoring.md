@@ -1,6 +1,6 @@
 ---
 description: Systematic code refactoring with best practices
-model: deepseek
+model: gpt-5.1
 allowed_tools: [read_project_file, get_file_structure, search_codebase, refactor_code, generate_code]
 requires_context: true
 ---

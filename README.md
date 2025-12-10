@@ -109,7 +109,7 @@ The CLI provides the same features as the web UI in your terminal. See [CLI.md](
                                   |
                          +--------v---------+
                          |      SQLite      |
-                         |    50+ Tables    |
+                         |    70+ Tables    |
                          +------------------+
 ```
 
@@ -146,7 +146,8 @@ See `backend/.env.example` for all options.
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Deployment guide (Docker, systemd, nginx) |
 | [USERGUIDE.md](./USERGUIDE.md) | User and developer guide |
 | [CLAUDE.md](./CLAUDE.md) | Guide for AI assistants |
-| [backend/WHITEPAPER.md](./backend/WHITEPAPER.md) | Technical architecture |
+| [backend/WHITEPAPER.md](./backend/WHITEPAPER.md) | Backend technical architecture |
+| [frontend/WHITEPAPER.md](./frontend/WHITEPAPER.md) | Frontend technical architecture |
 
 ## Technology Stack
 

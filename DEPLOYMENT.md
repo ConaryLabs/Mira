@@ -31,8 +31,8 @@ This guide covers deploying Mira in development and production environments.
 
 ### API Keys
 
-- **Google API Key**: Required for Gemini 3 Pro (LLM) and Gemini embeddings
-  - Get from: https://makersuite.google.com/app/apikey
+- **OpenAI API Key**: Required for GPT-5.1 (LLM) and text-embedding-3-large
+  - Get from: https://platform.openai.com/api-keys
 
 ### System Requirements
 
@@ -74,8 +74,8 @@ docker run -d -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
 cd backend
 cp .env.example .env
 
-# Edit .env and add your Google API key
-# GOOGLE_API_KEY=your-key-here
+# Edit .env and add your OpenAI API key
+# OPENAI_API_KEY=your-key-here
 ```
 
 ### 4. Build and Run Backend
@@ -217,14 +217,14 @@ For **developers** contributing to Mira, see [Quick Start (Development)](#quick-
 #### Prerequisites
 
 - Docker 24+ with Docker Compose v2
-- Google API key for Gemini
+- OpenAI API key for GPT-5.1
 
 #### Quick Start
 
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env and add your GOOGLE_API_KEY
+# Edit .env and add your OPENAI_API_KEY
 
 # 2. Build and start all services
 docker compose up -d
@@ -278,7 +278,7 @@ Environment variables can be set in the root `.env` file:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GOOGLE_API_KEY` | Yes | - | Google API key for Gemini |
+| `OPENAI_API_KEY` | Yes | - | OpenAI API key for GPT-5.1 |
 | `RUST_LOG` | No | `info` | Log level (debug, info, warn, error) |
 
 The backend uses `backend/.env.docker` for additional configuration. The docker-compose.yml overrides database and Qdrant URLs for container networking.
@@ -402,15 +402,17 @@ nginx (reverse proxy, port 80/443)
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `GOOGLE_API_KEY` | Google API key for Gemini | `AIza...` |
+| `OPENAI_API_KEY` | OpenAI API key for GPT-5.1 | `sk-proj-...` |
 
 #### LLM Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GEMINI_MODEL` | `gemini-3-pro-preview` | Gemini model to use |
-| `GEMINI_THINKING_LEVEL` | `high` | Thinking level: `low` or `high` |
-| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
+| `MODEL_ROUTER_ENABLED` | `true` | Enable 4-tier model routing |
+| `MODEL_FAST` | `gpt-5.1-codex-mini` | Fast tier model |
+| `MODEL_VOICE` | `gpt-5.1` | Voice tier model (user chat) |
+| `MODEL_CODE` | `gpt-5.1-codex-max` | Code tier model |
+| `MODEL_AGENTIC` | `gpt-5.1-codex-max` | Agentic tier model |
 
 #### Budget Management
 
@@ -613,7 +615,7 @@ journalctl -u mira-backend -n 50
 curl http://localhost:6333/health
 
 # 2. Missing API key
-grep GOOGLE_API_KEY backend/.env
+grep OPENAI_API_KEY backend/.env
 
 # 3. Port already in use
 lsof -i :3001
@@ -743,7 +745,7 @@ sudo systemctl start mira-qdrant
 2. Nginx proxies to backend on port 3001
 3. Backend queries SQLite for structured data
 4. Backend queries Qdrant for vector similarity search
-5. Backend calls Gemini 3 Pro for LLM responses
+5. Backend calls OpenAI GPT-5.1 for LLM responses
 6. Responses stream back via WebSocket
 
 ---
