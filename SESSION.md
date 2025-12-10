@@ -6,9 +6,9 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 52: 2025-12-10 (`2e6875c`)
+## Session 52: 2025-12-10 (`ee960f5`)
 
-**Summary:** Feature parity - Added CLI commands matching OpenAI Codex and Claude Code.
+**Summary:** Feature parity with OpenAI Codex and Claude Code - CLI commands + Frontend UI.
 
 **Research Phase:**
 - Reviewed OpenAI Codex CLI v0.66.0 changelog (December 2025)
@@ -16,7 +16,7 @@ Development session log. Recent sessions have full details; older sessions are c
 - Analyzed existing Mira backend capabilities
 - Found most features already exist in backend (just need CLI exposure)
 
-**New CLI Commands:**
+**Phase 1: CLI Commands**
 
 | Command | Description |
 |---------|-------------|
@@ -36,16 +36,28 @@ Development session log. Recent sessions have full details; older sessions are c
 - `session.cancel_agent` - Cancel a Codex session
 - `session.agent_info` - Get Codex session details
 
-**Files Changed:**
-- `src/cli/commands/builtin.rs` (NEW) - Command enum, parsing, help text
-- `src/cli/commands/mod.rs` - Export builtin module
-- `src/cli/repl.rs` - Command handlers (+260 lines)
-- `src/api/ws/session.rs` - Agent management APIs (+125 lines)
+**Phase 2: Frontend UI**
 
-**Remaining for Full Feature Parity (Phase 2-3):**
-- Frontend UI for background agent monitoring
-- Session management panel in frontend
-- Review mode UI with diff viewer
+**BackgroundAgentsPanel** - Floating panel for agent monitoring:
+- Running/completed/failed status with icons
+- Task description and progress display
+- Token usage and cost tracking
+- Cancel button for running agents
+- Collapsible completed agents section
+
+**Header Integration:**
+- Bot icon button in toolbar
+- Badge showing running agent count
+- Green highlight when panel is open
+
+**Files Changed:**
+- `backend/src/cli/commands/builtin.rs` (NEW) - Command parsing
+- `backend/src/cli/repl.rs` - Command handlers (+260 lines)
+- `backend/src/api/ws/session.rs` - Agent APIs (+125 lines)
+- `frontend/src/stores/useAgentStore.ts` (NEW) - Agent state
+- `frontend/src/components/BackgroundAgentsPanel.tsx` (NEW)
+- `frontend/src/components/Header.tsx` - Agents button
+- `frontend/src/Home.tsx` - Panel integration
 
 ---
 
