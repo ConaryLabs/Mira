@@ -6,6 +6,7 @@ import { ArtifactPanel } from './components/ArtifactPanel';
 import { ActivityPanel } from './components/ActivityPanel';
 import { IntelligencePanel } from './components/IntelligencePanel';
 import { BackgroundAgentsPanel } from './components/BackgroundAgentsPanel';
+import { ReviewPanel } from './components/ReviewPanel';
 import { ToastContainer } from './components/ToastContainer';
 import { useAppState } from './stores/useAppState';
 import { useWebSocketStore } from './stores/useWebSocketStore';
@@ -87,6 +88,9 @@ export function Home() {
 
       {/* Background Agents Panel - floating bottom right */}
       <BackgroundAgentsPanel />
+
+      {/* Review Panel - modal overlay */}
+      <ReviewPanel />
     </div>
   );
 }

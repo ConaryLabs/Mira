@@ -40,6 +40,14 @@ struct RestoreFileRequest {
     file_path: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GitDiffRequest {
+    project_id: String,
+    target: String,  // "uncommitted", "staged", "branch", "commit"
+    base_branch: Option<String>,
+    commit_hash: Option<String>,
+}
+
 pub async fn handle_git_operation(
     method: &str,
     params: Value,
@@ -234,6 +242,72 @@ pub async fn handle_git_operation(
                     "type": "file_content",
                     "path": req.file_path,
                     "content": content
+                }),
+                request_id: None,
+            })
+        }
+
+        "git.diff" => {
+            let req: GitDiffRequest = serde_json::from_value(params)
+                .map_err(|e| ApiError::bad_request(format!("Invalid diff request: {}", e)))?;
+
+            // Get attachments for the project first
+            let attachments = app_state
+                .git_client
+                .store
+                .list_project_attachments(&req.project_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to list attachments: {}", e)))?;
+
+            let attachment = attachments
+                .first()
+                .ok_or_else(|| ApiError::not_found("No repository attached to this project"))?;
+
+            let repo_path = attachment.local_path.clone();
+            let target = req.target.clone();
+            let base_branch = req.base_branch.clone();
+            let commit_hash = req.commit_hash.clone();
+
+            let diff = tokio::task::spawn_blocking(move || -> Result<String, ApiError> {
+                use std::process::Command;
+
+                let mut cmd = Command::new("git");
+                cmd.current_dir(&repo_path);
+
+                match target.as_str() {
+                    "staged" => {
+                        cmd.args(["diff", "--cached"]);
+                    }
+                    "branch" => {
+                        let base = base_branch.unwrap_or_else(|| "main".to_string());
+                        cmd.args(["diff", &format!("{}...HEAD", base)]);
+                    }
+                    "commit" => {
+                        let hash = commit_hash.unwrap_or_else(|| "HEAD".to_string());
+                        cmd.args(["show", &hash, "--format="]);
+                    }
+                    "uncommitted" | _ => {
+                        cmd.args(["diff", "HEAD"]);
+                    }
+                }
+
+                let output = cmd.output()
+                    .map_err(|e| ApiError::internal(format!("Failed to run git diff: {}", e)))?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(ApiError::internal(format!("Git diff failed: {}", stderr)));
+                }
+
+                Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            })
+            .await
+            .map_err(|e| ApiError::internal(format!("Task failed: {}", e)))??;
+
+            Ok(WsServerMessage::Data {
+                data: json!({
+                    "type": "diff_result",
+                    "diff": diff
                 }),
                 request_id: None,
             })
