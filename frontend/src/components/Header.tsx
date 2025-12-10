@@ -1,6 +1,6 @@
 // src/components/Header.tsx
 import React, { useState } from 'react';
-import { Folder, Activity, X, LogOut, Brain, Sun, Moon, MessageSquare, Bot } from 'lucide-react';
+import { Folder, Activity, X, LogOut, Brain, Sun, Moon, MessageSquare, Bot, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ArtifactToggle from './ArtifactToggle';
 import { ProjectsView } from './ProjectsView';
@@ -10,6 +10,7 @@ import { useAppState, useArtifactState } from '../stores/useAppState';
 import { useActivityStore } from '../stores/useActivityStore';
 import { useCodeIntelligenceStore } from '../stores/useCodeIntelligenceStore';
 import { useAgentStore } from '../stores/useAgentStore';
+import { useReviewStore } from '../stores/useReviewStore';
 import { useAuthStore, useCurrentUser } from '../stores/useAuthStore';
 import { useThemeStore } from '../stores/useThemeStore';
 import { useChatStore } from '../stores/useChatStore';
@@ -32,6 +33,10 @@ export const Header: React.FC = () => {
     isPanelVisible: isAgentsPanelVisible,
     agents
   } = useAgentStore();
+  const {
+    togglePanel: toggleReview,
+    isPanelVisible: isReviewPanelVisible
+  } = useReviewStore();
   const runningAgentsCount = agents.filter(a => a.status === 'running').length;
   const [showProjects, setShowProjects] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
@@ -145,6 +150,20 @@ export const Header: React.FC = () => {
                   {runningAgentsCount}
                 </span>
               )}
+            </button>
+
+            {/* Code Review Panel Toggle */}
+            <button
+              type="button"
+              onClick={toggleReview}
+              className={`p-2 rounded-md transition-colors ${
+                isReviewPanelVisible
+                  ? 'text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-900/30'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`}
+              title="Code Review"
+            >
+              <Eye size={16} />
             </button>
           </>
         )}
