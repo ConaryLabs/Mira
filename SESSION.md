@@ -6,7 +6,50 @@ Development session log. Recent sessions have full details; older sessions are c
 
 ---
 
-## Session 51: 2025-12-10 (`07e90c5`)
+## Session 52: 2025-12-10 (`2e6875c`)
+
+**Summary:** Feature parity - Added CLI commands matching OpenAI Codex and Claude Code.
+
+**Research Phase:**
+- Reviewed OpenAI Codex CLI v0.66.0 changelog (December 2025)
+- Reviewed Claude Code v2.0.64 features (December 2025)
+- Analyzed existing Mira backend capabilities
+- Found most features already exist in backend (just need CLI exposure)
+
+**New CLI Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/resume [name\|id]` | Resume session by name, ID, or show picker |
+| `/resume --last` | Resume most recent session |
+| `/review` | Review uncommitted changes (routes to LLM) |
+| `/review --branch <base>` | Review against base branch |
+| `/review --staged` | Review staged changes only |
+| `/rename <name>` | Rename current session |
+| `/agents` | List running Codex sessions |
+| `/agents cancel <id>` | Cancel a running agent |
+| `/search <query>` | Web search with type filter |
+| `/status` | Show current session status |
+
+**Backend API Extensions:**
+- `session.active_agents` - List active Codex sessions
+- `session.cancel_agent` - Cancel a Codex session
+- `session.agent_info` - Get Codex session details
+
+**Files Changed:**
+- `src/cli/commands/builtin.rs` (NEW) - Command enum, parsing, help text
+- `src/cli/commands/mod.rs` - Export builtin module
+- `src/cli/repl.rs` - Command handlers (+260 lines)
+- `src/api/ws/session.rs` - Agent management APIs (+125 lines)
+
+**Remaining for Full Feature Parity (Phase 2-3):**
+- Frontend UI for background agent monitoring
+- Session management panel in frontend
+- Review mode UI with diff viewer
+
+---
+
+## Session 51: 2025-12-10 (`54fb7e8`)
 
 **Summary:** Migration consolidation - collapsed 20 migrations into 4 clean files.
 
