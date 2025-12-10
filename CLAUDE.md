@@ -649,5 +649,4 @@ curl http://localhost:6333/collections
 - `backend/.env.example` - Environment variable template
 - `SESSION.md` - **Session log (UPDATE AT END OF EACH SESSION)** - Add commit hash and brief summary
 - `HOUSECLEANING_SUMMARY.md` - Complete report of November 2025 refactoring effort
-- `ISSUES_TO_CREATE.md` - Catalogued technical debt items for future work
 - `frontend/docs/STATE_BOUNDARIES.md` - Frontend state management architecture
