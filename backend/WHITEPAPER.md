@@ -2,696 +2,1066 @@
 
 This document provides a comprehensive technical reference for the Mira backend architecture, designed to help LLMs understand how the system works.
 
-## System Overview
+**Version:** 0.9.0
+**Last Updated:** December 10, 2025
+**Language:** Rust (Edition 2024)
+**Lines of Code:** ~31,000
 
-Mira is an AI coding assistant with a Rust backend that uses:
-- **Gemini 3 Pro** for all LLM operations with variable thinking levels
-- **SQLite** for structured data storage (50+ tables)
+---
+
+## Table of Contents
+
+1. [System Overview](#1-system-overview)
+2. [Architecture Diagram](#2-architecture-diagram)
+3. [Module Directory Structure](#3-module-directory-structure)
+4. [Database Schema](#4-database-schema)
+5. [Core Modules & Responsibilities](#5-core-modules--responsibilities)
+6. [LLM & Model Router](#6-llm--model-router)
+7. [Memory Systems](#7-memory-systems)
+8. [Operation Engine](#8-operation-engine)
+9. [WebSocket Protocol](#9-websocket-protocol)
+10. [Tools & Capabilities](#10-tools--capabilities)
+11. [Configuration System](#11-configuration-system)
+12. [Session Architecture](#12-session-architecture)
+13. [CLI Architecture](#13-cli-architecture)
+14. [Git Intelligence](#14-git-intelligence)
+15. [Build System Integration](#15-build-system-integration)
+16. [Testing Infrastructure](#16-testing-infrastructure)
+17. [Dependencies & External Systems](#17-dependencies--external-systems)
+
+---
+
+## 1. System Overview
+
+Mira is an AI-powered coding assistant with:
+
+- **OpenAI GPT-5.1 Family** for all LLM operations with 4-tier routing
+- **SQLite** for structured data storage (70+ tables)
 - **Qdrant** for vector embeddings (3 collections)
-- **WebSocket** for real-time client communication
+- **WebSocket** for real-time client communication (port 3001)
 
-## Architecture Layers
+### Key Design Principles
+
+- **Multi-model routing**: 4 tiers (Fast/Voice/Code/Agentic) for cost optimization
+- **Hybrid memory**: Structured (SQLite) + Semantic (Qdrant)
+- **Dual-session**: Eternal Voice sessions + discrete Codex sessions
+- **Comprehensive code intelligence**: Semantic graph, call graph, patterns
+- **Budget tracking**: Daily/monthly limits with LLM response caching
+
+---
+
+## 2. Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    WebSocket Layer                       │
-│              (src/api/ws/)                              │
-│    Handles client connections, message routing          │
-└─────────────────────────────────────────────────────────┘
-                           │
-┌─────────────────────────────────────────────────────────┐
-│                   Operation Engine                       │
-│              (src/operations/engine/)                   │
-│    Orchestrates complex workflows, tool execution       │
-└─────────────────────────────────────────────────────────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-┌───────v───────┐  ┌───────v───────┐  ┌───────v───────┐
-│  Gemini 3     │  │  Memory       │  │  Git          │
-│  Provider     │  │  Service      │  │  Intelligence │
-│  (src/llm/)   │  │  (src/memory/)│  │  (src/git/)   │
-└───────────────┘  └───────┬───────┘  └───────────────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-        ┌─────v─────┐ ┌────v────┐ ┌─────v─────┐
-        │  SQLite   │ │ Qdrant  │ │ Code      │
-        │  Storage  │ │ Vectors │ │ Intel     │
-        └───────────┘ └─────────┘ └───────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      Client Layer                            │
+│         React Frontend (5173) │ Rust CLI                    │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ WebSocket
+┌───────────────────────────────▼─────────────────────────────┐
+│                    WebSocket Layer (3001)                    │
+│                      src/api/ws/                            │
+│    Handlers: chat, git, files, operations, session, sudo    │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│                   Operation Engine                           │
+│                 src/operations/engine/                       │
+│    Orchestration, Tool Router, Context Building, Events     │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+┌───────▼───────┐      ┌───────▼───────┐      ┌───────▼───────┐
+│  Model Router │      │    Memory     │      │     Git       │
+│   src/llm/    │      │   Service     │      │ Intelligence  │
+│   router/     │      │  src/memory/  │      │   src/git/    │
+│               │      │               │      │               │
+│ 4-Tier:       │      │ Recall Engine │      │ Commits       │
+│ Fast/Voice/   │      │ Summaries     │      │ Co-change     │
+│ Code/Agentic  │      │ Embeddings    │      │ Expertise     │
+└───────┬───────┘      └───────┬───────┘      └───────────────┘
+        │                      │
+┌───────▼───────┐      ┌───────┴───────┐
+│   OpenAI      │      │               │
+│  GPT-5.1      │  ┌───▼───┐    ┌──────▼──────┐
+│  Family       │  │SQLite │    │   Qdrant    │
+│               │  │70+ tbl│    │ 3 collections│
+└───────────────┘  └───────┘    └─────────────┘
 ```
 
-## Core Components
+---
 
-### 1. Gemini 3 Pro Provider (`src/llm/provider/gemini3.rs`)
+## 3. Module Directory Structure
 
-The LLM provider handles all Gemini 3 Pro API interactions.
+```
+backend/src/
+├── agents/                      # Specialized agent system
+│   ├── builtin/                 # Built-in agents (explore, plan, general)
+│   ├── executor/                # Hybrid execution (in-process + subprocess)
+│   ├── registry.rs              # Agent registration & loading
+│   ├── types.rs                 # Agent definitions & configurations
+│   └── protocol.rs              # Agent communication protocol
+│
+├── api/                         # API layer
+│   ├── http/                    # HTTP endpoints (auth, health)
+│   ├── ws/                      # WebSocket handlers
+│   │   ├── chat/                # Chat handler + message routing
+│   │   │   ├── unified_handler.rs   # Main message dispatcher
+│   │   │   ├── connection.rs        # WebSocket lifecycle
+│   │   │   ├── message_router.rs    # Route to handlers
+│   │   │   └── heartbeat.rs         # Keep-alive pings
+│   │   ├── code_intelligence.rs # Semantic search & AST queries
+│   │   ├── documents.rs         # Document upload & processing
+│   │   ├── files.rs             # File browser & operations
+│   │   ├── filesystem.rs        # Filesystem access control
+│   │   ├── git.rs               # Git operations (clone, diff, etc.)
+│   │   ├── memory.rs            # Memory service access
+│   │   ├── operations/          # Operation streaming & status
+│   │   ├── project.rs           # Project management
+│   │   ├── session.rs           # Session management
+│   │   ├── sudo.rs              # Sudo approval & execution
+│   │   └── message.rs           # Message type definitions
+│   └── error.rs                 # Error types & handlers
+│
+├── auth/                        # Authentication & JWT
+│   ├── jwt.rs                   # JWT token handling
+│   ├── password.rs              # Password hashing (bcrypt)
+│   ├── service.rs               # Auth service
+│   └── models.rs                # Auth data models
+│
+├── bin/                         # Binary entry points
+│   ├── mira.rs                  # CLI binary
+│   └── mira_test.rs             # Scenario testing binary
+│
+├── budget/                      # Budget tracking
+│   └── mod.rs                   # Daily/monthly limits & cost tracking
+│
+├── build/                       # Build system integration
+│   ├── runner.rs                # Execute build commands
+│   ├── parser.rs                # Parse build error output
+│   ├── tracker.rs               # Store build runs & errors
+│   ├── resolver.rs              # Learn from historical fixes
+│   └── types.rs                 # Build-related types
+│
+├── cache/                       # LLM response caching
+│   ├── mod.rs                   # SHA-256 based cache
+│   ├── session_state.rs         # OpenAI prompt caching
+│   └── session_state_store.rs   # Persistent cache state
+│
+├── checkpoint/                  # Checkpoint/rewind system
+│   └── mod.rs                   # File state snapshots
+│
+├── cli/                         # Command-line interface
+│   ├── repl.rs                  # Interactive REPL loop
+│   ├── ws_client.rs             # WebSocket client
+│   ├── session/                 # Session management
+│   ├── project/                 # Project detection
+│   ├── commands/                # Slash commands (builtin + custom)
+│   │   ├── builtin.rs           # /resume, /review, /agents, etc.
+│   │   └── mod.rs               # Command loading
+│   ├── display/                 # Terminal output
+│   └── args.rs                  # CLI argument parsing
+│
+├── config/                      # Configuration management
+│   ├── mod.rs                   # Main config loader
+│   ├── llm.rs                   # LLM configuration
+│   ├── server.rs                # Server settings
+│   ├── memory.rs                # Memory system settings
+│   ├── caching.rs               # Caching configuration
+│   └── tools.rs                 # Tool configuration
+│
+├── context_oracle/              # Unified context gathering
+│   ├── gatherer.rs              # Assemble context from all systems
+│   └── types.rs                 # Context type definitions
+│
+├── git/                         # Git integration
+│   ├── client/                  # Git operations
+│   │   ├── operations.rs        # Clone, checkout, commit
+│   │   ├── project_ops.rs       # Project-level operations
+│   │   ├── tree_builder.rs      # Build file tree
+│   │   ├── diff_parser.rs       # Parse git diffs
+│   │   └── code_sync.rs         # Sync code to Qdrant
+│   ├── intelligence/            # Git intelligence
+│   │   ├── commits.rs           # Commit tracking
+│   │   ├── cochange.rs          # File co-change patterns
+│   │   ├── blame.rs             # Git blame analysis
+│   │   ├── expertise.rs         # Author expertise scoring
+│   │   └── fixes.rs             # Historical fix learning
+│   └── store.rs                 # Git data persistence
+│
+├── hooks/                       # Hook system
+│   └── mod.rs                   # Pre/post tool execution hooks
+│
+├── llm/                         # LLM provider & routing
+│   ├── provider/                # Provider implementations
+│   │   ├── openai/              # OpenAI GPT-5.1 family
+│   │   │   ├── mod.rs           # OpenAI API client
+│   │   │   ├── types.rs         # Request/response types
+│   │   │   ├── conversion.rs    # Format conversion
+│   │   │   ├── pricing.rs       # Cost calculation
+│   │   │   └── embeddings.rs    # text-embedding-3-large
+│   │   ├── gemini3/             # Google Gemini 3 (alternative)
+│   │   └── stream.rs            # Streaming response handling
+│   ├── router/                  # 4-tier model router
+│   │   ├── mod.rs               # Router orchestration
+│   │   ├── classifier.rs        # Task classification
+│   │   └── config.rs            # Router configuration
+│   └── embeddings.rs            # Generic embedding interface
+│
+├── mcp/                         # Model Context Protocol
+│   ├── mod.rs                   # MCP manager
+│   ├── protocol.rs              # MCP protocol
+│   └── transport.rs             # MCP transport
+│
+├── memory/                      # Hybrid memory system
+│   ├── core/                    # Core abstractions
+│   │   ├── traits.rs            # MemoryStore trait
+│   │   └── types.rs             # MemoryEntry & structures
+│   ├── features/                # Memory features
+│   │   ├── code_intelligence/   # Semantic graph & analysis
+│   │   │   ├── semantic.rs      # Semantic graph
+│   │   │   ├── call_graph.rs    # Call graph analysis
+│   │   │   ├── parser.rs        # Multi-language parser
+│   │   │   ├── patterns.rs      # Design pattern detection
+│   │   │   └── storage.rs       # Semantic storage
+│   │   ├── document_processing/ # Document ingestion
+│   │   ├── message_pipeline/    # Message analysis
+│   │   ├── recall_engine/       # Context retrieval
+│   │   │   ├── search/          # Search strategies
+│   │   │   │   ├── hybrid_search.rs
+│   │   │   │   ├── semantic_search.rs
+│   │   │   │   ├── recent_search.rs
+│   │   │   │   └── multihead_search.rs
+│   │   │   ├── scoring/         # Result scoring
+│   │   │   └── context/         # Context assembly
+│   │   └── summarization/       # Message summarization
+│   │       └── strategies/      # Rolling, snapshot
+│   ├── service/                 # Memory service coordination
+│   │   └── core_service.rs      # Main memory service
+│   └── storage/                 # Persistence layer
+│       ├── sqlite/              # SQLite implementation
+│       └── qdrant/              # Qdrant vector store
+│
+├── operations/                  # Operation orchestration
+│   ├── engine/                  # Core operation logic
+│   │   ├── orchestration.rs     # Main execution loop
+│   │   ├── lifecycle.rs         # State transitions
+│   │   ├── delegation.rs        # Task delegation
+│   │   ├── llm_orchestrator.rs  # LLM interaction
+│   │   ├── events.rs            # Event emission
+│   │   ├── artifacts.rs         # Artifact handling
+│   │   ├── context.rs           # Context assembly
+│   │   ├── code_handlers.rs     # Code operations
+│   │   ├── file_handlers.rs     # File operations
+│   │   ├── git_handlers.rs      # Git operations
+│   │   ├── external_handlers.rs # External tools
+│   │   └── tool_router/         # Tool invocation
+│   │       ├── registry.rs      # Tool registry
+│   │       └── mod.rs           # Router orchestration
+│   ├── tools/                   # Tool schema definitions
+│   │   ├── code_generation.rs   # generate_code, refactor
+│   │   ├── code_intelligence.rs # find_function, search
+│   │   ├── file_operations.rs   # read_file, write_file
+│   │   ├── git_analysis.rs      # git_log, cochanges
+│   │   ├── external.rs          # web_search, run_command
+│   │   └── agents.rs            # Agent tools
+│   ├── delegation_tools.rs      # Tool calling interface
+│   ├── tool_builder.rs          # Tool schema builder
+│   └── types.rs                 # Operation types
+│
+├── patterns/                    # Reasoning pattern storage
+│   ├── matcher.rs               # Pattern matching
+│   ├── replay.rs                # Pattern replay
+│   └── storage.rs               # Pattern persistence
+│
+├── project/                     # Project management
+│   ├── store.rs                 # Project persistence
+│   ├── guidelines.rs            # Guidelines loading
+│   └── tasks/                   # Project tasks
+│
+├── prompt/                      # Prompt building
+│   ├── builders.rs              # UnifiedPromptBuilder
+│   ├── internal.rs              # Technical prompts
+│   └── context.rs               # Context building
+│
+├── relationship/                # User context & facts
+│   ├── service.rs               # Relationship service
+│   ├── facts_service.rs         # Learned facts storage
+│   └── pattern_engine.rs        # Pattern learning
+│
+├── session/                     # Dual-session architecture
+│   ├── types.rs                 # Session types
+│   ├── manager.rs               # Session management
+│   ├── injection.rs             # Cross-session injection
+│   ├── codex_spawner.rs         # Spawn Codex from Voice
+│   ├── completion.rs            # Completion detection
+│   └── summary_generator.rs     # Session summarization
+│
+├── state.rs                     # Global AppState (DI container)
+│
+├── sudo/                        # Sudo approval system
+│   └── service.rs               # Permission checking
+│
+├── synthesis/                   # Tool synthesis
+│   ├── detector.rs              # Pattern detection
+│   ├── generator.rs             # Tool generation
+│   └── storage.rs               # Tool persistence
+│
+├── system/                      # System environment
+│   └── detector.rs              # Detect OS, shell, tools
+│
+├── tasks/                       # Background tasks
+│   ├── backfill.rs              # Backfill missing data
+│   ├── code_sync.rs             # Sync code to Qdrant
+│   └── embedding_cleanup.rs     # Clean embeddings
+│
+├── utils/                       # Centralized utilities
+│   ├── hash.rs                  # SHA-256 hashing
+│   ├── rate_limiter.rs          # Rate limiting
+│   ├── timeout.rs               # Timeout utilities
+│   └── timestamp.rs             # Timestamp utilities
+│
+├── watcher/                     # File system watching
+│   ├── config.rs                # Watcher configuration
+│   ├── events.rs                # File system events
+│   └── processor.rs             # Event processing
+│
+├── lib.rs                       # Library entry point
+└── main.rs                      # Server entry point
+```
 
-**Key Features:**
-- Variable thinking levels: `Low`, `High`
-- Tool calling via Gemini Function Calling format
-- Streaming support via Server-Sent Events (SSE)
-- Response caching integration
-- Thought signature handling for multi-turn function calls
+---
 
-**Usage:**
+## 4. Database Schema
+
+The database consists of **70+ tables** across 4 migration files.
+
+### 4.1 Foundation Tables (20251209000001)
+
+**Users & Authentication:**
+| Table | Purpose |
+|-------|---------|
+| `users` | User accounts (username, email, password_hash, preferences) |
+| `sessions` | Authentication sessions (token, expires_at) |
+| `user_profile` | Preferences & learning (languages, coding_style, tech_stack) |
+
+**Projects & Files:**
+| Table | Purpose |
+|-------|---------|
+| `projects` | Project metadata (name, path, language, framework, tags) |
+| `git_repo_attachments` | Git repository links with sync status |
+| `repository_files` | Indexed files (path, language, line_count, complexity) |
+| `local_changes` | Track uncommitted file changes |
+
+**Memory & Conversation:**
+| Table | Purpose |
+|-------|---------|
+| `memory_entries` | All chat messages (session_id, role, content, timestamp) |
+| `message_analysis` | Sentiment, intent, salience, error detection |
+| `rolling_summaries` | Periodic summaries (every 100 messages) |
+| `message_embeddings` | Track embeddings sent to Qdrant (entry_id → point_id) |
+
+**Personal Context:**
+| Table | Purpose |
+|-------|---------|
+| `memory_facts` | Learned user facts (preferences, habits) |
+| `learned_patterns` | Behavioral patterns (trigger, success rate) |
+
+**Chat Sessions:**
+| Table | Purpose |
+|-------|---------|
+| `chat_sessions` | Conversation sessions (user_id, type, status, message_count) |
+| `session_forks` | Fork relationships between sessions |
+| `codex_session_links` | Voice ↔ Codex session mapping |
+| `session_injections` | Cross-session message injection |
+| `session_checkpoints` | Git commit tracking for sessions |
+
+### 4.2 Code Intelligence Tables (20251209000002)
+
+**AST & Symbols:**
+| Table | Purpose |
+|-------|---------|
+| `code_elements` | Functions, classes, methods (name, type, complexity) |
+| `call_graph` | Function call relationships (caller_id → callee_id) |
+| `external_dependencies` | Import statements & dependencies |
+
+**Semantic Graph:**
+| Table | Purpose |
+|-------|---------|
+| `semantic_nodes` | Purpose/concepts for symbols |
+| `semantic_edges` | Relationships between symbols |
+| `concept_index` | Index concepts to symbols |
+| `semantic_analysis_cache` | Cache AST analysis results |
+
+**Design Patterns:**
+| Table | Purpose |
+|-------|---------|
+| `design_patterns` | Detected patterns (MVC, singleton, observer) |
+| `pattern_validation_cache` | Pattern detection caching |
+
+**Domain & Quality:**
+| Table | Purpose |
+|-------|---------|
+| `domain_clusters` | Group related symbols (cohesion_score) |
+| `code_quality_issues` | Linting/analysis issues |
+| `language_configs` | Parser configurations per language |
+
+### 4.3 Operations Tables (20251209000003)
+
+**Git Intelligence:**
+| Table | Purpose |
+|-------|---------|
+| `git_commits` | Indexed commits (hash, author, message, changes) |
+| `file_cochange_patterns` | Files changed together (confidence_score) |
+| `blame_annotations` | Line-by-line git blame |
+| `author_expertise` | Author skill scores per file pattern |
+| `historical_fixes` | Learn from previous error fixes |
+
+**Operations:**
+| Table | Purpose |
+|-------|---------|
+| `operations` | Operation tracking (id, status, kind, tokens, cost) |
+| `operation_events` | Status changes, LLM analysis, delegations |
+| `operation_tasks` | Sub-tasks within operations |
+
+**Artifacts:**
+| Table | Purpose |
+|-------|---------|
+| `artifacts` | Generated code snippets (kind, content, applied) |
+| `file_modifications` | Track file changes (original, modified, diff) |
+
+**Documents:**
+| Table | Purpose |
+|-------|---------|
+| `documents` | Uploaded documents (PDF, docx, etc.) |
+| `document_chunks` | Chunked content with embeddings |
+
+**Project Context:**
+| Table | Purpose |
+|-------|---------|
+| `project_guidelines` | CLAUDE.md or similar files |
+| `project_tasks` | Project-level tasks |
+| `task_sessions` | Link sessions to tasks |
+
+### 4.4 Infrastructure Tables (20251209000004)
+
+**Build System:**
+| Table | Purpose |
+|-------|---------|
+| `build_runs` | Build execution tracking |
+| `build_errors` | Parsed errors from builds |
+| `error_resolutions` | How errors were fixed |
+| `build_context_injections` | Link errors to operations |
+
+**Budget & Cache:**
+| Table | Purpose |
+|-------|---------|
+| `budget_tracking` | Per-request cost tracking |
+| `budget_summary` | Daily/monthly summaries |
+| `llm_cache` | Response cache (key_hash, response, TTL) |
+| `session_cache_state` | OpenAI prompt caching state |
+| `session_file_hashes` | File content hashes sent to LLM |
+
+**Reasoning Patterns:**
+| Table | Purpose |
+|-------|---------|
+| `reasoning_patterns` | Stored reasoning chains |
+| `reasoning_steps` | Steps within patterns |
+| `pattern_usage` | Track pattern success |
+
+**Tool Synthesis:**
+| Table | Purpose |
+|-------|---------|
+| `tool_patterns` | Detected tool opportunities |
+| `synthesized_tools` | Generated tool code |
+| `tool_executions` | Tool execution history |
+| `tool_effectiveness` | Tool success metrics |
+
+**Checkpoints:**
+| Table | Purpose |
+|-------|---------|
+| `checkpoints` | File state snapshots |
+| `checkpoint_files` | Stored file content |
+
+**Sudo System:**
+| Table | Purpose |
+|-------|---------|
+| `sudo_permissions` | Allowed commands |
+| `sudo_blocklist` | Dangerous commands (11 defaults) |
+| `sudo_approval_requests` | Pending approvals |
+| `sudo_audit_log` | Audit trail |
+
+---
+
+## 5. Core Modules & Responsibilities
+
+### 5.1 AppState (`src/state.rs`)
+
+Global dependency injection container with 30+ services:
+
 ```rust
-let provider = Gemini3Provider::new(api_key, model, ThinkingLevel::High)?;
-let response = provider.chat(messages, thinking_level).await?;
-let stream = provider.stream(messages, thinking_level).await?;
-```
-
-**Tool Format:**
-Tools use Gemini function declaration format:
-```json
-{
-  "functionDeclarations": [{
-    "name": "read_file",
-    "description": "Read contents of a file",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "path": {"type": "string", "description": "File path"}
-      },
-      "required": ["path"]
-    }
-  }]
+pub struct AppState {
+    pub sqlite_store: Arc<SqliteMemoryStore>,
+    pub llm_provider: Arc<dyn LlmProvider>,
+    pub memory_service: Arc<MemoryService>,
+    pub operation_engine: Arc<OperationEngine>,
+    pub context_oracle: Arc<ContextOracle>,
+    pub model_router: Arc<ModelRouter>,
+    pub session_manager: Arc<SessionManager>,
+    pub budget_tracker: Arc<BudgetTracker>,
+    pub llm_cache: Arc<LlmCache>,
+    pub git_client: Arc<GitClient>,
+    pub code_intelligence: Arc<CodeIntelligence>,
+    pub sudo_service: Arc<SudoService>,
+    // ... 20+ more services
 }
 ```
 
-### 2. Operation Engine (`src/operations/engine/`)
+### 5.2 API Layer (`src/api/`)
 
-The Operation Engine orchestrates complex multi-step workflows.
+**HTTP Handlers:**
+- `/health` - Readiness/liveness checks
+- `/api/auth/login` - User authentication
+- `/api/auth/register` - User registration
 
-**Components:**
-- `orchestration.rs` - Main execution loop
-- `lifecycle.rs` - Operation state management
-- `context.rs` - Context building for LLM calls
-- `tool_router.rs` - Routes tool calls to handlers
-- `skills.rs` - Skill definitions and routing
+**WebSocket Handlers (`src/api/ws/`):**
 
-**Operation Lifecycle:**
+| Handler | Responsibility |
+|---------|---------------|
+| `chat/unified_handler.rs` | Main message routing |
+| `code_intelligence.rs` | Semantic search, symbol analysis |
+| `documents.rs` | Document upload & processing |
+| `files.rs` | File browser |
+| `filesystem.rs` | Filesystem access with permissions |
+| `git.rs` | Git operations (clone, diff, log) |
+| `memory.rs` | Memory access & queries |
+| `operations/` | Operation streaming & status |
+| `project.rs` | Project CRUD |
+| `session.rs` | Session management |
+| `sudo.rs` | Sudo approval handling |
+
+---
+
+## 6. LLM & Model Router
+
+### 6.1 4-Tier Model Architecture
+
+| Tier | Model | Use Cases | Reasoning | Cost |
+|------|-------|-----------|-----------|------|
+| **Fast** | GPT-5.1-Codex-Mini | File ops, search, metadata | - | $0.25/$2 per 1M |
+| **Voice** | GPT-5.1 | User chat, explanations | medium | $1.25/$10 per 1M |
+| **Code** | GPT-5.1-Codex-Max | Code generation, >50k tokens | high | $1.25/$10 per 1M |
+| **Agentic** | GPT-5.1-Codex-Max | Long-running (24h+) autonomous | xhigh | $1.25/$10 per 1M |
+
+### 6.2 Routing Logic (`src/llm/router/classifier.rs`)
+
+```rust
+fn classify_task(prompt: &str, context: &OperationContext) -> ModelTier {
+    // Decision tree:
+    // - Simple file listing, grep, search → Fast
+    // - User-facing chat, explanations → Voice
+    // - Code generation, >50k tokens, >3 files → Code
+    // - Autonomous task lasting >1hr → Agentic
+}
+```
+
+### 6.3 Provider Implementation (`src/llm/provider/openai/`)
+
+- Uses OpenAI Responses API (`/v1/responses`)
+- Supports streaming via SSE
+- Tool calling via OpenAI function format
+- Embeddings via `text-embedding-3-large` (3072 dimensions)
+
+---
+
+## 7. Memory Systems
+
+### 7.1 Dual-Store Architecture
+
+- **SQLite**: Structured data (messages, analysis, metadata)
+- **Qdrant**: Vector embeddings (semantic search)
+
+### 7.2 Three Qdrant Collections
+
+| Collection | Content | Dimensions |
+|------------|---------|------------|
+| `mira_code` | Code snippets & symbols | 3072 |
+| `mira_conversation` | Chat history & summaries | 3072 |
+| `mira_git` | Commits & blame | 3072 |
+
+### 7.3 Memory Pipeline
+
+```
+Message Input
+    ↓
+Message Analysis (intent, salience, topics)
+    ↓
+Save to SQLite (memory_entries + analysis)
+    ↓
+Salience Check (MIN_SALIENCE > 0.5?)
+    ↓
+Generate Embeddings (text-embedding-3-large)
+    ↓
+Store in Qdrant (with metadata)
+    ↓
+Track in message_embeddings (entry_id → point_id)
+```
+
+### 7.4 Recall Strategy (Hybrid Search)
+
+```
+Query Input
+    ↓
+Recent Messages (LIMIT 10, ORDER BY timestamp DESC)
+    ↓
+Semantic Vector Search (MIRA_CONTEXT_SEMANTIC_MATCHES=10)
+    ↓
+Multi-head Search (semantic, code, documents, conversation)
+    ↓
+Composite Scoring (recency * 0.3 + relevance * 0.7)
+    ↓
+Rolling Summaries (if age > 168 hours)
+    ↓
+Final Context Bundle
+```
+
+### 7.5 Context Architecture
+
+| Layer | Purpose | Config | ~Tokens |
+|-------|---------|--------|---------|
+| LLM Message Array | Direct conversation turns | 12 messages | 3-5K |
+| Rolling Summary | Compressed older history | Every 100 msgs | ~2.5K |
+| Semantic Search | Relevant distant memories | 10 matches | 1-2K |
+
+---
+
+## 8. Operation Engine
+
+### 8.1 Lifecycle States
+
 ```
 PENDING → STARTED → DELEGATING → GENERATING → COMPLETED
                                                ↓
                                             FAILED
 ```
 
-**Tool Categories:**
-- File operations: `read_file`, `write_file`, `list_files`, etc.
-- Git operations: `git_status`, `git_commit`, `git_diff`, etc.
-- Code analysis: `find_functions`, `find_classes`, `semantic_search`, etc.
-- External: `web_search`, `fetch_url`, `execute_command`
+### 8.2 Operation Kinds
 
-**Tool Execution Flow:**
-1. LLM returns tool_calls in response
-2. ToolRouter routes each call to appropriate handler
-3. Handler executes and returns result
-4. Results sent back to LLM for continuation
+- `code_generation` - Create new code
+- `code_modification` - Edit existing code
+- `code_review` - Analyze & critique
+- `refactor` - Improve structure
+- `debug` - Troubleshoot issues
 
-### 3. Memory Service (`src/memory/`)
+### 8.3 Tool Calling Loop
 
-The Memory Service coordinates all memory operations.
-
-**Storage Backends:**
-- **SQLite** (`src/memory/storage/sqlite/`): Structured data
-- **Qdrant** (`src/memory/storage/qdrant/`): Vector embeddings
-
-**Qdrant Collections:**
-- `code`: Semantic nodes, code elements, patterns
-- `conversation`: Messages, summaries, user context
-- `git`: Commits, co-change patterns, fixes
-
-**Key Tables (SQLite):**
-- `memory_entries`: Conversation history
-- `message_analysis`: Extracted mood, intent, topics, salience
-- `rolling_summaries`: Compressed context (10-msg and 100-msg windows)
-- `memory_facts`: Key-value facts about user
-- `user_profile`: Coding preferences, tech stack
-
-**Recall Engine:**
-The recall engine assembles context for each LLM call:
-1. Recent messages (chronological)
-2. Semantic search results (from Qdrant)
-3. Rolling summaries (compressed history)
-4. Code intelligence (if applicable)
-5. Git intelligence (if applicable)
-
-### 4. Code Intelligence (`src/memory/features/code_intelligence/`)
-
-Code intelligence provides semantic understanding of code.
-
-**Modules:**
-- `semantic.rs`: Semantic graph (nodes, edges, concepts)
-- `call_graph.rs`: Function call relationships
-- `patterns.rs`: Design pattern detection
-- `clustering.rs`: Domain-based code grouping
-- `cache.rs`: Analysis result caching
-
-**Semantic Graph:**
 ```
-semantic_nodes: id, element_id, purpose, concepts, domain_labels
-semantic_edges: source_id, target_id, relationship_type, weight
-concept_index: concept, node_id (enables concept-based search)
+Operation Context + User Prompt
+    ↓
+Build Prompt (system + memory + code + message history)
+    ↓
+LLM Call (with tools in context)
+    ↓
+Parse Tool Calls
+    ↓
+Route Each Tool (file ops, git, code analysis)
+    ↓
+Emit Events (tool execution, results)
+    ↓
+Next LLM Call (with tool results) or COMPLETED
 ```
 
-**Relationship Types:**
-- `Uses`, `Implements`, `Extends`, `Contains`, `Calls`
-- `ConceptSimilar`, `DomainSame`, `CoChange`
+---
 
-**Call Graph:**
-- Stores caller-callee relationships
-- Supports impact analysis (what breaks if X changes)
-- Path finding between functions
-- Entry point and leaf detection
+## 9. WebSocket Protocol
 
-**Pattern Detection:**
-Detects: Factory, Builder, Repository, Observer, Singleton, Strategy, Decorator, Adapter, Facade, Command, Iterator
+### 9.1 Client → Server Messages
 
-### 5. Git Intelligence (`src/git/intelligence/`)
-
-Git intelligence provides deep understanding of git history.
-
-**Modules:**
-- `commits.rs`: Commit tracking with file changes
-- `cochange.rs`: Co-change pattern detection
-- `blame.rs`: Line-level blame annotations
-- `expertise.rs`: Author expertise scoring
-- `fixes.rs`: Historical fix matching
-
-**Co-change Detection:**
-Files that frequently change together get tracked:
-- Confidence score: `cochange_count / (changes_a + changes_b - cochange_count)` (Jaccard)
-- Suggests related files when editing
-
-**Author Expertise:**
-Scoring formula: `40% commits + 30% lines_changed + 30% recency`
-- Recency uses 365-day exponential decay
-- Tracks expertise per file and per domain
-
-**Historical Fixes:**
-- Normalizes error patterns (removes paths, numbers, quoted strings)
-- Links errors to fix commits
-- Suggests past fixes for similar errors
-
-### 6. Budget & Cache (`src/budget/`, `src/cache/`)
-
-**Budget Tracking:**
-- Records every LLM API call with cost
-- Enforces daily/monthly spending limits
-- Tracks token usage and cache hit rate
-
-**LLM Cache:**
-- SHA-256 key generation from request components
-- Cache key = hash(messages + tools + system + model + reasoning_effort)
-- TTL-based expiration (default 24 hours)
-- LRU eviction when cache grows large
-- Target 80%+ hit rate
-
-## Database Schema Overview
-
-### Foundation Tables (001)
-- `users`, `sessions`, `user_profile`
-- `projects`, `git_repo_attachments`, `repository_files`
-- `memory_entries`, `message_analysis`, `rolling_summaries`
-- `memory_facts`, `learned_patterns`, `message_embeddings`
-
-### Code Intelligence Tables (002)
-- `code_elements`: AST-parsed code symbols
-- `semantic_nodes`, `semantic_edges`, `concept_index`
-- `call_graph`, `external_dependencies`
-- `design_patterns`, `pattern_validation_cache`
-- `domain_clusters`, `code_quality_issues`
-
-### Git Intelligence Tables (003)
-- `git_commits`: Full commit history
-- `file_cochange_patterns`: Co-change tracking
-- `blame_annotations`: Line-level blame
-- `author_expertise`: Per-file expertise scores
-- `historical_fixes`: Error-to-fix mappings
-
-### Operations Tables (004)
-- `operations`: Workflow instances
-- `operation_events`: Real-time event log
-- `operation_tasks`: Task breakdown
-- `artifacts`: Generated code artifacts
-
-### Tool Synthesis Tables (006)
-- `tool_patterns`: Detected automation patterns
-- `synthesized_tools`: Generated tools
-- `tool_executions`: Execution history
-- `tool_effectiveness`: Success metrics
-
-### Budget & Cache Tables (008)
-- `budget_tracking`: Per-request cost records
-- `budget_summary`: Daily/monthly aggregates
-- `llm_cache`: Response cache
-- `reasoning_patterns`, `reasoning_steps`, `pattern_usage`
-
-## WebSocket Protocol
-
-### Message Types (Client → Server)
 ```json
-{"type": "chat", "content": "user message", "session_id": "..."}
-{"type": "operation.cancel", "operation_id": "..."}
+// Chat message
+{
+  "type": "chat",
+  "content": "User input",
+  "project_id": "proj-123",
+  "session_id": "sess-456",
+  "system_access_mode": "project",
+  "metadata": { "file_path": "src/main.rs" }
+}
+
+// Command (slash commands)
+{
+  "type": "command",
+  "command": "fork",
+  "args": { "target_session": "parent-id" }
+}
+
+// Project operations
+{
+  "type": "project_command",
+  "method": "create",
+  "params": { "name": "my-project" }
+}
+
+// Git operations
+{
+  "type": "git_command",
+  "method": "git.diff",
+  "params": { "project_id": "proj-123", "target": "uncommitted" }
+}
+
+// Sudo approval
+{
+  "type": "sudo_approval",
+  "approval_id": "req-789",
+  "approved": true
+}
 ```
 
-### Message Types (Server → Client)
+### 9.2 Server → Client Messages
+
 ```json
-{"type": "operation.started", "operation_id": "..."}
-{"type": "operation.chunk", "content": "partial response"}
-{"type": "operation.tool_call", "tool": "read_file", "args": {...}}
-{"type": "operation.tool_result", "result": "..."}
-{"type": "operation.completed", "response": "full response"}
-{"type": "operation.failed", "error": "..."}
+// Stream token
+{
+  "type": "stream_token",
+  "operation_id": "op-123",
+  "token": "class",
+  "progress": 0.45
+}
+
+// Chat complete
+{
+  "type": "chat_complete",
+  "operation_id": "op-123",
+  "tokens_used": 1234,
+  "cost_usd": 0.045,
+  "cache_hit": false
+}
+
+// Operation event
+{
+  "type": "operation_event",
+  "event_type": "tool_executed",
+  "data": { "tool_name": "read_file", "success": true }
+}
+
+// Sudo approval request
+{
+  "type": "sudo_approval_request",
+  "request_id": "req-789",
+  "command": "apt install nginx",
+  "reason": "Install web server"
+}
 ```
 
-### Event Flow
-1. Client sends chat message
-2. Server creates operation, sends `operation.started`
-3. LLM generates response, server streams `operation.chunk`
-4. If tools needed: `operation.tool_call` → execute → `operation.tool_result`
-5. Repeat tool cycle until LLM done
-6. Server sends `operation.completed`
+---
 
-## Configuration
+## 10. Tools & Capabilities
 
-### Environment Variables
-```bash
-# Server
-MIRA_PORT=3001
-MIRA_ENV=development
+### 10.1 Code Generation Tools
+- `generate_code` - Create new file
+- `refactor_code` - Improve existing code
+- `debug_code` - Diagnose & fix issues
 
-# Database
-DATABASE_URL=sqlite://data/mira.db
-QDRANT_URL=http://localhost:6334
+### 10.2 Code Intelligence Tools
+- `find_function` - Locate functions by name/pattern
+- `find_class_or_struct` - Find type definitions
+- `search_code_semantic` - Semantic code search
+- `find_imports` - Locate dependencies
+- `analyze_dependencies` - Understand relationships
+- `get_complexity_hotspots` - Find complex areas
+- `get_quality_issues` - Code quality analysis
+- `get_file_symbols` - List all symbols
+- `find_tests_for_code` - Locate related tests
+- `find_callers` - Find who calls a function
+- `get_element_definition` - Get implementation
 
-# Gemini 3 Pro
-GOOGLE_API_KEY=...
-GEMINI_MODEL=gemini-3-pro-preview
-GEMINI_THINKING_LEVEL=high
+### 10.3 File Operation Tools
+- `read_project_file` - Read code (max 500 lines)
+- `write_project_file` - Create/modify files
+- `edit_project_file` - Edit specific sections
+- `search_codebase` - Search across files
+- `list_project_files` - Browse directory
+- `get_file_summary` - High-level overview
 
-# Embeddings
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+### 10.4 Git Analysis Tools
+- `git_log` - Commit history
+- `get_file_cochanges` - Files changed together
+- `get_author_expertise` - Who's the expert?
+- `blame_file` - Line-by-line history
+- `get_historical_fixes` - How was this fixed before?
 
-# Budget
+### 10.5 External Tools
+- `web_search` - Search the internet (DuckDuckGo)
+- `fetch_url` - Retrieve web content
+- `run_command` - Execute shell commands
+- `run_tests` - Execute test scenarios
+
+---
+
+## 11. Configuration System
+
+### 11.1 LLM Configuration
+```env
+OPENAI_API_KEY=sk-...
+MODEL_ROUTER_ENABLED=true
+MODEL_FAST=gpt-5.1-codex-mini
+MODEL_VOICE=gpt-5.1
+MODEL_CODE=gpt-5.1-codex-max
+MODEL_AGENTIC=gpt-5.1-codex-max
+ROUTE_CODE_TOKEN_THRESHOLD=50000
+ROUTE_CODE_FILE_COUNT=3
+```
+
+### 11.2 Budget Management
+```env
 BUDGET_DAILY_LIMIT_USD=5.0
 BUDGET_MONTHLY_LIMIT_USD=150.0
+```
 
-# Cache
+### 11.3 Memory System
+```env
+MIRA_CONTEXT_RECENT_MESSAGES=30
+MIRA_CONTEXT_SEMANTIC_MATCHES=10
+MIRA_LLM_MESSAGE_HISTORY_LIMIT=12
+MEM_SALIENCE_MIN_FOR_EMBED=0.5
+MIRA_SUMMARY_ROLLING_ENABLED=true
+```
+
+### 11.4 Caching
+```env
 CACHE_ENABLED=true
 CACHE_TTL_SECONDS=86400
 ```
 
-## Key Patterns
+### 11.5 Database & Storage
+```env
+DATABASE_URL=sqlite:./data/mira.db
+QDRANT_URL=http://localhost:6334
+```
 
-### Error Handling
-- Use `anyhow::Result` for propagating errors
-- Log errors with `tracing` before returning
-- Return user-friendly error messages via WebSocket
+### 11.6 Server
+```env
+MIRA_HOST=0.0.0.0
+MIRA_PORT=3001
+```
 
-### Async Patterns
-- All I/O operations are async (SQLite, Qdrant, HTTP)
-- Use `tokio::spawn` for background tasks
-- Channels for inter-task communication
+---
 
-### Arc Sharing
-- Services wrapped in `Arc` for thread-safe sharing
-- `AppState` holds all service instances
-- Clone `Arc` references, not the services themselves
+## 12. Session Architecture
 
-### Database Queries
-- Use `sqlx::query` with runtime queries (not compile-time)
-- Handle `Option<T>` for nullable columns
-- Use transactions for multi-statement operations
+### 12.1 Dual-Session Model
 
-## Testing
+**Voice Sessions (Eternal):**
+- Live across conversations
+- User personality continuity
+- Use GPT-5.1 Voice tier
+- Parent session for Codex spawning
 
-### Test Structure
-- Integration tests in `backend/tests/`
-- 17 test suites, 127+ tests
-- Tests use in-memory SQLite and fake API keys
+**Codex Sessions (Discrete):**
+- Task-scoped for code work
+- Use GPT-5.1-Codex-Max
+- Spawned from Voice sessions
+- Summarize back to Voice on completion
 
-### Running Tests
+### 12.2 Session Tables
+
+```sql
+-- Voice session (eternal)
+INSERT INTO chat_sessions
+  (id, user_id, session_type, status)
+VALUES ('voice-123', 'user-1', 'voice', 'active');
+
+-- Codex session (discrete)
+INSERT INTO chat_sessions
+  (id, parent_session_id, session_type, codex_status)
+VALUES ('codex-456', 'voice-123', 'codex', 'active');
+```
+
+---
+
+## 13. CLI Architecture
+
+### 13.1 Entry Point
+`src/bin/mira.rs` - CLI binary
+
+### 13.2 Key Components
+
+| Module | Purpose |
+|--------|---------|
+| `repl.rs` | Interactive REPL loop |
+| `ws_client.rs` | WebSocket connection |
+| `session/` | Session management |
+| `project/` | Project detection |
+| `commands/` | Slash command loading |
+| `display/` | Terminal output |
+
+### 13.3 Built-in Commands
+
+| Command | Description |
+|---------|-------------|
+| `/resume [name\|id]` | Resume session |
+| `/resume --last` | Resume most recent |
+| `/review` | Review uncommitted changes |
+| `/review --branch <base>` | Review against branch |
+| `/rename <name>` | Rename session |
+| `/agents` | List background agents |
+| `/agents cancel <id>` | Cancel agent |
+| `/search <query>` | Web search |
+| `/status` | Show session status |
+
+---
+
+## 14. Git Intelligence
+
+### 14.1 Components (`src/git/intelligence/`)
+
+| Module | Purpose |
+|--------|---------|
+| `commits.rs` | Index and track commits |
+| `cochange.rs` | Detect files changed together |
+| `blame.rs` | Line-by-line history |
+| `expertise.rs` | Score author expertise |
+| `fixes.rs` | Learn from historical fixes |
+
+### 14.2 Co-Change Detection
+
+Tracks files frequently modified together to suggest related files during edits.
+
+### 14.3 Expertise Scoring
+
+Scores author knowledge per file pattern based on:
+- Number of commits
+- Lines changed
+- Recency of changes
+
+---
+
+## 15. Build System Integration
+
+### 15.1 Components (`src/build/`)
+
+| Module | Purpose |
+|--------|---------|
+| `runner.rs` | Execute build commands |
+| `parser.rs` | Parse error output |
+| `tracker.rs` | Store build runs |
+| `resolver.rs` | Learn from fixes |
+
+### 15.2 Error Learning
+
+- Parse build errors (multi-language)
+- Track how errors were resolved
+- Suggest fixes for similar errors
+
+---
+
+## 16. Testing Infrastructure
+
+### 16.1 Scenario Tests
+
 ```bash
-# All tests
-DATABASE_URL="sqlite://data/mira.db" cargo test
-
-# Specific suite
-DATABASE_URL="sqlite://data/mira.db" cargo test --test git_intelligence_test
-
-# With output
-DATABASE_URL="sqlite://data/mira.db" cargo test -- --nocapture
+cargo run --bin mira-test -- run ./scenarios/
+cargo run --bin mira-test -- run ./scenarios/ --mock
+cargo run --bin mira-test -- run ./scenarios/ --output json
 ```
 
-### Test Helpers
-- `tests/common/` - Shared test utilities
-- In-memory database creation
-- Fake provider construction
+### 16.2 Scenario Format
 
-## Performance Considerations
+```yaml
+name: "Test Name"
+description: "What this tests"
+tags: ["smoke", "tools"]
+timeout_seconds: 120
 
-### Caching Strategy
-- LLM responses cached with SHA-256 keys
-- Semantic analysis cached per symbol
-- Pattern validation cached per detection
-- Blame annotations cached with content hash
+setup:
+  create_files:
+    - path: "test.txt"
+      content: "Hello"
 
-### Database Optimization
-- SQLite WAL mode for concurrency
-- Indexes on frequently queried columns
-- Batch inserts for bulk operations
-
-### Memory Management
-- Streaming for large LLM responses
-- Pagination for Qdrant scrolling
-- Rolling summaries compress old context
-
-## Information Flow & Context Pipeline
-
-This section documents how information flows through the system - from storage to LLM context injection.
-
-### High-Level Flow
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              USER MESSAGE                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           OPERATION ENGINE                                   │
-│                    (src/operations/engine/orchestration.rs)                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-            ┌─────────────────────────┼─────────────────────────┐
-            ▼                         ▼                         ▼
-┌───────────────────┐    ┌───────────────────────┐    ┌────────────────────┐
-│   RECALL ENGINE   │    │    CONTEXT ORACLE     │    │   CONTEXT BUILDER  │
-│  (Memory Context) │    │  (Code Intelligence)  │    │  (Prompt Assembly) │
-│  recall_engine/   │    │   context_oracle/     │    │ engine/context.rs  │
-└─────────┬─────────┘    └───────────┬───────────┘    └─────────┬──────────┘
-          │                          │                          │
-          │                          ▼                          │
-          │              ┌───────────────────────┐              │
-          │              │   GATHERED CONTEXT    │              │
-          │              │  • Guidelines         │              │
-          │              │  • Code Search        │              │
-          │              │  • Semantic Concepts  │              │
-          │              │  • Call Graph         │              │
-          │              │  • Co-change          │              │
-          │              │  • Historical Fixes   │              │
-          │              │  • Design Patterns    │              │
-          │              │  • Reasoning Patterns │              │
-          │              │  • Build Errors       │              │
-          │              │  • Error Resolutions  │              │
-          │              │  • Expertise          │              │
-          │              └───────────┬───────────┘              │
-          │                          │                          │
-          └──────────────────────────┼──────────────────────────┘
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     UNIFIED PROMPT BUILDER                                   │
-│                      (src/prompt/builders.rs)                               │
-│                                                                             │
-│  Assembles: Persona + Memory + Code Intelligence + Tools + File Context     │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         GEMINI 3 PRO API CALL                               │
-│                      System Prompt + User Message                           │
-└─────────────────────────────────────────────────────────────────────────────┘
+steps:
+  - name: "Step name"
+    prompt: "User message"
+    assertions:
+      - type: completed_successfully
+      - type: tool_executed
+        tool_name: list_project_files
 ```
 
-### Context Oracle: Intelligence Hub
+### 16.3 Unit/Integration Tests
 
-The Context Oracle (`src/context_oracle/`) is the central hub for gathering intelligence from all subsystems.
+Located in `backend/tests/`:
+- 17 test suites
+- 160+ individual tests
+- Real LLM tests (require API key)
 
-**Architecture:**
-```rust
-pub struct ContextOracle {
-    pool: Arc<SqlitePool>,
-    code_intelligence: Option<Arc<CodeIntelligenceService>>,
-    semantic_graph: Option<Arc<SemanticGraphService>>,
-    guidelines_service: Option<Arc<ProjectGuidelinesService>>,
-    cochange_service: Option<Arc<CochangeService>>,
-    expertise_service: Option<Arc<ExpertiseService>>,
-    fix_service: Option<Arc<FixService>>,
-    build_tracker: Option<Arc<BuildTracker>>,
-    error_resolver: Option<Arc<ErrorResolver>>,
-    pattern_storage: Option<Arc<PatternStorage>>,
-    pattern_matcher: Option<Arc<PatternMatcher>>,
-}
+---
+
+## 17. Dependencies & External Systems
+
+### 17.1 Runtime Dependencies
+
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| Axum | 0.8 | Web framework |
+| Tokio | 1.38 | Async runtime |
+| SQLx | 0.8 | Database driver |
+| Qdrant | 1.15 | Vector database client |
+| Reqwest | 0.12 | HTTP client |
+| Git2 | 0.20 | Git operations |
+| SWC | 27 | JS/TS parser |
+
+### 17.2 External Services
+
+| Service | Purpose |
+|---------|---------|
+| OpenAI GPT-5.1 Family | LLM operations |
+| OpenAI Embeddings | text-embedding-3-large (3072D) |
+| Qdrant | Vector database (port 6334) |
+| SQLite | Local database |
+
+### 17.3 File System Locations
+
+| Path | Content |
+|------|---------|
+| `backend/data/mira.db` | SQLite database |
+| `backend/repos/` | Cloned repositories |
+| `backend/storage/documents/` | Uploaded documents |
+| `backend/qdrant_storage/` | Qdrant data |
+
+---
+
+## Appendix: Quick Reference
+
+### Running the Backend
+
+```bash
+# Development
+cargo run
+
+# Production
+cargo build --release
+./target/release/mira-backend
+
+# With debug logging
+RUST_LOG=debug cargo run
 ```
 
-**Gathering Pipeline:**
+### Database Operations
 
-| Source | Method | Data Retrieved | SQLite Table(s) | Qdrant Collection |
-|--------|--------|----------------|-----------------|-------------------|
-| Guidelines | `gather_guidelines()` | Project guidelines content | `project_guidelines` | - |
-| Code Search | `gather_code_context()` | Semantically relevant code | `code_elements` | `code` |
-| Semantic Concepts | `gather_semantic_concepts()` | Related symbols by concept | `semantic_nodes`, `concept_index` | - |
-| Call Graph | `gather_call_graph_context()` | Callers/callees of functions | `call_graph` | - |
-| Co-change | `gather_cochange_suggestions()` | Files that change together | `file_cochange_patterns` | - |
-| Historical Fixes | `gather_historical_fixes()` | Past fixes for similar errors | `historical_fixes` | - |
-| Design Patterns | `gather_design_patterns()` | Detected patterns (Factory, etc.) | `design_patterns` | - |
-| Reasoning Patterns | `gather_reasoning_patterns()` | Matched reasoning strategies | `reasoning_patterns` | - |
-| Build Errors | `gather_build_errors()` | Recent compilation errors | `build_errors` | - |
-| Error Resolutions | `gather_error_resolutions()` | How past errors were fixed | `error_resolutions` | - |
-| Expertise | `gather_expertise()` | Expert authors for file/domain | `author_expertise` | - |
+```bash
+# Run migrations
+DATABASE_URL="sqlite://data/mira.db" sqlx migrate run
 
-### Context Configuration
-
-Context gathering is budget-aware and configurable:
-
-```rust
-pub struct ContextConfig {
-    pub include_code_search: bool,         // Semantic code search
-    pub include_semantic_concepts: bool,   // Concept-based code understanding
-    pub include_guidelines: bool,          // Project guidelines
-    pub include_call_graph: bool,          // Function relationships
-    pub include_cochange: bool,            // Co-change suggestions
-    pub include_historical_fixes: bool,    // Past error fixes
-    pub include_patterns: bool,            // Design patterns
-    pub include_reasoning_patterns: bool,  // Reasoning strategies
-    pub include_build_errors: bool,        // Recent build errors
-    pub include_error_resolutions: bool,   // How errors were resolved
-    pub include_expertise: bool,           // Author expertise
-    pub max_context_tokens: usize,         // Token budget limit
-    pub max_code_results: usize,           // Code search limit
-    pub max_cochange_suggestions: usize,   // Co-change limit
-    pub max_historical_fixes: usize,       // Fix history limit
-}
+# Reset database
+./scripts/db-reset.sh
 ```
 
-**Budget-Aware Presets:**
+### Service Management
 
-| Preset | Budget Usage | Token Limit | Features Enabled |
-|--------|-------------|-------------|------------------|
-| `full()` | <40% | 16,000 | All features, max results |
-| `default()` | 40-80% | 8,000 | All features, standard limits |
-| `minimal()` | >80% | 4,000 | Code search + guidelines only |
-| `for_error()` | Any | 12,000 | Error-focused (fixes, resolutions, build errors) |
-
-### Recall Engine: Memory Context
-
-The Recall Engine (`src/memory/features/recall_engine/`) provides conversation memory context.
-
-**Components:**
-- `RecentSearch`: Chronological message retrieval from SQLite
-- `SemanticSearch`: Vector similarity search from Qdrant
-- `HybridSearch`: Combined recent + semantic with scoring
-- `MultiHeadSearch`: Multi-embedding search (emotional, factual, code)
-
-**RecallContext Structure:**
-```rust
-pub struct RecallContext {
-    pub recent: Vec<MemoryEntry>,           // Recent messages
-    pub semantic: Vec<MemoryEntry>,         // Semantically similar
-    pub rolling_summary: Option<String>,    // Last 100 messages compressed
-    pub session_summary: Option<String>,    // Full session summary
-    pub code_intelligence: Option<GatheredContext>,  // From Context Oracle
-}
+```bash
+mira-ctl start all
+mira-ctl status
+mira-ctl logs backend -f
+mira-ctl rebuild
 ```
-
-### Prompt Assembly
-
-The UnifiedPromptBuilder (`src/prompt/builders.rs`) assembles the final system prompt:
-
-**Assembly Order:**
-1. **Persona** - Core personality from `src/persona/default.rs`
-2. **Project Context** - Active project name and metadata
-3. **Memory Context** - Summaries + recent + semantic memories
-4. **Code Intelligence** - From semantic search results
-5. **Repository Structure** - File tree (directories and key files)
-6. **Tool Context** - Available tools and usage hints
-7. **File Context** - Currently viewed file content
-
-**Enriched Context (for tool execution):**
-The ContextBuilder (`src/operations/engine/context.rs`) builds enriched context for tool-assisted operations:
-
-```
-=== TASK CONTEXT ===
-[LLM's context from tool call]
-
-=== PROJECT STRUCTURE ===
-[Directory tree, max depth 3]
-
-=== RELEVANT CODE CONTEXT ===
-[Top 5 semantic search results with file paths]
-
-=== CODEBASE INTELLIGENCE ===
-[Context Oracle output - formatted sections for each source]
-
-=== USER PREFERENCES & CODING STYLE ===
-[Rolling summary + relevant semantic memories]
-```
-
-### GatheredContext Formatting
-
-The Context Oracle formats its output via `GatheredContext::format_for_prompt()`:
-
-```markdown
-## Project Guidelines
-[Guidelines content with file path prefixes]
-
-## Relevant Code
-**function** `func_name` in `src/file.rs`
-```code```
-
-## Related Concepts
-- **concept** (domain): purpose
-  Related: symbol1, symbol2
-
-## Call Graph
-**Callers**: func1, func2
-**Callees**: func3, func4
-
-## Related Files (Often Changed Together)
-- `src/related.rs` (85% confidence): reason
-
-## Similar Past Fixes
-- **abc1234** (90% similar): fix description
-
-## Detected Patterns
-- **FactoryPattern** (Factory): description
-
-## Suggested Approach
-**PatternName** (85% match)
-description
-Steps:
-1. Step one
-2. Step two
-
-## Recent Build Errors
-- **category**: error message
-
-## Past Error Resolutions
-- **fix_type**: Fixed by commit in files: file1, file2
-
-## Domain Experts
-- **author@email** (90% expertise): areas
-```
-
-### Data Storage Summary
-
-**Where Data is Written:**
-
-| Data Type | Service | SQLite Table | Qdrant Collection |
-|-----------|---------|--------------|-------------------|
-| Messages | MemoryService | `memory_entries` | `conversation` |
-| Message Analysis | MessagePipeline | `message_analysis` | - |
-| Rolling Summaries | SummarizationService | `rolling_summaries` | - |
-| Memory Facts | FactsService | `memory_facts` | - |
-| Code Elements | CodeIntelligenceService | `code_elements` | `code` |
-| Semantic Nodes | SemanticGraphService | `semantic_nodes` | - |
-| Call Graph | CallGraphService | `call_graph` | - |
-| Design Patterns | PatternDetector | `design_patterns` | - |
-| Git Commits | GitStore | `git_commits` | `git` |
-| Co-change Patterns | CochangeService | `file_cochange_patterns` | - |
-| Author Expertise | ExpertiseService | `author_expertise` | - |
-| Historical Fixes | FixService | `historical_fixes` | - |
-| Build Errors | BuildTracker | `build_errors` | - |
-| Error Resolutions | ErrorResolver | `error_resolutions` | - |
-| Project Guidelines | ProjectGuidelinesService | `project_guidelines` | - |
-| Reasoning Patterns | PatternStorage | `reasoning_patterns` | - |
-| Budget Tracking | BudgetTracker | `budget_tracking` | - |
-| LLM Cache | LlmCache | `llm_cache` | - |
-
-**Where Data is Read (for LLM Context):**
-
-| Context Source | Read By | Injected Via |
-|----------------|---------|--------------|
-| Recent Messages | RecallEngine | `add_memory_context()` |
-| Semantic Memories | RecallEngine | `add_memory_context()` |
-| Rolling Summary | RecallEngine | `add_memory_context()` |
-| Session Summary | RecallEngine | `add_memory_context()` |
-| Code Search Results | ContextOracle | `build_enriched_context_with_oracle()` |
-| Semantic Concepts | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Call Graph | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Co-change | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Historical Fixes | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Design Patterns | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Reasoning Patterns | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Build Errors | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Error Resolutions | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Expertise | ContextOracle | `GatheredContext::format_for_prompt()` |
-| Guidelines | ContextOracle | `GatheredContext::format_for_prompt()` |
-| File Tree | ContextLoader | `add_repository_structure()` |
-| Tools | delegation_tools | `add_tool_context()` |
-
-### Integration Points
-
-**AppState Wiring (`src/state.rs`):**
-```rust
-let context_oracle = Arc::new(
-    ContextOracle::new(Arc::new(pool.clone()))
-        .with_code_intelligence(code_intelligence.clone())
-        .with_semantic_graph(semantic_graph.clone())
-        .with_guidelines(guidelines_service.clone())
-        .with_cochange(cochange_service.clone())
-        .with_expertise(expertise_service.clone())
-        .with_fix_service(fix_service.clone())
-        .with_build_tracker(build_tracker.clone())
-        .with_error_resolver(error_resolver.clone())
-        .with_pattern_storage(pattern_storage.clone())
-        .with_pattern_matcher(pattern_matcher.clone()),
-);
-```
-
-**MemoryService with Oracle:**
-```rust
-let memory_service = Arc::new(MemoryService::with_oracle(
-    sqlite_store.clone(),
-    multi_store.clone(),
-    llm_provider.clone(),
-    embedding_client.clone(),
-    Some(context_oracle.clone()),
-));
-```
-
-**OperationEngine with Oracle:**
-```rust
-let operation_engine = Arc::new(OperationEngine::new(
-    // ... other params
-    Some(context_oracle.clone()),  // Context Oracle for unified intelligence
-));
-```
-
-## Security
-
-### API Key Management
-- Keys stored in environment variables
-- Never logged or included in responses
-- Validated on startup
-
-### Tool Execution
-- File operations restricted by default
-- `unrestricted: true` flag for system-wide access
-- Command execution sandboxed with timeout
-
-### Input Validation
-- Session IDs validated
-- File paths checked for traversal attacks
-- User input sanitized before storage
