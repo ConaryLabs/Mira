@@ -1,6 +1,6 @@
 ---
 description: Clear, comprehensive documentation generation
-model: gemini
+model: gpt-5.1
 allowed_tools: [read_project_file, get_file_structure, extract_symbols, list_project_files, generate_code]
 requires_context: true
 ---

@@ -1,6 +1,6 @@
 ---
 description: Comprehensive test generation with best practices
-model: deepseek
+model: gpt-5.1
 allowed_tools: [read_project_file, get_file_structure, extract_symbols, generate_code, search_codebase]
 requires_context: true
 ---

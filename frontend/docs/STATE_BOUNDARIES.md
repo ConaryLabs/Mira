@@ -2,7 +2,7 @@
 
 ## Store Architecture
 
-The Mira frontend uses Zustand for state management with the following stores:
+The Mira frontend uses Zustand for state management with 12 stores:
 
 ### 1. `useChatStore` - Chat & Messaging State
 **Location**: `src/stores/useChatStore.ts`
@@ -150,6 +150,73 @@ The Mira frontend uses Zustand for state management with the following stores:
 **Location**: `src/stores/useActivityStore.ts`
 **Responsibility**: Tracks current operation for activity indicator
 **Persisted**: No
+
+---
+
+### 8. `useAgentStore` - Background Agents
+**Location**: `src/stores/useAgentStore.ts`
+**Responsibility**: Manages background Codex agent state
+**Persisted**: No
+
+**State**:
+- `agents: Agent[]` - List of background agents
+- `isPanelVisible: boolean` - Agent panel visibility
+
+**Actions**:
+- `addAgent()` - Add a new background agent
+- `updateAgent()` - Update agent status/progress
+- `removeAgent()` - Remove completed/failed agent
+- `togglePanel()` - Show/hide agent panel
+
+---
+
+### 9. `useReviewStore` - Code Review Panel
+**Location**: `src/stores/useReviewStore.ts`
+**Responsibility**: Manages code review panel state
+**Persisted**: No
+
+**State**:
+- `isPanelVisible: boolean` - Review panel visibility
+- `loading: boolean` - Loading diff state
+- `diff: string | null` - Current diff content
+- `reviewTarget: ReviewTarget` - Target type (uncommitted, staged, branch, commit)
+- `baseBranch: string` - Base branch for comparison
+- `commitHash: string` - Specific commit hash
+- `reviewResult: string | null` - LLM review result
+
+**Actions**:
+- `togglePanel()` - Show/hide review panel
+- `setDiff()` - Update diff content
+- `setReviewTarget()` - Change review target type
+- `setReviewResult()` - Store LLM review
+
+---
+
+### 10. `useSudoStore` - Sudo Approval State
+**Location**: `src/stores/useSudoStore.ts`
+**Responsibility**: Manages sudo approval prompts
+**Persisted**: No
+
+**State**:
+- `pendingApproval: SudoRequest | null` - Current pending sudo request
+- `approvalHistory: SudoApproval[]` - Recent approvals
+
+---
+
+### 11. `useUsageStore` - Usage Tracking
+**Location**: `src/stores/useUsageStore.ts`
+**Responsibility**: Tracks API usage and budget
+**Persisted**: No
+
+---
+
+### 12. `useThemeStore` - Theme Preferences
+**Location**: `src/stores/useThemeStore.ts`
+**Responsibility**: Manages dark/light mode theme
+**Persisted**: Yes (localStorage)
+
+**State**:
+- `theme: 'light' | 'dark' | 'system'` - Current theme setting
 
 ---
 

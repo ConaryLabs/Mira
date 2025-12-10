@@ -23,7 +23,7 @@ A comprehensive guide for users and developers of the Mira AI coding assistant.
 
 ## Introduction
 
-Mira is an AI-powered coding assistant that combines Gemini 3 Pro with a hybrid memory system (SQLite + Qdrant vector database) for intelligent, context-aware code assistance. Key capabilities include:
+Mira is an AI-powered coding assistant that combines OpenAI GPT-5.1 with a hybrid memory system (SQLite + Qdrant vector database) for intelligent, context-aware code assistance. Key capabilities include:
 
 - **Conversational Coding**: Chat with an AI that understands your codebase
 - **Code Intelligence**: Semantic search, complexity analysis, and pattern detection
@@ -44,8 +44,8 @@ Backend (Rust + Axum)
         |
    +----+----+----+
    |         |    |
-SQLite   Qdrant  Gemini 3 Pro
-(50 tbl) (3 coll) (Google)
+SQLite   Qdrant  GPT-5.1
+(70 tbl) (3 coll) (OpenAI)
 ```
 
 ---
@@ -60,7 +60,7 @@ SQLite   Qdrant  Gemini 3 Pro
 | Node.js | 18+ | Frontend |
 | SQLite | 3.35+ | Structured storage |
 | Qdrant | 1.16+ | Vector embeddings |
-| Google API Key | - | Gemini 3 Pro + embeddings |
+| OpenAI API Key | - | GPT-5.1 + text-embedding-3-large |
 
 ### Installation
 
@@ -82,7 +82,7 @@ cd backend
 
 # Configure environment
 cp .env.example .env
-# Edit .env and set GOOGLE_API_KEY=your-google-api-key
+# Edit .env and set OPENAI_API_KEY=your-openai-api-key
 
 # Build and run migrations
 cargo build
@@ -1311,13 +1311,15 @@ Key settings in `backend/.env`:
 #### LLM Configuration
 
 ```bash
-# Google API key (required)
-GOOGLE_API_KEY=your-google-api-key
+# OpenAI API key (required)
+OPENAI_API_KEY=your-openai-api-key
 
-# Model settings
-GEMINI_MODEL=gemini-3-pro-preview
-GEMINI_THINKING_LEVEL=high  # low, high
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+# Model routing (4-tier system)
+MODEL_ROUTER_ENABLED=true
+MODEL_FAST=gpt-5.1-codex-mini        # Fast tier: file ops, search
+MODEL_VOICE=gpt-5.1                  # Voice tier: user chat
+MODEL_CODE=gpt-5.1-codex-max         # Code tier: code generation
+MODEL_AGENTIC=gpt-5.1-codex-max      # Agentic tier: long-running tasks
 ```
 
 #### Budget Management
@@ -1372,16 +1374,18 @@ MIRA_SUMMARIZE_AFTER_MESSAGES=20
 MIRA_USE_ROLLING_SUMMARIES_IN_CONTEXT=true
 ```
 
-### Thinking Levels
+### Model Routing
 
-Gemini 3 Pro supports variable thinking levels:
+Mira uses a 4-tier model routing system to optimize cost and performance:
 
-| Level | Use Case | Cost |
-|-------|----------|------|
-| `low` | Simple queries, quick answers | Lower |
-| `high` | Complex planning, architecture | Higher |
+| Tier | Model | Use Case |
+|------|-------|----------|
+| Fast | gpt-5.1-codex-mini | File ops, search, simple queries |
+| Voice | gpt-5.1 | User chat, explanations |
+| Code | gpt-5.1-codex-max | Code generation, refactoring |
+| Agentic | gpt-5.1-codex-max | Long-running autonomous tasks |
 
-Mira automatically selects thinking level based on task complexity.
+Mira automatically routes requests to the optimal tier based on task complexity.
 
 ### Qdrant Configuration
 
@@ -1416,7 +1420,7 @@ kill -9 <PID>
 
 **Missing API key:**
 ```
-Error: GOOGLE_API_KEY not set
+Error: OPENAI_API_KEY not set
 ```
 Ensure `.env` file exists with valid key.
 
@@ -1501,4 +1505,4 @@ curl http://localhost:6333/collections
 
 ---
 
-*Last updated: 2025-12-05*
+*Last updated: 2025-12-10*
