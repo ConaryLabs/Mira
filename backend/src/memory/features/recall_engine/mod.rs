@@ -13,7 +13,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::context_oracle::{ContextConfig, ContextOracle, ContextRequest, GatheredContext};
+use crate::memory::context::{ContextConfig, ContextOracle, ContextRequest, GatheredContext};
 use crate::llm::embeddings::EmbeddingHead;
 use crate::llm::provider::{EmbeddingProvider, LlmProvider};
 use crate::memory::{

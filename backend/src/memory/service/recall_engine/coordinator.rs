@@ -1,6 +1,6 @@
 // src/memory/service/recall_engine/coordinator.rs
 
-use crate::context_oracle::ContextConfig;
+use crate::memory::context::ContextConfig;
 use crate::memory::{
     core::types::MemoryEntry,
     features::recall_engine::{RecallConfig, RecallContext, RecallEngine, SearchMode},
