@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::api::error::{ApiError, ApiResult};
+use crate::git::error::{GitError, GitResult};
 use crate::git::store::GitStore;
 use crate::git::types::GitRepoAttachment;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
@@ -94,24 +94,24 @@ impl GitClient {
             .await
     }
 
-    pub async fn pull_changes(&self, attachment_id: &str) -> ApiResult<()> {
+    pub async fn pull_changes(&self, attachment_id: &str) -> GitResult<()> {
         // Fetch the attachment from store first
         let attachment = self
             .store
             .get_attachment(attachment_id)
             .await
-            .map_err(|e| ApiError::internal(format!("Failed to get git attachment: {}", e)))?
+            .map_err(|e| GitError::internal(format!("Failed to get git attachment: {}", e)))?
             .ok_or_else(|| {
-                ApiError::not_found(format!("Git attachment not found: {}", attachment_id))
+                GitError::not_found(format!("Git attachment not found: {}", attachment_id))
             })?;
 
         self.operations
             .pull_changes(&attachment)
             .await
-            .map_err(|e| ApiError::internal(format!("Failed to pull changes: {}", e)))
+            .map_err(|e| GitError::internal(format!("Failed to pull changes: {}", e)))
     }
 
-    pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
+    pub async fn reset_to_remote(&self, attachment_id: &str) -> GitResult<()> {
         self.operations.reset_to_remote(attachment_id).await
     }
 

@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use crate::api::error::{ApiResult, IntoApiErrorResult};
+use crate::git::error::{GitResult, IntoGitErrorResult};
 use crate::git::store::GitStore;
 use crate::git::types::{GitImportStatus, GitRepoAttachment};
 
@@ -57,7 +57,7 @@ impl GitOperations {
         self.store
             .create_attachment(&attachment)
             .await
-            .into_api_error("Failed to create git attachment")?;
+            .into_git_error("Failed to create git attachment")?;
 
         info!(
             "Attached repository {} for project {}",
@@ -73,7 +73,7 @@ impl GitOperations {
         );
 
         if let Some(parent) = Path::new(&attachment.local_path).parent() {
-            fs::create_dir_all(parent).into_api_error("Failed to create repository directory")?;
+            fs::create_dir_all(parent).into_git_error("Failed to create repository directory")?;
         }
 
         let repo_url = attachment.repo_url.clone();
@@ -81,13 +81,13 @@ impl GitOperations {
 
         tokio::task::spawn_blocking(move || Repository::clone(&repo_url, &local_path))
             .await
-            .into_api_error("Failed to spawn blocking task")?
-            .into_api_error("Failed to clone repository")?;
+            .into_git_error("Failed to spawn blocking task")?
+            .into_git_error("Failed to clone repository")?;
 
         self.store
             .update_import_status(&attachment.id, GitImportStatus::Cloned)
             .await
-            .into_api_error("Failed to update import status")?;
+            .into_git_error("Failed to update import status")?;
 
         info!("Successfully cloned repository {}", attachment.id);
         Ok(())
@@ -107,8 +107,8 @@ impl GitOperations {
         let repo_path = repo_path.to_path_buf();
         let files = tokio::task::spawn_blocking(move || walk_directory(&repo_path))
             .await
-            .into_api_error("Failed to spawn blocking task")?
-            .into_api_error("Failed to walk repository directory")?;
+            .into_git_error("Failed to spawn blocking task")?
+            .into_git_error("Failed to walk repository directory")?;
 
         debug!("Found {} files to import", files.len());
 
@@ -184,17 +184,17 @@ impl GitOperations {
         self.store
             .update_import_status(&attachment.id, GitImportStatus::Imported)
             .await
-            .into_api_error("Failed to update import status")?;
+            .into_git_error("Failed to update import status")?;
 
         self.store
             .update_last_imported(&attachment.id, Utc::now())
             .await
-            .into_api_error("Failed to update last imported time")?;
+            .into_git_error("Failed to update last imported time")?;
 
         self.store
             .update_last_sync(&attachment.id, Utc::now())
             .await
-            .into_api_error("Failed to update last sync time")?;
+            .into_git_error("Failed to update last sync time")?;
 
         info!(
             "Successfully imported {} files for repository {}",
@@ -250,13 +250,13 @@ impl GitOperations {
             Ok::<(), anyhow::Error>(())
         })
         .await
-        .into_api_error("Failed to spawn blocking task")?
-        .into_api_error("Failed to pull changes")?;
+        .into_git_error("Failed to spawn blocking task")?
+        .into_git_error("Failed to pull changes")?;
 
         self.store
             .update_last_sync(&attachment.id, Utc::now())
             .await
-            .into_api_error("Failed to update last sync time")?;
+            .into_git_error("Failed to update last sync time")?;
 
         // Layer 3: Re-parse changed files after successful pull
         if let Some(ref code_sync) = self.code_sync {
@@ -272,18 +272,18 @@ impl GitOperations {
         Ok(())
     }
 
-    pub async fn pull_changes_by_id(&self, attachment_id: &str) -> ApiResult<()> {
+    pub async fn pull_changes_by_id(&self, attachment_id: &str) -> GitResult<()> {
         let attachment = self
             .store
             .get_attachment(attachment_id)
             .await
-            .into_api_error("Failed to get attachment")?
+            .into_git_error("Failed to get attachment")?
             .ok_or_else(|| anyhow::anyhow!("Attachment not found"))
-            .into_api_error("Attachment not found")?;
+            .into_git_error("Attachment not found")?;
 
         self.pull_changes(&attachment)
             .await
-            .into_api_error("Failed to pull changes")
+            .into_git_error("Failed to pull changes")
     }
 
     pub async fn commit_and_push(
@@ -325,8 +325,8 @@ impl GitOperations {
             Ok::<(), anyhow::Error>(())
         })
         .await
-        .into_api_error("Failed to spawn blocking task")?
-        .into_api_error("Failed to commit and push")?;
+        .into_git_error("Failed to spawn blocking task")?
+        .into_git_error("Failed to commit and push")?;
 
         info!(
             "Successfully committed and pushed changes for repository {}",
@@ -345,7 +345,7 @@ impl GitOperations {
             .store
             .get_attachment(attachment_id)
             .await
-            .into_api_error("Failed to get attachment")?
+            .into_git_error("Failed to get attachment")?
             .ok_or_else(|| anyhow::anyhow!("Attachment not found"))?;
 
         let local_path = attachment.local_path.clone();
@@ -369,8 +369,8 @@ impl GitOperations {
             Ok(())
         })
         .await
-        .into_api_error("Failed to spawn blocking task")?
-        .into_api_error("Failed to restore file")?;
+        .into_git_error("Failed to spawn blocking task")?
+        .into_git_error("Failed to restore file")?;
 
         info!(
             "Successfully restored file {} in repository {}",
@@ -384,7 +384,7 @@ impl GitOperations {
             .store
             .get_attachment(attachment_id)
             .await
-            .into_api_error("Failed to get attachment")?
+            .into_git_error("Failed to get attachment")?
             .ok_or_else(|| anyhow::anyhow!("Attachment not found"))?;
 
         warn!("Resetting repository {} to origin/main", attachment.id);
@@ -405,9 +405,9 @@ impl GitOperations {
             Ok(())
         })
         .await
-        .into_api_error("Failed to spawn blocking task")?;
+        .into_git_error("Failed to spawn blocking task")?;
 
-        result.into_api_error("Failed to reset repository")?;
+        result.into_git_error("Failed to reset repository")?;
 
         warn!(
             "Hard reset repository {} to origin/main complete",
@@ -416,10 +416,10 @@ impl GitOperations {
         Ok(())
     }
 
-    pub async fn reset_to_remote(&self, attachment_id: &str) -> ApiResult<()> {
+    pub async fn reset_to_remote(&self, attachment_id: &str) -> GitResult<()> {
         self.hard_reset(attachment_id)
             .await
-            .into_api_error("Failed to reset to remote")
+            .into_git_error("Failed to reset to remote")
     }
 }
 
