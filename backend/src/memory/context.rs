@@ -1,11 +1,11 @@
-// src/context_oracle_stubs.rs
-// Context oracle stubs for power suit mode
-// Claude Code handles context gathering; these are minimal for compatibility
+// src/memory/context.rs
+// Context types for recall operations
+// In MCP mode, Claude Code handles context gathering; these provide type definitions
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Context configuration
+/// Context configuration for recall operations
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContextConfig {
     pub max_tokens: usize,
@@ -125,7 +125,7 @@ impl ContextRequest {
 }
 
 /// Context oracle - gathers context from multiple sources
-/// In power suit mode, this is a minimal implementation
+/// In MCP mode, this returns empty context (Claude Code handles context gathering)
 pub struct ContextOracle;
 
 impl ContextOracle {
@@ -133,7 +133,7 @@ impl ContextOracle {
         Self
     }
 
-    /// Gather context (stub - returns empty context in power suit mode)
+    /// Gather context (returns empty in MCP mode)
     pub async fn gather(&self, _request: &ContextRequest) -> anyhow::Result<GatheredContext> {
         Ok(GatheredContext::default())
     }

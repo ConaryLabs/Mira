@@ -7,7 +7,6 @@ pub mod config;
 pub mod utils;
 
 // Stub modules for compatibility (being cleaned up)
-pub mod context_oracle_stubs;
 pub mod llm_stubs;
 pub mod prompt_stubs;
 
@@ -53,6 +52,6 @@ pub mod prompt {
 }
 
 pub mod context_oracle {
-    //! Context oracle compatibility layer
-    pub use crate::context_oracle_stubs::*;
+    //! Context oracle compatibility layer - re-exports from memory::context
+    pub use crate::memory::context::*;
 }

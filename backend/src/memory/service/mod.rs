@@ -2,7 +2,7 @@
 use std::sync::Arc;
 use tracing::info;
 
-use crate::context_oracle::{ContextConfig, ContextOracle};
+use crate::memory::context::{ContextConfig, ContextOracle};
 use crate::llm::provider::{EmbeddingProvider, LlmProvider};
 use crate::memory::{
     features::{
