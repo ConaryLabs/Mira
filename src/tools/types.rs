@@ -46,7 +46,7 @@ pub struct ForgetRequest {
 pub struct GetGuidelinesRequest {
     #[schemars(description = "Filter by project path")]
     pub project_path: Option<String>,
-    #[schemars(description = "Filter by category: 'naming', 'style', 'architecture', 'testing'")]
+    #[schemars(description = "Filter by category: 'mira_usage' for Mira tool guidance, or 'naming', 'style', 'architecture', 'testing' for project conventions")]
     pub category: Option<String>,
 }
 
