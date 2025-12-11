@@ -2,7 +2,7 @@
 
 use crate::llm::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
-use crate::prompt::internal::summarization as prompts;
+use crate::memory::features::prompts::summarization as prompts;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;

@@ -8,7 +8,6 @@ pub mod utils;
 
 // Stub modules for compatibility (being cleaned up)
 pub mod llm_stubs;
-pub mod prompt_stubs;
 
 // Memory and knowledge
 pub mod memory;
@@ -45,9 +44,9 @@ pub mod llm {
 }
 
 pub mod prompt {
-    //! Prompt module compatibility layer
+    //! Prompt module compatibility layer - re-exports from memory::features::prompts
     pub mod internal {
-        pub use crate::prompt_stubs::internal::*;
+        pub use crate::memory::features::prompts::*;
     }
 }
 

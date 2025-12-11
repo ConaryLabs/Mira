@@ -7,11 +7,12 @@ pub mod decay;
 pub mod document_processing;
 pub mod embedding;
 pub mod memory_types;
-pub mod message_pipeline; // NEW - unified pipeline replaces message_analyzer and classification
+pub mod message_pipeline; // Unified pipeline replaces message_analyzer and classification
+pub mod prompts; // System prompts for LLM-based features
 pub mod recall_engine; // Consolidated recall/scoring/search
 pub mod salience;
 pub mod session;
-pub mod summarization; // NEW - document processing for PDF/DOCX/TXT files
+pub mod summarization;
 
 // Re-export commonly used types
 pub use document_processing::{
