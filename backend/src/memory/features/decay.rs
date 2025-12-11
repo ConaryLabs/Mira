@@ -2,7 +2,6 @@
 // Complete decay system - algorithm and scheduling in one module
 // Handles both the decay calculations and database updates
 
-use crate::state::AppState;
 use anyhow::Result;
 use chrono::{Duration, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -79,14 +78,14 @@ pub fn reinforce_memory(current_salience: f32, config: &DecayConfig) -> f32 {
 
 /// Spawn the background decay task
 pub fn spawn_decay_scheduler(
-    app_state: Arc<AppState>,
+    pool: Arc<SqlitePool>,
     interval: StdDuration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut cycles = 0u64;
         loop {
             cycles += 1;
-            if let Err(err) = run_decay_cycle(app_state.clone()).await {
+            if let Err(err) = run_decay_cycle_with_pool(&pool).await {
                 warn!("Decay cycle {} failed: {:#}", cycles, err);
             }
             tokio::time::sleep(interval).await;
@@ -95,8 +94,7 @@ pub fn spawn_decay_scheduler(
 }
 
 /// Run one decay cycle - updates all memories based on age
-pub async fn run_decay_cycle(app: Arc<AppState>) -> Result<()> {
-    let pool: &SqlitePool = &app.sqlite_store.pool;
+pub async fn run_decay_cycle_with_pool(pool: &SqlitePool) -> Result<()> {
     let config = DecayConfig::default();
     let now = Utc::now();
 
