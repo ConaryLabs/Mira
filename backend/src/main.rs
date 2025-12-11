@@ -121,14 +121,6 @@ struct ForgetRequest {
 // === Code Intelligence Request Types ===
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct AnalyzeFileRequest {
-    #[schemars(description = "Path to the file to analyze")]
-    file_path: String,
-    #[schemars(description = "Project ID for context")]
-    project_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 struct GetCallGraphRequest {
     #[schemars(description = "Function or method name to trace")]
     function_name: String,
@@ -181,12 +173,6 @@ struct GetChangeRiskRequest {
 }
 
 // === Project Context Request Types ===
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct GetProjectContextRequest {
-    #[schemars(description = "Project ID or path")]
-    project: String,
-}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct GetGuidelinesRequest {
