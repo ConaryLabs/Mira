@@ -1,10 +1,95 @@
 // src/tools/project.rs
-// Project guidelines tools
+// Project management and guidelines tools
 
 use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
+use std::path::Path;
 
 use super::types::*;
+
+/// Detect project type from marker files
+fn detect_project_type(path: &Path) -> Option<String> {
+    let markers = [
+        ("Cargo.toml", "rust"),
+        ("package.json", "node"),
+        ("pyproject.toml", "python"),
+        ("setup.py", "python"),
+        ("go.mod", "go"),
+        ("Gemfile", "ruby"),
+        ("pom.xml", "java"),
+        ("build.gradle", "java"),
+        ("CMakeLists.txt", "cpp"),
+        ("Makefile", "make"),
+    ];
+
+    for (file, project_type) in markers {
+        if path.join(file).exists() {
+            return Some(project_type.to_string());
+        }
+    }
+    None
+}
+
+/// Set the active project for this session
+pub async fn set_project(db: &SqlitePool, req: SetProjectRequest) -> anyhow::Result<serde_json::Value> {
+    // Canonicalize and validate the path
+    let path = Path::new(&req.project_path);
+    let canonical_path = if path.is_absolute() {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        std::env::current_dir()?.join(path).canonicalize()?
+    };
+
+    if !canonical_path.exists() {
+        anyhow::bail!("Project path does not exist: {}", canonical_path.display());
+    }
+
+    let path_str = canonical_path.to_string_lossy().to_string();
+
+    // Get name from request or directory name
+    let name = req.name.unwrap_or_else(|| {
+        canonical_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    });
+
+    // Detect project type
+    let project_type = detect_project_type(&canonical_path);
+
+    let now = Utc::now().timestamp();
+
+    // Upsert the project
+    sqlx::query(r#"
+        INSERT INTO projects (path, name, project_type, first_seen, last_accessed)
+        VALUES ($1, $2, $3, $4, $4)
+        ON CONFLICT(path) DO UPDATE SET
+            name = COALESCE(excluded.name, projects.name),
+            project_type = COALESCE(excluded.project_type, projects.project_type),
+            last_accessed = excluded.last_accessed
+    "#)
+    .bind(&path_str)
+    .bind(&name)
+    .bind(&project_type)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    // Get the project ID
+    let (id,): (i64,) = sqlx::query_as("SELECT id FROM projects WHERE path = $1")
+        .bind(&path_str)
+        .fetch_one(db)
+        .await?;
+
+    Ok(serde_json::json!({
+        "status": "active",
+        "id": id,
+        "path": path_str,
+        "name": name,
+        "project_type": project_type,
+        "message": format!("Project '{}' is now active. Memories and context will be scoped to this project.", name),
+    }))
+}
 
 /// Get coding guidelines
 pub async fn get_guidelines(db: &SqlitePool, req: GetGuidelinesRequest) -> anyhow::Result<Vec<serde_json::Value>> {

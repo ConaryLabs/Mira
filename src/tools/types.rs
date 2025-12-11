@@ -391,6 +391,21 @@ pub struct SemanticCodeSearchRequest {
 }
 
 // ============================================================================
+// Project Tools
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetProjectRequest {
+    #[schemars(description = "Absolute path to project root (e.g., /home/user/myproject)")]
+    pub project_path: String,
+    #[schemars(description = "Optional project name (auto-detected from directory name if not provided)")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetProjectRequest {}
+
+// ============================================================================
 // Analytics/Introspection Tools
 // ============================================================================
 

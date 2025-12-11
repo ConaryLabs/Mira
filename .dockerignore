@@ -1,0 +1,8 @@
+target/
+data/
+.git/
+.gitignore
+*.md
+!README.md
+.env*
+*.log

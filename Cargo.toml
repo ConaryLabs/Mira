@@ -2,6 +2,7 @@
 name = "mira"
 version = "2.0.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Memory and Intelligence Layer for Claude Code"
 
 [lib]
