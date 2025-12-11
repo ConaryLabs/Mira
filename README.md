@@ -19,6 +19,16 @@ Mira is a "power suit" for Claude Code - it provides persistent memory, code int
 cargo build --release
 ```
 
+### Initialize Database
+
+```bash
+# Run migrations
+DATABASE_URL="sqlite://data/mira.db" sqlx migrate run
+
+# Load Mira usage guidelines (helps Claude Code use Mira effectively)
+sqlite3 data/mira.db < seed_mira_guidelines.sql
+```
+
 ### Configure Claude Code
 
 Add to `~/.claude/mcp.json`:
