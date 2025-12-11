@@ -17,35 +17,33 @@ Mira is a **Power Suit for Claude Code** - a memory and intelligence layer that 
 
 ```
 mira/
-└── backend/              # Rust MCP server (~3k lines)
-    ├── src/
-    │   ├── main.rs       # MCP server entry point (348 lines)
-    │   ├── lib.rs        # Library exports (4 lines)
-    │   └── tools/        # MCP tool implementations
-    │       ├── mod.rs        # Module exports
-    │       ├── types.rs      # Request types for all tools
-    │       ├── response.rs   # Response helpers (json_response, etc.)
-    │       ├── semantic.rs   # SemanticSearch (Qdrant + OpenAI)
-    │       ├── memory.rs     # remember, recall, forget
-    │       ├── sessions.rs   # store_session, search_sessions
-    │       ├── tasks.rs      # task management
-    │       ├── code_intel.rs # symbols, call graph, semantic search
-    │       ├── git_intel.rs  # commits, cochange, error fixes
-    │       ├── build_intel.rs# build tracking
-    │       ├── documents.rs  # document search
-    │       ├── workspace.rs  # activity/context tracking
-    │       ├── project.rs    # guidelines
-    │       └── analytics.rs  # list_tables, query
-    ├── data/             # SQLite database + Qdrant storage
-    ├── bin/              # Qdrant binary
-    └── migrations/       # Database schema
+├── src/
+│   ├── main.rs       # MCP server entry point (348 lines)
+│   ├── lib.rs        # Library exports (4 lines)
+│   └── tools/        # MCP tool implementations
+│       ├── mod.rs        # Module exports
+│       ├── types.rs      # Request types for all tools
+│       ├── response.rs   # Response helpers (json_response, etc.)
+│       ├── semantic.rs   # SemanticSearch (Qdrant + OpenAI)
+│       ├── memory.rs     # remember, recall, forget
+│       ├── sessions.rs   # store_session, search_sessions
+│       ├── tasks.rs      # task management
+│       ├── code_intel.rs # symbols, call graph, semantic search
+│       ├── git_intel.rs  # commits, cochange, error fixes
+│       ├── build_intel.rs# build tracking
+│       ├── documents.rs  # document search
+│       ├── workspace.rs  # activity/context tracking
+│       ├── project.rs    # guidelines
+│       └── analytics.rs  # list_tables, query
+├── migrations/       # Database schema
+├── data/             # SQLite database (runtime, gitignored)
+├── Cargo.toml        # Rust dependencies
+└── .sqlx/            # SQLx offline mode cache
 ```
 
 ## Development Commands
 
 ```bash
-cd backend
-
 # Build
 SQLX_OFFLINE=true cargo build --release
 
@@ -54,9 +52,6 @@ DATABASE_URL="sqlite://data/mira.db" \
 QDRANT_URL="http://localhost:6334" \
 OPENAI_API_KEY="sk-..." \
 ./target/release/mira
-
-# Start Qdrant (if not running)
-./bin/qdrant &
 
 # Linting
 SQLX_OFFLINE=true cargo clippy
@@ -139,9 +134,9 @@ Add to `~/.claude/mcp.json`:
 {
   "mcpServers": {
     "mira": {
-      "command": "/path/to/mira/backend/target/release/mira",
+      "command": "/path/to/mira/target/release/mira",
       "env": {
-        "DATABASE_URL": "sqlite:///path/to/mira/backend/data/mira.db",
+        "DATABASE_URL": "sqlite:///path/to/mira/data/mira.db",
         "QDRANT_URL": "http://localhost:6334",
         "OPENAI_API_KEY": "sk-..."
       }

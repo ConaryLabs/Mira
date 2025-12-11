@@ -16,7 +16,6 @@ Mira is a "power suit" for Claude Code - it provides persistent memory, code int
 ### Build
 
 ```bash
-cd backend
 cargo build --release
 ```
 
@@ -28,9 +27,9 @@ Add to `~/.claude/mcp.json`:
 {
   "mcpServers": {
     "mira": {
-      "command": "/path/to/mira/backend/target/release/mira",
+      "command": "/path/to/mira/target/release/mira",
       "env": {
-        "DATABASE_URL": "sqlite:///path/to/mira/backend/data/mira.db"
+        "DATABASE_URL": "sqlite:///path/to/mira/data/mira.db"
       }
     }
   }
