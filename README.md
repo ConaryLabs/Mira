@@ -39,7 +39,7 @@ Add to `~/.claude/mcp.json`:
 
 Restart Claude Code to load the MCP server.
 
-## Available Tools (22)
+## Available Tools (36)
 
 ### Memory Tools
 | Tool | Description |

@@ -19,11 +19,12 @@ Mira is a **Power Suit for Claude Code** - a memory and intelligence layer that 
 mira/
 └── backend/              # Rust MCP server (~3k lines)
     ├── src/
-    │   ├── main.rs       # MCP server entry point (478 lines)
+    │   ├── main.rs       # MCP server entry point (348 lines)
     │   ├── lib.rs        # Library exports (4 lines)
     │   └── tools/        # MCP tool implementations
     │       ├── mod.rs        # Module exports
     │       ├── types.rs      # Request types for all tools
+    │       ├── response.rs   # Response helpers (json_response, etc.)
     │       ├── semantic.rs   # SemanticSearch (Qdrant + OpenAI)
     │       ├── memory.rs     # remember, recall, forget
     │       ├── sessions.rs   # store_session, search_sessions
