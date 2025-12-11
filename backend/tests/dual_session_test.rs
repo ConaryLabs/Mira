@@ -628,7 +628,7 @@ async fn test_llm_codex_compaction_support() {
 
     println!("First call (no previous_response_id)...");
     let response1 = provider
-        .chat_with_tools_continuing(messages1, system_prompt.to_string(), tools.clone(), None)
+        .chat_with_tools_continuing(messages1, system_prompt.to_string(), tools.clone(), None, None)
         .await;
 
     match response1 {
@@ -650,6 +650,7 @@ async fn test_llm_codex_compaction_support() {
                     system_prompt.to_string(),
                     tools.clone(),
                     Some(r1.id.clone()),
+                    None,
                 )
                 .await;
 

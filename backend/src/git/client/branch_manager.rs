@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use git2::{BranchType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::IntoApiError;
+use crate::api::error::IntoApiErrorResult;
 use crate::git::types::GitRepoAttachment;
 
 /// Branch information

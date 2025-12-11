@@ -179,6 +179,7 @@ async fn test_operation_engine_lifecycle() {
             SystemAccessMode::Project,
             None, // no cancel token
             &tx,
+            None, // force_tool
         )
         .await;
 
@@ -346,6 +347,7 @@ async fn test_operation_cancellation() {
             SystemAccessMode::Project,
             Some(cancel_token),
             &tx,
+            None, // force_tool
         )
         .await;
 
@@ -460,6 +462,7 @@ async fn test_multiple_operations() {
                 SystemAccessMode::Project,
                 None,
                 &tx,
+                None, // force_tool
             )
             .await;
 
@@ -557,6 +560,7 @@ async fn test_operation_event_ordering() {
             SystemAccessMode::Project,
             None,
             &tx,
+            None, // force_tool
         )
         .await;
 

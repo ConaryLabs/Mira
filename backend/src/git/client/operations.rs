@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use crate::api::error::{ApiResult, IntoApiError};
+use crate::api::error::{ApiResult, IntoApiErrorResult};
 use crate::git::store::GitStore;
 use crate::git::types::{GitImportStatus, GitRepoAttachment};
 

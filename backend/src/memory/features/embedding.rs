@@ -120,7 +120,7 @@ impl EmbeddingManager {
             let batch_embeddings = loop {
                 match self
                     .embedding_client
-                    .embed_batch(batch_texts.to_vec())
+                    .embed_batch(batch_texts)
                     .await
                 {
                     Ok(embeddings) => {

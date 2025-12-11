@@ -6,7 +6,6 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use tracing::{debug, info, warn};
 
-use crate::api::error::IntoApiError;
 use crate::git::store::GitStore;
 use crate::git::types::GitRepoAttachment;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
@@ -79,8 +78,8 @@ impl CodeSync {
                 Ok(files)
             })
             .await
-            .into_api_error("Failed to scan directory")?
-            .into_api_error("Failed to list files")?;
+            .map_err(|e| crate::api::error::ApiError::JoinError(e.to_string()))?
+            .map_err(|e| crate::api::error::ApiError::Internal(format!("Failed to list files: {}", e)))?;
 
         // Re-parse each file
         let mut parsed_count = 0;
