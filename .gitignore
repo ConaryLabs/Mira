@@ -1,12 +1,76 @@
-# Environment files with secrets
-.env
+# Build outputs
+/target
+/debug
+/release
 
-# Editor/IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+# Environment and config
+.env
+.env.local
+.env.*.local
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Backup files
+*.backup
+*.bak
+*.old
+*.orig
+*~
+
+# Archive files
+*.zip
+*.tar
+*.gz
+
+# Runtime directories
+/data/
+/bin/
+repos/
+temp/
+tmp/
+cache/
+logs/
+*.log
+sessions/
+uploads/
+downloads/
 
 # OS files
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Rust specific
+**/*.rs.bk
+*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv
+
+# Test coverage
+*.profraw
+*.profdata
+coverage/
+
+# Qdrant data
+qdrant_storage/
+.qdrant-initialized
+
+# Project specific
+test_repos/
+/storage/
+snapshots/
