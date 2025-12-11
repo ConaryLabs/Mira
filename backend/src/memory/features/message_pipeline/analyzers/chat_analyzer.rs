@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use crate::llm::provider::{LlmProvider, Message};
-use crate::prompt::internal::analysis as prompts;
+use crate::memory::features::prompts::analysis as prompts;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatAnalysisResult {

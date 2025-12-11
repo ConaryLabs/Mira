@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::llm::provider::LlmProvider;
-use crate::prompt::internal::code_intelligence as prompts;
+use crate::memory::features::prompts::code_intelligence as prompts;
 
 // ============================================================================
 // Data Structures
