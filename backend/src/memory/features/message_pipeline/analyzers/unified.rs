@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::LlmProvider;
+use crate::llm_compat::embeddings::EmbeddingHead;
+use crate::llm_compat::provider::LlmProvider;
 
 use super::chat_analyzer::ChatAnalyzer;
 

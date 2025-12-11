@@ -1,6 +1,9 @@
-// src/llm_stubs.rs
-// Stub types for LLM functionality
-// In power suit mode, these are placeholders - Claude Code drives LLM calls
+// src/llm.rs
+// LLM types and embedding provider for vector search
+// In MCP mode, Claude Code handles chat LLM calls. Mira provides:
+// - EmbeddingHead: Qdrant collection identifiers
+// - EmbeddingProvider: Vector embedding for semantic search
+// - Message types: For internal analysis features (pattern detection, etc.)
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

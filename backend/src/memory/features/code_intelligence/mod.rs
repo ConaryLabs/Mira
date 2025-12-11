@@ -47,8 +47,8 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::EmbeddingProvider;
+use crate::llm_compat::embeddings::EmbeddingHead;
+use crate::llm_compat::provider::EmbeddingProvider;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
@@ -99,7 +99,7 @@ impl CodeIntelligenceService {
     /// Create a semantic graph service with an LLM provider
     pub fn create_semantic_service(
         &self,
-        llm_provider: Arc<dyn crate::llm::provider::LlmProvider>,
+        llm_provider: Arc<dyn crate::llm_compat::provider::LlmProvider>,
     ) -> SemanticGraphService {
         SemanticGraphService::new(self.pool.clone(), llm_provider)
     }
@@ -107,7 +107,7 @@ impl CodeIntelligenceService {
     /// Create a pattern detection service with an LLM provider
     pub fn create_pattern_service(
         &self,
-        llm_provider: Arc<dyn crate::llm::provider::LlmProvider>,
+        llm_provider: Arc<dyn crate::llm_compat::provider::LlmProvider>,
     ) -> PatternDetectionService {
         PatternDetectionService::new(self.pool.clone(), llm_provider)
     }
@@ -115,7 +115,7 @@ impl CodeIntelligenceService {
     /// Create a domain clustering service with an LLM provider
     pub fn create_clustering_service(
         &self,
-        llm_provider: Arc<dyn crate::llm::provider::LlmProvider>,
+        llm_provider: Arc<dyn crate::llm_compat::provider::LlmProvider>,
     ) -> DomainClusteringService {
         DomainClusteringService::new(self.pool.clone(), llm_provider)
     }

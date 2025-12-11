@@ -9,8 +9,8 @@ use chrono::Utc;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-use crate::llm::embeddings::EmbeddingHead;
-use crate::llm::provider::EmbeddingProvider;
+use crate::llm_compat::embeddings::EmbeddingHead;
+use crate::llm_compat::provider::EmbeddingProvider;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::{SummaryRecord, SummaryType};
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;

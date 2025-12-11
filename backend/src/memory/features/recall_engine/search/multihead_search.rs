@@ -11,7 +11,7 @@ use tracing::debug;
 
 use super::super::scoring::CompositeScorer;
 use super::super::{RecallConfig, ScoredMemory};
-use crate::llm::{embeddings::EmbeddingHead, provider::EmbeddingProvider};
+use crate::llm_compat::{embeddings::EmbeddingHead, provider::EmbeddingProvider};
 use crate::memory::{core::types::MemoryEntry, storage::qdrant::multi_store::QdrantMultiStore};
 
 #[derive(Clone)]

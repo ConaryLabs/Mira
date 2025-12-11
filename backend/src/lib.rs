@@ -6,8 +6,8 @@ pub mod cache;
 pub mod config;
 pub mod utils;
 
-// Stub modules for compatibility (being cleaned up)
-pub mod llm_stubs;
+// LLM types and embedding support
+mod llm;
 
 // Memory and knowledge
 pub mod memory;
@@ -26,17 +26,23 @@ pub mod system;
 // Export commonly used items
 pub use config::CONFIG;
 
-// Compatibility layer re-exports
-pub mod llm {
-    //! LLM module compatibility layer
-    //! Claude Code handles actual LLM calls; we provide embedding support
+// Re-export llm module with structured submodules for backward compatibility
+pub use llm::{
+    EmbeddingHead, EmbeddingProvider, LlmProvider, LlmResponse, Message,
+    OpenAIEmbeddingProvider, StubLlmProvider, TokenUsage,
+    ArcEmbeddingProvider, ArcLlmProvider,
+};
+
+// Backward-compatible module structure
+pub mod llm_compat {
+    //! LLM module with submodule structure for existing imports
 
     pub mod embeddings {
-        pub use crate::llm_stubs::EmbeddingHead;
+        pub use crate::llm::EmbeddingHead;
     }
 
     pub mod provider {
-        pub use crate::llm_stubs::{
+        pub use crate::llm::{
             ArcEmbeddingProvider, ArcLlmProvider, EmbeddingProvider, LlmProvider,
             LlmResponse, Message, OpenAIEmbeddingProvider, StubLlmProvider, TokenUsage,
         };
