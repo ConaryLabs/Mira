@@ -78,12 +78,12 @@ impl CodeSync {
                 Ok(files)
             })
             .await
-            .map_err(|e| crate::api::error::ApiError::JoinError(e.to_string()))?
-            .map_err(|e| crate::api::error::ApiError::Internal(format!("Failed to list files: {}", e)))?;
+            .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to list files: {}", e))?;
 
         // Re-parse each file
         let mut parsed_count = 0;
-        for (file_path, content) in files_to_check {
+        for (file_path, content) in &files_to_check {
             // Check if file hash changed
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());

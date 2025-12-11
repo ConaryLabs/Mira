@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use crate::api::error::IntoApiErrorResult;
+use crate::git::error::IntoGitErrorResult;
 use crate::git::types::GitRepoAttachment;
 
 /// File node in the repository tree
@@ -45,15 +45,15 @@ impl TreeBuilder {
     /// Get the file tree of a repository
     pub fn get_file_tree(&self, attachment: &GitRepoAttachment) -> Result<Vec<FileNode>> {
         let repo =
-            Repository::open(&attachment.local_path).into_api_error("Failed to open repository")?;
+            Repository::open(&attachment.local_path).into_git_error("Failed to open repository")?;
 
         let head = repo
             .head()
-            .into_api_error("Failed to get repository head")?;
+            .into_git_error("Failed to get repository head")?;
 
         let tree = head
             .peel_to_tree()
-            .into_api_error("Failed to get tree from head")?;
+            .into_git_error("Failed to get tree from head")?;
 
         let mut nodes = Vec::new();
 
@@ -80,7 +80,7 @@ impl TreeBuilder {
 
             git2::TreeWalkResult::Ok
         })
-        .into_api_error("Failed to walk repository tree")?;
+        .into_git_error("Failed to walk repository tree")?;
 
         Ok(self.build_tree_structure(nodes))
     }
@@ -94,7 +94,7 @@ impl TreeBuilder {
         let full_path = Path::new(&attachment.local_path).join(file_path);
 
         fs::read_to_string(full_path)
-            .into_api_error("Failed to read file content")
+            .into_git_error("Failed to read file content")
             .map_err(|api_err| anyhow::Error::msg(api_err.to_string()))
     }
 
@@ -110,10 +110,10 @@ impl TreeBuilder {
 
         // Ensure parent directory exists
         if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent).into_api_error("Failed to create parent directory")?;
+            fs::create_dir_all(parent).into_git_error("Failed to create parent directory")?;
         }
 
-        fs::write(&full_path, content).into_api_error("Failed to write file content")?;
+        fs::write(&full_path, content).into_git_error("Failed to write file content")?;
 
         // For MVP, we don't auto-commit
         // In the future, we could use commit_message to create a commit

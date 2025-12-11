@@ -6,8 +6,7 @@ pub mod cache;
 pub mod config;
 pub mod utils;
 
-// Stub modules for compatibility
-pub mod api_stubs;
+// Stub modules for compatibility (being cleaned up)
 pub mod context_oracle_stubs;
 pub mod llm_stubs;
 pub mod prompt_stubs;
@@ -44,13 +43,6 @@ pub mod llm {
             ArcEmbeddingProvider, ArcLlmProvider, EmbeddingProvider, LlmProvider,
             LlmResponse, Message, OpenAIEmbeddingProvider, StubLlmProvider, TokenUsage,
         };
-    }
-}
-
-pub mod api {
-    //! API module compatibility layer
-    pub mod error {
-        pub use crate::api_stubs::{ApiError, ApiResult, IntoApiError, IntoApiErrorResult};
     }
 }
 
