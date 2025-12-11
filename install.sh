@@ -38,37 +38,86 @@ if [ ! -f "Dockerfile" ]; then
     }
 fi
 
-echo "Building Docker images (this may take a few minutes)..."
-docker compose build
+echo "Building Mira Docker image (this may take a few minutes)..."
+docker compose build mira
 
-echo "Starting Qdrant (vector database for semantic search)..."
-docker compose up -d qdrant
+# Ask about semantic search
+echo ""
+echo "Semantic search enables finding memories by meaning (not just keywords)."
+echo "It requires Qdrant (vector database) and an OpenAI API key."
+echo ""
+echo "Enable semantic search? [Y/n]:"
+read -r ENABLE_SEMANTIC
 
-# Wait for Qdrant to be ready
-echo "Waiting for Qdrant to start..."
-for i in {1..30}; do
-    if curl -s http://localhost:6334/healthz > /dev/null 2>&1; then
-        break
+ENABLE_SEMANTIC=${ENABLE_SEMANTIC:-Y}
+if [[ "$ENABLE_SEMANTIC" =~ ^[Yy] ]]; then
+    USE_QDRANT=true
+
+    echo "Starting Qdrant..."
+    docker compose up -d qdrant
+
+    # Wait for Qdrant to be ready
+    echo "Waiting for Qdrant to start..."
+    for i in {1..30}; do
+        if curl -s http://localhost:6334/healthz > /dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+
+    echo ""
+    echo "Enter your OpenAI API key (or press Enter to add later):"
+    read -r OPENAI_KEY
+
+    if [ -n "$OPENAI_KEY" ]; then
+        echo "OPENAI_API_KEY=$OPENAI_KEY" > "$MIRA_DIR/.env"
+        chmod 600 "$MIRA_DIR/.env"
+        echo "API key saved to ~/.mira/.env"
+        SEMANTIC_STATUS="enabled"
+    else
+        echo "No key provided. Add OPENAI_API_KEY to ~/.mira/.env later."
+        SEMANTIC_STATUS="Qdrant running, needs API key"
     fi
-    sleep 1
-done
+else
+    USE_QDRANT=false
+    SEMANTIC_STATUS="disabled"
+    echo "Skipped. Mira will use text-based search only."
+fi
 
 # Initialize database
+echo ""
 echo "Initializing database..."
 docker compose run --rm -T mira sh -c "cat migrations/*.sql | sqlite3 /app/data/mira.db && sqlite3 /app/data/mira.db < seed_mira_guidelines.sql" 2>/dev/null
 
 echo "Database initialized"
 
 # Create wrapper script for Claude Code
-# This runs mira connected to the Qdrant container
-cat > "$MIRA_DIR/mira" << 'WRAPPER'
+if [ "$USE_QDRANT" = true ]; then
+    # With Qdrant
+    cat > "$MIRA_DIR/mira" << 'WRAPPER'
 #!/bin/bash
 # Mira wrapper script - runs the MCP server in Docker with Qdrant
 cd "$HOME/.mira"
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
 exec docker compose run --rm -T \
     -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
     mira
 WRAPPER
+else
+    # Without Qdrant - just run Mira standalone
+    cat > "$MIRA_DIR/mira" << 'WRAPPER'
+#!/bin/bash
+# Mira wrapper script - runs the MCP server in Docker (no semantic search)
+cd "$HOME/.mira"
+exec docker run -i --rm \
+    -v "$HOME/.mira/data:/app/data" \
+    mira-mira
+WRAPPER
+fi
 chmod +x "$MIRA_DIR/mira"
 
 # Configure Claude Code
@@ -108,15 +157,13 @@ echo "Components:"
 echo "  - Mira MCP server (Docker)"
 echo "  - Qdrant vector database (Docker, port 6334)"
 echo "  - SQLite database (~/.mira/data/mira.db)"
+echo "  - Semantic search: $SEMANTIC_STATUS"
 echo ""
 echo "Next steps:"
 echo ""
-echo "1. (Optional) Enable semantic search by setting OPENAI_API_KEY:"
-echo "   export OPENAI_API_KEY=sk-..."
+echo "1. Restart Claude Code to load Mira"
 echo ""
-echo "2. Restart Claude Code to load Mira"
-echo ""
-echo "3. Add to your project's CLAUDE.md:"
+echo "2. Add to your project's CLAUDE.md:"
 echo ""
 echo "   ## Mira Memory"
 echo "   At session start:"
