@@ -51,14 +51,35 @@ Mira will automatically store and recall relevant context.
 
 ## Requirements
 
-- Docker
+- Docker with Docker Compose
 - Claude Code
+- (Optional) OpenAI API key for semantic search
+
+## What Gets Installed
+
+The install script sets up:
+- **Mira** - MCP server in Docker
+- **Qdrant** - Vector database for semantic search (Docker, port 6334)
+- **SQLite** - Persistent storage at `~/.mira/data/mira.db`
+
+## Semantic Search
+
+For better recall (finds memories by meaning, not just keywords), set your OpenAI API key:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+This enables text-embedding-3-large for semantic similarity search. Without it, Mira falls back to text-based search.
 
 ## Manual Install (without Docker)
 
 ```bash
 # Build
 cargo build --release
+
+# Run Qdrant (optional, for semantic search)
+docker run -d -p 6334:6334 qdrant/qdrant
 
 # Initialize database
 DATABASE_URL="sqlite://data/mira.db" sqlx migrate run
@@ -70,24 +91,13 @@ sqlite3 data/mira.db < seed_mira_guidelines.sql
     "mira": {
       "command": "/path/to/mira/target/release/mira",
       "env": {
-        "DATABASE_URL": "sqlite:///path/to/mira/data/mira.db"
+        "DATABASE_URL": "sqlite:///path/to/mira/data/mira.db",
+        "QDRANT_URL": "http://localhost:6334",
+        "OPENAI_API_KEY": "sk-..."
       }
     }
   }
 }
-```
-
-## Optional: Semantic Search
-
-For better recall (finds memories by meaning, not just keywords), add Qdrant and OpenAI:
-
-```bash
-# Run Qdrant
-docker run -d -p 6334:6334 qdrant/qdrant
-
-# Add to environment
-export QDRANT_URL="http://localhost:6334"
-export OPENAI_API_KEY="sk-..."
 ```
 
 ## How It Works
