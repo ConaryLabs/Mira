@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use qdrant_client::qdrant::{
     CreateCollectionBuilder, Distance, Filter, PointStruct, SearchPointsBuilder,
     UpsertPointsBuilder, VectorParamsBuilder, DeletePointsBuilder, PointId,
-    Value as QdrantValue, Condition,
+    Value as QdrantValue,
 };
 use qdrant_client::Qdrant;
 use std::collections::HashMap;
@@ -214,19 +214,6 @@ impl SemanticSearch {
             .collect();
 
         Ok(entries)
-    }
-
-    /// Search with a text filter (matches field contains value)
-    pub async fn search_with_text_filter(
-        &self,
-        collection: &str,
-        query: &str,
-        limit: usize,
-        field: &str,
-        value: &str,
-    ) -> Result<Vec<SearchResult>> {
-        let filter = Filter::must([Condition::matches(field, value.to_string())]);
-        self.search(collection, query, limit, Some(filter)).await
     }
 
     /// Delete a point by ID
