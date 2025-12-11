@@ -180,33 +180,53 @@ src/api/                    → Remove WebSocket, keep minimal HTTP for health
 - `llm_cache` (Claude Code's problem)
 - `codex_session_links` / `task_sessions` (no dual session)
 
-## Implementation Plan
+## Implementation Status (Completed)
 
-### Phase 1: Strip Down (Week 1)
-- [ ] Remove frontend entirely
-- [ ] Remove LLM orchestration (`src/llm/`)
-- [ ] Remove operations engine (`src/operations/`)
-- [ ] Remove chat/WebSocket handling
-- [ ] Remove CLI
-- [ ] Clean up Cargo.toml (remove unused deps)
+### Phase 1: Strip Down - DONE
+- [x] Remove frontend entirely
+- [x] Remove LLM orchestration (`src/llm/` - now just embedding provider)
+- [x] Remove operations engine (`src/operations/`)
+- [x] Remove chat/WebSocket handling
+- [x] Remove CLI
+- [x] Clean up Cargo.toml (remove unused deps)
 
-### Phase 2: MCP Server Core (Week 2)
-- [ ] Make MCP server the main binary
-- [ ] Implement memory tools (remember, recall, forget)
-- [ ] Implement basic code intelligence tools
-- [ ] Test with Claude Code
+### Phase 2: MCP Server Core - DONE
+- [x] Make MCP server the main binary
+- [x] Implement memory tools (remember, recall, forget)
+- [x] Implement basic code intelligence tools
+- [x] Test with Claude Code
 
-### Phase 3: Intelligence Integration (Week 3)
-- [ ] Wire up git intelligence to MCP
-- [ ] Wire up code intelligence to MCP
-- [ ] Implement build error tracking
-- [ ] Background indexer for code/git analysis
+### Phase 3: Intelligence Integration - DONE
+- [x] Wire up git intelligence to MCP
+- [x] Wire up code intelligence to MCP
+- [x] Implement build error tracking
+- [x] Background indexer for code/git analysis
 
-### Phase 4: Polish (Week 4)
-- [ ] Performance optimization
-- [ ] Documentation
-- [ ] Installation/setup scripts
-- [ ] CLAUDE.md instructions for using Mira
+### Phase 4: Polish - DONE
+- [x] Performance optimization
+- [x] Documentation
+- [x] CLAUDE.md instructions for using Mira
+
+### Code Structure (Final)
+
+```
+backend/src/
+├── main.rs           # MCP server (22 tools)
+├── lib.rs            # Library exports
+├── llm.rs            # Embedding provider (OpenAI)
+├── memory/
+│   ├── context.rs    # Context types for recall
+│   ├── features/
+│   │   ├── prompts.rs  # System prompts for LLM features
+│   │   └── ...
+│   └── ...
+├── git/
+│   ├── error.rs      # Git error types
+│   └── ...
+├── build/            # Build error tracking
+├── watcher/          # File system watching
+└── config/           # Configuration
+```
 
 ## Configuration
 
