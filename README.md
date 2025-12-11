@@ -1,173 +1,148 @@
-# Mira
+# Mira Power Suit
 
-**AI-Powered Coding Assistant with Hybrid Memory**
+**Memory and Intelligence Layer for Claude Code**
 
-Mira is an AI coding assistant powered by OpenAI GPT-5.1 with multi-tier model routing, backed by a comprehensive memory system and real-time streaming architecture. It remembers your codebase, understands your patterns, and helps you code more effectively.
+Mira is a "power suit" for Claude Code - it provides persistent memory, code intelligence, git intelligence, and project context through the Model Context Protocol (MCP). Claude Code handles all AI orchestration; Mira provides the superpowers.
 
-## Features
+## What Mira Does
 
-### Intelligent Code Understanding
-- **Semantic Code Graph** - Understands purpose, concepts, and relationships in your code
-- **Call Graph Analysis** - Tracks function dependencies and impact of changes
-- **Design Pattern Detection** - Recognizes Factory, Repository, Builder, Observer patterns
-- **Git Intelligence** - Learns from commit history, co-change patterns, and author expertise
-
-### Conversational Memory
-- **Hybrid Storage** - SQLite for structure + Qdrant for semantic search
-- **Multi-head Embeddings** - Separate vectors for code, conversations, and git context
-- **Rolling Summaries** - Maintains context across long sessions
-- **Automatic Analysis** - Extracts intent, topics, and salience from messages
-
-### Developer Tools
-- **39 Built-in Tools** - File operations, git commands, code analysis, web search
-- **Sandboxed Execution** - Safe command execution with sudo approval prompts
-- **Real-time Streaming** - WebSocket-based responses with cancellation support
-- **Project Context** - Attaches git repository context to conversations
-
-### Multiple Interfaces
-- **Web UI** - React frontend with Monaco editor and real-time streaming
-- **CLI** - Full-featured command-line interface with feature parity to web UI
-  - Interactive REPL with session management
-  - Streaming responses and sudo approval prompts
-  - Custom slash commands (`.mira/commands/`)
-  - Works in any terminal environment
-
-### Production Ready
-- **Budget Tracking** - Daily/monthly spending limits with cost visibility
-- **Response Caching** - 80%+ cache hit rate for repeated queries
-- **Health Endpoints** - `/health`, `/ready`, `/live` for load balancers
-- **Prometheus Metrics** - Request, LLM, and budget metrics at `/metrics`
+- **Persistent Memory** - Remember facts, decisions, and preferences across sessions
+- **Code Intelligence** - Understand code relationships, call graphs, and symbols
+- **Git Intelligence** - Know who's expert on what code, find similar past fixes
+- **Project Context** - Store and recall coding guidelines and conventions
 
 ## Quick Start
 
-### Option 1: Docker Compose (Recommended)
-
-The easiest way to run Mira. Requires only Docker - no Rust or Node.js needed.
+### Build
 
 ```bash
-# Clone the repository
-git clone https://github.com/ConaryLabs/Mira.git
-cd Mira
-
-# Configure your API key
-cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
-
-# Start all services
-docker compose up -d
-
-# Access Mira at http://localhost:8080
-```
-
-**Get an OpenAI API key**: https://platform.openai.com/api-keys
-
-### Option 2: Development Setup
-
-For contributors or those who prefer native installation.
-
-```bash
-# 1. Start Qdrant (vector database)
-docker run -d -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
-
-# 2. Setup backend
 cd backend
-cp .env.example .env
-# Edit .env with your OPENAI_API_KEY
 cargo build --release
-./target/release/mira-backend
-
-# 3. Setup frontend (new terminal)
-cd frontend
-npm install
-npm run dev
-
-# Access at http://localhost:5173
 ```
 
-### Using the CLI
+### Configure Claude Code
 
-After building the backend, you can also use the CLI:
+Add to `~/.claude/mcp.json`:
 
-```bash
-cd backend
-./target/release/mira
-
-# Or with cargo
-cargo run --bin mira
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/path/to/mira/backend/target/release/mira",
+      "env": {
+        "DATABASE_URL": "sqlite:///path/to/mira/backend/data/mira.db"
+      }
+    }
+  }
+}
 ```
 
-The CLI provides the same features as the web UI in your terminal. See [CLI.md](./CLI.md) for the full command reference.
+Restart Claude Code to load the MCP server.
+
+## Available Tools (22)
+
+### Memory Tools
+| Tool | Description |
+|------|-------------|
+| `remember` | Store a fact, decision, or preference for future sessions |
+| `recall` | Search through stored memories |
+| `forget` | Remove a stored memory by ID |
+
+### Code Intelligence
+| Tool | Description |
+|------|-------------|
+| `get_symbols` | Get functions, classes, structs from a file |
+| `get_call_graph` | See what calls a function and what it calls |
+| `get_related_files` | Find files related through imports or co-change patterns |
+
+### Git Intelligence
+| Tool | Description |
+|------|-------------|
+| `get_file_experts` | Find developers with expertise on a file |
+| `find_similar_fixes` | Search for similar past errors and their fixes |
+| `get_change_risk` | Assess risk of changing a file |
+| `find_cochange_patterns` | Find files that usually change together |
+
+### Project Context
+| Tool | Description |
+|------|-------------|
+| `get_guidelines` | Get coding guidelines for a project |
+| `add_guideline` | Add a coding guideline or convention |
+
+### Session & Data Access
+| Tool | Description |
+|------|-------------|
+| `list_sessions` | List chat sessions |
+| `get_session` | Get session details |
+| `search_memories` | Search chat message history |
+| `get_recent_messages` | Get recent messages from a session |
+| `list_operations` | List LLM operations |
+| `get_budget_status` | Get API budget usage |
+| `get_cache_stats` | Get LLM cache statistics |
+| `get_tool_usage` | Get tool execution statistics |
+| `list_tables` | List database tables |
+| `query` | Execute read-only SQL queries |
+
+## Example Usage
+
+Once configured, you can ask Claude Code things like:
+
+- "Remember that we use snake_case for variables in this project"
+- "What coding conventions do we have?"
+- "Who should review changes to auth.rs?"
+- "Have we seen this type of error before?"
+- "What files usually change together with main.rs?"
+- "What functions call the parse() function?"
 
 ## Architecture
 
 ```
-+------------------+     +------------------+     +------------------+
-|     Frontend     |     |     Backend      |     |     Qdrant       |
-|   React + Vite   | <-> |   Rust + Axum    | <-> |  Vector Search   |
-|   Monaco Editor  |     |  OpenAI GPT-5.1  |     |   3 Collections  |
-+------------------+     +--------+---------+     +------------------+
-                                  |
-                         +--------v---------+
-                         |      SQLite      |
-                         |    70+ Tables    |
-                         +------------------+
+Claude Code  <--MCP(stdio)-->  Mira MCP Server
+                                    |
+                  +----------+------+------+
+                  |          |             |
+               SQLite     Qdrant      Git Repo
+               (facts,    (vectors,   (history,
+               sessions)   code)       commits)
 ```
+
+Mira is a single binary that runs as an MCP server over stdio. Claude Code drives all interactions; Mira provides persistent storage and intelligence capabilities.
 
 ## Requirements
 
-### Docker Deployment
-- Docker 24+ with Docker Compose v2
-- OpenAI API key (GPT-5.1)
+- SQLite 3.35+ (embedded)
+- Qdrant 1.16+ (optional, for semantic search)
+- Rust 1.91+ (if building from source)
 
-### Development
-- Rust 1.91+
-- Node.js 18+
-- SQLite 3.35+
-- Qdrant 1.12+
+## Development
 
-## Configuration
+```bash
+# Build debug
+cargo build
 
-Key environment variables (set in `.env`):
+# Run tests
+cargo test
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-5.1 |
-| `MODEL_ROUTER_ENABLED` | No | Enable 4-tier model routing (default: true) |
-| `BUDGET_DAILY_LIMIT_USD` | No | Daily spending limit (default: 5.0) |
-| `BUDGET_MONTHLY_LIMIT_USD` | No | Monthly spending limit (default: 150.0) |
+# Build release
+cargo build --release
 
-See `backend/.env.example` for all options.
+# Test MCP server
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | DATABASE_URL="sqlite://data/mira.db" ./target/release/mira
+```
 
-## Documentation
+## Database
 
-| Document | Description |
-|----------|-------------|
-| [CLI.md](./CLI.md) | CLI cheat sheet and reference |
-| [DEPLOYMENT.md](./DEPLOYMENT.md) | Deployment guide (Docker, systemd, nginx) |
-| [USERGUIDE.md](./USERGUIDE.md) | User and developer guide |
-| [CLAUDE.md](./CLAUDE.md) | Guide for AI assistants |
-| [backend/WHITEPAPER.md](./backend/WHITEPAPER.md) | Backend technical architecture |
-| [frontend/WHITEPAPER.md](./frontend/WHITEPAPER.md) | Frontend technical architecture |
+Mira uses SQLite for structured data with the following key tables:
 
-## Technology Stack
-
-**Backend**: Rust, Axum, Tokio, SQLite, Qdrant, OpenAI GPT-5.1
-
-**Frontend**: React 18, TypeScript, Vite, Zustand, Monaco Editor, Tailwind CSS
+- `memory_facts` - Stored memories (remember/recall/forget)
+- `project_guidelines` - Project coding conventions
+- `code_elements` - Parsed code symbols
+- `call_graph` - Function call relationships
+- `semantic_edges` - Code semantic relationships
+- `file_cochange_patterns` - Git co-change analysis
+- `author_expertise` - Developer expertise scores
+- `historical_fixes` - Past error fixes
 
 ## License
 
-MIT License - see [LICENSE](./LICENSE) for details.
-
-## Contributing
-
-1. Fork the repository
-2. Use the [development setup](#option-2-development-setup)
-3. See [CLAUDE.md](./CLAUDE.md) for coding conventions
-4. Submit a pull request
-
-## Support
-
-- Review [DEPLOYMENT.md](./DEPLOYMENT.md) for setup issues
-- Check [PROGRESS.md](./PROGRESS.md) for technical decisions
-- Open an issue with reproduction steps
+MIT

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use crate::api::error::IntoApiError;
+use crate::api::error::IntoApiErrorResult;
 use crate::git::types::GitRepoAttachment;
 
 /// File node in the repository tree
@@ -95,7 +95,7 @@ impl TreeBuilder {
 
         fs::read_to_string(full_path)
             .into_api_error("Failed to read file content")
-            .map_err(|api_err| anyhow::Error::msg(api_err.message))
+            .map_err(|api_err| anyhow::Error::msg(api_err.to_string()))
     }
 
     /// Update file content in the repository

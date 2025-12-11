@@ -1,62 +1,72 @@
 // src/lib.rs
+// Mira Power Suit - Memory and Intelligence Layer for Claude Code
 
-pub mod api;
-pub mod auth;
-pub mod budget;
+// Core infrastructure
 pub mod cache;
-pub mod checkpoint;
-pub mod commands;
 pub mod config;
-pub mod file_system;
-pub mod git;
-pub mod hooks;
-pub mod llm;
-pub mod mcp;
-pub mod memory;
-pub mod persona;
-pub mod project;
-pub mod prompt;
-pub mod state;
-pub mod sudo;
-pub mod system;
-pub mod tasks;
-pub mod tools;
 pub mod utils;
 
-// Phase 2 - Core type definitions (operations & relationship systems)
-pub mod operations;
+// Stub modules for compatibility
+pub mod api_stubs;
+pub mod context_oracle_stubs;
+pub mod llm_stubs;
+pub mod prompt_stubs;
+pub mod state_stubs;
+
+// Memory and knowledge
+pub mod memory;
 pub mod relationship;
 
-// Milestone 4 - Tool synthesis system
-pub mod synthesis;
-
-// Milestone 5 - Build system integration
+// Intelligence layers
 pub mod build;
-
-// Milestone 6 - Reasoning pattern learning
-pub mod patterns;
-
-// Milestone 7 - Context Oracle (unified intelligence gathering)
-pub mod context_oracle;
-
-// Milestone 8 - Real-time file watching
+pub mod git;
 pub mod watcher;
 
-// Milestone 12 - Agent system (Claude Code-style specialized agents)
-pub mod agents;
-
-// Milestone 14 - Dual-session architecture (Voice + Codex)
-pub mod session;
-
-// CLI module (for mira binary)
-pub mod cli;
-
-// Testing infrastructure (mira-test binary)
-pub mod testing;
-
-// Milestone 10 - Production metrics
-pub mod metrics;
+// System integration
+pub mod file_system;
+pub mod project;
+pub mod system;
 
 // Export commonly used items
 pub use config::CONFIG;
-pub use state::AppState;
+
+// Compatibility layer re-exports
+pub mod llm {
+    //! LLM module compatibility layer
+    //! Claude Code handles actual LLM calls; we provide embedding support
+
+    pub mod embeddings {
+        pub use crate::llm_stubs::EmbeddingHead;
+    }
+
+    pub mod provider {
+        pub use crate::llm_stubs::{
+            ArcEmbeddingProvider, ArcLlmProvider, EmbeddingProvider, LlmProvider,
+            LlmResponse, Message, OpenAIEmbeddingProvider, StubLlmProvider, TokenUsage,
+        };
+    }
+}
+
+pub mod api {
+    //! API module compatibility layer
+    pub mod error {
+        pub use crate::api_stubs::{ApiError, ApiResult, IntoApiError, IntoApiErrorResult};
+    }
+}
+
+pub mod prompt {
+    //! Prompt module compatibility layer
+    pub mod internal {
+        pub use crate::prompt_stubs::internal::*;
+    }
+}
+
+pub mod context_oracle {
+    //! Context oracle compatibility layer
+    pub use crate::context_oracle_stubs::*;
+}
+
+pub mod state {
+    //! State compatibility layer
+    pub use crate::state_stubs::*;
+}

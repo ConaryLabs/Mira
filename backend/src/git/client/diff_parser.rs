@@ -6,7 +6,7 @@ use anyhow::Result;
 use git2::{Oid, Repository};
 use serde::{Deserialize, Serialize};
 
-use crate::api::error::IntoApiError;
+use crate::api::error::IntoApiErrorResult;
 use crate::git::types::GitRepoAttachment;
 
 /// Diff information
