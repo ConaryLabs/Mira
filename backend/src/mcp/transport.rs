@@ -121,44 +121,96 @@ impl Drop for StdioTransport {
     }
 }
 
-/// HTTP transport for remote MCP servers (placeholder for future implementation)
-#[allow(dead_code)]
+/// HTTP transport for remote MCP servers
+/// Supports MCP's HTTP+SSE transport specification
 pub struct HttpTransport {
     url: String,
     client: reqwest::Client,
+    session_id: tokio::sync::RwLock<Option<String>>,
+    timeout_ms: u64,
 }
 
-#[allow(dead_code)]
 impl HttpTransport {
+    /// Create a new HTTP transport with default timeout
     pub fn new(url: &str) -> Self {
+        Self::with_timeout(url, 30_000)
+    }
+
+    /// Create with custom timeout in milliseconds
+    pub fn with_timeout(url: &str, timeout_ms: u64) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(timeout_ms))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             url: url.to_string(),
-            client: reqwest::Client::new(),
+            client,
+            session_id: tokio::sync::RwLock::new(None),
+            timeout_ms,
         }
+    }
+
+    /// Get the current session ID
+    pub async fn session_id(&self) -> Option<String> {
+        self.session_id.read().await.clone()
+    }
+
+    /// Set the session ID (extracted from server response)
+    pub async fn set_session_id(&self, id: String) {
+        *self.session_id.write().await = Some(id);
+    }
+
+    /// Clear the session ID (for reconnection)
+    pub async fn clear_session(&self) {
+        *self.session_id.write().await = None;
+    }
+
+    /// Send a ping to check connection
+    pub async fn ping(&self) -> bool {
+        let ping = r#"{"jsonrpc":"2.0","id":0,"method":"ping"}"#;
+        self.send(ping).await.is_ok()
     }
 }
 
 #[async_trait]
 impl McpTransport for HttpTransport {
     async fn send(&self, message: &str) -> Result<String> {
-        let response = self
+        let mut request = self
             .client
             .post(&self.url)
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+
+        // Add session ID if we have one
+        if let Some(session) = self.session_id.read().await.as_ref() {
+            request = request.header("X-MCP-Session-Id", session);
+        }
+
+        let response = request
             .body(message.to_string())
             .send()
             .await
             .context("HTTP request failed")?;
 
+        // Extract session ID from response headers if present
+        if let Some(session) = response.headers().get("X-MCP-Session-Id") {
+            if let Ok(session_str) = session.to_str() {
+                *self.session_id.write().await = Some(session_str.to_string());
+            }
+        }
+
         if !response.status().is_success() {
-            anyhow::bail!("HTTP error: {}", response.status());
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP error {}: {}", status, body);
         }
 
         response.text().await.context("Failed to read response body")
     }
 
     fn is_connected(&self) -> bool {
-        true // HTTP is connectionless, always "connected"
+        // HTTP is connectionless, always "connected"
+        true
     }
 }
 

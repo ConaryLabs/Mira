@@ -135,6 +135,11 @@ pub struct TestStep {
     /// Mock response for this step (used in mock mode)
     #[serde(default)]
     pub mock_response: Option<MockResponse>,
+
+    /// Force the LLM to call a specific tool by name (for deterministic testing)
+    /// Uses OpenAI's tool_choice parameter to guarantee the specified tool is called
+    #[serde(default)]
+    pub force_tool: Option<String>,
 }
 
 /// Mock response for a test step

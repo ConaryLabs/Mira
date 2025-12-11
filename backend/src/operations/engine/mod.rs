@@ -29,6 +29,7 @@ use crate::git::client::GitClient;
 use crate::hooks::HookManager;
 use crate::llm::provider::LlmProvider;
 use crate::llm::router::ModelRouter;
+use crate::mcp::McpManager;
 use crate::memory::service::MemoryService;
 use crate::operations::{Artifact, Operation, OperationEvent};
 use crate::project::guidelines::ProjectGuidelinesService;
@@ -75,6 +76,7 @@ impl OperationEngine {
         checkpoint_manager: Option<Arc<CheckpointManager>>,
         project_store: Option<Arc<crate::project::ProjectStore>>,
         session_cache_store: Option<Arc<SessionCacheStore>>,
+        mcp_manager: Option<Arc<McpManager>>,
     ) -> Self {
         // Build sub-components
         let mut context_builder = ContextBuilder::new(
@@ -117,6 +119,11 @@ impl OperationEngine {
         // Add project store for dynamic working directory resolution
         if let Some(store) = project_store {
             tool_router = tool_router.with_project_store(store);
+        }
+
+        // Add MCP manager for external tool server integration
+        if let Some(mcp) = mcp_manager {
+            tool_router = tool_router.with_mcp_manager(mcp);
         }
 
         let tool_router_arc = Arc::new(tool_router);
@@ -179,6 +186,7 @@ impl OperationEngine {
         system_access_mode: SystemAccessMode,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        force_tool: Option<String>,
     ) -> Result<()> {
         self.orchestrator
             .run_operation(
@@ -189,6 +197,7 @@ impl OperationEngine {
                 system_access_mode,
                 cancel_token,
                 event_tx,
+                force_tool,
             )
             .await
     }

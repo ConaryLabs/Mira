@@ -26,6 +26,8 @@ pub struct ChatRequest {
     pub system_access_mode: SystemAccessMode,
     pub metadata: Option<MessageMetadata>,
     pub session_id: String,
+    /// Force the LLM to call a specific tool (for deterministic testing)
+    pub force_tool: Option<String>,
 }
 
 /// Result of expanding a slash command
@@ -127,6 +129,7 @@ impl UnifiedChatHandler {
                     request.project_id,
                     request.system_access_mode,
                     ws_tx,
+                    request.force_tool,
                 )
                 .await?;
 
@@ -298,6 +301,7 @@ impl UnifiedChatHandler {
                 request.project_id.clone(),
                 request.system_access_mode,
                 ws_tx,
+                request.force_tool,
             )
             .await?;
 
@@ -506,13 +510,73 @@ impl UnifiedChatHandler {
                 }));
             }
 
+            let resources = self.mcp_manager.get_all_resources().await;
+            let prompts = self.mcp_manager.get_all_prompts().await;
+
             let mut output = format!("**MCP Servers ({} connected):**\n\n", servers.len());
             for server in &servers {
                 let server_tools: Vec<_> = tools.iter().filter(|(s, _)| s == server).collect();
-                output.push_str(&format!("**{}** ({} tools)\n", server, server_tools.len()));
+                let server_resources: Vec<_> = resources.iter().filter(|(s, _)| s == server).collect();
+                let server_prompts: Vec<_> = prompts.iter().filter(|(s, _)| s == server).collect();
+                output.push_str(&format!("**{}** ({} tools, {} resources, {} prompts)\n",
+                    server, server_tools.len(), server_resources.len(), server_prompts.len()));
                 for (_, tool) in server_tools {
                     let desc = tool.description.as_deref().unwrap_or("No description");
                     output.push_str(&format!("  - `{}`: {}\n", tool.name, desc));
+                }
+                output.push('\n');
+            }
+
+            output.push_str("**Commands:**\n");
+            output.push_str("- `/mcp health` - Show server health status\n");
+            output.push_str("- `/mcp resources` - List available resources\n");
+            output.push_str("- `/mcp read <server> <uri>` - Read a resource\n");
+            output.push_str("- `/mcp prompts` - List available prompts\n");
+            output.push_str("- `/mcp prompt <server> <name> [arg=value ...]` - Get a prompt\n");
+
+            return Some(json!({
+                "type": "chat_complete",
+                "user_message_id": "",
+                "assistant_message_id": "",
+                "content": output,
+                "artifacts": [],
+                "thinking": null
+            }));
+        }
+
+        // Show MCP server health status
+        if content == "/mcp health" {
+            let health = self.mcp_manager.get_all_health().await;
+
+            if health.is_empty() {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "No MCP servers connected.\n\nUse `/mcp` to see configuration instructions.",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            let mut output = "**MCP Server Health:**\n\n".to_string();
+            for h in health {
+                let status = if h.connected { "Healthy" } else { "Unhealthy" };
+                let status_icon = if h.connected { "OK" } else { "FAIL" };
+                output.push_str(&format!(
+                    "**{}** [{}]\n  - Status: {}\n  - Success Rate: {:.1}%\n  - Total Requests: {}\n  - Consecutive Failures: {}\n",
+                    h.name,
+                    status_icon,
+                    status,
+                    h.success_rate() * 100.0,
+                    h.total_requests,
+                    h.consecutive_failures
+                ));
+                if let Some(err) = &h.last_error {
+                    output.push_str(&format!("  - Last Error: {}\n", err));
+                }
+                if let Some(last_success) = h.last_success {
+                    output.push_str(&format!("  - Last Success: {}\n", last_success.format("%Y-%m-%d %H:%M:%S UTC")));
                 }
                 output.push('\n');
             }
@@ -525,6 +589,214 @@ impl UnifiedChatHandler {
                 "artifacts": [],
                 "thinking": null
             }));
+        }
+
+        // List MCP resources
+        if content == "/mcp resources" {
+            let resources = self.mcp_manager.get_all_resources().await;
+
+            if resources.is_empty() {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "No MCP resources available.\n\nMCP servers must advertise resource support and provide resources.",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            let mut output = "**MCP Resources:**\n\n".to_string();
+            let mut current_server = String::new();
+            for (server_name, resource) in resources {
+                if server_name != current_server {
+                    if !current_server.is_empty() {
+                        output.push('\n');
+                    }
+                    output.push_str(&format!("**{}**\n", server_name));
+                    current_server = server_name;
+                }
+                output.push_str(&format!("- `{}` - {}\n", resource.uri, resource.name));
+                if let Some(desc) = &resource.description {
+                    output.push_str(&format!("  {}\n", desc));
+                }
+                if let Some(mime) = &resource.mime_type {
+                    output.push_str(&format!("  Type: {}\n", mime));
+                }
+            }
+            output.push_str("\nUse `/mcp read <server> <uri>` to read a resource.");
+
+            return Some(json!({
+                "type": "chat_complete",
+                "user_message_id": "",
+                "assistant_message_id": "",
+                "content": output,
+                "artifacts": [],
+                "thinking": null
+            }));
+        }
+
+        // Read an MCP resource
+        if content.starts_with("/mcp read ") {
+            let args = content.strip_prefix("/mcp read ").unwrap().trim();
+            let parts: Vec<&str> = args.splitn(2, ' ').collect();
+
+            if parts.len() < 2 {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "Usage: `/mcp read <server> <uri>`\n\nUse `/mcp resources` to see available resources.",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            let server_name = parts[0];
+            let uri = parts[1];
+
+            match self.mcp_manager.read_resource(server_name, uri).await {
+                Ok(result) => {
+                    let mut output = format!("**Resource: {}**\n\n", uri);
+                    for content in &result.contents {
+                        match content {
+                            crate::mcp::protocol::ResourceContent::Text { text, mime_type, .. } => {
+                                if let Some(mime) = mime_type {
+                                    output.push_str(&format!("Type: {}\n\n", mime));
+                                }
+                                output.push_str(text);
+                            }
+                            crate::mcp::protocol::ResourceContent::Blob { mime_type, .. } => {
+                                output.push_str(&format!("[Binary data: {}]", mime_type.as_deref().unwrap_or("unknown")));
+                            }
+                        }
+                    }
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": output,
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+                Err(e) => {
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": format!("Failed to read resource: {}", e),
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+            }
+        }
+
+        // List MCP prompts
+        if content == "/mcp prompts" {
+            let prompts = self.mcp_manager.get_all_prompts().await;
+
+            if prompts.is_empty() {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "No MCP prompts available.\n\nMCP servers must advertise prompt support and provide prompts.",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            let mut output = "**MCP Prompts:**\n\n".to_string();
+            let mut current_server = String::new();
+            for (server_name, prompt) in prompts {
+                if server_name != current_server {
+                    if !current_server.is_empty() {
+                        output.push('\n');
+                    }
+                    output.push_str(&format!("**{}**\n", server_name));
+                    current_server = server_name;
+                }
+                output.push_str(&format!("- `{}`", prompt.name));
+                if let Some(desc) = &prompt.description {
+                    output.push_str(&format!(" - {}", desc));
+                }
+                output.push('\n');
+                if !prompt.arguments.is_empty() {
+                    output.push_str("  Arguments:\n");
+                    for arg in &prompt.arguments {
+                        let required = if arg.required { " (required)" } else { "" };
+                        output.push_str(&format!("    - `{}`{}", arg.name, required));
+                        if let Some(desc) = &arg.description {
+                            output.push_str(&format!(": {}", desc));
+                        }
+                        output.push('\n');
+                    }
+                }
+            }
+            output.push_str("\nUse `/mcp prompt <server> <name> [arg=value ...]` to get a prompt.");
+
+            return Some(json!({
+                "type": "chat_complete",
+                "user_message_id": "",
+                "assistant_message_id": "",
+                "content": output,
+                "artifacts": [],
+                "thinking": null
+            }));
+        }
+
+        // Get an MCP prompt
+        if content.starts_with("/mcp prompt ") {
+            let args = content.strip_prefix("/mcp prompt ").unwrap().trim();
+            let parts: Vec<&str> = args.split_whitespace().collect();
+
+            if parts.len() < 2 {
+                return Some(json!({
+                    "type": "chat_complete",
+                    "user_message_id": "",
+                    "assistant_message_id": "",
+                    "content": "Usage: `/mcp prompt <server> <name> [arg=value ...]`\n\nUse `/mcp prompts` to see available prompts.",
+                    "artifacts": [],
+                    "thinking": null
+                }));
+            }
+
+            let server_name = parts[0];
+            let prompt_name = parts[1];
+
+            // Parse additional arguments (arg=value format)
+            let mut arguments = std::collections::HashMap::new();
+            for part in parts.iter().skip(2) {
+                if let Some((key, value)) = part.split_once('=') {
+                    arguments.insert(key.to_string(), value.to_string());
+                }
+            }
+
+            match self.mcp_manager.get_prompt(server_name, prompt_name, arguments).await {
+                Ok(result) => {
+                    let output = format!("**Prompt: {}**\n\n```json\n{}\n```", prompt_name, serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()));
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": output,
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+                Err(e) => {
+                    return Some(json!({
+                        "type": "chat_complete",
+                        "user_message_id": "",
+                        "assistant_message_id": "",
+                        "content": format!("Failed to get prompt: {}", e),
+                        "artifacts": [],
+                        "thinking": null
+                    }));
+                }
+            }
         }
 
         // Rewind to a checkpoint

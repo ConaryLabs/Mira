@@ -17,10 +17,13 @@ pub mod code_intelligence;
 pub mod external;
 pub mod file_operations;
 pub mod git_analysis;
+pub mod mcp;
 pub mod project_management;
 pub mod skills;
 
 use serde_json::Value;
+
+use crate::mcp::McpManager;
 
 /// Get all delegation tool schemas for LLM
 /// Includes code generation tools and all analysis tools
@@ -71,6 +74,9 @@ pub fn get_llm_tools() -> Vec<Value> {
     // Project management tools
     tools.extend(project_management::get_tools());
 
+    // Agent spawning tools (spawn_agent, spawn_agents_parallel)
+    tools.extend(agents::get_tools());
+
     tools
 }
 
@@ -97,4 +103,32 @@ pub fn get_file_low_level_tools() -> Vec<Value> {
 /// Get all external tools
 pub fn get_external_tools() -> Vec<Value> {
     external::get_tools()
+}
+
+/// Get all delegation tool schemas for LLM including MCP tools (async)
+///
+/// Use this when you have access to McpManager for full tool discovery
+pub async fn get_delegation_tools_with_mcp(mcp_manager: Option<&McpManager>) -> Vec<Value> {
+    let mut tools = get_delegation_tools();
+
+    // Add MCP tools if manager is available
+    if let Some(manager) = mcp_manager {
+        tools.extend(mcp::get_mcp_tools(manager).await);
+    }
+
+    tools
+}
+
+/// Get tool schemas for LLM including MCP tools (async)
+///
+/// Use this when you have access to McpManager for full tool discovery
+pub async fn get_llm_tools_with_mcp(mcp_manager: Option<&McpManager>) -> Vec<Value> {
+    let mut tools = get_llm_tools();
+
+    // Add MCP tools if manager is available
+    if let Some(manager) = mcp_manager {
+        tools.extend(mcp::get_mcp_tools(manager).await);
+    }
+
+    tools
 }

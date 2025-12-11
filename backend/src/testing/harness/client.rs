@@ -438,8 +438,8 @@ impl TestClient {
     }
 
     /// Send a chat message and capture all events until completion
-    pub async fn send_and_capture(&mut self, prompt: &str) -> Result<CapturedEvents> {
-        self.send_and_capture_with_timeout(prompt, self.timeout).await
+    pub async fn send_and_capture(&mut self, prompt: &str, force_tool: Option<String>) -> Result<CapturedEvents> {
+        self.send_and_capture_with_timeout(prompt, self.timeout, force_tool).await
     }
 
     /// Send a chat message with custom timeout
@@ -447,8 +447,9 @@ impl TestClient {
         &mut self,
         prompt: &str,
         timeout: Duration,
+        force_tool: Option<String>,
     ) -> Result<CapturedEvents> {
-        info!("[TestClient] Sending prompt: {}", &prompt[..prompt.len().min(100)]);
+        info!("[TestClient] Sending prompt: {}, force_tool: {:?}", &prompt[..prompt.len().min(100)], force_tool);
 
         // Clear event log
         self.event_log.clear();
@@ -460,6 +461,7 @@ impl TestClient {
             session_id: self.session_id.clone(),
             system_access_mode: self.access_mode.clone(),
             metadata: None,
+            force_tool, // Pass through for deterministic tool testing
         };
 
         let json = serde_json::to_string(&msg)?;

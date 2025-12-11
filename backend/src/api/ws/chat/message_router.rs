@@ -49,8 +49,9 @@ impl MessageRouter {
                 session_id,
                 system_access_mode,
                 metadata,
+                force_tool,
             } => {
-                self.handle_chat_message(content, project_id, session_id, system_access_mode, metadata)
+                self.handle_chat_message(content, project_id, session_id, system_access_mode, metadata, force_tool)
                     .await
             }
             WsClientMessage::ProjectCommand { method, params } => {
@@ -94,13 +95,14 @@ impl MessageRouter {
         message_session_id: Option<String>,
         system_access_mode: crate::api::ws::message::SystemAccessMode,
         metadata: Option<MessageMetadata>,
+        force_tool: Option<String>,
     ) -> Result<()> {
         // Use session_id from message if provided, otherwise use connection's default
         let session_id = message_session_id.unwrap_or_else(|| self.session_id.clone());
 
         info!(
-            "Processing chat message from {} (routing via LLM) with session_id: {}, access_mode: {:?}",
-            self.addr, session_id, system_access_mode
+            "Processing chat message from {} (routing via LLM) with session_id: {}, access_mode: {:?}, force_tool: {:?}",
+            self.addr, session_id, system_access_mode, force_tool
         );
 
         let request = ChatRequest {
@@ -109,6 +111,7 @@ impl MessageRouter {
             project_id,
             system_access_mode,
             metadata,
+            force_tool,
         };
 
         // Create channel for operation events

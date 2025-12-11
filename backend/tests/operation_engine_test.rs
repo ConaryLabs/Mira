@@ -146,6 +146,7 @@ async fn test_operation_engine_lifecycle() {
         None, // checkpoint_manager
         None, // project_store
         None, // session_cache_store
+        None, // mcp_manager
     );
 
     // Create event channel
@@ -314,6 +315,7 @@ async fn test_operation_cancellation() {
         None, // checkpoint_manager
         None, // project_store
         None, // session_cache_store
+        None, // mcp_manager
     );
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -427,6 +429,7 @@ async fn test_multiple_operations() {
         None, // checkpoint_manager
         None, // project_store
         None, // session_cache_store
+        None, // mcp_manager
     );
 
     // Create multiple operations
@@ -530,6 +533,7 @@ async fn test_operation_event_ordering() {
         None, // checkpoint_manager
         None, // project_store
         None, // session_cache_store
+        None, // mcp_manager
     );
 
     let (tx, _rx) = mpsc::channel(100);
@@ -636,6 +640,7 @@ async fn test_operation_retrieval() {
         None, // checkpoint_manager
         None, // project_store
         None, // session_cache_store
+        None, // mcp_manager
     );
 
     // Create operation with specific fields

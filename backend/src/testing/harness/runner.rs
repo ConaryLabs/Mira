@@ -201,8 +201,8 @@ impl ScenarioRunner {
                 step.prompt
             );
 
-            // Send prompt and capture events
-            match c.send_and_capture(&prompt_with_context).await {
+            // Send prompt and capture events (pass force_tool for deterministic testing)
+            match c.send_and_capture(&prompt_with_context, step.force_tool.clone()).await {
                 Ok(e) => e,
                 Err(e) => {
                     error!("Step '{}' failed to execute: {}", step.name, e);

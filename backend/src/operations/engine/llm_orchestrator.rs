@@ -15,7 +15,7 @@ use crate::cache::LlmCache;
 use crate::checkpoint::CheckpointManager;
 use crate::hooks::{HookEnv, HookManager, HookTrigger};
 use crate::llm::provider::{
-    FunctionCall, Message, OpenAIModel, OpenAIPricing, ToolCallInfo, ToolResponse,
+    FunctionCall, Message, OpenAIModel, OpenAIPricing, ToolCallInfo, ToolContext, ToolResponse,
 };
 use crate::llm::router::{ModelRouter, ModelTier};
 use crate::operations::engine::tool_router::ToolRouter;
@@ -359,6 +359,7 @@ impl LlmOrchestrator {
             SystemAccessMode::default(),
             operation_id,
             event_tx,
+            None, // No force_tool
         )
         .await
     }
@@ -374,8 +375,9 @@ impl LlmOrchestrator {
         system_access_mode: SystemAccessMode,
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        force_tool: Option<String>,
     ) -> Result<String> {
-        info!("[ORCHESTRATOR] Executing with LLM, access_mode={:?}", system_access_mode);
+        info!("[ORCHESTRATOR] Executing with LLM, access_mode={:?}, force_tool={:?}", system_access_mode, force_tool);
         self.execute_with_tools(
             user_id,
             operation_id,
@@ -385,6 +387,7 @@ impl LlmOrchestrator {
             system_access_mode,
             session_id,
             event_tx,
+            force_tool,
         )
         .await
     }
@@ -400,6 +403,7 @@ impl LlmOrchestrator {
         system_access_mode: SystemAccessMode,
         session_id: &str,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        force_tool: Option<String>,
     ) -> Result<String> {
         let start_time = Instant::now();
         info!(
@@ -479,12 +483,16 @@ impl LlmOrchestrator {
                 let provider = self.router.get_provider(current_tier);
 
                 // Call LLM with tools using the system prompt (preserves persona)
+                // Build ToolContext if force_tool is specified
+                let tool_context = force_tool.as_ref().map(|ft| ToolContext {
+                    force_tool: Some(ft.clone()),
+                });
                 let resp = match provider
                     .chat_with_tools(
                         messages.clone(),
                         system_prompt.clone(),
                         tools.clone(),
-                        None, // No special context needed
+                        tool_context,
                     )
                     .await
                 {

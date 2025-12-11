@@ -577,6 +577,7 @@ impl MiraClient {
             session_id: self.session_id.clone(),
             system_access_mode: Default::default(), // CLI defaults to project-only access
             metadata,
+            force_tool: None, // CLI doesn't force specific tools
         };
 
         self.send_message(&msg).await

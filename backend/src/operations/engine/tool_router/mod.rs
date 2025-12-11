@@ -7,7 +7,7 @@ mod file_routes;
 mod llm_conversation;
 mod registry;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,6 +15,7 @@ use tracing::info;
 
 use crate::api::ws::message::SystemAccessMode;
 use crate::llm::provider::LlmProvider;
+use crate::mcp::McpManager;
 use crate::memory::features::code_intelligence::CodeIntelligenceService;
 use crate::project::guidelines::ProjectGuidelinesService;
 use crate::project::{ProjectStore, ProjectTaskService};
@@ -36,6 +37,7 @@ pub struct ToolRouter {
     project_task_service: Option<Arc<ProjectTaskService>>,
     guidelines_service: Option<Arc<ProjectGuidelinesService>>,
     project_store: Option<Arc<ProjectStore>>,
+    mcp_manager: Option<Arc<McpManager>>,
     registry: ToolRegistry,
 }
 
@@ -63,8 +65,20 @@ impl ToolRouter {
             project_task_service: None,
             guidelines_service: None,
             project_store: None,
+            mcp_manager: None,
             registry: ToolRegistry::new(),
         }
+    }
+
+    /// Set the MCP manager for external tool server integration
+    pub fn with_mcp_manager(mut self, manager: Arc<McpManager>) -> Self {
+        self.mcp_manager = Some(manager);
+        self
+    }
+
+    /// Get the MCP manager if available
+    pub fn mcp_manager(&self) -> Option<&Arc<McpManager>> {
+        self.mcp_manager.as_ref()
     }
 
     /// Set the project task service for task management
@@ -93,6 +107,11 @@ impl ToolRouter {
     /// 3. Results returned to LLM
     pub async fn route_tool_call(&self, tool_name: &str, arguments: Value) -> Result<Value> {
         info!("[ROUTER] Routing tool: {}", tool_name);
+
+        // Handle MCP tools first (prefix: mcp__{server}__{tool})
+        if tool_name.starts_with("mcp__") {
+            return self.route_mcp_tool(tool_name, arguments).await;
+        }
 
         // Check registry for simple pass-through tools (git, code, external)
         if let Some(route) = self.registry.get_route(tool_name) {
@@ -307,7 +326,52 @@ impl ToolRouter {
             HandlerType::External => {
                 self.external_handlers.execute_tool(&route.internal_name, arguments).await
             }
+            HandlerType::Mcp => {
+                // MCP tools should be routed via route_mcp_tool, not registry
+                // This is a fallback that shouldn't normally be reached
+                Err(anyhow::anyhow!("MCP tools should use route_mcp_tool"))
+            }
         }
+    }
+
+    /// Route an MCP tool call to the appropriate server
+    ///
+    /// MCP tools are named as `mcp__{server}__{tool}` where:
+    /// - server: The MCP server name from config
+    /// - tool: The tool name within that server
+    async fn route_mcp_tool(&self, tool_name: &str, arguments: Value) -> Result<Value> {
+        let mcp = self.mcp_manager.as_ref()
+            .context("MCP manager not configured - cannot route MCP tool calls")?;
+
+        // Parse tool name: mcp__{server}__{tool}
+        let without_prefix = tool_name.strip_prefix("mcp__")
+            .context("Invalid MCP tool name - missing prefix")?;
+
+        let parts: Vec<&str> = without_prefix.splitn(2, "__").collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!(
+                "Invalid MCP tool name format. Expected 'mcp__{{server}}__{{tool}}', got '{}'",
+                tool_name
+            ));
+        }
+
+        let server_name = parts[0];
+        let actual_tool_name = parts[1];
+
+        info!(
+            "[ROUTER] MCP tool call: server='{}', tool='{}', args={}",
+            server_name, actual_tool_name,
+            serde_json::to_string(&arguments).unwrap_or_default()
+        );
+
+        // Call the tool on the MCP server
+        let result = mcp.call_tool(server_name, actual_tool_name, arguments).await
+            .with_context(|| format!(
+                "Failed to execute MCP tool '{}' on server '{}'",
+                actual_tool_name, server_name
+            ))?;
+
+        Ok(result)
     }
 
     /// Route native shell command from GPT-5.1
