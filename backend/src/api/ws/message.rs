@@ -55,6 +55,10 @@ pub enum WsClientMessage {
         #[serde(default)]
         system_access_mode: SystemAccessMode,
         metadata: Option<MessageMetadata>,
+        /// Force the LLM to call a specific tool by name
+        /// Used by test harness to ensure deterministic tool execution
+        #[serde(default)]
+        force_tool: Option<String>,
     },
     Command {
         command: String,

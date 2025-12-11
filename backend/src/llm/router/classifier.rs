@@ -219,6 +219,18 @@ impl TaskClassifier {
         task: &RoutingTask,
         user_message: &str,
     ) -> Option<CodexSpawnTrigger> {
+        // Check for explicit opt-out patterns - user wants direct execution
+        let message_lower = user_message.to_lowercase();
+        if message_lower.contains("do not delegate")
+            || message_lower.contains("don't delegate")
+            || message_lower.contains("call the tool directly")
+            || message_lower.contains("execute directly")
+            || message_lower.contains("immediately use the")
+            || message_lower.contains("immediately call")
+        {
+            return None;
+        }
+
         // Check for agentic operations first (highest priority)
         if let Some(ref op_kind) = task.operation_kind {
             if Self::AGENTIC_OPERATIONS.iter().any(|o| op_kind.contains(o)) {
@@ -256,7 +268,7 @@ impl TaskClassifier {
         }
 
         // Pattern-based detection from user message
-        let message_lower = user_message.to_lowercase();
+        // (message_lower already computed at start of function)
         let mut detected_patterns: Vec<String> = Vec::new();
         let mut pattern_count = 0;
 

@@ -315,12 +315,15 @@ impl AppState {
 
         // Initialize ToolRouter for AgentManager (separate instance from OperationEngine)
         let project_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let agent_tool_router = Arc::new(ToolRouter::new(
-            llm_provider.clone(),
-            project_dir,
-            code_intelligence.clone(),
-            None, // Agents don't need sudo service
-        ));
+        let agent_tool_router = Arc::new(
+            ToolRouter::new(
+                llm_provider.clone(),
+                project_dir,
+                code_intelligence.clone(),
+                None, // Agents don't need sudo service
+            )
+            .with_mcp_manager(mcp_manager.clone()),
+        );
 
         // Initialize Agent Manager
         info!("Initializing Agent Manager");
@@ -415,6 +418,7 @@ impl AppState {
             Some(checkpoint_manager.clone()),
             Some(project_store.clone()),
             Some(session_cache_store.clone()),
+            Some(mcp_manager.clone()),
         ));
 
         // Initialize authentication service

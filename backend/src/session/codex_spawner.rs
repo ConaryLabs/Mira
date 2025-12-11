@@ -250,6 +250,7 @@ async fn run_codex_session(
                 system_prompt.clone(),
                 tools.clone(),
                 previous_response_id.clone(),
+                None, // No tool forcing for Codex sessions - let model decide
             )
             .await
             .context("LLM call failed")?;

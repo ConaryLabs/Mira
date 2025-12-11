@@ -122,7 +122,59 @@ pub struct McpResource {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default, rename = "mimeType")]
+    pub mime_type: Option<String>,
     #[serde(default)]
+    pub annotations: Option<ResourceAnnotations>,
+}
+
+/// Resource annotations for audience and priority
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceAnnotations {
+    /// Intended audience: "user", "assistant", or both
+    #[serde(default)]
+    pub audience: Vec<String>,
+    /// Priority hint (0.0 to 1.0)
+    #[serde(default)]
+    pub priority: Option<f32>,
+}
+
+/// Resource content - can be text or binary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResourceContent {
+    #[serde(rename = "text")]
+    Text {
+        uri: String,
+        text: String,
+        #[serde(rename = "mimeType")]
+        mime_type: Option<String>,
+    },
+    #[serde(rename = "blob")]
+    Blob {
+        uri: String,
+        /// Base64-encoded binary data
+        blob: String,
+        #[serde(rename = "mimeType")]
+        mime_type: Option<String>,
+    },
+}
+
+/// Result from reading a resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceReadResult {
+    pub contents: Vec<ResourceContent>,
+}
+
+/// Resource template for dynamic URIs (RFC 6570)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResourceTemplate {
+    #[serde(rename = "uriTemplate")]
+    pub uri_template: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default, rename = "mimeType")]
     pub mime_type: Option<String>,
 }
 

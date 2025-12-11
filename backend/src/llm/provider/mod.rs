@@ -180,10 +180,12 @@ pub struct ToolResponse {
     pub raw_response: Value, // Full API response
 }
 
-/// Context for multi-turn conversations
-#[derive(Debug, Clone)]
-pub enum ToolContext {
-    // Reserved for future multi-turn context if needed
+/// Context for tool calling configuration
+#[derive(Debug, Clone, Default)]
+pub struct ToolContext {
+    /// Force specific tool choice behavior
+    /// None = auto (model decides), Some(name) = force specific tool
+    pub force_tool: Option<String>,
 }
 
 /// Universal LLM provider interface

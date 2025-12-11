@@ -517,17 +517,40 @@ impl OpenAIProvider {
         system: String,
         tools: Vec<Value>,
         previous_response_id: Option<String>,
+        context: Option<ToolContext>,
     ) -> Result<ToolResponse> {
         let start = Instant::now();
 
         let input = self.messages_to_input(&messages, &system);
         let responses_tools = self.tools_to_responses(&tools);
 
+        // Build tool_choice based on context
+        // Note: Responses API uses {"type": "function", "name": "xxx"} format
+        // (NOT the Chat Completions API format {"type": "function", "function": {"name": "xxx"}})
+        let tool_choice = match context.as_ref().and_then(|c| c.force_tool.as_ref()) {
+            Some(tool_name) => {
+                info!(
+                    "OpenAI {} chat_with_tools_continuing: FORCING tool '{}'",
+                    self.model, tool_name
+                );
+                serde_json::json!({
+                    "type": "function",
+                    "name": tool_name
+                })
+            }
+            None => serde_json::json!("auto"),
+        };
+
         info!(
-            "OpenAI {} chat_with_tools_continuing: {} tools, prev_id: {:?}",
+            "OpenAI {} chat_with_tools_continuing: {} tools, prev_id: {:?}, tool_choice: {}",
             self.model,
             responses_tools.len(),
-            previous_response_id.as_ref().map(|id| &id[..id.len().min(12)])
+            previous_response_id.as_ref().map(|id| &id[..id.len().min(12)]),
+            if context.as_ref().and_then(|c| c.force_tool.as_ref()).is_some() {
+                "forced"
+            } else {
+                "auto"
+            }
         );
 
         let request = ResponsesRequest {
@@ -539,7 +562,7 @@ impl OpenAIProvider {
             } else {
                 Some(responses_tools)
             },
-            tool_choice: Some(serde_json::json!("auto")),
+            tool_choice: Some(tool_choice),
             max_output_tokens: None,
             stream: None,
             store: Some(true), // Store for compaction continuity
@@ -680,17 +703,39 @@ impl LlmProvider for OpenAIProvider {
         messages: Vec<Message>,
         system: String,
         tools: Vec<Value>,
-        _context: Option<ToolContext>,
+        context: Option<ToolContext>,
     ) -> Result<ToolResponse> {
         let start = Instant::now();
 
         let input = self.messages_to_input(&messages, &system);
         let responses_tools = self.tools_to_responses(&tools);
 
+        // Build tool_choice based on context
+        // Note: Responses API uses {"type": "function", "name": "xxx"} format
+        // (NOT the Chat Completions API format {"type": "function", "function": {"name": "xxx"}})
+        let tool_choice = match context.as_ref().and_then(|c| c.force_tool.as_ref()) {
+            Some(tool_name) => {
+                info!(
+                    "OpenAI {} chat_with_tools: FORCING tool '{}'",
+                    self.model, tool_name
+                );
+                serde_json::json!({
+                    "type": "function",
+                    "name": tool_name
+                })
+            }
+            None => serde_json::json!("auto"),
+        };
+
         info!(
-            "OpenAI {} chat_with_tools: {} tools",
+            "OpenAI {} chat_with_tools: {} tools, tool_choice: {}",
             self.model,
-            responses_tools.len()
+            responses_tools.len(),
+            if context.as_ref().and_then(|c| c.force_tool.as_ref()).is_some() {
+                "forced"
+            } else {
+                "auto"
+            }
         );
 
         let request = ResponsesRequest {
@@ -702,7 +747,7 @@ impl LlmProvider for OpenAIProvider {
             } else {
                 Some(responses_tools)
             },
-            tool_choice: Some(serde_json::json!("auto")),
+            tool_choice: Some(tool_choice),
             max_output_tokens: None,
             stream: None,
             store: Some(false),

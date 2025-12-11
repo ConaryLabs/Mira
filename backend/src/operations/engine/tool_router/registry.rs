@@ -9,6 +9,7 @@ pub enum HandlerType {
     Git,
     Code,
     External,
+    Mcp,
 }
 
 /// Route configuration for a tool

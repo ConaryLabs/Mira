@@ -41,6 +41,7 @@ impl OperationManager {
         project_id: Option<String>,
         system_access_mode: SystemAccessMode,
         ws_tx: mpsc::Sender<serde_json::Value>,
+        force_tool: Option<String>,
     ) -> Result<String> {
         // Use provided project_id, or try to resolve from session's project_path
         let project_id = match project_id {
@@ -84,11 +85,13 @@ impl OperationManager {
         let cancel = cancel_token.clone();
         let active_ops = self.active_operations.clone();
         let access_mode = system_access_mode;
+        let force_tool_clone = force_tool.clone();
 
         tokio::spawn(async move {
             tracing::info!(
                 operation_id = %op_id,
                 access_mode = ?access_mode,
+                force_tool = ?force_tool_clone,
                 "Starting operation with system access mode"
             );
 
@@ -102,6 +105,7 @@ impl OperationManager {
                     access_mode,
                     Some(cancel),
                     &event_tx,
+                    force_tool_clone,
                 )
                 .await;
 

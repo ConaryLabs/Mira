@@ -7,7 +7,9 @@
 use serde_json::Value;
 
 // Re-export from tools module for backward compatibility
-pub use super::tools::{get_delegation_tools, get_llm_tools};
+pub use super::tools::{
+    get_delegation_tools, get_delegation_tools_with_mcp, get_llm_tools, get_llm_tools_with_mcp,
+};
 
 /// Parse tool call arguments from LLM response
 /// Returns (tool_name, parsed_args)

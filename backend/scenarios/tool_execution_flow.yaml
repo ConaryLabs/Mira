@@ -1,0 +1,145 @@
+name: "Tool Execution Flow - Multi-Tool Workflows"
+description: "Test complex tool execution patterns including chaining and parallel execution"
+tags: ["tools", "workflow", "chaining", "e2e"]
+timeout_seconds: 300
+
+setup:
+  create_dirs:
+    - "src"
+    - "docs"
+  create_files:
+    - path: "project.json"
+      content: |
+        {
+          "name": "test-project",
+          "version": "1.0.0",
+          "description": "A test project for tool execution scenarios",
+          "dependencies": {
+            "serde": "1.0",
+            "tokio": "1.0",
+            "anyhow": "1.0"
+          }
+        }
+    - path: "src/main.rs"
+      content: |
+        // Main application entry point
+        mod utils;
+        mod processor;
+
+        fn main() {
+            println!("Hello, world!");
+            let result = processor::run();
+            println!("Result: {}", result);
+        }
+    - path: "src/utils.rs"
+      content: |
+        // Utility functions
+
+        pub fn helper() -> String {
+            "helper result".to_string()
+        }
+
+        pub fn format_message(msg: &str) -> String {
+            format!("[MSG] {}", msg)
+        }
+    - path: "src/processor.rs"
+      content: |
+        // Processing logic
+        use crate::utils::helper;
+
+        pub fn run() -> String {
+            let h = helper();
+            format!("Processed: {}", h)
+        }
+    - path: "docs/README.md"
+      content: |
+        # Project Documentation
+
+        This is a test project for validating tool execution flows.
+
+        ## Features
+        - Main application
+        - Utility functions
+        - Processing module
+
+steps:
+  - name: "Sequential tool execution - read then search"
+    prompt: |
+      IMMEDIATELY use tools to do this:
+      1. Use read_project_file to read project.json
+      2. Use search_codebase to find "pub fn" in the codebase
+      Tell me the dependencies and function names you find.
+
+      Do NOT delegate this to a background session. Call the tools directly.
+    timeout_seconds: 90
+    assertions:
+      - type: completed_successfully
+      - type: tool_executed
+        tool_name: read_project_file
+        success: true
+      - type: tool_executed
+        tool_name: search_codebase
+        success: true
+      - type: response_contains
+        text: "serde"
+      - type: response_contains
+        text: "helper"
+
+  - name: "Multiple tool types in single request"
+    prompt: |
+      IMMEDIATELY use tools to complete these 3 tasks:
+      1. Use list_project_files to list files
+      2. Use read_project_file to read src/main.rs
+      3. Use search_codebase to find "processor"
+
+      Do NOT delegate this to a background session. Call all three tools directly.
+    timeout_seconds: 90
+    assertions:
+      - type: completed_successfully
+      - type: tool_executed
+        tool_name: list_project_files
+        success: true
+      - type: tool_executed
+        tool_name: read_project_file
+        success: true
+      - type: tool_executed
+        tool_name: search_codebase
+        success: true
+      - type: response_contains
+        text: "main.rs"
+
+  - name: "File modification workflow"
+    prompt: |
+      IMMEDIATELY use read_project_file to read src/main.rs, then use edit_project_file to add this comment at the very top of the file before all other content:
+      // Modified by mira-test scenario
+
+      Do NOT delegate this to a background session. Call the tools directly.
+    timeout_seconds: 90
+    force_tool: edit_project_file
+    assertions:
+      - type: completed_successfully
+      - type: tool_executed
+        tool_name: edit_project_file
+        success: true
+      - type: file_contains
+        path: "src/main.rs"
+        text: "// Modified by mira-test scenario"
+
+  - name: "Multi-file analysis"
+    prompt: |
+      IMMEDIATELY use read_project_file to read both src/main.rs and src/utils.rs.
+      Then explain what modules main.rs imports and what functions utils.rs exports.
+
+      Do NOT delegate this to a background session. Call the tools directly.
+    timeout_seconds: 90
+    assertions:
+      - type: completed_successfully
+      - type: response_contains
+        text: "utils"
+      - type: response_contains
+        text: "helper"
+      - type: response_contains
+        text: "processor"
+
+cleanup:
+  remove_project: true

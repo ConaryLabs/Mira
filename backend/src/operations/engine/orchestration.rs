@@ -55,6 +55,7 @@ impl Orchestrator {
         system_access_mode: SystemAccessMode,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        force_tool: Option<String>,
     ) -> Result<()> {
         // Run the inner operation logic
         let result = self
@@ -66,6 +67,7 @@ impl Orchestrator {
                 system_access_mode,
                 cancel_token,
                 event_tx,
+                force_tool,
             )
             .await;
 
@@ -94,6 +96,7 @@ impl Orchestrator {
         system_access_mode: SystemAccessMode,
         cancel_token: Option<CancellationToken>,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        force_tool: Option<String>,
     ) -> Result<()> {
         if let Some(token) = &cancel_token {
             if token.is_cancelled() {
@@ -186,6 +189,7 @@ impl Orchestrator {
             system_access_mode,
             &recall_context,
             event_tx,
+            force_tool,
         )
         .await;
 
@@ -214,6 +218,7 @@ impl Orchestrator {
         system_access_mode: SystemAccessMode,
         recall_context: &crate::memory::features::recall_engine::RecallContext,
         event_tx: &mpsc::Sender<OperationEngineEvent>,
+        force_tool: Option<String>,
     ) -> Result<()> {
         let llm = match &self.llm_orchestrator {
             Some(orch) => orch,
@@ -265,6 +270,7 @@ impl Orchestrator {
                 system_access_mode,
                 session_id,
                 event_tx,
+                force_tool,
             )
             .await
             .context("LLM orchestration failed")?;

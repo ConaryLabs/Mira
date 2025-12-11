@@ -37,6 +37,40 @@ impl Default for ReasoningEffort {
     }
 }
 
+/// Tool choice configuration for OpenAI API
+/// Controls whether and which tool the model should call
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// Model decides whether to call a tool (default behavior)
+    Auto,
+    /// Model must call a tool, but can choose which one
+    Required,
+    /// Force the model to call a specific tool by name
+    Function(String),
+}
+
+impl Default for ToolChoice {
+    fn default() -> Self {
+        ToolChoice::Auto
+    }
+}
+
+impl ToolChoice {
+    /// Convert to JSON value for API request
+    /// Note: Responses API uses {"type": "function", "name": "xxx"} format
+    /// (NOT the Chat Completions API format {"type": "function", "function": {"name": "xxx"}})
+    pub fn to_json(&self) -> Value {
+        match self {
+            ToolChoice::Auto => serde_json::json!("auto"),
+            ToolChoice::Required => serde_json::json!("required"),
+            ToolChoice::Function(name) => serde_json::json!({
+                "type": "function",
+                "name": name
+            }),
+        }
+    }
+}
+
 impl std::fmt::Display for ReasoningEffort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
