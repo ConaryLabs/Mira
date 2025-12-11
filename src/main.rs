@@ -11,11 +11,23 @@ use rmcp::{
 };
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 mod tools;
 use tools::*;
+
+// === Project Context ===
+
+/// Active project context for scoping data
+#[derive(Clone, Debug)]
+pub struct ProjectContext {
+    pub id: i64,
+    pub path: String,
+    pub name: String,
+    pub project_type: Option<String>,
+}
 
 // === Mira MCP Server ===
 
@@ -24,6 +36,7 @@ pub struct MiraServer {
     db: Arc<SqlitePool>,
     semantic: Arc<SemanticSearch>,
     tool_router: ToolRouter<Self>,
+    active_project: Arc<RwLock<Option<ProjectContext>>>,
 }
 
 impl MiraServer {
@@ -43,7 +56,18 @@ impl MiraServer {
             db: Arc::new(db),
             semantic: Arc::new(semantic),
             tool_router: Self::tool_router(),
+            active_project: Arc::new(RwLock::new(None)),
         })
+    }
+
+    /// Get the active project context (if set)
+    pub async fn get_active_project(&self) -> Option<ProjectContext> {
+        self.active_project.read().await.clone()
+    }
+
+    /// Set the active project context
+    pub async fn set_active_project(&self, ctx: Option<ProjectContext>) {
+        *self.active_project.write().await = ctx;
     }
 }
 
@@ -67,16 +91,18 @@ impl MiraServer {
 
     // === Memory (semantic search) ===
 
-    #[tool(description = "Remember a fact, decision, preference, or context for future sessions. Stores in both SQLite and vector database for semantic recall.")]
+    #[tool(description = "Remember a fact, decision, preference, or context for future sessions. Stores in both SQLite and vector database for semantic recall. Automatically scoped to active project (except preferences which are global).")]
     async fn remember(&self, Parameters(req): Parameters<RememberRequest>) -> Result<CallToolResult, McpError> {
-        let result = memory::remember(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = memory::remember(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    #[tool(description = "Search through stored memories using semantic similarity. Find memories by meaning, not just exact text match.")]
+    #[tool(description = "Search through stored memories using semantic similarity. Returns both project-specific and global memories.")]
     async fn recall(&self, Parameters(req): Parameters<RecallRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
-        let result = memory::recall(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = memory::recall(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No memories found matching '{}'", query)))
     }
 
@@ -88,22 +114,25 @@ impl MiraServer {
 
     // === Cross-Session Memory ===
 
-    #[tool(description = "Store a summary of the current session for cross-session recall. Call at the end of significant sessions.")]
+    #[tool(description = "Store a summary of the current session for cross-session recall. Automatically scoped to the active project.")]
     async fn store_session(&self, Parameters(req): Parameters<StoreSessionRequest>) -> Result<CallToolResult, McpError> {
-        let result = sessions::store_session(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = sessions::store_session(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    #[tool(description = "Search across past sessions using semantic similarity. Find what was discussed, decided, or worked on in previous sessions.")]
+    #[tool(description = "Search across past sessions using semantic similarity. Returns sessions from the active project and global sessions.")]
     async fn search_sessions(&self, Parameters(req): Parameters<SearchSessionsRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
-        let result = sessions::search_sessions(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = sessions::search_sessions(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No past sessions found matching '{}'", query)))
     }
 
-    #[tool(description = "Store an important decision or context for future reference. Decisions are keyed for updates.")]
+    #[tool(description = "Store an important decision or context for future reference. Automatically scoped to the active project.")]
     async fn store_decision(&self, Parameters(req): Parameters<StoreDecisionRequest>) -> Result<CallToolResult, McpError> {
-        let result = sessions::store_decision(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = sessions::store_decision(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
@@ -223,6 +252,40 @@ impl MiraServer {
     }
 
     // === Project Context ===
+
+    #[tool(description = "Set the active project for this session. Call this at the start of each session to enable project-scoped memories and context. Auto-detects project type from Cargo.toml, package.json, etc.")]
+    async fn set_project(&self, Parameters(req): Parameters<SetProjectRequest>) -> Result<CallToolResult, McpError> {
+        let result = project::set_project(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+
+        // Update the active project in server state
+        if let Some(id) = result.get("id").and_then(|v| v.as_i64()) {
+            let ctx = ProjectContext {
+                id,
+                path: result.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                name: result.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                project_type: result.get("project_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            };
+            self.set_active_project(Some(ctx)).await;
+        }
+
+        Ok(json_response(result))
+    }
+
+    #[tool(description = "Get the currently active project for this session. Returns null if no project is set.")]
+    async fn get_project(&self, Parameters(_req): Parameters<GetProjectRequest>) -> Result<CallToolResult, McpError> {
+        match self.get_active_project().await {
+            Some(ctx) => Ok(json_response(serde_json::json!({
+                "id": ctx.id,
+                "path": ctx.path,
+                "name": ctx.name,
+                "project_type": ctx.project_type,
+            }))),
+            None => Ok(json_response(serde_json::json!({
+                "active": false,
+                "message": "No project set. Call set_project() to enable project-scoped data."
+            }))),
+        }
+    }
 
     #[tool(description = "Get coding guidelines and conventions for a project.")]
     async fn get_guidelines(&self, Parameters(req): Parameters<GetGuidelinesRequest>) -> Result<CallToolResult, McpError> {

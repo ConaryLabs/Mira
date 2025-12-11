@@ -4,6 +4,12 @@
 -- Clear existing mira guidelines (idempotent)
 DELETE FROM coding_guidelines WHERE category = 'mira_usage';
 
+-- Project Setup (HIGHEST PRIORITY - do first)
+INSERT INTO coding_guidelines (content, category, project_path, priority, created_at, updated_at) VALUES
+('PROJECT_SETUP: At session start, FIRST call set_project(project_path="/absolute/path/to/project") to enable project-scoped data', 'mira_usage', NULL, 200, strftime('%s', 'now'), strftime('%s', 'now')),
+('PROJECT_SETUP: After set_project(), call get_guidelines(category="mira_usage") to load these instructions', 'mira_usage', NULL, 199, strftime('%s', 'now'), strftime('%s', 'now')),
+('PROJECT_SETUP: Use get_project() to check which project is currently active', 'mira_usage', NULL, 198, strftime('%s', 'now'), strftime('%s', 'now'));
+
 -- Memory Tools
 INSERT INTO coding_guidelines (content, category, project_path, priority, created_at, updated_at) VALUES
 ('REMEMBER: When user states a preference ("I prefer...", "always use...", "we do X here"), use remember() to store it with fact_type="preference"', 'mira_usage', NULL, 100, strftime('%s', 'now'), strftime('%s', 'now')),
