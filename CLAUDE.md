@@ -20,12 +20,12 @@ mira/
     ├── src/
     │   ├── main.rs           # MCP server with 22 tools
     │   ├── lib.rs            # Library exports
+    │   ├── llm.rs            # Embedding provider (OpenAI)
     │   ├── memory/           # Memory storage (SQLite + Qdrant)
     │   ├── git/              # Git intelligence
     │   ├── build/            # Build error tracking
     │   ├── watcher/          # File system watching
-    │   ├── config/           # Configuration
-    │   └── *_stubs.rs        # Compatibility stubs
+    │   └── config/           # Configuration
     ├── data/                 # SQLite database
     └── migrations/           # Database migrations
 ```
@@ -150,10 +150,12 @@ Add to `~/.claude/mcp.json`:
 ## Key Files
 
 - `src/main.rs` - MCP server with all 22 tools
-- `src/lib.rs` - Library exports and compatibility layers
+- `src/lib.rs` - Library exports
+- `src/llm.rs` - Embedding provider (OpenAI text-embedding-3-large)
 - `src/memory/` - Memory storage system
+- `src/memory/context.rs` - Context types for recall operations
 - `src/git/` - Git intelligence
-- `src/llm_stubs.rs` - Embedding support (no LLM calls)
+- `src/git/error.rs` - Git error types
 
 ## Testing
 
