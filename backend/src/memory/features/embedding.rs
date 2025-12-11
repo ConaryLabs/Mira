@@ -3,8 +3,8 @@
 //! Batch embedding generation with API optimization.
 //! The crown jewel of API optimization - saves 90% of API calls.
 
-use crate::llm_compat::embeddings::EmbeddingHead;
-use crate::llm_compat::provider::EmbeddingProvider;
+use crate::llm::EmbeddingHead;
+use crate::llm::EmbeddingProvider;
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::BatchEmbeddingConfig;
 use anyhow::Result;

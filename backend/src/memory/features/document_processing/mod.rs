@@ -8,7 +8,7 @@
 //! - Duplicate detection via SHA-256 hashing
 //! - WebSocket-based upload with progress tracking
 
-use crate::llm_compat::provider::EmbeddingProvider;
+use crate::llm::EmbeddingProvider;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
