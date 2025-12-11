@@ -1,7 +1,7 @@
 // src/memory/features/memory_types.rs
 // Shared types and structs for the memory service modules
 
-use crate::llm::embeddings::EmbeddingHead;
+use crate::llm_compat::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
 use serde::{Deserialize, Serialize};
 

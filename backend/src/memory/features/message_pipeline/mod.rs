@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-use crate::llm::provider::LlmProvider;
+use crate::llm_compat::provider::LlmProvider;
 use crate::memory::storage::sqlite::core::MessageAnalysis;
 
 use self::analyzers::unified::UnifiedAnalyzer;

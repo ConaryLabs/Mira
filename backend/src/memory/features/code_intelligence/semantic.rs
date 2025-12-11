@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::llm::provider::LlmProvider;
+use crate::llm_compat::provider::LlmProvider;
 use crate::memory::features::prompts::code_intelligence as prompts;
 
 // ============================================================================
@@ -706,7 +706,7 @@ Focus on:
             element_type, name, file_path, content
         );
 
-        let messages = vec![crate::llm::provider::Message::user(prompt)];
+        let messages = vec![crate::llm_compat::provider::Message::user(prompt)];
         let response = self
             .llm_provider
             .chat(messages, prompts::SEMANTIC_ANALYZER.to_string())

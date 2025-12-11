@@ -1,6 +1,6 @@
 // src/memory/features/summarization/strategies/rolling_summary.rs
 
-use crate::llm::provider::{LlmProvider, Message};
+use crate::llm_compat::provider::{LlmProvider, Message};
 use crate::memory::core::types::MemoryEntry;
 use crate::memory::features::memory_types::SummaryType;
 use crate::memory::features::prompts::summarization as prompts;

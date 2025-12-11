@@ -2,7 +2,7 @@
 //! Storage layer for documents in SQLite and Qdrant
 
 use crate::config::SYSTEM_CONTEXT;
-use crate::llm::provider::EmbeddingProvider;
+use crate::llm_compat::provider::EmbeddingProvider;
 use anyhow::Result;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{

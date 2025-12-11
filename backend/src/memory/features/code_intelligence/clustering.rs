@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::llm::provider::LlmProvider;
+use crate::llm_compat::provider::LlmProvider;
 use crate::memory::features::prompts::code_intelligence as prompts;
 
 // ============================================================================
@@ -208,7 +208,7 @@ Focus on:
             context
         );
 
-        let messages = vec![crate::llm::provider::Message::user(prompt)];
+        let messages = vec![crate::llm_compat::provider::Message::user(prompt)];
         let response = self
             .llm_provider
             .chat(messages, prompts::DOMAIN_PATTERN_ANALYZER.to_string())

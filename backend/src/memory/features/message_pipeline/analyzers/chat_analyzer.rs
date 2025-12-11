@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
-use crate::llm::provider::{LlmProvider, Message};
+use crate::llm_compat::provider::{LlmProvider, Message};
 use crate::memory::features::prompts::analysis as prompts;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::llm::embeddings::EmbeddingHead;
+use crate::llm_compat::embeddings::EmbeddingHead;
 use crate::memory::core::types::MemoryEntry;
 
 /// Embedding dimensions for text-embedding-3-large
