@@ -7,7 +7,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tracing::{debug, info};
 
-use crate::llm_compat::embeddings::EmbeddingHead;
+use crate::llm::EmbeddingHead;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;
 
 /// Delete all code embeddings for a specific file_id

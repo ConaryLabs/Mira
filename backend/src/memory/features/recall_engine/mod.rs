@@ -14,8 +14,8 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::memory::context::{ContextConfig, ContextOracle, ContextRequest, GatheredContext};
-use crate::llm_compat::embeddings::EmbeddingHead;
-use crate::llm_compat::provider::{EmbeddingProvider, LlmProvider};
+use crate::llm::EmbeddingHead;
+use crate::llm::{EmbeddingProvider, LlmProvider};
 use crate::memory::{
     core::types::MemoryEntry, storage::qdrant::multi_store::QdrantMultiStore,
     storage::sqlite::store::SqliteMemoryStore,

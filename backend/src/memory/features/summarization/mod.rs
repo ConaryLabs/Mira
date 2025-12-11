@@ -4,7 +4,7 @@ pub mod storage;
 pub mod strategies;
 pub mod triggers;
 
-use crate::llm_compat::provider::{EmbeddingProvider, LlmProvider};
+use crate::llm::{EmbeddingProvider, LlmProvider};
 use crate::memory::core::traits::MemoryStore;
 use crate::memory::features::memory_types::SummaryType;
 use crate::memory::storage::qdrant::multi_store::QdrantMultiStore;

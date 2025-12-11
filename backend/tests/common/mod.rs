@@ -7,7 +7,7 @@ use std::sync::Once;
 static INIT: Once = Once::new();
 
 /// Initialize test environment (loads .env file)
-fn init() {
+pub fn init() {
     INIT.call_once(|| {
         dotenv::dotenv().ok();
     });
@@ -22,16 +22,8 @@ pub fn openai_api_key() -> String {
     )
 }
 
-/// Get Google API key for tests - REQUIRED, panics if not set
-#[allow(dead_code)]
-pub fn google_api_key() -> String {
-    env::var("GOOGLE_API_KEY").expect(
-        "GOOGLE_API_KEY environment variable is required for tests. \
-         Set it to run integration tests against the real LLM."
-    )
-}
-
 /// Check if running with real API keys
 pub fn has_real_api_keys() -> bool {
+    init();
     env::var("OPENAI_API_KEY").is_ok()
 }

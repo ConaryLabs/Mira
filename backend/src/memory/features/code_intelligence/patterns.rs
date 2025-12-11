@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::llm_compat::provider::LlmProvider;
+use crate::llm::LlmProvider;
 use crate::memory::features::prompts::code_intelligence as prompts;
 
 // ============================================================================
@@ -303,7 +303,7 @@ If clearly present, set confidence > 0.7.
             pattern_type.as_str()
         );
 
-        let messages = vec![crate::llm_compat::provider::Message::user(prompt)];
+        let messages = vec![crate::llm::Message::user(prompt)];
         let response = self
             .llm_provider
             .chat(messages, prompts::DESIGN_PATTERN_DETECTOR.to_string())

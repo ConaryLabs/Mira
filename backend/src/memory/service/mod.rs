@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::memory::context::{ContextConfig, ContextOracle};
-use crate::llm_compat::provider::{EmbeddingProvider, LlmProvider};
+use crate::llm::{EmbeddingProvider, LlmProvider};
 use crate::memory::{
     features::{
         message_pipeline::MessagePipeline,
