@@ -10,7 +10,6 @@ pub mod utils;
 pub mod context_oracle_stubs;
 pub mod llm_stubs;
 pub mod prompt_stubs;
-pub mod state_stubs;
 
 // Memory and knowledge
 pub mod memory;
@@ -56,9 +55,4 @@ pub mod prompt {
 pub mod context_oracle {
     //! Context oracle compatibility layer
     pub use crate::context_oracle_stubs::*;
-}
-
-pub mod state {
-    //! State compatibility layer
-    pub use crate::state_stubs::*;
 }
