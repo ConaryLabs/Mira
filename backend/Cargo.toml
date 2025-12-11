@@ -32,52 +32,14 @@ schemars = "1"
 
 # Core utilities
 anyhow = "1.0"
-thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 uuid = { version = "1.8", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
-async-trait = "0.1"
-futures = "0.3"
-lazy_static = "1.5"
-dotenv = "0.15"
-regex = "1.11"
-sha2 = "0.10"
 
-# Git integration
-git2 = "0.20"
-
-# File system
-walkdir = "2.5"
-glob = "0.3"
-notify = "8"
-notify-debouncer-full = "0.5"
-dirs = "6.0"
-parking_lot = "0.12"
-
-# Document processing
-lopdf = "0.38"
-zip = "6"
-encoding_rs = "0.8"
-mime_guess = "2.0"
-quick-xml = "0.38"
-pdf-extract = "0.10"
-
-# Code parsing (for code intelligence)
-swc_ecma_parser = "27"
-swc_ecma_ast = "18"
-swc_common = "17"
-swc_ecma_visit = "18"
-syn = { version = "2.0", features = ["full", "extra-traits", "visit"] }
-quote = "1.0"
-proc-macro2 = { version = "1.0", features = ["span-locations"] }
-
-# HTTP client (for embeddings API)
+# HTTP client (for OpenAI embeddings API)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-
-# Streaming
-tokio-stream = { version = "0.1", features = ["net", "io-util"] }
-futures-util = "0.3"
 
 [dev-dependencies]
 tempfile = "3.8"
+dotenv = "0.15"

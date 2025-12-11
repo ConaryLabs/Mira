@@ -160,14 +160,6 @@ pub struct GetRelatedFilesRequest {
     pub limit: Option<i64>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SemanticSearchRequest {
-    #[schemars(description = "Natural language query to find code")]
-    pub query: String,
-    #[schemars(description = "Maximum results (default: 10)")]
-    pub limit: Option<i64>,
-}
-
 // ============================================================================
 // Git Intelligence Tools
 // ============================================================================
