@@ -395,7 +395,10 @@ impl QdrantMultiStore {
         let embedding = point.vectors.and_then(|v| {
             match v.vectors_options {
                 Some(qdrant_client::qdrant::vectors_output::VectorsOptions::Vector(vec)) => {
-                    Some(vec.data)
+                    match vec.into_vector() {
+                        qdrant_client::qdrant::vector_output::Vector::Dense(dense) => Some(dense.data),
+                        _ => None,
+                    }
                 }
                 _ => None,
             }
