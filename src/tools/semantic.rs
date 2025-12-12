@@ -9,7 +9,13 @@ use qdrant_client::qdrant::{
 };
 use qdrant_client::Qdrant;
 use std::collections::HashMap;
+use std::time::Duration;
 use tracing::{debug, info, warn};
+
+/// Timeouts for external API calls
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const EMBED_RETRY_ATTEMPTS: u32 = 2;
+const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 /// Embedding dimensions for gemini-embedding-001 (max precision)
 const EMBEDDING_DIM: u64 = 3072;
@@ -46,10 +52,15 @@ impl SemanticSearch {
             None
         };
 
+        let http_client = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             qdrant,
             gemini_key,
-            http_client: reqwest::Client::new(),
+            http_client,
         }
     }
 
@@ -78,6 +89,7 @@ impl SemanticSearch {
     }
 
     /// Get embedding for text using Google Gemini
+    /// Includes retry logic for transient failures
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let api_key = self.gemini_key.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Gemini API key not configured"))?;
@@ -87,35 +99,68 @@ impl SemanticSearch {
             api_key
         );
 
-        let response = self.http_client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({
-                "model": "models/gemini-embedding-001",
-                "content": {
-                    "parts": [{
-                        "text": text
-                    }]
-                },
-                "outputDimensionality": EMBEDDING_DIM
-            }))
-            .send()
-            .await?;
+        let body = serde_json::json!({
+            "model": "models/gemini-embedding-001",
+            "content": {
+                "parts": [{
+                    "text": text
+                }]
+            },
+            "outputDimensionality": EMBEDDING_DIM
+        });
 
-        let json: serde_json::Value = response.json().await?;
+        let mut last_error = None;
+        for attempt in 0..=EMBED_RETRY_ATTEMPTS {
+            if attempt > 0 {
+                debug!("Retrying embed (attempt {})", attempt + 1);
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
 
-        if let Some(error) = json.get("error") {
-            anyhow::bail!("Gemini API error: {}", error);
+            let result = self.http_client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    let json: serde_json::Value = match response.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            last_error = Some(anyhow::anyhow!("Failed to parse response: {}", e));
+                            continue;
+                        }
+                    };
+
+                    if let Some(error) = json.get("error") {
+                        // Don't retry on auth/quota errors
+                        let error_str = error.to_string();
+                        if error_str.contains("API_KEY") || error_str.contains("QUOTA") {
+                            anyhow::bail!("Gemini API error: {}", error);
+                        }
+                        last_error = Some(anyhow::anyhow!("Gemini API error: {}", error));
+                        continue;
+                    }
+
+                    let embedding = json["embedding"]["values"]
+                        .as_array()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid embedding response"))?
+                        .iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
+
+                    return Ok(embedding);
+                }
+                Err(e) => {
+                    // Retry on network errors
+                    last_error = Some(anyhow::anyhow!("Request failed: {}", e));
+                    continue;
+                }
+            }
         }
 
-        let embedding = json["embedding"]["values"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("Invalid embedding response: {:?}", json))?
-            .iter()
-            .filter_map(|v| v.as_f64().map(|f| f as f32))
-            .collect();
-
-        Ok(embedding)
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Embedding failed after retries")))
     }
 
     /// Store a point in a collection
