@@ -973,14 +973,14 @@ async fn main() -> Result<()> {
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
                     .merge(mcp_router)
-                    .layer(TimeoutLayer::new(Duration::from_secs(60)))
+                    .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
                     .layer(TraceLayer::new_for_http())
             } else {
                 info!("Warning: No auth token set, server is open");
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
                     .nest_service("/mcp", mcp_service)
-                    .layer(TimeoutLayer::new(Duration::from_secs(60)))
+                    .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
                     .layer(TraceLayer::new_for_http())
             };
 
