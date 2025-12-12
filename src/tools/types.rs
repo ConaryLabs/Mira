@@ -445,3 +445,19 @@ pub struct RecordRejectedApproachRequest {
     pub related_topics: Option<String>,
 }
 
+// ============================================================================
+// Indexing Tools
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct IndexRequest {
+    #[schemars(description = "Action: project/file/status")]
+    pub action: String,
+    #[schemars(description = "Project or file path")]
+    pub path: Option<String>,
+    #[schemars(description = "Include git indexing (default: true)")]
+    pub include_git: Option<bool>,
+    #[schemars(description = "Max commits to index (default: 500)")]
+    pub commit_limit: Option<i64>,
+}
+

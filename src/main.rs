@@ -17,7 +17,9 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 mod tools;
+mod indexer;
 use tools::*;
+use indexer::{CodeIndexer, GitIndexer};
 
 // === Project Context ===
 
@@ -555,6 +557,91 @@ impl MiraServer {
         let result = goals::record_rejected_approach(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
+
+    // === Indexing ===
+
+    #[tool(description = "Index code and git history. Actions: project/file/status")]
+    async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<CallToolResult, McpError> {
+        let action = req.action.as_str();
+        match action {
+            "project" => {
+                let path = req.path.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("path required")))?;
+                let path = std::path::Path::new(&path);
+
+                let mut code_indexer = CodeIndexer::with_semantic(
+                    self.db.as_ref().clone(),
+                    Some(self.semantic.clone())
+                ).map_err(to_mcp_err)?;
+                let mut stats = code_indexer.index_directory(path).await.map_err(to_mcp_err)?;
+
+                // Index git if requested (default: true)
+                if req.include_git.unwrap_or(true) {
+                    let git_indexer = GitIndexer::new(self.db.as_ref().clone());
+                    let commit_limit = req.commit_limit.unwrap_or(500) as usize;
+                    let git_stats = git_indexer.index_repository(path, commit_limit).await.map_err(to_mcp_err)?;
+                    stats.merge(git_stats);
+                }
+
+                Ok(json_response(serde_json::json!({
+                    "status": "indexed",
+                    "files_processed": stats.files_processed,
+                    "symbols_found": stats.symbols_found,
+                    "imports_found": stats.imports_found,
+                    "embeddings_generated": stats.embeddings_generated,
+                    "commits_indexed": stats.commits_indexed,
+                    "cochange_patterns": stats.cochange_patterns,
+                    "errors": stats.errors,
+                })))
+            }
+            "file" => {
+                let path = req.path.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("path required")))?;
+                let path = std::path::Path::new(&path);
+
+                let mut code_indexer = CodeIndexer::with_semantic(
+                    self.db.as_ref().clone(),
+                    Some(self.semantic.clone())
+                ).map_err(to_mcp_err)?;
+                let stats = code_indexer.index_file(path).await.map_err(to_mcp_err)?;
+
+                Ok(json_response(serde_json::json!({
+                    "status": "indexed",
+                    "file": req.path,
+                    "symbols_found": stats.symbols_found,
+                    "imports_found": stats.imports_found,
+                    "embeddings_generated": stats.embeddings_generated,
+                })))
+            }
+            "status" => {
+                // Get indexing status from database
+                let symbols: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM code_symbols")
+                    .fetch_one(self.db.as_ref())
+                    .await
+                    .map_err(|e| to_mcp_err(e.into()))?;
+                let imports: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM imports")
+                    .fetch_one(self.db.as_ref())
+                    .await
+                    .map_err(|e| to_mcp_err(e.into()))?;
+                let commits: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM git_commits")
+                    .fetch_one(self.db.as_ref())
+                    .await
+                    .map_err(|e| to_mcp_err(e.into()))?;
+                let cochange: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cochange_patterns")
+                    .fetch_one(self.db.as_ref())
+                    .await
+                    .map_err(|e| to_mcp_err(e.into()))?;
+
+                Ok(json_response(serde_json::json!({
+                    "symbols_indexed": symbols.0,
+                    "imports_indexed": imports.0,
+                    "commits_indexed": commits.0,
+                    "cochange_patterns": cochange.0,
+                })))
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Unknown action: {}. Use project/file/status", action
+            ))])),
+        }
+    }
 }
 
 #[tool_handler]
@@ -569,8 +656,55 @@ impl ServerHandler for MiraServer {
     }
 }
 
+mod daemon;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "mira")]
+#[command(about = "Memory and Intelligence Layer for Claude Code")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the MCP server (default)
+    Serve,
+    /// Daemon management commands
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonAction {
+    /// Start the background watcher daemon
+    Start {
+        /// Project path to watch (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+    /// Stop the daemon
+    Stop {
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+    /// Check daemon status
+    Status {
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .with_writer(std::io::stderr)
@@ -578,20 +712,78 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    info!("Starting Mira MCP Server...");
+    match cli.command {
+        None | Some(Commands::Serve) => {
+            // Default: run MCP server
+            info!("Starting Mira MCP Server...");
 
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
-    let qdrant_url = std::env::var("QDRANT_URL").ok();
-    let gemini_key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .ok();
+            let database_url = std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
+            let qdrant_url = std::env::var("QDRANT_URL").ok();
+            let gemini_key = std::env::var("GEMINI_API_KEY")
+                .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+                .ok();
 
-    let server = MiraServer::new(&database_url, qdrant_url.as_deref(), gemini_key).await?;
-    info!("Server initialized");
+            let server = MiraServer::new(&database_url, qdrant_url.as_deref(), gemini_key).await?;
+            info!("Server initialized");
 
-    let service = server.serve(rmcp::transport::stdio()).await?;
-    service.waiting().await?;
+            let service = server.serve(rmcp::transport::stdio()).await?;
+            service.waiting().await?;
+        }
+        Some(Commands::Daemon { action }) => {
+            let database_url = std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
+            let qdrant_url = std::env::var("QDRANT_URL").ok();
+            let gemini_key = std::env::var("GEMINI_API_KEY")
+                .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+                .ok();
+
+            match action {
+                DaemonAction::Start { path } => {
+                    let project_path = path
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::env::current_dir().unwrap());
+
+                    // Check if already running
+                    if let Some(pid) = daemon::is_running(&project_path) {
+                        println!("Daemon already running with PID {}", pid);
+                        return Ok(());
+                    }
+
+                    info!("Starting Mira daemon for {}", project_path.display());
+                    let d = daemon::Daemon::new(
+                        &project_path,
+                        &database_url,
+                        qdrant_url.as_deref(),
+                        gemini_key,
+                    ).await?;
+                    d.run().await?;
+                }
+                DaemonAction::Stop { path } => {
+                    let project_path = path
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::env::current_dir().unwrap());
+
+                    if daemon::stop(&project_path)? {
+                        println!("Daemon stopped");
+                    } else {
+                        println!("No daemon running");
+                    }
+                }
+                DaemonAction::Status { path } => {
+                    let project_path = path
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::env::current_dir().unwrap());
+
+                    if let Some(pid) = daemon::is_running(&project_path) {
+                        println!("Daemon running with PID {}", pid);
+                    } else {
+                        println!("Daemon not running");
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }
