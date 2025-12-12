@@ -6,11 +6,32 @@ use sqlx::sqlite::SqlitePool;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use super::types::*;
+// === Parameter structs for consolidated build tool ===
+
+pub struct GetBuildErrorsParams {
+    pub file_path: Option<String>,
+    pub category: Option<String>,
+    pub include_resolved: Option<bool>,
+    pub limit: Option<i64>,
+}
+
+pub struct RecordBuildParams {
+    pub command: String,
+    pub success: bool,
+    pub duration_ms: Option<i64>,
+}
+
+pub struct RecordBuildErrorParams {
+    pub message: String,
+    pub category: Option<String>,
+    pub severity: Option<String>,
+    pub file_path: Option<String>,
+    pub line_number: Option<i32>,
+    pub code: Option<String>,
+}
 
 fn hash_error(message: &str) -> String {
     let mut hasher = DefaultHasher::new();
-    // Normalize the message before hashing
     let normalized = message
         .lines()
         .next()
@@ -22,7 +43,7 @@ fn hash_error(message: &str) -> String {
 }
 
 /// Get recent build errors
-pub async fn get_build_errors(db: &SqlitePool, req: GetBuildErrorsRequest) -> anyhow::Result<Vec<serde_json::Value>> {
+pub async fn get_build_errors(db: &SqlitePool, req: GetBuildErrorsParams) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(20);
     let include_resolved = req.include_resolved.unwrap_or(false);
 
@@ -73,14 +94,13 @@ pub async fn get_build_errors(db: &SqlitePool, req: GetBuildErrorsRequest) -> an
 }
 
 /// Record a build run
-pub async fn record_build(db: &SqlitePool, req: RecordBuildRequest) -> anyhow::Result<serde_json::Value> {
+pub async fn record_build(db: &SqlitePool, req: RecordBuildParams) -> anyhow::Result<serde_json::Value> {
     let now = Utc::now().timestamp();
 
     let result = sqlx::query(r#"
-        INSERT INTO build_runs (project_path, command, success, duration_ms, error_count, warning_count, started_at, completed_at)
-        VALUES ($1, $2, $3, $4, 0, 0, $5, $5)
+        INSERT INTO build_runs (command, success, duration_ms, error_count, warning_count, started_at, completed_at)
+        VALUES ($1, $2, $3, 0, 0, $4, $4)
     "#)
-    .bind(&req.project_path)
     .bind(&req.command)
     .bind(req.success)
     .bind(req.duration_ms)
@@ -97,14 +117,14 @@ pub async fn record_build(db: &SqlitePool, req: RecordBuildRequest) -> anyhow::R
 }
 
 /// Record a build error
-pub async fn record_build_error(db: &SqlitePool, req: RecordBuildErrorRequest) -> anyhow::Result<serde_json::Value> {
+pub async fn record_build_error(db: &SqlitePool, req: RecordBuildErrorParams) -> anyhow::Result<serde_json::Value> {
     let now = Utc::now().timestamp();
     let error_hash = hash_error(&req.message);
     let severity = req.severity.as_deref().unwrap_or("error");
 
     let result = sqlx::query(r#"
-        INSERT INTO build_errors (error_hash, category, severity, message, file_path, line_number, column_number, code, suggestion, resolved, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10)
+        INSERT INTO build_errors (error_hash, category, severity, message, file_path, line_number, column_number, code, resolved, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
     "#)
     .bind(&error_hash)
     .bind(&req.category)
@@ -114,7 +134,6 @@ pub async fn record_build_error(db: &SqlitePool, req: RecordBuildErrorRequest) -
     .bind(req.line_number)
     .bind(None::<i32>) // column_number
     .bind(&req.code)
-    .bind(&req.suggestion)
     .bind(now)
     .execute(db)
     .await?;
@@ -128,7 +147,7 @@ pub async fn record_build_error(db: &SqlitePool, req: RecordBuildErrorRequest) -
 }
 
 /// Mark an error as resolved
-pub async fn resolve_error(db: &SqlitePool, req: ResolveErrorRequest) -> anyhow::Result<serde_json::Value> {
+pub async fn resolve_error(db: &SqlitePool, error_id: i64) -> anyhow::Result<serde_json::Value> {
     let now = Utc::now().timestamp();
 
     let result = sqlx::query(r#"
@@ -137,19 +156,19 @@ pub async fn resolve_error(db: &SqlitePool, req: ResolveErrorRequest) -> anyhow:
         WHERE id = $2
     "#)
     .bind(now)
-    .bind(req.error_id)
+    .bind(error_id)
     .execute(db)
     .await?;
 
     if result.rows_affected() > 0 {
         Ok(serde_json::json!({
             "status": "resolved",
-            "error_id": req.error_id,
+            "error_id": error_id,
         }))
     } else {
         Ok(serde_json::json!({
             "status": "not_found",
-            "error_id": req.error_id,
+            "error_id": error_id,
         }))
     }
 }

@@ -1,5 +1,6 @@
 // backend/src/main.rs
 // Mira Power Suit - MCP Server for Claude Code
+// Consolidated tools for minimal token footprint (55→30 tools)
 
 use anyhow::Result;
 use rmcp::{
@@ -73,15 +74,15 @@ impl MiraServer {
 
 #[tool_router]
 impl MiraServer {
-    // === Analytics ===
+    // === Admin/Analytics ===
 
-    #[tool(description = "List all tables in the Mira database with row counts.")]
+    #[tool(description = "List database tables with row counts.")]
     async fn list_tables(&self) -> Result<CallToolResult, McpError> {
         let result = analytics::list_tables(self.db.as_ref()).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    #[tool(description = "Execute a read-only SQL query against the Mira database. Only SELECT statements are allowed.")]
+    #[tool(description = "Execute read-only SQL SELECT query.")]
     async fn query(&self, Parameters(req): Parameters<QueryRequest>) -> Result<CallToolResult, McpError> {
         match analytics::query(self.db.as_ref(), req).await {
             Ok(result) => Ok(json_response(result)),
@@ -89,16 +90,16 @@ impl MiraServer {
         }
     }
 
-    // === Memory (semantic search) ===
+    // === Memory (core - high usage) ===
 
-    #[tool(description = "Remember a fact, decision, preference, or context for future sessions. Stores in both SQLite and vector database for semantic recall. Automatically scoped to active project (except preferences which are global).")]
+    #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
     async fn remember(&self, Parameters(req): Parameters<RememberRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = memory::remember(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    #[tool(description = "Search through stored memories using semantic similarity. Returns both project-specific and global memories.")]
+    #[tool(description = "Search memories using semantic similarity.")]
     async fn recall(&self, Parameters(req): Parameters<RecallRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
         let project_id = self.get_active_project().await.map(|p| p.id);
@@ -106,165 +107,49 @@ impl MiraServer {
         Ok(vec_response(result, format!("No memories found matching '{}'", query)))
     }
 
-    #[tool(description = "Forget (delete) a stored memory by its ID.")]
+    #[tool(description = "Delete a memory by ID.")]
     async fn forget(&self, Parameters(req): Parameters<ForgetRequest>) -> Result<CallToolResult, McpError> {
         let result = memory::forget(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    // === Cross-Session Memory ===
+    // === Session Context ===
 
-    #[tool(description = "Get context from previous sessions - recent memories, pending tasks, and session summaries. Call this at session start to pick up where you left off.")]
+    #[tool(description = "Get context from previous sessions. Call at session start.")]
     async fn get_session_context(&self, Parameters(req): Parameters<GetSessionContextRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::get_session_context(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    #[tool(description = "Store a summary of the current session for cross-session recall. Call this at the END of significant sessions. Automatically scoped to the active project.")]
+    #[tool(description = "Store session summary. Call at session end.")]
     async fn store_session(&self, Parameters(req): Parameters<StoreSessionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::store_session(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    #[tool(description = "Search across past sessions using semantic similarity. Returns sessions from the active project and global sessions.")]
+    #[tool(description = "Search past sessions semantically.")]
     async fn search_sessions(&self, Parameters(req): Parameters<SearchSessionsRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::search_sessions(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No past sessions found matching '{}'", query)))
+        Ok(vec_response(result, format!("No sessions found matching '{}'", query)))
     }
 
-    #[tool(description = "Store an important decision or context for future reference. Automatically scoped to the active project.")]
+    #[tool(description = "Store an important decision with context.")]
     async fn store_decision(&self, Parameters(req): Parameters<StoreDecisionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::store_decision(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    // === Code Intelligence ===
+    // === Project ===
 
-    #[tool(description = "Get all symbols (functions, classes, structs, etc.) defined in a file.")]
-    async fn get_symbols(&self, Parameters(req): Parameters<GetSymbolsRequest>) -> Result<CallToolResult, McpError> {
-        let file_path = req.file_path.clone();
-        let result = code_intel::get_symbols(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No symbols found in '{}'", file_path)))
-    }
-
-    #[tool(description = "Get the call graph showing what functions call and are called by a given function.")]
-    async fn get_call_graph(&self, Parameters(req): Parameters<GetCallGraphRequest>) -> Result<CallToolResult, McpError> {
-        let result = code_intel::get_call_graph(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "Find files that are related to a given file through imports or co-change patterns.")]
-    async fn get_related_files(&self, Parameters(req): Parameters<GetRelatedFilesRequest>) -> Result<CallToolResult, McpError> {
-        let result = code_intel::get_related_files(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "Search code using natural language. Find 'authentication logic' or 'error handling' by meaning, not just keywords.")]
-    async fn semantic_code_search(&self, Parameters(req): Parameters<SemanticCodeSearchRequest>) -> Result<CallToolResult, McpError> {
-        let query = req.query.clone();
-        let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No code found matching '{}'", query)))
-    }
-
-    // === Git Intelligence ===
-
-    #[tool(description = "Get recent git commits, optionally filtered by file or author.")]
-    async fn get_recent_commits(&self, Parameters(req): Parameters<GetRecentCommitsRequest>) -> Result<CallToolResult, McpError> {
-        let result = git_intel::get_recent_commits(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No commits found"))
-    }
-
-    #[tool(description = "Search git commits by message content.")]
-    async fn search_commits(&self, Parameters(req): Parameters<SearchCommitsRequest>) -> Result<CallToolResult, McpError> {
-        let query = req.query.clone();
-        let result = git_intel::search_commits(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No commits found matching '{}'", query)))
-    }
-
-    #[tool(description = "Find files that frequently change together. Useful for understanding implicit dependencies.")]
-    async fn find_cochange_patterns(&self, Parameters(req): Parameters<FindCochangeRequest>) -> Result<CallToolResult, McpError> {
-        let file_path = req.file_path.clone();
-        let result = git_intel::find_cochange_patterns(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No co-change patterns found for '{}'", file_path)))
-    }
-
-    #[tool(description = "Search for similar errors that were fixed before. Uses semantic search to find 'this error feels like...' matches.")]
-    async fn find_similar_fixes(&self, Parameters(req): Parameters<FindSimilarFixesRequest>) -> Result<CallToolResult, McpError> {
-        let error = req.error.clone();
-        let result = git_intel::find_similar_fixes(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No similar fixes found for: {}", error)))
-    }
-
-    #[tool(description = "Record an error fix for future learning. When you fix an error, record it so similar fixes can be found later.")]
-    async fn record_error_fix(&self, Parameters(req): Parameters<RecordErrorFixRequest>) -> Result<CallToolResult, McpError> {
-        let result = git_intel::record_error_fix(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    // === Build Intelligence ===
-
-    #[tool(description = "Get recent build errors, optionally filtered by file or category.")]
-    async fn get_build_errors(&self, Parameters(req): Parameters<GetBuildErrorsRequest>) -> Result<CallToolResult, McpError> {
-        let result = build_intel::get_build_errors(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No build errors found"))
-    }
-
-    #[tool(description = "Record a build run result for tracking.")]
-    async fn record_build(&self, Parameters(req): Parameters<RecordBuildRequest>) -> Result<CallToolResult, McpError> {
-        let result = build_intel::record_build(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "Record a build error for tracking and later analysis.")]
-    async fn record_build_error(&self, Parameters(req): Parameters<RecordBuildErrorRequest>) -> Result<CallToolResult, McpError> {
-        let result = build_intel::record_build_error(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "Mark a build error as resolved.")]
-    async fn resolve_error(&self, Parameters(req): Parameters<ResolveErrorRequest>) -> Result<CallToolResult, McpError> {
-        let result = build_intel::resolve_error(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    // === Workspace Context ===
-
-    #[tool(description = "Record file activity (read, write, error, test) for tracking what's being worked on.")]
-    async fn record_activity(&self, Parameters(req): Parameters<RecordActivityRequest>) -> Result<CallToolResult, McpError> {
-        let result = workspace::record_activity(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "Get recent file activity to see what has been worked on.")]
-    async fn get_recent_activity(&self, Parameters(req): Parameters<GetRecentActivityRequest>) -> Result<CallToolResult, McpError> {
-        let result = workspace::get_recent_activity(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No recent activity found"))
-    }
-
-    #[tool(description = "Set work context for tracking current focus (active task, recent error, current file).")]
-    async fn set_context(&self, Parameters(req): Parameters<SetContextRequest>) -> Result<CallToolResult, McpError> {
-        let result = workspace::set_context(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "Get current work context to understand what's being focused on.")]
-    async fn get_context(&self, Parameters(req): Parameters<GetContextRequest>) -> Result<CallToolResult, McpError> {
-        let result = workspace::get_context(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No active context"))
-    }
-
-    // === Project Context ===
-
-    #[tool(description = "Set the active project for this session. Call this at the start of each session to enable project-scoped memories and context. Auto-detects project type from Cargo.toml, package.json, etc.")]
+    #[tool(description = "Set active project. Call at session start for scoped data.")]
     async fn set_project(&self, Parameters(req): Parameters<SetProjectRequest>) -> Result<CallToolResult, McpError> {
         let result = project::set_project(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
 
-        // Update the active project in server state
         if let Some(id) = result.get("id").and_then(|v| v.as_i64()) {
             let ctx = ProjectContext {
                 id,
@@ -278,7 +163,7 @@ impl MiraServer {
         Ok(json_response(result))
     }
 
-    #[tool(description = "Get the currently active project for this session. Returns null if no project is set.")]
+    #[tool(description = "Get currently active project.")]
     async fn get_project(&self, Parameters(_req): Parameters<GetProjectRequest>) -> Result<CallToolResult, McpError> {
         match self.get_active_project().await {
             Some(ctx) => Ok(json_response(serde_json::json!({
@@ -289,91 +174,386 @@ impl MiraServer {
             }))),
             None => Ok(json_response(serde_json::json!({
                 "active": false,
-                "message": "No project set. Call set_project() to enable project-scoped data."
+                "message": "No project set. Call set_project() first."
             }))),
         }
     }
 
-    #[tool(description = "Get coding guidelines and conventions for a project.")]
+    #[tool(description = "Get coding guidelines. Use category='mira_usage' for tool guidance.")]
     async fn get_guidelines(&self, Parameters(req): Parameters<GetGuidelinesRequest>) -> Result<CallToolResult, McpError> {
         let result = project::get_guidelines(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No guidelines found. Use 'add_guideline' to add project conventions."))
+        Ok(vec_response(result, "No guidelines found."))
     }
 
-    #[tool(description = "Add a coding guideline or convention for a project.")]
+    #[tool(description = "Add a coding guideline or convention.")]
     async fn add_guideline(&self, Parameters(req): Parameters<AddGuidelineRequest>) -> Result<CallToolResult, McpError> {
         let result = project::add_guideline(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
-    // === Task Management ===
+    // === Consolidated Task Tool (6→1) ===
 
-    #[tool(description = "Create a new task or todo item. Tasks persist across sessions.")]
-    async fn create_task(&self, Parameters(req): Parameters<CreateTaskRequest>) -> Result<CallToolResult, McpError> {
-        let result = tasks::create_task(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
-    }
-
-    #[tool(description = "List tasks/todos with optional filters. Returns pending and in-progress tasks by default.")]
-    async fn list_tasks(&self, Parameters(req): Parameters<ListTasksRequest>) -> Result<CallToolResult, McpError> {
-        let result = tasks::list_tasks(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No tasks found. Use 'create_task' to add a new task."))
-    }
-
-    #[tool(description = "Get detailed information about a specific task.")]
-    async fn get_task(&self, Parameters(req): Parameters<GetTaskRequest>) -> Result<CallToolResult, McpError> {
-        let task_id = req.task_id.clone();
-        let result = tasks::get_task(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(option_response(result, format!("Task {} not found", task_id)))
-    }
-
-    #[tool(description = "Update a task's title, description, status, or priority.")]
-    async fn update_task(&self, Parameters(req): Parameters<UpdateTaskRequest>) -> Result<CallToolResult, McpError> {
-        let task_id = req.task_id.clone();
-        let result = tasks::update_task(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(option_response(result, format!("Task {} not found", task_id)))
-    }
-
-    #[tool(description = "Mark a task as completed with optional notes.")]
-    async fn complete_task(&self, Parameters(req): Parameters<CompleteTaskRequest>) -> Result<CallToolResult, McpError> {
-        let task_id = req.task_id.clone();
-        let result = tasks::complete_task(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(option_response(result, format!("Task {} not found", task_id)))
-    }
-
-    #[tool(description = "Delete a task and all its subtasks.")]
-    async fn delete_task(&self, Parameters(req): Parameters<DeleteTaskRequest>) -> Result<CallToolResult, McpError> {
-        let task_id = req.task_id.clone();
-        match tasks::delete_task(self.db.as_ref(), req).await.map_err(to_mcp_err)? {
-            Some(title) => Ok(json_response(serde_json::json!({
-                "status": "deleted",
-                "task_id": task_id,
-                "title": title,
-            }))),
-            None => Ok(text_response(format!("Task {} not found", task_id))),
+    #[tool(description = "Manage tasks. Actions: create/list/get/update/complete/delete")]
+    async fn task(&self, Parameters(req): Parameters<TaskRequest>) -> Result<CallToolResult, McpError> {
+        let action = req.action.as_str();
+        match action {
+            "create" => {
+                let title = req.title.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("title required for create")))?;
+                let result = tasks::create_task(self.db.as_ref(), tasks::CreateTaskParams {
+                    title,
+                    description: req.description.clone(),
+                    priority: req.priority.clone(),
+                    parent_id: req.parent_id.clone(),
+                }).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "list" => {
+                let result = tasks::list_tasks(self.db.as_ref(), tasks::ListTasksParams {
+                    status: req.status.clone(),
+                    parent_id: req.parent_id.clone(),
+                    include_completed: req.include_completed,
+                    limit: req.limit,
+                }).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No tasks found."))
+            }
+            "get" => {
+                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                let result = tasks::get_task(self.db.as_ref(), &task_id).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, format!("Task {} not found", task_id)))
+            }
+            "update" => {
+                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                let result = tasks::update_task(self.db.as_ref(), tasks::UpdateTaskParams {
+                    task_id,
+                    title: req.title.clone(),
+                    description: req.description.clone(),
+                    status: req.status.clone(),
+                    priority: req.priority.clone(),
+                }).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, "Task not found"))
+            }
+            "complete" => {
+                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                let result = tasks::complete_task(self.db.as_ref(), &task_id, req.notes.clone()).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, format!("Task {} not found", task_id)))
+            }
+            "delete" => {
+                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                match tasks::delete_task(self.db.as_ref(), &task_id).await.map_err(to_mcp_err)? {
+                    Some(title) => Ok(json_response(serde_json::json!({
+                        "status": "deleted",
+                        "task_id": task_id,
+                        "title": title,
+                    }))),
+                    None => Ok(text_response(format!("Task {} not found", task_id))),
+                }
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use create/list/get/update/complete/delete", action))])),
         }
     }
 
-    // === Document Search (semantic) ===
+    // === Consolidated Goal Tool (7→1) ===
 
-    #[tool(description = "List documents that have been uploaded and processed.")]
-    async fn list_documents(&self, Parameters(req): Parameters<ListDocumentsRequest>) -> Result<CallToolResult, McpError> {
-        let result = documents::list_documents(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, "No documents found."))
+    #[tool(description = "Manage goals/milestones. Actions: create/list/get/update/add_milestone/complete_milestone/progress")]
+    async fn goal(&self, Parameters(req): Parameters<GoalRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let action = req.action.as_str();
+        match action {
+            "create" => {
+                let title = req.title.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("title required")))?;
+                let result = goals::create_goal(self.db.as_ref(), goals::CreateGoalParams {
+                    title,
+                    description: req.description.clone(),
+                    success_criteria: req.success_criteria.clone(),
+                    priority: req.priority.clone(),
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "list" => {
+                let result = goals::list_goals(self.db.as_ref(), goals::ListGoalsParams {
+                    status: req.status.clone(),
+                    include_finished: req.include_finished,
+                    limit: req.limit,
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No goals found."))
+            }
+            "get" => {
+                let goal_id = req.goal_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("goal_id required")))?;
+                let result = goals::get_goal(self.db.as_ref(), &goal_id).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, format!("Goal '{}' not found", goal_id)))
+            }
+            "update" => {
+                let goal_id = req.goal_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("goal_id required")))?;
+                let result = goals::update_goal(self.db.as_ref(), goals::UpdateGoalParams {
+                    goal_id,
+                    title: req.title.clone(),
+                    description: req.description.clone(),
+                    status: req.status.clone(),
+                    priority: req.priority.clone(),
+                    progress_percent: req.progress_percent,
+                }).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, "Goal not found"))
+            }
+            "add_milestone" => {
+                let goal_id = req.goal_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("goal_id required")))?;
+                let title = req.title.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("title required")))?;
+                let result = goals::add_milestone(self.db.as_ref(), goals::AddMilestoneParams {
+                    goal_id,
+                    title,
+                    description: req.description.clone(),
+                    weight: req.weight,
+                }).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "complete_milestone" => {
+                let milestone_id = req.milestone_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("milestone_id required")))?;
+                let result = goals::complete_milestone(self.db.as_ref(), &milestone_id).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, format!("Milestone '{}' not found", milestone_id)))
+            }
+            "progress" => {
+                let result = goals::get_goal_progress(self.db.as_ref(), req.goal_id.clone(), project_id).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use create/list/get/update/add_milestone/complete_milestone/progress", action))])),
+        }
     }
 
-    #[tool(description = "Search through documents using semantic similarity. Find relevant content by meaning.")]
-    async fn search_documents(&self, Parameters(req): Parameters<SearchDocumentsRequest>) -> Result<CallToolResult, McpError> {
+    // === Consolidated Correction Tool (4→1) ===
+
+    #[tool(description = "Manage corrections. Actions: record/get/validate/list. Record when user corrects you.")]
+    async fn correction(&self, Parameters(req): Parameters<CorrectionRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let action = req.action.as_str();
+        match action {
+            "record" => {
+                let correction_type = req.correction_type.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("correction_type required")))?;
+                let what_was_wrong = req.what_was_wrong.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("what_was_wrong required")))?;
+                let what_is_right = req.what_is_right.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("what_is_right required")))?;
+                let result = corrections::record_correction(self.db.as_ref(), self.semantic.as_ref(), corrections::RecordCorrectionParams {
+                    correction_type,
+                    what_was_wrong,
+                    what_is_right,
+                    rationale: req.rationale.clone(),
+                    scope: req.scope.clone(),
+                    keywords: req.keywords.clone(),
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "get" => {
+                let result = corrections::get_corrections(self.db.as_ref(), self.semantic.as_ref(), corrections::GetCorrectionsParams {
+                    file_path: req.file_path.clone(),
+                    topic: req.topic.clone(),
+                    correction_type: req.correction_type.clone(),
+                    context: req.keywords.clone(), // Use keywords as context for semantic search
+                    limit: req.limit,
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No corrections found."))
+            }
+            "validate" => {
+                let correction_id = req.correction_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("correction_id required")))?;
+                let outcome = req.outcome.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("outcome required")))?;
+                let result = corrections::validate_correction(self.db.as_ref(), &correction_id, &outcome).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "list" => {
+                let result = corrections::list_corrections(self.db.as_ref(), corrections::ListCorrectionsParams {
+                    correction_type: req.correction_type.clone(),
+                    scope: req.scope.clone(),
+                    status: None, // Default to active
+                    limit: req.limit,
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No corrections found."))
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use record/get/validate/list", action))])),
+        }
+    }
+
+    // === Consolidated Document Tool (3→1) ===
+
+    #[tool(description = "Manage documents. Actions: list/search/get")]
+    async fn document(&self, Parameters(req): Parameters<DocumentRequest>) -> Result<CallToolResult, McpError> {
+        let action = req.action.as_str();
+        match action {
+            "list" => {
+                let result = documents::list_documents(self.db.as_ref(), documents::ListDocumentsParams {
+                    doc_type: req.doc_type.clone(),
+                    limit: req.limit,
+                }).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No documents found."))
+            }
+            "search" => {
+                let query = req.query.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("query required")))?;
+                let result = documents::search_documents(self.db.as_ref(), self.semantic.as_ref(), &query, req.limit).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, format!("No documents found matching '{}'", query)))
+            }
+            "get" => {
+                let document_id = req.document_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("document_id required")))?;
+                let result = documents::get_document(self.db.as_ref(), &document_id, req.include_content.unwrap_or(false)).await.map_err(to_mcp_err)?;
+                Ok(option_response(result, format!("Document '{}' not found", document_id)))
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use list/search/get", action))])),
+        }
+    }
+
+    // === Consolidated Permission Tool (3→1) ===
+
+    #[tool(description = "Manage permission rules. Actions: save/list/delete. Save when user approves a tool.")]
+    async fn permission(&self, Parameters(req): Parameters<PermissionRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let action = req.action.as_str();
+        match action {
+            "save" => {
+                let tool_name = req.tool_name.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("tool_name required")))?;
+                let result = permissions::save_permission(self.db.as_ref(), permissions::SavePermissionParams {
+                    tool_name,
+                    input_field: req.input_field.clone(),
+                    input_pattern: req.input_pattern.clone(),
+                    match_type: req.match_type.clone(),
+                    scope: req.scope.clone(),
+                    description: req.description.clone(),
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "list" => {
+                let result = permissions::list_permissions(self.db.as_ref(), permissions::ListPermissionsParams {
+                    tool_name: req.tool_name.clone(),
+                    scope: req.scope.clone(),
+                    limit: req.limit,
+                }, project_id).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No permission rules found."))
+            }
+            "delete" => {
+                let rule_id = req.rule_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("rule_id required")))?;
+                let result = permissions::delete_permission(self.db.as_ref(), &rule_id).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use save/list/delete", action))])),
+        }
+    }
+
+    // === Consolidated Build Tool (4→1) ===
+
+    #[tool(description = "Manage build tracking. Actions: record/record_error/get_errors/resolve")]
+    async fn build(&self, Parameters(req): Parameters<BuildRequest>) -> Result<CallToolResult, McpError> {
+        let action = req.action.as_str();
+        match action {
+            "record" => {
+                let command = req.command.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("command required")))?;
+                let success = req.success.ok_or_else(|| to_mcp_err(anyhow::anyhow!("success required")))?;
+                let result = build_intel::record_build(self.db.as_ref(), build_intel::RecordBuildParams {
+                    command,
+                    success,
+                    duration_ms: req.duration_ms,
+                }).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "record_error" => {
+                let message = req.message.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("message required")))?;
+                let result = build_intel::record_build_error(self.db.as_ref(), build_intel::RecordBuildErrorParams {
+                    message,
+                    category: req.category.clone(),
+                    severity: req.severity.clone(),
+                    file_path: req.file_path.clone(),
+                    line_number: req.line_number,
+                    code: req.code.clone(),
+                }).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            "get_errors" => {
+                let result = build_intel::get_build_errors(self.db.as_ref(), build_intel::GetBuildErrorsParams {
+                    file_path: req.file_path.clone(),
+                    category: req.category.clone(),
+                    include_resolved: req.include_resolved,
+                    limit: req.limit,
+                }).await.map_err(to_mcp_err)?;
+                Ok(vec_response(result, "No build errors found."))
+            }
+            "resolve" => {
+                let error_id = req.error_id.ok_or_else(|| to_mcp_err(anyhow::anyhow!("error_id required")))?;
+                let result = build_intel::resolve_error(self.db.as_ref(), error_id).await.map_err(to_mcp_err)?;
+                Ok(json_response(result))
+            }
+            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use record/record_error/get_errors/resolve", action))])),
+        }
+    }
+
+    // === Code Intelligence (keep separate - distinct use cases) ===
+
+    #[tool(description = "Get symbols (functions/classes/structs) from a file.")]
+    async fn get_symbols(&self, Parameters(req): Parameters<GetSymbolsRequest>) -> Result<CallToolResult, McpError> {
+        let file_path = req.file_path.clone();
+        let result = code_intel::get_symbols(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, format!("No symbols in '{}'", file_path)))
+    }
+
+    #[tool(description = "Get call graph for a function.")]
+    async fn get_call_graph(&self, Parameters(req): Parameters<GetCallGraphRequest>) -> Result<CallToolResult, McpError> {
+        let result = code_intel::get_call_graph(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
+    }
+
+    #[tool(description = "Find related files via imports or co-change patterns.")]
+    async fn get_related_files(&self, Parameters(req): Parameters<GetRelatedFilesRequest>) -> Result<CallToolResult, McpError> {
+        let result = code_intel::get_related_files(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
+    }
+
+    #[tool(description = "Search code by meaning (semantic search).")]
+    async fn semantic_code_search(&self, Parameters(req): Parameters<SemanticCodeSearchRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
-        let result = documents::search_documents(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No document content found matching '{}'", query)))
+        let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, format!("No code found for '{}'", query)))
     }
 
-    #[tool(description = "Get detailed information about a specific document, optionally including full content.")]
-    async fn get_document(&self, Parameters(req): Parameters<GetDocumentRequest>) -> Result<CallToolResult, McpError> {
-        let doc_id = req.document_id.clone();
-        let result = documents::get_document(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
-        Ok(option_response(result, format!("Document '{}' not found", doc_id)))
+    // === Git Intelligence ===
+
+    #[tool(description = "Get recent commits, optionally filtered.")]
+    async fn get_recent_commits(&self, Parameters(req): Parameters<GetRecentCommitsRequest>) -> Result<CallToolResult, McpError> {
+        let result = git_intel::get_recent_commits(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, "No commits found"))
+    }
+
+    #[tool(description = "Search commits by message.")]
+    async fn search_commits(&self, Parameters(req): Parameters<SearchCommitsRequest>) -> Result<CallToolResult, McpError> {
+        let query = req.query.clone();
+        let result = git_intel::search_commits(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, format!("No commits for '{}'", query)))
+    }
+
+    #[tool(description = "Find files that change together.")]
+    async fn find_cochange_patterns(&self, Parameters(req): Parameters<FindCochangeRequest>) -> Result<CallToolResult, McpError> {
+        let file_path = req.file_path.clone();
+        let result = git_intel::find_cochange_patterns(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, format!("No co-changes for '{}'", file_path)))
+    }
+
+    #[tool(description = "Find similar past error fixes (semantic search).")]
+    async fn find_similar_fixes(&self, Parameters(req): Parameters<FindSimilarFixesRequest>) -> Result<CallToolResult, McpError> {
+        let error = req.error.clone();
+        let result = git_intel::find_similar_fixes(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, format!("No fixes for: {}", error)))
+    }
+
+    #[tool(description = "Record an error fix for future learning.")]
+    async fn record_error_fix(&self, Parameters(req): Parameters<RecordErrorFixRequest>) -> Result<CallToolResult, McpError> {
+        let result = git_intel::record_error_fix(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
+    }
+
+    // === Proactive Context ===
+
+    #[tool(description = "Get all context for current work: corrections, decisions, goals, errors.")]
+    async fn get_proactive_context(&self, Parameters(req): Parameters<GetProactiveContextRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = proactive::get_proactive_context(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
+    }
+
+    #[tool(description = "Record a rejected approach to avoid re-suggesting it.")]
+    async fn record_rejected_approach(&self, Parameters(req): Parameters<RecordRejectedApproachRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = goals::record_rejected_approach(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
     }
 }
 
@@ -384,10 +564,7 @@ impl ServerHandler for MiraServer {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some("Mira Power Suit - Memory and Intelligence Layer for Claude Code. \
-                Features: semantic memory (remember/recall), cross-session context, persistent tasks, \
-                code intelligence, git intelligence, and document search. All search tools use \
-                semantic similarity when Qdrant + Gemini are configured.".to_string()),
+            instructions: Some("Mira Power Suit - Memory and Intelligence Layer for Claude Code. Features: semantic memory (remember/recall), cross-session context, persistent tasks, code intelligence, git intelligence, and document search. All search tools use semantic similarity when Qdrant + Gemini are configured.".to_string()),
         }
     }
 }
@@ -406,7 +583,6 @@ async fn main() -> Result<()> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
     let qdrant_url = std::env::var("QDRANT_URL").ok();
-    // Accept either GEMINI_API_KEY or GOOGLE_API_KEY
     let gemini_key = std::env::var("GEMINI_API_KEY")
         .or_else(|_| std::env::var("GOOGLE_API_KEY"))
         .ok();

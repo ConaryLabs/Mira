@@ -5,25 +5,45 @@ use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
-use super::types::*;
+// === Parameter structs for consolidated task tool ===
+
+pub struct CreateTaskParams {
+    pub title: String,
+    pub description: Option<String>,
+    pub priority: Option<String>,
+    pub parent_id: Option<String>,
+}
+
+pub struct ListTasksParams {
+    pub status: Option<String>,
+    pub parent_id: Option<String>,
+    pub include_completed: Option<bool>,
+    pub limit: Option<i64>,
+}
+
+pub struct UpdateTaskParams {
+    pub task_id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+}
 
 /// Create a new task
-pub async fn create_task(db: &SqlitePool, req: CreateTaskRequest) -> anyhow::Result<serde_json::Value> {
+pub async fn create_task(db: &SqlitePool, req: CreateTaskParams) -> anyhow::Result<serde_json::Value> {
     let now = Utc::now().timestamp();
     let id = Uuid::new_v4().to_string();
     let priority = req.priority.as_deref().unwrap_or("medium");
 
     let result = sqlx::query(r#"
-        INSERT INTO tasks (id, parent_id, title, description, status, priority, project_path, tags, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $8)
+        INSERT INTO tasks (id, parent_id, title, description, status, priority, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $6)
     "#)
     .bind(&id)
     .bind(&req.parent_id)
     .bind(&req.title)
     .bind(&req.description)
     .bind(priority)
-    .bind(&req.project_path)
-    .bind(&req.tags)
     .bind(now)
     .execute(db)
     .await?;
@@ -38,7 +58,7 @@ pub async fn create_task(db: &SqlitePool, req: CreateTaskRequest) -> anyhow::Res
 }
 
 /// List tasks with optional filters
-pub async fn list_tasks(db: &SqlitePool, req: ListTasksRequest) -> anyhow::Result<Vec<serde_json::Value>> {
+pub async fn list_tasks(db: &SqlitePool, req: ListTasksParams) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(20);
     let include_completed = req.include_completed.unwrap_or(false);
 
@@ -49,9 +69,8 @@ pub async fn list_tasks(db: &SqlitePool, req: ListTasksRequest) -> anyhow::Resul
                datetime(completed_at, 'unixepoch', 'localtime') as completed_at
         FROM tasks
         WHERE ($1 IS NULL OR status = $1)
-          AND ($2 IS NULL OR project_path = $2)
-          AND ($3 IS NULL OR parent_id = $3)
-          AND ($4 = 1 OR status != 'completed')
+          AND ($2 IS NULL OR parent_id = $2)
+          AND ($3 = 1 OR status != 'completed')
         ORDER BY
             CASE status
                 WHEN 'in_progress' THEN 0
@@ -66,12 +85,11 @@ pub async fn list_tasks(db: &SqlitePool, req: ListTasksRequest) -> anyhow::Resul
                 ELSE 3
             END,
             created_at DESC
-        LIMIT $5
+        LIMIT $4
     "#;
 
     let rows = sqlx::query_as::<_, (String, Option<String>, String, Option<String>, String, String, Option<String>, Option<String>, String, String, Option<String>)>(query)
         .bind(&req.status)
-        .bind(&req.project_path)
         .bind(&req.parent_id)
         .bind(if include_completed { 1 } else { 0 })
         .bind(limit)
@@ -99,7 +117,7 @@ pub async fn list_tasks(db: &SqlitePool, req: ListTasksRequest) -> anyhow::Resul
 }
 
 /// Get a specific task with its subtasks
-pub async fn get_task(db: &SqlitePool, req: GetTaskRequest) -> anyhow::Result<Option<serde_json::Value>> {
+pub async fn get_task(db: &SqlitePool, task_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
     let task_query = r#"
         SELECT id, parent_id, title, description, status, priority, project_path, tags,
                completion_notes,
@@ -111,7 +129,7 @@ pub async fn get_task(db: &SqlitePool, req: GetTaskRequest) -> anyhow::Result<Op
     "#;
 
     let task = sqlx::query_as::<_, (String, Option<String>, String, Option<String>, String, String, Option<String>, Option<String>, Option<String>, String, String, Option<String>)>(task_query)
-        .bind(&req.task_id)
+        .bind(task_id)
         .fetch_optional(db)
         .await?;
 
@@ -128,7 +146,7 @@ pub async fn get_task(db: &SqlitePool, req: GetTaskRequest) -> anyhow::Result<Op
             "#;
 
             let subtasks = sqlx::query_as::<_, (String, String, String, String)>(subtasks_query)
-                .bind(&req.task_id)
+                .bind(task_id)
                 .fetch_all(db)
                 .await
                 .unwrap_or_default();
@@ -166,7 +184,7 @@ pub async fn get_task(db: &SqlitePool, req: GetTaskRequest) -> anyhow::Result<Op
 }
 
 /// Update an existing task
-pub async fn update_task(db: &SqlitePool, req: UpdateTaskRequest) -> anyhow::Result<Option<serde_json::Value>> {
+pub async fn update_task(db: &SqlitePool, req: UpdateTaskParams) -> anyhow::Result<Option<serde_json::Value>> {
     let now = Utc::now().timestamp();
 
     let result = sqlx::query(r#"
@@ -204,7 +222,7 @@ pub async fn update_task(db: &SqlitePool, req: UpdateTaskRequest) -> anyhow::Res
 }
 
 /// Mark a task as completed
-pub async fn complete_task(db: &SqlitePool, req: CompleteTaskRequest) -> anyhow::Result<Option<serde_json::Value>> {
+pub async fn complete_task(db: &SqlitePool, task_id: &str, notes: Option<String>) -> anyhow::Result<Option<serde_json::Value>> {
     let now = Utc::now().timestamp();
 
     let result = sqlx::query(r#"
@@ -216,8 +234,8 @@ pub async fn complete_task(db: &SqlitePool, req: CompleteTaskRequest) -> anyhow:
         WHERE id = $3
     "#)
     .bind(now)
-    .bind(&req.notes)
-    .bind(&req.task_id)
+    .bind(&notes)
+    .bind(task_id)
     .execute(db)
     .await?;
 
@@ -227,16 +245,16 @@ pub async fn complete_task(db: &SqlitePool, req: CompleteTaskRequest) -> anyhow:
 
     Ok(Some(serde_json::json!({
         "status": "completed",
-        "task_id": req.task_id,
+        "task_id": task_id,
         "completed_at": Utc::now().to_rfc3339(),
-        "notes": req.notes,
+        "notes": notes,
     })))
 }
 
 /// Delete a task and its subtasks
-pub async fn delete_task(db: &SqlitePool, req: DeleteTaskRequest) -> anyhow::Result<Option<String>> {
+pub async fn delete_task(db: &SqlitePool, task_id: &str) -> anyhow::Result<Option<String>> {
     let task = sqlx::query_as::<_, (String,)>("SELECT title FROM tasks WHERE id = $1")
-        .bind(&req.task_id)
+        .bind(task_id)
         .fetch_optional(db)
         .await?;
 
@@ -244,13 +262,13 @@ pub async fn delete_task(db: &SqlitePool, req: DeleteTaskRequest) -> anyhow::Res
         Some((title,)) => {
             // Delete subtasks first
             sqlx::query("DELETE FROM tasks WHERE parent_id = $1")
-                .bind(&req.task_id)
+                .bind(task_id)
                 .execute(db)
                 .await?;
 
             // Delete the task itself
             sqlx::query("DELETE FROM tasks WHERE id = $1")
-                .bind(&req.task_id)
+                .bind(task_id)
                 .execute(db)
                 .await?;
 

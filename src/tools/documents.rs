@@ -4,10 +4,16 @@
 use sqlx::sqlite::SqlitePool;
 
 use super::semantic::{SemanticSearch, COLLECTION_DOCS};
-use super::types::*;
+
+// === Parameter structs for consolidated document tool ===
+
+pub struct ListDocumentsParams {
+    pub doc_type: Option<String>,
+    pub limit: Option<i64>,
+}
 
 /// List documents
-pub async fn list_documents(db: &SqlitePool, req: ListDocumentsRequest) -> anyhow::Result<Vec<serde_json::Value>> {
+pub async fn list_documents(db: &SqlitePool, req: ListDocumentsParams) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(20);
 
     let query = r#"
@@ -46,13 +52,14 @@ pub async fn list_documents(db: &SqlitePool, req: ListDocumentsRequest) -> anyho
 pub async fn search_documents(
     db: &SqlitePool,
     semantic: &SemanticSearch,
-    req: SearchDocumentsRequest,
+    query_str: &str,
+    limit: Option<i64>,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    let limit = req.limit.unwrap_or(10) as usize;
+    let limit = limit.unwrap_or(10) as usize;
 
     // Try semantic search first if available
     if semantic.is_available() {
-        match semantic.search(COLLECTION_DOCS, &req.query, limit, None).await {
+        match semantic.search(COLLECTION_DOCS, query_str, limit, None).await {
             Ok(results) if !results.is_empty() => {
                 return Ok(results.into_iter().map(|r| {
                     serde_json::json!({
@@ -67,7 +74,7 @@ pub async fn search_documents(
                 }).collect());
             }
             Ok(_) => {
-                tracing::debug!("No semantic results for document query: {}", req.query);
+                tracing::debug!("No semantic results for document query: {}", query_str);
             }
             Err(e) => {
                 tracing::warn!("Semantic document search failed, falling back to text: {}", e);
@@ -76,9 +83,9 @@ pub async fn search_documents(
     }
 
     // Fallback to SQLite text search
-    let search_pattern = format!("%{}%", req.query);
+    let search_pattern = format!("%{}%", query_str);
 
-    let query = r#"
+    let sql_query = r#"
         SELECT dc.id, dc.document_id, dc.chunk_index, dc.content,
                d.name, d.doc_type
         FROM document_chunks dc
@@ -88,7 +95,7 @@ pub async fn search_documents(
         LIMIT $2
     "#;
 
-    let rows = sqlx::query_as::<_, (String, String, i64, String, String, String)>(query)
+    let rows = sqlx::query_as::<_, (String, String, i64, String, String, String)>(sql_query)
         .bind(&search_pattern)
         .bind(limit as i64)
         .fetch_all(db)
@@ -97,11 +104,10 @@ pub async fn search_documents(
     Ok(rows
         .into_iter()
         .map(|(chunk_id, doc_id, chunk_idx, content, doc_name, doc_type)| {
-            // Truncate content for display but show context around match
             let display_content = if content.len() > 500 {
-                if let Some(pos) = content.to_lowercase().find(&req.query.to_lowercase()) {
+                if let Some(pos) = content.to_lowercase().find(&query_str.to_lowercase()) {
                     let start = pos.saturating_sub(100);
-                    let end = (pos + req.query.len() + 100).min(content.len());
+                    let end = (pos + query_str.len() + 100).min(content.len());
                     let snippet = &content[start..end];
                     if start > 0 { format!("...{}", snippet) } else { snippet.to_string() }
                 } else {
@@ -125,9 +131,7 @@ pub async fn search_documents(
 }
 
 /// Get a specific document
-pub async fn get_document(db: &SqlitePool, req: GetDocumentRequest) -> anyhow::Result<Option<serde_json::Value>> {
-    let include_content = req.include_content.unwrap_or(false);
-
+pub async fn get_document(db: &SqlitePool, document_id: &str, include_content: bool) -> anyhow::Result<Option<serde_json::Value>> {
     let doc_query = r#"
         SELECT id, name, file_path, doc_type, content, summary, chunk_count, total_tokens, metadata,
                datetime(created_at, 'unixepoch', 'localtime') as created_at
@@ -136,7 +140,7 @@ pub async fn get_document(db: &SqlitePool, req: GetDocumentRequest) -> anyhow::R
     "#;
 
     let doc = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, Option<String>, i64, i64, Option<String>, String)>(doc_query)
-        .bind(&req.document_id)
+        .bind(document_id)
         .fetch_optional(db)
         .await?;
 
@@ -155,11 +159,9 @@ pub async fn get_document(db: &SqlitePool, req: GetDocumentRequest) -> anyhow::R
             });
 
             if include_content {
-                // If document has inline content, include it
                 if let Some(doc_content) = content {
                     result["content"] = serde_json::json!(doc_content);
                 } else {
-                    // Otherwise get chunks
                     let chunks_query = r#"
                         SELECT chunk_index, content, token_count
                         FROM document_chunks
@@ -168,7 +170,7 @@ pub async fn get_document(db: &SqlitePool, req: GetDocumentRequest) -> anyhow::R
                     "#;
 
                     let chunk_rows = sqlx::query_as::<_, (i64, String, Option<i64>)>(chunks_query)
-                        .bind(&req.document_id)
+                        .bind(document_id)
                         .fetch_all(db)
                         .await
                         .unwrap_or_default();
