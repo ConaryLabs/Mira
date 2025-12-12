@@ -153,6 +153,36 @@ impl CodeIndexer {
         Ok(stats)
     }
 
+    /// Delete all data for a file (used when file is deleted)
+    pub async fn delete_file(&self, path: &Path) -> Result<()> {
+        let file_path_str = path.to_string_lossy().to_string();
+
+        // Delete from SQLite
+        sqlx::query("DELETE FROM code_symbols WHERE file_path = $1")
+            .bind(&file_path_str)
+            .execute(&self.db)
+            .await?;
+
+        sqlx::query("DELETE FROM imports WHERE file_path = $1")
+            .bind(&file_path_str)
+            .execute(&self.db)
+            .await?;
+
+        // Delete embeddings from Qdrant
+        if let Some(ref semantic) = self.semantic {
+            if semantic.is_available() {
+                semantic.delete_by_field(
+                    crate::tools::COLLECTION_CODE,
+                    "file_path",
+                    &file_path_str
+                ).await?;
+            }
+        }
+
+        tracing::info!("Deleted index data for {}", file_path_str);
+        Ok(())
+    }
+
     /// Index a single file
     pub async fn index_file(&mut self, path: &Path) -> Result<IndexStats> {
         let mut stats = IndexStats::default();
@@ -187,6 +217,19 @@ impl CodeIndexer {
             .bind(&file_path_str)
             .execute(&self.db)
             .await?;
+
+        // Delete old embeddings from Qdrant (if available)
+        if let Some(ref semantic) = self.semantic {
+            if semantic.is_available() {
+                if let Err(e) = semantic.delete_by_field(
+                    crate::tools::COLLECTION_CODE,
+                    "file_path",
+                    &file_path_str
+                ).await {
+                    tracing::warn!("Failed to delete old embeddings for {}: {}", file_path_str, e);
+                }
+            }
+        }
 
         // Parse based on extension
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
