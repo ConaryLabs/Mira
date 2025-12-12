@@ -5,6 +5,25 @@ use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
+/// Resolve a task ID - supports both full UUIDs and short prefixes
+async fn resolve_task_id(db: &SqlitePool, task_id: &str) -> anyhow::Result<Option<String>> {
+    // If it looks like a full UUID, use directly
+    if task_id.len() == 36 && task_id.contains('-') {
+        return Ok(Some(task_id.to_string()));
+    }
+
+    // Otherwise, treat as prefix and find matching task
+    let pattern = format!("{}%", task_id);
+    let result = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM tasks WHERE id LIKE $1 LIMIT 1"
+    )
+    .bind(&pattern)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(result)
+}
+
 // === Parameter structs for consolidated task tool ===
 
 pub struct CreateTaskParams {
@@ -222,8 +241,16 @@ pub async fn update_task(db: &SqlitePool, req: UpdateTaskParams) -> anyhow::Resu
 }
 
 /// Mark a task as completed
+/// Supports both full UUIDs and short ID prefixes (e.g., "3ec77d3f")
 pub async fn complete_task(db: &SqlitePool, task_id: &str, notes: Option<String>) -> anyhow::Result<Option<serde_json::Value>> {
     let now = Utc::now().timestamp();
+
+    // Support short ID prefixes by finding the full ID first
+    let full_id = resolve_task_id(db, task_id).await?;
+    let full_id = match full_id {
+        Some(id) => id,
+        None => return Ok(None),
+    };
 
     let result = sqlx::query(r#"
         UPDATE tasks
@@ -235,7 +262,7 @@ pub async fn complete_task(db: &SqlitePool, task_id: &str, notes: Option<String>
     "#)
     .bind(now)
     .bind(&notes)
-    .bind(task_id)
+    .bind(&full_id)
     .execute(db)
     .await?;
 
@@ -243,9 +270,17 @@ pub async fn complete_task(db: &SqlitePool, task_id: &str, notes: Option<String>
         return Ok(None);
     }
 
+    // Get the title for the response
+    let title = sqlx::query_scalar::<_, String>("SELECT title FROM tasks WHERE id = $1")
+        .bind(&full_id)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or_else(|| "?".to_string());
+
     Ok(Some(serde_json::json!({
         "status": "completed",
-        "task_id": task_id,
+        "task_id": full_id,
+        "title": title,
         "completed_at": Utc::now().to_rfc3339(),
         "notes": notes,
     })))
