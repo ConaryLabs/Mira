@@ -474,38 +474,71 @@ pub fn build_errors(results: &[Value]) -> String {
     out.trim_end().to_string()
 }
 
-/// Format proactive context
+/// Format proactive context - shows actionable info for the current work
 pub fn proactive_context(ctx: &Value) -> String {
-    let mut sections = Vec::new();
+    let mut out = String::new();
 
+    // Corrections are most important - these are mistakes to avoid
     if let Some(corrections) = ctx.get("corrections").and_then(|v| v.as_array()) {
         if !corrections.is_empty() {
-            sections.push(format!("{} correction{}", corrections.len(), if corrections.len() == 1 { "" } else { "s" }));
+            out.push_str("Corrections to follow:\n");
+            for c in corrections.iter().take(5) {
+                let wrong = c.get("what_was_wrong").and_then(|v| v.as_str()).unwrap_or("?");
+                let right = c.get("what_is_right").and_then(|v| v.as_str()).unwrap_or("?");
+                let wrong_short = if wrong.len() > 25 { format!("{}...", &wrong[..22]) } else { wrong.to_string() };
+                let right_short = if right.len() > 40 { format!("{}...", &right[..37]) } else { right.to_string() };
+                out.push_str(&format!("  {} → {}\n", wrong_short, right_short));
+            }
         }
     }
 
+    // Rejected approaches - don't repeat these
+    if let Some(rejected) = ctx.get("rejected_approaches").and_then(|v| v.as_array()) {
+        if !rejected.is_empty() {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Rejected approaches:\n");
+            for r in rejected.iter().take(3) {
+                let approach = r.get("approach").and_then(|v| v.as_str()).unwrap_or("?");
+                let reason = r.get("rejection_reason").and_then(|v| v.as_str()).unwrap_or("?");
+                let approach_short = if approach.len() > 30 { format!("{}...", &approach[..27]) } else { approach.to_string() };
+                let reason_short = if reason.len() > 30 { format!("{}...", &reason[..27]) } else { reason.to_string() };
+                out.push_str(&format!("  {} ({})\n", approach_short, reason_short));
+            }
+        }
+    }
+
+    // Relevant decisions
     if let Some(decisions) = ctx.get("decisions").and_then(|v| v.as_array()) {
         if !decisions.is_empty() {
-            sections.push(format!("{} decision{}", decisions.len(), if decisions.len() == 1 { "" } else { "s" }));
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Relevant decisions:\n");
+            for d in decisions.iter().take(3) {
+                let decision = d.get("decision").and_then(|v| v.as_str())
+                    .or_else(|| d.get("value").and_then(|v| v.as_str()))
+                    .unwrap_or("?");
+                let display = if decision.len() > 60 { format!("{}...", &decision[..57]) } else { decision.to_string() };
+                out.push_str(&format!("  {}\n", display));
+            }
         }
     }
 
+    // Active goals (brief)
     if let Some(goals) = ctx.get("goals").and_then(|v| v.as_array()) {
         if !goals.is_empty() {
-            sections.push(format!("{} goal{}", goals.len(), if goals.len() == 1 { "" } else { "s" }));
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Active goals:\n");
+            for g in goals.iter().take(3) {
+                let title = g.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                let progress = g.get("progress_percent").and_then(|v| v.as_i64()).unwrap_or(0);
+                out.push_str(&format!("  {} ({}%)\n", title, progress));
+            }
         }
     }
 
-    if let Some(tasks) = ctx.get("tasks").and_then(|v| v.as_array()) {
-        if !tasks.is_empty() {
-            sections.push(format!("{} task{}", tasks.len(), if tasks.len() == 1 { "" } else { "s" }));
-        }
-    }
-
-    if sections.is_empty() {
+    if out.is_empty() {
         "No relevant context.".to_string()
     } else {
-        format!("Context: {}", sections.join(", "))
+        out.trim_end().to_string()
     }
 }
 
@@ -536,37 +569,98 @@ pub fn guidelines(results: &[Value]) -> String {
     out.trim_end().to_string()
 }
 
-/// Format session context summary
+/// Format session context summary - shows actual content, not just counts
 pub fn session_context(ctx: &Value) -> String {
-    let mut parts = Vec::new();
+    let mut out = String::new();
 
-    if let Some(sessions) = ctx.get("recent_sessions").and_then(|v| v.as_array()) {
-        if !sessions.is_empty() {
-            parts.push(format!("{} recent session{}", sessions.len(), if sessions.len() == 1 { "" } else { "s" }));
-        }
-    }
-
-    if let Some(tasks) = ctx.get("pending_tasks").and_then(|v| v.as_array()) {
-        if !tasks.is_empty() {
-            parts.push(format!("{} pending task{}", tasks.len(), if tasks.len() == 1 { "" } else { "s" }));
-        }
-    }
-
+    // Active goals with progress
     if let Some(goals) = ctx.get("active_goals").and_then(|v| v.as_array()) {
         if !goals.is_empty() {
-            parts.push(format!("{} active goal{}", goals.len(), if goals.len() == 1 { "" } else { "s" }));
+            out.push_str("Goals:\n");
+            for g in goals {
+                let title = g.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                let progress = g.get("progress_percent").and_then(|v| v.as_i64()).unwrap_or(0);
+                let status = g.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                let icon = match status {
+                    "completed" => "✓",
+                    "in_progress" => "→",
+                    "blocked" => "✗",
+                    _ => "○",
+                };
+                out.push_str(&format!("  {} {} ({}%)\n", icon, title, progress));
+            }
         }
     }
 
-    if let Some(corrections) = ctx.get("recent_corrections").and_then(|v| v.as_array()) {
+    // Active corrections (important to follow)
+    if let Some(corrections) = ctx.get("active_corrections").and_then(|v| v.as_array()) {
         if !corrections.is_empty() {
-            parts.push(format!("{} correction{}", corrections.len(), if corrections.len() == 1 { "" } else { "s" }));
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Corrections:\n");
+            for c in corrections.iter().take(3) {
+                let wrong = c.get("what_was_wrong").and_then(|v| v.as_str()).unwrap_or("?");
+                let right = c.get("what_is_right").and_then(|v| v.as_str()).unwrap_or("?");
+                let wrong_short = if wrong.len() > 30 { format!("{}...", &wrong[..27]) } else { wrong.to_string() };
+                let right_short = if right.len() > 50 { format!("{}...", &right[..47]) } else { right.to_string() };
+                out.push_str(&format!("  {} → {}\n", wrong_short, right_short));
+            }
+            if corrections.len() > 3 {
+                out.push_str(&format!("  ...and {} more\n", corrections.len() - 3));
+            }
         }
     }
 
-    if parts.is_empty() {
+    // Pending tasks
+    if let Some(tasks) = ctx.get("pending_tasks").and_then(|v| v.as_array()) {
+        if !tasks.is_empty() {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Pending tasks:\n");
+            for t in tasks.iter().take(5) {
+                let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+                let icon = match status {
+                    "in_progress" => "→",
+                    "blocked" => "✗",
+                    _ => "○",
+                };
+                out.push_str(&format!("  {} {}\n", icon, title));
+            }
+            if tasks.len() > 5 {
+                out.push_str(&format!("  ...and {} more\n", tasks.len() - 5));
+            }
+        }
+    }
+
+    // Recent sessions (just summaries, truncated)
+    if let Some(sessions) = ctx.get("recent_sessions").and_then(|v| v.as_array()) {
+        if !sessions.is_empty() {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Recent sessions:\n");
+            for s in sessions.iter().take(3) {
+                let summary = s.get("summary").and_then(|v| v.as_str()).unwrap_or("?");
+                // Get first line or truncate
+                let first_line = summary.lines().next().unwrap_or(summary);
+                let display = if first_line.len() > 70 {
+                    format!("{}...", &first_line[..67])
+                } else {
+                    first_line.to_string()
+                };
+                out.push_str(&format!("  {}\n", display));
+            }
+        }
+    }
+
+    // Recent memories (just a count - these are context, not actionable)
+    if let Some(memories) = ctx.get("recent_memories").and_then(|v| v.as_array()) {
+        if !memories.is_empty() {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str(&format!("{} recent memories loaded\n", memories.len()));
+        }
+    }
+
+    if out.is_empty() {
         "Fresh session - no prior context.".to_string()
     } else {
-        format!("Session context: {}", parts.join(", "))
+        out.trim_end().to_string()
     }
 }
