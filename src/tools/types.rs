@@ -1,162 +1,276 @@
 // src/tools/types.rs
-// Request types for MCP tools - simplified for Claude Code augmentation
+// Consolidated request types for MCP tools - optimized for minimal token footprint
 
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 // ============================================================================
-// Memory Tools
+// Memory Tools (keep separate - high usage, simple)
 // ============================================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RememberRequest {
-    #[schemars(description = "The fact, decision, or preference to remember")]
+    #[schemars(description = "Content to remember")]
     pub content: String,
-    #[schemars(description = "Type: 'preference', 'decision', 'context', 'general'")]
+    #[schemars(description = "Type: preference/decision/context/general")]
     pub fact_type: Option<String>,
-    #[schemars(description = "Category for organization")]
+    #[schemars(description = "Category for filtering")]
     pub category: Option<String>,
-    #[schemars(description = "Unique key for upsert (auto-generated if not provided)")]
+    #[schemars(description = "Key for upsert")]
     pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct RecallRequest {
-    #[schemars(description = "Search query to find relevant memories")]
+    #[schemars(description = "Search query")]
     pub query: String,
-    #[schemars(description = "Filter by fact type")]
+    #[schemars(description = "Filter by type")]
     pub fact_type: Option<String>,
     #[schemars(description = "Filter by category")]
     pub category: Option<String>,
-    #[schemars(description = "Maximum results (default: 10)")]
+    #[schemars(description = "Max results (default: 10)")]
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ForgetRequest {
-    #[schemars(description = "ID of the memory to forget")]
+    #[schemars(description = "Memory ID to delete")]
     pub id: String,
 }
 
 // ============================================================================
-// Guidelines Tools
+// Consolidated Task Tool (6→1)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskRequest {
+    #[schemars(description = "Action: create/list/get/update/complete/delete")]
+    pub action: String,
+    #[schemars(description = "Task ID (for get/update/complete/delete)")]
+    pub task_id: Option<String>,
+    #[schemars(description = "Title (for create/update)")]
+    pub title: Option<String>,
+    #[schemars(description = "Description")]
+    pub description: Option<String>,
+    #[schemars(description = "Priority: low/medium/high/urgent")]
+    pub priority: Option<String>,
+    #[schemars(description = "Status: pending/in_progress/completed/blocked")]
+    pub status: Option<String>,
+    #[schemars(description = "Parent task ID")]
+    pub parent_id: Option<String>,
+    #[schemars(description = "Completion notes")]
+    pub notes: Option<String>,
+    #[schemars(description = "Include completed (for list)")]
+    pub include_completed: Option<bool>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
+// Consolidated Goal Tool (6→1)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GoalRequest {
+    #[schemars(description = "Action: create/list/get/update/add_milestone/complete_milestone/progress")]
+    pub action: String,
+    #[schemars(description = "Goal ID")]
+    pub goal_id: Option<String>,
+    #[schemars(description = "Milestone ID (for complete_milestone)")]
+    pub milestone_id: Option<String>,
+    #[schemars(description = "Title")]
+    pub title: Option<String>,
+    #[schemars(description = "Description")]
+    pub description: Option<String>,
+    #[schemars(description = "Success criteria")]
+    pub success_criteria: Option<String>,
+    #[schemars(description = "Priority: low/medium/high/critical")]
+    pub priority: Option<String>,
+    #[schemars(description = "Status: planning/in_progress/blocked/completed/abandoned")]
+    pub status: Option<String>,
+    #[schemars(description = "Progress percent (0-100)")]
+    pub progress_percent: Option<i32>,
+    #[schemars(description = "Milestone weight")]
+    pub weight: Option<i32>,
+    #[schemars(description = "Include finished goals")]
+    pub include_finished: Option<bool>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
+// Consolidated Correction Tool (4→1)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CorrectionRequest {
+    #[schemars(description = "Action: record/get/validate/list")]
+    pub action: String,
+    #[schemars(description = "Correction ID (for validate)")]
+    pub correction_id: Option<String>,
+    #[schemars(description = "Type: style/approach/pattern/preference/anti_pattern")]
+    pub correction_type: Option<String>,
+    #[schemars(description = "What was wrong")]
+    pub what_was_wrong: Option<String>,
+    #[schemars(description = "What is right")]
+    pub what_is_right: Option<String>,
+    #[schemars(description = "Rationale")]
+    pub rationale: Option<String>,
+    #[schemars(description = "Scope: global/project/file/topic")]
+    pub scope: Option<String>,
+    #[schemars(description = "Keywords for matching")]
+    pub keywords: Option<String>,
+    #[schemars(description = "File path (for get)")]
+    pub file_path: Option<String>,
+    #[schemars(description = "Topic (for get)")]
+    pub topic: Option<String>,
+    #[schemars(description = "Outcome: validated/overridden/deprecated")]
+    pub outcome: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
+// Consolidated Document Tool (3→1)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DocumentRequest {
+    #[schemars(description = "Action: list/search/get")]
+    pub action: String,
+    #[schemars(description = "Document ID (for get)")]
+    pub document_id: Option<String>,
+    #[schemars(description = "Search query")]
+    pub query: Option<String>,
+    #[schemars(description = "Filter by type: pdf/markdown/text/code")]
+    pub doc_type: Option<String>,
+    #[schemars(description = "Include full content")]
+    pub include_content: Option<bool>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
+// Consolidated Permission Tool (3→1)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PermissionRequest {
+    #[schemars(description = "Action: save/list/delete")]
+    pub action: String,
+    #[schemars(description = "Rule ID (for delete)")]
+    pub rule_id: Option<String>,
+    #[schemars(description = "Tool name (e.g., Bash, Edit)")]
+    pub tool_name: Option<String>,
+    #[schemars(description = "Field to match (e.g., command)")]
+    pub input_field: Option<String>,
+    #[schemars(description = "Pattern to match")]
+    pub input_pattern: Option<String>,
+    #[schemars(description = "Match type: exact/prefix/glob")]
+    pub match_type: Option<String>,
+    #[schemars(description = "Scope: global/project")]
+    pub scope: Option<String>,
+    #[schemars(description = "Description")]
+    pub description: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
+// Consolidated Build Tool (4→1)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BuildRequest {
+    #[schemars(description = "Action: record/record_error/get_errors/resolve")]
+    pub action: String,
+    #[schemars(description = "Error ID (for resolve)")]
+    pub error_id: Option<i64>,
+    #[schemars(description = "Build command")]
+    pub command: Option<String>,
+    #[schemars(description = "Build succeeded")]
+    pub success: Option<bool>,
+    #[schemars(description = "Duration in ms")]
+    pub duration_ms: Option<i64>,
+    #[schemars(description = "Error message")]
+    pub message: Option<String>,
+    #[schemars(description = "Error category")]
+    pub category: Option<String>,
+    #[schemars(description = "Severity: error/warning")]
+    pub severity: Option<String>,
+    #[schemars(description = "File path")]
+    pub file_path: Option<String>,
+    #[schemars(description = "Line number")]
+    pub line_number: Option<i32>,
+    #[schemars(description = "Error code")]
+    pub code: Option<String>,
+    #[schemars(description = "Include resolved")]
+    pub include_resolved: Option<bool>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
+// Guidelines Tools (keep separate - different structure)
 // ============================================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetGuidelinesRequest {
-    #[schemars(description = "Filter by project path")]
-    pub project_path: Option<String>,
-    #[schemars(description = "Filter by category: 'mira_usage' for Mira tool guidance, or 'naming', 'style', 'architecture', 'testing' for project conventions")]
+    #[schemars(description = "Category: mira_usage/naming/style/architecture/testing")]
     pub category: Option<String>,
+    #[schemars(description = "Project path filter")]
+    pub project_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddGuidelineRequest {
-    #[schemars(description = "The guideline content")]
+    #[schemars(description = "Guideline content")]
     pub content: String,
-    #[schemars(description = "Category: 'naming', 'style', 'architecture', 'testing', 'other'")]
+    #[schemars(description = "Category")]
     pub category: String,
-    #[schemars(description = "Project path (optional - global if not specified)")]
+    #[schemars(description = "Project path (global if omitted)")]
     pub project_path: Option<String>,
     #[schemars(description = "Priority (higher = more important)")]
     pub priority: Option<i32>,
 }
 
 // ============================================================================
-// Task Tools
-// ============================================================================
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateTaskRequest {
-    #[schemars(description = "Task title")]
-    pub title: String,
-    #[schemars(description = "Detailed description")]
-    pub description: Option<String>,
-    #[schemars(description = "Priority: 'low', 'medium', 'high', 'urgent'")]
-    pub priority: Option<String>,
-    #[schemars(description = "Project path")]
-    pub project_path: Option<String>,
-    #[schemars(description = "Tags (JSON array or comma-separated)")]
-    pub tags: Option<String>,
-    #[schemars(description = "Parent task ID for subtasks")]
-    pub parent_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListTasksRequest {
-    #[schemars(description = "Filter by status: 'pending', 'in_progress', 'completed', 'blocked'")]
-    pub status: Option<String>,
-    #[schemars(description = "Filter by project path")]
-    pub project_path: Option<String>,
-    #[schemars(description = "Filter by parent task ID")]
-    pub parent_id: Option<String>,
-    #[schemars(description = "Include completed tasks (default: false)")]
-    pub include_completed: Option<bool>,
-    #[schemars(description = "Maximum results (default: 20)")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct GetTaskRequest {
-    #[schemars(description = "Task ID")]
-    pub task_id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpdateTaskRequest {
-    #[schemars(description = "Task ID to update")]
-    pub task_id: String,
-    #[schemars(description = "New title")]
-    pub title: Option<String>,
-    #[schemars(description = "New description")]
-    pub description: Option<String>,
-    #[schemars(description = "New status")]
-    pub status: Option<String>,
-    #[schemars(description = "New priority")]
-    pub priority: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompleteTaskRequest {
-    #[schemars(description = "Task ID to complete")]
-    pub task_id: String,
-    #[schemars(description = "Completion notes")]
-    pub notes: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct DeleteTaskRequest {
-    #[schemars(description = "Task ID to delete")]
-    pub task_id: String,
-}
-
-// ============================================================================
-// Code Intelligence Tools
+// Code Intelligence Tools (keep separate - distinct use cases)
 // ============================================================================
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct GetSymbolsRequest {
-    #[schemars(description = "File path to get symbols from")]
+    #[schemars(description = "File path")]
     pub file_path: String,
-    #[schemars(description = "Filter by symbol type: 'function', 'class', 'struct', 'trait'")]
+    #[schemars(description = "Type: function/class/struct/trait")]
     pub symbol_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetCallGraphRequest {
-    #[schemars(description = "Symbol name to get call graph for")]
+    #[schemars(description = "Symbol name")]
     pub symbol: String,
-    #[schemars(description = "Depth of call graph (default: 2)")]
+    #[schemars(description = "Depth (default: 2)")]
     pub depth: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetRelatedFilesRequest {
-    #[schemars(description = "File path to find related files for")]
+    #[schemars(description = "File path")]
     pub file_path: String,
-    #[schemars(description = "Relation type: 'imports', 'cochange', 'all'")]
+    #[schemars(description = "Type: imports/cochange/all")]
     pub relation_type: Option<String>,
-    #[schemars(description = "Maximum results (default: 10)")]
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SemanticCodeSearchRequest {
+    #[schemars(description = "Natural language query")]
+    pub query: String,
+    #[schemars(description = "Language filter")]
+    pub language: Option<String>,
+    #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
 
@@ -166,240 +280,110 @@ pub struct GetRelatedFilesRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetRecentCommitsRequest {
-    #[schemars(description = "Maximum commits to return (default: 20)")]
+    #[schemars(description = "Max commits")]
     pub limit: Option<i64>,
-    #[schemars(description = "Filter by file path")]
+    #[schemars(description = "Filter by file")]
     pub file_path: Option<String>,
-    #[schemars(description = "Filter by author email")]
+    #[schemars(description = "Filter by author")]
     pub author: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchCommitsRequest {
-    #[schemars(description = "Search query for commit messages")]
+    #[schemars(description = "Search query")]
     pub query: String,
-    #[schemars(description = "Maximum results (default: 20)")]
+    #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct FindCochangeRequest {
-    #[schemars(description = "File path to find co-change patterns for")]
+    #[schemars(description = "File path")]
     pub file_path: String,
-    #[schemars(description = "Maximum results (default: 10)")]
+    #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct FindSimilarFixesRequest {
-    #[schemars(description = "Error message or pattern to search for")]
+    #[schemars(description = "Error message")]
     pub error: String,
-    #[schemars(description = "Error category filter")]
+    #[schemars(description = "Category filter")]
     pub category: Option<String>,
     #[schemars(description = "Language filter")]
     pub language: Option<String>,
-    #[schemars(description = "Maximum results (default: 5)")]
+    #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RecordErrorFixRequest {
-    #[schemars(description = "The error message/pattern")]
+    #[schemars(description = "Error pattern")]
     pub error_pattern: String,
-    #[schemars(description = "Error category: 'type_error', 'borrow_error', 'import_error', etc.")]
-    pub category: Option<String>,
-    #[schemars(description = "Programming language")]
-    pub language: Option<String>,
-    #[schemars(description = "File pattern where this occurred")]
-    pub file_pattern: Option<String>,
-    #[schemars(description = "Description of the fix")]
+    #[schemars(description = "Fix description")]
     pub fix_description: String,
-    #[schemars(description = "The diff that fixed it")]
+    #[schemars(description = "Category")]
+    pub category: Option<String>,
+    #[schemars(description = "Language")]
+    pub language: Option<String>,
+    #[schemars(description = "File pattern")]
+    pub file_pattern: Option<String>,
+    #[schemars(description = "Diff")]
     pub fix_diff: Option<String>,
     #[schemars(description = "Commit hash")]
     pub fix_commit: Option<String>,
 }
 
 // ============================================================================
-// Build Intelligence Tools
-// ============================================================================
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetBuildErrorsRequest {
-    #[schemars(description = "Filter by file path")]
-    pub file_path: Option<String>,
-    #[schemars(description = "Filter by category: 'type_error', 'syntax_error', 'linker_error'")]
-    pub category: Option<String>,
-    #[schemars(description = "Include resolved errors (default: false)")]
-    pub include_resolved: Option<bool>,
-    #[schemars(description = "Maximum results (default: 20)")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RecordBuildRequest {
-    #[schemars(description = "Build command that was run")]
-    pub command: String,
-    #[schemars(description = "Whether the build succeeded")]
-    pub success: bool,
-    #[schemars(description = "Project path")]
-    pub project_path: Option<String>,
-    #[schemars(description = "Build duration in milliseconds")]
-    pub duration_ms: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RecordBuildErrorRequest {
-    #[schemars(description = "Error message")]
-    pub message: String,
-    #[schemars(description = "Error category")]
-    pub category: Option<String>,
-    #[schemars(description = "Severity: 'error' or 'warning'")]
-    pub severity: Option<String>,
-    #[schemars(description = "File path")]
-    pub file_path: Option<String>,
-    #[schemars(description = "Line number")]
-    pub line_number: Option<i32>,
-    #[schemars(description = "Error code (e.g., E0308)")]
-    pub code: Option<String>,
-    #[schemars(description = "Compiler suggestion")]
-    pub suggestion: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ResolveErrorRequest {
-    #[schemars(description = "Error ID to mark as resolved")]
-    pub error_id: i64,
-}
-
-// ============================================================================
-// Document Tools
-// ============================================================================
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListDocumentsRequest {
-    #[schemars(description = "Filter by document type: 'pdf', 'markdown', 'text', 'code'")]
-    pub doc_type: Option<String>,
-    #[schemars(description = "Maximum results (default: 20)")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct SearchDocumentsRequest {
-    #[schemars(description = "Search query")]
-    pub query: String,
-    #[schemars(description = "Maximum results (default: 10)")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct GetDocumentRequest {
-    #[schemars(description = "Document ID")]
-    pub document_id: String,
-    #[schemars(description = "Include full content (default: false)")]
-    pub include_content: Option<bool>,
-}
-
-// ============================================================================
-// Workspace/Context Tools
-// ============================================================================
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RecordActivityRequest {
-    #[schemars(description = "File path")]
-    pub file_path: String,
-    #[schemars(description = "Activity type: 'read', 'write', 'error', 'test'")]
-    pub activity_type: String,
-    #[schemars(description = "Optional context (error message, test result, etc.)")]
-    pub context: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetRecentActivityRequest {
-    #[schemars(description = "Filter by file path")]
-    pub file_path: Option<String>,
-    #[schemars(description = "Filter by activity type")]
-    pub activity_type: Option<String>,
-    #[schemars(description = "Maximum results (default: 20)")]
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SetContextRequest {
-    #[schemars(description = "Context type: 'active_task', 'recent_error', 'current_file'")]
-    pub context_type: String,
-    #[schemars(description = "Context key")]
-    pub key: String,
-    #[schemars(description = "Context value")]
-    pub value: String,
-    #[schemars(description = "Priority (higher = more important)")]
-    pub priority: Option<i32>,
-    #[schemars(description = "TTL in seconds (optional)")]
-    pub ttl_seconds: Option<i64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetContextRequest {
-    #[schemars(description = "Filter by context type")]
-    pub context_type: Option<String>,
-}
-
-// ============================================================================
-// Session/Cross-Session Memory Tools
+// Session Tools
 // ============================================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetSessionContextRequest {
-    #[schemars(description = "Include recent memories (default: true)")]
+    #[schemars(description = "Include memories")]
     pub include_memories: Option<bool>,
-    #[schemars(description = "Include pending tasks (default: true)")]
+    #[schemars(description = "Include tasks")]
     pub include_tasks: Option<bool>,
-    #[schemars(description = "Include recent sessions (default: true)")]
+    #[schemars(description = "Include sessions")]
     pub include_sessions: Option<bool>,
-    #[schemars(description = "Maximum items per category (default: 5)")]
+    #[schemars(description = "Include goals")]
+    pub include_goals: Option<bool>,
+    #[schemars(description = "Include corrections")]
+    pub include_corrections: Option<bool>,
+    #[schemars(description = "Max items per category")]
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StoreSessionRequest {
-    #[schemars(description = "Summary of what happened in this session")]
+    #[schemars(description = "Session summary")]
     pub summary: String,
-    #[schemars(description = "Session ID (auto-generated if not provided)")]
+    #[schemars(description = "Session ID")]
     pub session_id: Option<String>,
-    #[schemars(description = "Project path this session was about")]
+    #[schemars(description = "Project path")]
     pub project_path: Option<String>,
-    #[schemars(description = "Key topics discussed")]
+    #[schemars(description = "Topics")]
     pub topics: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchSessionsRequest {
-    #[schemars(description = "Query to search past sessions (semantic search if available)")]
+    #[schemars(description = "Search query")]
     pub query: String,
-    #[schemars(description = "Maximum results (default: 10)")]
+    #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StoreDecisionRequest {
-    #[schemars(description = "Unique key for this decision (for updates)")]
+    #[schemars(description = "Unique key")]
     pub key: String,
-    #[schemars(description = "The decision or important context")]
+    #[schemars(description = "Decision content")]
     pub decision: String,
-    #[schemars(description = "Category: 'architecture', 'api', 'convention', 'preference'")]
+    #[schemars(description = "Category")]
     pub category: Option<String>,
-    #[schemars(description = "Additional context about why this decision was made")]
+    #[schemars(description = "Context/rationale")]
     pub context: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SemanticCodeSearchRequest {
-    #[schemars(description = "Natural language query to find relevant code")]
-    pub query: String,
-    #[schemars(description = "Filter by language: 'rust', 'python', 'typescript', etc.")]
-    pub language: Option<String>,
-    #[schemars(description = "Maximum results (default: 10)")]
-    pub limit: Option<i64>,
 }
 
 // ============================================================================
@@ -408,9 +392,9 @@ pub struct SemanticCodeSearchRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetProjectRequest {
-    #[schemars(description = "Absolute path to project root (e.g., /home/user/myproject)")]
+    #[schemars(description = "Project root path")]
     pub project_path: String,
-    #[schemars(description = "Optional project name (auto-detected from directory name if not provided)")]
+    #[schemars(description = "Project name")]
     pub name: Option<String>,
 }
 
@@ -418,13 +402,46 @@ pub struct SetProjectRequest {
 pub struct GetProjectRequest {}
 
 // ============================================================================
-// Analytics/Introspection Tools
+// Analytics/Admin Tools
 // ============================================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct QueryRequest {
-    #[schemars(description = "SQL SELECT query to execute")]
+    #[schemars(description = "SQL SELECT query")]
     pub sql: String,
-    #[schemars(description = "Maximum rows to return (default: 100)")]
+    #[schemars(description = "Max rows")]
     pub limit: Option<i64>,
 }
+
+// ============================================================================
+// Proactive Context
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetProactiveContextRequest {
+    #[schemars(description = "Files being worked on")]
+    pub files: Option<Vec<String>>,
+    #[schemars(description = "Topics/keywords")]
+    pub topics: Option<Vec<String>>,
+    #[schemars(description = "Current error")]
+    pub error: Option<String>,
+    #[schemars(description = "Current task")]
+    pub task: Option<String>,
+    #[schemars(description = "Max per category")]
+    pub limit_per_category: Option<i32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RecordRejectedApproachRequest {
+    #[schemars(description = "Problem context")]
+    pub problem_context: String,
+    #[schemars(description = "Approach tried")]
+    pub approach: String,
+    #[schemars(description = "Why rejected")]
+    pub rejection_reason: String,
+    #[schemars(description = "Related files")]
+    pub related_files: Option<String>,
+    #[schemars(description = "Related topics")]
+    pub related_topics: Option<String>,
+}
+

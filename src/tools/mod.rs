@@ -4,15 +4,18 @@
 pub mod analytics;
 pub mod build_intel;
 pub mod code_intel;
+pub mod corrections;
 pub mod documents;
 pub mod git_intel;
+pub mod goals;
 pub mod memory;
+pub mod permissions;
+pub mod proactive;
 pub mod project;
 pub mod response;
 pub mod semantic;
 pub mod sessions;
 pub mod tasks;
-pub mod workspace;
 pub mod types;
 
 // Re-export for use in main.rs

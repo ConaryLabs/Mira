@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
 
-/// Get session context - combines recent sessions, memories, and pending tasks
+/// Get session context - combines recent sessions, memories, pending tasks, goals, and corrections
 /// This is the "where did we leave off?" tool for session startup
 pub async fn get_session_context(
     db: &SqlitePool,
@@ -19,6 +19,8 @@ pub async fn get_session_context(
     let include_memories = req.include_memories.unwrap_or(true);
     let include_tasks = req.include_tasks.unwrap_or(true);
     let include_sessions = req.include_sessions.unwrap_or(true);
+    let include_goals = req.include_goals.unwrap_or(true);
+    let include_corrections = req.include_corrections.unwrap_or(true);
 
     let mut context = serde_json::json!({
         "project_id": project_id,
@@ -120,6 +122,72 @@ pub async fn get_session_context(
         }).collect();
 
         context["recent_sessions"] = serde_json::json!(sessions_json);
+    }
+
+    // Get active goals
+    if include_goals {
+        let goals = sqlx::query_as::<_, (String, String, String, String, i32, Option<String>)>(r#"
+            SELECT id, title, status, priority, progress_percent, blockers
+            FROM goals
+            WHERE status IN ('planning', 'in_progress', 'blocked')
+              AND (project_id IS NULL OR project_id = $1)
+            ORDER BY
+                CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+                CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END
+            LIMIT $2
+        "#)
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        let goals_json: Vec<serde_json::Value> = goals.into_iter().map(|(id, title, status, priority, progress, blockers)| {
+            serde_json::json!({
+                "id": id,
+                "title": title,
+                "status": status,
+                "priority": priority,
+                "progress_percent": progress,
+                "has_blockers": blockers.map(|b| !b.is_empty()).unwrap_or(false),
+            })
+        }).collect();
+
+        if !goals_json.is_empty() {
+            context["active_goals"] = serde_json::json!(goals_json);
+        }
+    }
+
+    // Get recent/important corrections
+    if include_corrections {
+        let corrections = sqlx::query_as::<_, (String, String, String, String, f64)>(r#"
+            SELECT id, correction_type, what_was_wrong, what_is_right, confidence
+            FROM corrections
+            WHERE status = 'active'
+              AND (project_id IS NULL OR project_id = $1)
+              AND confidence > 0.5
+            ORDER BY confidence DESC, times_validated DESC
+            LIMIT $2
+        "#)
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        let corrections_json: Vec<serde_json::Value> = corrections.into_iter().map(|(id, ctype, wrong, right, confidence)| {
+            serde_json::json!({
+                "id": id,
+                "correction_type": ctype,
+                "what_was_wrong": wrong,
+                "what_is_right": right,
+                "confidence": confidence,
+            })
+        }).collect();
+
+        if !corrections_json.is_empty() {
+            context["active_corrections"] = serde_json::json!(corrections_json);
+        }
     }
 
     Ok(context)
