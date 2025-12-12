@@ -81,22 +81,14 @@ enum HookAction {
 enum DaemonAction {
     /// Start the background watcher daemon
     Start {
-        /// Project path to watch (defaults to current directory)
-        #[arg(short, long)]
-        path: Option<String>,
+        /// Project paths to watch (can specify multiple: -p /path1 -p /path2)
+        #[arg(short, long, action = clap::ArgAction::Append)]
+        path: Vec<String>,
     },
     /// Stop the daemon
-    Stop {
-        /// Project path (defaults to current directory)
-        #[arg(short, long)]
-        path: Option<String>,
-    },
+    Stop,
     /// Check daemon status
-    Status {
-        /// Project path (defaults to current directory)
-        #[arg(short, long)]
-        path: Option<String>,
-    },
+    Status,
 }
 
 // === Middleware ===
@@ -283,42 +275,40 @@ async fn main() -> Result<()> {
 
             match action {
                 DaemonAction::Start { path } => {
-                    let project_path = path
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| std::env::current_dir().unwrap());
+                    // Collect project paths - default to current directory if none specified
+                    let project_paths: Vec<std::path::PathBuf> = if path.is_empty() {
+                        vec![std::env::current_dir().unwrap()]
+                    } else {
+                        path.into_iter().map(std::path::PathBuf::from).collect()
+                    };
 
                     // Check if already running
-                    if let Some(pid) = daemon::is_running(&project_path) {
+                    if let Some(pid) = daemon::is_running() {
                         println!("Daemon already running with PID {}", pid);
                         return Ok(());
                     }
 
-                    info!("Starting Mira daemon for {}", project_path.display());
+                    info!("Starting Mira daemon for {} project(s)", project_paths.len());
+                    for p in &project_paths {
+                        info!("  - {}", p.display());
+                    }
                     let d = daemon::Daemon::new(
-                        &project_path,
+                        project_paths,
                         &database_url,
                         qdrant_url.as_deref(),
                         gemini_key,
                     ).await?;
                     d.run().await?;
                 }
-                DaemonAction::Stop { path } => {
-                    let project_path = path
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| std::env::current_dir().unwrap());
-
-                    if daemon::stop(&project_path)? {
+                DaemonAction::Stop => {
+                    if daemon::stop()? {
                         println!("Daemon stopped");
                     } else {
                         println!("No daemon running");
                     }
                 }
-                DaemonAction::Status { path } => {
-                    let project_path = path
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| std::env::current_dir().unwrap());
-
-                    if let Some(pid) = daemon::is_running(&project_path) {
+                DaemonAction::Status => {
+                    if let Some(pid) = daemon::is_running() {
                         println!("Daemon running with PID {}", pid);
                     } else {
                         println!("Daemon not running");
