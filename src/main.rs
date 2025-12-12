@@ -12,7 +12,7 @@ use rmcp::{
     transport::{StreamableHttpService, StreamableHttpServerConfig},
     transport::streamable_http_server::session::local::LocalSessionManager,
 };
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, Level};
@@ -26,6 +26,26 @@ mod indexer;
 mod hooks;
 use tools::*;
 use indexer::{CodeIndexer, GitIndexer};
+
+// === Database Pool Configuration ===
+
+/// Create an optimized SQLite connection pool
+async fn create_optimized_pool(database_url: &str) -> Result<SqlitePool> {
+    SqlitePoolOptions::new()
+        // SQLite is single-writer, but can have multiple readers
+        .max_connections(10)
+        // Keep some connections ready
+        .min_connections(2)
+        // Don't wait too long for a connection
+        .acquire_timeout(Duration::from_secs(10))
+        // Recycle connections periodically
+        .max_lifetime(Duration::from_secs(1800)) // 30 minutes
+        // Close idle connections after a while
+        .idle_timeout(Duration::from_secs(600)) // 10 minutes
+        .connect(database_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))
+}
 
 // === Project Context ===
 
@@ -51,7 +71,7 @@ pub struct MiraServer {
 impl MiraServer {
     pub async fn new(database_url: &str, qdrant_url: Option<&str>, gemini_key: Option<String>) -> Result<Self> {
         info!("Connecting to database: {}", database_url);
-        let db = SqlitePool::connect(database_url).await?;
+        let db = create_optimized_pool(database_url).await?;
         info!("Database connected successfully");
 
         let semantic = SemanticSearch::new(qdrant_url, gemini_key).await;
@@ -903,7 +923,7 @@ async fn main() -> Result<()> {
                 .ok();
 
             // Create shared state that will be cloned for each session
-            let db = Arc::new(SqlitePool::connect(&database_url).await?);
+            let db = Arc::new(create_optimized_pool(&database_url).await?);
             let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key).await);
             info!("Database connected");
 

@@ -439,18 +439,22 @@ impl CodeIndexer {
         stats.unresolved_calls = unresolved_inserted;
 
         // Generate embeddings for semantic search (if available)
+        // Use batch embedding for better performance
         if let Some(ref semantic) = self.semantic {
             if semantic.is_available() {
                 // Ensure collection exists
                 if let Err(e) = semantic.ensure_collection(crate::tools::COLLECTION_CODE).await {
                     tracing::warn!("Failed to ensure code collection: {}", e);
                 } else {
-                    // Embed each symbol (functions, structs, classes - skip modules/imports)
-                    for symbol in &symbols {
-                        // Only embed meaningful symbols
-                        if matches!(symbol.symbol_type.as_str(),
-                            "function" | "struct" | "class" | "trait" | "enum" | "interface" | "type")
-                        {
+                    // Collect embeddable symbols
+                    let embeddable: Vec<_> = symbols.iter()
+                        .filter(|s| matches!(s.symbol_type.as_str(),
+                            "function" | "struct" | "class" | "trait" | "enum" | "interface" | "type"))
+                        .collect();
+
+                    if !embeddable.is_empty() {
+                        // Build batch items: (id, content, metadata)
+                        let batch_items: Vec<_> = embeddable.iter().map(|symbol| {
                             let text = Self::symbol_to_text(symbol, &file_path_str);
                             let id = Self::symbol_id(&file_path_str, symbol);
 
@@ -466,15 +470,16 @@ impl CodeIndexer {
                                 metadata.insert("signature".to_string(), serde_json::json!(sig.clone()));
                             }
 
-                            if let Err(e) = semantic.store(
-                                crate::tools::COLLECTION_CODE,
-                                &id,
-                                &text,
-                                metadata,
-                            ).await {
-                                tracing::warn!("Failed to embed symbol {}: {}", symbol.name, e);
-                            } else {
-                                stats.embeddings_generated += 1;
+                            (id, text, metadata)
+                        }).collect();
+
+                        // Store all symbols in one batch operation
+                        match semantic.store_batch(crate::tools::COLLECTION_CODE, batch_items).await {
+                            Ok(count) => {
+                                stats.embeddings_generated = count;
+                            }
+                            Err(e) => {
+                                tracing::warn!("Batch embedding failed: {}", e);
                             }
                         }
                     }

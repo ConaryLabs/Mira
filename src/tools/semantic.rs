@@ -163,6 +163,170 @@ impl SemanticSearch {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Embedding failed after retries")))
     }
 
+    /// Batch embed multiple texts in a single API call (more efficient)
+    /// Returns embeddings in the same order as input texts
+    pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // For small batches, just use sequential embedding
+        if texts.len() <= 2 {
+            let mut results = Vec::with_capacity(texts.len());
+            for text in texts {
+                results.push(self.embed(text).await?);
+            }
+            return Ok(results);
+        }
+
+        let api_key = self.gemini_key.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Gemini API key not configured"))?;
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key={}",
+            api_key
+        );
+
+        // Build batch request
+        let requests: Vec<serde_json::Value> = texts.iter().map(|text| {
+            serde_json::json!({
+                "model": "models/gemini-embedding-001",
+                "content": {
+                    "parts": [{
+                        "text": text
+                    }]
+                },
+                "outputDimensionality": EMBEDDING_DIM
+            })
+        }).collect();
+
+        let body = serde_json::json!({
+            "requests": requests
+        });
+
+        let mut last_error = None;
+        for attempt in 0..=EMBED_RETRY_ATTEMPTS {
+            if attempt > 0 {
+                debug!("Retrying batch embed (attempt {})", attempt + 1);
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+
+            let result = self.http_client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    let json: serde_json::Value = match response.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            last_error = Some(anyhow::anyhow!("Failed to parse batch response: {}", e));
+                            continue;
+                        }
+                    };
+
+                    if let Some(error) = json.get("error") {
+                        let error_str = error.to_string();
+                        if error_str.contains("API_KEY") || error_str.contains("QUOTA") {
+                            anyhow::bail!("Gemini API error: {}", error);
+                        }
+                        last_error = Some(anyhow::anyhow!("Gemini batch API error: {}", error));
+                        continue;
+                    }
+
+                    let embeddings = json["embeddings"]
+                        .as_array()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid batch embedding response"))?
+                        .iter()
+                        .map(|emb| {
+                            emb["values"]
+                                .as_array()
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        })
+                        .collect();
+
+                    return Ok(embeddings);
+                }
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Batch request failed: {}", e));
+                    continue;
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Batch embedding failed after retries")))
+    }
+
+    /// Store multiple points in a collection (more efficient than individual stores)
+    pub async fn store_batch(
+        &self,
+        collection: &str,
+        items: Vec<(String, String, HashMap<String, serde_json::Value>)>, // (id, content, metadata)
+    ) -> Result<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+
+        let qdrant = self.qdrant.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
+
+        // Get all embeddings in one batch call
+        let texts: Vec<String> = items.iter().map(|(_, content, _)| content.clone()).collect();
+        let embeddings = self.embed_batch(&texts).await?;
+
+        if embeddings.len() != items.len() {
+            anyhow::bail!("Embedding count mismatch: got {} for {} items", embeddings.len(), items.len());
+        }
+
+        // Build points
+        let points: Vec<PointStruct> = items.iter().zip(embeddings.iter())
+            .map(|((id, content, metadata), embedding)| {
+                let mut payload: HashMap<String, QdrantValue> = HashMap::new();
+                payload.insert("content".to_string(), content.clone().into());
+
+                for (key, value) in metadata {
+                    let qdrant_value = match value {
+                        serde_json::Value::String(s) => s.clone().into(),
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                i.into()
+                            } else if let Some(f) = n.as_f64() {
+                                f.into()
+                            } else {
+                                continue;
+                            }
+                        }
+                        serde_json::Value::Bool(b) => (*b).into(),
+                        _ => continue,
+                    };
+                    payload.insert(key.clone(), qdrant_value);
+                }
+
+                let numeric_id = hash_string(id);
+                PointStruct::new(numeric_id, embedding.clone(), payload)
+            })
+            .collect();
+
+        let count = points.len();
+
+        // Upsert all points at once
+        qdrant
+            .upsert_points(UpsertPointsBuilder::new(collection, points).wait(true))
+            .await
+            .context("Failed to batch store points")?;
+
+        debug!("Batch stored {} points in {}", count, collection);
+        Ok(count)
+    }
+
     /// Store a point in a collection
     pub async fn store(
         &self,
