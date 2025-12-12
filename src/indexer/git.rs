@@ -70,6 +70,7 @@ impl GitIndexer {
     }
 
     /// Index recent commits only
+    #[allow(dead_code)] // API for future incremental indexing
     pub async fn index_recent(&self, path: &Path, limit: usize) -> Result<IndexStats> {
         self.index_repository(path, limit).await
     }

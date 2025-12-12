@@ -28,6 +28,7 @@ pub struct Watcher {
 }
 
 impl Watcher {
+    #[allow(dead_code)] // Used by daemon
     pub fn new(path: &Path, db: SqlitePool) -> Self {
         Self {
             path: path.to_path_buf(),
@@ -59,10 +60,16 @@ impl Watcher {
 
         // Spawn the watcher thread
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create tokio runtime for watcher: {}", e);
+                    return;
+                }
+            };
             let event_tx = event_tx.clone();
 
-            let mut watcher = RecommendedWatcher::new(
+            let mut watcher = match RecommendedWatcher::new(
                 move |res: Result<Event, notify::Error>| {
                     if let Ok(event) = res {
                         for path in event.paths {
@@ -88,9 +95,18 @@ impl Watcher {
                     }
                 },
                 Config::default().with_poll_interval(Duration::from_secs(2)),
-            ).unwrap();
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::error!("Failed to create file watcher: {}", e);
+                    return;
+                }
+            };
 
-            watcher.watch(&path, RecursiveMode::Recursive).unwrap();
+            if let Err(e) = watcher.watch(&path, RecursiveMode::Recursive) {
+                tracing::error!("Failed to start watching {}: {}", path.display(), e);
+                return;
+            }
 
             // Keep thread alive
             loop {
@@ -171,6 +187,7 @@ impl Watcher {
     }
 
     /// Stop the watcher
+    #[allow(dead_code)] // For graceful shutdown
     pub async fn stop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(()).await;

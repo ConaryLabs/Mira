@@ -326,15 +326,6 @@ pub fn project_set(name: &str, path: &str) -> String {
     format!("Project: {} ({})", name, path)
 }
 
-/// Format simple status response
-pub fn status(action: &str, success: bool) -> String {
-    if success {
-        format!("{}: OK", action)
-    } else {
-        format!("{}: failed", action)
-    }
-}
-
 /// Format table list
 pub fn table_list(tables: &[(String, i64)]) -> String {
     if tables.is_empty() {
