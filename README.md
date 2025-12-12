@@ -122,9 +122,9 @@ The daemon:
 - Syncs git history periodically
 - Generates embeddings for semantic code search
 
-## HTTP/SSE Mode (Remote Access)
+## HTTP Mode (Remote Access)
 
-Run Mira as an HTTP server for multi-device/multi-session access:
+Run Mira as an HTTP server for multi-device/multi-session access. Uses the MCP **Streamable HTTP** transport (not legacy SSE).
 
 ```bash
 # Start HTTP server
@@ -137,14 +137,22 @@ mira serve-http --port 3000 --auth-token "your-secret"
 MIRA_AUTH_TOKEN="your-secret" mira serve-http
 ```
 
-### Claude Code Configuration (SSE)
+### Claude Code Configuration
 
-For HTTP/SSE transport, configure Claude Code with:
+**Important:** Use `http` transport, not `sse`. Mira uses MCP Streamable HTTP.
 
+Via CLI:
+```bash
+claude mcp add mira -t http http://localhost:3000/mcp \
+  -H 'Authorization: Bearer your-secret'
+```
+
+Or manually in `~/.claude.json`:
 ```json
 {
   "mcpServers": {
     "mira": {
+      "type": "http",
       "url": "http://your-server:3000/mcp",
       "headers": {
         "Authorization": "Bearer your-secret"
@@ -174,7 +182,7 @@ sudo systemctl enable mira-server
 sudo systemctl start mira-server
 ```
 
-Benefits of HTTP/SSE mode:
+Benefits of HTTP mode:
 - **Multi-device** - Connect from phone, laptop, work machine
 - **Shared memory** - All sessions share the same database
 - **Persistent** - Runs as a service, survives SSH disconnects
@@ -214,12 +222,12 @@ sqlite3 data/mira.db < seed_mira_guidelines.sql
 Claude Code  <--MCP-->  Mira Server  -->  SQLite (memories, symbols, commits)
                  |                   -->  Qdrant (semantic vectors)
                  |
-        stdio (default) or HTTP/SSE (remote)
+        stdio (default) or HTTP (remote)
 ```
 
 Mira runs as an MCP server with two transport options:
 - **stdio** (default) - Claude Code spawns Mira as a subprocess
-- **HTTP/SSE** - Mira runs as a persistent HTTP server for remote/multi-session access
+- **HTTP** - Mira runs as a persistent HTTP server using MCP Streamable HTTP transport
 
 The optional daemon provides background code indexing independent of the MCP server.
 
