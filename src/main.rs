@@ -9,6 +9,8 @@ use rmcp::{
     handler::server::wrapper::Parameters,
     model::*,
     tool, tool_router, tool_handler,
+    transport::{StreamableHttpService, StreamableHttpServerConfig},
+    transport::streamable_http_server::session::local::LocalSessionManager,
 };
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
@@ -726,6 +728,50 @@ impl ServerHandler for MiraServer {
 mod daemon;
 
 use clap::{Parser, Subcommand};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+    middleware::Next,
+    response::Response,
+};
+
+/// Auth middleware that checks for Bearer token
+async fn auth_middleware(
+    req: Request<Body>,
+    next: Next,
+    expected_token: String,
+) -> Result<Response, StatusCode> {
+    // Check Authorization header
+    if let Some(auth_header) = req.headers().get("authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if auth_str.starts_with("Bearer ") {
+                let token = &auth_str[7..];
+                if token == expected_token {
+                    return Ok(next.run(req).await);
+                }
+            }
+        }
+    }
+
+    // Also check X-Auth-Token header for simpler clients
+    if let Some(token_header) = req.headers().get("x-auth-token") {
+        if let Ok(token) = token_header.to_str() {
+            if token == expected_token {
+                return Ok(next.run(req).await);
+            }
+        }
+    }
+
+    Err(StatusCode::UNAUTHORIZED)
+}
+
+/// Graceful shutdown signal handler
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to install CTRL+C signal handler");
+    info!("Shutdown signal received, stopping server...");
+}
 
 #[derive(Parser)]
 #[command(name = "mira")]
@@ -737,8 +783,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run the MCP server (default)
+    /// Run the MCP server over stdio (default)
     Serve,
+    /// Run the MCP server over HTTP/SSE
+    ServeHttp {
+        /// Port to listen on
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+        /// Auth token (required for connections)
+        #[arg(short, long, env = "MIRA_AUTH_TOKEN")]
+        auth_token: Option<String>,
+    },
     /// Daemon management commands
     Daemon {
         #[command(subcommand)]
@@ -781,8 +836,8 @@ async fn main() -> Result<()> {
 
     match cli.command {
         None | Some(Commands::Serve) => {
-            // Default: run MCP server
-            info!("Starting Mira MCP Server...");
+            // Default: run MCP server over stdio
+            info!("Starting Mira MCP Server (stdio)...");
 
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
@@ -796,6 +851,64 @@ async fn main() -> Result<()> {
 
             let service = server.serve(rmcp::transport::stdio()).await?;
             service.waiting().await?;
+        }
+        Some(Commands::ServeHttp { port, auth_token }) => {
+            // Run MCP server over HTTP/SSE
+            info!("Starting Mira MCP Server (HTTP/SSE) on port {}...", port);
+
+            let database_url = std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
+            let qdrant_url = std::env::var("QDRANT_URL").ok();
+            let gemini_key = std::env::var("GEMINI_API_KEY")
+                .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+                .ok();
+
+            // Create shared state that will be cloned for each session
+            let db = Arc::new(SqlitePool::connect(&database_url).await?);
+            let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key).await);
+            info!("Database connected");
+
+            // Optional auth token validation
+            let expected_token = auth_token.clone();
+
+            // Create the MCP service with StreamableHttpService
+            let mcp_service = StreamableHttpService::new(
+                {
+                    let db = db.clone();
+                    let semantic = semantic.clone();
+                    move || {
+                        Ok(MiraServer {
+                            db: db.clone(),
+                            semantic: semantic.clone(),
+                            tool_router: MiraServer::tool_router(),
+                            active_project: Arc::new(RwLock::new(None)),
+                        })
+                    }
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default(),
+            );
+
+            // Build router with optional auth middleware
+            let app = if let Some(token) = expected_token {
+                info!("Auth token required for connections");
+                axum::Router::new()
+                    .nest_service("/mcp", mcp_service)
+                    .layer(axum::middleware::from_fn(move |req, next| {
+                        let token = token.clone();
+                        auth_middleware(req, next, token)
+                    }))
+            } else {
+                info!("Warning: No auth token set, server is open");
+                axum::Router::new().nest_service("/mcp", mcp_service)
+            };
+
+            let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+            info!("Listening on http://0.0.0.0:{}/mcp", port);
+
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
         }
         Some(Commands::Daemon { action }) => {
             let database_url = std::env::var("DATABASE_URL")
