@@ -304,7 +304,10 @@ fn extract_topics(text: &str, topics: &mut HashSet<String>) {
 }
 
 fn generate_summary(context: &TranscriptContext, trigger: &str) -> String {
-    let mut parts = vec![format!("Compaction triggered: {}", trigger)];
+    let mut parts = vec![
+        format!("[Pre-Compaction Save - {}]", trigger),
+        format!("Compaction triggered: {}", trigger),
+    ];
 
     if !context.files_modified.is_empty() {
         parts.push(format!("\nFiles modified ({}):", context.files_modified.len()));
