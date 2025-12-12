@@ -1,8 +1,24 @@
 // src/tools/format.rs
 // Human-readable formatters for MCP tool responses
 // Makes output clean and concise like native Claude Code tools
+//
+// Organization:
+//   - Memory: remember, recall_results, forgotten
+//   - Permissions: permission_saved, permission_list, permission_deleted
+//   - Sessions: session_stored, session_results, session_start, session_context
+//   - Tasks: task_list, task_action
+//   - Goals: goal_list, goal_action
+//   - Corrections: correction_recorded, correction_list
+//   - Code Intelligence: index_status, code_search_results, symbols_list, related_files, call_graph
+//   - Git: commit_list
+//   - Admin: project_set, table_list, query_results
+//   - Build: build_errors
+//   - Proactive: proactive_context
+//   - Guidelines: guidelines
 
 use serde_json::Value;
+
+// === Memory Formatters ===
 
 /// Format a "remembered" response
 pub fn remember(key: &str, fact_type: &str, category: Option<&str>) -> String {
