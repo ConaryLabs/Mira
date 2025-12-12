@@ -1,17 +1,30 @@
+# Mira MCP Server - HTTP Mode
+#
+# Installation:
+#   1. Edit this file and replace YOUR_USERNAME and paths as needed
+#   2. sudo cp mira-server.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable mira-server
+#   5. sudo systemctl start mira-server
+#
+# To set API keys securely:
+#   sudo systemctl edit mira-server
+#   Add:
+#     [Service]
+#     Environment=GEMINI_API_KEY=your-key
+#     Environment=MIRA_AUTH_TOKEN=your-token
+
 [Unit]
 Description=Mira MCP Server (HTTP)
-After=network.target docker.service
-Wants=docker.service
+After=network.target
 
 [Service]
 Type=simple
-User=peter
-WorkingDirectory=/home/peter/Mira
-Environment=DATABASE_URL=sqlite:///home/peter/Mira/data/mira.db
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/.mira
+Environment=DATABASE_URL=sqlite:///home/YOUR_USERNAME/.mira/data/mira.db
 Environment=QDRANT_URL=http://localhost:6334
-Environment=GEMINI_API_KEY=
-Environment=MIRA_AUTH_TOKEN=
-ExecStart=/home/peter/Mira/target/release/mira serve-http --port 3000
+ExecStart=/home/YOUR_USERNAME/.mira/target/release/mira serve-http --port 3000
 Restart=on-failure
 RestartSec=5
 
