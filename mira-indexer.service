@@ -1,0 +1,29 @@
+# Mira Background Indexer - Continuous Code Intelligence
+# Watches your codebase and keeps the index up-to-date automatically
+#
+# Installation:
+#   1. Edit this file: replace YOUR_USERNAME and PROJECT_PATH
+#   2. sudo cp mira-indexer.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable mira-indexer
+#   5. sudo systemctl start mira-indexer
+#
+# Note: This is optional. Mira works without it, but the indexer
+# keeps code intelligence fresh without manual re-indexing.
+
+[Unit]
+Description=Mira Background Indexer (auto-indexes code changes)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/.mira
+Environment=DATABASE_URL=sqlite:///home/YOUR_USERNAME/.mira/data/mira.db
+Environment=QDRANT_URL=http://localhost:6334
+ExecStart=/home/YOUR_USERNAME/.mira/target/release/mira daemon start -p /home/YOUR_USERNAME/PROJECT_PATH
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
