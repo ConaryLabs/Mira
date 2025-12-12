@@ -38,7 +38,7 @@ tracing-subscriber = "0.3"
 uuid = { version = "1.8", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
-# HTTP client (for OpenAI embeddings API)
+# HTTP client (for Gemini embeddings API)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
 [dev-dependencies]

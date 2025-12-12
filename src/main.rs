@@ -40,14 +40,14 @@ pub struct MiraServer {
 }
 
 impl MiraServer {
-    pub async fn new(database_url: &str, qdrant_url: Option<&str>, openai_key: Option<String>) -> Result<Self> {
+    pub async fn new(database_url: &str, qdrant_url: Option<&str>, gemini_key: Option<String>) -> Result<Self> {
         info!("Connecting to database: {}", database_url);
         let db = SqlitePool::connect(database_url).await?;
         info!("Database connected successfully");
 
-        let semantic = SemanticSearch::new(qdrant_url, openai_key).await;
+        let semantic = SemanticSearch::new(qdrant_url, gemini_key).await;
         if semantic.is_available() {
-            info!("Semantic search enabled (Qdrant + OpenAI)");
+            info!("Semantic search enabled (Qdrant + Gemini)");
         } else {
             info!("Semantic search disabled (using text-based fallback)");
         }
@@ -380,7 +380,7 @@ impl ServerHandler for MiraServer {
             instructions: Some("Mira Power Suit - Memory and Intelligence Layer for Claude Code. \
                 Features: semantic memory (remember/recall), cross-session context, persistent tasks, \
                 code intelligence, git intelligence, and document search. All search tools use \
-                semantic similarity when Qdrant/OpenAI are configured.".to_string()),
+                semantic similarity when Qdrant + Gemini are configured.".to_string()),
         }
     }
 }
@@ -399,9 +399,12 @@ async fn main() -> Result<()> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
     let qdrant_url = std::env::var("QDRANT_URL").ok();
-    let openai_key = std::env::var("OPENAI_API_KEY").ok();
+    // Accept either GEMINI_API_KEY or GOOGLE_API_KEY
+    let gemini_key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .ok();
 
-    let server = MiraServer::new(&database_url, qdrant_url.as_deref(), openai_key).await?;
+    let server = MiraServer::new(&database_url, qdrant_url.as_deref(), gemini_key).await?;
     info!("Server initialized");
 
     let service = server.serve(rmcp::transport::stdio()).await?;

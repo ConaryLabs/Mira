@@ -53,7 +53,7 @@ Mira will automatically store and recall relevant context.
 
 - Docker with Docker Compose
 - Claude Code
-- (Optional) OpenAI API key for semantic search
+- (Optional) Google Gemini API key for semantic search (free tier available)
 
 ## What Gets Installed
 
@@ -64,13 +64,15 @@ The install script sets up:
 
 ## Semantic Search
 
-For better recall (finds memories by meaning, not just keywords), set your OpenAI API key:
+For better recall (finds memories by meaning, not just keywords), set your Google Gemini API key:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export GEMINI_API_KEY="your-key-here"
 ```
 
-This enables text-embedding-3-large for semantic similarity search. Without it, Mira falls back to text-based search.
+Get a free API key at: https://aistudio.google.com/apikey
+
+This enables gemini-embedding-001 for semantic similarity search. Without it, Mira falls back to text-based search.
 
 ## Manual Install (without Docker)
 
@@ -93,7 +95,7 @@ sqlite3 data/mira.db < seed_mira_guidelines.sql
       "env": {
         "DATABASE_URL": "sqlite:///path/to/mira/data/mira.db",
         "QDRANT_URL": "http://localhost:6334",
-        "OPENAI_API_KEY": "sk-..."
+        "GEMINI_API_KEY": "your-key-here"
       }
     }
   }
