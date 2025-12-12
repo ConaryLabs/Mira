@@ -1,21 +1,25 @@
-# Mira MCP Server - HTTP Mode
+# Mira HTTP Server - Remote MCP Access
+# Run Mira as an HTTP server for multi-device/multi-session access
 #
 # Installation:
-#   1. Edit this file and replace YOUR_USERNAME and paths as needed
-#   2. sudo cp mira-server.service /etc/systemd/system/
+#   1. Edit this file: replace YOUR_USERNAME with your username
+#   2. sudo cp mira-http.service /etc/systemd/system/
 #   3. sudo systemctl daemon-reload
-#   4. sudo systemctl enable mira-server
-#   5. sudo systemctl start mira-server
+#   4. sudo systemctl enable mira-http
+#   5. sudo systemctl start mira-http
 #
-# To set API keys securely:
-#   sudo systemctl edit mira-server
+# Configure Claude Code:
+#   claude mcp add mira -t http http://localhost:3000/mcp
+#
+# To set API keys:
+#   sudo systemctl edit mira-http
 #   Add:
 #     [Service]
 #     Environment=GEMINI_API_KEY=your-key
 #     Environment=MIRA_AUTH_TOKEN=your-token
 
 [Unit]
-Description=Mira MCP Server (HTTP)
+Description=Mira HTTP Server (MCP over HTTP for remote access)
 After=network.target
 
 [Service]
