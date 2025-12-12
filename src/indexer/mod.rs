@@ -15,6 +15,7 @@ pub struct IndexStats {
     pub files_processed: usize,
     pub symbols_found: usize,
     pub imports_found: usize,
+    pub calls_found: usize,
     pub commits_indexed: usize,
     pub cochange_patterns: usize,
     pub embeddings_generated: usize,
@@ -26,6 +27,7 @@ impl IndexStats {
         self.files_processed += other.files_processed;
         self.symbols_found += other.symbols_found;
         self.imports_found += other.imports_found;
+        self.calls_found += other.calls_found;
         self.commits_indexed += other.commits_indexed;
         self.cochange_patterns += other.cochange_patterns;
         self.embeddings_generated += other.embeddings_generated;
