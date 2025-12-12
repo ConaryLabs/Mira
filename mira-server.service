@@ -1,0 +1,19 @@
+[Unit]
+Description=Mira MCP Server (HTTP/SSE)
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=peter
+WorkingDirectory=/home/peter/Mira
+Environment=DATABASE_URL=sqlite:///home/peter/Mira/data/mira.db
+Environment=QDRANT_URL=http://localhost:6334
+Environment=GEMINI_API_KEY=
+Environment=MIRA_AUTH_TOKEN=
+ExecStart=/home/peter/Mira/target/release/mira serve-http --port 3000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
