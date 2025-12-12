@@ -2,7 +2,7 @@
 name = "mira"
 version = "2.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.92"
 description = "Memory and Intelligence Layer for Claude Code"
 
 [lib]
@@ -56,11 +56,11 @@ tree-sitter-typescript = "0.23"
 tree-sitter-javascript = "0.23"
 
 # Git operations
-git2 = "0.19"
+git2 = "0.20"
 
 # File system utilities
 walkdir = "2.5"
-notify = "7.0"
+notify = "8.0"
 ignore = "0.4"
 libc = "0.2"
 md5 = "0.8.0"
