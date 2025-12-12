@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use qdrant_client::qdrant::{
-    CreateCollectionBuilder, Distance, Filter, PointStruct, SearchPointsBuilder,
+    Condition, CreateCollectionBuilder, Distance, Filter, PointStruct, SearchPointsBuilder,
     UpsertPointsBuilder, VectorParamsBuilder, DeletePointsBuilder, PointId,
     Value as QdrantValue,
 };
@@ -240,6 +240,33 @@ impl SemanticSearch {
             .context("Failed to delete point")?;
 
         Ok(())
+    }
+
+    /// Delete all points matching a field value (e.g., all embeddings for a file)
+    pub async fn delete_by_field(&self, collection: &str, field: &str, value: &str) -> Result<u64> {
+        let qdrant = self.qdrant.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
+
+        // Check if collection exists first
+        if !qdrant.collection_exists(collection).await? {
+            return Ok(0);
+        }
+
+        let result = qdrant
+            .delete_points(
+                DeletePointsBuilder::new(collection)
+                    .points(Filter::must([Condition::matches(
+                        field,
+                        value.to_string(),
+                    )]))
+                    .wait(true),
+            )
+            .await
+            .context("Failed to delete points by filter")?;
+
+        let deleted = result.result.map(|r| r.status).unwrap_or(0) as u64;
+        debug!("Deleted points where {}={} from {}", field, value, collection);
+        Ok(deleted)
     }
 }
 

@@ -12,6 +12,14 @@ use sqlx::sqlite::SqlitePool;
 use super::CodeIndexer;
 use crate::tools::SemanticSearch;
 
+/// Event types for the file watcher
+enum FileEvent {
+    /// File was created or modified - needs (re)indexing
+    Changed(PathBuf),
+    /// File was deleted - needs cleanup
+    Deleted(PathBuf),
+}
+
 pub struct Watcher {
     path: PathBuf,
     db: SqlitePool,
@@ -44,7 +52,7 @@ impl Watcher {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
-        let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(100);
+        let (event_tx, mut event_rx) = mpsc::channel::<FileEvent>(100);
 
         let path = self.path.clone();
         let db = self.db.clone();
@@ -57,19 +65,25 @@ impl Watcher {
             let mut watcher = RecommendedWatcher::new(
                 move |res: Result<Event, notify::Error>| {
                     if let Ok(event) = res {
-                        match event.kind {
-                            EventKind::Create(_) | EventKind::Modify(_) => {
-                                for path in event.paths {
-                                    // Only process code files
-                                    if let Some(ext) = path.extension() {
-                                        let ext = ext.to_string_lossy();
-                                        if matches!(ext.as_ref(), "rs" | "py" | "ts" | "tsx" | "js" | "jsx") {
-                                            let _ = rt.block_on(event_tx.send(path));
+                        for path in event.paths {
+                            // Only process code files
+                            if let Some(ext) = path.extension() {
+                                let ext = ext.to_string_lossy();
+                                if matches!(ext.as_ref(), "rs" | "py" | "ts" | "tsx" | "js" | "jsx") {
+                                    let file_event = match event.kind {
+                                        EventKind::Create(_) | EventKind::Modify(_) => {
+                                            Some(FileEvent::Changed(path))
                                         }
+                                        EventKind::Remove(_) => {
+                                            Some(FileEvent::Deleted(path))
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(fe) = file_event {
+                                        let _ = rt.block_on(event_tx.send(fe));
                                     }
                                 }
                             }
-                            _ => {}
                         }
                     }
                 },
@@ -98,35 +112,50 @@ impl Watcher {
 
             loop {
                 tokio::select! {
-                    Some(path) = event_rx.recv() => {
+                    Some(event) = event_rx.recv() => {
                         // Debounce: wait a bit in case there are more changes
                         tokio::time::sleep(Duration::from_millis(500)).await;
 
-                        // Drain any pending events for the same file
+                        // Drain any pending events (simple debounce)
                         while event_rx.try_recv().is_ok() {}
 
-                        // Index the file
-                        match indexer.index_file(&path).await {
-                            Ok(stats) => {
-                                if stats.embeddings_generated > 0 {
-                                    tracing::info!(
-                                        "Indexed {}: {} symbols, {} imports, {} embeddings",
-                                        path.display(),
-                                        stats.symbols_found,
-                                        stats.imports_found,
-                                        stats.embeddings_generated
-                                    );
-                                } else {
-                                    tracing::info!(
-                                        "Indexed {}: {} symbols, {} imports",
-                                        path.display(),
-                                        stats.symbols_found,
-                                        stats.imports_found
-                                    );
+                        match event {
+                            FileEvent::Changed(path) => {
+                                // Index the file
+                                match indexer.index_file(&path).await {
+                                    Ok(stats) => {
+                                        if stats.embeddings_generated > 0 {
+                                            tracing::info!(
+                                                "Indexed {}: {} symbols, {} imports, {} embeddings",
+                                                path.display(),
+                                                stats.symbols_found,
+                                                stats.imports_found,
+                                                stats.embeddings_generated
+                                            );
+                                        } else {
+                                            tracing::info!(
+                                                "Indexed {}: {} symbols, {} imports",
+                                                path.display(),
+                                                stats.symbols_found,
+                                                stats.imports_found
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to index {}: {}", path.display(), e);
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                tracing::warn!("Failed to index {}: {}", path.display(), e);
+                            FileEvent::Deleted(path) => {
+                                // Clean up deleted file
+                                match indexer.delete_file(&path).await {
+                                    Ok(()) => {
+                                        tracing::info!("Cleaned up deleted file: {}", path.display());
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to clean up {}: {}", path.display(), e);
+                                    }
+                                }
                             }
                         }
                     }
