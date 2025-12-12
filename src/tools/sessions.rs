@@ -4,6 +4,7 @@
 use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
+use std::path::Path;
 
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
@@ -412,4 +413,227 @@ pub async fn store_decision(
         "key": req.key,
         "project_id": project_id,
     }))
+}
+
+/// Combined session startup - sets project and loads all context in one call
+/// Returns a concise summary instead of raw JSON
+pub async fn session_start(
+    db: &SqlitePool,
+    req: SessionStartRequest,
+) -> anyhow::Result<SessionStartResult> {
+    // 1. Set up project (like set_project)
+    let path = Path::new(&req.project_path);
+    let canonical_path = if path.is_absolute() {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        std::env::current_dir()?.join(path).canonicalize()?
+    };
+
+    if !canonical_path.exists() {
+        anyhow::bail!("Project path does not exist: {}", canonical_path.display());
+    }
+
+    let path_str = canonical_path.to_string_lossy().to_string();
+    let name = req.name.unwrap_or_else(|| {
+        canonical_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    });
+
+    // Detect project type
+    let project_type = detect_project_type(&canonical_path);
+
+    let now = Utc::now().timestamp();
+
+    // Upsert the project
+    sqlx::query(r#"
+        INSERT INTO projects (path, name, project_type, first_seen, last_accessed)
+        VALUES ($1, $2, $3, $4, $4)
+        ON CONFLICT(path) DO UPDATE SET
+            name = COALESCE(excluded.name, projects.name),
+            project_type = COALESCE(excluded.project_type, projects.project_type),
+            last_accessed = excluded.last_accessed
+    "#)
+    .bind(&path_str)
+    .bind(&name)
+    .bind(&project_type)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    let (project_id,): (i64,) = sqlx::query_as("SELECT id FROM projects WHERE path = $1")
+        .bind(&path_str)
+        .fetch_one(db)
+        .await?;
+
+    // 2. Get persona (single guideline - most important)
+    let persona: Option<String> = sqlx::query_scalar(
+        "SELECT content FROM coding_guidelines WHERE category = 'persona' ORDER BY priority DESC LIMIT 1"
+    )
+    .fetch_optional(db)
+    .await?;
+
+    // Extract just the first sentence or core identity from persona
+    let persona_summary = persona.as_ref().map(|p| {
+        // Find the first line that describes the persona
+        p.lines()
+            .find(|line| line.starts_with("You are") || line.contains("Core traits"))
+            .unwrap_or("Custom persona loaded")
+            .trim()
+            .to_string()
+    });
+
+    // 3. Count mira_usage guidelines (don't return content - just note they're loaded)
+    let (usage_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM coding_guidelines WHERE category = 'mira_usage'"
+    )
+    .fetch_one(db)
+    .await?;
+
+    // 4. Get active corrections
+    let corrections = sqlx::query_as::<_, (String, String)>(r#"
+        SELECT what_was_wrong, what_is_right
+        FROM corrections
+        WHERE status = 'active'
+          AND (project_id IS NULL OR project_id = $1)
+          AND confidence > 0.5
+        ORDER BY confidence DESC, times_validated DESC
+        LIMIT 5
+    "#)
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    // 5. Get active goals
+    let goals = sqlx::query_as::<_, (String, String, i32)>(r#"
+        SELECT title, status, progress_percent
+        FROM goals
+        WHERE status IN ('planning', 'in_progress', 'blocked')
+          AND (project_id IS NULL OR project_id = $1)
+        ORDER BY
+            CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+            CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END
+        LIMIT 5
+    "#)
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    // 6. Get pending tasks
+    let tasks = sqlx::query_as::<_, (String, String)>(r#"
+        SELECT title, status
+        FROM tasks
+        WHERE status IN ('pending', 'in_progress', 'blocked')
+        ORDER BY
+            CASE status WHEN 'in_progress' THEN 1 WHEN 'blocked' THEN 2 ELSE 3 END
+        LIMIT 5
+    "#)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    // 7. Get recent session topics (just first lines)
+    let recent_sessions = sqlx::query_as::<_, (String,)>(r#"
+        SELECT content
+        FROM memory_entries
+        WHERE role = 'session_summary'
+          AND (project_id IS NULL OR project_id = $1)
+        ORDER BY created_at DESC
+        LIMIT 3
+    "#)
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let session_topics: Vec<String> = recent_sessions.into_iter()
+        .filter_map(|(content,)| {
+            content.lines().next().map(|line| {
+                if line.len() > 60 {
+                    format!("{}...", &line[..57])
+                } else {
+                    line.to_string()
+                }
+            })
+        })
+        .collect();
+
+    Ok(SessionStartResult {
+        project_id,
+        project_name: name,
+        project_path: path_str,
+        project_type,
+        persona_summary,
+        usage_guidelines_loaded: usage_count as usize,
+        corrections: corrections.into_iter()
+            .map(|(wrong, right)| CorrectionSummary { what_was_wrong: wrong, what_is_right: right })
+            .collect(),
+        goals: goals.into_iter()
+            .map(|(title, status, progress)| GoalSummary { title, status, progress_percent: progress })
+            .collect(),
+        tasks: tasks.into_iter()
+            .map(|(title, status)| TaskSummary { title, status })
+            .collect(),
+        recent_session_topics: session_topics,
+    })
+}
+
+/// Detect project type from marker files
+fn detect_project_type(path: &Path) -> Option<String> {
+    let markers = [
+        ("Cargo.toml", "rust"),
+        ("package.json", "node"),
+        ("pyproject.toml", "python"),
+        ("setup.py", "python"),
+        ("go.mod", "go"),
+        ("Gemfile", "ruby"),
+        ("pom.xml", "java"),
+        ("build.gradle", "java"),
+        ("CMakeLists.txt", "cpp"),
+        ("Makefile", "make"),
+    ];
+
+    for (file, project_type) in markers {
+        if path.join(file).exists() {
+            return Some(project_type.to_string());
+        }
+    }
+    None
+}
+
+// Result types for session_start
+#[derive(Debug)]
+pub struct SessionStartResult {
+    pub project_id: i64,
+    pub project_name: String,
+    pub project_path: String,
+    pub project_type: Option<String>,
+    pub persona_summary: Option<String>,
+    pub usage_guidelines_loaded: usize,
+    pub corrections: Vec<CorrectionSummary>,
+    pub goals: Vec<GoalSummary>,
+    pub tasks: Vec<TaskSummary>,
+    pub recent_session_topics: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct CorrectionSummary {
+    pub what_was_wrong: String,
+    pub what_is_right: String,
+}
+
+#[derive(Debug)]
+pub struct GoalSummary {
+    pub title: String,
+    pub status: String,
+    pub progress_percent: i32,
+}
+
+#[derive(Debug)]
+pub struct TaskSummary {
+    pub title: String,
+    pub status: String,
 }

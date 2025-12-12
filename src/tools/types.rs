@@ -446,6 +446,18 @@ pub struct RecordRejectedApproachRequest {
 }
 
 // ============================================================================
+// Session Start (combined startup tool)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SessionStartRequest {
+    #[schemars(description = "Project root path")]
+    pub project_path: String,
+    #[schemars(description = "Project name (auto-detected if omitted)")]
+    pub name: Option<String>,
+}
+
+// ============================================================================
 // Indexing Tools
 // ============================================================================
 
