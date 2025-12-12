@@ -114,7 +114,14 @@ impl MiraServer {
 
     // === Cross-Session Memory ===
 
-    #[tool(description = "Store a summary of the current session for cross-session recall. Automatically scoped to the active project.")]
+    #[tool(description = "Get context from previous sessions - recent memories, pending tasks, and session summaries. Call this at session start to pick up where you left off.")]
+    async fn get_session_context(&self, Parameters(req): Parameters<GetSessionContextRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = sessions::get_session_context(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
+    }
+
+    #[tool(description = "Store a summary of the current session for cross-session recall. Call this at the END of significant sessions. Automatically scoped to the active project.")]
     async fn store_session(&self, Parameters(req): Parameters<StoreSessionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::store_session(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
