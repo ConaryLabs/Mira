@@ -120,6 +120,23 @@ impl MiraServer {
 
     // === Session Context ===
 
+    #[tool(description = "Initialize session: sets project, loads persona, context, corrections, goals. Call once at session start.")]
+    async fn session_start(&self, Parameters(req): Parameters<SessionStartRequest>) -> Result<CallToolResult, McpError> {
+        let result = sessions::session_start(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
+
+        // Set active project context so subsequent calls are scoped
+        let ctx = ProjectContext {
+            id: result.project_id,
+            path: result.project_path.clone(),
+            name: result.project_name.clone(),
+            project_type: result.project_type.clone(),
+        };
+        self.set_active_project(Some(ctx)).await;
+
+        // Return formatted output
+        Ok(text_response(format::session_start(&result)))
+    }
+
     #[tool(description = "Get context from previous sessions. Call at session start.")]
     async fn get_session_context(&self, Parameters(req): Parameters<GetSessionContextRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);

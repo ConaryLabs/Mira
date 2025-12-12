@@ -569,6 +569,95 @@ pub fn guidelines(results: &[Value]) -> String {
     out.trim_end().to_string()
 }
 
+/// Format session_start result - concise startup summary
+pub fn session_start(result: &super::sessions::SessionStartResult) -> String {
+    let mut out = String::new();
+
+    // Project header
+    let type_suffix = result.project_type.as_ref()
+        .map(|t| format!(" ({})", t))
+        .unwrap_or_default();
+    out.push_str(&format!("Project: {}{}\n", result.project_name, type_suffix));
+
+    // Persona (if set)
+    if let Some(ref persona) = result.persona_summary {
+        out.push('\n');
+        out.push_str(&format!("Persona: {}\n", persona));
+    }
+
+    // Corrections (important - mistakes to avoid)
+    if !result.corrections.is_empty() {
+        out.push('\n');
+        out.push_str(&format!("{} correction{}:\n",
+            result.corrections.len(),
+            if result.corrections.len() == 1 { "" } else { "s" }
+        ));
+        for c in &result.corrections {
+            let wrong = if c.what_was_wrong.len() > 30 {
+                format!("{}...", &c.what_was_wrong[..27])
+            } else {
+                c.what_was_wrong.clone()
+            };
+            let right = if c.what_is_right.len() > 45 {
+                format!("{}...", &c.what_is_right[..42])
+            } else {
+                c.what_is_right.clone()
+            };
+            out.push_str(&format!("  {} → {}\n", wrong, right));
+        }
+    }
+
+    // Goals (active work)
+    if !result.goals.is_empty() {
+        out.push('\n');
+        out.push_str(&format!("{} active goal{}:\n",
+            result.goals.len(),
+            if result.goals.len() == 1 { "" } else { "s" }
+        ));
+        for g in &result.goals {
+            let icon = match g.status.as_str() {
+                "completed" => "✓",
+                "in_progress" => "→",
+                "blocked" => "✗",
+                _ => "○",
+            };
+            out.push_str(&format!("  {} {} ({}%)\n", icon, g.title, g.progress_percent));
+        }
+    }
+
+    // Tasks (pending work)
+    if !result.tasks.is_empty() {
+        out.push('\n');
+        out.push_str(&format!("{} pending task{}:\n",
+            result.tasks.len(),
+            if result.tasks.len() == 1 { "" } else { "s" }
+        ));
+        for t in &result.tasks {
+            let icon = match t.status.as_str() {
+                "in_progress" => "→",
+                "blocked" => "✗",
+                _ => "○",
+            };
+            out.push_str(&format!("  {} {}\n", icon, t.title));
+        }
+    }
+
+    // Recent session context
+    if !result.recent_session_topics.is_empty() {
+        out.push('\n');
+        out.push_str("Recent:\n");
+        for topic in &result.recent_session_topics {
+            out.push_str(&format!("  {}\n", topic));
+        }
+    }
+
+    // Footer with guidelines count
+    out.push('\n');
+    out.push_str(&format!("{} usage guidelines loaded. Ready.\n", result.usage_guidelines_loaded));
+
+    out.trim_end().to_string()
+}
+
 /// Format session context summary - shows actual content, not just counts
 pub fn session_context(ctx: &Value) -> String {
     let mut out = String::new();

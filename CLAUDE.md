@@ -4,12 +4,12 @@ This project uses **Mira** - a persistent memory and intelligence layer via MCP.
 
 ## Session Start
 
-Call these at the start of every session:
+Call once at the start of every session:
 ```
-get_guidelines(category="persona")
-get_guidelines(category="mira_usage")
-get_session_context()
+session_start(project_path="/home/peter/Mira")
 ```
+
+This single call sets the project, loads persona, corrections, goals, tasks, and recent context.
 
 All Mira documentation and usage guidance is stored in the database, not this file.
 
