@@ -3,6 +3,7 @@
 
 pub mod code;
 pub mod git;
+pub mod parsers;
 pub mod watcher;
 
 pub use code::CodeIndexer;
