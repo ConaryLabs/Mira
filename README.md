@@ -122,6 +122,64 @@ The daemon:
 - Syncs git history periodically
 - Generates embeddings for semantic code search
 
+## HTTP/SSE Mode (Remote Access)
+
+Run Mira as an HTTP server for multi-device/multi-session access:
+
+```bash
+# Start HTTP server
+mira serve-http --port 3000
+
+# With authentication (recommended)
+mira serve-http --port 3000 --auth-token "your-secret"
+
+# Or via environment variable
+MIRA_AUTH_TOKEN="your-secret" mira serve-http
+```
+
+### Claude Code Configuration (SSE)
+
+For HTTP/SSE transport, configure Claude Code with:
+
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "url": "http://your-server:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secret"
+      }
+    }
+  }
+}
+```
+
+### Systemd Service
+
+To run as a persistent service:
+
+```bash
+# Edit the service file with your settings
+sudo cp mira-server.service /etc/systemd/system/
+
+# Set your tokens in the service file
+sudo systemctl edit mira-server
+# Add:
+# [Service]
+# Environment=MIRA_AUTH_TOKEN=your-secret
+# Environment=GEMINI_API_KEY=your-key
+
+# Enable and start
+sudo systemctl enable mira-server
+sudo systemctl start mira-server
+```
+
+Benefits of HTTP/SSE mode:
+- **Multi-device** - Connect from phone, laptop, work machine
+- **Shared memory** - All sessions share the same database
+- **Persistent** - Runs as a service, survives SSH disconnects
+- **Remote** - Access your dev box memory from anywhere
+
 ## Manual Install (without Docker)
 
 ```bash
@@ -153,14 +211,17 @@ sqlite3 data/mira.db < seed_mira_guidelines.sql
 ## Architecture
 
 ```
-Claude Code  <--MCP-->  Mira Server
-                           |
-                        SQLite (memories, symbols, commits)
-                           |
-                        Qdrant (semantic vectors for code + memories)
+Claude Code  <--MCP-->  Mira Server  -->  SQLite (memories, symbols, commits)
+                 |                   -->  Qdrant (semantic vectors)
+                 |
+        stdio (default) or HTTP/SSE (remote)
 ```
 
-Mira runs as an MCP server invoked by Claude Code. The optional daemon provides background indexing.
+Mira runs as an MCP server with two transport options:
+- **stdio** (default) - Claude Code spawns Mira as a subprocess
+- **HTTP/SSE** - Mira runs as a persistent HTTP server for remote/multi-session access
+
+The optional daemon provides background code indexing independent of the MCP server.
 
 ## Project Scoping
 
