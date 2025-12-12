@@ -48,58 +48,114 @@ pub async fn get_symbols(db: &SqlitePool, req: GetSymbolsRequest) -> anyhow::Res
 
 /// Get call graph for a symbol
 pub async fn get_call_graph(db: &SqlitePool, req: GetCallGraphRequest) -> anyhow::Result<serde_json::Value> {
-    let depth = req.depth.unwrap_or(2);
+    let depth = req.depth.unwrap_or(2).min(5); // Cap at 5 to prevent runaway queries
 
-    // Get callers (who calls this symbol)
+    // Get callers (who calls this symbol) - also search by callee_name for better matching
     let callers_query = r#"
-        SELECT DISTINCT caller.name, caller.file_path, caller.symbol_type, cg.call_type
+        SELECT DISTINCT caller.name, caller.file_path, caller.symbol_type, cg.call_type, cg.call_line
         FROM call_graph cg
         JOIN code_symbols caller ON cg.caller_id = caller.id
         JOIN code_symbols callee ON cg.callee_id = callee.id
-        WHERE callee.name = $1 OR callee.qualified_name LIKE $2
-        LIMIT 20
+        WHERE callee.name = $1 OR callee.qualified_name LIKE $2 OR cg.callee_name = $1 OR cg.callee_name LIKE $2
+        LIMIT 50
     "#;
 
     let symbol_pattern = format!("%{}", req.symbol);
-    let callers = sqlx::query_as::<_, (String, String, String, Option<String>)>(callers_query)
+    let callers = sqlx::query_as::<_, (String, String, String, Option<String>, Option<i32>)>(callers_query)
         .bind(&req.symbol)
         .bind(&symbol_pattern)
         .fetch_all(db)
         .await
         .unwrap_or_default();
 
-    // Get callees (what this symbol calls)
+    // Get callees (what this symbol calls) - resolved calls
     let callees_query = r#"
-        SELECT DISTINCT callee.name, callee.file_path, callee.symbol_type, cg.call_type
+        SELECT DISTINCT callee.name, callee.file_path, callee.symbol_type, cg.call_type, cg.call_line
         FROM call_graph cg
         JOIN code_symbols caller ON cg.caller_id = caller.id
         JOIN code_symbols callee ON cg.callee_id = callee.id
         WHERE caller.name = $1 OR caller.qualified_name LIKE $2
-        LIMIT 20
+        LIMIT 50
     "#;
 
-    let callees = sqlx::query_as::<_, (String, String, String, Option<String>)>(callees_query)
+    let callees = sqlx::query_as::<_, (String, String, String, Option<String>, Option<i32>)>(callees_query)
         .bind(&req.symbol)
         .bind(&symbol_pattern)
         .fetch_all(db)
         .await
         .unwrap_or_default();
 
+    // Get unresolved calls (what this symbol calls but couldn't resolve)
+    let unresolved_query = r#"
+        SELECT uc.callee_name, uc.call_type, uc.call_line
+        FROM unresolved_calls uc
+        JOIN code_symbols caller ON uc.caller_id = caller.id
+        WHERE caller.name = $1 OR caller.qualified_name LIKE $2
+        LIMIT 50
+    "#;
+
+    let unresolved = sqlx::query_as::<_, (String, Option<String>, Option<i32>)>(unresolved_query)
+        .bind(&req.symbol)
+        .bind(&symbol_pattern)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+    // Recursive depth traversal for deeper analysis (if depth > 1)
+    let mut deeper_calls = Vec::new();
+    if depth > 1 {
+        for (callee_name, _, _, _, _) in &callees {
+            // Get what each callee calls (one level deeper)
+            let deeper_query = r#"
+                SELECT DISTINCT callee2.name, callee2.file_path, caller.name as via_function
+                FROM call_graph cg
+                JOIN code_symbols caller ON cg.caller_id = caller.id
+                JOIN code_symbols callee2 ON cg.callee_id = callee2.id
+                WHERE caller.name = $1
+                LIMIT 10
+            "#;
+
+            let deeper = sqlx::query_as::<_, (String, String, String)>(deeper_query)
+                .bind(callee_name)
+                .fetch_all(db)
+                .await
+                .unwrap_or_default();
+
+            for (name, file, via) in deeper {
+                deeper_calls.push(serde_json::json!({
+                    "name": name,
+                    "file": file,
+                    "via": via,
+                    "depth": 2,
+                }));
+            }
+        }
+    }
+
     Ok(serde_json::json!({
         "symbol": req.symbol,
         "depth": depth,
-        "called_by": callers.iter().map(|(name, file, typ, call_type)| serde_json::json!({
+        "called_by": callers.iter().map(|(name, file, typ, call_type, line)| serde_json::json!({
             "name": name,
             "file": file,
             "type": typ,
             "call_type": call_type,
+            "line": line,
         })).collect::<Vec<_>>(),
-        "calls": callees.iter().map(|(name, file, typ, call_type)| serde_json::json!({
+        "calls": callees.iter().map(|(name, file, typ, call_type, line)| serde_json::json!({
             "name": name,
             "file": file,
             "type": typ,
             "call_type": call_type,
+            "line": line,
         })).collect::<Vec<_>>(),
+        "unresolved_calls": unresolved.iter().map(|(name, call_type, line)| serde_json::json!({
+            "name": name,
+            "call_type": call_type,
+            "line": line,
+            "status": "unresolved",
+        })).collect::<Vec<_>>(),
+        "deeper_calls": deeper_calls,
     }))
 }
 
