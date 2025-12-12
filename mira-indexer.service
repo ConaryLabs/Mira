@@ -1,8 +1,9 @@
 # Mira Background Indexer - Continuous Code Intelligence
-# Watches your codebase and keeps the index up-to-date automatically
+# Watches your codebases and keeps the index up-to-date automatically
+# Supports multiple projects: add more -p flags for each project
 #
 # Installation:
-#   1. Edit this file: replace YOUR_USERNAME and PROJECT_PATH
+#   1. Edit this file: replace YOUR_USERNAME and add your project paths
 #   2. sudo cp mira-indexer.service /etc/systemd/system/
 #   3. sudo systemctl daemon-reload
 #   4. sudo systemctl enable mira-indexer
@@ -21,7 +22,8 @@ User=YOUR_USERNAME
 WorkingDirectory=/home/YOUR_USERNAME/.mira
 Environment=DATABASE_URL=sqlite:///home/YOUR_USERNAME/.mira/data/mira.db
 Environment=QDRANT_URL=http://localhost:6334
-ExecStart=/home/YOUR_USERNAME/.mira/target/release/mira daemon start -p /home/YOUR_USERNAME/PROJECT_PATH
+# Add multiple -p flags for each project you want to watch:
+ExecStart=/home/YOUR_USERNAME/.mira/target/release/mira daemon start -p /home/YOUR_USERNAME/project1 -p /home/YOUR_USERNAME/project2
 Restart=on-failure
 RestartSec=10
 
