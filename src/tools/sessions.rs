@@ -205,10 +205,14 @@ pub async fn store_session(
     let now = Utc::now().timestamp();
     let session_id = req.session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // Store in SQLite for persistence
+    // Store in SQLite for persistence (upsert - update if session exists)
     sqlx::query(r#"
         INSERT INTO memory_entries (id, session_id, role, content, created_at, project_id)
         VALUES ($1, $2, 'session_summary', $3, $4, $5)
+        ON CONFLICT(id) DO UPDATE SET
+            content = excluded.content,
+            created_at = excluded.created_at,
+            project_id = COALESCE(excluded.project_id, memory_entries.project_id)
     "#)
     .bind(&session_id)
     .bind(&session_id)
