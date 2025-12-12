@@ -349,6 +349,18 @@ pub struct GetContextRequest {
 // ============================================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetSessionContextRequest {
+    #[schemars(description = "Include recent memories (default: true)")]
+    pub include_memories: Option<bool>,
+    #[schemars(description = "Include pending tasks (default: true)")]
+    pub include_tasks: Option<bool>,
+    #[schemars(description = "Include recent sessions (default: true)")]
+    pub include_sessions: Option<bool>,
+    #[schemars(description = "Maximum items per category (default: 5)")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct StoreSessionRequest {
     #[schemars(description = "Summary of what happened in this session")]
     pub summary: String,

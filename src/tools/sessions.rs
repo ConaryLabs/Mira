@@ -8,6 +8,123 @@ use std::collections::HashMap;
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
 
+/// Get session context - combines recent sessions, memories, and pending tasks
+/// This is the "where did we leave off?" tool for session startup
+pub async fn get_session_context(
+    db: &SqlitePool,
+    req: GetSessionContextRequest,
+    project_id: Option<i64>,
+) -> anyhow::Result<serde_json::Value> {
+    let limit = req.limit.unwrap_or(5) as i64;
+    let include_memories = req.include_memories.unwrap_or(true);
+    let include_tasks = req.include_tasks.unwrap_or(true);
+    let include_sessions = req.include_sessions.unwrap_or(true);
+
+    let mut context = serde_json::json!({
+        "project_id": project_id,
+    });
+
+    // Get recent memories (decisions, context, preferences)
+    if include_memories {
+        let memories = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String)>(r#"
+            SELECT id, key, value, fact_type, category,
+                   datetime(updated_at, 'unixepoch', 'localtime') as updated
+            FROM memory_facts
+            WHERE (project_id IS NULL OR project_id = $1)
+            ORDER BY updated_at DESC
+            LIMIT $2
+        "#)
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+
+        let memories_json: Vec<serde_json::Value> = memories.into_iter().map(|(id, key, value, fact_type, category, updated)| {
+            serde_json::json!({
+                "id": id,
+                "key": key,
+                "value": value,
+                "fact_type": fact_type,
+                "category": category,
+                "updated": updated,
+            })
+        }).collect();
+
+        context["recent_memories"] = serde_json::json!(memories_json);
+    }
+
+    // Get pending/in-progress tasks
+    if include_tasks {
+        let tasks = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, String)>(r#"
+            SELECT id, title, description, status, priority,
+                   datetime(updated_at, 'unixepoch', 'localtime') as updated
+            FROM tasks
+            WHERE status IN ('pending', 'in_progress', 'blocked')
+              AND (project_path IS NULL OR $1 IS NULL OR project_path LIKE '%' || $1 || '%')
+            ORDER BY
+                CASE status
+                    WHEN 'in_progress' THEN 1
+                    WHEN 'blocked' THEN 2
+                    WHEN 'pending' THEN 3
+                END,
+                CASE priority
+                    WHEN 'urgent' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'medium' THEN 3
+                    WHEN 'low' THEN 4
+                END,
+                updated_at DESC
+            LIMIT $2
+        "#)
+        .bind(project_id.map(|_| "")) // Just checking if project is set
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+
+        let tasks_json: Vec<serde_json::Value> = tasks.into_iter().map(|(id, title, description, status, priority, updated)| {
+            serde_json::json!({
+                "id": id,
+                "title": title,
+                "description": description,
+                "status": status,
+                "priority": priority,
+                "updated": updated,
+            })
+        }).collect();
+
+        context["pending_tasks"] = serde_json::json!(tasks_json);
+    }
+
+    // Get recent session summaries
+    if include_sessions {
+        let sessions = sqlx::query_as::<_, (String, String, String)>(r#"
+            SELECT session_id, content,
+                   datetime(created_at, 'unixepoch', 'localtime') as created
+            FROM memory_entries
+            WHERE role = 'session_summary'
+              AND (project_id IS NULL OR project_id = $1)
+            ORDER BY created_at DESC
+            LIMIT $2
+        "#)
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+
+        let sessions_json: Vec<serde_json::Value> = sessions.into_iter().map(|(session_id, content, created)| {
+            serde_json::json!({
+                "session_id": session_id,
+                "summary": content,
+                "created": created,
+            })
+        }).collect();
+
+        context["recent_sessions"] = serde_json::json!(sessions_json);
+    }
+
+    Ok(context)
+}
+
 /// Store a session summary for cross-session recall
 /// Session is scoped to the active project if project_id is provided
 pub async fn store_session(
