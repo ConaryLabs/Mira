@@ -20,5 +20,5 @@ pub mod types;
 
 // Re-export for use in main.rs
 pub use types::*;
-pub use semantic::SemanticSearch;
+pub use semantic::{SemanticSearch, COLLECTION_CODE, COLLECTION_CONVERSATION, COLLECTION_DOCS};
 pub use response::{to_mcp_err, json_response, text_response, vec_response, option_response};
