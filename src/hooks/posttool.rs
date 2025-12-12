@@ -72,6 +72,8 @@ pub async fn run() -> Result<()> {
         "Edit" | "Write" => extract_file_action(&tool_name, &tool_input),
         "Bash" => extract_bash_action(&tool_input),
         "Task" => extract_task_action(&tool_input),
+        "Grep" => extract_grep_action(&tool_input),
+        "WebSearch" => extract_search_action(&tool_input),
         _ => None,
     };
 
@@ -136,16 +138,34 @@ fn extract_bash_action(input: &serde_json::Value) -> Option<Action> {
 
     // Only track significant commands
     let significant_patterns = [
+        // Git operations
         ("git commit", "Made git commit"),
         ("git push", "Pushed to remote"),
+        ("git pull", "Pulled from remote"),
         ("git checkout", "Switched branch"),
+        ("git merge", "Merged branch"),
+        ("git rebase", "Rebased branch"),
+        // Rust
         ("cargo build", "Built Rust project"),
-        ("cargo test", "Ran tests"),
+        ("cargo test", "Ran Rust tests"),
+        ("cargo add", "Added Rust dependency"),
+        ("cargo clippy", "Ran Rust linter"),
+        // Node/JS
         ("npm install", "Installed npm packages"),
         ("npm run build", "Built npm project"),
+        ("npm run test", "Ran npm tests"),
+        ("yarn add", "Added yarn package"),
+        // Python
+        ("pip install", "Installed Python package"),
+        ("pytest", "Ran Python tests"),
+        ("python -m", "Ran Python module"),
+        // Docker
         ("docker build", "Built Docker image"),
         ("docker-compose up", "Started Docker services"),
+        ("docker run", "Ran Docker container"),
+        // System
         ("systemctl", "Modified system service"),
+        ("make", "Ran make"),
     ];
 
     for (pattern, description) in &significant_patterns {
@@ -190,6 +210,52 @@ fn extract_task_action(input: &serde_json::Value) -> Option<Action> {
         content: format!("Spawned {} agent: {}", subagent_type, summary),
         fact_type: "context".to_string(),
         category: "session_activity".to_string(),
+    })
+}
+
+fn extract_grep_action(input: &serde_json::Value) -> Option<Action> {
+    let pattern = input.get("pattern").and_then(|p| p.as_str())?;
+
+    // Only track meaningful search patterns (not single chars or very short)
+    if pattern.len() < 4 {
+        return None;
+    }
+
+    // Skip common/noisy patterns
+    let skip_patterns = ["TODO", "FIXME", "import", "use ", "from "];
+    if skip_patterns.iter().any(|s| pattern.contains(s)) {
+        return None;
+    }
+
+    let display = if pattern.len() > 40 {
+        format!("{}...", &pattern[..37])
+    } else {
+        pattern.to_string()
+    };
+
+    Some(Action {
+        key: format!("grep-{}", timestamp_minute()),
+        content: format!("Searched for: {}", display),
+        fact_type: "context".to_string(),
+        category: "research".to_string(),
+    })
+}
+
+fn extract_search_action(input: &serde_json::Value) -> Option<Action> {
+    let query = input.get("query").and_then(|q| q.as_str())?;
+
+    // Track web searches - useful for understanding research context
+    let display = if query.len() > 60 {
+        format!("{}...", &query[..57])
+    } else {
+        query.to_string()
+    };
+
+    Some(Action {
+        key: format!("websearch-{}", timestamp_minute()),
+        content: format!("Web search: {}", display),
+        fact_type: "context".to_string(),
+        category: "research".to_string(),
     })
 }
 
