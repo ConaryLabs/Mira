@@ -771,7 +771,11 @@ impl ServerHandler for MiraServer {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation::from_build_env(),
+            server_info: Implementation {
+                name: "mira".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                ..Default::default()
+            },
             instructions: Some("Mira Power Suit - Memory and Intelligence Layer for Claude Code. Features: semantic memory (remember/recall), cross-session context, persistent tasks, code intelligence, git intelligence, and document search. All search tools use semantic similarity when Qdrant + Gemini are configured.".to_string()),
         }
     }
