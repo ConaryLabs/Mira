@@ -20,6 +20,7 @@ use tracing_subscriber::FmtSubscriber;
 
 mod tools;
 mod indexer;
+mod hooks;
 use tools::*;
 use indexer::{CodeIndexer, GitIndexer};
 
@@ -799,6 +800,19 @@ enum Commands {
         #[command(subcommand)]
         action: DaemonAction,
     },
+    /// Claude Code hook handlers (for use in settings.json)
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookAction {
+    /// Handle PermissionRequest hooks - auto-approve based on saved rules
+    Permission,
+    /// Handle PreCompact hooks - save context before conversation compaction
+    Precompact,
 }
 
 #[derive(Subcommand)]
@@ -960,6 +974,16 @@ async fn main() -> Result<()> {
                     } else {
                         println!("Daemon not running");
                     }
+                }
+            }
+        }
+        Some(Commands::Hook { action }) => {
+            match action {
+                HookAction::Permission => {
+                    hooks::permission::run().await?;
+                }
+                HookAction::Precompact => {
+                    hooks::precompact::run().await?;
                 }
             }
         }
