@@ -37,6 +37,15 @@ pub struct Import {
     pub is_external: bool,
 }
 
+/// Extracted function call (for call graph)
+#[derive(Debug, Clone)]
+pub struct FunctionCall {
+    pub caller_name: String,
+    pub callee_name: String,
+    pub call_line: u32,
+    pub call_type: String, // "direct", "method", "async"
+}
+
 pub struct CodeIndexer {
     db: SqlitePool,
     semantic: Option<Arc<SemanticSearch>>,
@@ -131,9 +140,10 @@ impl CodeIndexer {
                 continue;
             }
 
-            // Skip hidden directories
+            // Skip hidden directories and build output
             if file_path.components().any(|c| {
-                c.as_os_str().to_string_lossy().starts_with('.')
+                let name = c.as_os_str().to_string_lossy();
+                name.starts_with('.') || name == "target" || name == "node_modules" || name == "__pycache__"
             }) {
                 continue;
             }
@@ -233,7 +243,7 @@ impl CodeIndexer {
 
         // Parse based on extension
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let (symbols, imports) = match ext {
+        let (symbols, imports, calls) = match ext {
             "rs" => self.parse_rust(&content)?,
             "py" => self.parse_python(&content)?,
             "ts" | "tsx" => self.parse_typescript(&content)?,
@@ -290,6 +300,76 @@ impl CodeIndexer {
         stats.symbols_found = symbols.len();
         stats.imports_found = imports.len();
 
+        // Insert call graph relationships
+        // First, delete existing call graph entries for symbols in this file
+        sqlx::query(r#"
+            DELETE FROM call_graph WHERE caller_id IN (
+                SELECT id FROM code_symbols WHERE file_path = $1
+            )
+        "#)
+        .bind(&file_path_str)
+        .execute(&self.db)
+        .await?;
+
+        // Build a map of symbol names to their IDs for this file
+        let symbol_ids: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, name, qualified_name FROM code_symbols WHERE file_path = $1"
+        )
+        .bind(&file_path_str)
+        .fetch_all(&self.db)
+        .await?;
+
+        let symbol_map: std::collections::HashMap<String, i64> = symbol_ids.iter()
+            .flat_map(|(id, name, qname)| {
+                let mut entries = vec![(name.clone(), *id)];
+                if let Some(q) = qname {
+                    entries.push((q.clone(), *id));
+                }
+                entries
+            })
+            .collect();
+
+        // Insert calls where we can resolve the caller
+        let mut calls_inserted = 0;
+        for call in &calls {
+            // Find caller ID
+            let caller_id = symbol_map.get(&call.caller_name);
+
+            if let Some(&caller_id) = caller_id {
+                // Try to find callee ID (might not exist if external)
+                // First try exact match, then try just the function name part
+                let callee_name = call.callee_name.split("::").last().unwrap_or(&call.callee_name);
+
+                let callee_id: Option<(i64,)> = sqlx::query_as(
+                    "SELECT id FROM code_symbols WHERE name = $1 OR qualified_name LIKE $2 LIMIT 1"
+                )
+                .bind(callee_name)
+                .bind(format!("%{}", call.callee_name))
+                .fetch_optional(&self.db)
+                .await?;
+
+                if let Some((callee_id,)) = callee_id {
+                    // Insert the call relationship
+                    let result = sqlx::query(r#"
+                        INSERT OR IGNORE INTO call_graph (caller_id, callee_id, call_type, call_line)
+                        VALUES ($1, $2, $3, $4)
+                    "#)
+                    .bind(caller_id)
+                    .bind(callee_id)
+                    .bind(&call.call_type)
+                    .bind(call.call_line as i32)
+                    .execute(&self.db)
+                    .await;
+
+                    if result.is_ok() {
+                        calls_inserted += 1;
+                    }
+                }
+            }
+        }
+
+        stats.calls_found = calls_inserted;
+
         // Generate embeddings for semantic search (if available)
         if let Some(ref semantic) = self.semantic {
             if semantic.is_available() {
@@ -337,17 +417,18 @@ impl CodeIndexer {
         Ok(stats)
     }
 
-    fn parse_rust(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>)> {
+    fn parse_rust(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
         let tree = self.rust_parser.parse(content, None)
             .ok_or_else(|| anyhow!("Failed to parse Rust code"))?;
 
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
+        let mut calls = Vec::new();
         let bytes = content.as_bytes();
 
-        self.walk_rust_node(tree.root_node(), bytes, &mut symbols, &mut imports, None);
+        self.walk_rust_node(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
 
-        Ok((symbols, imports))
+        Ok((symbols, imports, calls))
     }
 
     fn walk_rust_node(
@@ -356,12 +437,22 @@ impl CodeIndexer {
         source: &[u8],
         symbols: &mut Vec<Symbol>,
         imports: &mut Vec<Import>,
+        calls: &mut Vec<FunctionCall>,
         parent_name: Option<&str>,
+        current_function: Option<&str>,
     ) {
         match node.kind() {
             "function_item" | "function_signature_item" => {
                 if let Some(sym) = self.extract_rust_function(node, source, parent_name) {
+                    let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
                     symbols.push(sym);
+                    // Walk function body with this function as context
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for child in body.children(&mut body.walk()) {
+                            self.walk_rust_node(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                        }
+                    }
+                    return;
                 }
             }
             "struct_item" => {
@@ -370,7 +461,7 @@ impl CodeIndexer {
                     symbols.push(sym);
                     // Walk children for impl methods
                     for child in node.children(&mut node.walk()) {
-                        self.walk_rust_node(child, source, symbols, imports, Some(&name));
+                        self.walk_rust_node(child, source, symbols, imports, calls, Some(&name), current_function);
                     }
                     return;
                 }
@@ -385,7 +476,7 @@ impl CodeIndexer {
                     let name = sym.name.clone();
                     symbols.push(sym);
                     for child in node.children(&mut node.walk()) {
-                        self.walk_rust_node(child, source, symbols, imports, Some(&name));
+                        self.walk_rust_node(child, source, symbols, imports, calls, Some(&name), current_function);
                     }
                     return;
                 }
@@ -395,7 +486,7 @@ impl CodeIndexer {
                 let type_name = node.child_by_field_name("type")
                     .map(|n| node_text(n, source));
                 for child in node.children(&mut node.walk()) {
-                    self.walk_rust_node(child, source, symbols, imports, type_name.as_deref());
+                    self.walk_rust_node(child, source, symbols, imports, calls, type_name.as_deref(), current_function);
                 }
                 return;
             }
@@ -414,13 +505,84 @@ impl CodeIndexer {
                     symbols.push(sym);
                 }
             }
+            "call_expression" => {
+                // Extract function call if we're inside a function
+                if let Some(caller) = current_function {
+                    if let Some(call) = self.extract_rust_call(node, source, caller) {
+                        calls.push(call);
+                    }
+                }
+            }
+            "macro_invocation" => {
+                // Extract macro calls (like println!, vec!, etc.)
+                if let Some(caller) = current_function {
+                    if let Some(call) = self.extract_rust_macro_call(node, source, caller) {
+                        calls.push(call);
+                    }
+                }
+            }
             _ => {}
         }
 
         // Recurse into children
         for child in node.children(&mut node.walk()) {
-            self.walk_rust_node(child, source, symbols, imports, parent_name);
+            self.walk_rust_node(child, source, symbols, imports, calls, parent_name, current_function);
         }
+    }
+
+    fn extract_rust_call(&self, node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+        // Get the function being called
+        let function_node = node.child_by_field_name("function")?;
+        let callee_name = match function_node.kind() {
+            "identifier" => node_text(function_node, source),
+            "field_expression" => {
+                // method call: obj.method() - extract method name
+                function_node.child_by_field_name("field")
+                    .map(|n| node_text(n, source))?
+            }
+            "scoped_identifier" => {
+                // Type::method() - extract full path
+                node_text(function_node, source)
+            }
+            _ => return None,
+        };
+
+        // Determine call type
+        let call_type = if function_node.kind() == "field_expression" {
+            "method"
+        } else if callee_name.contains("::") {
+            "static"
+        } else {
+            "direct"
+        };
+
+        Some(FunctionCall {
+            caller_name: caller.to_string(),
+            callee_name,
+            call_line: node.start_position().row as u32 + 1,
+            call_type: call_type.to_string(),
+        })
+    }
+
+    fn extract_rust_macro_call(&self, node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+        // Get macro name
+        let macro_node = node.child_by_field_name("macro")
+            .or_else(|| node.child(0))?;
+        let macro_name = node_text(macro_node, source);
+
+        // Skip common low-value macros
+        if matches!(macro_name.as_str(), "println" | "print" | "eprintln" | "eprint" |
+                    "format" | "write" | "writeln" | "panic" | "todo" | "unimplemented" |
+                    "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq") {
+            return None;
+        }
+
+        Some(FunctionCall {
+            caller_name: caller.to_string(),
+            callee_name: format!("{}!", macro_name),
+            call_line: node.start_position().row as u32 + 1,
+            call_type: "macro".to_string(),
+        })
     }
 
     fn extract_rust_function(&self, node: Node, source: &[u8], parent: Option<&str>) -> Option<Symbol> {
@@ -665,17 +827,18 @@ impl CodeIndexer {
         }
     }
 
-    fn parse_python(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>)> {
+    fn parse_python(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
         let tree = self.python_parser.parse(content, None)
             .ok_or_else(|| anyhow!("Failed to parse Python code"))?;
 
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
+        let mut calls = Vec::new();
         let bytes = content.as_bytes();
 
-        self.walk_python_node(tree.root_node(), bytes, &mut symbols, &mut imports, None);
+        self.walk_python_node(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
 
-        Ok((symbols, imports))
+        Ok((symbols, imports, calls))
     }
 
     fn walk_python_node(
@@ -684,12 +847,22 @@ impl CodeIndexer {
         source: &[u8],
         symbols: &mut Vec<Symbol>,
         imports: &mut Vec<Import>,
+        calls: &mut Vec<FunctionCall>,
         parent_name: Option<&str>,
+        current_function: Option<&str>,
     ) {
         match node.kind() {
             "function_definition" => {
                 if let Some(sym) = self.extract_python_function(node, source, parent_name) {
+                    let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
                     symbols.push(sym);
+                    // Walk function body with this function as context
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for child in body.children(&mut body.walk()) {
+                            self.walk_python_node(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                        }
+                    }
+                    return;
                 }
             }
             "class_definition" => {
@@ -699,7 +872,7 @@ impl CodeIndexer {
                     // Walk children for methods
                     if let Some(body) = node.child_by_field_name("body") {
                         for child in body.children(&mut body.walk()) {
-                            self.walk_python_node(child, source, symbols, imports, Some(&name));
+                            self.walk_python_node(child, source, symbols, imports, calls, Some(&name), current_function);
                         }
                     }
                     return;
@@ -710,13 +883,56 @@ impl CodeIndexer {
                     imports.push(import);
                 }
             }
+            "call" => {
+                // Extract function call if we're inside a function
+                if let Some(caller) = current_function {
+                    if let Some(call) = self.extract_python_call(node, source, caller) {
+                        calls.push(call);
+                    }
+                }
+            }
             _ => {}
         }
 
         // Recurse into children
         for child in node.children(&mut node.walk()) {
-            self.walk_python_node(child, source, symbols, imports, parent_name);
+            self.walk_python_node(child, source, symbols, imports, calls, parent_name, current_function);
         }
+    }
+
+    fn extract_python_call(&self, node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+        // Get the function being called
+        let function_node = node.child_by_field_name("function")?;
+        let callee_name = match function_node.kind() {
+            "identifier" => node_text(function_node, source),
+            "attribute" => {
+                // method call: obj.method() - extract method name
+                function_node.child_by_field_name("attribute")
+                    .map(|n| node_text(n, source))?
+            }
+            _ => return None,
+        };
+
+        // Skip common builtins
+        if matches!(callee_name.as_str(), "print" | "len" | "str" | "int" | "float" |
+                    "list" | "dict" | "set" | "tuple" | "range" | "enumerate" | "zip" |
+                    "open" | "type" | "isinstance" | "hasattr" | "getattr" | "setattr") {
+            return None;
+        }
+
+        // Determine call type
+        let call_type = if function_node.kind() == "attribute" {
+            "method"
+        } else {
+            "direct"
+        };
+
+        Some(FunctionCall {
+            caller_name: caller.to_string(),
+            callee_name,
+            call_line: node.start_position().row as u32 + 1,
+            call_type: call_type.to_string(),
+        })
     }
 
     fn extract_python_function(&self, node: Node, source: &[u8], parent: Option<&str>) -> Option<Symbol> {
@@ -818,30 +1034,32 @@ impl CodeIndexer {
         None
     }
 
-    fn parse_typescript(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>)> {
+    fn parse_typescript(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
         let tree = self.typescript_parser.parse(content, None)
             .ok_or_else(|| anyhow!("Failed to parse TypeScript code"))?;
 
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
+        let mut calls = Vec::new();
         let bytes = content.as_bytes();
 
-        self.walk_ts_node(tree.root_node(), bytes, &mut symbols, &mut imports, None, "typescript");
+        self.walk_ts_node(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None, "typescript");
 
-        Ok((symbols, imports))
+        Ok((symbols, imports, calls))
     }
 
-    fn parse_javascript(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>)> {
+    fn parse_javascript(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
         let tree = self.javascript_parser.parse(content, None)
             .ok_or_else(|| anyhow!("Failed to parse JavaScript code"))?;
 
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
+        let mut calls = Vec::new();
         let bytes = content.as_bytes();
 
-        self.walk_ts_node(tree.root_node(), bytes, &mut symbols, &mut imports, None, "javascript");
+        self.walk_ts_node(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None, "javascript");
 
-        Ok((symbols, imports))
+        Ok((symbols, imports, calls))
     }
 
     fn walk_ts_node(
@@ -850,13 +1068,23 @@ impl CodeIndexer {
         source: &[u8],
         symbols: &mut Vec<Symbol>,
         imports: &mut Vec<Import>,
+        calls: &mut Vec<FunctionCall>,
         parent_name: Option<&str>,
+        current_function: Option<&str>,
         language: &str,
     ) {
         match node.kind() {
             "function_declaration" | "method_definition" | "arrow_function" => {
                 if let Some(sym) = self.extract_ts_function(node, source, parent_name, language) {
+                    let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
                     symbols.push(sym);
+                    // Walk function body with this function as context
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for child in body.children(&mut body.walk()) {
+                            self.walk_ts_node(child, source, symbols, imports, calls, parent_name, Some(&func_name), language);
+                        }
+                    }
+                    return;
                 }
             }
             "class_declaration" => {
@@ -866,7 +1094,7 @@ impl CodeIndexer {
                     // Walk children for methods
                     if let Some(body) = node.child_by_field_name("body") {
                         for child in body.children(&mut body.walk()) {
-                            self.walk_ts_node(child, source, symbols, imports, Some(&name), language);
+                            self.walk_ts_node(child, source, symbols, imports, calls, Some(&name), current_function, language);
                         }
                     }
                     return;
@@ -887,13 +1115,59 @@ impl CodeIndexer {
                     imports.push(import);
                 }
             }
+            "call_expression" => {
+                // Extract function call if we're inside a function
+                if let Some(caller) = current_function {
+                    if let Some(call) = self.extract_ts_call(node, source, caller) {
+                        calls.push(call);
+                    }
+                }
+            }
             _ => {}
         }
 
         // Recurse into children
         for child in node.children(&mut node.walk()) {
-            self.walk_ts_node(child, source, symbols, imports, parent_name, language);
+            self.walk_ts_node(child, source, symbols, imports, calls, parent_name, current_function, language);
         }
+    }
+
+    fn extract_ts_call(&self, node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+        // Get the function being called
+        let function_node = node.child_by_field_name("function")?;
+        let callee_name = match function_node.kind() {
+            "identifier" => node_text(function_node, source),
+            "member_expression" => {
+                // method call: obj.method() - extract method name
+                function_node.child_by_field_name("property")
+                    .map(|n| node_text(n, source))?
+            }
+            _ => return None,
+        };
+
+        // Skip common builtins/console methods
+        if matches!(callee_name.as_str(), "log" | "error" | "warn" | "info" | "debug" |
+                    "toString" | "valueOf" | "push" | "pop" | "shift" | "unshift" |
+                    "map" | "filter" | "reduce" | "forEach" | "find" | "some" | "every" |
+                    "slice" | "splice" | "concat" | "join" | "split" | "trim" |
+                    "parseInt" | "parseFloat" | "setTimeout" | "setInterval" | "clearTimeout" |
+                    "require" | "import") {
+            return None;
+        }
+
+        // Determine call type
+        let call_type = if function_node.kind() == "member_expression" {
+            "method"
+        } else {
+            "direct"
+        };
+
+        Some(FunctionCall {
+            caller_name: caller.to_string(),
+            callee_name,
+            call_line: node.start_position().row as u32 + 1,
+            call_type: call_type.to_string(),
+        })
     }
 
     fn extract_ts_function(&self, node: Node, source: &[u8], parent: Option<&str>, language: &str) -> Option<Symbol> {

@@ -560,7 +560,7 @@ impl MiraServer {
 
     // === Indexing ===
 
-    #[tool(description = "Index code and git history. Actions: project/file/status")]
+    #[tool(description = "Index code and git history. Actions: project/file/status/cleanup")]
     async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<CallToolResult, McpError> {
         let action = req.action.as_str();
         match action {
@@ -637,8 +637,75 @@ impl MiraServer {
                     "cochange_patterns": cochange.0,
                 })))
             }
+            "cleanup" => {
+                // Remove stale data from excluded directories and orphaned entries
+                let excluded_patterns = vec![
+                    "%/target/%",
+                    "%/node_modules/%",
+                    "%/__pycache__/%",
+                    "%/.git/%",
+                ];
+
+                let mut symbols_removed = 0i64;
+                let mut calls_removed = 0i64;
+                let mut imports_removed = 0i64;
+
+                for pattern in &excluded_patterns {
+                    // Remove call_graph entries first (foreign key constraints)
+                    let result = sqlx::query(
+                        "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE file_path LIKE $1)"
+                    )
+                    .bind(pattern)
+                    .execute(self.db.as_ref())
+                    .await
+                    .map_err(|e| to_mcp_err(e.into()))?;
+                    calls_removed += result.rows_affected() as i64;
+
+                    let result = sqlx::query(
+                        "DELETE FROM call_graph WHERE callee_id IN (SELECT id FROM code_symbols WHERE file_path LIKE $1)"
+                    )
+                    .bind(pattern)
+                    .execute(self.db.as_ref())
+                    .await
+                    .map_err(|e| to_mcp_err(e.into()))?;
+                    calls_removed += result.rows_affected() as i64;
+
+                    // Remove symbols
+                    let result = sqlx::query("DELETE FROM code_symbols WHERE file_path LIKE $1")
+                        .bind(pattern)
+                        .execute(self.db.as_ref())
+                        .await
+                        .map_err(|e| to_mcp_err(e.into()))?;
+                    symbols_removed += result.rows_affected() as i64;
+
+                    // Remove imports
+                    let result = sqlx::query("DELETE FROM imports WHERE file_path LIKE $1")
+                        .bind(pattern)
+                        .execute(self.db.as_ref())
+                        .await
+                        .map_err(|e| to_mcp_err(e.into()))?;
+                    imports_removed += result.rows_affected() as i64;
+                }
+
+                // Also clean up orphaned call_graph entries (where caller or callee no longer exists)
+                let result = sqlx::query(
+                    "DELETE FROM call_graph WHERE caller_id NOT IN (SELECT id FROM code_symbols) OR callee_id NOT IN (SELECT id FROM code_symbols)"
+                )
+                .execute(self.db.as_ref())
+                .await
+                .map_err(|e| to_mcp_err(e.into()))?;
+                let orphans_removed = result.rows_affected() as i64;
+
+                Ok(json_response(serde_json::json!({
+                    "status": "cleaned",
+                    "symbols_removed": symbols_removed,
+                    "calls_removed": calls_removed + orphans_removed,
+                    "imports_removed": imports_removed,
+                    "patterns_cleaned": excluded_patterns,
+                })))
+            }
             _ => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Unknown action: {}. Use project/file/status", action
+                "Unknown action: {}. Use project/file/status/cleanup", action
             ))])),
         }
     }
