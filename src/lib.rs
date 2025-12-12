@@ -3,3 +3,4 @@
 
 pub mod tools;
 pub mod indexer;
+pub mod server;
