@@ -6,6 +6,7 @@ pub mod build_intel;
 pub mod code_intel;
 pub mod corrections;
 pub mod documents;
+pub mod format;
 pub mod git_intel;
 pub mod goals;
 pub mod memory;
