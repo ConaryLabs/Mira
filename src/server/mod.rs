@@ -768,6 +768,19 @@ impl MiraServer {
 #[tool_handler]
 impl ServerHandler for MiraServer {
     fn get_info(&self) -> ServerInfo {
+        // Include current date/time so Claude always knows the actual date
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d %H:%M:%S %Z").to_string();
+
+        let instructions = format!(
+            "Mira Power Suit - Memory and Intelligence Layer for Claude Code.\n\n\
+            CURRENT DATE/TIME: {}\n\n\
+            Features: semantic memory (remember/recall), cross-session context, persistent tasks, \
+            code intelligence, git intelligence, and document search. All search tools use semantic \
+            similarity when Qdrant + Gemini are configured.",
+            date_str
+        );
+
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -776,7 +789,7 @@ impl ServerHandler for MiraServer {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 ..Default::default()
             },
-            instructions: Some("Mira Power Suit - Memory and Intelligence Layer for Claude Code. Features: semantic memory (remember/recall), cross-session context, persistent tasks, code intelligence, git intelligence, and document search. All search tools use semantic similarity when Qdrant + Gemini are configured.".to_string()),
+            instructions: Some(instructions),
         }
     }
 }
