@@ -336,8 +336,19 @@ impl CodeIndexer {
             })
             .collect();
 
+        // Delete existing unresolved calls for this file's symbols
+        sqlx::query(r#"
+            DELETE FROM unresolved_calls WHERE caller_id IN (
+                SELECT id FROM code_symbols WHERE file_path = $1
+            )
+        "#)
+        .bind(&file_path_str)
+        .execute(&self.db)
+        .await?;
+
         // Insert calls where we can resolve the caller
         let mut calls_inserted = 0;
+        let mut unresolved_inserted = 0;
         for call in &calls {
             // Find caller ID
             let caller_id = symbol_map.get(&call.caller_name);
@@ -356,26 +367,76 @@ impl CodeIndexer {
                 .await?;
 
                 if let Some((callee_id,)) = callee_id {
-                    // Insert the call relationship
+                    // Insert the resolved call relationship (with callee_name for searching)
                     let result = sqlx::query(r#"
-                        INSERT OR IGNORE INTO call_graph (caller_id, callee_id, call_type, call_line)
-                        VALUES ($1, $2, $3, $4)
+                        INSERT OR IGNORE INTO call_graph (caller_id, callee_id, call_type, call_line, callee_name)
+                        VALUES ($1, $2, $3, $4, $5)
                     "#)
                     .bind(caller_id)
                     .bind(callee_id)
                     .bind(&call.call_type)
                     .bind(call.call_line as i32)
+                    .bind(&call.callee_name)
                     .execute(&self.db)
                     .await;
 
                     if result.is_ok() {
                         calls_inserted += 1;
                     }
+                } else {
+                    // Skip common stdlib/builtin method calls that will never resolve
+                    // These add noise without value
+                    let skip_methods = [
+                        // Rust common methods
+                        "unwrap", "unwrap_or", "unwrap_or_default", "unwrap_or_else",
+                        "expect", "ok", "err", "is_ok", "is_err", "is_some", "is_none",
+                        "map", "map_err", "and_then", "or_else", "filter", "flatten",
+                        "collect", "iter", "into_iter", "enumerate", "zip", "chain",
+                        "take", "skip", "first", "last", "get", "get_mut",
+                        "push", "pop", "insert", "remove", "clear", "len", "is_empty",
+                        "clone", "to_string", "to_owned", "as_ref", "as_mut",
+                        "into", "from", "try_into", "try_from",
+                        "bind", "fetch_all", "fetch_one", "fetch_optional", "execute",
+                        "send", "recv", "await", "spawn", "block_on",
+                        "min", "max", "min_by", "max_by", "sum", "product",
+                        "join", "split", "trim", "contains", "starts_with", "ends_with",
+                        "format", "write", "read", "flush",
+                        // Common trait methods
+                        "default", "new", "build", "with",
+                    ];
+
+                    let callee_short = call.callee_name.split("::").last().unwrap_or(&call.callee_name);
+                    if skip_methods.contains(&callee_short) {
+                        continue;
+                    }
+
+                    // Store as unresolved for later resolution
+                    let result = sqlx::query(r#"
+                        INSERT OR IGNORE INTO unresolved_calls (caller_id, callee_name, call_type, call_line)
+                        VALUES ($1, $2, $3, $4)
+                    "#)
+                    .bind(caller_id)
+                    .bind(&call.callee_name)
+                    .bind(&call.call_type)
+                    .bind(call.call_line as i32)
+                    .execute(&self.db)
+                    .await;
+
+                    if result.is_ok() {
+                        unresolved_inserted += 1;
+                    }
                 }
             }
         }
 
+        // Try to resolve any pending unresolved calls that might now be resolvable
+        let resolved = self.resolve_pending_calls().await.unwrap_or(0);
+        if resolved > 0 {
+            tracing::debug!("Resolved {} previously unresolved calls", resolved);
+        }
+
         stats.calls_found = calls_inserted;
+        stats.unresolved_calls = unresolved_inserted;
 
         // Generate embeddings for semantic search (if available)
         if let Some(ref semantic) = self.semantic {
@@ -1630,6 +1691,61 @@ impl CodeIndexer {
             docs.reverse();
             Some(docs.join("\n"))
         }
+    }
+
+    /// Try to resolve pending unresolved calls against newly indexed symbols
+    async fn resolve_pending_calls(&self) -> Result<usize> {
+        let mut resolved_count = 0;
+
+        // Get all unresolved calls
+        let unresolved: Vec<(i64, i64, String, Option<String>, Option<i32>)> = sqlx::query_as(
+            r#"
+            SELECT uc.id, uc.caller_id, uc.callee_name, uc.call_type, uc.call_line
+            FROM unresolved_calls uc
+            "#
+        )
+        .fetch_all(&self.db)
+        .await?;
+
+        for (unresolved_id, caller_id, callee_name, call_type, call_line) in unresolved {
+            // Try to find the callee now
+            let callee_short = callee_name.split("::").last().unwrap_or(&callee_name);
+            let callee_pattern = format!("%{}", callee_name);
+
+            let callee_id: Option<(i64,)> = sqlx::query_as(
+                "SELECT id FROM code_symbols WHERE name = $1 OR qualified_name LIKE $2 LIMIT 1"
+            )
+            .bind(callee_short)
+            .bind(&callee_pattern)
+            .fetch_optional(&self.db)
+            .await?;
+
+            if let Some((callee_id,)) = callee_id {
+                // Insert the resolved call
+                let insert_result = sqlx::query(r#"
+                    INSERT OR IGNORE INTO call_graph (caller_id, callee_id, call_type, call_line, callee_name)
+                    VALUES ($1, $2, $3, $4, $5)
+                "#)
+                .bind(caller_id)
+                .bind(callee_id)
+                .bind(&call_type)
+                .bind(call_line)
+                .bind(&callee_name)
+                .execute(&self.db)
+                .await;
+
+                if insert_result.is_ok() {
+                    // Delete from unresolved
+                    sqlx::query("DELETE FROM unresolved_calls WHERE id = $1")
+                        .bind(unresolved_id)
+                        .execute(&self.db)
+                        .await?;
+                    resolved_count += 1;
+                }
+            }
+        }
+
+        Ok(resolved_count)
     }
 }
 
