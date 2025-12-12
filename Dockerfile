@@ -1,8 +1,8 @@
 # Mira Power Suit - MCP Server for Claude Code
 # Multi-stage build for minimal final image
 
-# Build stage - Rust 1.85+ required for edition 2024
-FROM rust:latest AS builder
+# Build stage - Rust 1.92 required (edition 2024)
+FROM rust:1.92 AS builder
 
 WORKDIR /app
 

@@ -1,13 +1,23 @@
+# Mira Daemon - Background Code Indexing
+#
+# Installation:
+#   1. Edit this file and replace YOUR_USERNAME and paths as needed
+#   2. sudo cp mira-daemon.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable mira-daemon
+#   5. sudo systemctl start mira-daemon
+
 [Unit]
 Description=Mira Code Intelligence Daemon
-After=network.target docker.service
-Wants=docker.service
+After=network.target
 
 [Service]
 Type=simple
-User=peter
-WorkingDirectory=/home/peter/Mira
-ExecStart=/home/peter/Mira/scripts/start-daemon.sh
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/.mira
+Environment=DATABASE_URL=sqlite:///home/YOUR_USERNAME/.mira/data/mira.db
+Environment=QDRANT_URL=http://localhost:6334
+ExecStart=/home/YOUR_USERNAME/.mira/target/release/mira daemon start -p /path/to/your/project
 Restart=on-failure
 RestartSec=10
 
