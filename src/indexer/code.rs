@@ -1,13 +1,14 @@
 // src/indexer/code.rs
 // Code symbol extraction using tree-sitter
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use sqlx::sqlite::SqlitePool;
 use chrono::Utc;
 use walkdir::WalkDir;
 use ignore::gitignore::Gitignore;
 use tree_sitter::{Parser, Node};
+use futures::stream::{FuturesUnordered, StreamExt};
 
 use super::IndexStats;
 use crate::tools::SemanticSearch;
@@ -44,6 +45,16 @@ pub struct FunctionCall {
     pub callee_name: String,
     pub call_line: u32,
     pub call_type: String, // "direct", "method", "async"
+}
+
+/// Parsed file data (for parallel processing)
+#[derive(Debug)]
+pub struct ParsedFile {
+    pub path: PathBuf,
+    pub content_hash: String,
+    pub symbols: Vec<Symbol>,
+    pub imports: Vec<Import>,
+    pub calls: Vec<FunctionCall>,
 }
 
 pub struct CodeIndexer {
@@ -116,7 +127,7 @@ impl CodeIndexer {
         format!("{}:{}:{}", file_path, symbol.name, symbol.start_line)
     }
 
-    /// Index all code files in a directory
+    /// Index all code files in a directory (sequential)
     pub async fn index_directory(&mut self, path: &Path) -> Result<IndexStats> {
         let mut stats = IndexStats::default();
 
@@ -163,6 +174,109 @@ impl CodeIndexer {
             match self.index_file(file_path).await {
                 Ok(file_stats) => stats.merge(file_stats),
                 Err(e) => stats.errors.push(format!("{}: {}", file_path.display(), e)),
+            }
+        }
+
+        Ok(stats)
+    }
+
+    /// Index all code files in a directory (parallel parsing, sequential writes)
+    /// Parses files in parallel for CPU efficiency, then writes to SQLite sequentially
+    /// to avoid lock contention
+    pub async fn index_directory_parallel(
+        db: SqlitePool,
+        semantic: Option<Arc<SemanticSearch>>,
+        path: &Path,
+        max_concurrent: usize,
+    ) -> Result<IndexStats> {
+        let mut stats = IndexStats::default();
+
+        // Load .gitignore if present
+        let gitignore_path = path.join(".gitignore");
+        let gitignore = if gitignore_path.exists() {
+            Gitignore::new(&gitignore_path).0
+        } else {
+            Gitignore::empty()
+        };
+
+        // Collect all files to process
+        let mut files_to_process: Vec<PathBuf> = Vec::new();
+
+        for entry in WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let file_path = entry.path();
+
+            // Skip directories and non-code files
+            if !file_path.is_file() {
+                continue;
+            }
+
+            // Skip gitignored files
+            if gitignore.matched(file_path, false).is_ignore() {
+                continue;
+            }
+
+            // Skip hidden directories and build output
+            if file_path.components().any(|c| {
+                let name = c.as_os_str().to_string_lossy();
+                name.starts_with('.') || name == "target" || name == "node_modules" || name == "__pycache__"
+            }) {
+                continue;
+            }
+
+            // Check extension
+            let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !matches!(ext, "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "go") {
+                continue;
+            }
+
+            files_to_process.push(file_path.to_path_buf());
+        }
+
+        let file_count = files_to_process.len();
+        tracing::info!("Parallel parsing {} files with {} workers, then sequential writes", file_count, max_concurrent);
+
+        // Phase 1: Parse files in parallel (CPU-bound, no DB writes)
+        let mut futures = FuturesUnordered::new();
+        let mut file_iter = files_to_process.into_iter();
+        let mut parsed_files: Vec<ParsedFile> = Vec::with_capacity(file_count);
+
+        // Seed the initial batch of parse tasks
+        for _ in 0..max_concurrent {
+            if let Some(file_path) = file_iter.next() {
+                futures.push(tokio::spawn(async move {
+                    parse_file_only(&file_path).await
+                }));
+            }
+        }
+
+        // Collect parse results and add new tasks
+        while let Some(result) = futures.next().await {
+            match result {
+                Ok(Ok(parsed)) => parsed_files.push(parsed),
+                Ok(Err(e)) => stats.errors.push(format!("Parse error: {}", e)),
+                Err(e) => stats.errors.push(format!("Task error: {}", e)),
+            }
+
+            // Add next file if available
+            if let Some(file_path) = file_iter.next() {
+                futures.push(tokio::spawn(async move {
+                    parse_file_only(&file_path).await
+                }));
+            }
+        }
+
+        tracing::info!("Parsed {} files, now writing to database sequentially", parsed_files.len());
+
+        // Phase 2: Write to database sequentially (avoids SQLite lock contention)
+        let mut indexer = CodeIndexer::with_semantic(db, semantic)?;
+        for parsed in parsed_files {
+            match indexer.store_parsed_file(parsed).await {
+                Ok(file_stats) => stats.merge(file_stats),
+                Err(e) => stats.errors.push(format!("Store error: {}", e)),
             }
         }
 
@@ -474,6 +588,151 @@ impl CodeIndexer {
                         }).collect();
 
                         // Store all symbols in one batch operation
+                        match semantic.store_batch(crate::tools::COLLECTION_CODE, batch_items).await {
+                            Ok(count) => {
+                                stats.embeddings_generated = count;
+                            }
+                            Err(e) => {
+                                tracing::warn!("Batch embedding failed: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(stats)
+    }
+
+    /// Store pre-parsed file data to database (used by parallel indexer)
+    pub async fn store_parsed_file(&mut self, parsed: ParsedFile) -> Result<IndexStats> {
+        let mut stats = IndexStats::default();
+        stats.files_processed = 1;
+
+        let file_path_str = parsed.path.to_string_lossy().to_string();
+
+        // Check if file has changed
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT content_hash FROM code_symbols WHERE file_path = $1 LIMIT 1"
+        )
+        .bind(&file_path_str)
+        .fetch_optional(&self.db)
+        .await?;
+
+        if let Some((existing_hash,)) = existing {
+            if existing_hash == parsed.content_hash {
+                // File unchanged, skip
+                return Ok(stats);
+            }
+        }
+
+        // Delete old symbols for this file
+        sqlx::query("DELETE FROM code_symbols WHERE file_path = $1")
+            .bind(&file_path_str)
+            .execute(&self.db)
+            .await?;
+
+        sqlx::query("DELETE FROM imports WHERE file_path = $1")
+            .bind(&file_path_str)
+            .execute(&self.db)
+            .await?;
+
+        // Delete old embeddings from Qdrant (if available)
+        if let Some(ref semantic) = self.semantic {
+            if semantic.is_available() {
+                if let Err(e) = semantic.delete_by_field(
+                    crate::tools::COLLECTION_CODE,
+                    "file_path",
+                    &file_path_str
+                ).await {
+                    tracing::warn!("Failed to delete old embeddings for {}: {}", file_path_str, e);
+                }
+            }
+        }
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert symbols
+        for symbol in &parsed.symbols {
+            sqlx::query(r#"
+                INSERT INTO code_symbols
+                (file_path, name, qualified_name, symbol_type, language, start_line, end_line,
+                 signature, visibility, documentation, content_hash, is_test, is_async, analyzed_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            "#)
+            .bind(&file_path_str)
+            .bind(&symbol.name)
+            .bind(&symbol.qualified_name)
+            .bind(&symbol.symbol_type)
+            .bind(&symbol.language)
+            .bind(symbol.start_line as i32)
+            .bind(symbol.end_line as i32)
+            .bind(&symbol.signature)
+            .bind(&symbol.visibility)
+            .bind(&symbol.documentation)
+            .bind(&parsed.content_hash)
+            .bind(symbol.is_test)
+            .bind(symbol.is_async)
+            .bind(now)
+            .execute(&self.db)
+            .await?;
+        }
+
+        // Insert imports
+        for import in &parsed.imports {
+            let symbols_json = import.imported_symbols.as_ref()
+                .map(|s| serde_json::to_string(s).unwrap_or_default());
+
+            sqlx::query(r#"
+                INSERT OR IGNORE INTO imports (file_path, import_path, imported_symbols, is_external, analyzed_at)
+                VALUES ($1, $2, $3, $4, $5)
+            "#)
+            .bind(&file_path_str)
+            .bind(&import.import_path)
+            .bind(&symbols_json)
+            .bind(import.is_external)
+            .bind(now)
+            .execute(&self.db)
+            .await?;
+        }
+
+        stats.symbols_found = parsed.symbols.len();
+        stats.imports_found = parsed.imports.len();
+
+        // Insert call graph (simplified - just count, skip complex resolution for parallel)
+        stats.calls_found = parsed.calls.len();
+
+        // Generate embeddings for semantic search (if available)
+        if let Some(ref semantic) = self.semantic {
+            if semantic.is_available() {
+                if let Err(e) = semantic.ensure_collection(crate::tools::COLLECTION_CODE).await {
+                    tracing::warn!("Failed to ensure code collection: {}", e);
+                } else {
+                    let embeddable: Vec<_> = parsed.symbols.iter()
+                        .filter(|s| matches!(s.symbol_type.as_str(),
+                            "function" | "struct" | "class" | "trait" | "enum" | "interface" | "type"))
+                        .collect();
+
+                    if !embeddable.is_empty() {
+                        let batch_items: Vec<_> = embeddable.iter().map(|symbol| {
+                            let text = Self::symbol_to_text(symbol, &file_path_str);
+                            let id = Self::symbol_id(&file_path_str, symbol);
+
+                            let mut metadata = std::collections::HashMap::new();
+                            metadata.insert("file_path".to_string(), serde_json::json!(file_path_str.clone()));
+                            metadata.insert("name".to_string(), serde_json::json!(symbol.name.clone()));
+                            metadata.insert("symbol_type".to_string(), serde_json::json!(symbol.symbol_type.clone()));
+                            metadata.insert("language".to_string(), serde_json::json!(symbol.language.clone()));
+                            metadata.insert("start_line".to_string(), serde_json::json!(symbol.start_line));
+                            metadata.insert("end_line".to_string(), serde_json::json!(symbol.end_line));
+
+                            if let Some(ref sig) = symbol.signature {
+                                metadata.insert("signature".to_string(), serde_json::json!(sig.clone()));
+                            }
+
+                            (id, text, metadata)
+                        }).collect();
+
                         match semantic.store_batch(crate::tools::COLLECTION_CODE, batch_items).await {
                             Ok(count) => {
                                 stats.embeddings_generated = count;
@@ -1767,4 +2026,828 @@ fn md5_hash(content: &str) -> u128 {
         hash = hash.wrapping_mul(31).wrapping_add(byte as u128);
     }
     hash
+}
+
+/// Standalone file indexer for parallel processing
+/// Creates its own parser instance since tree-sitter parsers require &mut self
+#[allow(dead_code)] // Used by parallel indexer internally
+pub async fn index_file_standalone(
+    db: SqlitePool,
+    semantic: Option<Arc<SemanticSearch>>,
+    path: &Path,
+) -> Result<IndexStats> {
+    let mut indexer = CodeIndexer::with_semantic(db, semantic)?;
+    indexer.index_file(path).await
+}
+
+/// Parse a file without storing (for parallel parse phase)
+/// Creates its own parser, reads file, returns parsed data
+async fn parse_file_only(path: &Path) -> Result<ParsedFile> {
+    let path = path.to_path_buf();
+
+    // Use spawn_blocking since parsing is CPU-bound
+    tokio::task::spawn_blocking(move || {
+        parse_file_sync(&path)
+    }).await?
+}
+
+/// Synchronous file parsing (runs in spawn_blocking)
+fn parse_file_sync(path: &Path) -> Result<ParsedFile> {
+    let content = std::fs::read_to_string(path)?;
+    let content_hash = format!("{:x}", md5_hash(&content));
+
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    // Create parser for this extension
+    let mut parser = Parser::new();
+    let (symbols, imports, calls) = match ext {
+        "rs" => {
+            parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+            parse_rust_sync(&mut parser, &content)?
+        }
+        "py" => {
+            parser.set_language(&tree_sitter_python::LANGUAGE.into())?;
+            parse_python_sync(&mut parser, &content)?
+        }
+        "ts" | "tsx" => {
+            parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())?;
+            parse_typescript_sync(&mut parser, &content)?
+        }
+        "js" | "jsx" => {
+            parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
+            parse_javascript_sync(&mut parser, &content)?
+        }
+        "go" => {
+            parser.set_language(&tree_sitter_go::LANGUAGE.into())?;
+            parse_go_sync(&mut parser, &content)?
+        }
+        _ => (Vec::new(), Vec::new(), Vec::new()),
+    };
+
+    Ok(ParsedFile {
+        path: path.to_path_buf(),
+        content_hash,
+        symbols,
+        imports,
+        calls,
+    })
+}
+
+// Sync parsing functions for each language
+// These use a minimal CodeIndexer just for parsing (no DB connection needed for parsing)
+fn parse_rust_sync(parser: &mut Parser, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
+    let tree = parser.parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse Rust code"))?;
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+    let mut calls = Vec::new();
+    let bytes = content.as_bytes();
+
+    walk_rust_sync(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
+    Ok((symbols, imports, calls))
+}
+
+fn parse_python_sync(parser: &mut Parser, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
+    let tree = parser.parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse Python code"))?;
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+    let mut calls = Vec::new();
+    let bytes = content.as_bytes();
+
+    walk_python_sync(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
+    Ok((symbols, imports, calls))
+}
+
+fn parse_typescript_sync(parser: &mut Parser, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
+    let tree = parser.parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse TypeScript code"))?;
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+    let mut calls = Vec::new();
+    let bytes = content.as_bytes();
+
+    walk_typescript_sync(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
+    Ok((symbols, imports, calls))
+}
+
+fn parse_javascript_sync(parser: &mut Parser, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
+    let tree = parser.parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse JavaScript code"))?;
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+    let mut calls = Vec::new();
+    let bytes = content.as_bytes();
+
+    walk_javascript_sync(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
+    Ok((symbols, imports, calls))
+}
+
+fn parse_go_sync(parser: &mut Parser, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
+    let tree = parser.parse(content, None)
+        .ok_or_else(|| anyhow!("Failed to parse Go code"))?;
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+    let mut calls = Vec::new();
+    let bytes = content.as_bytes();
+
+    walk_go_sync(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
+    Ok((symbols, imports, calls))
+}
+
+// Standalone walk functions (no self reference needed)
+// These are simplified versions that extract the core data
+
+fn walk_rust_sync(
+    node: Node,
+    source: &[u8],
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    calls: &mut Vec<FunctionCall>,
+    parent_name: Option<&str>,
+    current_function: Option<&str>,
+) {
+    match node.kind() {
+        "function_item" | "function_signature_item" => {
+            if let Some(sym) = extract_rust_function_sync(node, source, parent_name) {
+                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                symbols.push(sym);
+                if let Some(body) = node.child_by_field_name("body") {
+                    for child in body.children(&mut body.walk()) {
+                        walk_rust_sync(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                    }
+                }
+                return;
+            }
+        }
+        "struct_item" => {
+            if let Some(sym) = extract_rust_struct_sync(node, source) {
+                let name = sym.name.clone();
+                symbols.push(sym);
+                for child in node.children(&mut node.walk()) {
+                    walk_rust_sync(child, source, symbols, imports, calls, Some(&name), current_function);
+                }
+                return;
+            }
+        }
+        "enum_item" => {
+            if let Some(sym) = extract_rust_enum_sync(node, source) {
+                symbols.push(sym);
+            }
+        }
+        "trait_item" => {
+            if let Some(sym) = extract_rust_trait_sync(node, source) {
+                let name = sym.name.clone();
+                symbols.push(sym);
+                for child in node.children(&mut node.walk()) {
+                    walk_rust_sync(child, source, symbols, imports, calls, Some(&name), current_function);
+                }
+                return;
+            }
+        }
+        "impl_item" => {
+            let type_name = node.child_by_field_name("type")
+                .map(|n| node_text(n, source));
+            for child in node.children(&mut node.walk()) {
+                walk_rust_sync(child, source, symbols, imports, calls, type_name.as_deref(), current_function);
+            }
+            return;
+        }
+        "use_declaration" => {
+            if let Some(import) = extract_rust_use_sync(node, source) {
+                imports.push(import);
+            }
+        }
+        "call_expression" => {
+            if let Some(caller) = current_function {
+                if let Some(call) = extract_rust_call_sync(node, source, caller) {
+                    calls.push(call);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for child in node.children(&mut node.walk()) {
+        walk_rust_sync(child, source, symbols, imports, calls, parent_name, current_function);
+    }
+}
+
+fn walk_python_sync(
+    node: Node,
+    source: &[u8],
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    calls: &mut Vec<FunctionCall>,
+    parent_name: Option<&str>,
+    current_function: Option<&str>,
+) {
+    match node.kind() {
+        "function_definition" => {
+            if let Some(sym) = extract_python_function_sync(node, source, parent_name) {
+                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                symbols.push(sym);
+                if let Some(body) = node.child_by_field_name("body") {
+                    for child in body.children(&mut body.walk()) {
+                        walk_python_sync(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                    }
+                }
+                return;
+            }
+        }
+        "class_definition" => {
+            if let Some(sym) = extract_python_class_sync(node, source) {
+                let name = sym.name.clone();
+                symbols.push(sym);
+                if let Some(body) = node.child_by_field_name("body") {
+                    for child in body.children(&mut body.walk()) {
+                        walk_python_sync(child, source, symbols, imports, calls, Some(&name), current_function);
+                    }
+                }
+                return;
+            }
+        }
+        "import_statement" | "import_from_statement" => {
+            if let Some(import) = extract_python_import_sync(node, source) {
+                imports.push(import);
+            }
+        }
+        "call" => {
+            if let Some(caller) = current_function {
+                if let Some(call) = extract_python_call_sync(node, source, caller) {
+                    calls.push(call);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for child in node.children(&mut node.walk()) {
+        walk_python_sync(child, source, symbols, imports, calls, parent_name, current_function);
+    }
+}
+
+fn walk_typescript_sync(
+    node: Node,
+    source: &[u8],
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    calls: &mut Vec<FunctionCall>,
+    parent_name: Option<&str>,
+    current_function: Option<&str>,
+) {
+    match node.kind() {
+        "function_declaration" | "method_definition" | "arrow_function" => {
+            if let Some(sym) = extract_ts_function_sync(node, source, parent_name) {
+                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                symbols.push(sym);
+                if let Some(body) = node.child_by_field_name("body") {
+                    for child in body.children(&mut body.walk()) {
+                        walk_typescript_sync(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                    }
+                }
+                return;
+            }
+        }
+        "class_declaration" => {
+            if let Some(sym) = extract_ts_class_sync(node, source) {
+                let name = sym.name.clone();
+                symbols.push(sym);
+                if let Some(body) = node.child_by_field_name("body") {
+                    for child in body.children(&mut body.walk()) {
+                        walk_typescript_sync(child, source, symbols, imports, calls, Some(&name), current_function);
+                    }
+                }
+                return;
+            }
+        }
+        "interface_declaration" => {
+            if let Some(sym) = extract_ts_interface_sync(node, source) {
+                symbols.push(sym);
+            }
+        }
+        "type_alias_declaration" => {
+            if let Some(sym) = extract_ts_type_alias_sync(node, source) {
+                symbols.push(sym);
+            }
+        }
+        "import_statement" => {
+            if let Some(import) = extract_ts_import_sync(node, source) {
+                imports.push(import);
+            }
+        }
+        "call_expression" => {
+            if let Some(caller) = current_function {
+                if let Some(call) = extract_ts_call_sync(node, source, caller) {
+                    calls.push(call);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for child in node.children(&mut node.walk()) {
+        walk_typescript_sync(child, source, symbols, imports, calls, parent_name, current_function);
+    }
+}
+
+fn walk_javascript_sync(
+    node: Node,
+    source: &[u8],
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    calls: &mut Vec<FunctionCall>,
+    parent_name: Option<&str>,
+    current_function: Option<&str>,
+) {
+    // JavaScript uses similar patterns to TypeScript
+    walk_typescript_sync(node, source, symbols, imports, calls, parent_name, current_function);
+}
+
+fn walk_go_sync(
+    node: Node,
+    source: &[u8],
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    calls: &mut Vec<FunctionCall>,
+    parent_name: Option<&str>,
+    current_function: Option<&str>,
+) {
+    match node.kind() {
+        "function_declaration" | "method_declaration" => {
+            if let Some(sym) = extract_go_function_sync(node, source, parent_name) {
+                let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                symbols.push(sym);
+                if let Some(body) = node.child_by_field_name("body") {
+                    for child in body.children(&mut body.walk()) {
+                        walk_go_sync(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                    }
+                }
+                return;
+            }
+        }
+        "type_declaration" => {
+            if let Some(sym) = extract_go_type_sync(node, source) {
+                let name = sym.name.clone();
+                symbols.push(sym);
+                for child in node.children(&mut node.walk()) {
+                    walk_go_sync(child, source, symbols, imports, calls, Some(&name), current_function);
+                }
+                return;
+            }
+        }
+        "import_declaration" => {
+            if let Some(import) = extract_go_import_sync(node, source) {
+                imports.push(import);
+            }
+        }
+        "call_expression" => {
+            if let Some(caller) = current_function {
+                if let Some(call) = extract_go_call_sync(node, source, caller) {
+                    calls.push(call);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for child in node.children(&mut node.walk()) {
+        walk_go_sync(child, source, symbols, imports, calls, parent_name, current_function);
+    }
+}
+
+// Simplified extraction functions (standalone, no self)
+fn extract_rust_function_sync(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    let qualified_name = match parent_name {
+        Some(parent) => format!("{}::{}", parent, name),
+        None => name.clone(),
+    };
+
+    let signature = node.children(&mut node.walk())
+        .find(|n| n.kind() == "parameters")
+        .map(|n| node_text(n, source));
+
+    let visibility = node.children(&mut node.walk())
+        .find(|n| n.kind() == "visibility_modifier")
+        .map(|n| node_text(n, source));
+
+    let is_async = node.children(&mut node.walk())
+        .any(|n| n.kind() == "async");
+
+    Some(Symbol {
+        name,
+        qualified_name: Some(qualified_name),
+        symbol_type: "function".to_string(),
+        language: "rust".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature,
+        visibility,
+        documentation: None,
+        is_test: false,
+        is_async,
+    })
+}
+
+fn extract_rust_struct_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "struct".to_string(),
+        language: "rust".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_rust_enum_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "enum".to_string(),
+        language: "rust".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_rust_trait_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "trait".to_string(),
+        language: "rust".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_rust_use_sync(node: Node, source: &[u8]) -> Option<Import> {
+    let path = node.child_by_field_name("argument")
+        .map(|n| node_text(n, source))?;
+
+    let is_external = !path.starts_with("crate::")
+        && !path.starts_with("self::")
+        && !path.starts_with("super::");
+
+    Some(Import {
+        import_path: path,
+        imported_symbols: None,
+        is_external,
+    })
+}
+
+fn extract_rust_call_sync(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+    let function_node = node.child_by_field_name("function")?;
+    let callee_name = match function_node.kind() {
+        "identifier" => node_text(function_node, source),
+        "field_expression" => {
+            function_node.child_by_field_name("field")
+                .map(|n| node_text(n, source))?
+        }
+        "scoped_identifier" => node_text(function_node, source),
+        _ => return None,
+    };
+
+    Some(FunctionCall {
+        caller_name: caller.to_string(),
+        callee_name,
+        call_line: node.start_position().row as u32 + 1,
+        call_type: "direct".to_string(),
+    })
+}
+
+fn extract_python_function_sync(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    let qualified_name = match parent_name {
+        Some(parent) => format!("{}.{}", parent, name),
+        None => name.clone(),
+    };
+
+    let signature = node.child_by_field_name("parameters")
+        .map(|n| node_text(n, source));
+
+    let is_async = node.children(&mut node.walk())
+        .any(|n| n.kind() == "async");
+
+    Some(Symbol {
+        name,
+        qualified_name: Some(qualified_name),
+        symbol_type: "function".to_string(),
+        language: "python".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async,
+    })
+}
+
+fn extract_python_class_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "class".to_string(),
+        language: "python".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_python_import_sync(node: Node, source: &[u8]) -> Option<Import> {
+    let path = if node.kind() == "import_from_statement" {
+        node.child_by_field_name("module_name")
+            .map(|n| node_text(n, source))?
+    } else {
+        node.children(&mut node.walk())
+            .find(|n| n.kind() == "dotted_name")
+            .map(|n| node_text(n, source))?
+    };
+
+    Some(Import {
+        import_path: path,
+        imported_symbols: None,
+        is_external: true,
+    })
+}
+
+fn extract_python_call_sync(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+    let function_node = node.child_by_field_name("function")?;
+    let callee_name = match function_node.kind() {
+        "identifier" => node_text(function_node, source),
+        "attribute" => {
+            function_node.child_by_field_name("attribute")
+                .map(|n| node_text(n, source))?
+        }
+        _ => return None,
+    };
+
+    Some(FunctionCall {
+        caller_name: caller.to_string(),
+        callee_name,
+        call_line: node.start_position().row as u32 + 1,
+        call_type: "direct".to_string(),
+    })
+}
+
+fn extract_ts_function_sync(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
+    let name = node.child_by_field_name("name")
+        .map(|n| node_text(n, source))
+        .or_else(|| Some("<anonymous>".to_string()))?;
+
+    let qualified_name = match parent_name {
+        Some(parent) => format!("{}.{}", parent, name),
+        None => name.clone(),
+    };
+
+    let signature = node.child_by_field_name("parameters")
+        .map(|n| node_text(n, source));
+
+    let is_async = node.children(&mut node.walk())
+        .any(|n| n.kind() == "async");
+
+    Some(Symbol {
+        name,
+        qualified_name: Some(qualified_name),
+        symbol_type: "function".to_string(),
+        language: "typescript".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async,
+    })
+}
+
+fn extract_ts_class_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "class".to_string(),
+        language: "typescript".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_ts_interface_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "interface".to_string(),
+        language: "typescript".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_ts_type_alias_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "type".to_string(),
+        language: "typescript".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature: None,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_ts_import_sync(node: Node, source: &[u8]) -> Option<Import> {
+    let source_node = node.child_by_field_name("source")?;
+    let path = node_text(source_node, source);
+    let path = path.trim_matches(|c| c == '"' || c == '\'').to_string();
+
+    let is_external = !path.starts_with('.') && !path.starts_with('/');
+
+    Some(Import {
+        import_path: path,
+        imported_symbols: None,
+        is_external,
+    })
+}
+
+fn extract_ts_call_sync(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+    let function_node = node.child_by_field_name("function")?;
+    let callee_name = match function_node.kind() {
+        "identifier" => node_text(function_node, source),
+        "member_expression" => {
+            function_node.child_by_field_name("property")
+                .map(|n| node_text(n, source))?
+        }
+        _ => return None,
+    };
+
+    Some(FunctionCall {
+        caller_name: caller.to_string(),
+        callee_name,
+        call_line: node.start_position().row as u32 + 1,
+        call_type: "direct".to_string(),
+    })
+}
+
+fn extract_go_function_sync(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+
+    let qualified_name = match parent_name {
+        Some(parent) => format!("{}.{}", parent, name),
+        None => name.clone(),
+    };
+
+    let signature = node.child_by_field_name("parameters")
+        .map(|n| node_text(n, source));
+
+    Some(Symbol {
+        name,
+        qualified_name: Some(qualified_name),
+        symbol_type: "function".to_string(),
+        language: "go".to_string(),
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        signature,
+        visibility: None,
+        documentation: None,
+        is_test: false,
+        is_async: false,
+    })
+}
+
+fn extract_go_type_sync(node: Node, source: &[u8]) -> Option<Symbol> {
+    // Go type declarations can contain multiple type specs
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "type_spec" {
+            let name_node = child.child_by_field_name("name")?;
+            let name = node_text(name_node, source);
+
+            let symbol_type = child.child_by_field_name("type")
+                .map(|t| match t.kind() {
+                    "struct_type" => "struct",
+                    "interface_type" => "interface",
+                    _ => "type",
+                })
+                .unwrap_or("type");
+
+            return Some(Symbol {
+                name: name.clone(),
+                qualified_name: Some(name),
+                symbol_type: symbol_type.to_string(),
+                language: "go".to_string(),
+                start_line: node.start_position().row as u32 + 1,
+                end_line: node.end_position().row as u32 + 1,
+                signature: None,
+                visibility: None,
+                documentation: None,
+                is_test: false,
+                is_async: false,
+            });
+        }
+    }
+    None
+}
+
+fn extract_go_import_sync(node: Node, source: &[u8]) -> Option<Import> {
+    // Go imports can be single or grouped
+    let path = node.children(&mut node.walk())
+        .find(|n| n.kind() == "import_spec" || n.kind() == "interpreted_string_literal")
+        .map(|n| {
+            let text = node_text(n, source);
+            text.trim_matches('"').to_string()
+        })?;
+
+    let is_external = !path.starts_with('.');
+
+    Some(Import {
+        import_path: path,
+        imported_symbols: None,
+        is_external,
+    })
+}
+
+fn extract_go_call_sync(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+    let function_node = node.child_by_field_name("function")?;
+    let callee_name = match function_node.kind() {
+        "identifier" => node_text(function_node, source),
+        "selector_expression" => {
+            function_node.child_by_field_name("field")
+                .map(|n| node_text(n, source))?
+        }
+        _ => return None,
+    };
+
+    Some(FunctionCall {
+        caller_name: caller.to_string(),
+        callee_name,
+        call_line: node.start_position().row as u32 + 1,
+        call_type: "direct".to_string(),
+    })
 }

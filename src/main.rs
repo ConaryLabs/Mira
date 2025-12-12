@@ -611,11 +611,24 @@ impl MiraServer {
                 let path = req.path.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("path required")))?;
                 let path = std::path::Path::new(&path);
 
-                let mut code_indexer = CodeIndexer::with_semantic(
-                    self.db.as_ref().clone(),
-                    Some(self.semantic.clone())
-                ).map_err(to_mcp_err)?;
-                let mut stats = code_indexer.index_directory(path).await.map_err(to_mcp_err)?;
+                // Use parallel indexing by default for better performance
+                let use_parallel = req.parallel.unwrap_or(true);
+                let max_workers = req.max_workers.unwrap_or(4) as usize;
+
+                let mut stats = if use_parallel {
+                    CodeIndexer::index_directory_parallel(
+                        self.db.as_ref().clone(),
+                        Some(self.semantic.clone()),
+                        path,
+                        max_workers,
+                    ).await.map_err(to_mcp_err)?
+                } else {
+                    let mut code_indexer = CodeIndexer::with_semantic(
+                        self.db.as_ref().clone(),
+                        Some(self.semantic.clone())
+                    ).map_err(to_mcp_err)?;
+                    code_indexer.index_directory(path).await.map_err(to_mcp_err)?
+                };
 
                 // Index git if requested (default: true)
                 if req.include_git.unwrap_or(true) {
@@ -627,6 +640,8 @@ impl MiraServer {
 
                 Ok(json_response(serde_json::json!({
                     "status": "indexed",
+                    "parallel": use_parallel,
+                    "workers": max_workers,
                     "files_processed": stats.files_processed,
                     "symbols_found": stats.symbols_found,
                     "imports_found": stats.imports_found,
