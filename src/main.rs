@@ -925,18 +925,56 @@ async fn main() -> Result<()> {
                 StreamableHttpServerConfig::default(),
             );
 
+            // Health check handler
+            let health_db = db.clone();
+            let health_semantic = semantic.clone();
+            let health_handler = move || {
+                let db = health_db.clone();
+                let semantic = health_semantic.clone();
+                async move {
+                    let mut status = serde_json::json!({
+                        "status": "ok",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    });
+
+                    // Check database
+                    let db_ok = sqlx::query("SELECT 1")
+                        .fetch_one(db.as_ref())
+                        .await
+                        .is_ok();
+                    status["database"] = serde_json::json!(if db_ok { "ok" } else { "error" });
+
+                    // Check Qdrant
+                    status["semantic_search"] = serde_json::json!(
+                        if semantic.is_available() { "ok" } else { "disabled" }
+                    );
+
+                    if !db_ok {
+                        status["status"] = serde_json::json!("degraded");
+                    }
+
+                    axum::Json(status)
+                }
+            };
+
             // Build router with optional auth middleware
+            // Health endpoint is public, MCP endpoint requires auth
             let app = if let Some(token) = expected_token {
                 info!("Auth token required for connections");
-                axum::Router::new()
+                let mcp_router = axum::Router::new()
                     .nest_service("/mcp", mcp_service)
                     .layer(axum::middleware::from_fn(move |req, next| {
                         let token = token.clone();
                         auth_middleware(req, next, token)
-                    }))
+                    }));
+                axum::Router::new()
+                    .route("/health", axum::routing::get(health_handler))
+                    .merge(mcp_router)
             } else {
                 info!("Warning: No auth token set, server is open");
-                axum::Router::new().nest_service("/mcp", mcp_service)
+                axum::Router::new()
+                    .route("/health", axum::routing::get(health_handler))
+                    .nest_service("/mcp", mcp_service)
             };
 
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
