@@ -44,7 +44,7 @@ docker compose build mira
 # Ask about semantic search
 echo ""
 echo "Semantic search enables finding memories by meaning (not just keywords)."
-echo "It requires Qdrant (vector database) and an OpenAI API key."
+echo "It requires Qdrant (vector database) and a Google Gemini API key (free tier available)."
 echo ""
 echo "Enable semantic search? [Y/n]:"
 read -r ENABLE_SEMANTIC
@@ -66,16 +66,17 @@ if [[ "$ENABLE_SEMANTIC" =~ ^[Yy] ]]; then
     done
 
     echo ""
-    echo "Enter your OpenAI API key (or press Enter to add later):"
-    read -r OPENAI_KEY
+    echo "Enter your Gemini API key (get one free at https://aistudio.google.com/apikey)"
+    echo "Or press Enter to add later:"
+    read -r GEMINI_KEY
 
-    if [ -n "$OPENAI_KEY" ]; then
-        echo "OPENAI_API_KEY=$OPENAI_KEY" > "$MIRA_DIR/.env"
+    if [ -n "$GEMINI_KEY" ]; then
+        echo "GEMINI_API_KEY=$GEMINI_KEY" > "$MIRA_DIR/.env"
         chmod 600 "$MIRA_DIR/.env"
         echo "API key saved to ~/.mira/.env"
         SEMANTIC_STATUS="enabled"
     else
-        echo "No key provided. Add OPENAI_API_KEY to ~/.mira/.env later."
+        echo "No key provided. Add GEMINI_API_KEY to ~/.mira/.env later."
         SEMANTIC_STATUS="Qdrant running, needs API key"
     fi
 else
@@ -104,7 +105,7 @@ if [ -f .env ]; then
     set +a
 fi
 exec docker compose run --rm -T \
-    -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+    -e GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
     mira
 WRAPPER
 else

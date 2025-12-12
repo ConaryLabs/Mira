@@ -1,5 +1,5 @@
 // src/tools/semantic.rs
-// Semantic search utilities for MCP tools using OpenAI embeddings + Qdrant
+// Semantic search utilities for MCP tools using Google Gemini embeddings + Qdrant
 
 use anyhow::{Context, Result};
 use qdrant_client::qdrant::{
@@ -11,7 +11,7 @@ use qdrant_client::Qdrant;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
-/// Embedding dimensions for text-embedding-3-large
+/// Embedding dimensions for gemini-embedding-001 (max precision)
 const EMBEDDING_DIM: u64 = 3072;
 
 /// Collection names
@@ -19,17 +19,17 @@ pub const COLLECTION_CODE: &str = "mira_code";
 pub const COLLECTION_CONVERSATION: &str = "mira_conversation";
 pub const COLLECTION_DOCS: &str = "mira_docs";
 
-/// Semantic search client wrapping OpenAI embeddings + Qdrant
+/// Semantic search client wrapping Google Gemini embeddings + Qdrant
 pub struct SemanticSearch {
     qdrant: Option<Qdrant>,
-    openai_key: Option<String>,
+    gemini_key: Option<String>,
     http_client: reqwest::Client,
 }
 
 impl SemanticSearch {
     /// Create a new semantic search client
-    /// Gracefully handles missing Qdrant or OpenAI config
-    pub async fn new(qdrant_url: Option<&str>, openai_key: Option<String>) -> Self {
+    /// Gracefully handles missing Qdrant or Gemini config
+    pub async fn new(qdrant_url: Option<&str>, gemini_key: Option<String>) -> Self {
         let qdrant = if let Some(url) = qdrant_url {
             match Qdrant::from_url(url).skip_compatibility_check().build() {
                 Ok(client) => {
@@ -48,14 +48,14 @@ impl SemanticSearch {
 
         Self {
             qdrant,
-            openai_key,
+            gemini_key,
             http_client: reqwest::Client::new(),
         }
     }
 
     /// Check if semantic search is available
     pub fn is_available(&self) -> bool {
-        self.qdrant.is_some() && self.openai_key.is_some()
+        self.qdrant.is_some() && self.gemini_key.is_some()
     }
 
     /// Ensure a collection exists
@@ -77,19 +77,27 @@ impl SemanticSearch {
         Ok(())
     }
 
-    /// Get embedding for text using OpenAI
+    /// Get embedding for text using Google Gemini
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let api_key = self.openai_key.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("OpenAI API key not configured"))?;
+        let api_key = self.gemini_key.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Gemini API key not configured"))?;
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={}",
+            api_key
+        );
 
         let response = self.http_client
-            .post("https://api.openai.com/v1/embeddings")
-            .header("Authorization", format!("Bearer {}", api_key))
+            .post(&url)
             .header("Content-Type", "application/json")
             .json(&serde_json::json!({
-                "model": "text-embedding-3-large",
-                "input": text,
-                "dimensions": EMBEDDING_DIM
+                "model": "models/gemini-embedding-001",
+                "content": {
+                    "parts": [{
+                        "text": text
+                    }]
+                },
+                "outputDimensionality": EMBEDDING_DIM
             }))
             .send()
             .await?;
@@ -97,12 +105,12 @@ impl SemanticSearch {
         let json: serde_json::Value = response.json().await?;
 
         if let Some(error) = json.get("error") {
-            anyhow::bail!("OpenAI API error: {}", error);
+            anyhow::bail!("Gemini API error: {}", error);
         }
 
-        let embedding = json["data"][0]["embedding"]
+        let embedding = json["embedding"]["values"]
             .as_array()
-            .ok_or_else(|| anyhow::anyhow!("Invalid embedding response"))?
+            .ok_or_else(|| anyhow::anyhow!("Invalid embedding response: {:?}", json))?
             .iter()
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
