@@ -12,6 +12,7 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
+    restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
     ports:
