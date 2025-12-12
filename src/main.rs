@@ -17,6 +17,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+use tower_http::trace::TraceLayer;
+use tower_http::timeout::TimeoutLayer;
+use std::time::Duration;
 
 mod tools;
 mod indexer;
@@ -970,11 +973,15 @@ async fn main() -> Result<()> {
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
                     .merge(mcp_router)
+                    .layer(TimeoutLayer::new(Duration::from_secs(60)))
+                    .layer(TraceLayer::new_for_http())
             } else {
                 info!("Warning: No auth token set, server is open");
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
                     .nest_service("/mcp", mcp_service)
+                    .layer(TimeoutLayer::new(Duration::from_secs(60)))
+                    .layer(TraceLayer::new_for_http())
             };
 
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;

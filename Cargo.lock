@@ -1679,6 +1679,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower 0.5.2",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "tree-sitter",
@@ -3269,9 +3270,11 @@ dependencies = [
  "http-body",
  "iri-string",
  "pin-project-lite",
+ "tokio",
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
