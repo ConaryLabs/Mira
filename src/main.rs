@@ -813,6 +813,8 @@ enum HookAction {
     Permission,
     /// Handle PreCompact hooks - save context before conversation compaction
     Precompact,
+    /// Handle PostToolCall hooks - auto-remember significant actions
+    Posttool,
 }
 
 #[derive(Subcommand)]
@@ -984,6 +986,9 @@ async fn main() -> Result<()> {
                 }
                 HookAction::Precompact => {
                     hooks::precompact::run().await?;
+                }
+                HookAction::Posttool => {
+                    hooks::posttool::run().await?;
                 }
             }
         }
