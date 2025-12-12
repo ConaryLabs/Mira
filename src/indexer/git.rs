@@ -238,6 +238,9 @@ impl GitIndexer {
     async fn store_commits(&self, commits: &[CommitData]) -> Result<()> {
         let now = Utc::now().timestamp();
 
+        // Use transaction for batch insert (much faster than individual inserts)
+        let mut tx = self.db.begin().await?;
+
         for commit in commits {
             let files_json = serde_json::to_string(&commit.files_changed)?;
 
@@ -257,15 +260,19 @@ impl GitIndexer {
             .bind(commit.deletions as i32)
             .bind(commit.committed_at)
             .bind(now)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
         }
 
+        tx.commit().await?;
         Ok(())
     }
 
     async fn store_cochange_patterns(&self, patterns: &[CochangePattern]) -> Result<()> {
         let now = Utc::now().timestamp();
+
+        // Use transaction for batch insert
+        let mut tx = self.db.begin().await?;
 
         for pattern in patterns {
             sqlx::query(r#"
@@ -281,10 +288,11 @@ impl GitIndexer {
             .bind(pattern.cochange_count as i32)
             .bind(pattern.confidence)
             .bind(now)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
         }
 
+        tx.commit().await?;
         Ok(())
     }
 }

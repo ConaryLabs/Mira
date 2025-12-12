@@ -471,5 +471,9 @@ pub struct IndexRequest {
     pub include_git: Option<bool>,
     #[schemars(description = "Max commits to index (default: 500)")]
     pub commit_limit: Option<i64>,
+    #[schemars(description = "Use parallel indexing for faster performance (default: true)")]
+    pub parallel: Option<bool>,
+    #[schemars(description = "Max concurrent workers for parallel indexing (default: 4)")]
+    pub max_workers: Option<i64>,
 }
 
