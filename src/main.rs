@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 use tower_http::timeout::TimeoutLayer;
+use tower_http::cors::{CorsLayer, Any};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use std::time::Duration;
@@ -234,6 +235,16 @@ async fn main() -> Result<()> {
                 }
             };
 
+            // CORS configuration for browser-based clients (Claude.ai web)
+            let cors = CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+                .expose_headers([
+                    "mcp-session-id".parse().unwrap(),
+                    "content-type".parse().unwrap(),
+                ]);
+
             // Build router with optional auth middleware
             // Health endpoint is public, MCP endpoint requires auth
             let app = if let Some(token) = expected_token {
@@ -247,6 +258,7 @@ async fn main() -> Result<()> {
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
                     .merge(mcp_router)
+                    .layer(cors)
                     .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
                     .layer(TraceLayer::new_for_http())
             } else {
@@ -254,6 +266,7 @@ async fn main() -> Result<()> {
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
                     .nest_service("/mcp", mcp_service)
+                    .layer(cors)
                     .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
                     .layer(TraceLayer::new_for_http())
             };
