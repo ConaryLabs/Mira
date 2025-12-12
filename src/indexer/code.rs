@@ -53,6 +53,7 @@ pub struct CodeIndexer {
     python_parser: Parser,
     typescript_parser: Parser,
     javascript_parser: Parser,
+    go_parser: Parser,
 }
 
 impl CodeIndexer {
@@ -74,6 +75,9 @@ impl CodeIndexer {
         let mut javascript_parser = Parser::new();
         javascript_parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
 
+        let mut go_parser = Parser::new();
+        go_parser.set_language(&tree_sitter_go::LANGUAGE.into())?;
+
         Ok(Self {
             db,
             semantic,
@@ -81,6 +85,7 @@ impl CodeIndexer {
             python_parser,
             typescript_parser,
             javascript_parser,
+            go_parser,
         })
     }
 
@@ -151,7 +156,7 @@ impl CodeIndexer {
 
             // Check extension
             let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !matches!(ext, "rs" | "py" | "ts" | "tsx" | "js" | "jsx") {
+            if !matches!(ext, "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "go") {
                 continue;
             }
 
@@ -249,6 +254,7 @@ impl CodeIndexer {
             "py" => self.parse_python(&content)?,
             "ts" | "tsx" => self.parse_typescript(&content)?,
             "js" | "jsx" => self.parse_javascript(&content)?,
+            "go" => self.parse_go(&content)?,
             _ => return Ok(stats),
         };
 
@@ -1286,6 +1292,344 @@ impl CodeIndexer {
             imported_symbols: None,
             is_external,
         })
+    }
+
+    // ========== Go parsing ==========
+
+    fn parse_go(&mut self, content: &str) -> Result<(Vec<Symbol>, Vec<Import>, Vec<FunctionCall>)> {
+        let tree = self.go_parser.parse(content, None)
+            .ok_or_else(|| anyhow!("Failed to parse Go code"))?;
+
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut calls = Vec::new();
+        let bytes = content.as_bytes();
+
+        self.walk_go_node(tree.root_node(), bytes, &mut symbols, &mut imports, &mut calls, None, None);
+
+        Ok((symbols, imports, calls))
+    }
+
+    fn walk_go_node(
+        &self,
+        node: Node,
+        source: &[u8],
+        symbols: &mut Vec<Symbol>,
+        imports: &mut Vec<Import>,
+        calls: &mut Vec<FunctionCall>,
+        parent_name: Option<&str>,
+        current_function: Option<&str>,
+    ) {
+        match node.kind() {
+            "function_declaration" => {
+                if let Some(sym) = self.extract_go_function(node, source, None) {
+                    let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                    symbols.push(sym);
+                    // Walk function body with this function as context
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for child in body.children(&mut body.walk()) {
+                            self.walk_go_node(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                        }
+                    }
+                    return;
+                }
+            }
+            "method_declaration" => {
+                // Extract receiver type for qualified name
+                let receiver_type = node.child_by_field_name("receiver")
+                    .and_then(|r| {
+                        // receiver is a parameter_list, get the type from it
+                        r.children(&mut r.walk())
+                            .find(|n| n.kind() == "parameter_declaration")
+                            .and_then(|p| p.child_by_field_name("type"))
+                            .map(|t| {
+                                // Handle pointer receivers (*Type)
+                                let text = node_text(t, source);
+                                text.trim_start_matches('*').to_string()
+                            })
+                    });
+
+                if let Some(sym) = self.extract_go_function(node, source, receiver_type.as_deref()) {
+                    let func_name = sym.qualified_name.clone().unwrap_or_else(|| sym.name.clone());
+                    symbols.push(sym);
+                    // Walk method body
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for child in body.children(&mut body.walk()) {
+                            self.walk_go_node(child, source, symbols, imports, calls, parent_name, Some(&func_name));
+                        }
+                    }
+                    return;
+                }
+            }
+            "type_declaration" => {
+                // type_declaration contains type_spec children
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "type_spec" {
+                        if let Some(sym) = self.extract_go_type(child, source) {
+                            symbols.push(sym);
+                        }
+                    }
+                }
+            }
+            "import_declaration" => {
+                // import_declaration contains import_spec children
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "import_spec" || child.kind() == "import_spec_list" {
+                        self.extract_go_imports(child, source, imports);
+                    }
+                }
+            }
+            "call_expression" => {
+                // Extract function call if we're inside a function
+                if let Some(caller) = current_function {
+                    if let Some(call) = self.extract_go_call(node, source, caller) {
+                        calls.push(call);
+                    }
+                }
+            }
+            "const_declaration" | "var_declaration" => {
+                // Extract package-level constants and variables
+                if parent_name.is_none() {
+                    if let Some(sym) = self.extract_go_var(node, source) {
+                        symbols.push(sym);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Recurse into children
+        for child in node.children(&mut node.walk()) {
+            self.walk_go_node(child, source, symbols, imports, calls, parent_name, current_function);
+        }
+    }
+
+    fn extract_go_function(&self, node: Node, source: &[u8], receiver: Option<&str>) -> Option<Symbol> {
+        let name_node = node.child_by_field_name("name")?;
+        let name = node_text(name_node, source);
+
+        let qualified_name = receiver.map(|r| format!("{}.{}", r, name));
+
+        // Get parameters
+        let params = node.child_by_field_name("parameters")
+            .map(|n| node_text(n, source))
+            .unwrap_or_default();
+
+        // Get return type
+        let return_type = node.child_by_field_name("result")
+            .map(|n| node_text(n, source));
+
+        let signature = if let Some(ret) = return_type {
+            format!("{} {}", params, ret)
+        } else {
+            params
+        };
+
+        // Check visibility (Go uses capitalization)
+        let visibility = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            Some("public".to_string())
+        } else {
+            Some("private".to_string())
+        };
+
+        // Check for test function (name starts with Test)
+        let is_test = name.starts_with("Test") || name.starts_with("Benchmark") || name.starts_with("Example");
+
+        // Get doc comment
+        let documentation = self.get_go_doc_comment(node, source);
+
+        Some(Symbol {
+            name,
+            qualified_name,
+            symbol_type: "function".to_string(),
+            language: "go".to_string(),
+            start_line: node.start_position().row as u32 + 1,
+            end_line: node.end_position().row as u32 + 1,
+            signature: Some(signature),
+            visibility,
+            documentation,
+            is_test,
+            is_async: false, // Go doesn't have async keyword
+        })
+    }
+
+    fn extract_go_type(&self, node: Node, source: &[u8]) -> Option<Symbol> {
+        let name_node = node.child_by_field_name("name")?;
+        let name = node_text(name_node, source);
+
+        // Determine type kind (struct, interface, or alias)
+        let type_node = node.child_by_field_name("type")?;
+        let symbol_type = match type_node.kind() {
+            "struct_type" => "struct",
+            "interface_type" => "interface",
+            _ => "type",
+        };
+
+        // Check visibility
+        let visibility = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            Some("public".to_string())
+        } else {
+            Some("private".to_string())
+        };
+
+        let documentation = self.get_go_doc_comment(node, source);
+
+        Some(Symbol {
+            name: name.clone(),
+            qualified_name: Some(name),
+            symbol_type: symbol_type.to_string(),
+            language: "go".to_string(),
+            start_line: node.start_position().row as u32 + 1,
+            end_line: node.end_position().row as u32 + 1,
+            signature: None,
+            visibility,
+            documentation,
+            is_test: false,
+            is_async: false,
+        })
+    }
+
+    fn extract_go_imports(&self, node: Node, source: &[u8], imports: &mut Vec<Import>) {
+        match node.kind() {
+            "import_spec" => {
+                // Get the path
+                if let Some(path_node) = node.child_by_field_name("path") {
+                    let path = node_text(path_node, source)
+                        .trim_matches('"')
+                        .to_string();
+
+                    // Check if it's an external (third-party) import
+                    // Standard library doesn't have dots, third-party usually has domain
+                    let is_external = path.contains('.');
+
+                    imports.push(Import {
+                        import_path: path,
+                        imported_symbols: None,
+                        is_external,
+                    });
+                }
+            }
+            "import_spec_list" => {
+                // Recurse into the list
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "import_spec" {
+                        self.extract_go_imports(child, source, imports);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn extract_go_var(&self, node: Node, source: &[u8]) -> Option<Symbol> {
+        // Get the first var_spec or const_spec
+        let spec = node.children(&mut node.walk())
+            .find(|n| n.kind() == "var_spec" || n.kind() == "const_spec")?;
+
+        let name_node = spec.child_by_field_name("name")
+            .or_else(|| spec.children(&mut spec.walk()).find(|n| n.kind() == "identifier"))?;
+        let name = node_text(name_node, source);
+
+        let symbol_type = if node.kind() == "const_declaration" { "const" } else { "var" };
+
+        let visibility = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            Some("public".to_string())
+        } else {
+            Some("private".to_string())
+        };
+
+        // Get type if specified
+        let type_sig = spec.child_by_field_name("type")
+            .map(|n| node_text(n, source));
+
+        Some(Symbol {
+            name: name.clone(),
+            qualified_name: Some(name),
+            symbol_type: symbol_type.to_string(),
+            language: "go".to_string(),
+            start_line: node.start_position().row as u32 + 1,
+            end_line: node.end_position().row as u32 + 1,
+            signature: type_sig,
+            visibility,
+            documentation: None,
+            is_test: false,
+            is_async: false,
+        })
+    }
+
+    fn extract_go_call(&self, node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
+        // Get the function being called
+        let function_node = node.child_by_field_name("function")?;
+        let callee_name = match function_node.kind() {
+            "identifier" => node_text(function_node, source),
+            "selector_expression" => {
+                // method call: obj.Method() or pkg.Func()
+                function_node.child_by_field_name("field")
+                    .map(|n| node_text(n, source))?
+            }
+            _ => return None,
+        };
+
+        // Skip common low-value calls
+        if matches!(callee_name.as_str(),
+            "Print" | "Println" | "Printf" | "Sprint" | "Sprintf" | "Sprintln" |
+            "Error" | "Errorf" | "Fatal" | "Fatalf" | "Panic" | "Panicf" |
+            "Log" | "Logf" | "Debug" | "Debugf" | "Info" | "Infof" | "Warn" | "Warnf" |
+            "New" | "Make" | "Append" | "Copy" | "Delete" | "Close" | "Len" | "Cap"
+        ) {
+            return None;
+        }
+
+        let call_type = if function_node.kind() == "selector_expression" {
+            "method"
+        } else {
+            "direct"
+        };
+
+        Some(FunctionCall {
+            caller_name: caller.to_string(),
+            callee_name,
+            call_line: node.start_position().row as u32 + 1,
+            call_type: call_type.to_string(),
+        })
+    }
+
+    fn get_go_doc_comment(&self, node: Node, source: &[u8]) -> Option<String> {
+        // Go doc comments are // comments immediately preceding the declaration
+        let mut docs = Vec::new();
+
+        if let Some(parent) = node.parent() {
+            let mut found_node = false;
+            let children: Vec<_> = parent.children(&mut parent.walk()).collect();
+
+            for child in children.into_iter().rev() {
+                if child.id() == node.id() {
+                    found_node = true;
+                    continue;
+                }
+                if !found_node {
+                    continue;
+                }
+
+                if child.kind() == "comment" {
+                    let text = node_text(child, source);
+                    if text.starts_with("//") {
+                        docs.push(text.trim_start_matches('/').trim().to_string());
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if docs.is_empty() {
+            None
+        } else {
+            docs.reverse();
+            Some(docs.join("\n"))
+        }
     }
 }
 
