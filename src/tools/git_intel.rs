@@ -8,6 +8,40 @@ use std::collections::HashMap;
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
 
+/// Normalize an absolute path to a relative path for database lookups.
+/// Cochange patterns are stored with relative paths (e.g., "src/main.rs").
+fn normalize_to_relative(path: &str) -> String {
+    // Common project root patterns to strip
+    if path.starts_with('/') {
+        // Try to find "src/" or other common directories
+        for marker in ["src/", "lib/", "tests/", "examples/", "benches/"] {
+            if let Some(idx) = path.find(marker) {
+                return path[idx..].to_string();
+            }
+        }
+        // Try stripping everything up to and including the last project-like directory
+        // e.g., /home/user/MyProject/foo.rs -> foo.rs
+        if let Some(last_slash) = path.rfind('/') {
+            // Get filename if no better match
+            let filename = &path[last_slash + 1..];
+            // But also check if there's a recognizable relative path
+            // Look for patterns like "project_name/src/..." or "project_name/lib/..."
+            let parts: Vec<&str> = path.split('/').collect();
+            for (i, part) in parts.iter().enumerate() {
+                // Common project indicators: Cargo.toml sibling dirs, etc.
+                if *part == "src" || *part == "lib" || *part == "tests" {
+                    return parts[i..].join("/");
+                }
+            }
+            // Last resort: use just the filename
+            if !filename.is_empty() {
+                return filename.to_string();
+            }
+        }
+    }
+    path.to_string()
+}
+
 /// Get recent commits
 pub async fn get_recent_commits(db: &SqlitePool, req: GetRecentCommitsRequest) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(20);
@@ -87,6 +121,10 @@ pub async fn search_commits(db: &SqlitePool, req: SearchCommitsRequest) -> anyho
 pub async fn find_cochange_patterns(db: &SqlitePool, req: FindCochangeRequest) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(10);
 
+    // Normalize path: cochange_patterns stores relative paths (e.g., "src/main.rs")
+    // but requests often come with absolute paths (e.g., "/home/user/project/src/main.rs")
+    let file_path = normalize_to_relative(&req.file_path);
+
     let query = r#"
         SELECT
             CASE WHEN file_a = $1 THEN file_b ELSE file_a END as related_file,
@@ -100,7 +138,7 @@ pub async fn find_cochange_patterns(db: &SqlitePool, req: FindCochangeRequest) -
     "#;
 
     let rows = sqlx::query_as::<_, (String, i64, f64, String)>(query)
-        .bind(&req.file_path)
+        .bind(&file_path)
         .bind(limit)
         .fetch_all(db)
         .await?;
