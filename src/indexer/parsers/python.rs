@@ -182,3 +182,119 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
         call_type: call_type.to_string(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_python(code: &str) -> ParseResult {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        parse(&mut parser, code).unwrap()
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let code = r#"
+def hello_world():
+    print("Hello")
+"#;
+        let (symbols, _, _) = parse_python(code);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "hello_world");
+        assert_eq!(symbols[0].symbol_type, "function");
+        assert_eq!(symbols[0].language, "python");
+    }
+
+    #[test]
+    fn test_parse_async_function() {
+        let code = r#"
+async def fetch_data():
+    return "data"
+"#;
+        let (symbols, _, _) = parse_python(code);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "fetch_data");
+        assert!(symbols[0].is_async);
+    }
+
+    #[test]
+    fn test_parse_class_with_methods() {
+        let code = r#"
+class MyClass:
+    def __init__(self):
+        self.value = 0
+
+    def get_value(self):
+        return self.value
+
+    async def async_method(self):
+        pass
+"#;
+        let (symbols, _, _) = parse_python(code);
+
+        let class_sym = symbols.iter().find(|s| s.name == "MyClass").unwrap();
+        assert_eq!(class_sym.symbol_type, "class");
+
+        let init_sym = symbols.iter().find(|s| s.name == "__init__").unwrap();
+        assert_eq!(init_sym.qualified_name, Some("MyClass.__init__".to_string()));
+
+        let async_sym = symbols.iter().find(|s| s.name == "async_method").unwrap();
+        assert!(async_sym.is_async);
+    }
+
+    #[test]
+    fn test_parse_imports() {
+        let code = r#"
+import os
+import json
+from typing import List, Dict
+from .local_module import helper
+from ..parent import util
+"#;
+        let (_, imports, _) = parse_python(code);
+
+        assert!(imports.len() >= 3);
+
+        let os_import = imports.iter().find(|i| i.import_path == "os").unwrap();
+        assert!(os_import.is_external);
+
+        let local_import = imports.iter().find(|i| i.import_path.contains("local_module"));
+        assert!(local_import.is_some());
+    }
+
+    #[test]
+    fn test_parse_test_function() {
+        let code = r#"
+def test_something():
+    assert True
+
+async def test_async_feature():
+    assert True
+"#;
+        let (symbols, _, _) = parse_python(code);
+
+        let test_sym = symbols.iter().find(|s| s.name == "test_something").unwrap();
+        assert!(test_sym.is_test);
+
+        let async_test = symbols.iter().find(|s| s.name == "test_async_feature").unwrap();
+        assert!(async_test.is_test);
+        assert!(async_test.is_async);
+    }
+
+    #[test]
+    fn test_parse_decorated_function() {
+        let code = r#"
+@decorator
+def decorated_func():
+    pass
+
+@property
+def my_property(self):
+    return self._value
+"#;
+        let (symbols, _, _) = parse_python(code);
+        assert!(symbols.iter().any(|s| s.name == "decorated_func"));
+        assert!(symbols.iter().any(|s| s.name == "my_property"));
+    }
+}

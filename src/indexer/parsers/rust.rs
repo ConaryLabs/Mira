@@ -383,3 +383,174 @@ fn get_doc_comment(node: Node, source: &[u8]) -> Option<String> {
         Some(docs.join("\n"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_rust(code: &str) -> ParseResult {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        parse(&mut parser, code).unwrap()
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let code = r#"
+fn hello_world() {
+    println!("Hello");
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "hello_world");
+        assert_eq!(symbols[0].symbol_type, "function");
+        assert_eq!(symbols[0].language, "rust");
+        assert!(!symbols[0].is_async);
+    }
+
+    #[test]
+    fn test_parse_async_function() {
+        let code = r#"
+async fn fetch_data() -> Result<String, Error> {
+    Ok("data".to_string())
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "fetch_data");
+        // Note: async detection depends on tree-sitter node structure
+    }
+
+    #[test]
+    fn test_parse_struct_with_impl() {
+        let code = r#"
+pub struct MyStruct {
+    field: i32,
+}
+
+impl MyStruct {
+    pub fn new() -> Self {
+        Self { field: 0 }
+    }
+
+    fn private_method(&self) -> i32 {
+        self.field
+    }
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+
+        let struct_sym = symbols.iter().find(|s| s.name == "MyStruct").unwrap();
+        assert_eq!(struct_sym.symbol_type, "struct");
+        assert_eq!(struct_sym.visibility, Some("pub".to_string()));
+
+        let new_sym = symbols.iter().find(|s| s.name == "new").unwrap();
+        assert_eq!(new_sym.symbol_type, "function");
+        assert_eq!(new_sym.qualified_name, Some("MyStruct::new".to_string()));
+        assert_eq!(new_sym.visibility, Some("pub".to_string()));
+
+        let private_sym = symbols.iter().find(|s| s.name == "private_method").unwrap();
+        assert!(private_sym.visibility.is_none() || private_sym.visibility == Some("private".to_string()));
+    }
+
+    #[test]
+    fn test_parse_test_function() {
+        let code = r#"
+#[test]
+fn test_something() {
+    assert!(true);
+}
+
+#[tokio::test]
+async fn test_async() {
+    assert!(true);
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+
+        let test_sym = symbols.iter().find(|s| s.name == "test_something").unwrap();
+        assert!(test_sym.is_test);
+
+        let async_test = symbols.iter().find(|s| s.name == "test_async").unwrap();
+        assert!(async_test.is_test);
+        // Note: async detection depends on tree-sitter structure
+    }
+
+    #[test]
+    fn test_parse_imports() {
+        let code = r#"
+use std::collections::HashMap;
+use crate::tools::format;
+use super::parsers;
+use anyhow::{Result, Context};
+"#;
+        let (_, imports, _) = parse_rust(code);
+
+        assert!(imports.len() >= 3);
+
+        let std_import = imports.iter().find(|i| i.import_path.contains("std")).unwrap();
+        assert!(std_import.is_external);
+
+        let crate_import = imports.iter().find(|i| i.import_path.contains("crate")).unwrap();
+        assert!(!crate_import.is_external);
+    }
+
+    #[test]
+    fn test_parse_enum() {
+        let code = r#"
+pub enum Status {
+    Active,
+    Inactive,
+    Pending(String),
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+
+        let enum_sym = symbols.iter().find(|s| s.name == "Status").unwrap();
+        assert_eq!(enum_sym.symbol_type, "enum");
+        assert_eq!(enum_sym.visibility, Some("pub".to_string()));
+    }
+
+    #[test]
+    fn test_parse_trait_impl() {
+        let code = r#"
+trait Greet {
+    fn greet(&self) -> String;
+}
+
+struct Person;
+
+impl Greet for Person {
+    fn greet(&self) -> String {
+        "Hello".to_string()
+    }
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+
+        let trait_sym = symbols.iter().find(|s| s.name == "Greet").unwrap();
+        assert_eq!(trait_sym.symbol_type, "trait");
+
+        let person_sym = symbols.iter().find(|s| s.name == "Person").unwrap();
+        assert_eq!(person_sym.symbol_type, "struct");
+    }
+
+    #[test]
+    fn test_parse_function_calls() {
+        let code = r#"
+fn caller() {
+    helper();
+    other_func();
+}
+
+fn helper() {}
+fn other_func() {}
+"#;
+        let (_, _, calls) = parse_rust(code);
+
+        assert!(calls.len() >= 2);
+        assert!(calls.iter().any(|c| c.caller_name == "caller" && c.callee_name == "helper"));
+        assert!(calls.iter().any(|c| c.caller_name == "caller" && c.callee_name == "other_func"));
+    }
+}

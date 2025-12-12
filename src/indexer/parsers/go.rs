@@ -254,3 +254,159 @@ fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall>
         call_type: call_type.to_string(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_go(code: &str) -> ParseResult {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_go::LANGUAGE.into()).unwrap();
+        parse(&mut parser, code).unwrap()
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let code = r#"
+package main
+
+func helloWorld() {
+    fmt.Println("Hello")
+}
+"#;
+        let (symbols, _, _) = parse_go(code);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "helloWorld");
+        assert_eq!(symbols[0].symbol_type, "function");
+        assert_eq!(symbols[0].language, "go");
+    }
+
+    #[test]
+    fn test_parse_exported_function() {
+        let code = r#"
+package main
+
+func PublicFunc() string {
+    return "public"
+}
+
+func privateFunc() string {
+    return "private"
+}
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let public_sym = symbols.iter().find(|s| s.name == "PublicFunc").unwrap();
+        assert_eq!(public_sym.visibility, Some("public".to_string()));
+
+        let private_sym = symbols.iter().find(|s| s.name == "privateFunc").unwrap();
+        assert_eq!(private_sym.visibility, Some("private".to_string()));
+    }
+
+    #[test]
+    fn test_parse_struct_with_methods() {
+        let code = r#"
+package main
+
+type MyStruct struct {
+    Value int
+}
+
+func (m *MyStruct) GetValue() int {
+    return m.Value
+}
+
+func (m MyStruct) String() string {
+    return "MyStruct"
+}
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let struct_sym = symbols.iter().find(|s| s.name == "MyStruct").unwrap();
+        assert_eq!(struct_sym.symbol_type, "struct");
+
+        let method_sym = symbols.iter().find(|s| s.name == "GetValue").unwrap();
+        assert_eq!(method_sym.symbol_type, "function");
+        // Methods are captured with qualified names
+        assert!(method_sym.qualified_name.is_some());
+    }
+
+    #[test]
+    fn test_parse_interface() {
+        let code = r#"
+package main
+
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let interface_sym = symbols.iter().find(|s| s.name == "Reader").unwrap();
+        assert_eq!(interface_sym.symbol_type, "interface");
+    }
+
+    #[test]
+    fn test_parse_imports() {
+        let code = r#"
+package main
+
+import (
+    "fmt"
+    "os"
+    "github.com/user/repo/pkg"
+)
+"#;
+        let (_, imports, _) = parse_go(code);
+
+        assert!(imports.len() >= 3);
+
+        let fmt_import = imports.iter().find(|i| i.import_path == "fmt").unwrap();
+        assert!(fmt_import.is_external);
+
+        let pkg_import = imports.iter().find(|i| i.import_path.contains("github.com")).unwrap();
+        assert!(pkg_import.is_external);
+    }
+
+    #[test]
+    fn test_parse_test_function() {
+        let code = r#"
+package main
+
+func TestSomething(t *testing.T) {
+    // test code
+}
+
+func BenchmarkOperation(b *testing.B) {
+    // benchmark code
+}
+
+func ExampleUsage() {
+    // example code
+}
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let test_sym = symbols.iter().find(|s| s.name == "TestSomething").unwrap();
+        assert!(test_sym.is_test);
+
+        let bench_sym = symbols.iter().find(|s| s.name == "BenchmarkOperation").unwrap();
+        assert!(bench_sym.is_test);
+
+        let example_sym = symbols.iter().find(|s| s.name == "ExampleUsage").unwrap();
+        assert!(example_sym.is_test);
+    }
+
+    #[test]
+    fn test_parse_single_import() {
+        let code = r#"
+package main
+
+import "fmt"
+"#;
+        let (_, imports, _) = parse_go(code);
+
+        assert!(imports.len() >= 1);
+        assert!(imports.iter().any(|i| i.import_path == "fmt"));
+    }
+}
