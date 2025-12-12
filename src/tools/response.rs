@@ -18,9 +18,10 @@ pub fn text_response(message: impl Into<String>) -> CallToolResult {
 
 /// Smart JSON response - auto-detects type and formats nicely
 pub fn json_response<T: Serialize>(result: T) -> CallToolResult {
-    let value = serde_json::to_value(&result).unwrap();
-    let formatted = format_value(&value);
-    text_response(formatted)
+    match serde_json::to_value(&result) {
+        Ok(value) => text_response(format_value(&value)),
+        Err(e) => text_response(format!("Serialization error: {}", e)),
+    }
 }
 
 /// Smart vec response - formats list results nicely
@@ -29,7 +30,7 @@ pub fn vec_response<T: Serialize>(result: Vec<T>, empty_msg: impl Into<String>) 
         text_response(empty_msg)
     } else {
         let values: Vec<Value> = result.into_iter()
-            .map(|r| serde_json::to_value(r).unwrap())
+            .filter_map(|r| serde_json::to_value(r).ok())
             .collect();
         let formatted = format_vec(&values);
         text_response(formatted)

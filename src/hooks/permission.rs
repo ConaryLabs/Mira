@@ -17,6 +17,7 @@ struct HookInput {
 }
 
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)] // Fields populated by sqlx FromRow
 struct PermissionRule {
     id: String,
     tool_name: String,

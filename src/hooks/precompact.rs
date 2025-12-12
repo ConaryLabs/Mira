@@ -30,6 +30,7 @@ struct TranscriptContext {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // Used for debug output
 struct ToolCall {
     tool: String,
     input_summary: String,

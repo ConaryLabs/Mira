@@ -140,9 +140,9 @@ pub async fn get_corrections(
     }
 
     // Supplement with semantic matches if available
-    if semantic.is_available() && req.context.is_some() {
-        let context = req.context.as_ref().unwrap();
-        if let Ok(semantic_results) = semantic.search(COLLECTION_CONVERSATION, context, limit as usize, None).await {
+    if semantic.is_available() {
+        if let Some(context) = &req.context {
+            if let Ok(semantic_results) = semantic.search(COLLECTION_CONVERSATION, context, limit as usize, None).await {
             for result in semantic_results {
                 if result.metadata.get("type").and_then(|t| t.as_str()) == Some("correction") {
                     if let Some(correction_id) = result.metadata.get("id").and_then(|v| v.as_str()) {
@@ -157,6 +157,7 @@ pub async fn get_corrections(
                     }
                 }
             }
+        }
         }
     }
 

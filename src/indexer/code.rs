@@ -56,6 +56,7 @@ pub struct CodeIndexer {
 }
 
 impl CodeIndexer {
+    #[allow(dead_code)] // Convenience constructor
     pub fn new(db: SqlitePool) -> Result<Self> {
         Self::with_semantic(db, None)
     }

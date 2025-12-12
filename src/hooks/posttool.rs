@@ -15,20 +15,8 @@ struct HookInput {
     session_id: Option<String>,
     tool_name: Option<String>,
     tool_input: Option<serde_json::Value>,
+    #[allow(dead_code)] // May use for richer context later
     tool_result: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct HookOutput {
-    #[serde(rename = "hookSpecificOutput")]
-    hook_specific_output: HookSpecificOutput,
-}
-
-#[derive(Debug, Serialize)]
-struct HookSpecificOutput {
-    #[serde(rename = "hookEventName")]
-    hook_event_name: String,
-    status: String,
 }
 
 // MCP types for HTTP API
