@@ -860,8 +860,15 @@ enum DaemonAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Stdio mode: quiet (WARN only) to avoid polluting Claude Code output
+    // HTTP/daemon mode: INFO for visibility
+    let log_level = match &cli.command {
+        None | Some(Commands::Serve) => Level::WARN,
+        _ => Level::INFO,
+    };
+
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+        .with_max_level(log_level)
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .finish();
@@ -869,9 +876,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         None | Some(Commands::Serve) => {
-            // Default: run MCP server over stdio
-            info!("Starting Mira MCP Server (stdio)...");
-
+            // Default: run MCP server over stdio (quiet mode)
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
             let qdrant_url = std::env::var("QDRANT_URL").ok();
@@ -880,8 +885,6 @@ async fn main() -> Result<()> {
                 .ok();
 
             let server = MiraServer::new(&database_url, qdrant_url.as_deref(), gemini_key).await?;
-            info!("Server initialized");
-
             let service = server.serve(rmcp::transport::stdio()).await?;
             service.waiting().await?;
         }
