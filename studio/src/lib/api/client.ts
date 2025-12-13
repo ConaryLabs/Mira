@@ -123,9 +123,12 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
 
   // Create async generator for the rest of the stream
   async function* generateChunks(): AsyncGenerator<string, void, unknown> {
-    // Process any remaining buffer
-    const lines = buffer.split('\n');
-    for (const line of lines) {
+    // Process any remaining buffer from conversation ID parsing
+    // Pop last line in case it's incomplete
+    const initialLines = buffer.split('\n');
+    buffer = initialLines.pop() || '';
+
+    for (const line of initialLines) {
       // Handle SSE data lines - preserve all whitespace, handle \r
       const cleanLine = line.replace(/\r$/, '');
       if (cleanLine.startsWith('data: ')) {
