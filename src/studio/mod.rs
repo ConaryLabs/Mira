@@ -413,6 +413,7 @@ async fn chat_stream_handler(
 
     let event_stream = async_stream::stream! {
         let mut buffer = String::new();
+        let mut byte_buffer: Vec<u8> = Vec::new();
         let mut full_response = String::new();
 
         // Send conversation ID first
@@ -420,33 +421,113 @@ async fn chat_stream_handler(
 
         tokio::pin!(byte_stream);
 
+        // Helper to process SSE data and yield text
+        // Returns any text chunks to yield
+        fn process_sse_data(data: &str, full_response: &mut String) -> Option<String> {
+            if data == "[DONE]" {
+                return None;
+            }
+
+            match serde_json::from_str::<AnthropicStreamEvent>(data) {
+                Ok(event) => {
+                    if event.event_type == "content_block_delta" {
+                        if let Some(delta) = event.delta {
+                            if let Some(text) = delta.text {
+                                full_response.push_str(&text);
+                                return Some(text);
+                            }
+                        }
+                    }
+                    None
+                }
+                Err(e) => {
+                    tracing::error!("SSE JSON parse FAILED: {} - data: {}", e, &data[..data.len().min(200)]);
+                    None
+                }
+            }
+        }
+
+        // Process complete SSE events from buffer, returning unconsumed portion
+        fn extract_events(buffer: &str) -> (Vec<String>, String) {
+            let mut events = Vec::new();
+            let mut remaining = buffer.to_string();
+
+            // SSE events are separated by blank lines (\n\n or \r\n\r\n)
+            loop {
+                // Look for event boundary - try both line ending styles
+                let boundary = remaining.find("\r\n\r\n")
+                    .map(|pos| (pos, 4))
+                    .or_else(|| remaining.find("\n\n").map(|pos| (pos, 2)));
+
+                match boundary {
+                    Some((pos, len)) => {
+                        let event_data = remaining[..pos].to_string();
+                        remaining = remaining[pos + len..].to_string();
+
+                        // Collect all data lines in this event (SSE spec allows multi-line data)
+                        let mut data_parts = Vec::new();
+                        for line in event_data.lines() {
+                            // Handle both "data: value" and "data:value" (space is optional per SSE spec)
+                            if let Some(rest) = line.strip_prefix("data:") {
+                                let value = rest.strip_prefix(' ').unwrap_or(rest);
+                                data_parts.push(value.to_string());
+                            }
+                            // Ignore event:, id:, retry:, and comments (:)
+                        }
+
+                        if !data_parts.is_empty() {
+                            // SSE spec: join multiple data lines with newlines
+                            events.push(data_parts.join("\n"));
+                        }
+                    }
+                    None => break,
+                }
+            }
+
+            (events, remaining)
+        }
+
         while let Some(chunk_result) = byte_stream.next().await {
             match chunk_result {
                 Ok(bytes) => {
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    // Append to byte buffer and decode only valid UTF-8
+                    byte_buffer.extend_from_slice(&bytes);
 
-                    while let Some(event_end) = buffer.find("\n\n") {
-                        let event_data = buffer[..event_end].to_string();
-                        buffer = buffer[event_end + 2..].to_string();
-
-                        for line in event_data.lines() {
-                            if let Some(data) = line.strip_prefix("data: ") {
-                                if data == "[DONE]" {
-                                    yield Ok(Event::default().data("[DONE]"));
-                                    continue;
-                                }
-
-                                if let Ok(event) = serde_json::from_str::<AnthropicStreamEvent>(data) {
-                                    if event.event_type == "content_block_delta" {
-                                        if let Some(delta) = event.delta {
-                                            if let Some(text) = delta.text {
-                                                full_response.push_str(&text);
-                                                yield Ok(Event::default().data(&text));
-                                            }
-                                        }
-                                    }
-                                }
+                    // Find the last valid UTF-8 boundary
+                    let valid_up_to = match std::str::from_utf8(&byte_buffer) {
+                        Ok(s) => {
+                            buffer.push_str(s);
+                            byte_buffer.len()
+                        }
+                        Err(e) => {
+                            // Decode up to the error point
+                            let valid = e.valid_up_to();
+                            if valid > 0 {
+                                buffer.push_str(std::str::from_utf8(&byte_buffer[..valid]).unwrap());
                             }
+                            valid
+                        }
+                    };
+
+                    // Keep any incomplete UTF-8 sequence for next iteration
+                    if valid_up_to < byte_buffer.len() {
+                        byte_buffer = byte_buffer[valid_up_to..].to_vec();
+                    } else {
+                        byte_buffer.clear();
+                    }
+
+                    // Extract and process complete SSE events
+                    let (events, remaining) = extract_events(&buffer);
+                    buffer = remaining;
+
+                    for data in events {
+                        if data == "[DONE]" {
+                            yield Ok(Event::default().data("[DONE]"));
+                            continue;
+                        }
+
+                        if let Some(text) = process_sse_data(&data, &mut full_response) {
+                            yield Ok(Event::default().data(&text));
                         }
                     }
                 }
@@ -454,6 +535,16 @@ async fn chat_stream_handler(
                     error!("Stream error: {}", e);
                     yield Ok(Event::default().data(format!("[ERROR] {}", e)));
                     break;
+                }
+            }
+        }
+
+        // Process any remaining buffer (in case stream ended without final blank line)
+        if !buffer.trim().is_empty() {
+            let (events, _) = extract_events(&(buffer + "\n\n"));
+            for data in events {
+                if let Some(text) = process_sse_data(&data, &mut full_response) {
+                    yield Ok(Event::default().data(&text));
                 }
             }
         }
