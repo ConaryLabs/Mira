@@ -186,17 +186,17 @@ async fn main() -> Result<()> {
 
             // Create Studio state for chat API
             let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
-            let studio_state = StudioState {
-                db: db.clone(),
-                semantic: semantic.clone(),
-                http_client: reqwest::Client::builder()
+            let studio_state = StudioState::new(
+                db.clone(),
+                semantic.clone(),
+                reqwest::Client::builder()
                     .no_gzip()
                     .no_deflate()
                     .no_brotli()
                     .build()
                     .unwrap_or_else(|_| reqwest::Client::new()),
-                anthropic_key: anthropic_key.clone(),
-            };
+                anthropic_key.clone(),
+            );
             if anthropic_key.is_some() {
                 info!("Anthropic API key configured for Studio chat");
             } else {
