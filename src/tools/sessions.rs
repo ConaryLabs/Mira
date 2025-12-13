@@ -571,6 +571,9 @@ pub async fn session_start(
     // 9. Get active plan from work state (for seamless resume)
     let active_plan = get_active_plan(db, Some(project_id)).await.unwrap_or(None);
 
+    // 10. Get working documents from work state (for seamless resume)
+    let working_docs = get_working_docs(db, Some(project_id)).await.unwrap_or_default();
+
     Ok(SessionStartResult {
         project_id,
         project_name: name,
@@ -590,6 +593,7 @@ pub async fn session_start(
         recent_session_topics: session_topics,
         active_todos,
         active_plan,
+        working_docs,
     })
 }
 
@@ -631,12 +635,21 @@ pub struct SessionStartResult {
     pub recent_session_topics: Vec<String>,
     pub active_todos: Option<Vec<WorkStateTodo>>,  // From previous session
     pub active_plan: Option<ActivePlan>,  // From previous session
+    pub working_docs: Vec<WorkingDoc>,  // Working documents from previous session
 }
 
 #[derive(Debug, Clone)]
 pub struct ActivePlan {
     pub status: String,
     pub content: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkingDoc {
+    pub filename: String,
+    pub path: String,
+    pub preview: String,  // First few lines
     pub updated_at: i64,
 }
 
@@ -866,4 +879,74 @@ pub async fn get_active_plan(
         }
         None => Ok(None),
     }
+}
+
+/// Get working documents from work state for session resume
+pub async fn get_working_docs(
+    db: &SqlitePool,
+    project_id: Option<i64>,
+) -> anyhow::Result<Vec<WorkingDoc>> {
+    let now = Utc::now().timestamp();
+
+    // Get all working_doc entries that haven't expired
+    let results = sqlx::query_as::<_, (String,)>(r#"
+        SELECT context_value
+        FROM work_context
+        WHERE context_type = 'working_doc'
+          AND (project_id IS NULL OR project_id = $1)
+          AND (expires_at IS NULL OR expires_at > $2)
+        ORDER BY updated_at DESC
+        LIMIT 10
+    "#)
+    .bind(project_id)
+    .bind(now)
+    .fetch_all(db)
+    .await?;
+
+    let mut docs = Vec::new();
+
+    for (context_value,) in results {
+        if let Ok(doc_json) = serde_json::from_str::<serde_json::Value>(&context_value) {
+            let filename = doc_json.get("filename")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let path = doc_json.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let content = doc_json.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            // Create preview - first 3 non-empty lines
+            let preview: String = content
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" | ");
+
+            let preview = if preview.len() > 100 {
+                format!("{}...", &preview[..97])
+            } else {
+                preview
+            };
+
+            let updated_at = doc_json.get("updated_at")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            docs.push(WorkingDoc {
+                filename,
+                path,
+                preview,
+                updated_at,
+            });
+        }
+    }
+
+    Ok(docs)
 }

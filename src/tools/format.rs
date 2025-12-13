@@ -695,6 +695,15 @@ pub fn session_start(result: &super::sessions::SessionStartResult) -> String {
         }
     }
 
+    // Working documents from previous session
+    if !result.working_docs.is_empty() {
+        out.push('\n');
+        out.push_str("📄 Working documents:\n");
+        for doc in &result.working_docs {
+            out.push_str(&format!("  {} - {}\n", doc.filename, doc.preview));
+        }
+    }
+
     // Recent session context
     if !result.recent_session_topics.is_empty() {
         out.push('\n');

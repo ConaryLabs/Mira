@@ -69,7 +69,17 @@ pub async fn run() -> Result<()> {
 
     // Process based on tool type
     let action = match tool_name.as_str() {
-        "Edit" | "Write" => extract_file_action(&tool_name, &tool_input),
+        "Edit" | "Write" => {
+            // Track markdown/doc files for seamless resume
+            if let Some(path) = tool_input.get("file_path").and_then(|p| p.as_str()) {
+                if is_working_doc(path) {
+                    if let Err(e) = save_working_doc(&session_id, path, &tool_input).await {
+                        eprintln!("PostToolCall: Failed to save working doc: {}", e);
+                    }
+                }
+            }
+            extract_file_action(&tool_name, &tool_input)
+        }
         "Bash" => extract_bash_action(&tool_input),
         "Task" => extract_task_action(&tool_input),
         "Grep" => extract_grep_action(&tool_input),
@@ -347,6 +357,157 @@ fn load_debounce() -> serde_json::Value {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}))
+}
+
+/// Check if a file is a working document worth tracking
+fn is_working_doc(path: &str) -> bool {
+    let path_lower = path.to_lowercase();
+
+    // Track markdown, text, and common doc files
+    let doc_extensions = [".md", ".txt", ".markdown", ".rst", ".org"];
+    let is_doc = doc_extensions.iter().any(|ext| path_lower.ends_with(ext));
+
+    // Skip certain paths
+    let skip_patterns = [
+        "/node_modules/",
+        "/.git/",
+        "/target/",
+        "/dist/",
+        "/build/",
+        "/.venv/",
+        "/venv/",
+        "/__pycache__/",
+        "/tmp/",
+        "CHANGELOG",
+        "LICENSE",
+    ];
+    let should_skip = skip_patterns.iter().any(|p| path.contains(p));
+
+    // Include known working doc names regardless of extension
+    let working_doc_names = [
+        "PLAN", "TODO", "NOTES", "SCRATCH", "DRAFT", "WIP",
+        "RESEARCH", "ANALYSIS", "DESIGN", "SPEC", "README",
+        "SESSION", "CONTEXT", "SUMMARY",
+    ];
+    let filename = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let is_working_name = working_doc_names.iter()
+        .any(|n| filename.to_uppercase().contains(n));
+
+    (is_doc || is_working_name) && !should_skip
+}
+
+/// Save a working document for seamless resume
+async fn save_working_doc(session_id: &str, path: &str, tool_input: &serde_json::Value) -> Result<()> {
+    // Get content - for Write it's in "content", for Edit we need to read the file
+    let content = if let Some(c) = tool_input.get("content").and_then(|c| c.as_str()) {
+        Some(c.to_string())
+    } else {
+        // Try to read the file
+        std::fs::read_to_string(path).ok()
+    };
+
+    let content = match content {
+        Some(c) if c.len() > 50 => c,  // Only track substantial content
+        _ => return Ok(()),
+    };
+
+    let mira_url = std::env::var("MIRA_URL")
+        .unwrap_or_else(|_| "http://localhost:3000/mcp".to_string());
+    let auth_token = std::env::var("MIRA_AUTH_TOKEN")
+        .unwrap_or_else(|_| "63c7663fe0dbdfcd2bbf6c33a0a9b4b9".to_string());
+
+    let client = reqwest::Client::new();
+
+    // Initialize MCP session
+    let init_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 1,
+        method: "initialize".to_string(),
+        params: serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "posttool-hook-doc", "version": "1.0"}
+        }),
+    };
+
+    let resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .json(&init_req)
+        .send()
+        .await?;
+
+    let mcp_session = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or(session_id)
+        .to_string();
+
+    // Send initialized notification
+    let notif = McpNotification {
+        jsonrpc: "2.0".to_string(),
+        method: "notifications/initialized".to_string(),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&notif)
+        .send()
+        .await?;
+
+    // Build document state
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+
+    let doc_state = serde_json::json!({
+        "path": path,
+        "filename": filename,
+        "content": content,
+        "updated_at": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    });
+
+    // Use filename as key so we track per-file
+    let sync_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 2,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "sync_work_state",
+            "arguments": {
+                "context_type": "working_doc",
+                "context_key": format!("doc-{}", filename),
+                "context_value": doc_state,
+                "ttl_hours": 72  // Keep docs for 3 days
+            }
+        }),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&sync_req)
+        .send()
+        .await?;
+
+    Ok(())
 }
 
 /// Try to read the plan file from common locations
