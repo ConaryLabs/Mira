@@ -441,7 +441,7 @@ async fn chat_stream_handler(
                     None
                 }
                 Err(e) => {
-                    tracing::error!("SSE JSON parse FAILED: {} - data: {}", e, &data[..data.len().min(200)]);
+                    tracing::error!("SSE JSON parse error: {} - data: {:?}", e, &data[..data.len().min(100)]);
                     None
                 }
             }
