@@ -568,6 +568,9 @@ pub async fn session_start(
     // 8. Get active todos from work state (for seamless resume)
     let active_todos = get_active_todos(db, Some(project_id)).await.unwrap_or(None);
 
+    // 9. Get active plan from work state (for seamless resume)
+    let active_plan = get_active_plan(db, Some(project_id)).await.unwrap_or(None);
+
     Ok(SessionStartResult {
         project_id,
         project_name: name,
@@ -586,6 +589,7 @@ pub async fn session_start(
             .collect(),
         recent_session_topics: session_topics,
         active_todos,
+        active_plan,
     })
 }
 
@@ -626,6 +630,14 @@ pub struct SessionStartResult {
     pub tasks: Vec<TaskSummary>,
     pub recent_session_topics: Vec<String>,
     pub active_todos: Option<Vec<WorkStateTodo>>,  // From previous session
+    pub active_plan: Option<ActivePlan>,  // From previous session
+}
+
+#[derive(Debug, Clone)]
+pub struct ActivePlan {
+    pub status: String,
+    pub content: Option<String>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug)]
@@ -788,6 +800,68 @@ pub async fn get_active_todos(
                 Ok(None)
             } else {
                 Ok(Some(pending))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+/// Get active plan from work state for session resume
+pub async fn get_active_plan(
+    db: &SqlitePool,
+    project_id: Option<i64>,
+) -> anyhow::Result<Option<ActivePlan>> {
+    let now = Utc::now().timestamp();
+
+    // Get the most recent active_plan entry that hasn't expired
+    let result = sqlx::query_as::<_, (String,)>(r#"
+        SELECT context_value
+        FROM work_context
+        WHERE context_type = 'active_plan'
+          AND (project_id IS NULL OR project_id = $1)
+          AND (expires_at IS NULL OR expires_at > $2)
+        ORDER BY updated_at DESC
+        LIMIT 1
+    "#)
+    .bind(project_id)
+    .bind(now)
+    .fetch_optional(db)
+    .await?;
+
+    match result {
+        Some((context_value,)) => {
+            // Parse the plan state
+            let plan_json: serde_json::Value = serde_json::from_str(&context_value)?;
+
+            let status = plan_json.get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let content = plan_json.get("content")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let updated_at = plan_json.get("updated_at")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            // Only return plans that are "ready" (not just "planning")
+            if status == "ready" && content.is_some() {
+                Ok(Some(ActivePlan {
+                    status,
+                    content,
+                    updated_at,
+                }))
+            } else if status == "planning" {
+                // Still in planning mode
+                Ok(Some(ActivePlan {
+                    status,
+                    content: None,
+                    updated_at,
+                }))
+            } else {
+                Ok(None)
             }
         }
         None => Ok(None),

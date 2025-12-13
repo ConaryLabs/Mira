@@ -649,6 +649,35 @@ pub fn session_start(result: &super::sessions::SessionStartResult) -> String {
         }
     }
 
+    // Active plan from previous session (for seamless resume)
+    if let Some(ref plan) = result.active_plan {
+        out.push('\n');
+        if plan.status == "planning" {
+            out.push_str("⚠ RESUME - Plan mode was in progress\n");
+            out.push_str("Use EnterPlanMode to continue planning.\n");
+        } else if plan.status == "ready" {
+            out.push_str("📋 RESUME - Active plan from previous session:\n");
+            if let Some(ref content) = plan.content {
+                // Show first 500 chars of plan, or first 10 lines
+                let preview: String = content
+                    .lines()
+                    .take(10)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let preview = if preview.len() > 500 {
+                    format!("{}...", &preview[..497])
+                } else if content.lines().count() > 10 {
+                    format!("{}...", preview)
+                } else {
+                    preview
+                };
+                for line in preview.lines() {
+                    out.push_str(&format!("  {}\n", line));
+                }
+            }
+        }
+    }
+
     // Active todos from previous session (for seamless resume)
     if let Some(ref todos) = result.active_todos {
         if !todos.is_empty() {
