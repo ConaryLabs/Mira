@@ -74,6 +74,13 @@ pub async fn run() -> Result<()> {
         "Task" => extract_task_action(&tool_input),
         "Grep" => extract_grep_action(&tool_input),
         "WebSearch" => extract_search_action(&tool_input),
+        "TodoWrite" => {
+            // Save todo state immediately for seamless session resume
+            if let Err(e) = save_todo_state(&session_id, &tool_input).await {
+                eprintln!("PostToolCall: Failed to save todo state: {}", e);
+            }
+            None // Don't create a separate action - we handle it specially
+        }
         _ => None,
     };
 
@@ -324,6 +331,93 @@ fn load_debounce() -> serde_json::Value {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}))
+}
+
+/// Save TodoWrite state for seamless session resume
+async fn save_todo_state(session_id: &str, tool_input: &serde_json::Value) -> Result<()> {
+    let todos = match tool_input.get("todos") {
+        Some(t) => t,
+        None => return Ok(()), // No todos to save
+    };
+
+    let mira_url = std::env::var("MIRA_URL")
+        .unwrap_or_else(|_| "http://localhost:3000/mcp".to_string());
+    let auth_token = std::env::var("MIRA_AUTH_TOKEN")
+        .unwrap_or_else(|_| "63c7663fe0dbdfcd2bbf6c33a0a9b4b9".to_string());
+
+    let client = reqwest::Client::new();
+
+    // Initialize MCP session
+    let init_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 1,
+        method: "initialize".to_string(),
+        params: serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "posttool-hook-todos", "version": "1.0"}
+        }),
+    };
+
+    let resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .json(&init_req)
+        .send()
+        .await?;
+
+    let mcp_session = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or(session_id)
+        .to_string();
+
+    // Send initialized notification
+    let notif = McpNotification {
+        jsonrpc: "2.0".to_string(),
+        method: "notifications/initialized".to_string(),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&notif)
+        .send()
+        .await?;
+
+    // Call sync_work_state to save todo state
+    let sync_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 2,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "sync_work_state",
+            "arguments": {
+                "context_type": "active_todos",
+                "context_key": format!("session-{}", session_id),
+                "context_value": todos,
+                "ttl_hours": 24  // Keep for 24 hours
+            }
+        }),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&sync_req)
+        .send()
+        .await?;
+
+    Ok(())
 }
 
 async fn save_action(session_id: &str, action: &Action) -> Result<()> {

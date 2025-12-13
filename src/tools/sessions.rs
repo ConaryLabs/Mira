@@ -565,6 +565,9 @@ pub async fn session_start(
         })
         .collect();
 
+    // 8. Get active todos from work state (for seamless resume)
+    let active_todos = get_active_todos(db, Some(project_id)).await.unwrap_or(None);
+
     Ok(SessionStartResult {
         project_id,
         project_name: name,
@@ -582,6 +585,7 @@ pub async fn session_start(
             .map(|(title, status)| TaskSummary { title, status })
             .collect(),
         recent_session_topics: session_topics,
+        active_todos,
     })
 }
 
@@ -621,6 +625,7 @@ pub struct SessionStartResult {
     pub goals: Vec<GoalSummary>,
     pub tasks: Vec<TaskSummary>,
     pub recent_session_topics: Vec<String>,
+    pub active_todos: Option<Vec<WorkStateTodo>>,  // From previous session
 }
 
 #[derive(Debug)]
@@ -640,4 +645,151 @@ pub struct GoalSummary {
 pub struct TaskSummary {
     pub title: String,
     pub status: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkStateTodo {
+    pub content: String,
+    pub status: String,
+    #[serde(rename = "activeForm")]
+    pub active_form: String,
+}
+
+// ============================================================================
+// Work State Functions - for seamless session resume
+// ============================================================================
+
+use super::types::{SyncWorkStateRequest, GetWorkStateRequest};
+
+/// Sync work state for seamless session resume
+/// Stores transient state like active todos, current file focus, etc.
+pub async fn sync_work_state(
+    db: &SqlitePool,
+    req: SyncWorkStateRequest,
+    project_id: Option<i64>,
+) -> anyhow::Result<serde_json::Value> {
+    let now = Utc::now().timestamp();
+    let ttl_hours = req.ttl_hours.unwrap_or(24);
+    let expires_at = now + (ttl_hours * 3600);
+
+    // Serialize context_value to string
+    let context_value = serde_json::to_string(&req.context_value)?;
+
+    // Upsert into work_context
+    sqlx::query(r#"
+        INSERT INTO work_context (context_type, context_key, context_value, priority, expires_at, created_at, updated_at, project_id)
+        VALUES ($1, $2, $3, 0, $4, $5, $5, $6)
+        ON CONFLICT(context_type, context_key) DO UPDATE SET
+            context_value = excluded.context_value,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at,
+            project_id = COALESCE(excluded.project_id, work_context.project_id)
+    "#)
+    .bind(&req.context_type)
+    .bind(&req.context_key)
+    .bind(&context_value)
+    .bind(expires_at)
+    .bind(now)
+    .bind(project_id)
+    .execute(db)
+    .await?;
+
+    Ok(serde_json::json!({
+        "status": "synced",
+        "context_type": req.context_type,
+        "context_key": req.context_key,
+        "expires_at": expires_at,
+    }))
+}
+
+/// Get work state for session resume
+pub async fn get_work_state(
+    db: &SqlitePool,
+    req: GetWorkStateRequest,
+    project_id: Option<i64>,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let now = Utc::now().timestamp();
+    let include_expired = req.include_expired.unwrap_or(false);
+
+    let mut query = String::from(r#"
+        SELECT context_type, context_key, context_value, expires_at,
+               datetime(updated_at, 'unixepoch', 'localtime') as updated
+        FROM work_context
+        WHERE (project_id IS NULL OR project_id = $1)
+    "#);
+
+    if let Some(ref ct) = req.context_type {
+        query.push_str(&format!(" AND context_type = '{}'", ct.replace('\'', "''")));
+    }
+
+    if let Some(ref ck) = req.context_key {
+        query.push_str(&format!(" AND context_key = '{}'", ck.replace('\'', "''")));
+    }
+
+    if !include_expired {
+        query.push_str(&format!(" AND (expires_at IS NULL OR expires_at > {})", now));
+    }
+
+    query.push_str(" ORDER BY updated_at DESC LIMIT 50");
+
+    let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, String)>(&query)
+        .bind(project_id)
+        .fetch_all(db)
+        .await?;
+
+    Ok(rows.into_iter().map(|(context_type, context_key, context_value, expires_at, updated)| {
+        // Try to parse context_value as JSON, fall back to string
+        let value: serde_json::Value = serde_json::from_str(&context_value)
+            .unwrap_or(serde_json::Value::String(context_value));
+
+        serde_json::json!({
+            "context_type": context_type,
+            "context_key": context_key,
+            "value": value,
+            "expires_at": expires_at,
+            "updated": updated,
+        })
+    }).collect())
+}
+
+/// Get active todos from work state for session resume
+pub async fn get_active_todos(
+    db: &SqlitePool,
+    project_id: Option<i64>,
+) -> anyhow::Result<Option<Vec<WorkStateTodo>>> {
+    let now = Utc::now().timestamp();
+
+    // Get the most recent active_todos entry that hasn't expired
+    let result = sqlx::query_as::<_, (String,)>(r#"
+        SELECT context_value
+        FROM work_context
+        WHERE context_type = 'active_todos'
+          AND (project_id IS NULL OR project_id = $1)
+          AND (expires_at IS NULL OR expires_at > $2)
+        ORDER BY updated_at DESC
+        LIMIT 1
+    "#)
+    .bind(project_id)
+    .bind(now)
+    .fetch_optional(db)
+    .await?;
+
+    match result {
+        Some((context_value,)) => {
+            // Parse the todos array
+            let todos: Vec<WorkStateTodo> = serde_json::from_str(&context_value)?;
+            // Filter to only non-completed todos
+            let pending: Vec<WorkStateTodo> = todos
+                .into_iter()
+                .filter(|t| t.status != "completed")
+                .collect();
+
+            if pending.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(pending))
+            }
+        }
+        None => Ok(None),
+    }
 }

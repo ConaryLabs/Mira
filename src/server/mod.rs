@@ -185,6 +185,20 @@ impl MiraServer {
         Ok(json_response(result))
     }
 
+    #[tool(description = "Sync work state for seamless session resume. Stores active todos, current focus, etc.")]
+    async fn sync_work_state(&self, Parameters(req): Parameters<SyncWorkStateRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = sessions::sync_work_state(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        Ok(json_response(result))
+    }
+
+    #[tool(description = "Get work state for session resume.")]
+    async fn get_work_state(&self, Parameters(req): Parameters<GetWorkStateRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let result = sessions::get_work_state(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        Ok(vec_response(result, "No work state found".to_string()))
+    }
+
     // === Project ===
 
     #[tool(description = "Set active project. Call at session start for scoped data.")]
