@@ -649,6 +649,23 @@ pub fn session_start(result: &super::sessions::SessionStartResult) -> String {
         }
     }
 
+    // Active todos from previous session (for seamless resume)
+    if let Some(ref todos) = result.active_todos {
+        if !todos.is_empty() {
+            out.push('\n');
+            out.push_str("⚠ RESUME - Active todos from previous session:\n");
+            for t in todos {
+                let icon = match t.status.as_str() {
+                    "in_progress" => "→",
+                    "completed" => "✓",
+                    _ => "○",
+                };
+                out.push_str(&format!("  {} [{}] {}\n", icon, t.status, t.content));
+            }
+            out.push_str("\nUse TodoWrite to restore these or start fresh.\n");
+        }
+    }
+
     // Recent session context
     if !result.recent_session_topics.is_empty() {
         out.push('\n');
@@ -660,7 +677,7 @@ pub fn session_start(result: &super::sessions::SessionStartResult) -> String {
 
     // Footer with guidelines count
     out.push('\n');
-    out.push_str(&format!("{} usage guidelines loaded. Ready.\n", result.usage_guidelines_loaded));
+    out.push_str(&format!("{} usage guidelines loaded. Ready.", result.usage_guidelines_loaded));
 
     out.trim_end().to_string()
 }

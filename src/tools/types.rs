@@ -457,6 +457,28 @@ pub struct SessionStartRequest {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SyncWorkStateRequest {
+    #[schemars(description = "Context type: active_todos/current_file/active_goal")]
+    pub context_type: String,
+    #[schemars(description = "Context key (e.g., session ID)")]
+    pub context_key: String,
+    #[schemars(description = "Context value (JSON)")]
+    pub context_value: serde_json::Value,
+    #[schemars(description = "Time-to-live in hours (default: 24)")]
+    pub ttl_hours: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetWorkStateRequest {
+    #[schemars(description = "Context type filter")]
+    pub context_type: Option<String>,
+    #[schemars(description = "Context key filter")]
+    pub context_key: Option<String>,
+    #[schemars(description = "Include expired entries")]
+    pub include_expired: Option<bool>,
+}
+
 // ============================================================================
 // Indexing Tools
 // ============================================================================
