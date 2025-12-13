@@ -105,9 +105,9 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       if (line.startsWith('event: conversation')) {
-        // Next data line has the conversation ID
         continue;
       }
       if (line.startsWith('data: ') && !conversationId) {
@@ -115,6 +115,11 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
         // Check if this looks like a UUID (conversation ID)
         if (data.match(/^[0-9a-f-]{36}$/i)) {
           conversationId = data;
+          // Save remaining lines back to buffer for the generator
+          const remaining = lines.slice(i + 1);
+          if (remaining.length > 0) {
+            buffer = remaining.join('\n') + '\n' + buffer;
+          }
           break;
         }
       }
