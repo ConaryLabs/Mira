@@ -81,6 +81,22 @@ pub async fn run() -> Result<()> {
             }
             None // Don't create a separate action - we handle it specially
         }
+        "EnterPlanMode" => {
+            // Mark that we're entering plan mode
+            if let Err(e) = save_plan_state(&session_id, "planning", None).await {
+                eprintln!("PostToolCall: Failed to save plan state: {}", e);
+            }
+            None
+        }
+        "ExitPlanMode" => {
+            // Plan mode complete - try to capture the plan
+            // The plan file path is typically in the working directory
+            let plan_content = try_read_plan_file();
+            if let Err(e) = save_plan_state(&session_id, "ready", plan_content.as_deref()).await {
+                eprintln!("PostToolCall: Failed to save plan state: {}", e);
+            }
+            None
+        }
         _ => None,
     };
 
@@ -331,6 +347,130 @@ fn load_debounce() -> serde_json::Value {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}))
+}
+
+/// Try to read the plan file from common locations
+fn try_read_plan_file() -> Option<String> {
+    // Common plan file names that Claude Code uses
+    let plan_files = [
+        "PLAN.md",
+        "plan.md",
+        ".plan.md",
+        "implementation-plan.md",
+    ];
+
+    // Check current directory and parent
+    let dirs = [
+        std::env::current_dir().ok(),
+        std::env::current_dir().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())),
+    ];
+
+    for dir in dirs.iter().flatten() {
+        for file in &plan_files {
+            let path = dir.join(file);
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    // Only return if it looks like a real plan (not empty or too short)
+                    if content.len() > 50 {
+                        return Some(content);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Save plan state for seamless session resume
+async fn save_plan_state(session_id: &str, status: &str, content: Option<&str>) -> Result<()> {
+    let mira_url = std::env::var("MIRA_URL")
+        .unwrap_or_else(|_| "http://localhost:3000/mcp".to_string());
+    let auth_token = std::env::var("MIRA_AUTH_TOKEN")
+        .unwrap_or_else(|_| "63c7663fe0dbdfcd2bbf6c33a0a9b4b9".to_string());
+
+    let client = reqwest::Client::new();
+
+    // Initialize MCP session
+    let init_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 1,
+        method: "initialize".to_string(),
+        params: serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "posttool-hook-plan", "version": "1.0"}
+        }),
+    };
+
+    let resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .json(&init_req)
+        .send()
+        .await?;
+
+    let mcp_session = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or(session_id)
+        .to_string();
+
+    // Send initialized notification
+    let notif = McpNotification {
+        jsonrpc: "2.0".to_string(),
+        method: "notifications/initialized".to_string(),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&notif)
+        .send()
+        .await?;
+
+    // Build plan state object
+    let plan_state = serde_json::json!({
+        "status": status,
+        "content": content,
+        "updated_at": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    });
+
+    // Call sync_work_state to save plan state
+    let sync_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 2,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "sync_work_state",
+            "arguments": {
+                "context_type": "active_plan",
+                "context_key": format!("session-{}", session_id),
+                "context_value": plan_state,
+                "ttl_hours": 48  // Plans persist longer than todos
+            }
+        }),
+    };
+
+    client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&sync_req)
+        .send()
+        .await?;
+
+    Ok(())
 }
 
 /// Save TodoWrite state for seamless session resume
