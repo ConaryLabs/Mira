@@ -16,10 +16,31 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::{convert::Infallible, sync::Arc, time::Duration};
+use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tracing::{info, error, debug};
 
 use crate::tools::{SemanticSearch, memory, types::RecallRequest};
+
+// === Workspace Events ===
+
+/// Events streamed to the workspace terminal
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceEvent {
+    /// System info message
+    Info { message: String },
+    /// Tool/operation started
+    ToolStart { tool: String, args: Option<String> },
+    /// Tool/operation completed
+    ToolEnd { tool: String, result: Option<String>, success: bool },
+    /// Memory operation
+    Memory { action: String, content: String },
+    /// File operation
+    File { action: String, path: String },
+    /// Context loaded
+    Context { kind: String, count: usize },
+}
 
 // === Constants ===
 
@@ -37,6 +58,30 @@ pub struct StudioState {
     pub semantic: Arc<SemanticSearch>,
     pub http_client: Client,
     pub anthropic_key: Option<String>,
+    pub workspace_tx: broadcast::Sender<WorkspaceEvent>,
+}
+
+impl StudioState {
+    pub fn new(
+        db: Arc<SqlitePool>,
+        semantic: Arc<SemanticSearch>,
+        http_client: Client,
+        anthropic_key: Option<String>,
+    ) -> Self {
+        let (workspace_tx, _) = broadcast::channel(100);
+        Self {
+            db,
+            semantic,
+            http_client,
+            anthropic_key,
+            workspace_tx,
+        }
+    }
+
+    /// Emit a workspace event (non-blocking, ignores if no subscribers)
+    pub fn emit(&self, event: WorkspaceEvent) {
+        let _ = self.workspace_tx.send(event);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +171,7 @@ pub fn router(state: StudioState) -> Router {
         .route("/conversations/{id}", get(get_conversation))
         .route("/conversations/{id}/messages", get(get_messages))
         .route("/chat/stream", post(chat_stream_handler))
+        .route("/workspace/events", get(workspace_events_handler))
         .with_state(state)
 }
 
@@ -139,6 +185,43 @@ async fn status_handler(
         "anthropic_configured": state.anthropic_key.is_some(),
         "semantic_search": state.semantic.is_available(),
     }))
+}
+
+/// SSE stream of workspace events for the terminal panel
+async fn workspace_events_handler(
+    State(state): State<StudioState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.workspace_tx.subscribe();
+
+    // Send initial connection event
+    let _ = state.workspace_tx.send(WorkspaceEvent::Info {
+        message: "Terminal connected".to_string(),
+    });
+
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if let Ok(json) = serde_json::to_string(&event) {
+                        yield Ok(Event::default().data(json));
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    // Missed some events, continue
+                    debug!("Workspace event stream lagged by {} events", n);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(30))
+            .text("ping")
+    )
 }
 
 /// List recent conversations
@@ -604,11 +687,24 @@ async fn build_tiered_context(state: &StudioState, conversation_id: &str) -> Str
     let mut prompt_parts = Vec::new();
 
     // 1. Load persona
+    state.emit(WorkspaceEvent::ToolStart {
+        tool: "load_persona".to_string(),
+        args: None,
+    });
     let persona = load_persona(&state.db).await;
     prompt_parts.push(persona);
+    state.emit(WorkspaceEvent::ToolEnd {
+        tool: "load_persona".to_string(),
+        result: Some("loaded".to_string()),
+        success: true,
+    });
 
     // 2. Load rolling summary for this conversation (if exists)
     if let Some(rolling) = load_rolling_summary(&state.db, conversation_id).await {
+        state.emit(WorkspaceEvent::Context {
+            kind: "rolling_summary".to_string(),
+            count: 1,
+        });
         prompt_parts.push(format!(
             "\n<conversation_history>\nSummary of earlier parts of this conversation:\n{}\n</conversation_history>",
             rolling
@@ -616,24 +712,50 @@ async fn build_tiered_context(state: &StudioState, conversation_id: &str) -> Str
     }
 
     // 3. Load recent session summaries from Claude Code sessions
-    let sessions = load_recent_sessions(&state.db).await;
+    state.emit(WorkspaceEvent::ToolStart {
+        tool: "load_sessions".to_string(),
+        args: None,
+    });
+    let (sessions, session_count) = load_recent_sessions_with_count(&state.db).await;
     if !sessions.is_empty() {
+        state.emit(WorkspaceEvent::Context {
+            kind: "session_summaries".to_string(),
+            count: session_count,
+        });
         prompt_parts.push(format!(
             "\n<session_context>\nRecent work sessions (what we've been working on):\n{}\n</session_context>",
             sessions
         ));
     }
+    state.emit(WorkspaceEvent::ToolEnd {
+        tool: "load_sessions".to_string(),
+        result: Some(format!("{} sessions", session_count)),
+        success: true,
+    });
 
     // 4. Recall semantic memories based on recent messages
     let recent = get_recent_messages(&state.db, conversation_id, 3).await;
     if !recent.is_empty() {
-        let memories = recall_relevant_memories(state, &recent).await;
+        state.emit(WorkspaceEvent::ToolStart {
+            tool: "semantic_recall".to_string(),
+            args: Some("based on recent messages".to_string()),
+        });
+        let (memories, memory_count) = recall_relevant_memories_with_count(state, &recent).await;
         if !memories.is_empty() {
+            state.emit(WorkspaceEvent::Memory {
+                action: "recall".to_string(),
+                content: format!("{} memories matched", memory_count),
+            });
             prompt_parts.push(format!(
                 "\n<memories>\nRelevant details from memory:\n{}\n</memories>",
                 memories
             ));
         }
+        state.emit(WorkspaceEvent::ToolEnd {
+            tool: "semantic_recall".to_string(),
+            result: Some(format!("{} memories", memory_count)),
+            success: true,
+        });
     }
 
     prompt_parts.join("\n")
@@ -758,8 +880,8 @@ async fn generate_rolling_summary_for_conversation(state: StudioState, conversat
     info!("Generated rolling summary for conversation {} ({} messages)", conversation_id, messages.len());
 }
 
-/// Load recent session summaries for narrative context
-async fn load_recent_sessions(db: &SqlitePool) -> String {
+/// Load recent session summaries for narrative context (returns string and count)
+async fn load_recent_sessions_with_count(db: &SqlitePool) -> (String, usize) {
     let result = sqlx::query_as::<_, (String, String)>(r#"
         SELECT content, datetime(created_at, 'unixepoch', 'localtime') as created
         FROM memory_entries
@@ -772,16 +894,18 @@ async fn load_recent_sessions(db: &SqlitePool) -> String {
 
     match result {
         Ok(sessions) if !sessions.is_empty() => {
-            info!("Loaded {} session summaries", sessions.len());
-            sessions
+            let count = sessions.len();
+            info!("Loaded {} session summaries", count);
+            let text = sessions
                 .into_iter()
                 .map(|(content, created)| format!("[{}]\n{}", created, content))
                 .collect::<Vec<_>>()
-                .join("\n\n---\n\n")
+                .join("\n\n---\n\n");
+            (text, count)
         }
         _ => {
             debug!("No session summaries found");
-            String::new()
+            (String::new(), 0)
         }
     }
 }
@@ -800,8 +924,8 @@ async fn load_persona(db: &SqlitePool) -> String {
     }
 }
 
-/// Recall memories relevant to the conversation
-async fn recall_relevant_memories(state: &StudioState, messages: &[ChatMessage]) -> String {
+/// Recall memories relevant to the conversation (returns string and count)
+async fn recall_relevant_memories_with_count(state: &StudioState, messages: &[ChatMessage]) -> (String, usize) {
     let user_messages: Vec<&str> = messages
         .iter()
         .filter(|m| m.role == "user")
@@ -811,7 +935,7 @@ async fn recall_relevant_memories(state: &StudioState, messages: &[ChatMessage])
         .collect();
 
     if user_messages.is_empty() {
-        return String::new();
+        return (String::new(), 0);
     }
 
     let query = user_messages.join(" ");
@@ -836,19 +960,20 @@ async fn recall_relevant_memories(state: &StudioState, messages: &[ChatMessage])
                 .collect();
 
             if memory_lines.is_empty() {
-                String::new()
+                (String::new(), 0)
             } else {
-                info!("Injected {} memories into context", memory_lines.len());
-                memory_lines.join("\n")
+                let count = memory_lines.len();
+                info!("Injected {} memories into context", count);
+                (memory_lines.join("\n"), count)
             }
         }
         Ok(_) => {
             debug!("No relevant memories found");
-            String::new()
+            (String::new(), 0)
         }
         Err(e) => {
             error!("Failed to recall memories: {}", e);
-            String::new()
+            (String::new(), 0)
         }
     }
 }
