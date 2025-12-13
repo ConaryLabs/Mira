@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Mira Studio Theme */
+:root {
+  /* Warm chat panel colors */
+  --chat-bg: #faf9f7;
+  --chat-bubble-user: #e8e4df;
+  --chat-bubble-ai: #ffffff;
+  --chat-text: #1a1a1a;
+
+  /* Sexy terminal colors */
+  --terminal-bg: #0d1117;
+  --terminal-text: #c9d1d9;
+  --terminal-accent: #58a6ff;
+  --terminal-success: #3fb950;
+  --terminal-error: #f85149;
+  --terminal-warning: #d29922;
+  --terminal-border: #30363d;
+}
+
+/* Global resets */
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Terminal font */
+.font-mono {
+  font-family: 'JetBrains Mono', 'Berkeley Mono', 'SF Mono', Consolas, monospace;
+}
+
+/* Smooth scrolling */
+* {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar for terminal panel */
+.terminal-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-scroll::-webkit-scrollbar-track {
+  background: var(--terminal-bg);
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  background: var(--terminal-border);
+  border-radius: 4px;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}

@@ -1658,6 +1658,7 @@ name = "mira"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "axum 0.8.7",
  "chrono",
  "clap",
@@ -1679,6 +1680,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tower 0.5.2",
  "tower-http",
  "tracing",
