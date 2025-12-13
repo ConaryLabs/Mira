@@ -140,7 +140,8 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
         const data = cleanLine.substring(6);
         if (data === '[DONE]') return;
         if (data.startsWith('[ERROR]')) throw new Error(data);
-        if (!data.match(/^[0-9a-f-]{36}$/i)) { // Skip conversation ID if still in buffer
+        // Skip empty strings and conversation IDs
+        if (data && !data.match(/^[0-9a-f-]{36}$/i)) {
           yield data;
         }
       }
@@ -163,6 +164,9 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
           if (data === '[DONE]') return;
           if (data.startsWith('[ERROR]')) throw new Error(data);
           yield data;
+        } else if (line.includes('data')) {
+          // Debug: log lines that contain 'data' but don't match our pattern
+          console.warn('Unexpected SSE line:', JSON.stringify(line));
         }
       }
     }

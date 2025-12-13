@@ -153,6 +153,10 @@
 
       // Stream the response
       for await (const chunk of result.chunks) {
+        // Debug: log chunks that might be problematic
+        if (chunk === '' || chunk.startsWith(' ') || chunk.endsWith(' ')) {
+          console.log('SSE chunk:', JSON.stringify(chunk));
+        }
         const lastIndex = messages.length - 1;
         messages[lastIndex] = {
           ...messages[lastIndex],
