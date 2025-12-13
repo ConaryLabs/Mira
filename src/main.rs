@@ -189,7 +189,12 @@ async fn main() -> Result<()> {
             let studio_state = StudioState {
                 db: db.clone(),
                 semantic: semantic.clone(),
-                http_client: reqwest::Client::new(),
+                http_client: reqwest::Client::builder()
+                    .no_gzip()
+                    .no_deflate()
+                    .no_brotli()
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new()),
                 anthropic_key: anthropic_key.clone(),
             };
             if anthropic_key.is_some() {
