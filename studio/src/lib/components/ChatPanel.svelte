@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { marked } from 'marked';
   import {
     streamChat,
     checkApiStatus,
@@ -8,6 +9,12 @@
     type MessageInfo,
     type ConversationInfo
   } from '$lib/api/client';
+
+  // Configure marked for safe rendering
+  marked.setOptions({
+    breaks: true,  // Convert \n to <br>
+    gfm: true,     // GitHub Flavored Markdown
+  });
 
   interface Message {
     id: string;
@@ -187,6 +194,14 @@
   function formatTime(date: Date): string {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
+
+  function renderMarkdown(content: string): string {
+    try {
+      return marked.parse(content) as string;
+    } catch {
+      return content;
+    }
+  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -264,7 +279,13 @@
               ? 'bg-[var(--chat-bubble-user)] text-gray-900'
               : 'bg-[var(--chat-bubble-ai)] border border-gray-200 text-gray-800 shadow-sm'}"
           >
-            <p class="whitespace-pre-wrap">{message.content}</p>
+            {#if message.role === 'assistant'}
+              <div class="prose prose-sm prose-gray max-w-none">
+                {@html renderMarkdown(message.content)}
+              </div>
+            {:else}
+              <p class="whitespace-pre-wrap">{message.content}</p>
+            {/if}
           </div>
         </div>
       {/each}
