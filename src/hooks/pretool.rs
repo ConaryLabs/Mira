@@ -336,6 +336,42 @@ async fn get_code_context(file_path: &str) -> Option<String> {
         context_parts.push(format!("File contains: {}", parts.join(", ")));
     }
 
+    // Get improvement suggestions via proactive context
+    let proactive_req = McpRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 4,
+        method: "tools/call".to_string(),
+        params: serde_json::json!({
+            "name": "get_proactive_context",
+            "arguments": {
+                "files": [file_path],
+                "limit_per_category": 3
+            }
+        }),
+    };
+
+    let improvements_resp = client
+        .post(&mira_url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Mcp-Session-Id", &mcp_session)
+        .json(&proactive_req)
+        .send()
+        .await
+        .ok();
+
+    if let Some(resp) = improvements_resp {
+        if let Ok(improvements_text) = resp.text().await {
+            // Parse improvements from response
+            if let Some(improvements) = extract_improvements(&improvements_text) {
+                if !improvements.is_empty() {
+                    context_parts.push(improvements);
+                }
+            }
+        }
+    }
+
     if context_parts.is_empty() {
         return None;
     }
@@ -351,4 +387,68 @@ async fn get_code_context(file_path: &str) -> Option<String> {
         filename,
         context_parts.join(". ")
     ))
+}
+
+/// Extract improvement suggestions from proactive context response
+fn extract_improvements(response: &str) -> Option<String> {
+    // The response is SSE format - find JSON data events
+    for line in response.lines() {
+        if let Some(json_start) = line.find("improvement_suggestions") {
+            // Found improvements - try to parse the array
+            if let Some(arr_start) = line[json_start..].find('[') {
+                let rest = &line[json_start + arr_start..];
+                // Find matching bracket
+                let mut depth = 0;
+                let mut end_pos = 0;
+                for (i, c) in rest.chars().enumerate() {
+                    match c {
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_pos = i + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if end_pos > 0 {
+                    let arr_json = &rest[..end_pos];
+                    if let Ok(improvements) = serde_json::from_str::<Vec<serde_json::Value>>(arr_json) {
+                        if improvements.is_empty() {
+                            return None;
+                        }
+
+                        // Filter for high severity only in hook context
+                        let high: Vec<_> = improvements.iter()
+                            .filter(|i| i.get("severity").and_then(|s| s.as_str()) == Some("high"))
+                            .collect();
+
+                        if high.is_empty() {
+                            return None;
+                        }
+
+                        let mut out = String::from("Code improvements needed:");
+                        for imp in high.iter().take(3) {
+                            let symbol = imp.get("symbol_name").and_then(|s| s.as_str()).unwrap_or("?");
+                            let imp_type = imp.get("improvement_type").and_then(|s| s.as_str()).unwrap_or("?");
+                            let current = imp.get("current_value").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let threshold = imp.get("threshold").and_then(|v| v.as_i64()).unwrap_or(0);
+                            out.push_str(&format!(
+                                " [{}] {} - {} lines (max: {})",
+                                imp_type.replace('_', " "),
+                                symbol,
+                                current,
+                                threshold
+                            ));
+                        }
+                        return Some(out);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
