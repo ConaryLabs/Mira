@@ -80,6 +80,8 @@ enum HookAction {
     Precompact,
     /// Handle PostToolCall hooks - auto-remember significant actions
     Posttool,
+    /// Handle PreToolUse hooks - provide code context before file operations
+    Pretool,
     /// Handle SessionStart hooks - check for unfinished work and prompt to resume
     Sessionstart,
 }
@@ -368,6 +370,9 @@ async fn main() -> Result<()> {
                 }
                 HookAction::Posttool => {
                     hooks::posttool::run().await?;
+                }
+                HookAction::Pretool => {
+                    hooks::pretool::run().await?;
                 }
                 HookAction::Sessionstart => {
                     hooks::sessionstart::run().await?;

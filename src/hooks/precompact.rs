@@ -396,7 +396,7 @@ async fn save_to_mira(
         id: 1,
         method: "initialize".to_string(),
         params: serde_json::json!({
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "precompact-hook-rust", "version": "1.0"}
         }),

@@ -95,7 +95,7 @@ async fn check_work_state(project_path: &str) -> Option<String> {
         id: 1,
         method: "initialize".to_string(),
         params: serde_json::json!({
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "sessionstart-hook", "version": "1.0"}
         }),
