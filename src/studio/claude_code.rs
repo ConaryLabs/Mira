@@ -158,7 +158,7 @@ fn parse_claude_json(line: &str) -> Option<String> {
         // System messages
         "system" => {
             let text = json.get("message").and_then(|m| m.as_str())?;
-            Some(format!("ℹ {}", text))
+            Some(format!("[info] {}", text))
         }
         _ => None,
     }
