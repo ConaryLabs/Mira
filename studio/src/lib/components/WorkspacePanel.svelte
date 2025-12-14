@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
 
+  interface Props {
+    onCollapse?: () => void;
+  }
+
+  let { onCollapse }: Props = $props();
+
   interface WorkspaceEntry {
     id: string;
     type: 'command' | 'output' | 'file' | 'diff' | 'info' | 'memory' | 'context';
@@ -158,8 +164,17 @@
       </div>
       <span class="ml-3 text-sm font-medium text-[var(--terminal-text)] font-mono">workspace</span>
     </div>
-    <div class="text-xs text-gray-500 font-mono">
-      mira://studio
+    <div class="flex items-center gap-3">
+      <span class="text-xs text-gray-500 font-mono">mira://studio</span>
+      {#if onCollapse}
+        <button
+          onclick={onCollapse}
+          class="text-gray-500 hover:text-[var(--terminal-text)] transition-colors p-1"
+          title="Hide terminal"
+        >
+          <span class="text-lg">›</span>
+        </button>
+      {/if}
     </div>
   </header>
 
