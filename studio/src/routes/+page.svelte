@@ -1,13 +1,40 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import WorkspacePanel from '$lib/components/WorkspacePanel.svelte';
 
   // Panel visibility state - start collapsed
   let showWorkspace = $state(false);
+  let eventSource: EventSource | null = null;
 
   function toggleWorkspace() {
     showWorkspace = !showWorkspace;
   }
+
+  // Subscribe to workspace events to auto-open terminal on Claude Code start
+  onMount(() => {
+    eventSource = new EventSource('/api/workspace/events');
+
+    eventSource.onmessage = (event) => {
+      if (event.data === 'ping') return;
+
+      try {
+        const data = JSON.parse(event.data);
+        // Auto-open terminal when Claude Code starts
+        if (data.type === 'claude_code_start') {
+          showWorkspace = true;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    };
+  });
+
+  onDestroy(() => {
+    if (eventSource) {
+      eventSource.close();
+    }
+  });
 </script>
 
 <div class="flex h-full relative">

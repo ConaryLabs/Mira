@@ -13,7 +13,8 @@ use futures::stream::Stream;
 use std::{convert::Infallible, time::Duration};
 use tracing::debug;
 
-use super::types::{StudioState, WorkspaceEvent, ConversationInfo, MessageInfo, MessagesQuery};
+use super::types::{StudioState, WorkspaceEvent, ConversationInfo, MessageInfo, MessagesQuery, LaunchClaudeCodeRequest};
+use super::claude_code;
 
 pub async fn status_handler(
     State(state): State<StudioState>,
@@ -208,4 +209,23 @@ pub async fn get_messages(
     }).collect();
 
     Ok(Json(result))
+}
+
+/// Launch a Claude Code session
+pub async fn launch_claude_code_handler(
+    State(state): State<StudioState>,
+    Json(req): Json<LaunchClaudeCodeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Spawn the Claude Code process in the background
+    let task = req.task.clone();
+    let project_path = req.project_path;
+
+    tokio::spawn(async move {
+        claude_code::launch_claude_code(state, task, project_path).await;
+    });
+
+    Ok(Json(serde_json::json!({
+        "status": "launched",
+        "message": "Claude Code session started"
+    })))
 }
