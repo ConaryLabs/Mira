@@ -7,6 +7,19 @@ use sqlx::sqlite::SqlitePool;
 use super::semantic::{SemanticSearch, COLLECTION_CODE};
 use super::types::*;
 
+/// Code improvement suggestion
+#[derive(Debug, Clone, Serialize)]
+pub struct CodeImprovement {
+    pub file_path: String,
+    pub symbol_name: String,
+    pub improvement_type: String,  // "long_function", "high_complexity", "missing_test"
+    pub current_value: i64,
+    pub threshold: i64,
+    pub severity: String,  // "high", "medium", "low"
+    pub suggestion: String,
+    pub start_line: i64,
+}
+
 /// Codebase style analysis report
 #[derive(Debug, Clone, Serialize)]
 pub struct StyleReport {
@@ -433,4 +446,95 @@ pub async fn analyze_codebase_style(db: &SqlitePool, project_path: &str) -> anyh
         test_ratio: (test_ratio * 100.0).round() / 100.0,
         suggested_max_length: suggested_max,
     })
+}
+
+/// Find improvement opportunities for files
+pub async fn find_improvements(
+    db: &SqlitePool,
+    file_paths: &[String],
+    style: &StyleReport,
+) -> anyhow::Result<Vec<CodeImprovement>> {
+    if file_paths.is_empty() || style.total_functions == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut improvements = Vec::new();
+    let threshold = style.suggested_max_length;
+
+    // Build placeholders for IN clause
+    let placeholders: Vec<String> = file_paths.iter().enumerate()
+        .map(|(i, _)| format!("${}", i + 1))
+        .collect();
+    let in_clause = placeholders.join(", ");
+
+    // Query for long functions (>1.5x suggested max)
+    let query = format!(
+        r#"SELECT name, file_path, start_line, end_line, (end_line - start_line + 1) as lines, complexity_score
+           FROM code_symbols
+           WHERE symbol_type = 'function'
+             AND file_path IN ({})
+             AND (end_line - start_line + 1) > ${}
+           ORDER BY (end_line - start_line + 1) DESC
+           LIMIT 10"#,
+        in_clause,
+        file_paths.len() + 1
+    );
+
+    let long_threshold = (threshold as f64 * 1.5) as i64;
+
+    let mut query_builder = sqlx::query_as::<_, (String, String, i64, i64, i64, Option<f64>)>(&query);
+    for path in file_paths {
+        query_builder = query_builder.bind(path);
+    }
+    query_builder = query_builder.bind(long_threshold);
+
+    let long_functions = query_builder.fetch_all(db).await.unwrap_or_default();
+
+    for (name, file, start_line, _end_line, lines, complexity) in long_functions {
+        let severity = if lines > threshold * 2 { "high" } else { "medium" };
+        improvements.push(CodeImprovement {
+            file_path: file,
+            symbol_name: name.clone(),
+            improvement_type: "long_function".to_string(),
+            current_value: lines,
+            threshold,
+            severity: severity.to_string(),
+            suggestion: format!("Consider splitting this {}-line function (suggested max: {})", lines, threshold),
+            start_line,
+        });
+
+        // Also flag high complexity if present
+        if let Some(cx) = complexity {
+            if cx > 10.0 {
+                improvements.push(CodeImprovement {
+                    file_path: improvements.last().unwrap().file_path.clone(),
+                    symbol_name: name,
+                    improvement_type: "high_complexity".to_string(),
+                    current_value: cx as i64,
+                    threshold: 10,
+                    severity: if cx > 15.0 { "high" } else { "medium" }.to_string(),
+                    suggestion: format!("Complexity score {} is high - consider simplifying", cx as i64),
+                    start_line,
+                });
+            }
+        }
+    }
+
+    // Deduplicate by (file_path, symbol_name, improvement_type)
+    improvements.sort_by(|a, b| {
+        (&a.file_path, &a.symbol_name, &a.improvement_type)
+            .cmp(&(&b.file_path, &b.symbol_name, &b.improvement_type))
+    });
+    improvements.dedup_by(|a, b| {
+        a.file_path == b.file_path && a.symbol_name == b.symbol_name && a.improvement_type == b.improvement_type
+    });
+
+    // Sort by severity (high first), then by current_value descending
+    improvements.sort_by(|a, b| {
+        let sev_order = |s: &str| match s { "high" => 0, "medium" => 1, _ => 2 };
+        sev_order(&a.severity).cmp(&sev_order(&b.severity))
+            .then(b.current_value.cmp(&a.current_value))
+    });
+
+    Ok(improvements)
 }

@@ -93,6 +93,11 @@ pub async fn get_proactive_context(
         .map(|a| !a.is_empty())
         .unwrap_or(false);
 
+    let improvement_count = code_context.get("improvement_suggestions")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
     // Build summary
     let summary_parts: Vec<String> = vec![
         if !corrections.is_empty() { Some(format!("{} corrections", corrections.len())) } else { None },
@@ -102,6 +107,7 @@ pub async fn get_proactive_context(
         if !relevant_memories.is_empty() { Some(format!("{} relevant memories", relevant_memories.len())) } else { None },
         if !similar_errors.is_empty() { Some(format!("{} similar errors", similar_errors.len())) } else { None },
         if has_code_context { Some("code context".to_string()) } else { None },
+        if improvement_count > 0 { Some(format!("{} code improvements", improvement_count)) } else { None },
     ].into_iter().flatten().collect();
 
     let summary = if summary_parts.is_empty() {
@@ -496,13 +502,27 @@ async fn get_code_context(
         seen.insert(key.to_string())
     });
 
-    // Get codebase style metrics if we have files to work with
-    let style_context = if let Some(first_file) = files.first() {
-        // Determine project path from first file
-        let project_path = first_file.split('/').take(4).collect::<Vec<_>>().join("/");
+    // Get codebase style metrics and improvements if we have files to work with
+    let (style_context, improvement_suggestions) = if let Some(first_file) = files.first() {
+        // Determine project path from first file - try to find src directory for better accuracy
+        let project_path = {
+            let parts: Vec<&str> = first_file.split('/').collect();
+            // Look for 'src' directory to exclude target/external code
+            if let Some(src_idx) = parts.iter().position(|p| *p == "src") {
+                parts[..=src_idx].join("/")
+            } else {
+                // Fallback to 4 segments (e.g., /home/user/project)
+                parts.iter().take(4).cloned().collect::<Vec<_>>().join("/")
+            }
+        };
         match code_intel::analyze_codebase_style(db, &project_path).await {
             Ok(report) if report.total_functions > 0 => {
-                Some(serde_json::json!({
+                // Get improvement suggestions for these files
+                let improvements = code_intel::find_improvements(db, files, &report)
+                    .await
+                    .unwrap_or_default();
+
+                let style = serde_json::json!({
                     "avg_function_length": report.avg_function_length,
                     "function_distribution": {
                         "short_pct": report.short_pct,
@@ -517,17 +537,33 @@ async fn get_code_context(
                         report.avg_function_length,
                         report.abstraction_level
                     ),
-                }))
+                });
+
+                let imps: Vec<serde_json::Value> = improvements.iter().map(|i| {
+                    serde_json::json!({
+                        "file_path": i.file_path,
+                        "symbol_name": i.symbol_name,
+                        "improvement_type": i.improvement_type,
+                        "current_value": i.current_value,
+                        "threshold": i.threshold,
+                        "severity": i.severity,
+                        "suggestion": i.suggestion,
+                        "start_line": i.start_line,
+                    })
+                }).collect();
+
+                (Some(style), imps)
             }
-            _ => None,
+            _ => (None, Vec::new()),
         }
     } else {
-        None
+        (None, Vec::new())
     };
 
     Ok(serde_json::json!({
         "related_files": related_files,
         "key_symbols": key_symbols,
         "codebase_style": style_context,
+        "improvement_suggestions": improvement_suggestions,
     }))
 }

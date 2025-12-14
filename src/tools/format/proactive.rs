@@ -64,8 +64,32 @@ pub fn proactive_context(ctx: &Value) -> String {
         }
     }
 
-    // Code context - related files and symbols
+    // Code context - related files, symbols, and improvements
     if let Some(code_ctx) = ctx.get("code_context") {
+        // Improvement suggestions - show high severity first
+        if let Some(improvements) = code_ctx.get("improvement_suggestions").and_then(|v| v.as_array()) {
+            let high: Vec<_> = improvements.iter()
+                .filter(|i| i.get("severity").and_then(|s| s.as_str()) == Some("high"))
+                .collect();
+            if !high.is_empty() {
+                if !out.is_empty() { out.push('\n'); }
+                out.push_str("Code improvements needed:\n");
+                for imp in high.iter().take(3) {
+                    let symbol = imp.get("symbol_name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let imp_type = imp.get("improvement_type").and_then(|v| v.as_str()).unwrap_or("?");
+                    let current = imp.get("current_value").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let threshold = imp.get("threshold").and_then(|v| v.as_i64()).unwrap_or(0);
+                    out.push_str(&format!(
+                        "  [HIGH] {}: {} ({} lines, max: {})\n",
+                        imp_type.replace('_', " "),
+                        symbol,
+                        current,
+                        threshold
+                    ));
+                }
+            }
+        }
+
         // Related files
         if let Some(related) = code_ctx.get("related_files").and_then(|v| v.as_array()) {
             if !related.is_empty() {

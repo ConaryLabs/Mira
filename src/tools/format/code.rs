@@ -2,7 +2,7 @@
 // Formatters for code intelligence (symbols, commits, call graph, search)
 
 use serde_json::Value;
-use crate::tools::code_intel::StyleReport;
+use crate::tools::code_intel::{CodeImprovement, StyleReport};
 
 /// Format index status
 pub fn index_status(action: &str, path: &str, stats: Option<&Value>) -> String {
@@ -183,4 +183,55 @@ pub fn style_context(report: &StyleReport) -> String {
         report.abstraction_level,
         report.suggested_max_length
     )
+}
+
+/// Format improvement suggestions for proactive context
+pub fn improvement_suggestions(improvements: &[CodeImprovement]) -> String {
+    if improvements.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!("Code improvements ({}):\n", improvements.len());
+    for imp in improvements.iter().take(5) {
+        let short_path = imp.file_path.rsplit('/').next().unwrap_or(&imp.file_path);
+        out.push_str(&format!(
+            "  [{}] {} in {}:{} - {} ({}->{})\n",
+            imp.severity.to_uppercase(),
+            imp.improvement_type.replace('_', " "),
+            short_path,
+            imp.start_line,
+            imp.suggestion,
+            imp.current_value,
+            imp.threshold
+        ));
+    }
+    out.trim_end().to_string()
+}
+
+/// Format improvement suggestions concisely for hooks
+pub fn improvement_context(improvements: &[CodeImprovement]) -> String {
+    if improvements.is_empty() {
+        return String::new();
+    }
+
+    let high_severity: Vec<_> = improvements.iter()
+        .filter(|i| i.severity == "high")
+        .collect();
+
+    if high_severity.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from("Code improvements needed:\n");
+    for imp in high_severity.iter().take(3) {
+        out.push_str(&format!(
+            "  - [{}] {}: {} - {} lines (max: {})\n",
+            imp.severity.to_uppercase(),
+            imp.improvement_type.replace('_', " "),
+            imp.symbol_name,
+            imp.current_value,
+            imp.threshold
+        ));
+    }
+    out.trim_end().to_string()
 }
