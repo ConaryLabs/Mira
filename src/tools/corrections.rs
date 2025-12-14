@@ -387,10 +387,8 @@ fn file_matches_pattern(file_path: &str, pattern: &str) -> bool {
         let prefix = &pattern[..pattern.len() - 1];
         return file_path.starts_with(prefix);
     }
-    if pattern.starts_with("**/") {
-        let suffix = &pattern[3..];
-        if suffix.starts_with("*.") {
-            let ext = &suffix[1..];
+    if let Some(suffix) = pattern.strip_prefix("**/") {
+        if let Some(ext) = suffix.strip_prefix("*") {
             return file_path.ends_with(ext);
         } else {
             return file_path.ends_with(&format!("/{}", suffix)) || file_path == suffix;

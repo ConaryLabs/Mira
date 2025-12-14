@@ -320,7 +320,7 @@ fn generate_summary(context: &TranscriptContext, trigger: &str) -> String {
             let display = if f.contains("/Mira/") {
                 f.split("/Mira/").last().unwrap_or(f)
             } else {
-                f.split('/').last().unwrap_or(f)
+                f.split('/').next_back().unwrap_or(f)
             };
             parts.push(format!("  - {}", display));
         }

@@ -1,6 +1,8 @@
 // src/indexer/git.rs
 // Git history indexing using git2
 
+#![allow(clippy::field_reassign_with_default)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};

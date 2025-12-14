@@ -100,13 +100,9 @@ pub async fn recall(
         // Note: Qdrant doesn't support OR conditions with is_null easily,
         // so we rely on the SQLite fallback for strict project filtering.
         // Semantic search will return results from all projects but ranked by relevance.
-        let filter = if let Some(ref fact_type) = req.fact_type {
-            Some(qdrant_client::qdrant::Filter::must([
-                qdrant_client::qdrant::Condition::matches("fact_type", fact_type.clone())
-            ]))
-        } else {
-            None
-        };
+        let filter = req.fact_type.as_ref().map(|fact_type| qdrant_client::qdrant::Filter::must([
+            qdrant_client::qdrant::Condition::matches("fact_type", fact_type.clone())
+        ]));
 
         match semantic.search(COLLECTION_CONVERSATION, &req.query, limit, filter).await {
             Ok(results) if !results.is_empty() => {
