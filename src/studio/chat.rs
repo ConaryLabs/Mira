@@ -12,7 +12,7 @@ use std::{convert::Infallible, time::Duration};
 use tokio_stream::StreamExt;
 use tracing::{info, error};
 
-use super::types::{StudioState, ChatRequest, AnthropicRequest, AnthropicStreamEvent};
+use super::types::{StudioState, ChatRequest, AnthropicRequest, AnthropicStreamEvent, UsageInfo};
 use super::context::{build_tiered_context, get_recent_messages};
 
 /// Messages to keep verbatim in context
@@ -103,10 +103,11 @@ pub async fn chat_stream_handler(
     .await
     .unwrap_or((0,));
 
-    // Build tiered context
-    let system_prompt = build_tiered_context(&state, &conversation_id).await;
+    // Build tiered context with cache control
+    let system_blocks = build_tiered_context(&state, &conversation_id).await;
+    let cache_blocks = system_blocks.len();
 
-    // Get last N messages for the request
+    // Get last N messages for the request (last user message has cache_control)
     let recent_messages = get_recent_messages(&state.db, &conversation_id, CONTEXT_WINDOW_SIZE).await;
 
     let anthropic_req = AnthropicRequest {
@@ -114,10 +115,11 @@ pub async fn chat_stream_handler(
         max_tokens: req.max_tokens,
         messages: recent_messages,
         stream: true,
-        system: Some(system_prompt),
+        system: if system_blocks.is_empty() { None } else { Some(system_blocks) },
     };
 
-    info!("Starting streaming chat with model: {} (conversation: {}, {} messages)", model, conversation_id, msg_count);
+    info!("Starting streaming chat with model: {} (conversation: {}, {} messages, {} cache blocks)",
+          model, conversation_id, msg_count, cache_blocks);
 
     let response = state.http_client
         .post("https://api.anthropic.com/v1/messages")
@@ -140,6 +142,7 @@ pub async fn chat_stream_handler(
     let byte_stream = response.bytes_stream();
     let db = state.db.clone();
     let conv_id = conversation_id.clone();
+    let model_for_metrics = model.clone();
     let should_summarize = msg_count > 0 && (msg_count as usize).is_multiple_of(ROLLING_SUMMARY_THRESHOLD);
     let summary_state = state.clone();
 
@@ -147,20 +150,26 @@ pub async fn chat_stream_handler(
         let mut buffer = String::new();
         let mut byte_buffer: Vec<u8> = Vec::new();
         let mut full_response = String::new();
+        let mut usage_info: Option<UsageInfo> = None;
 
         // Send conversation ID first
         yield Ok(Event::default().event("conversation").data(&conv_id));
 
         tokio::pin!(byte_stream);
 
-        // Helper to process SSE data and yield text
-        fn process_sse_data(data: &str, full_response: &mut String) -> Option<String> {
+        // Helper to process SSE data and yield text, also capture usage
+        fn process_sse_data(data: &str, full_response: &mut String, usage: &mut Option<UsageInfo>) -> Option<String> {
             if data == "[DONE]" {
                 return None;
             }
 
             match serde_json::from_str::<AnthropicStreamEvent>(data) {
                 Ok(event) => {
+                    // Capture usage info from message_start or message_delta
+                    if event.usage.is_some() {
+                        *usage = event.usage;
+                    }
+
                     if event.event_type == "content_block_delta" {
                         if let Some(delta) = event.delta {
                             if let Some(text) = delta.text {
@@ -246,7 +255,7 @@ pub async fn chat_stream_handler(
                             continue;
                         }
 
-                        if let Some(text) = process_sse_data(&data, &mut full_response) {
+                        if let Some(text) = process_sse_data(&data, &mut full_response, &mut usage_info) {
                             yield Ok(Event::default().data(&text));
                         }
                     }
@@ -263,7 +272,7 @@ pub async fn chat_stream_handler(
         if !buffer.trim().is_empty() {
             let (events, _) = extract_events(&(buffer + "\n\n"));
             for data in events {
-                if let Some(text) = process_sse_data(&data, &mut full_response) {
+                if let Some(text) = process_sse_data(&data, &mut full_response, &mut usage_info) {
                     yield Ok(Event::default().data(&text));
                 }
             }
@@ -281,6 +290,41 @@ pub async fn chat_stream_handler(
         .bind(save_time)
         .execute(db.as_ref())
         .await;
+
+        // Log and store cache metrics
+        if let Some(usage) = &usage_info {
+            let cache_read = usage.cache_read_input_tokens.unwrap_or(0);
+            let cache_write = usage.cache_creation_input_tokens.unwrap_or(0);
+            let uncached = usage.input_tokens;
+            let output = usage.output_tokens;
+
+            // Calculate and log hit rate
+            let total_input = cache_read + cache_write + uncached;
+            if total_input > 0 {
+                let hit_rate = cache_read as f64 / total_input as f64 * 100.0;
+                info!(
+                    "Cache metrics: read={}, write={}, uncached={}, output={}, hit_rate={:.1}%",
+                    cache_read, cache_write, uncached, output, hit_rate
+                );
+            }
+
+            // Store metrics in database
+            let metrics_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO studio_cache_metrics (id, conversation_id, message_id, cache_read_tokens, cache_write_tokens, uncached_tokens, output_tokens, model, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+            )
+            .bind(&metrics_id)
+            .bind(&conv_id)
+            .bind(&assistant_msg_id)
+            .bind(cache_read as i64)
+            .bind(cache_write as i64)
+            .bind(uncached as i64)
+            .bind(output as i64)
+            .bind(&model_for_metrics)
+            .bind(save_time)
+            .execute(db.as_ref())
+            .await;
+        }
 
         // Generate rolling summary if threshold reached
         if should_summarize {
