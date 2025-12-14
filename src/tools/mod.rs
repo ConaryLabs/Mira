@@ -2,6 +2,8 @@
 // MCP Tool modules - organized by domain for Claude Code augmentation
 
 pub mod analytics;
+pub mod helpers;
+pub mod semantic_helpers;
 pub mod build_intel;
 pub mod code_intel;
 pub mod corrections;
@@ -18,6 +20,7 @@ pub mod semantic;
 pub mod sessions;
 pub mod tasks;
 pub mod types;
+pub mod work_state;
 
 // Re-export for use in main.rs
 pub use types::*;

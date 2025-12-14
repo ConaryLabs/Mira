@@ -18,6 +18,21 @@ use std::time::Duration;
 use crate::tools::*;
 use crate::indexer::{CodeIndexer, GitIndexer};
 
+/// Macro to extract a required field from a request, returning an error if missing.
+/// Usage: `require!(req.title, "title required for create")`
+macro_rules! require {
+    ($field:expr, $msg:expr) => {
+        $field.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!($msg)))?
+    };
+}
+
+/// Helper to create an unknown action error response
+fn unknown_action(action: &str, valid_actions: &str) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(format!(
+        "Unknown action: {}. Use {}", action, valid_actions
+    ))])
+}
+
 // === Database Pool Configuration ===
 
 /// Create an optimized SQLite connection pool
@@ -250,12 +265,10 @@ impl MiraServer {
 
     #[tool(description = "Manage tasks. Actions: create/list/get/update/complete/delete")]
     async fn task(&self, Parameters(req): Parameters<TaskRequest>) -> Result<CallToolResult, McpError> {
-        let action = req.action.as_str();
-        match action {
+        match req.action.as_str() {
             "create" => {
-                let title = req.title.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("title required for create")))?;
                 let result = tasks::create_task(self.db.as_ref(), tasks::CreateTaskParams {
-                    title,
+                    title: require!(req.title, "title required for create"),
                     description: req.description.clone(),
                     priority: req.priority.clone(),
                     parent_id: req.parent_id.clone(),
@@ -272,14 +285,13 @@ impl MiraServer {
                 Ok(vec_response(result, "No tasks found."))
             }
             "get" => {
-                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                let task_id = require!(req.task_id, "task_id required");
                 let result = tasks::get_task(self.db.as_ref(), &task_id).await.map_err(to_mcp_err)?;
                 Ok(option_response(result, format!("Task {} not found", task_id)))
             }
             "update" => {
-                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
                 let result = tasks::update_task(self.db.as_ref(), tasks::UpdateTaskParams {
-                    task_id,
+                    task_id: require!(req.task_id, "task_id required"),
                     title: req.title.clone(),
                     description: req.description.clone(),
                     status: req.status.clone(),
@@ -288,12 +300,12 @@ impl MiraServer {
                 Ok(option_response(result, "Task not found"))
             }
             "complete" => {
-                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                let task_id = require!(req.task_id, "task_id required");
                 let result = tasks::complete_task(self.db.as_ref(), &task_id, req.notes.clone()).await.map_err(to_mcp_err)?;
                 Ok(option_response(result, format!("Task {} not found", task_id)))
             }
             "delete" => {
-                let task_id = req.task_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("task_id required")))?;
+                let task_id = require!(req.task_id, "task_id required");
                 match tasks::delete_task(self.db.as_ref(), &task_id).await.map_err(to_mcp_err)? {
                     Some(title) => Ok(json_response(serde_json::json!({
                         "status": "deleted",
@@ -303,7 +315,7 @@ impl MiraServer {
                     None => Ok(text_response(format!("Task {} not found", task_id))),
                 }
             }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use create/list/get/update/complete/delete", action))])),
+            action => Ok(unknown_action(action, "create/list/get/update/complete/delete")),
         }
     }
 
@@ -312,12 +324,10 @@ impl MiraServer {
     #[tool(description = "Manage goals/milestones. Actions: create/list/get/update/add_milestone/complete_milestone/progress")]
     async fn goal(&self, Parameters(req): Parameters<GoalRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let action = req.action.as_str();
-        match action {
+        match req.action.as_str() {
             "create" => {
-                let title = req.title.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("title required")))?;
                 let result = goals::create_goal(self.db.as_ref(), goals::CreateGoalParams {
-                    title,
+                    title: require!(req.title, "title required"),
                     description: req.description.clone(),
                     success_criteria: req.success_criteria.clone(),
                     priority: req.priority.clone(),
@@ -333,14 +343,13 @@ impl MiraServer {
                 Ok(vec_response(result, "No goals found."))
             }
             "get" => {
-                let goal_id = req.goal_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("goal_id required")))?;
+                let goal_id = require!(req.goal_id, "goal_id required");
                 let result = goals::get_goal(self.db.as_ref(), &goal_id).await.map_err(to_mcp_err)?;
                 Ok(option_response(result, format!("Goal '{}' not found", goal_id)))
             }
             "update" => {
-                let goal_id = req.goal_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("goal_id required")))?;
                 let result = goals::update_goal(self.db.as_ref(), goals::UpdateGoalParams {
-                    goal_id,
+                    goal_id: require!(req.goal_id, "goal_id required"),
                     title: req.title.clone(),
                     description: req.description.clone(),
                     status: req.status.clone(),
@@ -350,18 +359,16 @@ impl MiraServer {
                 Ok(option_response(result, "Goal not found"))
             }
             "add_milestone" => {
-                let goal_id = req.goal_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("goal_id required")))?;
-                let title = req.title.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("title required")))?;
                 let result = goals::add_milestone(self.db.as_ref(), goals::AddMilestoneParams {
-                    goal_id,
-                    title,
+                    goal_id: require!(req.goal_id, "goal_id required"),
+                    title: require!(req.title, "title required"),
                     description: req.description.clone(),
                     weight: req.weight,
                 }).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
             "complete_milestone" => {
-                let milestone_id = req.milestone_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("milestone_id required")))?;
+                let milestone_id = require!(req.milestone_id, "milestone_id required");
                 let result = goals::complete_milestone(self.db.as_ref(), &milestone_id).await.map_err(to_mcp_err)?;
                 Ok(option_response(result, format!("Milestone '{}' not found", milestone_id)))
             }
@@ -369,7 +376,7 @@ impl MiraServer {
                 let result = goals::get_goal_progress(self.db.as_ref(), req.goal_id.clone(), project_id).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use create/list/get/update/add_milestone/complete_milestone/progress", action))])),
+            action => Ok(unknown_action(action, "create/list/get/update/add_milestone/complete_milestone/progress")),
         }
     }
 
@@ -378,16 +385,12 @@ impl MiraServer {
     #[tool(description = "Manage corrections. Actions: record/get/validate/list. Record when user corrects you.")]
     async fn correction(&self, Parameters(req): Parameters<CorrectionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let action = req.action.as_str();
-        match action {
+        match req.action.as_str() {
             "record" => {
-                let correction_type = req.correction_type.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("correction_type required")))?;
-                let what_was_wrong = req.what_was_wrong.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("what_was_wrong required")))?;
-                let what_is_right = req.what_is_right.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("what_is_right required")))?;
                 let result = corrections::record_correction(self.db.as_ref(), self.semantic.as_ref(), corrections::RecordCorrectionParams {
-                    correction_type,
-                    what_was_wrong,
-                    what_is_right,
+                    correction_type: require!(req.correction_type, "correction_type required"),
+                    what_was_wrong: require!(req.what_was_wrong, "what_was_wrong required"),
+                    what_is_right: require!(req.what_is_right, "what_is_right required"),
                     rationale: req.rationale.clone(),
                     scope: req.scope.clone(),
                     keywords: req.keywords.clone(),
@@ -399,27 +402,29 @@ impl MiraServer {
                     file_path: req.file_path.clone(),
                     topic: req.topic.clone(),
                     correction_type: req.correction_type.clone(),
-                    context: req.keywords.clone(), // Use keywords as context for semantic search
+                    context: req.keywords.clone(),
                     limit: req.limit,
                 }, project_id).await.map_err(to_mcp_err)?;
                 Ok(vec_response(result, "No corrections found."))
             }
             "validate" => {
-                let correction_id = req.correction_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("correction_id required")))?;
-                let outcome = req.outcome.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("outcome required")))?;
-                let result = corrections::validate_correction(self.db.as_ref(), &correction_id, &outcome).await.map_err(to_mcp_err)?;
+                let result = corrections::validate_correction(
+                    self.db.as_ref(),
+                    &require!(req.correction_id, "correction_id required"),
+                    &require!(req.outcome, "outcome required"),
+                ).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
             "list" => {
                 let result = corrections::list_corrections(self.db.as_ref(), corrections::ListCorrectionsParams {
                     correction_type: req.correction_type.clone(),
                     scope: req.scope.clone(),
-                    status: None, // Default to active
+                    status: None,
                     limit: req.limit,
                 }, project_id).await.map_err(to_mcp_err)?;
                 Ok(vec_response(result, "No corrections found."))
             }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use record/get/validate/list", action))])),
+            action => Ok(unknown_action(action, "record/get/validate/list")),
         }
     }
 
@@ -427,8 +432,7 @@ impl MiraServer {
 
     #[tool(description = "Manage documents. Actions: list/search/get")]
     async fn document(&self, Parameters(req): Parameters<DocumentRequest>) -> Result<CallToolResult, McpError> {
-        let action = req.action.as_str();
-        match action {
+        match req.action.as_str() {
             "list" => {
                 let result = documents::list_documents(self.db.as_ref(), documents::ListDocumentsParams {
                     doc_type: req.doc_type.clone(),
@@ -437,16 +441,16 @@ impl MiraServer {
                 Ok(vec_response(result, "No documents found."))
             }
             "search" => {
-                let query = req.query.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("query required")))?;
+                let query = require!(req.query, "query required");
                 let result = documents::search_documents(self.db.as_ref(), self.semantic.as_ref(), &query, req.limit).await.map_err(to_mcp_err)?;
                 Ok(vec_response(result, format!("No documents found matching '{}'", query)))
             }
             "get" => {
-                let document_id = req.document_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("document_id required")))?;
+                let document_id = require!(req.document_id, "document_id required");
                 let result = documents::get_document(self.db.as_ref(), &document_id, req.include_content.unwrap_or(false)).await.map_err(to_mcp_err)?;
                 Ok(option_response(result, format!("Document '{}' not found", document_id)))
             }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use list/search/get", action))])),
+            action => Ok(unknown_action(action, "list/search/get")),
         }
     }
 
@@ -455,12 +459,10 @@ impl MiraServer {
     #[tool(description = "Manage permission rules. Actions: save/list/delete. Save when user approves a tool.")]
     async fn permission(&self, Parameters(req): Parameters<PermissionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let action = req.action.as_str();
-        match action {
+        match req.action.as_str() {
             "save" => {
-                let tool_name = req.tool_name.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("tool_name required")))?;
                 let result = permissions::save_permission(self.db.as_ref(), permissions::SavePermissionParams {
-                    tool_name,
+                    tool_name: require!(req.tool_name, "tool_name required"),
                     input_field: req.input_field.clone(),
                     input_pattern: req.input_pattern.clone(),
                     match_type: req.match_type.clone(),
@@ -478,11 +480,10 @@ impl MiraServer {
                 Ok(vec_response(result, "No permission rules found."))
             }
             "delete" => {
-                let rule_id = req.rule_id.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("rule_id required")))?;
-                let result = permissions::delete_permission(self.db.as_ref(), &rule_id).await.map_err(to_mcp_err)?;
+                let result = permissions::delete_permission(self.db.as_ref(), &require!(req.rule_id, "rule_id required")).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use save/list/delete", action))])),
+            action => Ok(unknown_action(action, "save/list/delete")),
         }
     }
 
@@ -490,22 +491,18 @@ impl MiraServer {
 
     #[tool(description = "Manage build tracking. Actions: record/record_error/get_errors/resolve")]
     async fn build(&self, Parameters(req): Parameters<BuildRequest>) -> Result<CallToolResult, McpError> {
-        let action = req.action.as_str();
-        match action {
+        match req.action.as_str() {
             "record" => {
-                let command = req.command.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("command required")))?;
-                let success = req.success.ok_or_else(|| to_mcp_err(anyhow::anyhow!("success required")))?;
                 let result = build_intel::record_build(self.db.as_ref(), build_intel::RecordBuildParams {
-                    command,
-                    success,
+                    command: require!(req.command, "command required"),
+                    success: require!(req.success, "success required"),
                     duration_ms: req.duration_ms,
                 }).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
             "record_error" => {
-                let message = req.message.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("message required")))?;
                 let result = build_intel::record_build_error(self.db.as_ref(), build_intel::RecordBuildErrorParams {
-                    message,
+                    message: require!(req.message, "message required"),
                     category: req.category.clone(),
                     severity: req.severity.clone(),
                     file_path: req.file_path.clone(),
@@ -524,11 +521,10 @@ impl MiraServer {
                 Ok(vec_response(result, "No build errors found."))
             }
             "resolve" => {
-                let error_id = req.error_id.ok_or_else(|| to_mcp_err(anyhow::anyhow!("error_id required")))?;
-                let result = build_intel::resolve_error(self.db.as_ref(), error_id).await.map_err(to_mcp_err)?;
+                let result = build_intel::resolve_error(self.db.as_ref(), require!(req.error_id, "error_id required")).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!("Unknown action: {}. Use record/record_error/get_errors/resolve", action))])),
+            action => Ok(unknown_action(action, "record/record_error/get_errors/resolve")),
         }
     }
 
