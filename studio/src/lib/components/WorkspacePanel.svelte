@@ -9,12 +9,13 @@
 
   interface WorkspaceEntry {
     id: string;
-    type: 'command' | 'output' | 'file' | 'diff' | 'info' | 'memory' | 'context';
+    type: 'command' | 'output' | 'file' | 'diff' | 'info' | 'memory' | 'context' | 'claude_code';
     content: string;
     timestamp: Date;
     status?: 'running' | 'success' | 'error';
     file?: string;
     tool?: string;
+    stream?: 'stdout' | 'stderr';
   }
 
   let entries = $state<WorkspaceEntry[]>([]);
@@ -119,6 +120,36 @@
           file: event.path
         });
         break;
+
+      case 'claude_code_start':
+        addEntry({
+          id,
+          type: 'claude_code',
+          content: `Starting Claude Code: ${event.task}`,
+          timestamp,
+          status: 'running'
+        });
+        break;
+
+      case 'claude_code_output':
+        addEntry({
+          id,
+          type: 'claude_code',
+          content: event.line,
+          timestamp,
+          stream: event.stream
+        });
+        break;
+
+      case 'claude_code_end':
+        addEntry({
+          id,
+          type: 'claude_code',
+          content: event.success ? '✓ Claude Code finished successfully' : `✗ Claude Code exited with code ${event.exit_code}`,
+          timestamp,
+          status: event.success ? 'success' : 'error'
+        });
+        break;
     }
   }
 
@@ -126,8 +157,16 @@
     entries = [...entries.slice(-50), entry]; // Keep last 50 entries
   }
 
-  function getStatusColor(status?: string) {
-    switch (status) {
+  function getStatusColor(entry: WorkspaceEntry) {
+    // Claude Code stderr is warning color
+    if (entry.stream === 'stderr') {
+      return 'text-[var(--terminal-warning)]';
+    }
+    // Claude Code output is cyan
+    if (entry.type === 'claude_code' && !entry.status) {
+      return 'text-cyan-400';
+    }
+    switch (entry.status) {
       case 'running': return 'text-[var(--terminal-accent)]';
       case 'success': return 'text-[var(--terminal-success)]';
       case 'error': return 'text-[var(--terminal-error)]';
@@ -144,6 +183,7 @@
       case 'info': return 'ℹ';
       case 'memory': return '🧠';
       case 'context': return '📚';
+      case 'claude_code': return '🤖';
       default: return '•';
     }
   }
@@ -185,7 +225,7 @@
     {/if}
 
     {#each entries as entry (entry.id)}
-      <div class="mb-1.5 {getStatusColor(entry.status)} group">
+      <div class="mb-1.5 {getStatusColor(entry)} group">
         <div class="flex items-start gap-2">
           <span class="text-gray-600 select-none w-4 flex-shrink-0">{getTypeIcon(entry.type)}</span>
           <div class="flex-1 min-w-0">

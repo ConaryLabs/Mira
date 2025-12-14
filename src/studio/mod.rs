@@ -5,6 +5,7 @@ mod types;
 mod context;
 mod chat;
 mod handlers;
+mod claude_code;
 
 use axum::{Router, routing::{get, post}};
 
@@ -21,5 +22,6 @@ pub fn router(state: StudioState) -> Router {
         .route("/conversations/{id}/messages", get(handlers::get_messages))
         .route("/chat/stream", post(chat::chat_stream_handler))
         .route("/workspace/events", get(handlers::workspace_events_handler))
+        .route("/claude-code/launch", post(handlers::launch_claude_code_handler))
         .with_state(state)
 }

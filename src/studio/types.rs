@@ -26,6 +26,12 @@ pub enum WorkspaceEvent {
     File { action: String, path: String },
     /// Context loaded
     Context { kind: String, count: usize },
+    /// Claude Code session starting
+    ClaudeCodeStart { task: String },
+    /// Claude Code output line
+    ClaudeCodeOutput { line: String, stream: String },
+    /// Claude Code session ended
+    ClaudeCodeEnd { exit_code: i32, success: bool },
 }
 
 #[derive(Clone)]
@@ -149,4 +155,14 @@ impl WorkContextCounts {
     pub fn total(&self) -> usize {
         self.goals + self.tasks + self.corrections + self.documents
     }
+}
+
+/// Request to launch a Claude Code session
+#[derive(Debug, Deserialize)]
+pub struct LaunchClaudeCodeRequest {
+    /// The task for Claude Code to work on
+    pub task: String,
+    /// Project path (defaults to current directory)
+    #[serde(default)]
+    pub project_path: Option<String>,
 }

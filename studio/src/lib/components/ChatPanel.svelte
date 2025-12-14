@@ -171,6 +171,24 @@
         };
         setTimeout(scrollToBottom, 0);
       }
+
+      // After streaming, check for Claude Code directive
+      const lastIndex = messages.length - 1;
+      const fullContent = messages[lastIndex].content;
+      const { cleanContent, task } = extractClaudeCodeDirective(fullContent);
+
+      // Update message with cleaned content (directive stripped)
+      if (cleanContent !== fullContent) {
+        messages[lastIndex] = {
+          ...messages[lastIndex],
+          content: cleanContent
+        };
+      }
+
+      // Launch Claude Code if directive was found
+      if (task) {
+        await launchClaudeCode(task);
+      }
     } catch (error) {
       console.error('Failed to send message:', error);
       const lastIndex = messages.length - 1;
@@ -200,6 +218,36 @@
       return marked.parse(content) as string;
     } catch {
       return content;
+    }
+  }
+
+  // Parse and extract [LAUNCH_CC]...[/LAUNCH_CC] directives
+  function extractClaudeCodeDirective(content: string): { cleanContent: string; task: string | null } {
+    const regex = /\[LAUNCH_CC\]([\s\S]*?)\[\/LAUNCH_CC\]/g;
+    let task: string | null = null;
+
+    // Extract the first task (if multiple, only use first)
+    const match = regex.exec(content);
+    if (match) {
+      task = match[1].trim();
+    }
+
+    // Remove all directives from content
+    const cleanContent = content.replace(regex, '').trim();
+
+    return { cleanContent, task };
+  }
+
+  // Launch Claude Code with a task
+  async function launchClaudeCode(task: string) {
+    try {
+      await fetch('/api/claude-code/launch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task })
+      });
+    } catch (error) {
+      console.error('Failed to launch Claude Code:', error);
     }
   }
 </script>
