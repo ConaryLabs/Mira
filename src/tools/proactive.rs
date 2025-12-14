@@ -3,11 +3,12 @@
 
 use sqlx::sqlite::SqlitePool;
 
-use super::types::{GetProactiveContextRequest, FindSimilarFixesRequest};
+use super::types::{GetProactiveContextRequest, FindSimilarFixesRequest, GetRelatedFilesRequest};
 use super::semantic::SemanticSearch;
 use super::corrections::{self, GetCorrectionsParams};
 use super::goals;
 use super::git_intel;
+use super::code_intel;
 
 /// Get all relevant context for the current work, combined into one response
 pub async fn get_proactive_context(
@@ -79,6 +80,19 @@ pub async fn get_proactive_context(
         Vec::new()
     };
 
+    // 7. Get code intelligence if files specified
+    let code_context = if let Some(files) = &req.files {
+        get_code_context(db, files, limit).await.unwrap_or_default()
+    } else {
+        serde_json::json!({})
+    };
+
+    // Check if code context has data
+    let has_code_context = code_context.get("related_files")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+
     // Build summary
     let summary_parts: Vec<String> = vec![
         if !corrections.is_empty() { Some(format!("{} corrections", corrections.len())) } else { None },
@@ -87,6 +101,7 @@ pub async fn get_proactive_context(
         if !related_decisions.is_empty() { Some(format!("{} related decisions", related_decisions.len())) } else { None },
         if !relevant_memories.is_empty() { Some(format!("{} relevant memories", relevant_memories.len())) } else { None },
         if !similar_errors.is_empty() { Some(format!("{} similar errors", similar_errors.len())) } else { None },
+        if has_code_context { Some("code context".to_string()) } else { None },
     ].into_iter().flatten().collect();
 
     let summary = if summary_parts.is_empty() {
@@ -111,6 +126,7 @@ pub async fn get_proactive_context(
         "related_decisions": related_decisions,
         "relevant_memories": relevant_memories,
         "similar_errors": similar_errors,
+        "code_context": code_context,
     }))
 }
 
@@ -391,4 +407,97 @@ async fn get_relevant_memories(
             "updated_at": updated,
         })
     }).collect())
+}
+
+/// Get code intelligence context for specified files
+async fn get_code_context(
+    db: &SqlitePool,
+    files: &[String],
+    limit: i64,
+) -> anyhow::Result<serde_json::Value> {
+    let mut related_files = Vec::new();
+    let mut key_symbols = Vec::new();
+
+    for file_path in files.iter().take(3) {
+        // Get related files (imports + cochange)
+        if let Ok(related) = code_intel::get_related_files(
+            db,
+            GetRelatedFilesRequest {
+                file_path: file_path.clone(),
+                relation_type: Some("all".to_string()),
+                limit: Some(limit),
+            },
+        ).await {
+            // Extract cochange patterns (most useful for understanding impact)
+            if let Some(cochange) = related.get("cochange_patterns").and_then(|c| c.as_array()) {
+                for pattern in cochange.iter().take(3) {
+                    if let Some(file) = pattern.get("file").and_then(|f| f.as_str()) {
+                        let confidence = pattern.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0);
+                        if confidence > 0.3 {
+                            related_files.push(serde_json::json!({
+                                "file": file,
+                                "related_to": file_path,
+                                "relation": "cochange",
+                                "confidence": confidence,
+                            }));
+                        }
+                    }
+                }
+            }
+
+            // Extract imports (dependencies)
+            if let Some(imports) = related.get("imports").and_then(|i| i.as_array()) {
+                for import in imports.iter().take(5) {
+                    if let Some(path) = import.get("import_path").and_then(|p| p.as_str()) {
+                        let is_external = import.get("is_external").and_then(|e| e.as_bool()).unwrap_or(true);
+                        if !is_external {
+                            related_files.push(serde_json::json!({
+                                "file": path,
+                                "related_to": file_path,
+                                "relation": "import",
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Get key symbols from the file (functions, structs, etc.)
+        let symbols = sqlx::query_as::<_, (String, String, Option<String>, i64)>(r#"
+            SELECT name, symbol_type, signature, start_line
+            FROM code_symbols
+            WHERE file_path LIKE $1
+              AND symbol_type IN ('function', 'struct', 'class', 'trait', 'enum')
+              AND (visibility IS NULL OR visibility != 'private')
+            ORDER BY start_line
+            LIMIT $2
+        "#)
+        .bind(format!("%{}", file_path))
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        for (name, symbol_type, signature, line) in symbols {
+            key_symbols.push(serde_json::json!({
+                "name": name,
+                "type": symbol_type,
+                "signature": signature,
+                "file": file_path,
+                "line": line,
+            }));
+        }
+    }
+
+    // Deduplicate related files
+    let mut seen = std::collections::HashSet::new();
+    related_files.retain(|f| {
+        let key = f.get("file").and_then(|f| f.as_str()).unwrap_or("");
+        seen.insert(key.to_string())
+    });
+
+    Ok(serde_json::json!({
+        "related_files": related_files,
+        "key_symbols": key_symbols,
+    }))
 }

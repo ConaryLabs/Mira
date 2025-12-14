@@ -427,7 +427,7 @@ async fn save_working_doc(session_id: &str, path: &str, tool_input: &serde_json:
         id: 1,
         method: "initialize".to_string(),
         params: serde_json::json!({
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "posttool-hook-doc", "version": "1.0"}
         }),
@@ -557,7 +557,7 @@ async fn save_plan_state(session_id: &str, status: &str, content: Option<&str>) 
         id: 1,
         method: "initialize".to_string(),
         params: serde_json::json!({
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "posttool-hook-plan", "version": "1.0"}
         }),
@@ -654,7 +654,7 @@ async fn save_todo_state(session_id: &str, tool_input: &serde_json::Value) -> Re
         id: 1,
         method: "initialize".to_string(),
         params: serde_json::json!({
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "posttool-hook-todos", "version": "1.0"}
         }),
@@ -735,7 +735,7 @@ async fn save_action(session_id: &str, action: &Action) -> Result<()> {
         id: 1,
         method: "initialize".to_string(),
         params: serde_json::json!({
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "posttool-hook", "version": "1.0"}
         }),

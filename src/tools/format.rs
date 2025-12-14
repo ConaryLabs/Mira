@@ -542,6 +542,40 @@ pub fn proactive_context(ctx: &Value) -> String {
         }
     }
 
+    // Code context - related files and symbols
+    if let Some(code_ctx) = ctx.get("code_context") {
+        // Related files
+        if let Some(related) = code_ctx.get("related_files").and_then(|v| v.as_array()) {
+            if !related.is_empty() {
+                if !out.is_empty() { out.push('\n'); }
+                out.push_str("Related files:\n");
+                for r in related.iter().take(5) {
+                    let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("?");
+                    let relation = r.get("relation").and_then(|v| v.as_str()).unwrap_or("related");
+                    // Extract just the filename for display
+                    let filename = std::path::Path::new(file)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(file);
+                    out.push_str(&format!("  {} ({})\n", filename, relation));
+                }
+            }
+        }
+
+        // Key symbols
+        if let Some(symbols) = code_ctx.get("key_symbols").and_then(|v| v.as_array()) {
+            if !symbols.is_empty() {
+                if !out.is_empty() { out.push('\n'); }
+                out.push_str("Key symbols:\n");
+                for s in symbols.iter().take(8) {
+                    let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let stype = s.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+                    out.push_str(&format!("  {} ({})\n", name, stype));
+                }
+            }
+        }
+    }
+
     if out.is_empty() {
         "No relevant context.".to_string()
     } else {
