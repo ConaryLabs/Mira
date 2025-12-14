@@ -73,6 +73,52 @@ export interface StreamResult {
   chunks: AsyncGenerator<string, void, unknown>;
 }
 
+/**
+ * Parse SSE events from a buffer, handling event boundaries correctly.
+ * Returns [parsedEvents, remainingBuffer]
+ */
+function parseSSEEvents(buffer: string): [string[], string] {
+  const events: string[] = [];
+  let remaining = buffer;
+
+  // SSE events are separated by blank lines (\n\n or \r\n\r\n)
+  while (true) {
+    // Find event boundary
+    let boundaryPos = remaining.indexOf('\r\n\r\n');
+    let boundaryLen = 4;
+    if (boundaryPos === -1) {
+      boundaryPos = remaining.indexOf('\n\n');
+      boundaryLen = 2;
+    }
+
+    if (boundaryPos === -1) {
+      // No complete event yet
+      break;
+    }
+
+    const eventBlock = remaining.substring(0, boundaryPos);
+    remaining = remaining.substring(boundaryPos + boundaryLen);
+
+    // Parse the event block - collect all data: lines
+    const dataLines: string[] = [];
+    for (const line of eventBlock.split(/\r?\n/)) {
+      if (line.startsWith('data:')) {
+        // SSE spec: optional single space after colon is stripped
+        const value = line.substring(5);
+        dataLines.push(value.startsWith(' ') ? value.substring(1) : value);
+      }
+      // Ignore event:, id:, retry:, and comment lines
+    }
+
+    // Per SSE spec, multiple data lines are joined with newlines
+    if (dataLines.length > 0) {
+      events.push(dataLines.join('\n'));
+    }
+  }
+
+  return [events, remaining];
+}
+
 export async function streamChat(request: ChatRequest): Promise<StreamResult> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
@@ -102,72 +148,60 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+    const [events, remaining] = parseSSEEvents(buffer);
+    buffer = remaining;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith('event: conversation')) {
-        continue;
-      }
-      if (line.startsWith('data: ') && !conversationId) {
-        const data = line.slice(6);
-        // Check if this looks like a UUID (conversation ID)
-        if (data.match(/^[0-9a-f-]{36}$/i)) {
-          conversationId = data;
-          // Save remaining lines back to buffer for the generator
-          const remaining = lines.slice(i + 1);
-          if (remaining.length > 0) {
-            buffer = remaining.join('\n') + '\n' + buffer;
-          }
-          break;
-        }
+    for (const data of events) {
+      // Check if this looks like a UUID (conversation ID)
+      if (data.match(/^[0-9a-f-]{36}$/i)) {
+        conversationId = data;
+        break;
       }
     }
   }
 
   // Create async generator for the rest of the stream
   async function* generateChunks(): AsyncGenerator<string, void, unknown> {
-    // Process any remaining buffer from conversation ID parsing
-    // Pop last line in case it's incomplete
-    const initialLines = buffer.split('\n');
-    buffer = initialLines.pop() || '';
+    // Process any buffered events first
+    const [initialEvents, remaining] = parseSSEEvents(buffer);
+    buffer = remaining;
 
-    for (const line of initialLines) {
-      // Handle SSE data lines - preserve all whitespace, handle \r
-      const cleanLine = line.replace(/\r$/, '');
-      if (cleanLine.startsWith('data: ')) {
-        const data = cleanLine.substring(6);
-        if (data === '[DONE]') return;
-        if (data.startsWith('[ERROR]')) throw new Error(data);
-        // Skip empty strings and conversation IDs
-        if (data && !data.match(/^[0-9a-f-]{36}$/i)) {
-          yield data;
-        }
+    for (const data of initialEvents) {
+      if (data === '[DONE]') return;
+      if (data.startsWith('[ERROR]')) throw new Error(data);
+      if (data && !data.match(/^[0-9a-f-]{36}$/i)) {
+        yield data;
       }
     }
 
     // Continue reading stream
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        // Flush decoder
+        buffer += decoder.decode();
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      const [events, rem] = parseSSEEvents(buffer);
+      buffer = rem;
 
-      for (const line of lines) {
-        // Handle SSE data lines - preserve all whitespace, handle \r
-        const cleanLine = line.replace(/\r$/, '');
-        if (cleanLine.startsWith('data: ')) {
-          const data = cleanLine.substring(6);
-          if (data === '[DONE]') return;
-          if (data.startsWith('[ERROR]')) throw new Error(data);
-          yield data;
-        } else if (line.includes('data')) {
-          // Debug: log lines that contain 'data' but don't match our pattern
-          console.warn('Unexpected SSE line:', JSON.stringify(line));
-        }
+      for (const data of events) {
+        if (data === '[DONE]') return;
+        if (data.startsWith('[ERROR]')) throw new Error(data);
+        yield data;
+      }
+    }
+
+    // Process any final buffered events
+    if (buffer.trim()) {
+      // Add fake boundary to flush remaining
+      const [finalEvents] = parseSSEEvents(buffer + '\n\n');
+      for (const data of finalEvents) {
+        if (data === '[DONE]') return;
+        if (data.startsWith('[ERROR]')) throw new Error(data);
+        yield data;
       }
     }
   }
