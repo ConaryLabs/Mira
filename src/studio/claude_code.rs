@@ -26,6 +26,7 @@ pub async fn launch_claude_code(
     let mut cmd = Command::new(&claude_path);
     cmd.arg("-p").arg(&task);
     cmd.arg("--output-format").arg("stream-json");
+    cmd.arg("--verbose");
 
     // Set working directory if provided
     if let Some(path) = project_path {
