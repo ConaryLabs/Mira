@@ -1,6 +1,8 @@
 // src/tools/helpers.rs
 // Common helper functions to reduce code duplication across tools
 
+#![allow(dead_code)] // Utility functions for future use
+
 /// Truncate a string to a maximum length, adding ellipsis if truncated.
 /// The total output length will be at most `max_len` characters.
 ///

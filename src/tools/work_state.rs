@@ -13,14 +13,17 @@ use super::types::{SyncWorkStateRequest, GetWorkStateRequest};
 pub struct ActivePlan {
     pub status: String,
     pub content: Option<String>,
+    #[allow(dead_code)]
     pub updated_at: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkingDoc {
     pub filename: String,
+    #[allow(dead_code)]
     pub path: String,
     pub preview: String,
+    #[allow(dead_code)]
     pub updated_at: i64,
 }
 
