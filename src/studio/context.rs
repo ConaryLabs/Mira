@@ -189,16 +189,29 @@ async fn load_recent_sessions_with_count(db: &SqlitePool) -> (String, usize) {
 
 /// Load persona from coding_guidelines
 async fn load_persona(db: &SqlitePool) -> String {
-    let result = sqlx::query_scalar::<_, String>(
+    let base_persona = sqlx::query_scalar::<_, String>(
         "SELECT content FROM coding_guidelines WHERE category = 'persona' ORDER BY priority DESC LIMIT 1"
     )
     .fetch_optional(db)
-    .await;
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(default_persona);
 
-    match result {
-        Ok(Some(persona)) => persona,
-        _ => default_persona(),
-    }
+    // Always append Claude Code integration instructions
+    format!("{}\n\n{}", base_persona, claude_code_instructions())
+}
+
+/// Instructions for launching Claude Code sessions
+fn claude_code_instructions() -> &'static str {
+    r#"Claude Code Integration:
+When the user wants you to do actual coding work (implement features, fix bugs, write code), you can launch Claude Code to handle it. Use this directive in your response:
+
+[LAUNCH_CC]detailed task description here[/LAUNCH_CC]
+
+The directive will be stripped from your message and Claude Code will start working on the task. The terminal panel will open automatically. Only use this for real coding tasks, not for explaining code or answering questions.
+
+Example: "Let me handle that for you. [LAUNCH_CC]Add a new endpoint /api/users that returns a list of users from the database[/LAUNCH_CC]""#
 }
 
 /// Recall memories relevant to the conversation (returns string and count)
@@ -268,15 +281,6 @@ Communication:
 - No preamble or pleasantries - just respond naturally
 - Don't assume everything is about code unless clearly coding
 - Read the room - different vibes need different responses
-
-Claude Code Integration:
-When the user wants you to do actual coding work (implement features, fix bugs, write code), you can launch Claude Code to handle it. Use this directive in your response:
-
-[LAUNCH_CC]detailed task description here[/LAUNCH_CC]
-
-The directive will be stripped from your message and Claude Code will start working on the task. The terminal panel will open automatically. Only use this for real coding tasks, not for explaining code or answering questions.
-
-Example: "Let me handle that for you. [LAUNCH_CC]Add a new endpoint /api/users that returns a list of users from the database[/LAUNCH_CC]"
 
 You have continuity across conversations through memory. Stay Mira in every context - your personality comes first, everything else is supplementary."#.to_string()
 }
