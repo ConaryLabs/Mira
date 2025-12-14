@@ -19,8 +19,11 @@ pub async fn launch_claude_code(
 
     info!("Launching Claude Code with task: {}", &task[..task.len().min(100)]);
 
-    // Build the command
-    let mut cmd = Command::new("claude");
+    // Build the command - use full path since systemd has minimal PATH
+    let claude_path = std::env::var("CLAUDE_PATH")
+        .unwrap_or_else(|_| "/home/peter/.local/bin/claude".to_string());
+
+    let mut cmd = Command::new(&claude_path);
     cmd.arg("-p").arg(&task);
     cmd.arg("--print");
 
