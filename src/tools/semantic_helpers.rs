@@ -42,6 +42,7 @@ impl MetadataBuilder {
     }
 
     /// Add a number field.
+    #[allow(dead_code)]
     pub fn number(mut self, key: &str, value: i64) -> Self {
         self.metadata.insert(key.to_string(), Value::Number(value.into()));
         self
@@ -76,6 +77,7 @@ pub async fn store_with_logging(
 }
 
 /// Result from semantic search with common fields.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub content: String,
@@ -85,6 +87,7 @@ pub struct SearchResult {
 
 /// Search with semantic search if available, with optional filter.
 /// Returns None if semantic search is unavailable or returns no results.
+#[allow(dead_code)]
 pub async fn search_semantic(
     semantic: &SemanticSearch,
     collection: &str,
@@ -116,11 +119,13 @@ pub async fn search_semantic(
 }
 
 /// Helper to get a string value from metadata.
+#[allow(dead_code)]
 pub fn metadata_string(metadata: &HashMap<String, Value>, key: &str) -> Option<String> {
     metadata.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
 /// Helper to get an i64 value from metadata.
+#[allow(dead_code)]
 pub fn metadata_i64(metadata: &HashMap<String, Value>, key: &str) -> Option<i64> {
     metadata.get(key).and_then(|v| v.as_i64())
 }

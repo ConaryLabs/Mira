@@ -36,7 +36,8 @@ pub enum WorkspaceEvent {
     ToolEnd { tool: String, result: Option<String>, success: bool },
     /// Memory operation
     Memory { action: String, content: String },
-    /// File operation
+    /// File operation (reserved for future use)
+    #[allow(dead_code)]
     File { action: String, path: String },
     /// Context loaded
     Context { kind: String, count: usize },
