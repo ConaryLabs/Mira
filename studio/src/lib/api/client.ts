@@ -141,6 +141,7 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
   let conversationId = '';
   const decoder = new TextDecoder();
   let buffer = '';
+  let pendingEvents: string[] = []; // Events received after conversation ID
 
   // Read until we get the conversation ID
   while (!conversationId) {
@@ -151,10 +152,13 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
     const [events, remaining] = parseSSEEvents(buffer);
     buffer = remaining;
 
-    for (const data of events) {
+    for (let i = 0; i < events.length; i++) {
+      const data = events[i];
       // Check if this looks like a UUID (conversation ID)
       if (data.match(/^[0-9a-f-]{36}$/i)) {
         conversationId = data;
+        // Capture any events that came after the ID in this batch
+        pendingEvents = events.slice(i + 1);
         break;
       }
     }
@@ -162,7 +166,16 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
 
   // Create async generator for the rest of the stream
   async function* generateChunks(): AsyncGenerator<string, void, unknown> {
-    // Process any buffered events first
+    // First, yield any events that came after the conversation ID
+    for (const data of pendingEvents) {
+      if (data === '[DONE]') return;
+      if (data.startsWith('[ERROR]')) throw new Error(data);
+      if (data && !data.match(/^[0-9a-f-]{36}$/i)) {
+        yield data;
+      }
+    }
+
+    // Process any buffered events
     const [initialEvents, remaining] = parseSSEEvents(buffer);
     buffer = remaining;
 
