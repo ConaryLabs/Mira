@@ -145,7 +145,7 @@
         addEntry({
           id,
           type: 'claude_code',
-          content: event.success ? '✓ Claude Code finished successfully' : `✗ Claude Code exited with code ${event.exit_code}`,
+          content: event.success ? '[ok] Claude Code finished' : `[err] Claude Code exited with code ${event.exit_code}`,
           timestamp,
           status: event.success ? 'success' : 'error'
         });
@@ -176,15 +176,15 @@
 
   function getTypeIcon(type: string) {
     switch (type) {
-      case 'command': return '›';
+      case 'command': return '>';
       case 'output': return ' ';
-      case 'file': return '📄';
-      case 'diff': return '±';
-      case 'info': return 'ℹ';
-      case 'memory': return '🧠';
-      case 'context': return '📚';
-      case 'claude_code': return '🤖';
-      default: return '•';
+      case 'file': return '#';
+      case 'diff': return '~';
+      case 'info': return 'i';
+      case 'memory': return '*';
+      case 'context': return '+';
+      case 'claude_code': return '$';
+      default: return '-';
     }
   }
 
