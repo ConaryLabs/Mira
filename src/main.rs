@@ -78,6 +78,8 @@ enum HookAction {
     Precompact,
     /// Handle PostToolCall hooks - auto-remember significant actions
     Posttool,
+    /// Handle SessionStart hooks - check for unfinished work and prompt to resume
+    Sessionstart,
 }
 
 #[derive(Subcommand)]
@@ -365,6 +367,9 @@ async fn main() -> Result<()> {
                 }
                 HookAction::Posttool => {
                     hooks::posttool::run().await?;
+                }
+                HookAction::Sessionstart => {
+                    hooks::sessionstart::run().await?;
                 }
             }
         }
