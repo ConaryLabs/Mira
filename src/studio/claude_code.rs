@@ -25,7 +25,7 @@ pub async fn launch_claude_code(
 
     let mut cmd = Command::new(&claude_path);
     cmd.arg("-p").arg(&task);
-    cmd.arg("--print");
+    cmd.arg("--output-format").arg("stream-json");
 
     // Set working directory if provided
     if let Some(path) = project_path {
@@ -60,17 +60,21 @@ pub async fn launch_claude_code(
     let state_stdout = state.clone();
     let state_stderr = state.clone();
 
-    // Spawn task to read stdout
+    // Spawn task to read stdout (JSON stream)
     let stdout_handle = tokio::spawn(async move {
         if let Some(stdout) = stdout {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
-                state_stdout.emit(WorkspaceEvent::ClaudeCodeOutput {
-                    line,
-                    stream: "stdout".to_string(),
-                });
+                // Parse JSON and format for display
+                let display_line = parse_claude_json(&line);
+                if let Some(text) = display_line {
+                    state_stdout.emit(WorkspaceEvent::ClaudeCodeOutput {
+                        line: text,
+                        stream: "stdout".to_string(),
+                    });
+                }
             }
         }
     });
@@ -106,4 +110,56 @@ pub async fn launch_claude_code(
     info!("Claude Code finished with exit code: {} (success: {})", exit_code, success);
 
     state.emit(WorkspaceEvent::ClaudeCodeEnd { exit_code, success });
+}
+
+/// Parse Claude Code's stream-json output and return displayable text
+fn parse_claude_json(line: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(line).ok()?;
+
+    let msg_type = json.get("type")?.as_str()?;
+
+    match msg_type {
+        // Assistant text streaming
+        "assistant" => {
+            let message = json.get("message")?;
+            let content = message.get("content")?.as_array()?;
+            for block in content {
+                if block.get("type")?.as_str()? == "text" {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            return Some(text.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        }
+        // Content block delta (streaming text chunks)
+        "content_block_delta" => {
+            let delta = json.get("delta")?;
+            if delta.get("type")?.as_str()? == "text_delta" {
+                let text = delta.get("text")?.as_str()?;
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+            None
+        }
+        // Tool use
+        "tool_use" => {
+            let tool_name = json.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
+            Some(format!("› {}", tool_name))
+        }
+        // Tool result
+        "tool_result" | "result" => {
+            // Don't show full tool results, just acknowledge
+            Some("└─ done".to_string())
+        }
+        // System messages
+        "system" => {
+            let text = json.get("message").and_then(|m| m.as_str())?;
+            Some(format!("ℹ {}", text))
+        }
+        _ => None,
+    }
 }
