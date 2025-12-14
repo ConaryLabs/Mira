@@ -280,6 +280,11 @@ fn format_vec(values: &[Value]) -> String {
         if first.contains_key("caller") && first.contains_key("callee") {
             return format::call_graph(values);
         }
+
+        // Work context entries (for session resume)
+        if first.contains_key("context_type") && first.contains_key("context_key") {
+            return format::work_context(values);
+        }
     }
 
     // Fallback: count + compact representation

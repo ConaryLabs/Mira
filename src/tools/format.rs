@@ -816,6 +816,41 @@ pub fn session_context(ctx: &Value) -> String {
     }
 }
 
+// === Work Context Formatter (for session resume) ===
+
+/// Format work context entries for session resume detection
+/// Outputs context_type keywords that the SessionStart hook looks for
+pub fn work_context(results: &[Value]) -> String {
+    if results.is_empty() {
+        return "No work context found.".to_string();
+    }
+
+    let mut types: Vec<&str> = Vec::new();
+
+    for r in results {
+        if let Some(ct) = r.get("context_type").and_then(|v| v.as_str()) {
+            if !types.contains(&ct) {
+                types.push(ct);
+            }
+        }
+    }
+
+    // Build output with keywords the SessionStart hook can detect
+    let mut out = String::new();
+
+    for ct in &types {
+        match *ct {
+            "active_todos" => out.push_str("active_todos: Found in-progress tasks\n"),
+            "active_plan" => out.push_str("active_plan: Found plan in progress\n"),
+            t if t.starts_with("working_doc") => out.push_str("working_doc: Found working documents\n"),
+            _ => out.push_str(&format!("{}: Found\n", ct)),
+        }
+    }
+
+    out.push_str(&format!("\n{} work context entries total", results.len()));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
