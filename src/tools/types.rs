@@ -274,6 +274,12 @@ pub struct SemanticCodeSearchRequest {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCodebaseStyleRequest {
+    #[schemars(description = "Project path (defaults to active project)")]
+    pub project_path: Option<String>,
+}
+
 // ============================================================================
 // Git Intelligence Tools
 // ============================================================================

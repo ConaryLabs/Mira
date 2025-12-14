@@ -556,6 +556,16 @@ impl MiraServer {
         Ok(vec_response(result, format!("No code found for '{}'", query)))
     }
 
+    #[tool(description = "Get codebase style metrics (function lengths, abstraction level).")]
+    async fn get_codebase_style(&self, Parameters(req): Parameters<GetCodebaseStyleRequest>) -> Result<CallToolResult, McpError> {
+        let project_path = match req.project_path {
+            Some(p) => p,
+            None => self.get_active_project().await.map(|p| p.path).unwrap_or_else(|| ".".to_string()),
+        };
+        let report = code_intel::analyze_codebase_style(self.db.as_ref(), &project_path).await.map_err(to_mcp_err)?;
+        Ok(text_response(format::style_report(&report)))
+    }
+
     // === Git Intelligence ===
 
     #[tool(description = "Get recent commits, optionally filtered.")]

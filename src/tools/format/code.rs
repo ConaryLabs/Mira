@@ -2,6 +2,7 @@
 // Formatters for code intelligence (symbols, commits, call graph, search)
 
 use serde_json::Value;
+use crate::tools::code_intel::StyleReport;
 
 /// Format index status
 pub fn index_status(action: &str, path: &str, stats: Option<&Value>) -> String {
@@ -130,4 +131,56 @@ pub fn call_graph(results: &[Value]) -> String {
     }
 
     out.trim_end().to_string()
+}
+
+/// Format style report for codebase analysis
+pub fn style_report(report: &StyleReport) -> String {
+    if report.total_functions == 0 {
+        return "No functions indexed yet. Run `index project` first.".to_string();
+    }
+
+    format!(
+        "Codebase Style (match this when writing code):\n\
+        - Average function: {:.1} lines\n\
+        - Distribution: {}% short (<10), {}% medium (10-30), {}% long (>30)\n\
+        - Total: {} functions ({} short, {} medium, {} long)\n\
+        - Abstraction level: {} ({} traits, {} structs)\n\
+        - Test coverage: {} test functions ({:.0}% of codebase)\n\
+        - Suggested max function length: {} lines",
+        report.avg_function_length,
+        report.short_pct as i64,
+        report.medium_pct as i64,
+        report.long_pct as i64,
+        report.total_functions,
+        report.short_functions,
+        report.medium_functions,
+        report.long_functions,
+        report.abstraction_level,
+        report.trait_count,
+        report.struct_count,
+        report.test_functions,
+        report.test_ratio * 100.0,
+        report.suggested_max_length
+    )
+}
+
+/// Format style report as concise context for LLM prompts
+pub fn style_context(report: &StyleReport) -> String {
+    if report.total_functions == 0 {
+        return String::new();
+    }
+
+    format!(
+        "**Codebase Style (match this):**\n\
+        - Average function: {:.0} lines\n\
+        - Distribution: {}% short, {}% medium, {}% long\n\
+        - Abstraction level: {}\n\
+        - Keep functions under {} lines unless complex logic requires more",
+        report.avg_function_length,
+        report.short_pct as i64,
+        report.medium_pct as i64,
+        report.long_pct as i64,
+        report.abstraction_level,
+        report.suggested_max_length
+    )
 }
