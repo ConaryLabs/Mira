@@ -1,10 +1,30 @@
 // src/tools/code_intel.rs
 // Code intelligence tools with semantic search
 
+use serde::Serialize;
 use sqlx::sqlite::SqlitePool;
 
 use super::semantic::{SemanticSearch, COLLECTION_CODE};
 use super::types::*;
+
+/// Codebase style analysis report
+#[derive(Debug, Clone, Serialize)]
+pub struct StyleReport {
+    pub total_functions: i64,
+    pub avg_function_length: f64,
+    pub short_functions: i64,   // <10 lines
+    pub medium_functions: i64,  // 10-30 lines
+    pub long_functions: i64,    // >30 lines
+    pub short_pct: f64,
+    pub medium_pct: f64,
+    pub long_pct: f64,
+    pub trait_count: i64,
+    pub struct_count: i64,
+    pub abstraction_level: String,  // "low", "moderate", "heavy"
+    pub test_functions: i64,
+    pub test_ratio: f64,
+    pub suggested_max_length: i64,
+}
 
 /// Get symbols from a file
 pub async fn get_symbols(db: &SqlitePool, req: GetSymbolsRequest) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -306,4 +326,111 @@ pub async fn semantic_code_search(
             })
         })
         .collect())
+}
+
+/// Analyze codebase style patterns for a project
+pub async fn analyze_codebase_style(db: &SqlitePool, project_path: &str) -> anyhow::Result<StyleReport> {
+    let path_pattern = format!("{}%", project_path);
+
+    // 1. Get function length stats
+    let length_stats: Option<(i64, f64)> = sqlx::query_as(
+        r#"SELECT COUNT(*), AVG(end_line - start_line + 1)
+           FROM code_symbols
+           WHERE symbol_type = 'function' AND file_path LIKE $1"#
+    )
+    .bind(&path_pattern)
+    .fetch_optional(db)
+    .await?;
+
+    let (total_functions, avg_length) = length_stats.unwrap_or((0, 0.0));
+
+    // 2. Get function length distribution
+    let distribution: Option<(i64, i64, i64)> = sqlx::query_as(
+        r#"SELECT
+            SUM(CASE WHEN (end_line - start_line + 1) < 10 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN (end_line - start_line + 1) BETWEEN 10 AND 30 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN (end_line - start_line + 1) > 30 THEN 1 ELSE 0 END)
+           FROM code_symbols
+           WHERE symbol_type = 'function' AND file_path LIKE $1"#
+    )
+    .bind(&path_pattern)
+    .fetch_optional(db)
+    .await?;
+
+    let (short, medium, long) = distribution.unwrap_or((0, 0, 0));
+
+    // 3. Count traits/interfaces vs concrete types
+    let trait_count: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*)
+           FROM code_symbols
+           WHERE symbol_type IN ('trait', 'interface') AND file_path LIKE $1"#
+    )
+    .bind(&path_pattern)
+    .fetch_one(db)
+    .await
+    .unwrap_or((0,));
+
+    let struct_count: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*)
+           FROM code_symbols
+           WHERE symbol_type IN ('struct', 'class') AND file_path LIKE $1"#
+    )
+    .bind(&path_pattern)
+    .fetch_one(db)
+    .await
+    .unwrap_or((0,));
+
+    // 4. Count test functions
+    let test_count: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*)
+           FROM code_symbols
+           WHERE symbol_type = 'function' AND is_test = 1 AND file_path LIKE $1"#
+    )
+    .bind(&path_pattern)
+    .fetch_one(db)
+    .await
+    .unwrap_or((0,));
+
+    // Calculate percentages
+    let total = total_functions.max(1) as f64;
+    let short_pct = (short as f64 / total * 100.0).round();
+    let medium_pct = (medium as f64 / total * 100.0).round();
+    let long_pct = (long as f64 / total * 100.0).round();
+    let test_ratio = test_count.0 as f64 / total;
+
+    // Determine abstraction level
+    let abstraction_ratio = trait_count.0 as f64 / (struct_count.0 + trait_count.0).max(1) as f64;
+    let abstraction_level = if abstraction_ratio < 0.1 {
+        "low"
+    } else if abstraction_ratio < 0.3 {
+        "moderate"
+    } else {
+        "heavy"
+    }.to_string();
+
+    // Suggested max length based on distribution (p75-ish)
+    let suggested_max = if long_pct > 20.0 {
+        40  // Codebase already has many long functions
+    } else if medium_pct > 50.0 {
+        30  // Medium-heavy codebase
+    } else {
+        20  // Prefer shorter functions
+    };
+
+    Ok(StyleReport {
+        total_functions,
+        avg_function_length: (avg_length * 10.0).round() / 10.0,
+        short_functions: short,
+        medium_functions: medium,
+        long_functions: long,
+        short_pct,
+        medium_pct,
+        long_pct,
+        trait_count: trait_count.0,
+        struct_count: struct_count.0,
+        abstraction_level,
+        test_functions: test_count.0,
+        test_ratio: (test_ratio * 100.0).round() / 100.0,
+        suggested_max_length: suggested_max,
+    })
 }

@@ -496,8 +496,38 @@ async fn get_code_context(
         seen.insert(key.to_string())
     });
 
+    // Get codebase style metrics if we have files to work with
+    let style_context = if let Some(first_file) = files.first() {
+        // Determine project path from first file
+        let project_path = first_file.split('/').take(4).collect::<Vec<_>>().join("/");
+        match code_intel::analyze_codebase_style(db, &project_path).await {
+            Ok(report) if report.total_functions > 0 => {
+                Some(serde_json::json!({
+                    "avg_function_length": report.avg_function_length,
+                    "function_distribution": {
+                        "short_pct": report.short_pct,
+                        "medium_pct": report.medium_pct,
+                        "long_pct": report.long_pct,
+                    },
+                    "abstraction_level": report.abstraction_level,
+                    "suggested_max_length": report.suggested_max_length,
+                    "guidance": format!(
+                        "Keep functions under {} lines. This codebase averages {:.0} lines per function with {} abstraction.",
+                        report.suggested_max_length,
+                        report.avg_function_length,
+                        report.abstraction_level
+                    ),
+                }))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     Ok(serde_json::json!({
         "related_files": related_files,
         "key_symbols": key_symbols,
+        "codebase_style": style_context,
     }))
 }

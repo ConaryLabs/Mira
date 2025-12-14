@@ -23,6 +23,7 @@ pub use entities::{
 pub use code::{
     index_status, code_search_results, symbols_list,
     commit_list, related_files, call_graph,
+    style_report, style_context,
 };
 pub use admin::{project_set, table_list, query_results, build_errors, guidelines};
 pub use sessions::{session_stored, session_results, session_start, session_context};
