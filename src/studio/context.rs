@@ -68,7 +68,7 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
         success: true,
     });
 
-    // === Block 3: Session context + rolling summary + memories (5m cache) ===
+    // === Block 3: Session context + rolling summary (5m cache - stable within conversation) ===
     let mut session_parts = Vec::new();
 
     // Rolling summary for this conversation
@@ -105,7 +105,12 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
         success: true,
     });
 
-    // Semantic memories based on recent messages
+    // Add session context as cached block (stable within conversation)
+    if !session_parts.is_empty() {
+        blocks.push(SystemBlock::cached(session_parts.join("\n\n")));
+    }
+
+    // === Block 4: Semantic memories (NOT cached - changes based on conversation) ===
     let recent = get_recent_messages_raw(&state.db, conversation_id, 3).await;
     if !recent.is_empty() {
         state.emit(WorkspaceEvent::ToolStart {
@@ -118,21 +123,17 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
                 action: "recall".to_string(),
                 content: format!("{} memories matched", memory_count),
             });
-            session_parts.push(format!(
+            // No cache_control - memories change based on conversation context
+            blocks.push(SystemBlock::text(format!(
                 "<memories>\nRelevant details from memory:\n{}\n</memories>",
                 memories
-            ));
+            )));
         }
         state.emit(WorkspaceEvent::ToolEnd {
             tool: "semantic_recall".to_string(),
-            result: Some(format!("{} memories", memory_count)),
+            result: Some(format!("{} memories (uncached)", memory_count)),
             success: true,
         });
-    }
-
-    // Combine all session context into one block with cache control
-    if !session_parts.is_empty() {
-        blocks.push(SystemBlock::cached(session_parts.join("\n\n")));
     }
 
     blocks
