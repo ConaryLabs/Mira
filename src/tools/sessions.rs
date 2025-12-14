@@ -16,7 +16,7 @@ pub async fn get_session_context(
     req: GetSessionContextRequest,
     project_id: Option<i64>,
 ) -> anyhow::Result<serde_json::Value> {
-    let limit = req.limit.unwrap_or(5) as i64;
+    let limit = req.limit.unwrap_or(5);
     let include_memories = req.include_memories.unwrap_or(true);
     let include_tasks = req.include_tasks.unwrap_or(true);
     let include_sessions = req.include_sessions.unwrap_or(true);

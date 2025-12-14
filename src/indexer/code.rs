@@ -1,6 +1,9 @@
 // src/indexer/code.rs
 // Code symbol extraction using tree-sitter
 
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::type_complexity)]
+
 use std::path::{Path, PathBuf};
 use anyhow::Result;
 use sqlx::sqlite::SqlitePool;

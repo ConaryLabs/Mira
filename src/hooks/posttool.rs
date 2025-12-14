@@ -153,7 +153,7 @@ fn extract_file_action(tool_name: &str, input: &serde_json::Value) -> Option<Act
     let display_path = if file_path.contains("/Mira/") {
         file_path.split("/Mira/").last().unwrap_or(file_path)
     } else {
-        file_path.split('/').last().unwrap_or(file_path)
+        file_path.split('/').next_back().unwrap_or(file_path)
     };
 
     let action_verb = if tool_name == "Edit" { "Edited" } else { "Created" };

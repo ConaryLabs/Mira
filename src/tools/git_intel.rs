@@ -166,13 +166,9 @@ pub async fn find_similar_fixes(
 
     // Try semantic search first for better "this error feels like..." matching
     if semantic.is_available() {
-        let filter = if let Some(ref category) = req.category {
-            Some(qdrant_client::qdrant::Filter::must([
-                qdrant_client::qdrant::Condition::matches("category", category.clone())
-            ]))
-        } else {
-            None
-        };
+        let filter = req.category.as_ref().map(|category| qdrant_client::qdrant::Filter::must([
+            qdrant_client::qdrant::Condition::matches("category", category.clone())
+        ]));
 
         match semantic.search(COLLECTION_CONVERSATION, &req.error, limit, filter).await {
             Ok(results) => {

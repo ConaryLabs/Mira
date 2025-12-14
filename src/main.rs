@@ -2,6 +2,8 @@
 // Mira Power Suit - MCP Server for Claude Code
 // CLI entry point
 
+#![allow(clippy::collapsible_if)] // Nested ifs often clearer than let-chains
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use axum::{
@@ -107,8 +109,7 @@ async fn auth_middleware(
     // Check Authorization header
     if let Some(auth_header) = req.headers().get("authorization") {
         if let Ok(auth_str) = auth_header.to_str() {
-            if auth_str.starts_with("Bearer ") {
-                let token = &auth_str[7..];
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 if token == expected_token {
                     return Ok(next.run(req).await);
                 }

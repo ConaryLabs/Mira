@@ -238,13 +238,9 @@ pub async fn semantic_code_search(
 
     // Try semantic search if available
     if semantic.is_available() {
-        let filter = if let Some(ref lang) = req.language {
-            Some(qdrant_client::qdrant::Filter::must([
-                qdrant_client::qdrant::Condition::matches("language", lang.clone())
-            ]))
-        } else {
-            None
-        };
+        let filter = req.language.as_ref().map(|lang| qdrant_client::qdrant::Filter::must([
+            qdrant_client::qdrant::Condition::matches("language", lang.clone())
+        ]));
 
         match semantic.search(COLLECTION_CODE, &req.query, limit, filter).await {
             Ok(results) if !results.is_empty() => {

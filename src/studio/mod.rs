@@ -492,7 +492,7 @@ async fn chat_stream_handler(
     let byte_stream = response.bytes_stream();
     let db = state.db.clone();
     let conv_id = conversation_id.clone();
-    let should_summarize = msg_count > 0 && msg_count as usize % ROLLING_SUMMARY_THRESHOLD == 0;
+    let should_summarize = msg_count > 0 && (msg_count as usize).is_multiple_of(ROLLING_SUMMARY_THRESHOLD);
     let summary_state = state.clone();
 
     let event_stream = async_stream::stream! {

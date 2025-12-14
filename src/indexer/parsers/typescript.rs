@@ -1,6 +1,8 @@
 // src/indexer/parsers/typescript.rs
 // TypeScript/JavaScript language parser using tree-sitter
 
+#![allow(clippy::too_many_arguments)]
+
 use anyhow::{anyhow, Result};
 use tree_sitter::{Parser, Node};
 
