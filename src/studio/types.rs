@@ -124,7 +124,6 @@ pub struct SystemBlock {
 
 impl SystemBlock {
     /// Create a text block without caching
-    #[allow(dead_code)]
     pub fn text(content: impl Into<String>) -> Self {
         Self {
             block_type: "text".to_string(),
