@@ -5,9 +5,8 @@ use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
 
-use super::semantic::SemanticSearch;
-
-const COLLECTION_CONVERSATION: &str = "mira_conversation";
+use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
+use super::semantic_helpers::{MetadataBuilder, store_with_logging};
 
 // === Parameter structs for consolidated correction tool ===
 
@@ -65,26 +64,19 @@ pub async fn record_correction(
     .await?;
 
     // Store in semantic search for fuzzy matching
-    if semantic.is_available() {
-        let content = format!(
-            "Correction: {} -> {}. Rationale: {}",
-            req.what_was_wrong,
-            req.what_is_right,
-            req.rationale.as_deref().unwrap_or("")
-        );
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("type".to_string(), serde_json::Value::String("correction".to_string()));
-        metadata.insert("correction_type".to_string(), serde_json::Value::String(req.correction_type.clone()));
-        metadata.insert("scope".to_string(), serde_json::Value::String(scope.to_string()));
-        metadata.insert("id".to_string(), serde_json::Value::String(id.clone()));
-        if let Some(pid) = project_id {
-            metadata.insert("project_id".to_string(), serde_json::Value::Number(pid.into()));
-        }
-
-        if let Err(e) = semantic.store(COLLECTION_CONVERSATION, &id, &content, metadata).await {
-            tracing::warn!("Failed to store correction in Qdrant: {}", e);
-        }
-    }
+    let content = format!(
+        "Correction: {} -> {}. Rationale: {}",
+        req.what_was_wrong,
+        req.what_is_right,
+        req.rationale.as_deref().unwrap_or("")
+    );
+    let metadata = MetadataBuilder::new("correction")
+        .string("correction_type", &req.correction_type)
+        .string("scope", scope)
+        .string("id", &id)
+        .project_id(project_id)
+        .build();
+    store_with_logging(semantic, COLLECTION_CONVERSATION, &id, &content, metadata).await;
 
     Ok(serde_json::json!({
         "status": "recorded",

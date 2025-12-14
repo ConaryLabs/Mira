@@ -3,10 +3,10 @@
 
 use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
+use super::semantic_helpers::{MetadataBuilder, store_with_logging};
 use super::types::*;
 
 /// Remember a fact, decision, or preference
@@ -64,26 +64,13 @@ pub async fn remember(
     .await?;
 
     // Also store in Qdrant for semantic search
-    if semantic.is_available() {
-        let mut metadata = HashMap::new();
-        metadata.insert("type".to_string(), serde_json::Value::String("memory_fact".to_string()));
-        metadata.insert("fact_type".to_string(), serde_json::Value::String(fact_type.clone()));
-        metadata.insert("key".to_string(), serde_json::Value::String(key.clone()));
-        if let Some(ref cat) = req.category {
-            metadata.insert("category".to_string(), serde_json::Value::String(cat.clone()));
-        }
-        if let Some(pid) = effective_project_id {
-            metadata.insert("project_id".to_string(), serde_json::Value::Number(pid.into()));
-        }
-
-        if let Err(e) = semantic.ensure_collection(COLLECTION_CONVERSATION).await {
-            tracing::warn!("Failed to ensure conversation collection: {}", e);
-        }
-
-        if let Err(e) = semantic.store(COLLECTION_CONVERSATION, &id, &req.content, metadata).await {
-            tracing::warn!("Failed to store memory in Qdrant: {}", e);
-        }
-    }
+    let metadata = MetadataBuilder::new("memory_fact")
+        .string("fact_type", &fact_type)
+        .string("key", &key)
+        .string_opt("category", req.category.as_ref())
+        .project_id(effective_project_id)
+        .build();
+    store_with_logging(semantic, COLLECTION_CONVERSATION, &id, &req.content, metadata).await;
 
     Ok(serde_json::json!({
         "status": "remembered",
