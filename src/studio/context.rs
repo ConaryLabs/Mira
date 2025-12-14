@@ -1,30 +1,35 @@
 // src/studio/context.rs
 // Context building for chat - persona, memories, work context
+// Now returns Vec<SystemBlock> for Anthropic prompt caching
 
 use sqlx::SqlitePool;
 use tracing::{info, error, debug};
 
 use crate::tools::{memory, types::RecallRequest};
-use super::types::{StudioState, WorkspaceEvent, ChatMessage, WorkContextCounts};
+use super::types::{StudioState, WorkspaceEvent, ChatMessage, SystemBlock, WorkContextCounts};
 
-/// Build tiered context: persona + work context + rolling summary + session context + semantic memories
-pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) -> String {
-    let mut prompt_parts = Vec::new();
+/// Build tiered context as SystemBlocks with cache_control for Anthropic prompt caching
+/// Returns Vec<SystemBlock> with strategic cache breakpoints:
+/// - Block 1: Persona (1h cache - rarely changes)
+/// - Block 2: Work context (5m cache - goals, tasks, corrections)
+/// - Block 3: Session context + memories (5m cache - conversation-specific)
+pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) -> Vec<SystemBlock> {
+    let mut blocks = Vec::new();
 
-    // 1. Load persona
+    // === Block 1: Persona (1h cache - rarely changes mid-session) ===
     state.emit(WorkspaceEvent::ToolStart {
         tool: "load_persona".to_string(),
         args: None,
     });
     let persona = load_persona(&state.db).await;
-    prompt_parts.push(persona);
+    blocks.push(SystemBlock::cached_1h(persona));
     state.emit(WorkspaceEvent::ToolEnd {
         tool: "load_persona".to_string(),
-        result: Some("loaded".to_string()),
+        result: Some("loaded (1h cache)".to_string()),
         success: true,
     });
 
-    // 2. Load current work context (goals, tasks, corrections, working docs)
+    // === Block 2: Work context (5m cache - changes occasionally) ===
     state.emit(WorkspaceEvent::ToolStart {
         tool: "load_work_context".to_string(),
         args: None,
@@ -55,27 +60,30 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
                 count: counts.documents,
             });
         }
-        prompt_parts.push(work_context);
+        blocks.push(SystemBlock::cached(work_context));
     }
     state.emit(WorkspaceEvent::ToolEnd {
         tool: "load_work_context".to_string(),
-        result: Some(format!("{} items", counts.total())),
+        result: Some(format!("{} items (5m cache)", counts.total())),
         success: true,
     });
 
-    // 3. Load rolling summary for this conversation (if exists)
+    // === Block 3: Session context + rolling summary + memories (5m cache) ===
+    let mut session_parts = Vec::new();
+
+    // Rolling summary for this conversation
     if let Some(rolling) = load_rolling_summary(&state.db, conversation_id).await {
         state.emit(WorkspaceEvent::Context {
             kind: "rolling_summary".to_string(),
             count: 1,
         });
-        prompt_parts.push(format!(
-            "\n<conversation_history>\nSummary of earlier parts of this conversation:\n{}\n</conversation_history>",
+        session_parts.push(format!(
+            "<conversation_history>\nSummary of earlier parts of this conversation:\n{}\n</conversation_history>",
             rolling
         ));
     }
 
-    // 4. Load recent session summaries from Claude Code sessions
+    // Recent session summaries from Claude Code
     state.emit(WorkspaceEvent::ToolStart {
         tool: "load_sessions".to_string(),
         args: None,
@@ -86,8 +94,8 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
             kind: "session_summaries".to_string(),
             count: session_count,
         });
-        prompt_parts.push(format!(
-            "\n<session_context>\nRecent work sessions (what we've been working on):\n{}\n</session_context>",
+        session_parts.push(format!(
+            "<session_context>\nRecent work sessions (what we've been working on):\n{}\n</session_context>",
             sessions
         ));
     }
@@ -97,8 +105,8 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
         success: true,
     });
 
-    // 5. Recall semantic memories based on recent messages
-    let recent = get_recent_messages(&state.db, conversation_id, 3).await;
+    // Semantic memories based on recent messages
+    let recent = get_recent_messages_raw(&state.db, conversation_id, 3).await;
     if !recent.is_empty() {
         state.emit(WorkspaceEvent::ToolStart {
             tool: "semantic_recall".to_string(),
@@ -110,8 +118,8 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
                 action: "recall".to_string(),
                 content: format!("{} memories matched", memory_count),
             });
-            prompt_parts.push(format!(
-                "\n<memories>\nRelevant details from memory:\n{}\n</memories>",
+            session_parts.push(format!(
+                "<memories>\nRelevant details from memory:\n{}\n</memories>",
                 memories
             ));
         }
@@ -122,10 +130,16 @@ pub async fn build_tiered_context(state: &StudioState, conversation_id: &str) ->
         });
     }
 
-    prompt_parts.join("\n")
+    // Combine all session context into one block with cache control
+    if !session_parts.is_empty() {
+        blocks.push(SystemBlock::cached(session_parts.join("\n\n")));
+    }
+
+    blocks
 }
 
-/// Get recent messages from the database
+/// Get recent messages from the database as ChatMessage with MessageContent
+/// The last user message gets cache_control for incremental caching
 pub async fn get_recent_messages(db: &SqlitePool, conversation_id: &str, limit: usize) -> Vec<ChatMessage> {
     let messages = sqlx::query_as::<_, (String, String)>(r#"
         SELECT role, content FROM studio_messages
@@ -140,9 +154,35 @@ pub async fn get_recent_messages(db: &SqlitePool, conversation_id: &str, limit: 
     .unwrap_or_default();
 
     // Reverse to get chronological order
-    messages.into_iter().rev().map(|(role, content)| {
-        ChatMessage { role, content }
+    let msgs: Vec<(String, String)> = messages.into_iter().rev().collect();
+    let len = msgs.len();
+
+    msgs.into_iter().enumerate().map(|(i, (role, content))| {
+        // Put cache_control on the last user message for incremental caching
+        if i == len - 1 && role == "user" {
+            ChatMessage::cached(role, content)
+        } else {
+            ChatMessage::text(role, content)
+        }
     }).collect()
+}
+
+/// Get recent messages as raw (role, content) tuples - for internal use
+async fn get_recent_messages_raw(db: &SqlitePool, conversation_id: &str, limit: usize) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (String, String)>(r#"
+        SELECT role, content FROM studio_messages
+        WHERE conversation_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+    "#)
+    .bind(conversation_id)
+    .bind(limit as i64)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .rev()
+    .collect()
 }
 
 /// Load the conversation's rolling summary
@@ -215,11 +255,11 @@ Example: "Let me handle that for you. [LAUNCH_CC]Add a new endpoint /api/users t
 }
 
 /// Recall memories relevant to the conversation (returns string and count)
-async fn recall_relevant_memories_with_count(state: &StudioState, messages: &[ChatMessage]) -> (String, usize) {
+async fn recall_relevant_memories_with_count(state: &StudioState, messages: &[(String, String)]) -> (String, usize) {
     let user_messages: Vec<&str> = messages
         .iter()
-        .filter(|m| m.role == "user")
-        .map(|m| m.content.as_str())
+        .filter(|(role, _)| role == "user")
+        .map(|(_, content)| content.as_str())
         .rev()
         .take(3)
         .collect();
