@@ -31,39 +31,240 @@ A single orchestrator (`mira chat`) that:
 
 ### Tool Implementation
 
-Without Claude CLI's built-in tools, we implement them via DeepSeek function calling:
+We implement Claude Code-style tools via DeepSeek function calling. Tool definitions based on [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts).
+
+#### Tool Definitions (JSON Schema for DeepSeek)
 
 ```rust
-let tools = vec![
-    Tool::new("read_file", "Read file contents", json!({
-        "type": "object",
-        "properties": {
-            "path": {"type": "string", "description": "File path to read"}
+fn define_tools() -> Vec<Tool> {
+    vec![
+        // READ FILE - Reads files from local filesystem
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "read_file".into(),
+                description: Some("Reads a file from the local filesystem. Supports text, code, images (PNG/JPG), PDFs, and Jupyter notebooks. Results returned in cat -n format with line numbers. Use absolute paths only.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute path to the file to read"
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Line number to start reading from (1-indexed). Omit to read from beginning."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of lines to read. Omit to read entire file (up to 2000 lines)."
+                        }
+                    },
+                    "required": ["file_path"]
+                }),
+            },
         },
-        "required": ["path"]
-    })),
-    Tool::new("write_file", "Write content to file", json!({...})),
-    Tool::new("edit_file", "Edit file with search/replace", json!({...})),
-    Tool::new("bash", "Run shell command", json!({...})),
-    Tool::new("glob", "Find files by pattern", json!({...})),
-    Tool::new("grep", "Search file contents", json!({...})),
-];
 
-// Mira executes tool calls, returns results to DeepSeek
-async fn execute_tool(call: &ToolCall) -> String {
-    match call.name.as_str() {
-        "read_file" => fs::read_to_string(&call.args["path"]).unwrap_or_else(|e| e.to_string()),
-        "bash" => run_command(&call.args["command"]).await,
-        // ...
-    }
+        // WRITE FILE - Creates or overwrites files
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "write_file".into(),
+                description: Some("Writes content to a file. Will overwrite existing files. IMPORTANT: You MUST read existing files before writing to them. Prefer editing existing files over creating new ones.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute path to the file to write"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Content to write to the file"
+                        }
+                    },
+                    "required": ["file_path", "content"]
+                }),
+            },
+        },
+
+        // EDIT FILE - Exact string replacement
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "edit_file".into(),
+                description: Some("Performs exact string replacement in files. MUST read the file first. The old_string must be unique in the file, or use replace_all for global replacement. Preserve exact indentation.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute path to the file to edit"
+                        },
+                        "old_string": {
+                            "type": "string",
+                            "description": "Exact text to find and replace (must be unique unless using replace_all)"
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "Text to replace old_string with"
+                        },
+                        "replace_all": {
+                            "type": "boolean",
+                            "description": "If true, replace all occurrences. Default false."
+                        }
+                    },
+                    "required": ["file_path", "old_string", "new_string"]
+                }),
+            },
+        },
+
+        // BASH - Execute shell commands
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "bash".into(),
+                description: Some("Executes bash commands. Use for git, npm, cargo, docker, etc. Do NOT use for file operations (use read_file, write_file, edit_file instead). Quote paths with spaces.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "The bash command to execute"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Brief 5-10 word description of what this command does"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Timeout in milliseconds. Default 120000 (2 min), max 600000 (10 min)."
+                        }
+                    },
+                    "required": ["command"]
+                }),
+            },
+        },
+
+        // GLOB - Find files by pattern
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "glob".into(),
+                description: Some("Fast file pattern matching. Supports patterns like '**/*.rs' or 'src/**/*.ts'. Returns matching files sorted by modification time.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Glob pattern to match files (e.g., '**/*.rs', 'src/**/*.ts')"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to search in. Defaults to current directory."
+                        }
+                    },
+                    "required": ["pattern"]
+                }),
+            },
+        },
+
+        // GREP - Search file contents
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "grep".into(),
+                description: Some("Powerful search built on ripgrep. Supports full regex. Use this instead of 'grep' or 'rg' bash commands.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Regex pattern to search for"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "File or directory to search. Defaults to current directory."
+                        },
+                        "glob": {
+                            "type": "string",
+                            "description": "Filter files by glob pattern (e.g., '*.rs', '**/*.ts')"
+                        },
+                        "output_mode": {
+                            "type": "string",
+                            "enum": ["content", "files_with_matches", "count"],
+                            "description": "Output mode: 'content' (matching lines), 'files_with_matches' (file paths only, default), 'count' (match counts)"
+                        },
+                        "case_insensitive": {
+                            "type": "boolean",
+                            "description": "Case insensitive search"
+                        }
+                    },
+                    "required": ["pattern"]
+                }),
+            },
+        },
+
+        // REMEMBER - Store in Mira memory
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "remember".into(),
+                description: Some("Store a fact, decision, or preference in Mira's persistent memory for future recall.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "The information to remember"
+                        },
+                        "fact_type": {
+                            "type": "string",
+                            "enum": ["preference", "decision", "context", "general"],
+                            "description": "Type of information being stored"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Optional category for filtering"
+                        }
+                    },
+                    "required": ["content"]
+                }),
+            },
+        },
+
+        // RECALL - Search Mira memory
+        Tool {
+            r#type: "function".into(),
+            function: Function {
+                name: "recall".into(),
+                description: Some("Search Mira's persistent memory using semantic similarity.".into()),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results to return. Default 5."
+                        }
+                    },
+                    "required": ["query"]
+                }),
+            },
+        },
+    ]
 }
 ```
 
-This is actually **better** because:
+This is actually **better** than Claude CLI because:
 - We control tool execution completely
 - Can add safety checks, logging, permissions
 - Tools integrate directly with Mira (no MCP overhead)
 - Can extend with Mira-specific tools (remember, recall, etc.)
+- Full visibility into what's happening
 
 ### Context Scoping
 
