@@ -471,24 +471,7 @@ pub async fn session_start(
         .fetch_one(db)
         .await?;
 
-    // 2. Get persona (single guideline - most important)
-    let persona: Option<String> = sqlx::query_scalar(
-        "SELECT content FROM coding_guidelines WHERE category = 'persona' ORDER BY priority DESC LIMIT 1"
-    )
-    .fetch_optional(db)
-    .await?;
-
-    // Extract just the first sentence or core identity from persona
-    let persona_summary = persona.as_ref().map(|p| {
-        // Find the first line that describes the persona
-        p.lines()
-            .find(|line| line.starts_with("You are") || line.contains("Core traits"))
-            .unwrap_or("Custom persona loaded")
-            .trim()
-            .to_string()
-    });
-
-    // 3. Count mira_usage guidelines (don't return content - just note they're loaded)
+    // 2. Count mira_usage guidelines (don't return content - just note they're loaded)
     let (usage_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM coding_guidelines WHERE category = 'mira_usage'"
     )
@@ -579,7 +562,7 @@ pub async fn session_start(
         project_name: name,
         project_path: path_str,
         project_type,
-        persona_summary,
+        persona_summary: None, // Persona only used in Studio chat, not Claude Code
         usage_guidelines_loaded: usage_count as usize,
         corrections: corrections.into_iter()
             .map(|(wrong, right)| CorrectionSummary { what_was_wrong: wrong, what_is_right: right })

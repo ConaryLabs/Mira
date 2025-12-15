@@ -136,10 +136,14 @@ pub struct CorrectionRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DocumentRequest {
-    #[schemars(description = "Action: list/search/get")]
+    #[schemars(description = "Action: list/search/get/ingest/delete")]
     pub action: String,
-    #[schemars(description = "Document ID (for get)")]
+    #[schemars(description = "Document ID (for get/delete)")]
     pub document_id: Option<String>,
+    #[schemars(description = "File path (for ingest)")]
+    pub path: Option<String>,
+    #[schemars(description = "Document name (for ingest, defaults to filename)")]
+    pub name: Option<String>,
     #[schemars(description = "Search query")]
     pub query: Option<String>,
     #[schemars(description = "Filter by type: pdf/markdown/text/code")]
