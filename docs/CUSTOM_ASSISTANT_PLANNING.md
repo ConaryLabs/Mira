@@ -16,12 +16,15 @@ A single orchestrator (`mira chat`) that:
 
 | Factor | Claude CLI | DeepSeek API |
 |--------|-----------|--------------|
+| Context window | 200K | **128K** |
+| Max output | ~8K | **8K** (deepseek-chat) |
 | Caching | Manual (`cache_control` headers) | **Auto** (just works) |
 | Min cache tokens | 1,024 | **64** |
-| Cache TTL | 5 minutes | **Disk-persistent** |
+| Cache TTL | 5 minutes | **Hours to days** |
 | Cache hit discount | 90% | **90%** |
 | Cache write cost | +25% | **Free** |
 | Base pricing | $3/M input, $15/M output (Sonnet 4.5) | **$0.28/M input, $0.42/M output** |
+| Rate limits | Tiered | **None** |
 | Tools | Built-in (Read, Write, Edit, Bash) | We implement |
 
 **Bottom line:** DeepSeek is ~10x cheaper with simpler caching. We trade built-in tools for massive cost savings - and we were going to wrap everything anyway.
@@ -225,12 +228,15 @@ Content-Type: application/json
 
 | Feature | Details |
 |---------|---------|
+| **Context window** | 128K tokens |
+| **Max output** | 8K tokens (deepseek-chat) |
 | **Auto-caching** | Enabled by default, no configuration needed |
-| **Cache granularity** | 64 tokens minimum |
-| **Cache persistence** | Disk-based, survives across requests |
-| **Function calling** | OpenAI-compatible tool format |
-| **Streaming** | SSE streaming responses |
+| **Cache granularity** | 64 tokens minimum storage unit |
+| **Cache TTL** | Hours to days (automatic cleanup when unused) |
+| **Function calling** | OpenAI-compatible, max 128 tools per request |
+| **Streaming** | SSE with `data:` prefix, `[DONE]` terminator |
 | **Pricing** | $0.028/M cache hit, $0.28/M cache miss, $0.42/M output |
+| **Rate limits** | None enforced |
 
 ### Basic Usage (Rust)
 
@@ -294,17 +300,23 @@ Mira: Stream to terminal, done
 
 ### Cache Behavior
 
-DeepSeek's disk cache works on **prefix matching**:
+DeepSeek's auto-cache works on **prefix matching** (from official docs):
 
 ```
 Request 1: [system prompt] + [context] + "fix auth bug"
            └─────────────────────────┘
-                    cached
+                    cached (if ≥64 tokens)
 
 Request 2: [system prompt] + [context] + "now add tests"
            └─────────────────────────┘
                  cache HIT (90% off)
 ```
+
+**Important notes from DeepSeek docs:**
+- Only the **repeated prefix** triggers cache hits
+- Minimum 64 tokens required for caching
+- Cache is "best-effort" - not guaranteed 100% hit rate
+- Cache auto-clears when unused (hours to days)
 
 Since our system prompt and context are prepended, they naturally form a stable prefix → high cache hit rate.
 
@@ -417,6 +429,16 @@ pub struct ResponseMessage {
     pub content: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+}
+
+/// Token usage with cache metrics (from DeepSeek API)
+#[derive(Deserialize, Debug)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub prompt_cache_hit_tokens: u32,    // Tokens served from cache (90% off)
+    pub prompt_cache_miss_tokens: u32,   // Tokens computed fresh
 }
 
 pub async fn chat(client: &Client, messages: &[Message], tools: &[Tool]) -> Result<ResponseMessage> {
@@ -843,7 +865,7 @@ Mira/
 | **Architecture** | Extend Mira binary | Add `mira chat` subcommand, reuse existing tools |
 | **Sessions** | Eliminated entirely | One neverending conversation, rolling summaries for context |
 | **Project detection** | Layered: .mira/ → git → package → cwd | Explicit config wins, then git root, then package files, then cwd |
-| **Context budget** | ~64k tokens per request | DeepSeek supports 64k context, auto-caches efficiently |
+| **Context budget** | 128K tokens per request | DeepSeek supports 128K context, 8K max output |
 | **Input library** | rustyline | Mature, history, completion, vi/emacs modes |
 
 ## Design Decisions (Detailed Analysis)
@@ -905,7 +927,7 @@ impl ContinuousContext {
 
 ### 1b. Context Management (Rolling Summaries)
 
-**Question:** How do we handle context growth with a 64k token limit?
+**Question:** How do we handle context growth with a 128K token limit?
 
 **Answer:** Mira proactively manages context with rolling summaries before we hit the limit.
 
@@ -1315,30 +1337,34 @@ file = "prompts/assistant.md"
 
 **Question:** How much Mira context to inject? What's the token budget?
 
-**DeepSeek V3.2 Specifications:**
+**DeepSeek V3.2 Specifications (from official docs):**
 
 | Spec | Value |
 |------|-------|
-| Context window | 64k tokens |
-| Input price | $0.28/M tokens |
+| Context window | **128K tokens** |
+| Max output | **8K tokens** (deepseek-chat) |
+| Input price (cache miss) | $0.28/M tokens |
+| Input price (cache hit) | $0.028/M tokens (90% off) |
 | Output price | $0.42/M tokens |
-| Cache hit price | $0.028/M tokens (90% off) |
 | Cache minimum | 64 tokens |
-| Cache persistence | Disk-based (survives across requests) |
+| Cache TTL | Hours to days (auto-cleanup) |
+| Rate limits | None |
 
 **Key insight:** We own the entire prompt. DeepSeek's auto-caching means we don't need to worry about `cache_control` headers - just keep the prefix stable.
 
 **DeepSeek caching details:**
-- Automatic caching enabled by default
-- Prefix matching: same prefix = cache hit
-- **64 token minimum** (vs 1,024 for Anthropic)
-- **Disk-persistent** (survives across API calls)
+- Automatic caching enabled by default, no configuration needed
+- Prefix matching: only the **repeated prefix** triggers cache hits
+- **64 token minimum** storage unit (vs 1,024 for Anthropic)
+- Cache TTL is "hours to days" - auto-cleared when unused
 - Cache writes are **free** (no premium like Anthropic's 25%)
+- Best-effort basis - not guaranteed 100% hit rate
 
 **Constraints:**
-- 64k context per request
+- 128K context per request (plenty of room)
+- 8K max output per response
 - More context = higher cost (but cache hits are cheap)
-- Keep system prompt + warm context under ~10k to leave room for conversation
+- Keep system prompt + warm context under ~20k to leave room for conversation + tool calls
 
 **Budget allocation (targets - measure after implementation):**
 
