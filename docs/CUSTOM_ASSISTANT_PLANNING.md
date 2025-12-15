@@ -1,16 +1,66 @@
 # Mira Chat - Planning Document
 
-**Power-armored Claude Code.** Same coding capabilities, but with persistent memory, code intelligence, and no MCP abstraction layer.
+**Power-armored coding assistant.** Persistent memory, code intelligence, cost-efficient inference.
 
 ## Vision
 
-**Sessions are the problem, not the solution.** Claude Code treats each session as isolated. We want the opposite: one continuous, neverending relationship.
+**Sessions are the problem, not the solution.** Traditional assistants treat each session as isolated. We want the opposite: one continuous, neverending relationship.
 
 A single orchestrator (`mira chat`) that:
-- Uses Claude CLI as the inference engine (Sonnet 4.5 / Haiku 4.5)
-- Injects rich context directly into prompts (no MCP round-trips)
+- Uses **DeepSeek V3.2** as the inference engine (cost-efficient, auto-caching)
+- Injects rich context directly into prompts
 - **Eliminates sessions entirely** - One conversation, forever
 - Mira IS the memory - the relationship persists across everything
+
+## Why DeepSeek Over Claude CLI?
+
+| Factor | Claude CLI | DeepSeek API |
+|--------|-----------|--------------|
+| Caching | Manual (`cache_control` headers) | **Auto** (just works) |
+| Min cache tokens | 1,024 | **64** |
+| Cache TTL | 5 minutes | **Disk-persistent** |
+| Cache hit discount | 90% | **90%** |
+| Cache write cost | +25% | **Free** |
+| Base pricing | $3/M input, $15/M output (Sonnet 4.5) | **$0.28/M input, $0.42/M output** |
+| Tools | Built-in (Read, Write, Edit, Bash) | We implement |
+
+**Bottom line:** DeepSeek is ~10x cheaper with simpler caching. We trade built-in tools for massive cost savings - and we were going to wrap everything anyway.
+
+### Tool Implementation
+
+Without Claude CLI's built-in tools, we implement them via DeepSeek function calling:
+
+```rust
+let tools = vec![
+    Tool::new("read_file", "Read file contents", json!({
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "File path to read"}
+        },
+        "required": ["path"]
+    })),
+    Tool::new("write_file", "Write content to file", json!({...})),
+    Tool::new("edit_file", "Edit file with search/replace", json!({...})),
+    Tool::new("bash", "Run shell command", json!({...})),
+    Tool::new("glob", "Find files by pattern", json!({...})),
+    Tool::new("grep", "Search file contents", json!({...})),
+];
+
+// Mira executes tool calls, returns results to DeepSeek
+async fn execute_tool(call: &ToolCall) -> String {
+    match call.name.as_str() {
+        "read_file" => fs::read_to_string(&call.args["path"]).unwrap_or_else(|e| e.to_string()),
+        "bash" => run_command(&call.args["command"]).await,
+        // ...
+    }
+}
+```
+
+This is actually **better** because:
+- We control tool execution completely
+- Can add safety checks, logging, permissions
+- Tools integrate directly with Mira (no MCP overhead)
+- Can extend with Mira-specific tools (remember, recall, etc.)
 
 ### Context Scoping
 
@@ -21,12 +71,13 @@ A single orchestrator (`mira chat`) that:
 
 When you `cd /home/peter/Mira`, code context switches. But the relationship continues - same memories, same corrections, same ongoing conversation.
 
-## What We Keep from Claude Code
+## What We Implement (Core Tools)
 
-- All built-in tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch
-- Session resume capability
-- Subagents (Task tool)
-- Streaming responses
+Built with DeepSeek function calling:
+- **File tools**: read_file, write_file, edit_file
+- **Shell tools**: bash, glob, grep
+- **Memory tools**: remember, recall (integrated with Mira DB)
+- **Streaming**: SSE response streaming to terminal
 
 ## What We Add (Power Armor)
 
@@ -36,12 +87,13 @@ When you `cd /home/peter/Mira`, code context switches. But the relationship cont
 - **Corrections** - Remember and apply user preferences
 - **Goals/Tasks** - Track work across sessions
 - **Project continuity** - Switch projects, carry context
+- **Rolling summaries** - Never lose context, just summarize older parts
 
-## What We Remove
+## What We Avoid
 
 - **Sessions entirely** - No start/end, one continuous conversation
 - **MCP abstraction** - Direct DB/Qdrant access, no serialization
-- **Tool call latency** - Memory is pre-loaded, not fetched on-demand
+- **Claude CLI dependency** - Direct API calls, we own the tool loop
 - **Context amnesia** - Mira remembers everything, always
 
 ## How It Works
@@ -54,18 +106,22 @@ Mira:
   2. Load: corrections, active goals, recent sessions
   3. Query: relevant code symbols, recent commits
   4. Build system prompt with all context
-  5. Spawn: claude --system-prompt "..." -- "fix the auth bug"
+  5. Call DeepSeek API with tools + context
   ↓
-Claude: uses Read/Edit/Bash to fix it, streams response
+DeepSeek: Returns tool calls (read_file, edit_file, etc.)
   ↓
-Mira: displays output, tracks session for resume
+Mira: Executes tools, returns results, loops until done
+  ↓
+DeepSeek: "I've fixed the auth bug by..."
+  ↓
+Mira: Stream to terminal, store in conversation history
 ```
 
 ---
 
-## Architecture Overview (Revised)
+## Architecture Overview
 
-**Key insight:** No MCP. Mira is the orchestrator. Claude is the inference engine.
+**Key insight:** Mira is the orchestrator. DeepSeek is the inference engine. We own the tool loop.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -75,7 +131,7 @@ Mira: displays output, tracks session for resume
 │  │  Input Layer                                             │   │
 │  │  - Readline (rustyline)                                  │   │
 │  │  - Slash commands: /remember, /recall, /tasks, /switch   │   │
-│  │  - Regular prompts → Claude                              │   │
+│  │  - Regular prompts → DeepSeek                            │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │                              ▼                                  │
@@ -85,22 +141,32 @@ Mira: displays output, tracks session for resume
 │  │  - Query Qdrant: semantic search for relevant context    │   │
 │  │  - Query code index: symbols, call graph, co-change      │   │
 │  │  - Build system prompt with all context injected         │   │
+│  │  - DeepSeek auto-caches (no manual cache_control!)       │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Claude Subprocess                                       │   │
-│  │  - Spawns: claude --system-prompt "..." -- "user prompt" │   │
-│  │  - Streams NDJSON response                               │   │
-│  │  - Claude has: Read, Write, Edit, Bash, Glob, Grep       │   │
+│  │  DeepSeek API Client                                     │   │
+│  │  - POST to api.deepseek.com/chat/completions             │   │
+│  │  - Stream SSE responses                                  │   │
+│  │  - Function calling for tools                            │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                  │
+│                              ▼                                  │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  Tool Executor (Mira-owned)                              │   │
+│  │  - read_file, write_file, edit_file                      │   │
+│  │  - bash, glob, grep                                      │   │
+│  │  - remember, recall (direct DB access)                   │   │
+│  │  - Execute → return result → continue conversation       │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  Response Handler                                        │   │
 │  │  - Stream to terminal                                    │   │
-│  │  - Track session ID for resume                           │   │
-│  │  - Optional: parse for auto-remember triggers            │   │
+│  │  - Loop until no more tool calls                         │   │
+│  │  - Rolling summaries for long conversations              │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -110,300 +176,414 @@ Mira: displays output, tracks session for resume
 │                    Mira Storage (Direct Access)                 │
 │  - SQLite: memories, corrections, goals, tasks, sessions        │
 │  - Qdrant: semantic embeddings (code, docs, memories)           │
-│  - No MCP serialization - direct Rust function calls            │
+│  - No MCP, no subprocess - direct Rust function calls           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**What Mira handles directly (no Claude):**
+**What Mira handles directly (slash commands):**
 - `/remember X` → insert into SQLite + Qdrant
 - `/recall X` → semantic search, display results
 - `/tasks`, `/goals`, `/status` → query and display
 - `/switch` → change project, reload context
 
-**What Claude handles (via subprocess):**
+**What DeepSeek handles (via API):**
 - Code understanding and generation
-- File operations (Read, Write, Edit)
-- Shell commands (Bash)
-- Search (Glob, Grep)
+- Deciding which tools to call
+- Reasoning about context
 
-**What we build:** Mira orchestrator + context injection
-**What we get for free:** Claude's built-in tools, agent loop, sessions
+**What Mira executes (tool calls from DeepSeek):**
+- File operations (read, write, edit)
+- Shell commands (bash)
+- Search (glob, grep)
+- Memory (remember, recall - integrated as tools too)
+
+**What we build:** Everything (orchestrator, tools, context, API client)
+**What we get for free:** DeepSeek's auto-caching, cheap inference
 
 ---
 
-## Claude Agent SDK
+## DeepSeek API Integration
 
-### What It Provides
+### API Overview
 
-The Agent SDK (formerly Claude Code SDK) is the same harness that powers Claude Code:
+DeepSeek provides an OpenAI-compatible API with automatic context caching:
 
-| Built-in Tool | Description |
-|---------------|-------------|
-| **Read** | Read any file in the working directory |
-| **Write** | Create new files |
-| **Edit** | Make precise edits to existing files |
-| **Bash** | Run terminal commands, scripts, git operations |
-| **Glob** | Find files by pattern (`**/*.ts`, `src/**/*.py`) |
-| **Grep** | Search file contents with regex |
-| **WebSearch** | Search the web for current information |
-| **WebFetch** | Fetch and parse web page content |
-| **Task** | Spawn subagents for complex subtasks |
+```
+POST https://api.deepseek.com/chat/completions
+Authorization: Bearer $DEEPSEEK_API_KEY
+Content-Type: application/json
 
-### Basic Usage
-
-```python
-from claude_agent_sdk import query, ClaudeAgentOptions
-
-async for message in query(
-    prompt="Find and fix the bug in auth.py",
-    options=ClaudeAgentOptions(
-        allowed_tools=["Read", "Edit", "Bash", "Glob", "Grep"],
-        mcp_servers={
-            "mira": {
-                "command": "/path/to/mira",
-                "env": {"DATABASE_URL": "sqlite://data/mira.db"}
-            }
-        }
-    )
-):
-    print(message)
+{
+  "model": "deepseek-chat",
+  "messages": [...],
+  "tools": [...],
+  "stream": true
+}
 ```
 
 ### Key Features
 
-**Sessions** - Resume conversations with full context:
-```python
-# First query - capture session ID
-async for message in query(prompt="Read the auth module"):
-    if message.subtype == 'init':
-        session_id = message.data.get('session_id')
+| Feature | Details |
+|---------|---------|
+| **Auto-caching** | Enabled by default, no configuration needed |
+| **Cache granularity** | 64 tokens minimum |
+| **Cache persistence** | Disk-based, survives across requests |
+| **Function calling** | OpenAI-compatible tool format |
+| **Streaming** | SSE streaming responses |
+| **Pricing** | $0.028/M cache hit, $0.28/M cache miss, $0.42/M output |
 
-# Later - resume with full context
-async for message in query(
-    prompt="Now find all places that call it",
-    options=ClaudeAgentOptions(resume=session_id)
-):
-    pass
+### Basic Usage (Rust)
+
+```rust
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<Message>,
+    tools: Vec<Tool>,
+    stream: bool,
+}
+
+#[derive(Serialize)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+async fn chat(client: &Client, messages: Vec<Message>, tools: Vec<Tool>) -> Result<Response> {
+    let request = ChatRequest {
+        model: "deepseek-chat".into(),
+        messages,
+        tools,
+        stream: true,
+    };
+
+    let response = client
+        .post("https://api.deepseek.com/chat/completions")
+        .bearer_auth(std::env::var("DEEPSEEK_API_KEY")?)
+        .json(&request)
+        .send()
+        .await?;
+
+    // Handle SSE stream...
+    Ok(response)
+}
 ```
 
-**Hooks** - Run custom code at key points:
-```python
-ClaudeAgentOptions(
-    hooks={
-        "PreToolUse": [{
-            "matcher": "Edit|Write",
-            "hooks": [{"type": "command", "command": "echo 'File changing...'"}]
-        }],
-        "PostToolUse": [{
-            "matcher": ".*",
-            "hooks": [{"type": "command", "command": "notify-send 'Tool complete'"}]
-        }]
-    }
-)
-```
-
-**MCP Servers** - Connect external tools (like Mira):
-```python
-ClaudeAgentOptions(
-    mcp_servers={
-        "mira": {"command": "./mira", "args": [], "env": {...}},
-        "playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}
-    }
-)
-```
-
-**Permissions** - Control which tools are allowed:
-```python
-ClaudeAgentOptions(
-    allowed_tools=["Read", "Glob", "Grep"],  # Read-only agent
-    permission_mode="bypassPermissions"
-)
-```
-
-### SDK Internals (Important!)
-
-The Python SDK is just a **thin subprocess wrapper**. Under the hood:
+### Tool Calling Flow
 
 ```
-SDK query()
-    ↓
-spawns: claude --output-format stream-json --verbose --print -- "prompt"
-    ↓
-reads: newline-delimited JSON (NDJSON) from stdout
-    ↓
-yields: parsed Message objects
+User: "Fix the auth bug in src/auth.rs"
+            ↓
+Mira: Build context, send to DeepSeek with tools
+            ↓
+DeepSeek: Returns tool_call: read_file("src/auth.rs")
+            ↓
+Mira: Executes read_file, returns content
+            ↓
+DeepSeek: Analyzes, returns tool_call: edit_file(...)
+            ↓
+Mira: Executes edit, returns success
+            ↓
+DeepSeek: "I've fixed the auth bug by..."
+            ↓
+Mira: Stream to terminal, done
 ```
 
-**Key files in SDK:**
-- `_internal/transport/subprocess_cli.py` - Spawns Claude CLI
-- `_internal/message_parser.py` - Parses NDJSON stream
+### Cache Behavior
 
-**CLI arguments the SDK uses:**
-- `--output-format stream-json` - NDJSON output
-- `--input-format stream-json` - NDJSON input (for streaming mode)
-- `--allowed-tools X,Y,Z` - Tool whitelist
-- `--mcp-config {...}` - MCP server configuration as JSON
-- `--system-prompt "..."` - Custom system prompt
-- `--resume SESSION_ID` - Resume a session
+DeepSeek's disk cache works on **prefix matching**:
 
-**This means:** We can trivially implement the same thing in Rust. The protocol is just subprocess + NDJSON over stdio.
+```
+Request 1: [system prompt] + [context] + "fix auth bug"
+           └─────────────────────────┘
+                    cached
+
+Request 2: [system prompt] + [context] + "now add tests"
+           └─────────────────────────┘
+                 cache HIT (90% off)
+```
+
+Since our system prompt and context are prepended, they naturally form a stable prefix → high cache hit rate.
 
 ---
 
 ## What We Build
 
-### Language Options
-
-Since the SDK is just subprocess + NDJSON, we have two viable paths:
-
-#### Option A: Python (Use SDK directly)
-
-```python
-# mira-assistant/main.py
-from claude_agent_sdk import query, ClaudeAgentOptions
-
-async def main():
-    ctx = ContinuousContext()
-    while True:
-        user_input = await get_input()
-        if user_input.startswith("/"):
-            await handle_command(user_input, ctx)
-            continue
-
-        async for message in query(
-            prompt=user_input,
-            options=ClaudeAgentOptions(
-                resume=ctx.current_session_id,
-                allowed_tools=ctx.get_allowed_tools(),
-                mcp_servers={"mira": ctx.mira_config},
-                cwd=ctx.current_project
-            )
-        ):
-            await stream_output(message)
-            ctx.update_from_message(message)
-```
-
-#### Option B: Rust (Single binary with Mira) ⭐ Recommended
+### Main Chat Loop
 
 ```rust
-// src/claude/mod.rs - Claude CLI wrapper (~400 lines total)
-use tokio::process::{Command, Child};
-use tokio::io::{BufReader, AsyncBufReadExt};
-use serde::{Deserialize, Serialize};
+// src/chat/mod.rs - Main chat loop
+use crate::tools::SemanticSearch;
+use crate::chat::{deepseek, context::ContinuousContext, tools::execute_tool};
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-pub enum Message {
-    #[serde(rename = "system")]
-    System { subtype: String, session_id: Option<String> },
-    #[serde(rename = "assistant")]
-    Assistant { message: AssistantMessage },
-    #[serde(rename = "result")]
-    Result { subtype: String, result: String },
-}
+pub async fn run(pool: SqlitePool, semantic: Option<SemanticSearch>) -> Result<()> {
+    let client = reqwest::Client::new();
+    let mut ctx = ContinuousContext::new(pool.clone(), semantic);
+    let mut editor = create_editor()?;
 
-#[derive(Debug, Serialize)]
-pub struct QueryOptions {
-    pub allowed_tools: Vec<String>,
-    pub mcp_servers: HashMap<String, McpServerConfig>,
-    pub system_prompt: Option<String>,
-    pub resume: Option<String>,
-    pub cwd: Option<PathBuf>,
-}
-
-pub fn query(prompt: &str, options: QueryOptions) -> impl Stream<Item = Result<Message>> {
-    async_stream::try_stream! {
-        let mut cmd = Command::new("claude");
-        cmd.args(["--output-format", "stream-json", "--verbose"]);
-
-        if !options.allowed_tools.is_empty() {
-            cmd.args(["--allowed-tools", &options.allowed_tools.join(",")]);
-        }
-        if let Some(ref session_id) = options.resume {
-            cmd.args(["--resume", session_id]);
-        }
-        if let Some(ref prompt_text) = options.system_prompt {
-            cmd.args(["--system-prompt", prompt_text]);
-        }
-        if !options.mcp_servers.is_empty() {
-            let config = serde_json::to_string(&options.mcp_servers)?;
-            cmd.args(["--mcp-config", &config]);
-        }
-
-        cmd.args(["--print", "--", prompt]);
-        cmd.stdout(Stdio::piped());
-
-        if let Some(cwd) = options.cwd {
-            cmd.current_dir(cwd);
-        }
-
-        let mut child = cmd.spawn()?;
-        let stdout = child.stdout.take().unwrap();
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-
-        while let Some(line) = lines.next_line().await? {
-            let msg: Message = serde_json::from_str(&line)?;
-            yield msg;
-        }
-    }
-}
-```
-
-```rust
-// src/main.rs - Main loop
-use mira::{db, tools, claude};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let pool = db::connect("sqlite://data/mira.db").await?;
-    let qdrant = db::connect_qdrant().await.ok();
-    let mut ctx = ContinuousContext::new(pool, qdrant);
+    println!("Mira Chat - Type /help for commands, /quit to exit");
 
     loop {
-        let input = read_input().await?;
+        let input = match editor.readline(">>> ") {
+            Ok(line) => line,
+            Err(_) => break,
+        };
+        editor.add_history_entry(&input)?;
 
-        // Slash commands handled directly by Mira (no Claude)
+        // Slash commands handled directly by Mira
         if input.starts_with('/') {
-            handle_command(&input, &mut ctx).await?;
+            if !handle_command(&input, &mut ctx).await? {
+                break; // /quit
+            }
             continue;
         }
 
-        // Build context-rich system prompt
+        // Add user message to conversation
+        ctx.add_message(Message::user(&input));
+
+        // Build messages with context-rich system prompt
         let system_prompt = ctx.build_system_prompt(&input).await?;
+        let messages = ctx.build_messages(&system_prompt);
+        let tools = define_tools();
 
-        let options = claude::QueryOptions {
-            system_prompt: Some(system_prompt),
-            resume: ctx.current_session_id.clone(),
-            cwd: Some(ctx.current_project.clone()),
-            // No MCP servers - Mira handles memory directly
-        };
+        // Tool loop: keep calling DeepSeek until no more tool calls
+        loop {
+            let response = deepseek::chat(&client, &messages, &tools).await?;
 
-        let mut stream = pin!(claude::query(&input, options));
-        while let Some(msg) = stream.next().await {
-            handle_message(msg?, &mut ctx).await?;
+            // Stream text content to terminal
+            if let Some(text) = &response.content {
+                print!("{}", text);
+            }
+
+            // Check for tool calls
+            if response.tool_calls.is_empty() {
+                ctx.add_message(Message::assistant(&response));
+                break;
+            }
+
+            // Execute tools and add results
+            for call in &response.tool_calls {
+                let result = execute_tool(call, &pool, &ctx).await;
+                ctx.add_message(Message::tool_result(&call.id, &result));
+            }
         }
+
+        println!(); // Newline after response
+        ctx.maybe_summarize().await?;
+    }
+
+    // Store session summary on exit
+    ctx.store_session_summary().await?;
+    Ok(())
+}
+```
+
+### DeepSeek API Client
+
+```rust
+// src/chat/deepseek.rs - DeepSeek API client
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use futures::StreamExt;
+
+const API_URL: &str = "https://api.deepseek.com/chat/completions";
+
+#[derive(Serialize)]
+pub struct ChatRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    pub stream: bool,
+}
+
+#[derive(Deserialize)]
+pub struct ChatResponse {
+    pub choices: Vec<Choice>,
+    pub usage: Option<Usage>,
+}
+
+#[derive(Deserialize)]
+pub struct Choice {
+    pub message: ResponseMessage,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ResponseMessage {
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCall>,
+}
+
+pub async fn chat(client: &Client, messages: &[Message], tools: &[Tool]) -> Result<ResponseMessage> {
+    let request = ChatRequest {
+        model: "deepseek-chat".into(),
+        messages: messages.to_vec(),
+        tools: tools.to_vec(),
+        stream: true,
+    };
+
+    let api_key = std::env::var("DEEPSEEK_API_KEY")?;
+
+    let response = client
+        .post(API_URL)
+        .bearer_auth(&api_key)
+        .json(&request)
+        .send()
+        .await?;
+
+    // Handle SSE streaming
+    let mut stream = response.bytes_stream();
+    let mut content = String::new();
+    let mut tool_calls = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let text = String::from_utf8_lossy(&chunk);
+
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data == "[DONE]" {
+                    break;
+                }
+                if let Ok(delta) = serde_json::from_str::<StreamDelta>(data) {
+                    if let Some(c) = delta.choices.first() {
+                        if let Some(ref text) = c.delta.content {
+                            print!("{}", text); // Stream to terminal
+                            content.push_str(text);
+                        }
+                        if let Some(ref calls) = c.delta.tool_calls {
+                            // Accumulate tool call chunks
+                            merge_tool_calls(&mut tool_calls, calls);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(ResponseMessage {
+        content: if content.is_empty() { None } else { Some(content) },
+        tool_calls,
+    })
+}
+
+### Tool Executor
+
+```rust
+// src/chat/tools.rs - Tool execution
+use serde_json::Value;
+use std::process::Command;
+
+pub async fn execute_tool(call: &ToolCall, pool: &SqlitePool, ctx: &ContinuousContext) -> String {
+    let args = &call.function.arguments;
+
+    match call.function.name.as_str() {
+        "read_file" => {
+            let path = args["path"].as_str().unwrap();
+            match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(e) => format!("Error reading file: {}", e),
+            }
+        }
+
+        "write_file" => {
+            let path = args["path"].as_str().unwrap();
+            let content = args["content"].as_str().unwrap();
+            match std::fs::write(path, content) {
+                Ok(_) => format!("Successfully wrote to {}", path),
+                Err(e) => format!("Error writing file: {}", e),
+            }
+        }
+
+        "edit_file" => {
+            let path = args["path"].as_str().unwrap();
+            let old = args["old_string"].as_str().unwrap();
+            let new = args["new_string"].as_str().unwrap();
+
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    if !content.contains(old) {
+                        return format!("Error: old_string not found in {}", path);
+                    }
+                    let updated = content.replace(old, new);
+                    match std::fs::write(path, &updated) {
+                        Ok(_) => format!("Successfully edited {}", path),
+                        Err(e) => format!("Error writing file: {}", e),
+                    }
+                }
+                Err(e) => format!("Error reading file: {}", e),
+            }
+        }
+
+        "bash" => {
+            let command = args["command"].as_str().unwrap();
+            match Command::new("sh").arg("-c").arg(command).output() {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if output.status.success() {
+                        stdout.to_string()
+                    } else {
+                        format!("Exit code {}\nstdout: {}\nstderr: {}",
+                            output.status.code().unwrap_or(-1), stdout, stderr)
+                    }
+                }
+                Err(e) => format!("Error running command: {}", e),
+            }
+        }
+
+        "glob" => {
+            let pattern = args["pattern"].as_str().unwrap();
+            match glob::glob(pattern) {
+                Ok(paths) => {
+                    let files: Vec<_> = paths.filter_map(|p| p.ok()).collect();
+                    files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n")
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "grep" => {
+            let pattern = args["pattern"].as_str().unwrap();
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            match Command::new("rg")
+                .args(["--files-with-matches", pattern, path])
+                .output() {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "remember" => {
+            let content = args["content"].as_str().unwrap();
+            let fact_type = args.get("fact_type").and_then(|v| v.as_str());
+            match crate::tools::memory::remember(pool, content, fact_type, None, None).await {
+                Ok(_) => "Remembered.".to_string(),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "recall" => {
+            let query = args["query"].as_str().unwrap();
+            match crate::tools::memory::recall(pool, query, None, None, Some(5)).await {
+                Ok(results) => {
+                    results.iter().map(|r| format!("• {}", r.content)).collect::<Vec<_>>().join("\n")
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        _ => format!("Unknown tool: {}", call.function.name),
     }
 }
 ```
 
-**Why Rust is now the better choice:**
-
-| Factor | Python | Rust |
-|--------|--------|------|
-| Startup time | ~500ms | ~10ms |
-| Binary distribution | Requires Python | Single binary |
-| Mira integration | SDK + MCP | Direct function calls |
-| Memory usage | Higher | Lower |
-| Maintenance | Depends on SDK updates | We control it |
-| Implementation effort | ~500 lines | ~600 lines |
-
-The Rust path gives us a **single `mira` binary** that does everything:
-- Interactive assistant mode (`mira chat`)
-- Daemon mode for file watching (`mira daemon`)
-- Direct database access (no serialization overhead)
-
-### Continuous Context Layer (Rust)
+### Continuous Context Layer
 
 ```rust
 // src/chat/context.rs
@@ -411,8 +591,9 @@ use sqlx::SqlitePool;
 use crate::tools::SemanticSearch;
 
 pub struct ContinuousContext {
-    pub current_session_id: Option<String>,
     pub current_project: PathBuf,
+    messages: Vec<Message>,           // Full conversation history
+    summaries: Vec<Summary>,          // Older chunks, searchable
     pool: SqlitePool,
     qdrant: Option<SemanticSearch>,
 }
@@ -420,30 +601,38 @@ pub struct ContinuousContext {
 impl ContinuousContext {
     pub fn new(pool: SqlitePool, qdrant: Option<SemanticSearch>) -> Self {
         Self {
-            current_session_id: None,
             current_project: detect_project(&std::env::current_dir().unwrap()),
+            messages: Vec::new(),
+            summaries: Vec::new(),
             pool,
             qdrant,
         }
     }
 
+    pub fn add_message(&mut self, msg: Message) {
+        self.messages.push(msg);
+    }
+
+    /// Build full message array for DeepSeek API
+    pub fn build_messages(&self, system_prompt: &str) -> Vec<Message> {
+        let mut result = vec![Message::system(system_prompt)];
+        result.extend(self.messages.clone());
+        result
+    }
+
     /// Build system prompt with all relevant context injected
     pub async fn build_system_prompt(&self, user_query: &str) -> Result<String> {
         let mut prompt = String::from(CORE_INSTRUCTIONS);
-
         prompt.push_str("\n\n<context>\n");
 
         // Project info
         prompt.push_str(&format!("Project: {}\n", self.current_project.display()));
 
-        // Semantic search for relevant memories based on user query
-        if let Some(ref qdrant) = self.qdrant {
-            let memories = qdrant.search("memories", user_query, 5).await?;
-            if !memories.is_empty() {
-                prompt.push_str("\n## Relevant memories\n");
-                for m in memories {
-                    prompt.push_str(&format!("- {}\n", m.content));
-                }
+        // Rolling summaries (older conversation)
+        if !self.summaries.is_empty() {
+            prompt.push_str("\n## Previous conversation summary\n");
+            for s in &self.summaries {
+                prompt.push_str(&format!("{}\n", s.content));
             }
         }
 
@@ -465,24 +654,36 @@ impl ContinuousContext {
             }
         }
 
-        // Recent session summaries
-        let sessions = tools::sessions::recent(&self.pool, 2).await?;
-        if !sessions.is_empty() {
-            prompt.push_str("\n## Recent work\n");
-            for s in sessions {
-                prompt.push_str(&format!("- {}\n", s.summary));
+        prompt.push_str("</context>\n\n");
+
+        // Semantic memories (uncached - query dependent)
+        if let Some(ref qdrant) = self.qdrant {
+            let memories = qdrant.search("memories", user_query, 5).await?;
+            if !memories.is_empty() {
+                prompt.push_str("<relevant_memories>\n");
+                for m in memories {
+                    prompt.push_str(&format!("- {}\n", m.content));
+                }
+                prompt.push_str("</relevant_memories>");
             }
         }
-
-        prompt.push_str("</context>");
 
         Ok(prompt)
     }
 
-    pub fn update_from_message(&mut self, msg: &claude::Message) {
-        if let claude::Message::System { subtype: "init", session_id } = msg {
-            self.current_session_id = session_id.clone();
+    /// Summarize older messages when context grows too large
+    pub async fn maybe_summarize(&mut self) -> Result<()> {
+        let token_estimate = self.messages.len() * 100; // Rough estimate
+
+        if token_estimate > 40_000 {
+            let split = self.messages.len() / 2;
+            let to_summarize: Vec<_> = self.messages.drain(..split).collect();
+
+            // Generate summary (could use DeepSeek for this too)
+            let summary = generate_summary(&to_summarize);
+            self.summaries.push(summary);
         }
+        Ok(())
     }
 }
 ```
@@ -561,16 +762,13 @@ pub async fn handle_command(input: &str, ctx: &mut ContinuousContext) -> Result<
 Mira/
 ├── src/
 │   ├── main.rs                  # Entry point (add "chat" subcommand)
-│   ├── claude/                  # NEW: Claude CLI wrapper
-│   │   ├── mod.rs               # Query function, message types
-│   │   ├── options.rs           # QueryOptions builder
-│   │   └── stream.rs            # NDJSON stream parser
 │   ├── chat/                    # NEW: Interactive assistant
 │   │   ├── mod.rs               # Main chat loop
+│   │   ├── deepseek.rs          # DeepSeek API client
 │   │   ├── context.rs           # ContinuousContext
+│   │   ├── tools.rs             # Tool executor
 │   │   ├── commands.rs          # Slash command handlers
-│   │   ├── input.rs             # Readline, history
-│   │   └── output.rs            # Streaming output, formatting
+│   │   └── input.rs             # Readline, history
 │   ├── tools/                   # Existing Mira tools (reused directly!)
 │   │   ├── memory.rs
 │   │   ├── sessions.rs
@@ -589,40 +787,46 @@ Mira/
 
 ## Implementation Phases
 
-### Phase 1: Claude CLI Wrapper (~400 lines)
-- [x] Research Agent SDK / CLI protocol
-- [x] Document NDJSON message format
-- [ ] `src/claude/mod.rs` - Message types, query function
-- [ ] `src/claude/options.rs` - QueryOptions builder
-- [ ] `src/claude/stream.rs` - NDJSON parser
-- [ ] Test: spawn claude, stream responses
+### Phase 1: DeepSeek API Client (~300 lines)
+- [ ] `src/chat/deepseek.rs` - API types and client
+- [ ] SSE streaming response parser
+- [ ] Tool call accumulation
+- [ ] Error handling and retries
+- [ ] Test: basic chat completion
 
-### Phase 2: Basic Chat Loop (~200 lines)
+### Phase 2: Tool Executor (~400 lines)
+- [ ] `src/chat/tools.rs` - Tool definitions and executor
+- [ ] File tools: read_file, write_file, edit_file
+- [ ] Shell tools: bash, glob, grep
+- [ ] Memory tools: remember, recall (integrate with existing)
+- [ ] Test: tool execution loop
+
+### Phase 3: Basic Chat Loop (~200 lines)
 - [ ] `src/chat/mod.rs` - Main loop
-- [ ] `src/chat/output.rs` - Stream messages to terminal
 - [ ] Add `mira chat` subcommand to main.rs
-- [ ] Test: interactive conversation works
+- [ ] Stream responses to terminal
+- [ ] Test: interactive conversation with tools
 
-### Phase 3: Continuous Context (~300 lines)
+### Phase 4: Continuous Context (~300 lines)
 - [ ] `src/chat/context.rs` - ContinuousContext struct
 - [ ] Project detection (cwd → git root)
-- [ ] Session tracking (capture session_id from init message)
-- [ ] Auto-save session on exit/switch
-- [ ] Warm context injection from Mira
+- [ ] Conversation history management
+- [ ] Rolling summaries when context grows
+- [ ] Warm context injection from Mira DB
 
-### Phase 4: Slash Commands (~200 lines)
+### Phase 5: Slash Commands (~200 lines)
 - [ ] `src/chat/commands.rs` - Command handlers
 - [ ] `/switch`, `/status`, `/remember`, `/recall`, `/tasks`
 - [ ] Direct Mira tool calls (no MCP overhead)
 
-### Phase 5: Polish
+### Phase 6: Polish
 - [ ] `rustyline` for readline (history, completion)
 - [ ] Ctrl+C handling (cancel current query)
 - [ ] Pretty output formatting (markdown rendering?)
-- [ ] Config file support
+- [ ] Config file support (DEEPSEEK_API_KEY, etc.)
 - [ ] Error recovery
 
-**Total new code: ~1100 lines** (plus existing Mira tools reused)
+**Total new code: ~1400 lines** (plus existing Mira tools reused)
 
 ---
 
@@ -630,66 +834,385 @@ Mira/
 
 | Question | Decision | Rationale |
 |----------|----------|-----------|
-| **Language** | Rust | Single binary, direct Mira integration, fast startup. SDK is just subprocess+NDJSON - easy to implement |
-| **Tool implementation** | Claude CLI built-ins | We spawn `claude` CLI which has Read/Write/Edit/Bash/etc |
+| **Language** | Rust | Single binary, direct Mira integration, fast startup |
+| **LLM Provider** | DeepSeek V3.2 | 10x cheaper, auto-caching, disk-persistent cache |
+| **Tool implementation** | Mira-owned | We implement read/write/edit/bash/etc via function calling |
 | **Mira integration** | Context injection | Query DB/Qdrant, inject into system prompt - no MCP |
-| **Context strategy** | Claude sessions + Mira for cross-session | Claude handles within-session, Mira handles across-session |
-| **Multi-file editing** | Claude CLI Edit tool | Already implemented in Claude Code |
+| **Context strategy** | Rolling summaries + Mira context | Mira handles all context management, DeepSeek is stateless |
+| **Multi-file editing** | Custom edit_file tool | Simple search/replace, can extend later |
 | **Architecture** | Extend Mira binary | Add `mira chat` subcommand, reuse existing tools |
-| **Sessions** | Eliminated (user POV) | Claude sessions are implementation detail; Mira provides continuity |
+| **Sessions** | Eliminated entirely | One neverending conversation, rolling summaries for context |
 | **Project detection** | Layered: .mira/ → git → package → cwd | Explicit config wins, then git root, then package files, then cwd |
-| **Context budget** | Claude: ~24k (built-in) + Mira: ~2k (appended) | Claude CLI includes 24k system prompt; we add ~2k warm context |
+| **Context budget** | ~64k tokens per request | DeepSeek supports 64k context, auto-caches efficiently |
 | **Input library** | rustyline | Mature, history, completion, vi/emacs modes |
 
 ## Design Decisions (Detailed Analysis)
 
 ### 1. Sessionless Design
 
-**Question:** How do we achieve "no sessions" when Claude CLI uses sessions internally?
+**Question:** How do we achieve "no sessions" with a stateless API like DeepSeek?
 
-**Answer:** Claude sessions become an **implementation detail**, hidden from the user. Mira provides continuity.
+**Answer:** Mira owns the conversation state. DeepSeek is stateless - we send the full context each request.
 
 ```
 User's mental model:     One neverending conversation
                               ↓
-Mira's job:              Maintain continuity across Claude sessions
+Mira's job:              Maintain conversation history + rolling summaries
                               ↓
-Claude CLI:              Sessions are just context windows (implementation detail)
+DeepSeek API:            Stateless - receives full context each request
 ```
 
 **How it works:**
 
 1. User talks to Mira - no concept of "starting" or "ending" anything
-2. Mira tracks a Claude session ID internally for context efficiency
-3. When context gets stale or fills up:
-   - Mira extracts key information (decisions, context, progress)
-   - Stores in SQLite/Qdrant
-   - Starts fresh Claude session with rich context injection
+2. Mira maintains the conversation history in memory
+3. When context grows too large:
+   - Mira summarizes older portions
+   - Stores summaries in SQLite/Qdrant
+   - Keeps recent conversation in full fidelity
    - User never notices - conversation continues seamlessly
 
 **Implementation:**
 
 ```rust
 impl ContinuousContext {
-    /// Get session ID, creating new one if needed (transparent to user)
-    async fn ensure_claude_session(&mut self) -> Result<Option<String>> {
-        // If we have a recent session, reuse it
-        if let Some(ref session) = self.claude_session {
-            if session.is_usable() {
-                return Ok(Some(session.id.clone()));
-            }
-            // Session is stale - extract and store context before dropping
-            self.persist_session_context(session).await?;
+    /// Build full message array for DeepSeek (stateless API)
+    pub fn build_messages(&self, system_prompt: &str) -> Vec<Message> {
+        let mut messages = vec![Message::system(system_prompt)];
+
+        // Include rolling summaries if context was summarized
+        if !self.summaries.is_empty() {
+            let summary_text = self.summaries.iter()
+                .map(|s| s.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            messages.push(Message::system(&format!(
+                "<conversation_summary>\n{}\n</conversation_summary>",
+                summary_text
+            )));
         }
 
-        // Start fresh - Mira's context injection handles continuity
-        self.claude_session = None;
-        Ok(None) // Claude will create new session, Mira injects context
+        // Full recent conversation
+        messages.extend(self.messages.clone());
+        messages
     }
 }
 ```
 
-**Key insight:** The user never sees sessions. They just talk to Mira. Mira handles the plumbing.
+**Key insight:** The user never sees sessions. They just talk to Mira. DeepSeek is stateless - Mira provides all state.
+
+---
+
+### 1b. Context Management (Rolling Summaries)
+
+**Question:** How do we handle context growth with a 64k token limit?
+
+**Answer:** Mira proactively manages context with rolling summaries before we hit the limit.
+
+```
+Conversation grows...
+  ↓
+Mira (proactively):
+  1. Summarize older chunks → store in SQLite/Qdrant
+  2. Drop summarized content from active context
+  3. Keep recent conversation in full fidelity
+  ↓
+Next query:
+  1. Semantic search finds relevant old context
+  2. Re-inject only what's relevant to current query
+  3. Send curated context to DeepSeek
+```
+
+**Why rolling summaries work well:**
+
+| Naive Approach | Mira Rolling Summaries |
+|----------------|------------------------|
+| Hit limit, fail | Proactive, never hit limit |
+| Lose old context | Old context summarized + searchable |
+| One-size-fits-all | Query-relevant re-injection |
+| No control | Full control over what's kept |
+
+**Implementation sketch:**
+
+```rust
+impl ContinuousContext {
+    /// Check if we should summarize older context
+    async fn maybe_summarize(&mut self) -> Result<()> {
+        let recent_tokens = estimate_tokens(&self.recent_messages);
+
+        // Keep ~50k tokens of recent conversation, summarize rest
+        if recent_tokens > 50_000 {
+            let to_summarize = self.recent_messages.drain(..self.recent_messages.len() / 2);
+            let summary = self.generate_summary(to_summarize).await?;
+
+            // Store summary with embeddings for future retrieval
+            self.store_conversation_chunk(&summary).await?;
+        }
+        Ok(())
+    }
+
+    /// Build context with semantic re-injection of old content
+    async fn build_context(&self, query: &str) -> String {
+        let mut ctx = String::new();
+
+        // Always include: corrections, goals, recent conversation
+        ctx.push_str(&self.format_corrections());
+        ctx.push_str(&self.format_active_goals());
+        ctx.push_str(&self.format_recent_messages());
+
+        // Semantic re-injection: find old context relevant to this query
+        let relevant_old = self.qdrant.search("conversations", query, 3).await?;
+        if !relevant_old.is_empty() {
+            ctx.push_str("\n## Relevant prior context\n");
+            for chunk in relevant_old {
+                ctx.push_str(&chunk.summary);
+            }
+        }
+
+        ctx
+    }
+}
+```
+
+**Key insight:** Old conversation isn't lost - it's summarized and searchable. Relevant history resurfaces automatically via semantic match.
+
+**Important: Context-aware retrieval**
+
+Not all context ages the same way:
+
+| Type | Freshness | Source | Example |
+|------|-----------|--------|---------|
+| **Code** | Current only | Daemon/file watcher index | Symbols, call graphs, file contents |
+| **Decisions** | Timeless | Memory DB | "We chose PostgreSQL over MySQL because..." |
+| **Preferences** | Timeless | Corrections DB | "Use .expect() not .unwrap()" |
+| **Conversations about code** | Stale quickly | DON'T re-inject | Old discussion about auth bug (code has changed) |
+| **Conversations about architecture** | Long-lived | Memory DB | "The system uses event sourcing" |
+
+```rust
+async fn build_context(&self, query: &str) -> String {
+    // Code context: ALWAYS fresh from daemon index
+    let code_symbols = self.code_index.search_current(&query).await?;
+
+    // Non-code context: semantic search across time
+    let memories = self.qdrant.search("memories", &query, 5).await?;
+    let corrections = self.db.get_relevant_corrections(&query).await?;
+
+    // Conversation history: recent only, old stuff is summarized
+    // Don't re-inject old code discussions - the code has changed
+    let recent_conversation = self.get_recent_messages(20);
+
+    // ...
+}
+```
+
+**Key insight:** Code is ephemeral (index it live). Knowledge is persistent (store it forever).
+
+**The Gap Problem**
+
+Naive approach creates blind spots:
+
+```
+Messages 1-50:    summarized ✓
+Messages 51-94:   LIMBO (not summarized, not "recent") ✗
+Messages 95-100:  recent ✓
+```
+
+**Solution: Overlapping coverage with no gaps**
+
+```
+                    [------------ CONTEXT WINDOW ------------]
+Summarized:         [====1-50====]
+Unsummarized buffer:              [=========51-100==========]
+                                                   ↑
+                                            current message
+
+Rule: Everything since last summary stays in context (full fidelity)
+      Only summarize when buffer would exceed budget
+```
+
+Implementation:
+
+```rust
+struct ConversationContext {
+    summaries: Vec<Summary>,           // Older chunks, searchable
+    buffer: Vec<Message>,              // Everything since last summary (full)
+    buffer_token_count: usize,
+}
+
+impl ConversationContext {
+    fn maybe_summarize(&mut self) {
+        // Only summarize when buffer exceeds threshold
+        if self.buffer_token_count > 40_000 {
+            // Summarize older half of buffer
+            let split = self.buffer.len() / 2;
+            let to_summarize: Vec<_> = self.buffer.drain(..split).collect();
+
+            let summary = generate_summary(&to_summarize);
+            self.summaries.push(summary);
+
+            // Remaining buffer stays in full fidelity - NO GAP
+            self.recalculate_tokens();
+        }
+    }
+
+    fn build_context(&self, query: &str) -> String {
+        let mut ctx = String::new();
+
+        // Semantic search across ALL summaries
+        let relevant = semantic_search(&self.summaries, query);
+        for s in relevant {
+            ctx.push_str(&s.content);
+        }
+
+        // Full buffer - everything since last summary
+        for msg in &self.buffer {
+            ctx.push_str(&msg.format());
+        }
+
+        ctx
+    }
+}
+```
+
+**Key insight:** Never have messages in limbo. Either they're in the buffer (full) or they're summarized (searchable). The handoff is seamless.
+
+**Cache-Optimized Injection Order**
+
+DeepSeek's auto-caching works on prefixes - same prefix = cache hit. Order content from most stable to least stable:
+
+```
+[CACHED PREFIX - stable, high cache hit rate]
+├── 1. Persona                    (1h TTL - almost never changes)
+├── 2. Summaries                  (5m TTL - only grows, prefix stable)
+├── 3. Work context               (5m TTL - goals/tasks/corrections)
+├── 4. Conversation buffer        (5m TTL - grows but prefix stable)
+│
+[UNCACHED SUFFIX - changes per query]
+├── 5. Semantic memories          (query-dependent, different every time)
+└── 6. Current user message
+```
+
+Why this order maximizes cache hits:
+
+| Position | Content | Cache Behavior |
+|----------|---------|----------------|
+| 1 | Persona | Same across all queries → always hits |
+| 2 | Summaries | Append-only, old summaries unchanged → prefix hits |
+| 3 | Work context | Changes occasionally, but prefix stable within session |
+| 4 | Buffer | New messages append, old unchanged → prefix hits |
+| 5 | Semantic memories | Different per query → never cached (that's fine) |
+| 6 | User message | Always different → never cached |
+
+```rust
+fn build_prompt(&self, query: &str) -> Vec<SystemBlock> {
+    vec![
+        // Cached blocks (stable prefix)
+        SystemBlock::cached_1h(self.persona.clone()),
+        SystemBlock::cached(self.format_summaries()),
+        SystemBlock::cached(self.format_work_context()),
+        SystemBlock::cached(self.format_buffer()),
+
+        // Uncached blocks (dynamic suffix)
+        SystemBlock::text(self.semantic_search(query)),
+        // User message goes in messages array, not system
+    ]
+}
+```
+
+**Key insight:** Put stable stuff first. Semantic memories are intentionally last because they SHOULD change per query - that's the point.
+
+**Code Intelligence = Natural Chunking**
+
+We don't pass raw files - the indexer breaks code into cache-friendly logical units:
+
+```
+Raw file approach (bad for caching):
+  file.rs (500 lines) → any change = full recache
+
+Code intelligence approach (cache-friendly):
+  symbol: auth::validate_token    [cached ✓]
+  symbol: auth::refresh_token     [CHANGED - recache]
+  symbol: auth::revoke_token      [cached ✓]
+  call_graph edges                [cached ✓]
+  imports/dependencies            [cached ✓]
+```
+
+The daemon/indexer already chunks by:
+- Functions/methods (with signatures + bodies)
+- Classes/structs
+- Import relationships
+- Call graph edges
+
+When injecting code context, we inject **symbols relevant to the query**, not whole files. Each symbol is a stable, cacheable unit. Only modified symbols need recaching.
+
+```rust
+fn inject_code_context(&self, query: &str) -> Vec<SystemBlock> {
+    // Semantic search finds relevant symbols (already chunked)
+    let symbols = self.code_index.search(query, 10).await;
+
+    // Each symbol is a cacheable block
+    symbols.iter().map(|sym| {
+        SystemBlock::cached(format!(
+            "// {}::{}\n{}",
+            sym.file_path, sym.name, sym.body
+        ))
+    }).collect()
+}
+```
+
+**Key insight:** The indexer isn't just for search - it's the chunking strategy for cache-efficient code injection.
+
+**Future: Context-Aware Caching**
+
+Not all content should be cached equally. The file watcher could track modification patterns:
+
+```
+Hot (actively editing):   Don't cache - changing too fast, cache writes wasted
+Warm (recent edits):      Short TTL cache - might change soon
+Cold (stable):            Aggressive caching - high hit rate
+```
+
+Detection heuristics:
+- Time since last modification
+- Edit frequency (3 edits in 5 minutes = hot)
+- Explicit signals ("working on this file" vs "reference file")
+
+This applies to everything the watcher processes:
+- Code files → symbols chunked, cache based on stability
+- Docs → sections chunked, cache based on stability
+- Even conversation chunks → recent = hot, older = cold
+
+```rust
+enum CacheStrategy {
+    Hot,        // No cache_control
+    Warm,       // cache_control: 5m
+    Cold,       // cache_control: 1h
+}
+
+fn cache_strategy_for(path: &Path, last_modified: Duration) -> CacheStrategy {
+    if last_modified < Duration::minutes(5) { CacheStrategy::Hot }
+    else if last_modified < Duration::hours(1) { CacheStrategy::Warm }
+    else { CacheStrategy::Cold }
+}
+```
+
+**Key insight:** Cache what's stable, don't waste cache writes on hot content.
+
+**Reference implementation:** Studio already does this - see `src/studio/context.rs`:
+
+```
+build_tiered_context() returns Vec<SystemBlock>:
+├── Block 1: Persona (1h cache - rarely changes)
+├── Block 2: Work context (5m cache - goals, tasks, corrections, working docs)
+├── Block 3: Session context + rolling summary (5m cache - stable within conversation)
+└── Block 4: Semantic memories (NO cache - changes based on user query)
+```
+
+Key patterns to reuse:
+- `load_rolling_summary()` - Summarized older conversation chunks
+- `recall_relevant_memories()` - Semantic search based on recent user messages
+- `SystemBlock::cached()` vs `SystemBlock::text()` - Strategic cache control
+- Work context loaded but flagged as "background awareness" to avoid steering conversation
 
 ---
 
@@ -792,35 +1315,30 @@ file = "prompts/assistant.md"
 
 **Question:** How much Mira context to inject? What's the token budget?
 
-**Research: Claude Code's actual system prompt**
+**DeepSeek V3.2 Specifications:**
 
-Measured by [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts):
+| Spec | Value |
+|------|-------|
+| Context window | 64k tokens |
+| Input price | $0.28/M tokens |
+| Output price | $0.42/M tokens |
+| Cache hit price | $0.028/M tokens (90% off) |
+| Cache minimum | 64 tokens |
+| Cache persistence | Disk-based (survives across requests) |
 
-| Component | Tokens |
-|-----------|--------|
-| Main system prompt | 3,097 |
-| Learning mode | 1,042 |
-| MCP CLI integration | 1,335 |
-| TodoWrite tool desc | 2,167 |
-| Bash tool desc | 1,074 |
-| Task tool desc | 1,193 |
-| /security-review | 2,614 |
-| ~30 more components | ... |
-| **Total** | **~23,000-25,000** |
+**Key insight:** We own the entire prompt. DeepSeek's auto-caching means we don't need to worry about `cache_control` headers - just keep the prefix stable.
 
-**Key insight:** We spawn Claude CLI, which includes all of this automatically. Our "warm context" is *additional* - injected via `--system-prompt` or `--append-system-prompt`.
-
-**Caching details:**
-- Prompt caching requires **minimum 1,024-4,096 tokens** (model-dependent)
-- Cache order: `tools → system → messages`
-- Cache reads get 90% cost discount (5-minute TTL)
-- Cache writes have 25% premium
+**DeepSeek caching details:**
+- Automatic caching enabled by default
+- Prefix matching: same prefix = cache hit
+- **64 token minimum** (vs 1,024 for Anthropic)
+- **Disk-persistent** (survives across API calls)
+- Cache writes are **free** (no premium like Anthropic's 25%)
 
 **Constraints:**
-- Sonnet 4.5 / Opus 4.5 have 200k context; Haiku 4.5 for lighter tasks
-- More context = higher cost + slower TTFT
-- Static prefix must be ≥1,024 tokens to be cacheable
-- Dynamic context shouldn't dominate the conversation
+- 64k context per request
+- More context = higher cost (but cache hits are cheap)
+- Keep system prompt + warm context under ~10k to leave room for conversation
 
 **Budget allocation (targets - measure after implementation):**
 
@@ -1033,7 +1551,7 @@ impl Completer for MiraHelper {
 
 | Feature | Claude Code | `mira chat` |
 |---------|-------------|-------------|
-| Built-in tools | ✓ | ✓ (spawns claude CLI) |
+| Built-in tools | ✓ | ✓ (Mira-implemented) |
 | **Sessionless** | ✗ (session-based) | ✓ (one neverending conversation) |
 | **Context injection** | ✗ (MCP tool calls) | ✓ (pre-loaded into prompt) |
 | **Cross-project memory** | ✗ | ✓ (direct DB + Qdrant) |
@@ -1042,7 +1560,8 @@ impl Completer for MiraHelper {
 | **Code intelligence** | ✗ | ✓ (symbols, call graph) |
 | **Git intelligence** | ✗ | ✓ (co-change patterns) |
 | **Semantic search** | ✗ | ✓ (query-relevant memories) |
-| Subagents | ✓ | ✓ (via claude CLI) |
+| Cost (input) | $3.00/M (Sonnet 4.5) | **$0.28/M (DeepSeek)** |
+| Cost (output) | $15.00/M (Sonnet 4.5) | **$0.42/M (DeepSeek)** |
 | Startup time | ~2s | ~10ms |
 | Single binary | ✗ (Node.js) | ✓ |
 
@@ -1050,18 +1569,17 @@ impl Completer for MiraHelper {
 
 ## References
 
-### Agent SDK
-- [Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview)
-- [Agent SDK Python](https://github.com/anthropics/claude-agent-sdk-python)
-- [Agent SDK TypeScript](https://github.com/anthropics/claude-agent-sdk-typescript)
-- [Agent SDK Demos](https://github.com/anthropics/claude-agent-sdk-demos)
+### DeepSeek
+- [DeepSeek API Documentation](https://platform.deepseek.com/api-docs)
+- [DeepSeek Chat API](https://platform.deepseek.com/api-docs/chat)
+- [DeepSeek Function Calling](https://platform.deepseek.com/api-docs/function-calling)
+- [DeepSeek Context Caching](https://platform.deepseek.com/api-docs/context-caching)
 
-### Claude Code
+### Mira
+- [Mira Repository](https://github.com/yourusername/mira) (this project)
+- SQLite for structured data
+- Qdrant for semantic embeddings
+
+### Reference: Claude Code (for comparison)
 - [Claude Code Repository](https://github.com/anthropics/claude-code)
-- [Claude Code Plugins](https://github.com/anthropics/claude-code/tree/main/plugins)
-
-### API Features
-- [Context Editing](https://platform.claude.com/docs/en/build-with-claude/context-editing)
-- [Context Windows](https://platform.claude.com/docs/en/build-with-claude/context-windows)
-- [Prompt Caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
-- [Tool Use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)
+- [Claude Code System Prompts](https://github.com/Piebald-AI/claude-code-system-prompts) - Research on prompt structure
