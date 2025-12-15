@@ -11,13 +11,18 @@ use sqlx::sqlite::SqlitePool;
 
 use super::CodeIndexer;
 use crate::tools::SemanticSearch;
+use crate::tools::ingest;
 
 /// Event types for the file watcher
 enum FileEvent {
-    /// File was created or modified - needs (re)indexing
-    Changed(PathBuf),
-    /// File was deleted - needs cleanup
-    Deleted(PathBuf),
+    /// Code file was created or modified - needs (re)indexing
+    CodeChanged(PathBuf),
+    /// Code file was deleted - needs cleanup
+    CodeDeleted(PathBuf),
+    /// Document file was created or modified - needs (re)ingesting
+    DocChanged(PathBuf),
+    /// Document file was deleted - needs cleanup
+    DocDeleted(PathBuf),
 }
 
 pub struct Watcher {
@@ -73,22 +78,29 @@ impl Watcher {
                 move |res: Result<Event, notify::Error>| {
                     if let Ok(event) = res {
                         for path in event.paths {
-                            // Only process code files
                             if let Some(ext) = path.extension() {
                                 let ext = ext.to_string_lossy();
-                                if matches!(ext.as_ref(), "rs" | "py" | "ts" | "tsx" | "js" | "jsx") {
-                                    let file_event = match event.kind {
-                                        EventKind::Create(_) | EventKind::Modify(_) => {
-                                            Some(FileEvent::Changed(path))
-                                        }
-                                        EventKind::Remove(_) => {
-                                            Some(FileEvent::Deleted(path))
-                                        }
-                                        _ => None,
-                                    };
-                                    if let Some(fe) = file_event {
-                                        let _ = rt.block_on(event_tx.send(fe));
+                                let is_code = matches!(ext.as_ref(), "rs" | "py" | "ts" | "tsx" | "js" | "jsx");
+                                let is_doc = matches!(ext.as_ref(), "md" | "markdown" | "pdf" | "txt");
+
+                                let file_event = match (is_code, is_doc, &event.kind) {
+                                    (true, _, EventKind::Create(_) | EventKind::Modify(_)) => {
+                                        Some(FileEvent::CodeChanged(path))
                                     }
+                                    (true, _, EventKind::Remove(_)) => {
+                                        Some(FileEvent::CodeDeleted(path))
+                                    }
+                                    (_, true, EventKind::Create(_) | EventKind::Modify(_)) => {
+                                        Some(FileEvent::DocChanged(path))
+                                    }
+                                    (_, true, EventKind::Remove(_)) => {
+                                        Some(FileEvent::DocDeleted(path))
+                                    }
+                                    _ => None,
+                                };
+
+                                if let Some(fe) = file_event {
+                                    let _ = rt.block_on(event_tx.send(fe));
                                 }
                             }
                         }
@@ -116,6 +128,10 @@ impl Watcher {
 
         let semantic = self.semantic.clone();
 
+        // Clone for document handling (separate from code indexer)
+        let db_for_docs = self.db.clone();
+        let semantic_for_docs = self.semantic.clone();
+
         // Spawn the indexer task
         tokio::spawn(async move {
             let mut indexer = match CodeIndexer::with_semantic(db, semantic) {
@@ -136,8 +152,7 @@ impl Watcher {
                         while event_rx.try_recv().is_ok() {}
 
                         match event {
-                            FileEvent::Changed(path) => {
-                                // Index the file
+                            FileEvent::CodeChanged(path) => {
                                 match indexer.index_file(&path).await {
                                     Ok(stats) => {
                                         if stats.embeddings_generated > 0 {
@@ -149,7 +164,7 @@ impl Watcher {
                                                 stats.embeddings_generated
                                             );
                                         } else {
-                                            tracing::info!(
+                                            tracing::debug!(
                                                 "Indexed {}: {} symbols, {} imports",
                                                 path.display(),
                                                 stats.symbols_found,
@@ -162,14 +177,46 @@ impl Watcher {
                                     }
                                 }
                             }
-                            FileEvent::Deleted(path) => {
-                                // Clean up deleted file
+                            FileEvent::CodeDeleted(path) => {
                                 match indexer.delete_file(&path).await {
                                     Ok(()) => {
-                                        tracing::info!("Cleaned up deleted file: {}", path.display());
+                                        tracing::info!("Cleaned up deleted code file: {}", path.display());
                                     }
                                     Err(e) => {
                                         tracing::warn!("Failed to clean up {}: {}", path.display(), e);
+                                    }
+                                }
+                            }
+                            FileEvent::DocChanged(path) => {
+                                let path_str = path.to_string_lossy();
+                                let semantic_ref = semantic_for_docs.as_deref();
+                                match ingest::update_document(&db_for_docs, semantic_ref, &path_str).await {
+                                    Ok(Some(result)) => {
+                                        tracing::info!(
+                                            "Ingested document {}: {} chunks, ~{} tokens",
+                                            result.name,
+                                            result.chunk_count,
+                                            result.total_tokens
+                                        );
+                                    }
+                                    Ok(None) => {
+                                        tracing::debug!("Document unchanged: {}", path.display());
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to ingest document {}: {}", path.display(), e);
+                                    }
+                                }
+                            }
+                            FileEvent::DocDeleted(path) => {
+                                let path_str = path.to_string_lossy();
+                                let semantic_ref = semantic_for_docs.as_deref();
+                                match ingest::delete_document_by_path(&db_for_docs, semantic_ref, &path_str).await {
+                                    Ok(true) => {
+                                        tracing::info!("Removed deleted document: {}", path.display());
+                                    }
+                                    Ok(false) => {}
+                                    Err(e) => {
+                                        tracing::warn!("Failed to remove document {}: {}", path.display(), e);
                                     }
                                 }
                             }

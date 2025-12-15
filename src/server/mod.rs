@@ -430,7 +430,7 @@ impl MiraServer {
 
     // === Consolidated Document Tool (3→1) ===
 
-    #[tool(description = "Manage documents. Actions: list/search/get")]
+    #[tool(description = "Manage documents. Actions: list/search/get/ingest/delete")]
     async fn document(&self, Parameters(req): Parameters<DocumentRequest>) -> Result<CallToolResult, McpError> {
         match req.action.as_str() {
             "list" => {
@@ -450,7 +450,33 @@ impl MiraServer {
                 let result = documents::get_document(self.db.as_ref(), &document_id, req.include_content.unwrap_or(false)).await.map_err(to_mcp_err)?;
                 Ok(option_response(result, format!("Document '{}' not found", document_id)))
             }
-            action => Ok(unknown_action(action, "list/search/get")),
+            "ingest" => {
+                let path = require!(req.path, "path required for ingest");
+                let result = ingest::ingest_document(
+                    self.db.as_ref(),
+                    Some(self.semantic.as_ref()),
+                    &path,
+                    req.name.as_deref(),
+                ).await.map_err(to_mcp_err)?;
+                Ok(json_response(serde_json::json!({
+                    "status": "ingested",
+                    "document_id": result.document_id,
+                    "name": result.name,
+                    "doc_type": result.doc_type,
+                    "chunk_count": result.chunk_count,
+                    "total_tokens": result.total_tokens,
+                })))
+            }
+            "delete" => {
+                let document_id = require!(req.document_id, "document_id required for delete");
+                let deleted = ingest::delete_document(self.db.as_ref(), Some(self.semantic.as_ref()), &document_id).await.map_err(to_mcp_err)?;
+                if deleted {
+                    Ok(text_response(format!("Document '{}' deleted", document_id)))
+                } else {
+                    Ok(text_response(format!("Document '{}' not found", document_id)))
+                }
+            }
+            action => Ok(unknown_action(action, "list/search/get/ingest/delete")),
         }
     }
 
