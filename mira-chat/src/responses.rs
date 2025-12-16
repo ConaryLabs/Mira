@@ -7,7 +7,10 @@
 //! - Function calling for tools
 
 use anyhow::Result;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
+use tokio::sync::mpsc;
 
 const API_URL: &str = "https://api.openai.com/v1/responses";
 
@@ -63,9 +66,10 @@ pub struct Tool {
 }
 
 /// Response from the Responses API
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ResponsesResponse {
     pub id: String,
+    #[serde(default)]
     pub model: String,
     pub output: Vec<OutputItem>,
     pub usage: Option<Usage>,
@@ -95,7 +99,9 @@ pub enum OutputItem {
     #[serde(rename = "reasoning")]
     Reasoning {
         id: String,
-        summary: Option<String>,
+        /// Summary can be a string, array, or null
+        #[serde(default)]
+        summary: serde_json::Value,
     },
 }
 
@@ -110,7 +116,7 @@ pub enum ContentItem {
 }
 
 /// Token usage with cache metrics
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
     pub input_tokens: u32,
     pub output_tokens: u32,
@@ -120,13 +126,13 @@ pub struct Usage {
     pub output_tokens_details: Option<OutputTokensDetails>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct InputTokensDetails {
     #[serde(default)]
     pub cached_tokens: u32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct OutputTokensDetails {
     #[serde(default)]
     pub reasoning_tokens: u32,
@@ -147,6 +153,63 @@ impl Usage {
             .unwrap_or(0)
     }
 }
+
+// ============================================================================
+// Streaming types
+// ============================================================================
+
+/// Streaming events from the Responses API
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// Text delta - print this immediately
+    TextDelta(String),
+    /// Function call started
+    FunctionCallStart { name: String, call_id: String },
+    /// Function call arguments delta
+    FunctionCallDelta { call_id: String, arguments_delta: String },
+    /// Function call completed
+    FunctionCallDone { name: String, call_id: String, arguments: String },
+    /// Response completed with final data
+    Done(ResponsesResponse),
+    /// Error occurred
+    Error(String),
+}
+
+/// Raw SSE event data
+#[derive(Debug, Deserialize)]
+struct SseEventData {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(default)]
+    delta: Option<String>,
+    #[serde(default)]
+    response: Option<ResponsesResponse>,
+    #[serde(default)]
+    item: Option<StreamOutputItem>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    call_id: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// Streaming output item (simplified for parsing)
+#[derive(Debug, Clone, Deserialize)]
+struct StreamOutputItem {
+    #[serde(rename = "type")]
+    item_type: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    call_id: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+// ============================================================================
+// Client
+// ============================================================================
 
 /// GPT-5.2 Responses API client
 pub struct Client {
@@ -187,6 +250,30 @@ impl Client {
         self.send_request(&request).await
     }
 
+    /// Create a streaming response
+    pub async fn create_stream(
+        &self,
+        input: &str,
+        instructions: &str,
+        previous_response_id: Option<&str>,
+        reasoning_effort: &str,
+        tools: &[Tool],
+    ) -> Result<mpsc::Receiver<StreamEvent>> {
+        let request = ResponsesRequest {
+            model: "gpt-5.2".into(),
+            input: InputType::Text(input.into()),
+            instructions: instructions.into(),
+            previous_response_id: previous_response_id.map(String::from),
+            reasoning: ReasoningConfig {
+                effort: reasoning_effort.into(),
+            },
+            tools: tools.to_vec(),
+            stream: true,
+        };
+
+        self.send_streaming_request(&request).await
+    }
+
     /// Continue a response with tool results
     pub async fn continue_with_tool_results(
         &self,
@@ -220,6 +307,39 @@ impl Client {
         self.send_request(&request).await
     }
 
+    /// Continue with tool results (streaming)
+    pub async fn continue_with_tool_results_stream(
+        &self,
+        previous_response_id: &str,
+        tool_results: Vec<(String, String)>,
+        instructions: &str,
+        reasoning_effort: &str,
+        tools: &[Tool],
+    ) -> Result<mpsc::Receiver<StreamEvent>> {
+        let conversation: Vec<ConversationItem> = tool_results
+            .into_iter()
+            .map(|(call_id, output)| ConversationItem {
+                item_type: "function_call_output".into(),
+                call_id: Some(call_id),
+                output: Some(output),
+            })
+            .collect();
+
+        let request = ResponsesRequest {
+            model: "gpt-5.2".into(),
+            input: InputType::Conversation(conversation),
+            instructions: instructions.into(),
+            previous_response_id: Some(previous_response_id.into()),
+            reasoning: ReasoningConfig {
+                effort: reasoning_effort.into(),
+            },
+            tools: tools.to_vec(),
+            stream: true,
+        };
+
+        self.send_streaming_request(&request).await
+    }
+
     async fn send_request(&self, request: &ResponsesRequest) -> Result<ResponsesResponse> {
         let response = self
             .http
@@ -235,18 +355,150 @@ impl Client {
             anyhow::bail!("API error {}: {}", status, body);
         }
 
-        // Get raw text first for debugging
         let text = response.text().await?;
-
-        // Try to parse
         let result: ResponsesResponse = serde_json::from_str(&text)
             .map_err(|e| {
-                // Log first 500 chars of response for debugging
                 let preview = if text.len() > 500 { &text[..500] } else { &text };
                 anyhow::anyhow!("JSON parse error: {}. Response preview: {}", e, preview)
             })?;
 
         Ok(result)
+    }
+
+    async fn send_streaming_request(
+        &self,
+        request: &ResponsesRequest,
+    ) -> Result<mpsc::Receiver<StreamEvent>> {
+        let response = self
+            .http
+            .post(API_URL)
+            .bearer_auth(&self.api_key)
+            .json(request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await?;
+            anyhow::bail!("API error {}: {}", status, body);
+        }
+
+        let (tx, rx) = mpsc::channel(100);
+
+        // Spawn task to process SSE stream
+        let bytes_stream = response.bytes_stream();
+        tokio::spawn(async move {
+            let mut buffer = String::new();
+            let mut current_event = String::new();
+            let mut function_calls: std::collections::HashMap<String, (String, String)> =
+                std::collections::HashMap::new();
+
+            futures::pin_mut!(bytes_stream);
+
+            while let Some(chunk_result) = bytes_stream.next().await {
+                let chunk = match chunk_result {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                        break;
+                    }
+                };
+
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                // Process complete lines
+                while let Some(newline_pos) = buffer.find('\n') {
+                    let line = buffer[..newline_pos].trim().to_string();
+                    buffer = buffer[newline_pos + 1..].to_string();
+
+                    if line.starts_with("event:") {
+                        current_event = line[6..].trim().to_string();
+                    } else if line.starts_with("data:") {
+                        let data = line[5..].trim();
+                        if let Some(event) = parse_sse_event(&current_event, data, &mut function_calls) {
+                            if tx.send(event).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+}
+
+/// Parse SSE event into StreamEvent
+fn parse_sse_event(
+    event_type: &str,
+    data: &str,
+    function_calls: &mut std::collections::HashMap<String, (String, String)>,
+) -> Option<StreamEvent> {
+    // Try to parse the JSON data
+    let parsed: serde_json::Value = serde_json::from_str(data).ok()?;
+
+    match event_type {
+        "response.output_text.delta" => {
+            // Text streaming
+            let delta = parsed.get("delta")?.as_str()?;
+            Some(StreamEvent::TextDelta(delta.to_string()))
+        }
+        "response.function_call_arguments.delta" => {
+            // Function call arguments streaming
+            let call_id = parsed.get("call_id")?.as_str()?.to_string();
+            let delta = parsed.get("delta")?.as_str()?.to_string();
+
+            // Accumulate arguments
+            function_calls
+                .entry(call_id.clone())
+                .or_insert_with(|| (String::new(), String::new()))
+                .1
+                .push_str(&delta);
+
+            Some(StreamEvent::FunctionCallDelta {
+                call_id,
+                arguments_delta: delta,
+            })
+        }
+        "response.output_item.added" => {
+            // Check if it's a function call
+            let item = parsed.get("item")?;
+            let item_type = item.get("type")?.as_str()?;
+
+            if item_type == "function_call" {
+                let name = item.get("name")?.as_str()?.to_string();
+                let call_id = item.get("call_id")?.as_str()?.to_string();
+
+                function_calls.insert(call_id.clone(), (name.clone(), String::new()));
+
+                Some(StreamEvent::FunctionCallStart { name, call_id })
+            } else {
+                None
+            }
+        }
+        "response.output_item.done" => {
+            // Check if it's a completed function call
+            let item = parsed.get("item")?;
+            let item_type = item.get("type")?.as_str()?;
+
+            if item_type == "function_call" {
+                let name = item.get("name")?.as_str()?.to_string();
+                let call_id = item.get("call_id")?.as_str()?.to_string();
+                let arguments = item.get("arguments")?.as_str()?.to_string();
+
+                Some(StreamEvent::FunctionCallDone { name, call_id, arguments })
+            } else {
+                None
+            }
+        }
+        "response.completed" => {
+            // Final response with usage
+            let response = parsed.get("response")?;
+            let resp: ResponsesResponse = serde_json::from_value(response.clone()).ok()?;
+            Some(StreamEvent::Done(resp))
+        }
+        _ => None,
     }
 }
 

@@ -9,10 +9,11 @@
 use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use std::io::{self, Write};
 
 use crate::context::{build_system_prompt, MiraContext};
 use crate::reasoning::classify;
-use crate::responses::Client;
+use crate::responses::{Client, ResponsesResponse, StreamEvent, Tool, Usage};
 use crate::tools::{get_tools, ToolExecutor};
 
 /// REPL state
@@ -103,8 +104,8 @@ impl Repl {
                         continue;
                     }
 
-                    // Process user input
-                    self.process_input(trimmed).await?;
+                    // Process user input with streaming
+                    self.process_input_streaming(trimmed).await?;
                 }
                 Err(ReadlineError::Interrupted) => {
                     println!("^C");
@@ -133,7 +134,6 @@ impl Repl {
                 println!("  /help     - Show this help");
                 println!("  /clear    - Clear conversation history");
                 println!("  /context  - Show current Mira context");
-                println!("  /effort   - Show/set reasoning effort");
                 println!("  /quit     - Exit");
             }
             "/clear" => {
@@ -158,8 +158,8 @@ impl Repl {
         Ok(())
     }
 
-    /// Process user input and get response
-    async fn process_input(&mut self, input: &str) -> Result<()> {
+    /// Process user input with streaming responses
+    async fn process_input_streaming(&mut self, input: &str) -> Result<()> {
         let client = match &self.client {
             Some(c) => c,
             None => {
@@ -177,99 +177,100 @@ impl Repl {
         let system_prompt = build_system_prompt(&self.context);
         let tools = get_tools();
 
-        // Track total tokens across all turns
-        let mut total_input = 0u32;
-        let mut total_output = 0u32;
-        let mut total_cached = 0u32;
-        let mut total_reasoning = 0u32;
+        // Track total usage
+        let mut total_usage = Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            input_tokens_details: None,
+            output_tokens_details: None,
+        };
 
-        // Initial request
-        let response = client
-            .create(
+        // Initial streaming request
+        let mut rx = match client
+            .create_stream(
                 input,
                 &system_prompt,
                 self.previous_response_id.as_deref(),
                 effort_str,
                 &tools,
             )
-            .await;
-
-        let mut current_response = match response {
-            Ok(resp) => resp,
+            .await
+        {
+            Ok(rx) => rx,
             Err(e) => {
                 eprintln!("Error: {}", e);
                 return Ok(());
             }
         };
 
-        // Agentic loop - keep going until we get a text response with no tool calls
+        // Agentic loop
         const MAX_ITERATIONS: usize = 10;
         for iteration in 0..MAX_ITERATIONS {
-            // Store response ID for conversation continuity
-            self.previous_response_id = Some(current_response.id.clone());
+            // Process streaming events
+            let stream_result = self.process_stream(&mut rx).await?;
 
-            // Accumulate usage
-            if let Some(usage) = &current_response.usage {
-                total_input += usage.input_tokens;
-                total_output += usage.output_tokens;
-                total_cached += usage.cached_tokens();
-                total_reasoning += usage.reasoning_tokens();
-            }
+            // Update response ID
+            if let Some(ref resp) = stream_result.final_response {
+                self.previous_response_id = Some(resp.id.clone());
 
-            // Collect function calls and execute them
-            let mut tool_results: Vec<(String, String)> = Vec::new();
-            let mut has_text_output = false;
-
-            for item in &current_response.output {
-                // Handle text messages
-                if let Some(text) = item.text() {
-                    println!("\n{}\n", text);
-                    has_text_output = true;
-                }
-
-                // Handle function calls
-                if let Some((name, arguments, call_id)) = item.as_function_call() {
-                    println!("  [tool: {}]", name);
-
-                    // Execute tool
-                    let result = self.tools.execute(name, arguments).await?;
-                    let result_len = result.len();
-
-                    // Truncate for display
-                    let display_result = if result_len > 200 {
-                        format!("{}... ({} bytes total)", &result[..200], result_len)
-                    } else {
-                        result.clone()
-                    };
-                    println!("  [result: {}]", display_result.trim());
-
-                    tool_results.push((call_id.to_string(), result));
+                // Accumulate usage
+                if let Some(ref usage) = resp.usage {
+                    total_usage.input_tokens += usage.input_tokens;
+                    total_usage.output_tokens += usage.output_tokens;
                 }
             }
 
-            // If no tool calls, we're done
-            if tool_results.is_empty() {
+            // If no function calls, we're done
+            if stream_result.function_calls.is_empty() {
                 break;
             }
 
-            // If we have tool results, send them back
+            // Make sure we have a previous response ID before continuing
+            let prev_id = match &self.previous_response_id {
+                Some(id) if !id.is_empty() => id.clone(),
+                _ => {
+                    eprintln!("  [error: no response ID for continuation]");
+                    break;
+                }
+            };
+
+            // Execute function calls
+            let mut tool_results: Vec<(String, String)> = Vec::new();
+            for (name, call_id, arguments) in &stream_result.function_calls {
+                println!("  [tool: {}]", name);
+
+                let result = self.tools.execute(name, arguments).await?;
+                let result_len = result.len();
+
+                // Truncate for display
+                let display_result = if result_len > 200 {
+                    format!("{}... ({} bytes)", &result[..200], result_len)
+                } else {
+                    result.clone()
+                };
+                println!("  [result: {}]", display_result.trim());
+
+                tool_results.push((call_id.clone(), result));
+            }
+
+            // Check iteration limit
             if iteration >= MAX_ITERATIONS - 1 {
                 eprintln!("  [warning: max iterations reached]");
                 break;
             }
 
-            let continuation = client
-                .continue_with_tool_results(
-                    &current_response.id,
+            // Continue with tool results (streaming)
+            rx = match client
+                .continue_with_tool_results_stream(
+                    &prev_id,
                     tool_results,
                     &system_prompt,
                     effort_str,
                     &tools,
                 )
-                .await;
-
-            current_response = match continuation {
-                Ok(resp) => resp,
+                .await
+            {
+                Ok(rx) => rx,
                 Err(e) => {
                     eprintln!("Error continuing: {}", e);
                     break;
@@ -278,26 +279,97 @@ impl Repl {
         }
 
         // Show total usage stats
-        let cache_pct = if total_input > 0 {
-            (total_cached as f32 / total_input as f32) * 100.0
+        let cached = total_usage.cached_tokens();
+        let cache_pct = if total_usage.input_tokens > 0 {
+            (cached as f32 / total_usage.input_tokens as f32) * 100.0
         } else {
             0.0
         };
 
-        if total_reasoning > 0 {
+        let reasoning = total_usage.reasoning_tokens();
+        if reasoning > 0 {
             println!(
                 "  [tokens: {} in / {} out ({} reasoning), {:.0}% cached]",
-                total_input, total_output, total_reasoning, cache_pct
+                total_usage.input_tokens, total_usage.output_tokens, reasoning, cache_pct
             );
         } else {
             println!(
                 "  [tokens: {} in / {} out, {:.0}% cached]",
-                total_input, total_output, cache_pct
+                total_usage.input_tokens, total_usage.output_tokens, cache_pct
             );
         }
 
         Ok(())
     }
+
+    /// Process a stream of events, printing text and collecting function calls
+    async fn process_stream(
+        &self,
+        rx: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
+    ) -> Result<StreamResult> {
+        let mut result = StreamResult::default();
+        let mut printed_newline_before = false;
+        let mut printed_any_text = false;
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::TextDelta(delta) => {
+                    // Print newline before first text
+                    if !printed_newline_before {
+                        println!();
+                        printed_newline_before = true;
+                    }
+
+                    // Print delta immediately
+                    print!("{}", delta);
+                    io::stdout().flush()?;
+                    printed_any_text = true;
+                }
+                StreamEvent::FunctionCallStart { name, call_id } => {
+                    result.function_calls.push((name, call_id, String::new()));
+                }
+                StreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
+                    // Accumulate arguments
+                    if let Some(fc) = result.function_calls.iter_mut().find(|(_, id, _)| id == &call_id) {
+                        fc.2.push_str(&arguments_delta);
+                    }
+                }
+                StreamEvent::FunctionCallDone { name, call_id, arguments } => {
+                    // Update with final arguments
+                    if let Some(fc) = result.function_calls.iter_mut().find(|(_, id, _)| id == &call_id) {
+                        fc.2 = arguments;
+                    } else {
+                        result.function_calls.push((name, call_id, arguments));
+                    }
+                }
+                StreamEvent::Done(response) => {
+                    result.final_response = Some(response);
+                    break;
+                }
+                StreamEvent::Error(e) => {
+                    eprintln!("\nStream error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        // Print newline after text if we printed any
+        if printed_any_text {
+            println!();
+            println!();
+        }
+
+        Ok(result)
+    }
+}
+
+/// Result of processing a stream
+#[derive(Default)]
+struct StreamResult {
+    /// Collected function calls: (name, call_id, arguments)
+    function_calls: Vec<(String, String, String)>,
+    /// Final response with usage stats
+    final_response: Option<ResponsesResponse>,
 }
 
 /// Entry point for the REPL with pre-loaded context
