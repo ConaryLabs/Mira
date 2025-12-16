@@ -1147,16 +1147,16 @@ Mira/
 - [x] Project path from CLI args
 - [x] `mira-chat/src/semantic.rs` - Qdrant + Gemini embeddings
 
-### Phase 6: Slash Commands (partial)
+### Phase 6: Slash Commands ✅
 - [x] `/help` - Show available commands
 - [x] `/clear` - Clear conversation history
 - [x] `/context` - Show loaded Mira context
 - [x] `/quit`, `/exit` - Exit
-- [ ] `/switch` - Change project
-- [ ] `/status` - Show current state (project, goals, tasks)
-- [ ] `/remember` - Direct memory storage (bypass GPT)
-- [ ] `/recall` - Direct memory search (bypass GPT)
-- [ ] `/tasks` - List tasks
+- [x] `/switch [path]` - Change project, reload context
+- [x] `/status` - Show current state (project, goals, tasks, memories)
+- [x] `/remember <text>` - Direct memory storage (SQLite + Qdrant)
+- [x] `/recall <query>` - Direct memory search (semantic + text fallback)
+- [x] `/tasks` - List pending tasks by priority
 
 ### Phase 7: Polish
 - [x] `rustyline` for readline with history
