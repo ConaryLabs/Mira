@@ -1,0 +1,50 @@
+[package]
+name = "mira-chat"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Power-armored coding assistant with GPT-5.2"
+
+[[bin]]
+name = "mira-chat"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.38", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database (shared with mira)
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
+
+# Vector database (shared with mira)
+qdrant-client = "1.16"
+
+# HTTP client (for GPT-5.2 Responses API)
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
+futures = "0.3"
+tokio-stream = "0.1"
+async-stream = "0.3"
+
+# CLI / REPL
+clap = { version = "4.4", features = ["derive", "env"] }
+rustyline = "15"
+
+# Core utilities
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.8", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+
+# File operations for tools
+walkdir = "2.5"
+ignore = "0.4"
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3.8"
