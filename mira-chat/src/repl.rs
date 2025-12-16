@@ -57,10 +57,10 @@ impl Repl {
         self
     }
 
-    /// Load context from Mira
-    pub async fn with_context(mut self, db_url: &str, qdrant_url: &str) -> Result<Self> {
-        self.context = MiraContext::load(db_url, qdrant_url).await?;
-        Ok(self)
+    /// Set pre-loaded context
+    pub fn with_loaded_context(mut self, context: MiraContext) -> Self {
+        self.context = context;
+        self
     }
 
     /// Load command history
@@ -300,7 +300,16 @@ impl Repl {
     }
 }
 
-/// Entry point for the REPL
+/// Entry point for the REPL with pre-loaded context
+pub async fn run_with_context(api_key: String, context: MiraContext) -> Result<()> {
+    let mut repl = Repl::new()?
+        .with_api_key(api_key)
+        .with_loaded_context(context);
+
+    repl.run().await
+}
+
+/// Entry point for the REPL (loads context itself)
 pub async fn run() -> Result<()> {
     let api_key = std::env::var("OPENAI_API_KEY")
         .expect("OPENAI_API_KEY required");
