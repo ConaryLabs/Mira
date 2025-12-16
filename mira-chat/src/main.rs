@@ -9,12 +9,14 @@
 use anyhow::Result;
 use clap::Parser;
 use sqlx::sqlite::SqlitePoolOptions;
+use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
 
 mod context;
 mod reasoning;
 mod repl;
 mod responses;
+mod semantic;
 mod tools;
 
 #[derive(Parser)]
@@ -32,6 +34,10 @@ struct Args {
     /// OpenAI API key
     #[arg(long, env = "OPENAI_API_KEY")]
     openai_api_key: Option<String>,
+
+    /// Gemini API key for embeddings
+    #[arg(long, env = "GEMINI_API_KEY")]
+    gemini_api_key: Option<String>,
 
     /// Default reasoning effort
     #[arg(long, default_value = "medium")]
@@ -88,6 +94,23 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Initialize semantic search (Qdrant + Gemini embeddings)
+    let gemini_key = args.gemini_api_key
+        .or_else(|| std::env::var("GEMINI_API_KEY").ok());
+    let semantic = Arc::new(
+        semantic::SemanticSearch::new(Some(&args.qdrant_url), gemini_key).await
+    );
+
+    if semantic.is_available() {
+        println!("Semantic: enabled (Qdrant + Gemini)");
+        // Ensure collection exists
+        if let Err(e) = semantic.ensure_collection(semantic::COLLECTION_MEMORY).await {
+            println!("Semantic: collection init failed ({})", e);
+        }
+    } else {
+        println!("Semantic: disabled (Qdrant or Gemini not configured)");
+    }
+
     // Load context from Mira
     let context = if let Some(ref pool) = db {
         match context::MiraContext::load(pool, &project_path).await {
@@ -120,5 +143,5 @@ async fn main() -> Result<()> {
     println!();
 
     // Run REPL
-    repl::run_with_context(api_key, context).await
+    repl::run_with_context(api_key, context, db, semantic).await
 }
