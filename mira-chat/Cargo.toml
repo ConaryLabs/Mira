@@ -50,5 +50,8 @@ glob = "0.3"
 regex = "1.10"
 urlencoding = "2.1"
 
+# Config file
+toml = "0.8"
+
 [dev-dependencies]
 tempfile = "3.8"

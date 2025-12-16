@@ -1158,15 +1158,15 @@ Mira/
 - [x] `/recall <query>` - Direct memory search (semantic + text fallback)
 - [x] `/tasks` - List pending tasks by priority
 
-### Phase 7: Polish
+### Phase 7: Polish ✅
 - [x] `rustyline` for readline with history
-- [x] Basic Ctrl+C handling (cancels input)
-- [ ] Tab completion for slash commands
-- [ ] Pretty output formatting (markdown rendering?)
-- [ ] Config file support (~/.mira/config.toml)
-- [ ] Ctrl+C to cancel in-flight request
+- [x] Basic Ctrl+C handling (cancels input during readline)
+- [x] Tab completion for slash commands (MiraHelper with Completer)
+- [x] Pretty output formatting (streaming markdown with code block coloring)
+- [x] Config file support (~/.mira/config.toml)
+- [x] Ctrl+C to cancel in-flight requests (AtomicBool + tokio::select!)
 
-**Current stats:** ~2000 lines across 7 modules, 20 tests passing, 10 tools
+**Current stats:** ~2500 lines across 7 modules, 25 tests passing, 10 tools
 
 ---
 

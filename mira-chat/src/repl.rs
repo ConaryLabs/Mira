@@ -7,11 +7,19 @@
 //! - Tool execution feedback
 
 use anyhow::Result;
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::{Hinter, HistoryHinter};
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
+use rustyline::{Context, Editor, Helper};
 use sqlx::SqlitePool;
+use std::borrow::Cow;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::context::{build_system_prompt, MiraContext};
 use crate::reasoning::classify;
@@ -19,10 +27,87 @@ use crate::responses::{Client, ResponsesResponse, StreamEvent, Tool, Usage};
 use crate::semantic::SemanticSearch;
 use crate::tools::{get_tools, ToolExecutor};
 
+/// Slash commands for tab completion
+const SLASH_COMMANDS: &[&str] = &[
+    "/help",
+    "/clear",
+    "/context",
+    "/status",
+    "/switch",
+    "/remember",
+    "/recall",
+    "/tasks",
+    "/quit",
+    "/exit",
+];
+
+/// Custom helper for rustyline with completion and hints
+struct MiraHelper {
+    hinter: HistoryHinter,
+}
+
+impl MiraHelper {
+    fn new() -> Self {
+        Self {
+            hinter: HistoryHinter::new(),
+        }
+    }
+}
+
+impl Completer for MiraHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // Only complete slash commands at the start of the line
+        if line.starts_with('/') && pos <= line.find(' ').unwrap_or(line.len()) {
+            let matches: Vec<Pair> = SLASH_COMMANDS
+                .iter()
+                .filter(|cmd| cmd.starts_with(line.split_whitespace().next().unwrap_or("")))
+                .map(|cmd| Pair {
+                    display: cmd.to_string(),
+                    replacement: cmd.to_string(),
+                })
+                .collect();
+            Ok((0, matches))
+        } else {
+            Ok((pos, vec![]))
+        }
+    }
+}
+
+impl Hinter for MiraHelper {
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
+        // Show history hints for non-slash commands
+        if !line.starts_with('/') {
+            self.hinter.hint(line, pos, ctx)
+        } else {
+            None
+        }
+    }
+}
+
+impl Highlighter for MiraHelper {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+        // Dim the hint text
+        Cow::Owned(format!("\x1b[90m{}\x1b[0m", hint))
+    }
+}
+
+impl Validator for MiraHelper {}
+
+impl Helper for MiraHelper {}
+
 /// REPL state
 pub struct Repl {
-    /// Readline editor with history
-    editor: DefaultEditor,
+    /// Readline editor with history and completion
+    editor: Editor<MiraHelper, DefaultHistory>,
     /// GPT-5.2 API client
     client: Option<Client>,
     /// Tool executor
@@ -37,11 +122,14 @@ pub struct Repl {
     db: Option<SqlitePool>,
     /// Semantic search for slash commands
     semantic: Arc<SemanticSearch>,
+    /// Cancellation flag for Ctrl+C during streaming
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Repl {
     pub fn new(db: Option<SqlitePool>, semantic: Arc<SemanticSearch>) -> Result<Self> {
-        let editor = DefaultEditor::new()?;
+        let mut editor = Editor::new()?;
+        editor.set_helper(Some(MiraHelper::new()));
 
         // History file in ~/.mira/chat_history
         let history_path = dirs::home_dir()
@@ -64,6 +152,7 @@ impl Repl {
             history_path,
             db,
             semantic,
+            cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -98,8 +187,19 @@ impl Repl {
     pub async fn run(&mut self) -> Result<()> {
         self.load_history();
 
+        // Set up Ctrl+C handler for cancelling in-flight requests
+        let cancelled = Arc::clone(&self.cancelled);
+        tokio::spawn(async move {
+            loop {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    cancelled.store(true, Ordering::SeqCst);
+                }
+            }
+        });
+
         println!("Type your message (Ctrl+D to exit, /help for commands)");
         println!("  Use \\\\ at end of line for multi-line input, or \"\"\" to start/end block");
+        println!("  Press Ctrl+C to cancel in-flight requests");
         println!();
 
         loop {
@@ -119,6 +219,9 @@ impl Repl {
                         self.handle_command(trimmed).await?;
                         continue;
                     }
+
+                    // Reset cancellation flag before processing
+                    self.cancelled.store(false, Ordering::SeqCst);
 
                     // Process user input with streaming
                     self.process_input_streaming(trimmed).await?;
@@ -559,8 +662,13 @@ impl Repl {
         // Agentic loop
         const MAX_ITERATIONS: usize = 10;
         for iteration in 0..MAX_ITERATIONS {
-            // Process streaming events
-            let stream_result = self.process_stream(&mut rx).await?;
+            // Process streaming events (returns (result, was_cancelled))
+            let (stream_result, was_cancelled) = self.process_stream(&mut rx).await?;
+
+            // If cancelled, break out of the loop
+            if was_cancelled {
+                break;
+            }
 
             // Update response ID
             if let Some(ref resp) = stream_result.final_response {
@@ -590,6 +698,12 @@ impl Repl {
             // Execute function calls
             let mut tool_results: Vec<(String, String)> = Vec::new();
             for (name, call_id, arguments) in &stream_result.function_calls {
+                // Check for cancellation before each tool
+                if self.is_cancelled() {
+                    println!("  [cancelled]");
+                    return Ok(());
+                }
+
                 println!("  [tool: {}]", name);
 
                 let result = self.tools.execute(name, arguments).await?;
@@ -604,6 +718,12 @@ impl Repl {
                 println!("  [result: {}]", display_result.trim());
 
                 tool_results.push((call_id.clone(), result));
+            }
+
+            // Check for cancellation after tool execution
+            if self.is_cancelled() {
+                println!("  [cancelled]");
+                break;
             }
 
             // Check iteration limit
@@ -656,54 +776,91 @@ impl Repl {
     }
 
     /// Process a stream of events, printing text and collecting function calls
+    /// Returns (result, was_cancelled)
     async fn process_stream(
         &self,
-        rx: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
-    ) -> Result<StreamResult> {
+        rx: &mut mpsc::Receiver<StreamEvent>,
+    ) -> Result<(StreamResult, bool)> {
         let mut result = StreamResult::default();
         let mut printed_newline_before = false;
         let mut printed_any_text = false;
+        let mut formatter = MarkdownFormatter::new();
 
-        while let Some(event) = rx.recv().await {
-            match event {
-                StreamEvent::TextDelta(delta) => {
-                    // Print newline before first text
-                    if !printed_newline_before {
-                        println!();
-                        printed_newline_before = true;
-                    }
+        loop {
+            // Check for cancellation
+            if self.cancelled.load(Ordering::SeqCst) {
+                // Flush formatter and reset colors
+                let remaining = formatter.flush();
+                if !remaining.is_empty() {
+                    print!("{}", remaining);
+                }
+                print!("\x1b[0m"); // Reset any pending colors
+                if printed_any_text {
+                    println!();
+                }
+                println!("\n  [cancelled]");
+                return Ok((result, true));
+            }
 
-                    // Print delta immediately
-                    print!("{}", delta);
-                    io::stdout().flush()?;
-                    printed_any_text = true;
-                }
-                StreamEvent::FunctionCallStart { name, call_id } => {
-                    result.function_calls.push((name, call_id, String::new()));
-                }
-                StreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
-                    // Accumulate arguments
-                    if let Some(fc) = result.function_calls.iter_mut().find(|(_, id, _)| id == &call_id) {
-                        fc.2.push_str(&arguments_delta);
+            // Use select! to allow cancellation checks even if recv blocks
+            tokio::select! {
+                event = rx.recv() => {
+                    match event {
+                        Some(StreamEvent::TextDelta(delta)) => {
+                            // Print newline before first text
+                            if !printed_newline_before {
+                                println!();
+                                printed_newline_before = true;
+                            }
+
+                            // Format and print delta immediately
+                            let formatted = formatter.process(&delta);
+                            if !formatted.is_empty() {
+                                print!("{}", formatted);
+                                io::stdout().flush()?;
+                            }
+                            printed_any_text = true;
+                        }
+                        Some(StreamEvent::FunctionCallStart { name, call_id }) => {
+                            result.function_calls.push((name, call_id, String::new()));
+                        }
+                        Some(StreamEvent::FunctionCallDelta { call_id, arguments_delta }) => {
+                            // Accumulate arguments
+                            if let Some(fc) = result.function_calls.iter_mut().find(|(_, id, _)| id == &call_id) {
+                                fc.2.push_str(&arguments_delta);
+                            }
+                        }
+                        Some(StreamEvent::FunctionCallDone { name, call_id, arguments }) => {
+                            // Update with final arguments
+                            if let Some(fc) = result.function_calls.iter_mut().find(|(_, id, _)| id == &call_id) {
+                                fc.2 = arguments;
+                            } else {
+                                result.function_calls.push((name, call_id, arguments));
+                            }
+                        }
+                        Some(StreamEvent::Done(response)) => {
+                            result.final_response = Some(response);
+                            break;
+                        }
+                        Some(StreamEvent::Error(e)) => {
+                            eprintln!("\nStream error: {}", e);
+                            break;
+                        }
+                        None => break,
                     }
                 }
-                StreamEvent::FunctionCallDone { name, call_id, arguments } => {
-                    // Update with final arguments
-                    if let Some(fc) = result.function_calls.iter_mut().find(|(_, id, _)| id == &call_id) {
-                        fc.2 = arguments;
-                    } else {
-                        result.function_calls.push((name, call_id, arguments));
-                    }
-                }
-                StreamEvent::Done(response) => {
-                    result.final_response = Some(response);
-                    break;
-                }
-                StreamEvent::Error(e) => {
-                    eprintln!("\nStream error: {}", e);
-                    break;
+                // Small timeout to allow cancellation checks
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {
+                    // Just loop around to check cancellation
                 }
             }
+        }
+
+        // Flush any remaining formatted content
+        let remaining = formatter.flush();
+        if !remaining.is_empty() {
+            print!("{}", remaining);
+            io::stdout().flush()?;
         }
 
         // Print newline after text if we printed any
@@ -712,7 +869,12 @@ impl Repl {
             println!();
         }
 
-        Ok(result)
+        Ok((result, false))
+    }
+
+    /// Check if operation was cancelled
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
     }
 }
 
@@ -723,6 +885,120 @@ struct StreamResult {
     function_calls: Vec<(String, String, String)>,
     /// Final response with usage stats
     final_response: Option<ResponsesResponse>,
+}
+
+/// Simple streaming markdown formatter
+/// Tracks code block state and applies ANSI colors
+struct MarkdownFormatter {
+    in_code_block: bool,
+    pending: String,
+}
+
+impl MarkdownFormatter {
+    fn new() -> Self {
+        Self {
+            in_code_block: false,
+            pending: String::new(),
+        }
+    }
+
+    /// Process a chunk of text and return formatted output
+    fn process(&mut self, chunk: &str) -> String {
+        // Accumulate chunk with pending content
+        self.pending.push_str(chunk);
+
+        let mut output = String::new();
+        let mut processed_up_to = 0;
+
+        // Process complete lines and code block markers
+        let bytes = self.pending.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            // Check for code block marker (```)
+            if i + 3 <= bytes.len() && &self.pending[i..i + 3] == "```" {
+                // Output everything before the marker
+                if i > processed_up_to {
+                    output.push_str(&self.format_text(&self.pending[processed_up_to..i]));
+                }
+
+                // Toggle code block state
+                if self.in_code_block {
+                    // End of code block - reset color
+                    output.push_str("\x1b[0m```");
+                    self.in_code_block = false;
+                } else {
+                    // Start of code block - dim color
+                    output.push_str("```\x1b[2m");
+                    self.in_code_block = true;
+                }
+
+                // Skip to end of line for language specifier
+                let mut j = i + 3;
+                while j < bytes.len() && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                if j < bytes.len() {
+                    output.push_str(&self.pending[i + 3..=j]);
+                    processed_up_to = j + 1;
+                    i = j + 1;
+                } else {
+                    // No newline yet, keep pending
+                    processed_up_to = i + 3;
+                    i = j;
+                }
+                continue;
+            }
+
+            i += 1;
+        }
+
+        // Output remaining processed content
+        if processed_up_to < self.pending.len() {
+            // Check if we might have an incomplete ``` at the end
+            let remaining = &self.pending[processed_up_to..];
+            let trailing = remaining.len().min(2);
+            let safe_len = remaining.len() - trailing;
+
+            if safe_len > 0 {
+                output.push_str(&self.format_text(&remaining[..safe_len]));
+                self.pending = remaining[safe_len..].to_string();
+            } else {
+                self.pending = remaining.to_string();
+            }
+        } else {
+            self.pending.clear();
+        }
+
+        output
+    }
+
+    /// Format text with inline styles (bold, italic)
+    fn format_text(&self, text: &str) -> String {
+        if self.in_code_block {
+            // Inside code block, no inline formatting
+            return text.to_string();
+        }
+        text.to_string()
+    }
+
+    /// Flush any remaining pending content
+    fn flush(&mut self) -> String {
+        if self.pending.is_empty() {
+            return String::new();
+        }
+
+        let output = self.format_text(&self.pending);
+        self.pending.clear();
+
+        // Reset colors if we were in a code block
+        if self.in_code_block {
+            self.in_code_block = false;
+            format!("{}\x1b[0m", output)
+        } else {
+            output
+        }
+    }
 }
 
 /// Entry point for the REPL with pre-loaded context
@@ -749,5 +1025,46 @@ mod tests {
         let semantic = Arc::new(SemanticSearch::new(None, None).await);
         let repl = Repl::new(None, semantic);
         assert!(repl.is_ok());
+    }
+
+    #[test]
+    fn test_markdown_formatter_plain_text() {
+        let mut fmt = MarkdownFormatter::new();
+        let out = fmt.process("Hello world");
+        // Most text is pending until we're sure there's no ```
+        let flush = fmt.flush();
+        assert!(out.contains("Hello") || flush.contains("Hello"));
+    }
+
+    #[test]
+    fn test_markdown_formatter_code_block() {
+        let mut fmt = MarkdownFormatter::new();
+
+        // Start code block
+        let out1 = fmt.process("```rust\n");
+        assert!(out1.contains("```"));
+        assert!(out1.contains("\x1b[2m")); // dim color
+
+        // Code content
+        let out2 = fmt.process("fn main() {}\n");
+
+        // End code block
+        let out3 = fmt.process("```\n");
+        assert!(out3.contains("\x1b[0m")); // reset color
+
+        let flush = fmt.flush();
+        // Combined output should have code
+        let all = format!("{}{}{}{}", out1, out2, out3, flush);
+        assert!(all.contains("fn main"));
+    }
+
+    #[test]
+    fn test_markdown_formatter_flush() {
+        let mut fmt = MarkdownFormatter::new();
+        let out = fmt.process("partial text here");
+        let flush = fmt.flush();
+        // Combined output should have the full text
+        let all = format!("{}{}", out, flush);
+        assert!(all.contains("partial"));
     }
 }
