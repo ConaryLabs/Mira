@@ -33,6 +33,10 @@ pub struct Repl {
     previous_response_id: Option<String>,
     /// History file path
     history_path: std::path::PathBuf,
+    /// Database pool for slash commands
+    db: Option<SqlitePool>,
+    /// Semantic search for slash commands
+    semantic: Arc<SemanticSearch>,
 }
 
 impl Repl {
@@ -46,9 +50,9 @@ impl Repl {
             .join("chat_history");
 
         // Build ToolExecutor with db and semantic if available
-        let mut tools = ToolExecutor::new().with_semantic(semantic);
-        if let Some(pool) = db {
-            tools = tools.with_db(pool);
+        let mut tools = ToolExecutor::new().with_semantic(Arc::clone(&semantic));
+        if let Some(ref pool) = db {
+            tools = tools.with_db(pool.clone());
         }
 
         Ok(Self {
@@ -58,6 +62,8 @@ impl Repl {
             context: MiraContext::default(),
             previous_response_id: None,
             history_path,
+            db,
+            semantic,
         })
     }
 
@@ -237,13 +243,22 @@ impl Repl {
 
     /// Handle slash commands
     async fn handle_command(&mut self, cmd: &str) -> Result<()> {
-        match cmd {
+        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+        let command = parts[0];
+        let arg = parts.get(1).copied().unwrap_or("");
+
+        match command {
             "/help" => {
                 println!("Commands:");
-                println!("  /help     - Show this help");
-                println!("  /clear    - Clear conversation history");
-                println!("  /context  - Show current Mira context");
-                println!("  /quit     - Exit");
+                println!("  /help              - Show this help");
+                println!("  /clear             - Clear conversation history");
+                println!("  /context           - Show current Mira context");
+                println!("  /status            - Show current state");
+                println!("  /switch [path]     - Switch project");
+                println!("  /remember <text>   - Store in memory");
+                println!("  /recall <query>    - Search memory");
+                println!("  /tasks             - List tasks");
+                println!("  /quit              - Exit");
             }
             "/clear" => {
                 self.previous_response_id = None;
@@ -257,14 +272,243 @@ impl Repl {
                     println!("{}", ctx);
                 }
             }
+            "/status" => {
+                self.cmd_status().await;
+            }
+            "/switch" => {
+                self.cmd_switch(arg).await;
+            }
+            "/remember" => {
+                if arg.is_empty() {
+                    println!("Usage: /remember <text to remember>");
+                } else {
+                    self.cmd_remember(arg).await;
+                }
+            }
+            "/recall" => {
+                if arg.is_empty() {
+                    println!("Usage: /recall <search query>");
+                } else {
+                    self.cmd_recall(arg).await;
+                }
+            }
+            "/tasks" => {
+                self.cmd_tasks().await;
+            }
             "/quit" | "/exit" => {
                 std::process::exit(0);
             }
             _ => {
-                println!("Unknown command: {}", cmd);
+                println!("Unknown command: {}. Try /help", command);
             }
         }
         Ok(())
+    }
+
+    /// /status - Show current state
+    async fn cmd_status(&self) {
+        println!("Project: {}", self.context.project_path.as_deref().unwrap_or("(none)"));
+        println!("Conversation: {}", if self.previous_response_id.is_some() { "active" } else { "new" });
+        println!("Semantic search: {}", if self.semantic.is_available() { "enabled" } else { "disabled" });
+
+        if let Some(ref db) = self.db {
+            // Count goals
+            let goals: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM goals WHERE status = 'in_progress'")
+                .fetch_one(db)
+                .await
+                .unwrap_or((0,));
+            println!("Active goals: {}", goals.0);
+
+            // Count tasks
+            let tasks: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status != 'completed'")
+                .fetch_one(db)
+                .await
+                .unwrap_or((0,));
+            println!("Pending tasks: {}", tasks.0);
+
+            // Count memories
+            let memories: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memory_facts")
+                .fetch_one(db)
+                .await
+                .unwrap_or((0,));
+            println!("Memories: {}", memories.0);
+        }
+    }
+
+    /// /switch - Change project
+    async fn cmd_switch(&mut self, path: &str) {
+        let new_path = if path.is_empty() {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string())
+        } else {
+            path.to_string()
+        };
+
+        // Reload context for new project
+        if let Some(ref db) = self.db {
+            match crate::context::MiraContext::load(db, &new_path).await {
+                Ok(ctx) => {
+                    self.context = ctx;
+                    println!("Switched to: {}", new_path);
+                    println!("  {} corrections, {} goals, {} memories",
+                        self.context.corrections.len(),
+                        self.context.goals.len(),
+                        self.context.memories.len());
+                }
+                Err(e) => {
+                    println!("Failed to load context: {}", e);
+                    self.context.project_path = Some(new_path.clone());
+                    println!("Switched to: {} (no context)", new_path);
+                }
+            }
+        } else {
+            self.context.project_path = Some(new_path.clone());
+            println!("Switched to: {} (no database)", new_path);
+        }
+
+        // Clear conversation on project switch
+        self.previous_response_id = None;
+    }
+
+    /// /remember - Store in memory
+    async fn cmd_remember(&self, content: &str) {
+        use chrono::Utc;
+        use uuid::Uuid;
+
+        if let Some(ref db) = self.db {
+            let now = Utc::now().timestamp();
+            let id = Uuid::new_v4().to_string();
+            let key: String = content
+                .chars()
+                .take(50)
+                .collect::<String>()
+                .to_lowercase()
+                .replace(|c: char| !c.is_alphanumeric() && c != ' ', "")
+                .trim()
+                .to_string();
+
+            let result = sqlx::query(r#"
+                INSERT INTO memory_facts (id, fact_type, key, value, category, source, confidence, times_used, created_at, updated_at)
+                VALUES ($1, 'general', $2, $3, NULL, 'mira-chat', 1.0, 0, $4, $4)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            "#)
+            .bind(&id)
+            .bind(&key)
+            .bind(content)
+            .bind(now)
+            .execute(db)
+            .await;
+
+            match result {
+                Ok(_) => {
+                    println!("Remembered: \"{}\"", if content.len() > 50 { &content[..50] } else { content });
+
+                    // Also store in Qdrant if available
+                    if self.semantic.is_available() {
+                        use std::collections::HashMap;
+                        let mut metadata = HashMap::new();
+                        metadata.insert("fact_type".into(), serde_json::json!("general"));
+                        metadata.insert("key".into(), serde_json::json!(key));
+
+                        if let Err(e) = self.semantic.store(
+                            crate::semantic::COLLECTION_MEMORY,
+                            &id,
+                            content,
+                            metadata
+                        ).await {
+                            println!("  (semantic index failed: {})", e);
+                        }
+                    }
+                }
+                Err(e) => println!("Failed to remember: {}", e),
+            }
+        } else {
+            println!("No database connected.");
+        }
+    }
+
+    /// /recall - Search memory
+    async fn cmd_recall(&self, query: &str) {
+        // Try semantic search first
+        if self.semantic.is_available() {
+            match self.semantic.search(crate::semantic::COLLECTION_MEMORY, query, 5, None).await {
+                Ok(results) if !results.is_empty() => {
+                    println!("Found {} memories (semantic):", results.len());
+                    for (i, r) in results.iter().enumerate() {
+                        let preview = if r.content.len() > 80 {
+                            format!("{}...", &r.content[..80])
+                        } else {
+                            r.content.clone()
+                        };
+                        println!("  {}. [score: {:.2}] {}", i + 1, r.score, preview);
+                    }
+                    return;
+                }
+                Ok(_) => {} // Fall through to text search
+                Err(e) => {
+                    println!("  (semantic search failed: {}, trying text...)", e);
+                }
+            }
+        }
+
+        // Fallback to text search
+        if let Some(ref db) = self.db {
+            let pattern = format!("%{}%", query);
+            let rows: Vec<(String, String)> = sqlx::query_as(
+                "SELECT key, value FROM memory_facts WHERE value LIKE $1 OR key LIKE $1 ORDER BY times_used DESC LIMIT 5"
+            )
+            .bind(&pattern)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+
+            if rows.is_empty() {
+                println!("No memories found for: {}", query);
+            } else {
+                println!("Found {} memories (text):", rows.len());
+                for (i, (key, value)) in rows.iter().enumerate() {
+                    let preview = if value.len() > 80 {
+                        format!("{}...", &value[..80])
+                    } else {
+                        value.clone()
+                    };
+                    println!("  {}. [{}] {}", i + 1, key, preview);
+                }
+            }
+        } else {
+            println!("No database connected.");
+        }
+    }
+
+    /// /tasks - List tasks
+    async fn cmd_tasks(&self) {
+        if let Some(ref db) = self.db {
+            let rows: Vec<(String, String, String)> = sqlx::query_as(
+                "SELECT title, status, priority FROM tasks WHERE status != 'completed' ORDER BY
+                 CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                 created_at DESC LIMIT 10"
+            )
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+
+            if rows.is_empty() {
+                println!("No pending tasks.");
+            } else {
+                println!("Tasks ({}):", rows.len());
+                for (title, status, priority) in rows {
+                    let icon = match status.as_str() {
+                        "in_progress" => "◐",
+                        "blocked" => "✗",
+                        _ => "○",
+                    };
+                    println!("  {} [{}] {}", icon, priority, title);
+                }
+            }
+        } else {
+            println!("No database connected.");
+        }
     }
 
     /// Process user input with streaming responses
