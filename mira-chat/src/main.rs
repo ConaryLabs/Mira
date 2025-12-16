@@ -12,6 +12,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod config;
 mod context;
 mod reasoning;
 mod repl;
@@ -24,12 +25,12 @@ mod tools;
 #[command(about = "Power-armored coding assistant with GPT-5.2")]
 struct Args {
     /// Database path (sqlite URL)
-    #[arg(long, env = "DATABASE_URL", default_value = "sqlite://data/mira.db")]
-    database_url: String,
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: Option<String>,
 
     /// Qdrant URL
-    #[arg(long, env = "QDRANT_URL", default_value = "http://localhost:6334")]
-    qdrant_url: String,
+    #[arg(long, env = "QDRANT_URL")]
+    qdrant_url: Option<String>,
 
     /// OpenAI API key
     #[arg(long, env = "OPENAI_API_KEY")]
@@ -40,8 +41,8 @@ struct Args {
     gemini_api_key: Option<String>,
 
     /// Default reasoning effort
-    #[arg(long, default_value = "medium")]
-    reasoning_effort: String,
+    #[arg(long)]
+    reasoning_effort: Option<String>,
 
     /// Project path (defaults to current directory)
     #[arg(long, short = 'p')]
@@ -57,26 +58,45 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // Verify API key is set
+    // Load config file (~/.mira/config.toml)
+    let config = config::Config::load();
+
+    // Resolve values: CLI args > env vars (handled by clap) > config file > defaults
     let api_key = args.openai_api_key
-        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-        .expect("OPENAI_API_KEY environment variable or --openai-api-key required");
+        .or(config.openai_api_key)
+        .expect("OPENAI_API_KEY required (set via --openai-api-key, env var, or ~/.mira/config.toml)");
+
+    let database_url = args.database_url
+        .or(config.database_url)
+        .unwrap_or_else(|| "sqlite://data/mira.db".to_string());
+
+    let qdrant_url = args.qdrant_url
+        .or(config.qdrant_url)
+        .unwrap_or_else(|| "http://localhost:6334".to_string());
+
+    let reasoning_effort = args.reasoning_effort
+        .or(config.reasoning_effort)
+        .unwrap_or_else(|| "medium".to_string());
+
+    let gemini_key = args.gemini_api_key
+        .or(config.gemini_api_key);
 
     // Determine project path
     let project_path = args.project
+        .or(config.project)
         .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string()))
         .unwrap_or_else(|| ".".to_string());
 
     println!("Mira Chat v{}", env!("CARGO_PKG_VERSION"));
     println!("{}", "=".repeat(50));
-    println!("GPT-5.2 Thinking | Reasoning: {}", args.reasoning_effort);
+    println!("GPT-5.2 Thinking | Reasoning: {}", reasoning_effort);
     println!("Project: {}", project_path);
 
     // Connect to database
-    let db_url = if args.database_url.starts_with("sqlite:") {
-        args.database_url.clone()
+    let db_url = if database_url.starts_with("sqlite:") {
+        database_url.clone()
     } else {
-        format!("sqlite:{}", args.database_url)
+        format!("sqlite:{}", database_url)
     };
 
     let db = match SqlitePoolOptions::new()
@@ -95,10 +115,8 @@ async fn main() -> Result<()> {
     };
 
     // Initialize semantic search (Qdrant + Gemini embeddings)
-    let gemini_key = args.gemini_api_key
-        .or_else(|| std::env::var("GEMINI_API_KEY").ok());
     let semantic = Arc::new(
-        semantic::SemanticSearch::new(Some(&args.qdrant_url), gemini_key).await
+        semantic::SemanticSearch::new(Some(&qdrant_url), gemini_key).await
     );
 
     if semantic.is_available() {
