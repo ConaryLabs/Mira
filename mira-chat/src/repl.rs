@@ -84,13 +84,14 @@ impl Repl {
         self.load_history();
 
         println!("Type your message (Ctrl+D to exit, /help for commands)");
+        println!("  Use \\\\ at end of line for multi-line input, or \"\"\" to start/end block");
         println!();
 
         loop {
-            let readline = self.editor.readline(">>> ");
+            let input = self.read_input()?;
 
-            match readline {
-                Ok(line) => {
+            match input {
+                Some(line) => {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -107,16 +108,8 @@ impl Repl {
                     // Process user input with streaming
                     self.process_input_streaming(trimmed).await?;
                 }
-                Err(ReadlineError::Interrupted) => {
-                    println!("^C");
-                    continue;
-                }
-                Err(ReadlineError::Eof) => {
+                None => {
                     println!("Goodbye!");
-                    break;
-                }
-                Err(err) => {
-                    eprintln!("Error: {:?}", err);
                     break;
                 }
             }
@@ -124,6 +117,113 @@ impl Repl {
 
         self.save_history();
         Ok(())
+    }
+
+    /// Read input with multi-line support
+    fn read_input(&mut self) -> Result<Option<String>> {
+        let first_line = match self.editor.readline(">>> ") {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) => {
+                println!("^C");
+                return Ok(Some(String::new())); // Empty to continue loop
+            }
+            Err(ReadlineError::Eof) => return Ok(None),
+            Err(err) => {
+                eprintln!("Error: {:?}", err);
+                return Ok(None);
+            }
+        };
+
+        let trimmed = first_line.trim();
+
+        // Check for triple-quote multi-line mode
+        if trimmed == "\"\"\"" || trimmed.starts_with("\"\"\"") {
+            return self.read_multiline_block(&first_line);
+        }
+
+        // Check for backslash continuation
+        if trimmed.ends_with('\\') {
+            return self.read_continuation_lines(&first_line);
+        }
+
+        Ok(Some(first_line))
+    }
+
+    /// Read multi-line block delimited by """
+    fn read_multiline_block(&mut self, first_line: &str) -> Result<Option<String>> {
+        let mut lines = Vec::new();
+
+        // Handle content after opening """
+        let after_open = first_line.trim().strip_prefix("\"\"\"").unwrap_or("");
+        if !after_open.is_empty() {
+            if after_open.ends_with("\"\"\"") {
+                // Single line with """ on both ends
+                return Ok(Some(after_open.strip_suffix("\"\"\"").unwrap_or(after_open).to_string()));
+            }
+            lines.push(after_open.to_string());
+        }
+
+        loop {
+            match self.editor.readline("... ") {
+                Ok(line) => {
+                    if line.trim() == "\"\"\"" || line.trim().ends_with("\"\"\"") {
+                        // End of block
+                        let before_close = line.trim().strip_suffix("\"\"\"").unwrap_or("");
+                        if !before_close.is_empty() {
+                            lines.push(before_close.to_string());
+                        }
+                        break;
+                    }
+                    lines.push(line);
+                }
+                Err(ReadlineError::Interrupted) => {
+                    println!("^C (cancelled multi-line)");
+                    return Ok(Some(String::new()));
+                }
+                Err(ReadlineError::Eof) => {
+                    return Ok(None);
+                }
+                Err(err) => {
+                    eprintln!("Error: {:?}", err);
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(Some(lines.join("\n")))
+    }
+
+    /// Read continuation lines (ending with \)
+    fn read_continuation_lines(&mut self, first_line: &str) -> Result<Option<String>> {
+        let mut lines = Vec::new();
+        lines.push(first_line.trim().strip_suffix('\\').unwrap_or(first_line.trim()).to_string());
+
+        loop {
+            match self.editor.readline("... ") {
+                Ok(line) => {
+                    let trimmed = line.trim();
+                    if trimmed.ends_with('\\') {
+                        lines.push(trimmed.strip_suffix('\\').unwrap_or(trimmed).to_string());
+                    } else {
+                        lines.push(line);
+                        break;
+                    }
+                }
+                Err(ReadlineError::Interrupted) => {
+                    println!("^C (cancelled multi-line)");
+                    return Ok(Some(String::new()));
+                }
+                Err(ReadlineError::Eof) => {
+                    return Ok(None);
+                }
+                Err(err) => {
+                    eprintln!("Error: {:?}", err);
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(Some(lines.join("\n")))
     }
 
     /// Handle slash commands
