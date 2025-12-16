@@ -1111,53 +1111,62 @@ Mira/
 
 ## Implementation Phases
 
-### Phase 1: Responses API Client (~350 lines)
-- [ ] `src/chat/responses.rs` - API types and client
-- [ ] SSE streaming response parser
-- [ ] Output item handling (Reasoning, Message, FunctionCall)
-- [ ] `previous_response_id` chain management
-- [ ] Error handling and retries
-- [ ] Test: basic response creation
+### Phase 1: Responses API Client ✅
+- [x] `mira-chat/src/responses.rs` - API types and client
+- [x] SSE streaming response parser
+- [x] Output item handling (Reasoning, Message, FunctionCall)
+- [x] `previous_response_id` chain management
+- [x] Error handling and retries
+- [x] Tests: request serialization, output item parsing
 
-### Phase 2: Reasoning Router (~150 lines)
-- [ ] `src/chat/reasoning.rs` - Task complexity classifier
-- [ ] Keyword/pattern-based classification
-- [ ] Map complexity → reasoning_effort (none/low/medium/high/xhigh)
-- [ ] Test: classification accuracy
+### Phase 2: Reasoning Router ✅
+- [x] `mira-chat/src/reasoning.rs` - Task complexity classifier
+- [x] Keyword/pattern-based classification
+- [x] Map complexity → reasoning_effort (none/low/medium/high/xhigh)
+- [x] Tests: classification for all 5 effort levels
 
-### Phase 3: Tool Executor (~400 lines)
-- [ ] `src/chat/tools.rs` - Tool definitions and executor
-- [ ] File tools: read_file, write_file, edit_file
-- [ ] Shell tools: bash, glob, grep
-- [ ] Memory tools: remember, recall (integrate with existing)
-- [ ] Test: tool execution loop
+### Phase 3: Tool Executor ✅
+- [x] `mira-chat/src/tools.rs` - Tool definitions and executor
+- [x] File tools: read_file, write_file, edit_file
+- [x] Shell tools: bash, glob, grep
+- [x] Web tools: web_search (DuckDuckGo), web_fetch (HTML→text)
+- [x] Memory tools: remember, recall (SQLite + Qdrant semantic search)
+- [x] Tests: 12 tool tests including edit edge cases
 
-### Phase 4: Basic Chat Loop (~200 lines)
-- [ ] `src/chat/mod.rs` - Main loop with Responses API
-- [ ] Add `mira chat` subcommand to main.rs
-- [ ] Stream responses to terminal
-- [ ] Response chain management
-- [ ] Test: interactive conversation with tools
+### Phase 4: Basic Chat Loop ✅
+- [x] `mira-chat/src/repl.rs` - Main REPL with Responses API
+- [x] Standalone `mira-chat` binary (not subcommand)
+- [x] Stream responses to terminal
+- [x] Response chain management via `previous_response_id`
+- [x] Agentic loop with max 10 iterations
+- [x] Multi-line input (backslash continuation, """ blocks)
 
-### Phase 5: Context/Instructions Builder (~250 lines)
-- [ ] `src/chat/context.rs` - Build instructions with Mira context
-- [ ] Project detection (cwd → git root)
-- [ ] Inject corrections, goals, memories into instructions
-- [ ] (Note: no need for rolling summaries - `previous_response_id` handles state)
+### Phase 5: Context/Instructions Builder ✅
+- [x] `mira-chat/src/context.rs` - Build instructions with Mira context
+- [x] Load corrections, goals, memories from SQLite
+- [x] Project path from CLI args
+- [x] `mira-chat/src/semantic.rs` - Qdrant + Gemini embeddings
 
-### Phase 6: Slash Commands (~200 lines)
-- [ ] `src/chat/commands.rs` - Command handlers
-- [ ] `/switch`, `/status`, `/remember`, `/recall`, `/tasks`
-- [ ] Direct Mira tool calls (no MCP overhead)
+### Phase 6: Slash Commands (partial)
+- [x] `/help` - Show available commands
+- [x] `/clear` - Clear conversation history
+- [x] `/context` - Show loaded Mira context
+- [x] `/quit`, `/exit` - Exit
+- [ ] `/switch` - Change project
+- [ ] `/status` - Show current state (project, goals, tasks)
+- [ ] `/remember` - Direct memory storage (bypass GPT)
+- [ ] `/recall` - Direct memory search (bypass GPT)
+- [ ] `/tasks` - List tasks
 
 ### Phase 7: Polish
-- [ ] `rustyline` for readline (history, completion)
-- [ ] Ctrl+C handling (cancel current query)
+- [x] `rustyline` for readline with history
+- [x] Basic Ctrl+C handling (cancels input)
+- [ ] Tab completion for slash commands
 - [ ] Pretty output formatting (markdown rendering?)
-- [ ] Config file support (OPENAI_API_KEY, etc.)
-- [ ] Error recovery
+- [ ] Config file support (~/.mira/config.toml)
+- [ ] Ctrl+C to cancel in-flight request
 
-**Total new code: ~1550 lines** (plus existing Mira tools reused)
+**Current stats:** ~2000 lines across 7 modules, 20 tests passing, 10 tools
 
 ---
 
