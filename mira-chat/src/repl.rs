@@ -9,11 +9,14 @@
 use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use sqlx::SqlitePool;
 use std::io::{self, Write};
+use std::sync::Arc;
 
 use crate::context::{build_system_prompt, MiraContext};
 use crate::reasoning::classify;
 use crate::responses::{Client, ResponsesResponse, StreamEvent, Tool, Usage};
+use crate::semantic::SemanticSearch;
 use crate::tools::{get_tools, ToolExecutor};
 
 /// REPL state
@@ -33,7 +36,7 @@ pub struct Repl {
 }
 
 impl Repl {
-    pub fn new() -> Result<Self> {
+    pub fn new(db: Option<SqlitePool>, semantic: Arc<SemanticSearch>) -> Result<Self> {
         let editor = DefaultEditor::new()?;
 
         // History file in ~/.mira/chat_history
@@ -42,10 +45,16 @@ impl Repl {
             .join(".mira")
             .join("chat_history");
 
+        // Build ToolExecutor with db and semantic if available
+        let mut tools = ToolExecutor::new().with_semantic(semantic);
+        if let Some(pool) = db {
+            tools = tools.with_db(pool);
+        }
+
         Ok(Self {
             editor,
             client: None,
-            tools: ToolExecutor::new(),
+            tools,
             context: MiraContext::default(),
             previous_response_id: None,
             history_path,
@@ -473,21 +482,15 @@ struct StreamResult {
 }
 
 /// Entry point for the REPL with pre-loaded context
-pub async fn run_with_context(api_key: String, context: MiraContext) -> Result<()> {
-    let mut repl = Repl::new()?
+pub async fn run_with_context(
+    api_key: String,
+    context: MiraContext,
+    db: Option<SqlitePool>,
+    semantic: Arc<SemanticSearch>,
+) -> Result<()> {
+    let mut repl = Repl::new(db, semantic)?
         .with_api_key(api_key)
         .with_loaded_context(context);
-
-    repl.run().await
-}
-
-/// Entry point for the REPL (loads context itself)
-pub async fn run() -> Result<()> {
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY required");
-
-    let mut repl = Repl::new()?
-        .with_api_key(api_key);
 
     repl.run().await
 }
@@ -496,9 +499,11 @@ pub async fn run() -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_repl_new() {
-        let repl = Repl::new();
+    #[tokio::test]
+    async fn test_repl_new() {
+        // Create with no db or semantic
+        let semantic = Arc::new(SemanticSearch::new(None, None).await);
+        let repl = Repl::new(None, semantic);
         assert!(repl.is_ok());
     }
 }
