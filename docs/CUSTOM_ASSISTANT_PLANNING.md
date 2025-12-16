@@ -1,39 +1,67 @@
 # Mira Chat - Planning Document
 
-**Power-armored coding assistant.** Persistent memory, code intelligence, cost-efficient inference.
+**Power-armored coding assistant.** Persistent memory, code intelligence, best-in-class inference.
 
 ## Vision
 
 **Sessions are the problem, not the solution.** Traditional assistants treat each session as isolated. We want the opposite: one continuous, neverending relationship.
 
 A single orchestrator (`mira chat`) that:
-- Uses **DeepSeek V3.2** as the inference engine (cost-efficient, auto-caching)
+- Uses **GPT-5.2 Thinking** as the inference engine (best reasoning, auto-caching)
+- **Variable reasoning effort** - scale intelligence to task complexity
 - Injects rich context directly into prompts
 - **Eliminates sessions entirely** - One conversation, forever
 - Mira IS the memory - the relationship persists across everything
 
-## Why DeepSeek Over Claude CLI?
+## Why GPT-5.2 Over Claude CLI?
 
-| Factor | Claude CLI | DeepSeek API |
-|--------|-----------|--------------|
-| Context window | 200K | **128K** |
-| Max output | ~8K | **8K** (deepseek-chat) |
-| Caching | Manual (`cache_control` headers) | **Auto** (just works) |
-| Min cache tokens | 1,024 | **64** |
-| Cache TTL | 5 minutes | **Hours to days** |
+| Factor | Claude CLI (Opus 4.5) | GPT-5.2 Thinking |
+|--------|----------------------|------------------|
+| Context window | 200K | **400K** |
+| Max output | ~8K | **128K** |
+| Caching | Manual (`cache_control` headers) | **Auto** (prefix-based) |
 | Cache hit discount | 90% | **90%** |
 | Cache write cost | +25% | **Free** |
-| Base pricing | $3/M input, $15/M output (Sonnet 4.5) | **$0.28/M input, $0.42/M output** |
-| Rate limits | Tiered | **None** |
-| Tools | Built-in (Read, Write, Edit, Bash) | We implement |
+| Base pricing | $5/M input, $25/M output | **$1.75/M input, $14/M output** |
+| Cached pricing | $0.50/M input | **$0.175/M input** |
+| ARC-AGI-2 (reasoning) | 37.6% | **52.9%** |
+| SWE-bench (coding) | 80.9% | **80.0%** |
+| Reasoning control | None | **5 levels (none→xhigh)** |
+| Tools | Built-in | We implement |
 
-**Bottom line:** DeepSeek is ~10x cheaper with simpler caching. We trade built-in tools for massive cost savings - and we were going to wrap everything anyway.
+**Bottom line:** GPT-5.2 has the best reasoning (ARC-AGI-2: 52.9%), massive context (400K), huge output (128K), and variable reasoning effort. At ~$2-3/session with caching, it fits comfortably in a $200/month budget.
+
+## Reasoning Effort Levels
+
+GPT-5.2's killer feature: **scale reasoning to task complexity**.
+
+| Level | Token Cost | Latency | Use Case |
+|-------|------------|---------|----------|
+| `none` | 1x | Fastest | Tool execution, simple queries |
+| `low` | ~3-5x | Fast | Code navigation, file search |
+| `medium` | ~8-10x | Moderate | Code understanding, standard edits |
+| `high` | ~15-20x | Slower | Complex refactoring, architecture |
+| `xhigh` | ~23x | Slowest | Critical debugging, deep analysis |
+
+### Task Router
+
+```
+User query → Mira classifies complexity → Sets reasoning_effort → GPT-5.2
+
+Examples:
+  "read src/main.rs"           → none   (just execute tool)
+  "what does this function do" → medium (understand code)
+  "refactor auth system"       → high   (multi-file planning)
+  "why is this deadlocking"    → xhigh  (deep debugging)
+```
+
+This lets us use GPT-5.2's full power when needed while keeping costs low for simple operations.
 
 ### Tool Implementation
 
-We implement Claude Code-style tools via DeepSeek function calling. Tool definitions based on [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts).
+We implement Claude Code-style tools via GPT-5.2 function calling. Tool definitions based on [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts).
 
-#### Tool Definitions (JSON Schema for DeepSeek)
+#### Tool Definitions (JSON Schema for GPT-5.2)
 
 ```rust
 fn define_tools() -> Vec<Tool> {
@@ -277,11 +305,12 @@ When you `cd /home/peter/Mira`, code context switches. But the relationship cont
 
 ## What We Implement (Core Tools)
 
-Built with DeepSeek function calling:
+Built with GPT-5.2 function calling:
 - **File tools**: read_file, write_file, edit_file
 - **Shell tools**: bash, glob, grep
 - **Memory tools**: remember, recall (integrated with Mira DB)
 - **Streaming**: SSE response streaming to terminal
+- **Reasoning router**: Classify task complexity → set reasoning_effort
 
 ## What We Add (Power Armor)
 
@@ -306,17 +335,18 @@ Built with DeepSeek function calling:
 User: "fix the auth bug"
   ↓
 Mira:
-  1. Semantic search: find memories related to "auth"
-  2. Load: corrections, active goals, recent sessions
-  3. Query: relevant code symbols, recent commits
-  4. Build system prompt with all context
-  5. Call DeepSeek API with tools + context
+  1. Classify complexity → set reasoning_effort (high for bug fix)
+  2. Semantic search: find memories related to "auth"
+  3. Load: corrections, active goals, recent sessions
+  4. Query: relevant code symbols, recent commits
+  5. Build system prompt with all context
+  6. Call GPT-5.2 API with tools + context + reasoning_effort
   ↓
-DeepSeek: Returns tool calls (read_file, edit_file, etc.)
+GPT-5.2: Returns tool calls (read_file, edit_file, etc.)
   ↓
 Mira: Executes tools, returns results, loops until done
   ↓
-DeepSeek: "I've fixed the auth bug by..."
+GPT-5.2: "I've fixed the auth bug by..."
   ↓
 Mira: Stream to terminal, store in conversation history
 ```
@@ -325,7 +355,7 @@ Mira: Stream to terminal, store in conversation history
 
 ## Architecture Overview
 
-**Key insight:** Mira is the orchestrator. DeepSeek is the inference engine. We own the tool loop.
+**Key insight:** Mira is the orchestrator. GPT-5.2 is the inference engine. We own the tool loop.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -335,7 +365,14 @@ Mira: Stream to terminal, store in conversation history
 │  │  Input Layer                                             │   │
 │  │  - Readline (rustyline)                                  │   │
 │  │  - Slash commands: /remember, /recall, /tasks, /switch   │   │
-│  │  - Regular prompts → DeepSeek                            │   │
+│  │  - Regular prompts → GPT-5.2                             │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                  │
+│                              ▼                                  │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  Reasoning Router                                        │   │
+│  │  - Classify task complexity                              │   │
+│  │  - Set reasoning_effort: none/low/medium/high/xhigh      │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │                              ▼                                  │
@@ -345,15 +382,16 @@ Mira: Stream to terminal, store in conversation history
 │  │  - Query Qdrant: semantic search for relevant context    │   │
 │  │  - Query code index: symbols, call graph, co-change      │   │
 │  │  - Build system prompt with all context injected         │   │
-│  │  - DeepSeek auto-caches (no manual cache_control!)       │   │
+│  │  - GPT-5.2 auto-caches stable prefix                     │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │  DeepSeek API Client                                     │   │
-│  │  - POST to api.deepseek.com/chat/completions             │   │
+│  │  GPT-5.2 API Client                                      │   │
+│  │  - POST to api.openai.com/v1/chat/completions            │   │
 │  │  - Stream SSE responses                                  │   │
 │  │  - Function calling for tools                            │   │
+│  │  - reasoning_effort parameter                            │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │                              ▼                                  │
@@ -390,36 +428,49 @@ Mira: Stream to terminal, store in conversation history
 - `/tasks`, `/goals`, `/status` → query and display
 - `/switch` → change project, reload context
 
-**What DeepSeek handles (via API):**
+**What GPT-5.2 handles (via API):**
 - Code understanding and generation
 - Deciding which tools to call
-- Reasoning about context
+- Reasoning about context (scaled by reasoning_effort)
 
-**What Mira executes (tool calls from DeepSeek):**
+**What Mira executes (tool calls from GPT-5.2):**
 - File operations (read, write, edit)
 - Shell commands (bash)
 - Search (glob, grep)
 - Memory (remember, recall - integrated as tools too)
 
-**What we build:** Everything (orchestrator, tools, context, API client)
-**What we get for free:** DeepSeek's auto-caching, cheap inference
+**What we build:** Everything (orchestrator, tools, context, API client, reasoning router)
+**What we get for free:** GPT-5.2's auto-caching, best-in-class reasoning
 
 ---
 
-## DeepSeek API Integration
+## GPT-5.2 Responses API Integration
+
+### Why Responses API (Not Chat Completions)
+
+GPT-5.2 works best with the **Responses API**, OpenAI's cutting-edge agentic interface (Dec 2025):
+
+| Feature | Chat Completions | Responses API |
+|---------|-----------------|---------------|
+| **Conversation state** | Send full history each turn | `previous_response_id` |
+| **Chain of thought** | Discarded between turns | **Preserved across turns** |
+| **Cache utilization** | Standard | **40-80% better** |
+| **Benchmark (TAUBench)** | Baseline | **+5% with GPT-5.2** |
+| **Output format** | Single message | Polymorphic items |
 
 ### API Overview
 
-DeepSeek provides an OpenAI-compatible API with automatic context caching:
-
 ```
-POST https://api.deepseek.com/chat/completions
-Authorization: Bearer $DEEPSEEK_API_KEY
+POST https://api.openai.com/v1/responses
+Authorization: Bearer $OPENAI_API_KEY
 Content-Type: application/json
 
 {
-  "model": "deepseek-chat",
-  "messages": [...],
+  "model": "gpt-5.2",
+  "input": "Fix the auth bug in src/auth.rs",
+  "instructions": "You are Mira, a power-armored coding assistant...",
+  "previous_response_id": "resp_abc123",  // Conversation continuity
+  "reasoning": { "effort": "high" },
   "tools": [...],
   "stream": true
 }
@@ -429,15 +480,16 @@ Content-Type: application/json
 
 | Feature | Details |
 |---------|---------|
-| **Context window** | 128K tokens |
-| **Max output** | 8K tokens (deepseek-chat) |
-| **Auto-caching** | Enabled by default, no configuration needed |
-| **Cache granularity** | 64 tokens minimum storage unit |
-| **Cache TTL** | Hours to days (automatic cleanup when unused) |
-| **Function calling** | OpenAI-compatible, max 128 tools per request |
-| **Streaming** | SSE with `data:` prefix, `[DONE]` terminator |
-| **Pricing** | $0.028/M cache hit, $0.28/M cache miss, $0.42/M output |
-| **Rate limits** | None enforced |
+| **Context window** | 400K tokens |
+| **Max output** | 128K tokens |
+| **CoT preservation** | Reasoning state persists across turns (hidden but used) |
+| **Cache hit discount** | 90% ($0.175/M vs $1.75/M) |
+| **Reasoning effort** | none / low / medium / high / xhigh |
+| **Conversation state** | Managed via `previous_response_id` |
+| **Output items** | Reasoning summaries, messages, tool calls, results |
+| **Pricing** | $0.175/M cache hit, $1.75/M cache miss, $14/M output |
+| **ARC-AGI-2** | 52.9% (best abstract reasoning) |
+| **Compact endpoint** | `/responses/compact` for long workflows |
 
 ### Basic Usage (Rust)
 
@@ -446,78 +498,130 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
-struct ChatRequest {
+struct ResponsesRequest {
     model: String,
-    messages: Vec<Message>,
+    input: String,
+    instructions: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_response_id: Option<String>,
+    reasoning: ReasoningConfig,
     tools: Vec<Tool>,
     stream: bool,
 }
 
 #[derive(Serialize)]
-struct Message {
-    role: String,
-    content: String,
+struct ReasoningConfig {
+    effort: String,  // "none" | "low" | "medium" | "high" | "xhigh"
 }
 
-async fn chat(client: &Client, messages: Vec<Message>, tools: Vec<Tool>) -> Result<Response> {
-    let request = ChatRequest {
-        model: "deepseek-chat".into(),
-        messages,
-        tools,
+#[derive(Deserialize)]
+struct ResponsesResponse {
+    id: String,  // Use as previous_response_id for next turn
+    output: Vec<OutputItem>,
+    usage: Usage,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum OutputItem {
+    #[serde(rename = "reasoning")]
+    Reasoning { summary: String },
+    #[serde(rename = "message")]
+    Message { content: String },
+    #[serde(rename = "function_call")]
+    FunctionCall { name: String, arguments: String, call_id: String },
+}
+
+async fn respond(
+    client: &Client,
+    input: &str,
+    instructions: &str,
+    previous_response_id: Option<&str>,
+    reasoning_effort: &str,
+    tools: &[Tool],
+) -> Result<ResponsesResponse> {
+    let request = ResponsesRequest {
+        model: "gpt-5.2".into(),
+        input: input.into(),
+        instructions: instructions.into(),
+        previous_response_id: previous_response_id.map(String::from),
+        reasoning: ReasoningConfig { effort: reasoning_effort.into() },
+        tools: tools.to_vec(),
         stream: true,
     };
 
     let response = client
-        .post("https://api.deepseek.com/chat/completions")
-        .bearer_auth(std::env::var("DEEPSEEK_API_KEY")?)
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(std::env::var("OPENAI_API_KEY")?)
         .json(&request)
         .send()
         .await?;
 
-    // Handle SSE stream...
-    Ok(response)
+    // Handle SSE stream, collect output items...
+    parse_response(response).await
 }
 ```
+
+### Conversation Flow with Responses API
+
+```
+Turn 1:
+  Mira → GPT-5.2: input="fix auth bug", previous_response_id=None
+  GPT-5.2 → Mira: response_id="resp_001", output=[FunctionCall{read_file}]
+
+Turn 2 (after tool execution):
+  Mira → GPT-5.2: input=<tool_result>, previous_response_id="resp_001"
+  GPT-5.2 → Mira: response_id="resp_002", output=[FunctionCall{edit_file}]
+
+  (GPT-5.2 internally has full CoT from turn 1 - better reasoning!)
+
+Turn 3:
+  Mira → GPT-5.2: input=<tool_result>, previous_response_id="resp_002"
+  GPT-5.2 → Mira: response_id="resp_003", output=[Message{"I've fixed..."}]
+```
+
+**Key insight:** We don't send full conversation history. OpenAI manages state. We just pass `previous_response_id` and the model has full context including hidden chain-of-thought.
 
 ### Tool Calling Flow
 
 ```
 User: "Fix the auth bug in src/auth.rs"
             ↓
-Mira: Build context, send to DeepSeek with tools
+Mira: Classify → high complexity, set reasoning_effort="high"
             ↓
-DeepSeek: Returns tool_call: read_file("src/auth.rs")
+Mira: Build context, send to GPT-5.2 with tools + reasoning
+            ↓
+GPT-5.2: Returns tool_call: read_file("src/auth.rs")
             ↓
 Mira: Executes read_file, returns content
             ↓
-DeepSeek: Analyzes, returns tool_call: edit_file(...)
+GPT-5.2: Analyzes (high reasoning), returns tool_call: edit_file(...)
             ↓
 Mira: Executes edit, returns success
             ↓
-DeepSeek: "I've fixed the auth bug by..."
+GPT-5.2: "I've fixed the auth bug by..."
             ↓
 Mira: Stream to terminal, done
 ```
 
 ### Cache Behavior
 
-DeepSeek's auto-cache works on **prefix matching** (from official docs):
+GPT-5.2's auto-cache works on **prefix matching**:
 
 ```
 Request 1: [system prompt] + [context] + "fix auth bug"
            └─────────────────────────┘
-                    cached (if ≥64 tokens)
+                    cached prefix
 
 Request 2: [system prompt] + [context] + "now add tests"
            └─────────────────────────┘
-                 cache HIT (90% off)
+                 cache HIT (90% off: $0.175/M)
 ```
 
-**Important notes from DeepSeek docs:**
+**Key points:**
 - Only the **repeated prefix** triggers cache hits
-- Minimum 64 tokens required for caching
-- Cache is "best-effort" - not guaranteed 100% hit rate
-- Cache auto-clears when unused (hours to days)
+- Cache is automatic - no configuration needed
+- 90% discount on cache hits ($0.175/M vs $1.75/M)
 
 Since our system prompt and context are prepended, they naturally form a stable prefix → high cache hit rate.
 
@@ -528,14 +632,17 @@ Since our system prompt and context are prepended, they naturally form a stable 
 ### Main Chat Loop
 
 ```rust
-// src/chat/mod.rs - Main chat loop
+// src/chat/mod.rs - Main chat loop (Responses API)
 use crate::tools::SemanticSearch;
-use crate::chat::{deepseek, context::ContinuousContext, tools::execute_tool};
+use crate::chat::{responses, context::ContinuousContext, tools::execute_tool, reasoning::classify_effort};
 
 pub async fn run(pool: SqlitePool, semantic: Option<SemanticSearch>) -> Result<()> {
     let client = reqwest::Client::new();
     let mut ctx = ContinuousContext::new(pool.clone(), semantic);
     let mut editor = create_editor()?;
+
+    // Track response chain for conversation continuity
+    let mut previous_response_id: Option<String> = None;
 
     println!("Mira Chat - Type /help for commands, /quit to exit");
 
@@ -554,103 +661,129 @@ pub async fn run(pool: SqlitePool, semantic: Option<SemanticSearch>) -> Result<(
             continue;
         }
 
-        // Add user message to conversation
-        ctx.add_message(Message::user(&input));
+        // Classify task complexity → set reasoning effort
+        let reasoning_effort = classify_effort(&input, &ctx);
 
-        // Build messages with context-rich system prompt
-        let system_prompt = ctx.build_system_prompt(&input).await?;
-        let messages = ctx.build_messages(&system_prompt);
+        // Build instructions with Mira context (corrections, goals, memories)
+        let instructions = ctx.build_instructions(&input).await?;
         let tools = define_tools();
 
-        // Tool loop: keep calling DeepSeek until no more tool calls
+        // Agentic loop: keep calling GPT-5.2 until task complete
+        let mut current_input = input.clone();
         loop {
-            let response = deepseek::chat(&client, &messages, &tools).await?;
+            let response = responses::create(
+                &client,
+                &current_input,
+                &instructions,
+                previous_response_id.as_deref(),
+                &reasoning_effort,
+                &tools,
+            ).await?;
 
-            // Stream text content to terminal
-            if let Some(text) = &response.content {
-                print!("{}", text);
+            // Update response chain
+            previous_response_id = Some(response.id.clone());
+
+            // Process output items
+            for item in &response.output {
+                match item {
+                    OutputItem::Message { content } => {
+                        print!("{}", content);
+                    }
+                    OutputItem::FunctionCall { name, arguments, call_id } => {
+                        let result = execute_tool(name, arguments, &pool, &ctx).await;
+                        current_input = format_tool_result(call_id, &result);
+                        continue; // Next iteration with tool result
+                    }
+                    OutputItem::Reasoning { summary } => {
+                        // Optional: show reasoning summary in debug mode
+                    }
+                }
             }
 
-            // Check for tool calls
-            if response.tool_calls.is_empty() {
-                ctx.add_message(Message::assistant(&response));
-                break;
-            }
-
-            // Execute tools and add results
-            for call in &response.tool_calls {
-                let result = execute_tool(call, &pool, &ctx).await;
-                ctx.add_message(Message::tool_result(&call.id, &result));
-            }
+            // No more function calls = task complete
+            break;
         }
 
         println!(); // Newline after response
-        ctx.maybe_summarize().await?;
     }
 
-    // Store session summary on exit
-    ctx.store_session_summary().await?;
     Ok(())
 }
 ```
 
-### DeepSeek API Client
+### Responses API Client
 
 ```rust
-// src/chat/deepseek.rs - DeepSeek API client
+// src/chat/responses.rs - GPT-5.2 Responses API client
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use futures::StreamExt;
 
-const API_URL: &str = "https://api.deepseek.com/chat/completions";
+const API_URL: &str = "https://api.openai.com/v1/responses";
 
 #[derive(Serialize)]
-pub struct ChatRequest {
+pub struct ResponsesRequest {
     pub model: String,
-    pub messages: Vec<Message>,
+    pub input: String,
+    pub instructions: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    pub reasoning: ReasoningConfig,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
     pub stream: bool,
 }
 
+#[derive(Serialize)]
+pub struct ReasoningConfig {
+    pub effort: String,
+}
+
 #[derive(Deserialize)]
-pub struct ChatResponse {
-    pub choices: Vec<Choice>,
+pub struct ResponsesResponse {
+    pub id: String,
+    pub output: Vec<OutputItem>,
     pub usage: Option<Usage>,
 }
 
 #[derive(Deserialize)]
-pub struct Choice {
-    pub message: ResponseMessage,
-    pub finish_reason: Option<String>,
+#[serde(tag = "type")]
+pub enum OutputItem {
+    #[serde(rename = "reasoning")]
+    Reasoning { summary: String },
+    #[serde(rename = "message")]
+    Message { content: String },
+    #[serde(rename = "function_call")]
+    FunctionCall { name: String, arguments: String, call_id: String },
 }
 
-#[derive(Deserialize)]
-pub struct ResponseMessage {
-    pub content: Option<String>,
-    #[serde(default)]
-    pub tool_calls: Vec<ToolCall>,
-}
-
-/// Token usage with cache metrics (from DeepSeek API)
+/// Token usage with cache metrics
 #[derive(Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    pub prompt_cache_hit_tokens: u32,    // Tokens served from cache (90% off)
-    pub prompt_cache_miss_tokens: u32,   // Tokens computed fresh
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cached_input_tokens: u32,  // Tokens served from cache (90% off)
 }
 
-pub async fn chat(client: &Client, messages: &[Message], tools: &[Tool]) -> Result<ResponseMessage> {
-    let request = ChatRequest {
-        model: "deepseek-chat".into(),
-        messages: messages.to_vec(),
+pub async fn create(
+    client: &Client,
+    input: &str,
+    instructions: &str,
+    previous_response_id: Option<&str>,
+    reasoning_effort: &str,
+    tools: &[Tool],
+) -> Result<ResponsesResponse> {
+    let request = ResponsesRequest {
+        model: "gpt-5.2".into(),
+        input: input.into(),
+        instructions: instructions.into(),
+        previous_response_id: previous_response_id.map(String::from),
+        reasoning: ReasoningConfig { effort: reasoning_effort.into() },
         tools: tools.to_vec(),
         stream: true,
     };
 
-    let api_key = std::env::var("DEEPSEEK_API_KEY")?;
+    let api_key = std::env::var("OPENAI_API_KEY")?;
 
     let response = client
         .post(API_URL)
@@ -832,81 +965,48 @@ impl ContinuousContext {
         }
     }
 
-    pub fn add_message(&mut self, msg: Message) {
-        self.messages.push(msg);
-    }
-
-    /// Build full message array for DeepSeek API
-    pub fn build_messages(&self, system_prompt: &str) -> Vec<Message> {
-        let mut result = vec![Message::system(system_prompt)];
-        result.extend(self.messages.clone());
-        result
-    }
-
-    /// Build system prompt with all relevant context injected
-    pub async fn build_system_prompt(&self, user_query: &str) -> Result<String> {
-        let mut prompt = String::from(CORE_INSTRUCTIONS);
-        prompt.push_str("\n\n<context>\n");
+    /// Build instructions with Mira context for Responses API
+    /// Note: Conversation history is managed by previous_response_id, not us
+    pub async fn build_instructions(&self, user_query: &str) -> Result<String> {
+        let mut instructions = String::from(CORE_INSTRUCTIONS);
+        instructions.push_str("\n\n<context>\n");
 
         // Project info
-        prompt.push_str(&format!("Project: {}\n", self.current_project.display()));
-
-        // Rolling summaries (older conversation)
-        if !self.summaries.is_empty() {
-            prompt.push_str("\n## Previous conversation summary\n");
-            for s in &self.summaries {
-                prompt.push_str(&format!("{}\n", s.content));
-            }
-        }
+        instructions.push_str(&format!("Project: {}\n", self.current_project.display()));
 
         // Active corrections (always include)
         let corrections = tools::corrections::list(&self.pool, 5).await?;
         if !corrections.is_empty() {
-            prompt.push_str("\n## Corrections (follow these)\n");
+            instructions.push_str("\n## Corrections (follow these)\n");
             for c in corrections {
-                prompt.push_str(&format!("- {}\n", c.what_is_right));
+                instructions.push_str(&format!("- {}\n", c.what_is_right));
             }
         }
 
         // Active goals
         let goals = tools::goals::list_active(&self.pool, 3).await?;
         if !goals.is_empty() {
-            prompt.push_str("\n## Active goals\n");
+            instructions.push_str("\n## Active goals\n");
             for g in goals {
-                prompt.push_str(&format!("- [{}] {}\n", g.priority, g.title));
+                instructions.push_str(&format!("- [{}] {}\n", g.priority, g.title));
             }
         }
 
-        prompt.push_str("</context>\n\n");
+        instructions.push_str("</context>\n\n");
 
-        // Semantic memories (uncached - query dependent)
+        // Semantic memories (query-relevant)
         if let Some(ref qdrant) = self.qdrant {
             let memories = qdrant.search("memories", user_query, 5).await?;
             if !memories.is_empty() {
-                prompt.push_str("<relevant_memories>\n");
+                instructions.push_str("<relevant_memories>\n");
                 for m in memories {
-                    prompt.push_str(&format!("- {}\n", m.content));
+                    instructions.push_str(&format!("- {}\n", m.content));
                 }
-                prompt.push_str("</relevant_memories>");
+                instructions.push_str("</relevant_memories>");
             }
         }
 
-        Ok(prompt)
-    }
-
-    /// Summarize older messages when context grows too large
-    pub async fn maybe_summarize(&mut self) -> Result<()> {
-        let token_estimate = self.messages.len() * 100; // Rough estimate
-
-        if token_estimate > 40_000 {
-            let split = self.messages.len() / 2;
-            let to_summarize: Vec<_> = self.messages.drain(..split).collect();
-
-            // Generate summary (could use DeepSeek for this too)
-            let summary = generate_summary(&to_summarize);
-            self.summaries.push(summary);
-        }
-        Ok(())
+        Ok(instructions)
     }
 }
 ```
@@ -987,8 +1087,9 @@ Mira/
 │   ├── main.rs                  # Entry point (add "chat" subcommand)
 │   ├── chat/                    # NEW: Interactive assistant
 │   │   ├── mod.rs               # Main chat loop
-│   │   ├── deepseek.rs          # DeepSeek API client
-│   │   ├── context.rs           # ContinuousContext
+│   │   ├── responses.rs         # GPT-5.2 Responses API client
+│   │   ├── reasoning.rs         # Task complexity classifier
+│   │   ├── context.rs           # Instructions builder (Mira context)
 │   │   ├── tools.rs             # Tool executor
 │   │   ├── commands.rs          # Slash command handlers
 │   │   └── input.rs             # Readline, history
@@ -1000,7 +1101,7 @@ Mira/
 │   └── server/                  # Existing MCP server
 │       └── mod.rs
 ├── prompts/
-│   └── system.md                # Core system prompt
+│   └── instructions.md          # Core instructions for GPT-5.2
 └── Cargo.toml
 ```
 
@@ -1010,46 +1111,53 @@ Mira/
 
 ## Implementation Phases
 
-### Phase 1: DeepSeek API Client (~300 lines)
-- [ ] `src/chat/deepseek.rs` - API types and client
+### Phase 1: Responses API Client (~350 lines)
+- [ ] `src/chat/responses.rs` - API types and client
 - [ ] SSE streaming response parser
-- [ ] Tool call accumulation
+- [ ] Output item handling (Reasoning, Message, FunctionCall)
+- [ ] `previous_response_id` chain management
 - [ ] Error handling and retries
-- [ ] Test: basic chat completion
+- [ ] Test: basic response creation
 
-### Phase 2: Tool Executor (~400 lines)
+### Phase 2: Reasoning Router (~150 lines)
+- [ ] `src/chat/reasoning.rs` - Task complexity classifier
+- [ ] Keyword/pattern-based classification
+- [ ] Map complexity → reasoning_effort (none/low/medium/high/xhigh)
+- [ ] Test: classification accuracy
+
+### Phase 3: Tool Executor (~400 lines)
 - [ ] `src/chat/tools.rs` - Tool definitions and executor
 - [ ] File tools: read_file, write_file, edit_file
 - [ ] Shell tools: bash, glob, grep
 - [ ] Memory tools: remember, recall (integrate with existing)
 - [ ] Test: tool execution loop
 
-### Phase 3: Basic Chat Loop (~200 lines)
-- [ ] `src/chat/mod.rs` - Main loop
+### Phase 4: Basic Chat Loop (~200 lines)
+- [ ] `src/chat/mod.rs` - Main loop with Responses API
 - [ ] Add `mira chat` subcommand to main.rs
 - [ ] Stream responses to terminal
+- [ ] Response chain management
 - [ ] Test: interactive conversation with tools
 
-### Phase 4: Continuous Context (~300 lines)
-- [ ] `src/chat/context.rs` - ContinuousContext struct
+### Phase 5: Context/Instructions Builder (~250 lines)
+- [ ] `src/chat/context.rs` - Build instructions with Mira context
 - [ ] Project detection (cwd → git root)
-- [ ] Conversation history management
-- [ ] Rolling summaries when context grows
-- [ ] Warm context injection from Mira DB
+- [ ] Inject corrections, goals, memories into instructions
+- [ ] (Note: no need for rolling summaries - `previous_response_id` handles state)
 
-### Phase 5: Slash Commands (~200 lines)
+### Phase 6: Slash Commands (~200 lines)
 - [ ] `src/chat/commands.rs` - Command handlers
 - [ ] `/switch`, `/status`, `/remember`, `/recall`, `/tasks`
 - [ ] Direct Mira tool calls (no MCP overhead)
 
-### Phase 6: Polish
+### Phase 7: Polish
 - [ ] `rustyline` for readline (history, completion)
 - [ ] Ctrl+C handling (cancel current query)
 - [ ] Pretty output formatting (markdown rendering?)
-- [ ] Config file support (DEEPSEEK_API_KEY, etc.)
+- [ ] Config file support (OPENAI_API_KEY, etc.)
 - [ ] Error recovery
 
-**Total new code: ~1400 lines** (plus existing Mira tools reused)
+**Total new code: ~1550 lines** (plus existing Mira tools reused)
 
 ---
 
@@ -1058,92 +1166,99 @@ Mira/
 | Question | Decision | Rationale |
 |----------|----------|-----------|
 | **Language** | Rust | Single binary, direct Mira integration, fast startup |
-| **LLM Provider** | DeepSeek V3.2 | 10x cheaper, auto-caching, disk-persistent cache |
+| **LLM Provider** | GPT-5.2 Thinking | Best reasoning (ARC-AGI-2: 52.9%), 400K context, 128K output |
+| **API** | Responses API | CoT preservation, `previous_response_id`, 40-80% better cache |
+| **Reasoning control** | Variable effort | none/low/medium/high/xhigh based on task complexity |
 | **Tool implementation** | Mira-owned | We implement read/write/edit/bash/etc via function calling |
-| **Mira integration** | Context injection | Query DB/Qdrant, inject into system prompt - no MCP |
-| **Context strategy** | Rolling summaries + Mira context | Mira handles all context management, DeepSeek is stateless |
+| **Mira integration** | Instructions injection | Query DB/Qdrant, inject into `instructions` parameter |
+| **Conversation state** | `previous_response_id` | OpenAI manages state, we just pass response IDs |
 | **Multi-file editing** | Custom edit_file tool | Simple search/replace, can extend later |
 | **Architecture** | Extend Mira binary | Add `mira chat` subcommand, reuse existing tools |
-| **Sessions** | Eliminated entirely | One neverending conversation, rolling summaries for context |
+| **Sessions** | Eliminated entirely | One neverending conversation via `previous_response_id` |
 | **Project detection** | Layered: .mira/ → git → package → cwd | Explicit config wins, then git root, then package files, then cwd |
-| **Context budget** | 128K tokens per request | DeepSeek supports 128K context, 8K max output |
+| **Context budget** | 400K tokens per request | GPT-5.2 supports 400K context, 128K max output |
 | **Input library** | rustyline | Mature, history, completion, vi/emacs modes |
 
 ## Design Decisions (Detailed Analysis)
 
 ### 1. Sessionless Design
 
-**Question:** How do we achieve "no sessions" with a stateless API like DeepSeek?
+**Question:** How do we achieve "no sessions"?
 
-**Answer:** Mira owns the conversation state. DeepSeek is stateless - we send the full context each request.
+**Answer:** The Responses API's `previous_response_id` handles conversation state. OpenAI manages history; we just pass response IDs.
 
 ```
 User's mental model:     One neverending conversation
                               ↓
-Mira's job:              Maintain conversation history + rolling summaries
+Mira's job:              Track previous_response_id + inject context into instructions
                               ↓
-DeepSeek API:            Stateless - receives full context each request
+GPT-5.2 Responses API:   Maintains full conversation state + hidden CoT
 ```
 
 **How it works:**
 
 1. User talks to Mira - no concept of "starting" or "ending" anything
-2. Mira maintains the conversation history in memory
-3. When context grows too large:
-   - Mira summarizes older portions
-   - Stores summaries in SQLite/Qdrant
-   - Keeps recent conversation in full fidelity
-   - User never notices - conversation continues seamlessly
+2. Each response returns an `id` (e.g., "resp_001")
+3. Next request includes `previous_response_id: "resp_001"`
+4. GPT-5.2 has full conversation context + preserved chain-of-thought
+5. For very long conversations, use `/responses/compact` endpoint
 
 **Implementation:**
 
 ```rust
-impl ContinuousContext {
-    /// Build full message array for DeepSeek (stateless API)
-    pub fn build_messages(&self, system_prompt: &str) -> Vec<Message> {
-        let mut messages = vec![Message::system(system_prompt)];
+struct ConversationState {
+    previous_response_id: Option<String>,
+}
 
-        // Include rolling summaries if context was summarized
-        if !self.summaries.is_empty() {
-            let summary_text = self.summaries.iter()
-                .map(|s| s.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            messages.push(Message::system(&format!(
-                "<conversation_summary>\n{}\n</conversation_summary>",
-                summary_text
-            )));
+impl ConversationState {
+    /// Update after each response
+    pub fn update(&mut self, response: &ResponsesResponse) {
+        self.previous_response_id = Some(response.id.clone());
+    }
+
+    /// Build request with conversation continuity
+    pub fn build_request(
+        &self,
+        input: &str,
+        instructions: &str,
+        reasoning_effort: &str,
+        tools: &[Tool],
+    ) -> ResponsesRequest {
+        ResponsesRequest {
+            model: "gpt-5.2".into(),
+            input: input.into(),
+            instructions: instructions.into(),
+            previous_response_id: self.previous_response_id.clone(),
+            reasoning: ReasoningConfig { effort: reasoning_effort.into() },
+            tools: tools.to_vec(),
+            stream: true,
         }
-
-        // Full recent conversation
-        messages.extend(self.messages.clone());
-        messages
     }
 }
 ```
 
-**Key insight:** The user never sees sessions. They just talk to Mira. DeepSeek is stateless - Mira provides all state.
+**Key insight:** The user never sees sessions. OpenAI manages conversation state via response IDs. Mira just tracks the chain.
 
 ---
 
-### 1b. Context Management (Rolling Summaries)
+### 1b. Context Management (Responses API)
 
-**Question:** How do we handle context growth with a 128K token limit?
+**Question:** How do we handle context growth with 400K tokens?
 
-**Answer:** Mira proactively manages context with rolling summaries before we hit the limit.
+**Answer:** The Responses API handles conversation history. Mira focuses on injecting *relevant context* into `instructions`.
 
 ```
 Conversation grows...
   ↓
-Mira (proactively):
-  1. Summarize older chunks → store in SQLite/Qdrant
-  2. Drop summarized content from active context
-  3. Keep recent conversation in full fidelity
+GPT-5.2 (automatically):
+  1. Maintains conversation history via previous_response_id
+  2. Preserves hidden chain-of-thought
+  3. For very long conversations: /responses/compact endpoint
   ↓
-Next query:
-  1. Semantic search finds relevant old context
-  2. Re-inject only what's relevant to current query
-  3. Send curated context to DeepSeek
+Mira's job:
+  1. Query relevant memories/corrections/goals
+  2. Inject into instructions parameter
+  3. Pass previous_response_id
 ```
 
 **Why rolling summaries work well:**
@@ -1299,46 +1414,47 @@ impl ConversationContext {
 
 **Key insight:** Never have messages in limbo. Either they're in the buffer (full) or they're summarized (searchable). The handoff is seamless.
 
-**Cache-Optimized Injection Order**
+**Cache-Optimized Instructions Order**
 
-DeepSeek's auto-caching works on prefixes - same prefix = cache hit. Order content from most stable to least stable:
+GPT-5.2's auto-caching works on prefixes - same prefix = cache hit. Order instructions from most stable to least stable:
 
 ```
-[CACHED PREFIX - stable, high cache hit rate]
-├── 1. Persona                    (1h TTL - almost never changes)
-├── 2. Summaries                  (5m TTL - only grows, prefix stable)
-├── 3. Work context               (5m TTL - goals/tasks/corrections)
-├── 4. Conversation buffer        (5m TTL - grows but prefix stable)
+[CACHED PREFIX in instructions - stable, high cache hit rate]
+├── 1. Core persona/instructions  (almost never changes)
+├── 2. Project context            (changes on /switch)
+├── 3. Corrections                (changes occasionally)
+├── 4. Active goals               (changes occasionally)
 │
-[UNCACHED SUFFIX - changes per query]
-├── 5. Semantic memories          (query-dependent, different every time)
-└── 6. Current user message
+[UNCACHED SUFFIX in instructions - changes per query]
+└── 5. Semantic memories          (query-dependent, different every time)
+
+Conversation history:             Managed by previous_response_id
 ```
 
 Why this order maximizes cache hits:
 
 | Position | Content | Cache Behavior |
 |----------|---------|----------------|
-| 1 | Persona | Same across all queries → always hits |
-| 2 | Summaries | Append-only, old summaries unchanged → prefix hits |
-| 3 | Work context | Changes occasionally, but prefix stable within session |
-| 4 | Buffer | New messages append, old unchanged → prefix hits |
+| 1 | Core instructions | Same across all queries → always hits |
+| 2 | Project context | Changes on project switch only |
+| 3 | Corrections | Changes occasionally, prefix stable |
+| 4 | Active goals | Changes occasionally, prefix stable |
 | 5 | Semantic memories | Different per query → never cached (that's fine) |
-| 6 | User message | Always different → never cached |
 
 ```rust
-fn build_prompt(&self, query: &str) -> Vec<SystemBlock> {
-    vec![
-        // Cached blocks (stable prefix)
-        SystemBlock::cached_1h(self.persona.clone()),
-        SystemBlock::cached(self.format_summaries()),
-        SystemBlock::cached(self.format_work_context()),
-        SystemBlock::cached(self.format_buffer()),
+fn build_instructions(&self, query: &str) -> String {
+    let mut instructions = String::new();
 
-        // Uncached blocks (dynamic suffix)
-        SystemBlock::text(self.semantic_search(query)),
-        // User message goes in messages array, not system
-    ]
+    // Stable prefix (cached by GPT-5.2)
+    instructions.push_str(CORE_INSTRUCTIONS);
+    instructions.push_str(&self.format_project_context());
+    instructions.push_str(&self.format_corrections());
+    instructions.push_str(&self.format_goals());
+
+    // Dynamic suffix (not cached - that's fine)
+    instructions.push_str(&self.semantic_search(query));
+
+    instructions
 }
 ```
 
@@ -1536,36 +1652,35 @@ file = "prompts/assistant.md"
 
 ### 3. Warm Context Token Budget
 
-**Question:** How much Mira context to inject? What's the token budget?
+**Question:** How much Mira context to inject into `instructions`? What's the token budget?
 
-**DeepSeek V3.2 Specifications (from official docs):**
+**GPT-5.2 Thinking Specifications:**
 
 | Spec | Value |
 |------|-------|
-| Context window | **128K tokens** |
-| Max output | **8K tokens** (deepseek-chat) |
-| Input price (cache miss) | $0.28/M tokens |
-| Input price (cache hit) | $0.028/M tokens (90% off) |
-| Output price | $0.42/M tokens |
-| Cache minimum | 64 tokens |
-| Cache TTL | Hours to days (auto-cleanup) |
-| Rate limits | None |
+| Context window | **400K tokens** |
+| Max output | **128K tokens** |
+| Input price (cache miss) | $1.75/M tokens |
+| Input price (cache hit) | $0.175/M tokens (90% off) |
+| Output price | $14.00/M tokens |
+| Reasoning effort | none / low / medium / high / xhigh |
+| Conversation state | `previous_response_id` |
+| Long workflows | `/responses/compact` endpoint |
 
-**Key insight:** We own the entire prompt. DeepSeek's auto-caching means we don't need to worry about `cache_control` headers - just keep the prefix stable.
+**Key insight:** With 400K context and `previous_response_id`, we have massive headroom. GPT-5.2's auto-caching means we just keep the instructions prefix stable.
 
-**DeepSeek caching details:**
+**GPT-5.2 caching details:**
 - Automatic caching enabled by default, no configuration needed
 - Prefix matching: only the **repeated prefix** triggers cache hits
-- **64 token minimum** storage unit (vs 1,024 for Anthropic)
-- Cache TTL is "hours to days" - auto-cleared when unused
-- Cache writes are **free** (no premium like Anthropic's 25%)
-- Best-effort basis - not guaranteed 100% hit rate
+- 40-80% better cache utilization than Chat Completions
+- Conversation state managed by `previous_response_id`, not in instructions
+- Chain of thought preserved across turns (hidden but used)
 
 **Constraints:**
-- 128K context per request (plenty of room)
-- 8K max output per response
-- More context = higher cost (but cache hits are cheap)
-- Keep system prompt + warm context under ~20k to leave room for conversation + tool calls
+- 400K context per request (massive headroom)
+- 128K max output per response
+- Conversation history managed by OpenAI (no token cost for us)
+- Instructions should contain: persona, project context, corrections, goals, relevant memories
 
 **Budget allocation (targets - measure after implementation):**
 
@@ -1779,16 +1894,21 @@ impl Completer for MiraHelper {
 | Feature | Claude Code | `mira chat` |
 |---------|-------------|-------------|
 | Built-in tools | ✓ | ✓ (Mira-implemented) |
-| **Sessionless** | ✗ (session-based) | ✓ (one neverending conversation) |
-| **Context injection** | ✗ (MCP tool calls) | ✓ (pre-loaded into prompt) |
+| **Sessionless** | ✗ (session-based) | ✓ (`previous_response_id` chain) |
+| **Context injection** | ✗ (MCP tool calls) | ✓ (pre-loaded into instructions) |
 | **Cross-project memory** | ✗ | ✓ (direct DB + Qdrant) |
 | **Project switching** | ✗ | ✓ (code context scoped, memory global) |
 | **Persistent tasks/goals** | ✗ | ✓ (direct DB) |
 | **Code intelligence** | ✗ | ✓ (symbols, call graph) |
 | **Git intelligence** | ✗ | ✓ (co-change patterns) |
 | **Semantic search** | ✗ | ✓ (query-relevant memories) |
-| Cost (input) | $3.00/M (Sonnet 4.5) | **$0.28/M (DeepSeek)** |
-| Cost (output) | $15.00/M (Sonnet 4.5) | **$0.42/M (DeepSeek)** |
+| **Variable reasoning** | ✗ | ✓ (none/low/medium/high/xhigh) |
+| **CoT preservation** | ✗ | ✓ (Responses API) |
+| Context window | 200K | **400K** |
+| Max output | ~8K | **128K** |
+| Cost (cached input) | $0.50/M (Opus 4.5) | **$0.175/M (GPT-5.2)** |
+| Cost (output) | $25.00/M (Opus 4.5) | **$14.00/M (GPT-5.2)** |
+| Reasoning benchmark | 37.6% ARC-AGI-2 | **52.9% ARC-AGI-2** |
 | Startup time | ~2s | ~10ms |
 | Single binary | ✗ (Node.js) | ✓ |
 
@@ -1796,11 +1916,11 @@ impl Completer for MiraHelper {
 
 ## References
 
-### DeepSeek
-- [DeepSeek API Documentation](https://platform.deepseek.com/api-docs)
-- [DeepSeek Chat API](https://platform.deepseek.com/api-docs/chat)
-- [DeepSeek Function Calling](https://platform.deepseek.com/api-docs/function-calling)
-- [DeepSeek Context Caching](https://platform.deepseek.com/api-docs/context-caching)
+### OpenAI GPT-5.2
+- [Introducing GPT-5.2](https://openai.com/index/introducing-gpt-5-2/)
+- [Responses API Documentation](https://platform.openai.com/docs/api-reference/responses)
+- [GPT-5.2 Model Guide](https://platform.openai.com/docs/guides/latest-model)
+- [Why We Built the Responses API](https://developers.openai.com/blog/responses-api/)
 
 ### Mira
 - [Mira Repository](https://github.com/yourusername/mira) (this project)
