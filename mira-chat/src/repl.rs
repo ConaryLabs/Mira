@@ -12,7 +12,7 @@ use rustyline::DefaultEditor;
 
 use crate::context::{build_system_prompt, MiraContext};
 use crate::reasoning::classify;
-use crate::responses::{Client, OutputItem};
+use crate::responses::Client;
 use crate::tools::{get_tools, ToolExecutor};
 
 /// REPL state
@@ -170,69 +170,130 @@ impl Repl {
 
         // Classify task complexity for reasoning effort
         let effort = classify(input);
-        println!("  [reasoning: {}]", effort);
+        let effort_str = effort.as_str();
+        println!("  [reasoning: {}]", effort_str);
 
         // Build system prompt with context
         let system_prompt = build_system_prompt(&self.context);
         let tools = get_tools();
 
-        // Call GPT-5.2 Responses API
+        // Track total tokens across all turns
+        let mut total_input = 0u32;
+        let mut total_output = 0u32;
+        let mut total_cached = 0u32;
+        let mut total_reasoning = 0u32;
+
+        // Initial request
         let response = client
             .create(
                 input,
                 &system_prompt,
                 self.previous_response_id.as_deref(),
-                effort.as_str(),
+                effort_str,
                 &tools,
             )
             .await;
 
-        match response {
-            Ok(resp) => {
-                // Store response ID for conversation continuity
-                self.previous_response_id = Some(resp.id.clone());
-
-                // Process output items
-                for item in &resp.output {
-                    match item {
-                        OutputItem::Reasoning { summary } => {
-                            println!("  [thinking: {}]", summary);
-                        }
-                        OutputItem::Message { content } => {
-                            println!("\n{}\n", content);
-                        }
-                        OutputItem::FunctionCall {
-                            name,
-                            arguments,
-                            call_id: _,
-                        } => {
-                            println!("  [tool: {}]", name);
-
-                            // Execute tool
-                            let result = self.tools.execute(name, arguments).await?;
-
-                            // TODO: Send tool result back to API for continuation
-                            println!("  [result: {} bytes]", result.len());
-                        }
-                    }
-                }
-
-                // Show usage stats
-                if let Some(usage) = &resp.usage {
-                    let cache_pct = if usage.input_tokens > 0 {
-                        (usage.cached_input_tokens as f32 / usage.input_tokens as f32) * 100.0
-                    } else {
-                        0.0
-                    };
-                    println!(
-                        "  [tokens: {} in / {} out, {:.0}% cached]",
-                        usage.input_tokens, usage.output_tokens, cache_pct
-                    );
-                }
-            }
+        let mut current_response = match response {
+            Ok(resp) => resp,
             Err(e) => {
                 eprintln!("Error: {}", e);
+                return Ok(());
             }
+        };
+
+        // Agentic loop - keep going until we get a text response with no tool calls
+        const MAX_ITERATIONS: usize = 10;
+        for iteration in 0..MAX_ITERATIONS {
+            // Store response ID for conversation continuity
+            self.previous_response_id = Some(current_response.id.clone());
+
+            // Accumulate usage
+            if let Some(usage) = &current_response.usage {
+                total_input += usage.input_tokens;
+                total_output += usage.output_tokens;
+                total_cached += usage.cached_tokens();
+                total_reasoning += usage.reasoning_tokens();
+            }
+
+            // Collect function calls and execute them
+            let mut tool_results: Vec<(String, String)> = Vec::new();
+            let mut has_text_output = false;
+
+            for item in &current_response.output {
+                // Handle text messages
+                if let Some(text) = item.text() {
+                    println!("\n{}\n", text);
+                    has_text_output = true;
+                }
+
+                // Handle function calls
+                if let Some((name, arguments, call_id)) = item.as_function_call() {
+                    println!("  [tool: {}]", name);
+
+                    // Execute tool
+                    let result = self.tools.execute(name, arguments).await?;
+                    let result_len = result.len();
+
+                    // Truncate for display
+                    let display_result = if result_len > 200 {
+                        format!("{}... ({} bytes total)", &result[..200], result_len)
+                    } else {
+                        result.clone()
+                    };
+                    println!("  [result: {}]", display_result.trim());
+
+                    tool_results.push((call_id.to_string(), result));
+                }
+            }
+
+            // If no tool calls, we're done
+            if tool_results.is_empty() {
+                break;
+            }
+
+            // If we have tool results, send them back
+            if iteration >= MAX_ITERATIONS - 1 {
+                eprintln!("  [warning: max iterations reached]");
+                break;
+            }
+
+            let continuation = client
+                .continue_with_tool_results(
+                    &current_response.id,
+                    tool_results,
+                    &system_prompt,
+                    effort_str,
+                    &tools,
+                )
+                .await;
+
+            current_response = match continuation {
+                Ok(resp) => resp,
+                Err(e) => {
+                    eprintln!("Error continuing: {}", e);
+                    break;
+                }
+            };
+        }
+
+        // Show total usage stats
+        let cache_pct = if total_input > 0 {
+            (total_cached as f32 / total_input as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        if total_reasoning > 0 {
+            println!(
+                "  [tokens: {} in / {} out ({} reasoning), {:.0}% cached]",
+                total_input, total_output, total_reasoning, cache_pct
+            );
+        } else {
+            println!(
+                "  [tokens: {} in / {} out, {:.0}% cached]",
+                total_input, total_output, cache_pct
+            );
         }
 
         Ok(())

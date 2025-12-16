@@ -11,7 +11,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::Path;
 
-use crate::responses::{Function, Tool};
+use crate::responses::Tool;
 
 /// Tool executor handles tool invocation and result formatting
 pub struct ToolExecutor {
@@ -150,101 +150,91 @@ impl ToolExecutor {
 pub fn get_tools() -> Vec<Tool> {
     vec![
         Tool {
-            r#type: "function".into(),
-            function: Function {
-                name: "read_file".into(),
-                description: Some("Read the contents of a file".into()),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path to the file to read"
-                        }
-                    },
-                    "required": ["path"]
-                }),
-            },
+            tool_type: "function".into(),
+            name: "read_file".into(),
+            description: Some("Read the contents of a file".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to read"
+                    }
+                },
+                "required": ["path"]
+            }),
         },
         Tool {
-            r#type: "function".into(),
-            function: Function {
-                name: "write_file".into(),
-                description: Some("Write content to a file".into()),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path to write to"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Content to write"
-                        }
+            tool_type: "function".into(),
+            name: "write_file".into(),
+            description: Some("Write content to a file".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to write to"
                     },
-                    "required": ["path", "content"]
-                }),
-            },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
         },
         Tool {
-            r#type: "function".into(),
-            function: Function {
-                name: "glob".into(),
-                description: Some("Find files matching a glob pattern".into()),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "pattern": {
-                            "type": "string",
-                            "description": "Glob pattern (e.g., **/*.rs)"
-                        },
-                        "path": {
-                            "type": "string",
-                            "description": "Base directory to search from"
-                        }
+            tool_type: "function".into(),
+            name: "glob".into(),
+            description: Some("Find files matching a glob pattern".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern (e.g., **/*.rs)"
                     },
-                    "required": ["pattern"]
-                }),
-            },
+                    "path": {
+                        "type": "string",
+                        "description": "Base directory to search from"
+                    }
+                },
+                "required": ["pattern"]
+            }),
         },
         Tool {
-            r#type: "function".into(),
-            function: Function {
-                name: "grep".into(),
-                description: Some("Search for a pattern in files".into()),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "pattern": {
-                            "type": "string",
-                            "description": "Regex pattern to search for"
-                        },
-                        "path": {
-                            "type": "string",
-                            "description": "Directory to search in"
-                        }
+            tool_type: "function".into(),
+            name: "grep".into(),
+            description: Some("Search for a pattern in files".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for"
                     },
-                    "required": ["pattern"]
-                }),
-            },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search in"
+                    }
+                },
+                "required": ["pattern"]
+            }),
         },
         Tool {
-            r#type: "function".into(),
-            function: Function {
-                name: "bash".into(),
-                description: Some("Execute a shell command".into()),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "Shell command to execute"
-                        }
-                    },
-                    "required": ["command"]
-                }),
-            },
+            tool_type: "function".into(),
+            name: "bash".into(),
+            description: Some("Execute a shell command".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    }
+                },
+                "required": ["command"]
+            }),
         },
     ]
 }
@@ -257,7 +247,7 @@ mod tests {
     fn test_get_tools() {
         let tools = get_tools();
         assert_eq!(tools.len(), 5);
-        assert_eq!(tools[0].function.name, "read_file");
+        assert_eq!(tools[0].name, "read_file");
     }
 
     #[tokio::test]
