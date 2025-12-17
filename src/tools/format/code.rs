@@ -165,6 +165,7 @@ pub fn style_report(report: &StyleReport) -> String {
 }
 
 /// Format style report as concise context for LLM prompts
+#[allow(dead_code)]
 pub fn style_context(report: &StyleReport) -> String {
     if report.total_functions == 0 {
         return String::new();
@@ -186,6 +187,7 @@ pub fn style_context(report: &StyleReport) -> String {
 }
 
 /// Format improvement suggestions for proactive context
+#[allow(dead_code)]
 pub fn improvement_suggestions(improvements: &[CodeImprovement]) -> String {
     if improvements.is_empty() {
         return String::new();
@@ -209,6 +211,7 @@ pub fn improvement_suggestions(improvements: &[CodeImprovement]) -> String {
 }
 
 /// Format improvement suggestions concisely for hooks
+#[allow(dead_code)]
 pub fn improvement_context(improvements: &[CodeImprovement]) -> String {
     if improvements.is_empty() {
         return String::new();

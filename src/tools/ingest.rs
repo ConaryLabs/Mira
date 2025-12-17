@@ -372,6 +372,7 @@ pub async fn delete_document(
 }
 
 /// Check if a file path is a supported document type
+#[allow(dead_code)]
 pub fn is_document_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
