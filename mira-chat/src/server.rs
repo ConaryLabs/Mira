@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 use crate::{
     context::MiraContext,
+    reasoning::classify,
     responses::{Client as GptClient, StreamEvent},
     semantic::SemanticSearch,
     tools::{get_tools, DiffInfo, ToolExecutor},
@@ -312,9 +313,13 @@ async fn process_chat(
     tx: mpsc::Sender<ChatEvent>,
 ) -> Result<()> {
     let project_path = PathBuf::from(&request.project_path);
+
+    // Classify task complexity for model routing
+    let effort = classify(&request.message);
     let reasoning_effort = request
         .reasoning_effort
-        .unwrap_or(state.default_reasoning_effort.clone());
+        .unwrap_or_else(|| effort.as_str().to_string());
+    let model = effort.model();
 
     // Save user message
     let user_msg_id = Uuid::new_v4().to_string();
@@ -378,6 +383,7 @@ async fn process_chat(
                     &system_prompt,
                     previous_response_id.as_deref(),
                     &reasoning_effort,
+                    model,
                     &tools,
                 )
                 .await?
@@ -399,6 +405,7 @@ async fn process_chat(
                     tool_results,
                     &system_prompt,
                     &reasoning_effort,
+                    model,
                     &tools,
                 )
                 .await?

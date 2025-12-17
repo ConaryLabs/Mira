@@ -32,14 +32,20 @@ pub use types::{
 /// Number of recent messages to keep in the sliding window
 const WINDOW_SIZE: usize = 20;
 
-/// Minimum similarity score for semantic recall
-const RECALL_THRESHOLD: f32 = 0.65;
+/// Minimum similarity score for semantic recall (unused but kept for potential future use)
+const _RECALL_THRESHOLD: f32 = 0.65;
 
-/// Number of semantic results to fetch
-const RECALL_LIMIT: usize = 5;
+/// Number of semantic results to fetch (unused but kept for potential future use)
+const _RECALL_LIMIT: usize = 5;
 
 /// Message count threshold to trigger summarization
 const SUMMARIZE_THRESHOLD: usize = 30;
+
+/// Number of level-1 summaries before meta-summarization
+const META_SUMMARY_THRESHOLD: usize = 10;
+
+/// Max summaries to load into context (keeps prompt size bounded)
+const MAX_SUMMARIES_IN_CONTEXT: usize = 3;
 
 /// Collection name for chat messages
 const COLLECTION_CHAT: &str = "mira_chat_messages";
@@ -202,32 +208,27 @@ impl SessionManager {
     }
 
     /// Assemble context for a new query
-    pub async fn assemble_context(&self, query: &str) -> Result<AssembledContext> {
+    pub async fn assemble_context(&self, _query: &str) -> Result<AssembledContext> {
         let mut ctx = AssembledContext::default();
 
-        // 1. Load recent messages (sliding window)
+        // 1. Load recent messages (sliding window) - for summarization tracking
         ctx.recent_messages = self.load_recent_messages(WINDOW_SIZE).await?;
 
-        // 2. Semantic recall of relevant past context
-        if self.semantic.is_available() && !query.is_empty() {
-            ctx.semantic_context = self.semantic_recall(query).await?;
-        }
+        // REMOVED: Semantic recall and code index hints
+        // These were query-dependent and broke prefix caching on every turn.
+        // Cache hit rate went from ~80% to 0% because these changed every query.
+        // The model can use grep/glob/read_file tools to find what it needs.
 
-        // 3. Load Mira context
+        // 2. Load Mira context (corrections, goals, memories)
         ctx.mira_context = MiraContext::load(&self.db, &self.project_path).await?;
 
-        // 4. Load rolling summaries
+        // 3. Load rolling summaries
         ctx.summaries = self.load_summaries(3).await?;
 
-        // 5. Load code compaction blob
+        // 4. Load code compaction blob
         ctx.code_compaction = self.load_code_compaction().await?;
 
-        // 6. Query-dependent code index hints (symbols/files)
-        if !query.is_empty() {
-            ctx.code_index_hints = self.load_code_index_hints(query).await;
-        }
-
-        // 7. Get previous response ID
+        // 5. Get previous response ID
         ctx.previous_response_id = self.get_response_id().await?;
 
         Ok(ctx)
@@ -380,12 +381,12 @@ impl SessionManager {
 
         let results = self
             .semantic
-            .search(COLLECTION_CHAT, query, RECALL_LIMIT, Some(filter))
+            .search(COLLECTION_CHAT, query, _RECALL_LIMIT, Some(filter))
             .await?;
 
         Ok(results
             .into_iter()
-            .filter(|r| r.score >= RECALL_THRESHOLD)
+            .filter(|r| r.score >= _RECALL_THRESHOLD)
             .map(|r| SemanticHit {
                 content: r.content,
                 score: r.score,
@@ -400,22 +401,119 @@ impl SessionManager {
             .collect())
     }
 
-    /// Load rolling summaries
+    /// Load rolling summaries with tiered support
+    /// Prioritizes meta-summaries (level 2) over regular summaries (level 1)
     async fn load_summaries(&self, limit: usize) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
+        // First get any meta-summaries (level 2)
+        let meta: Vec<(String,)> = sqlx::query_as(
             r#"
             SELECT summary FROM chat_summaries
-            WHERE project_path = $1
+            WHERE project_path = $1 AND level = 2
             ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(&self.project_path)
+        .fetch_all(&self.db)
+        .await?;
+
+        let mut summaries: Vec<String> = meta.into_iter().map(|(s,)| s).collect();
+        let remaining = limit.saturating_sub(summaries.len());
+
+        // Then get recent level-1 summaries
+        if remaining > 0 {
+            let recent: Vec<(String,)> = sqlx::query_as(
+                r#"
+                SELECT summary FROM chat_summaries
+                WHERE project_path = $1 AND level = 1
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(&self.project_path)
+            .bind(remaining as i64)
+            .fetch_all(&self.db)
+            .await?;
+
+            summaries.extend(recent.into_iter().map(|(s,)| s));
+        }
+
+        Ok(summaries)
+    }
+
+    /// Check if meta-summarization is needed (too many level-1 summaries)
+    pub async fn check_meta_summarization_needed(&self) -> Result<Option<Vec<(String, String)>>> {
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM chat_summaries WHERE project_path = $1 AND level = 1",
+        )
+        .bind(&self.project_path)
+        .fetch_one(&self.db)
+        .await?;
+
+        if (count.0 as usize) < META_SUMMARY_THRESHOLD {
+            return Ok(None);
+        }
+
+        info!(
+            "Meta-summarization needed: {} level-1 summaries to compress",
+            count.0
+        );
+
+        // Get oldest level-1 summaries to compress
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT id, summary FROM chat_summaries
+            WHERE project_path = $1 AND level = 1
+            ORDER BY created_at ASC
             LIMIT $2
             "#,
         )
         .bind(&self.project_path)
-        .bind(limit as i64)
+        .bind(META_SUMMARY_THRESHOLD as i64)
         .fetch_all(&self.db)
         .await?;
 
-        Ok(rows.into_iter().map(|(s,)| s).collect())
+        if rows.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(rows))
+        }
+    }
+
+    /// Store a meta-summary (level 2) and delete the summarized level-1 summaries
+    pub async fn store_meta_summary(&self, summary: &str, summary_ids: &[String]) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().timestamp();
+
+        // Store the meta-summary
+        sqlx::query(
+            r#"
+            INSERT INTO chat_summaries (id, project_path, summary, message_ids, message_count, level, created_at)
+            VALUES ($1, $2, $3, $4, $5, 2, $6)
+            "#,
+        )
+        .bind(&id)
+        .bind(&self.project_path)
+        .bind(summary)
+        .bind(serde_json::to_string(summary_ids)?)
+        .bind(summary_ids.len() as i64)
+        .bind(now)
+        .execute(&self.db)
+        .await?;
+
+        // Delete the old level-1 summaries
+        for sum_id in summary_ids {
+            sqlx::query("DELETE FROM chat_summaries WHERE id = $1")
+                .bind(sum_id)
+                .execute(&self.db)
+                .await?;
+        }
+
+        info!(
+            "Stored meta-summary, deleted {} level-1 summaries",
+            summary_ids.len()
+        );
+        Ok(())
     }
 
     /// Load the most recent code compaction blob
@@ -548,6 +646,29 @@ impl SessionManager {
         .await?;
 
         info!("Stored summary, deleted {} old messages", message_ids.len());
+        Ok(())
+    }
+
+    /// Store a per-turn summary (doesn't delete messages - just adds summary)
+    /// Used for immediate turn summarization in fresh-chain-per-turn mode
+    pub async fn store_turn_summary(&self, summary: &str) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO chat_summaries (id, project_path, summary, message_ids, message_count, level, created_at)
+            VALUES ($1, $2, $3, '[]', 1, 1, $4)
+            "#,
+        )
+        .bind(&id)
+        .bind(&self.project_path)
+        .bind(summary)
+        .bind(now)
+        .execute(&self.db)
+        .await?;
+
+        debug!("Stored turn summary");
         Ok(())
     }
 
@@ -698,75 +819,10 @@ impl AssembledContext {
             sections.push(summary_section);
         }
 
-        // 4. Semantic context - changes per query (LEAST STABLE)
-        // This is query-dependent, so put it LAST to maximize prefix cache hits
-        if !self.semantic_context.is_empty() {
-            let mut semantic_section = String::from("## Relevant Past Context\n");
-            for hit in &self.semantic_context {
-                let preview = if hit.content.len() > 200 {
-                    format!("{}...", &hit.content[..200])
-                } else {
-                    hit.content.clone()
-                };
-                semantic_section.push_str(&format!(
-                    "- [{}] (relevance: {:.0}%): {}\n",
-                    hit.role,
-                    hit.score * 100.0,
-                    preview
-                ));
-            }
-            sections.push(semantic_section);
-        }
-
-        // 5. Code index hints - changes per query (LEAST STABLE)
-        // Also query-dependent, so keep it at the end.
-        if !self.code_index_hints.is_empty() {
-            let mut s = String::from(
-                "## Code Index Hints (background index; verify by reading files)\n",
-            );
-
-            let project_prefix = self
-                .mira_context
-                .project_path
-                .as_deref()
-                .map(|p| format!("{}/", p.trim_end_matches('/')));
-
-            for f in &self.code_index_hints {
-                let display_path = project_prefix
-                    .as_deref()
-                    .and_then(|prefix| f.file_path.strip_prefix(prefix))
-                    .unwrap_or(f.file_path.as_str());
-
-                s.push_str(&format!("- {}\n", display_path));
-
-                for sym in &f.symbols {
-                    let name = sym
-                        .qualified_name
-                        .as_deref()
-                        .unwrap_or(sym.name.as_str());
-
-                    let mut sig = sym.signature.as_deref().unwrap_or("").trim().to_string();
-                    if sig.len() > 140 {
-                        sig.truncate(140);
-                        sig.push_str("...");
-                    }
-
-                    if sig.is_empty() {
-                        s.push_str(&format!(
-                            "  - {} {} (lines {}-{})\n",
-                            sym.symbol_type, name, sym.start_line, sym.end_line
-                        ));
-                    } else {
-                        s.push_str(&format!(
-                            "  - {} {}: {} (lines {}-{})\n",
-                            sym.symbol_type, name, sig, sym.start_line, sym.end_line
-                        ));
-                    }
-                }
-            }
-
-            sections.push(s);
-        }
+        // REMOVED: Semantic context and code index hints
+        // These were query-dependent and broke prefix caching on every turn.
+        // The model can use grep/glob/read_file tools to find what it needs.
+        // This single change should dramatically improve cache hit rates.
 
         if sections.is_empty() {
             String::new()

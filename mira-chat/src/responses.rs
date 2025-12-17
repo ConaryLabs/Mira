@@ -257,10 +257,11 @@ impl Client {
         instructions: &str,
         previous_response_id: Option<&str>,
         reasoning_effort: &str,
+        model: &str,
         tools: &[Tool],
     ) -> Result<mpsc::Receiver<StreamEvent>> {
         let request = ResponsesRequest {
-            model: "gpt-5.2".into(),
+            model: model.into(),
             input: InputType::Text(input.into()),
             instructions: instructions.into(),
             previous_response_id: previous_response_id.map(String::from),
@@ -314,6 +315,7 @@ impl Client {
         tool_results: Vec<(String, String)>,
         instructions: &str,
         reasoning_effort: &str,
+        model: &str,
         tools: &[Tool],
     ) -> Result<mpsc::Receiver<StreamEvent>> {
         let conversation: Vec<ConversationItem> = tool_results
@@ -326,7 +328,7 @@ impl Client {
             .collect();
 
         let request = ResponsesRequest {
-            model: "gpt-5.2".into(),
+            model: model.into(),
             input: InputType::Conversation(conversation),
             instructions: instructions.into(),
             previous_response_id: Some(previous_response_id.into()),
@@ -467,7 +469,12 @@ impl Client {
             .iter()
             .map(|(role, content)| {
                 let preview = if content.len() > 500 {
-                    format!("{}...", &content[..500])
+                    // Find a valid char boundary near 500
+                    let mut end = 500;
+                    while !content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}...", &content[..end])
                 } else {
                     content.clone()
                 };
