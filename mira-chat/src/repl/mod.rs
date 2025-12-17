@@ -6,16 +6,14 @@
 //! - Streaming response display
 //! - Tool execution feedback
 
+mod formatter;
+mod helper;
+
 use anyhow::Result;
-use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::highlight::Highlighter;
-use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::history::DefaultHistory;
-use rustyline::validate::Validator;
-use rustyline::{Context, Editor, Helper};
+use rustyline::Editor;
 use sqlx::SqlitePool;
-use std::borrow::Cow;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -24,90 +22,13 @@ use tokio::sync::mpsc;
 
 use crate::context::{build_system_prompt, MiraContext};
 use crate::reasoning::classify;
-use crate::responses::{Client, ResponsesResponse, StreamEvent, Tool, Usage};
+use crate::responses::{Client, ResponsesResponse, StreamEvent, Usage};
 use crate::semantic::SemanticSearch;
 use crate::session::SessionManager;
 use crate::tools::{get_tools, ToolExecutor};
 
-/// Slash commands for tab completion
-const SLASH_COMMANDS: &[&str] = &[
-    "/help",
-    "/version",
-    "/uptime",
-    "/compact",
-    "/clear",
-    "/context",
-    "/status",
-    "/switch",
-    "/remember",
-    "/recall",
-    "/tasks",
-    "/quit",
-    "/exit",
-];
-
-/// Custom helper for rustyline with completion and hints
-struct MiraHelper {
-    hinter: HistoryHinter,
-}
-
-impl MiraHelper {
-    fn new() -> Self {
-        Self {
-            hinter: HistoryHinter::new(),
-        }
-    }
-}
-
-impl Completer for MiraHelper {
-    type Candidate = Pair;
-
-    fn complete(
-        &self,
-        line: &str,
-        pos: usize,
-        _ctx: &Context<'_>,
-    ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        // Only complete slash commands at the start of the line
-        if line.starts_with('/') && pos <= line.find(' ').unwrap_or(line.len()) {
-            let matches: Vec<Pair> = SLASH_COMMANDS
-                .iter()
-                .filter(|cmd| cmd.starts_with(line.split_whitespace().next().unwrap_or("")))
-                .map(|cmd| Pair {
-                    display: cmd.to_string(),
-                    replacement: cmd.to_string(),
-                })
-                .collect();
-            Ok((0, matches))
-        } else {
-            Ok((pos, vec![]))
-        }
-    }
-}
-
-impl Hinter for MiraHelper {
-    type Hint = String;
-
-    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
-        // Show history hints for non-slash commands
-        if !line.starts_with('/') {
-            self.hinter.hint(line, pos, ctx)
-        } else {
-            None
-        }
-    }
-}
-
-impl Highlighter for MiraHelper {
-    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-        // Dim the hint text
-        Cow::Owned(format!("\x1b[90m{}\x1b[0m", hint))
-    }
-}
-
-impl Validator for MiraHelper {}
-
-impl Helper for MiraHelper {}
+use formatter::MarkdownFormatter;
+use helper::MiraHelper;
 
 /// REPL state
 pub struct Repl {
@@ -294,7 +215,12 @@ impl Repl {
         if !after_open.is_empty() {
             if after_open.ends_with("\"\"\"") {
                 // Single line with """ on both ends
-                return Ok(Some(after_open.strip_suffix("\"\"\"").unwrap_or(after_open).to_string()));
+                return Ok(Some(
+                    after_open
+                        .strip_suffix("\"\"\"")
+                        .unwrap_or(after_open)
+                        .to_string(),
+                ));
             }
             lines.push(after_open.to_string());
         }
@@ -332,7 +258,13 @@ impl Repl {
     /// Read continuation lines (ending with \)
     fn read_continuation_lines(&mut self, first_line: &str) -> Result<Option<String>> {
         let mut lines = Vec::new();
-        lines.push(first_line.trim().strip_suffix('\\').unwrap_or(first_line.trim()).to_string());
+        lines.push(
+            first_line
+                .trim()
+                .strip_suffix('\\')
+                .unwrap_or(first_line.trim())
+                .to_string(),
+        );
 
         loop {
             match self.editor.readline("... ") {
@@ -471,17 +403,36 @@ impl Repl {
 
     /// /status - Show current state
     async fn cmd_status(&self) {
-        println!("Project: {}", self.context.project_path.as_deref().unwrap_or("(none)"));
-        println!("Semantic search: {}", if self.semantic.is_available() { "enabled" } else { "disabled" });
+        println!(
+            "Project: {}",
+            self.context.project_path.as_deref().unwrap_or("(none)")
+        );
+        println!(
+            "Semantic search: {}",
+            if self.semantic.is_available() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
 
         // Show session info
         if let Some(ref session) = self.session {
             if let Ok(stats) = session.stats().await {
-                println!("Session: {} messages, {} summaries{}{}",
+                println!(
+                    "Session: {} messages, {} summaries{}{}",
                     stats.total_messages,
                     stats.summary_count,
-                    if stats.has_active_conversation { ", active" } else { "" },
-                    if stats.has_code_compaction { ", has compaction" } else { "" }
+                    if stats.has_active_conversation {
+                        ", active"
+                    } else {
+                        ""
+                    },
+                    if stats.has_code_compaction {
+                        ", has compaction"
+                    } else {
+                        ""
+                    }
                 );
             }
         } else {
@@ -490,17 +441,19 @@ impl Repl {
 
         if let Some(ref db) = self.db {
             // Count goals
-            let goals: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM goals WHERE status = 'in_progress'")
-                .fetch_one(db)
-                .await
-                .unwrap_or((0,));
+            let goals: (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM goals WHERE status = 'in_progress'")
+                    .fetch_one(db)
+                    .await
+                    .unwrap_or((0,));
             println!("Active goals: {}", goals.0);
 
             // Count tasks
-            let tasks: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status != 'completed'")
-                .fetch_one(db)
-                .await
-                .unwrap_or((0,));
+            let tasks: (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE status != 'completed'")
+                    .fetch_one(db)
+                    .await
+                    .unwrap_or((0,));
             println!("Pending tasks: {}", tasks.0);
 
             // Count memories
@@ -561,7 +514,8 @@ impl Repl {
         match client.compact(&response_id, &context).await {
             Ok(response) => {
                 // Store the compaction blob
-                if let Err(e) = session.store_compaction(&response.encrypted_content, &files).await {
+                if let Err(e) = session.store_compaction(&response.encrypted_content, &files).await
+                {
                     println!("Failed to store compaction: {}", e);
                     return;
                 }
@@ -594,10 +548,12 @@ impl Repl {
                 Ok(ctx) => {
                     self.context = ctx;
                     println!("Switched to: {}", new_path);
-                    println!("  {} corrections, {} goals, {} memories",
+                    println!(
+                        "  {} corrections, {} goals, {} memories",
                         self.context.corrections.len(),
                         self.context.goals.len(),
-                        self.context.memories.len());
+                        self.context.memories.len()
+                    );
                 }
                 Err(e) => {
                     println!("Failed to load context: {}", e);
@@ -631,11 +587,13 @@ impl Repl {
                 .trim()
                 .to_string();
 
-            let result = sqlx::query(r#"
+            let result = sqlx::query(
+                r#"
                 INSERT INTO memory_facts (id, fact_type, key, value, category, source, confidence, times_used, created_at, updated_at)
                 VALUES ($1, 'general', $2, $3, NULL, 'mira-chat', 1.0, 0, $4, $4)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-            "#)
+            "#,
+            )
             .bind(&id)
             .bind(&key)
             .bind(content)
@@ -645,7 +603,14 @@ impl Repl {
 
             match result {
                 Ok(_) => {
-                    println!("Remembered: \"{}\"", if content.len() > 50 { &content[..50] } else { content });
+                    println!(
+                        "Remembered: \"{}\"",
+                        if content.len() > 50 {
+                            &content[..50]
+                        } else {
+                            content
+                        }
+                    );
 
                     // Also store in Qdrant if available
                     if self.semantic.is_available() {
@@ -654,12 +619,11 @@ impl Repl {
                         metadata.insert("fact_type".into(), serde_json::json!("general"));
                         metadata.insert("key".into(), serde_json::json!(key));
 
-                        if let Err(e) = self.semantic.store(
-                            crate::semantic::COLLECTION_MEMORY,
-                            &id,
-                            content,
-                            metadata
-                        ).await {
+                        if let Err(e) = self
+                            .semantic
+                            .store(crate::semantic::COLLECTION_MEMORY, &id, content, metadata)
+                            .await
+                        {
                             println!("  (semantic index failed: {})", e);
                         }
                     }
@@ -675,7 +639,11 @@ impl Repl {
     async fn cmd_recall(&self, query: &str) {
         // Try semantic search first
         if self.semantic.is_available() {
-            match self.semantic.search(crate::semantic::COLLECTION_MEMORY, query, 5, None).await {
+            match self
+                .semantic
+                .search(crate::semantic::COLLECTION_MEMORY, query, 5, None)
+                .await
+            {
                 Ok(results) if !results.is_empty() => {
                     println!("Found {} memories (semantic):", results.len());
                     for (i, r) in results.iter().enumerate() {
@@ -730,7 +698,7 @@ impl Repl {
             let rows: Vec<(String, String, String)> = sqlx::query_as(
                 "SELECT title, status, priority FROM tasks WHERE status != 'completed' ORDER BY
                  CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-                 created_at DESC LIMIT 10"
+                 created_at DESC LIMIT 10",
             )
             .fetch_all(db)
             .await
@@ -805,11 +773,17 @@ impl Repl {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to assemble context: {}", e);
-                    (build_system_prompt(&self.context), self.previous_response_id.clone())
+                    (
+                        build_system_prompt(&self.context),
+                        self.previous_response_id.clone(),
+                    )
                 }
             }
         } else {
-            (build_system_prompt(&self.context), self.previous_response_id.clone())
+            (
+                build_system_prompt(&self.context),
+                self.previous_response_id.clone(),
+            )
         };
 
         let tools = get_tools();
@@ -845,7 +819,8 @@ impl Repl {
         const MAX_ITERATIONS: usize = 10;
         for iteration in 0..MAX_ITERATIONS {
             // Process streaming events (returns (result, was_cancelled, response_text))
-            let (stream_result, was_cancelled, response_text) = self.process_stream(&mut rx).await?;
+            let (stream_result, was_cancelled, response_text) =
+                self.process_stream(&mut rx).await?;
             full_response_text.push_str(&response_text);
 
             // If cancelled, break out of the loop
@@ -953,7 +928,10 @@ impl Repl {
         // Check if summarization is needed and do it
         if let Some(ref session) = self.session {
             if let Ok(Some(messages_to_summarize)) = session.check_summarization_needed().await {
-                println!("  [summarizing {} old messages...]", messages_to_summarize.len());
+                println!(
+                    "  [summarizing {} old messages...]",
+                    messages_to_summarize.len()
+                );
 
                 // Format messages for summarization API
                 let formatted: Vec<(String, String)> = messages_to_summarize
@@ -964,7 +942,8 @@ impl Repl {
                 // Call GPT to summarize
                 if let Ok(summary) = client.summarize_messages(&formatted).await {
                     // Collect message IDs
-                    let ids: Vec<String> = messages_to_summarize.iter().map(|m| m.id.clone()).collect();
+                    let ids: Vec<String> =
+                        messages_to_summarize.iter().map(|m| m.id.clone()).collect();
 
                     // Store summary and delete old messages
                     if let Err(e) = session.store_summary(&summary, &ids).await {
@@ -988,12 +967,20 @@ impl Repl {
 
                     let context = format!(
                         "Code context for project. Files: {}",
-                        touched_files.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
+                        touched_files
+                            .iter()
+                            .take(20)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
 
                     match client.compact(&response_id, &context).await {
                         Ok(response) => {
-                            if let Err(e) = session.store_compaction(&response.encrypted_content, &touched_files).await {
+                            if let Err(e) = session
+                                .store_compaction(&response.encrypted_content, &touched_files)
+                                .await
+                            {
                                 tracing::warn!("Failed to store compaction: {}", e);
                             } else {
                                 session.clear_touched_files();
@@ -1149,127 +1136,6 @@ struct StreamResult {
     final_response: Option<ResponsesResponse>,
 }
 
-/// Simple streaming markdown formatter
-/// Tracks code block state and applies ANSI colors
-struct MarkdownFormatter {
-    in_code_block: bool,
-    pending: String,
-}
-
-impl MarkdownFormatter {
-    fn new() -> Self {
-        Self {
-            in_code_block: false,
-            pending: String::new(),
-        }
-    }
-
-    /// Process a chunk of text and return formatted output
-    fn process(&mut self, chunk: &str) -> String {
-        // Accumulate chunk with pending content
-        self.pending.push_str(chunk);
-
-        let mut output = String::new();
-        let mut processed_up_to = 0;
-
-        // Process complete lines and code block markers
-        let bytes = self.pending.as_bytes();
-        let mut i = 0;
-
-        while i < bytes.len() {
-            // Only check for code block marker at valid char boundaries
-            if self.pending.is_char_boundary(i)
-                && self.pending.get(i..i + 3) == Some("```")
-            {
-                // Output everything before the marker
-                if i > processed_up_to && self.pending.is_char_boundary(processed_up_to) {
-                    output.push_str(&self.format_text(&self.pending[processed_up_to..i]));
-                }
-
-                // Toggle code block state
-                if self.in_code_block {
-                    // End of code block - reset color
-                    output.push_str("\x1b[0m```");
-                    self.in_code_block = false;
-                } else {
-                    // Start of code block - dim color
-                    output.push_str("```\x1b[2m");
-                    self.in_code_block = true;
-                }
-
-                // Skip to end of line for language specifier
-                let mut j = i + 3;
-                while j < bytes.len() && bytes[j] != b'\n' {
-                    j += 1;
-                }
-                if j < bytes.len() && self.pending.is_char_boundary(i + 3) && self.pending.is_char_boundary(j + 1) {
-                    output.push_str(&self.pending[i + 3..=j]);
-                    processed_up_to = j + 1;
-                    i = j + 1;
-                } else {
-                    // No newline yet or invalid boundary, keep pending
-                    processed_up_to = i + 3;
-                    i = if j < bytes.len() { j + 1 } else { j };
-                }
-                continue;
-            }
-
-            i += 1;
-        }
-
-        // Output remaining processed content
-        if processed_up_to < self.pending.len() && self.pending.is_char_boundary(processed_up_to) {
-            // Check if we might have an incomplete ``` at the end
-            let remaining = &self.pending[processed_up_to..];
-            let trailing = remaining.len().min(2);
-
-            // Find a valid char boundary for safe_len
-            let mut safe_len = remaining.len().saturating_sub(trailing);
-            while safe_len > 0 && !remaining.is_char_boundary(safe_len) {
-                safe_len -= 1;
-            }
-
-            if safe_len > 0 {
-                output.push_str(&self.format_text(&remaining[..safe_len]));
-                self.pending = remaining[safe_len..].to_string();
-            } else {
-                self.pending = remaining.to_string();
-            }
-        } else if processed_up_to >= self.pending.len() {
-            self.pending.clear();
-        }
-
-        output
-    }
-
-    /// Format text with inline styles (bold, italic)
-    fn format_text(&self, text: &str) -> String {
-        if self.in_code_block {
-            // Inside code block, no inline formatting
-            return text.to_string();
-        }
-        text.to_string()
-    }
-
-    /// Flush any remaining pending content
-    fn flush(&mut self) -> String {
-        if self.pending.is_empty() {
-            return String::new();
-        }
-
-        let output = self.format_text(&self.pending);
-        self.pending.clear();
-
-        // Reset colors if we were in a code block
-        if self.in_code_block {
-            self.in_code_block = false;
-            format!("{}\x1b[0m", output)
-        } else {
-            output
-        }
-    }
-}
-
 /// Entry point for the REPL with pre-loaded context
 pub async fn run_with_context(
     api_key: String,
@@ -1295,46 +1161,5 @@ mod tests {
         let semantic = Arc::new(SemanticSearch::new(None, None).await);
         let repl = Repl::new(None, semantic, None);
         assert!(repl.is_ok());
-    }
-
-    #[test]
-    fn test_markdown_formatter_plain_text() {
-        let mut fmt = MarkdownFormatter::new();
-        let out = fmt.process("Hello world");
-        // Most text is pending until we're sure there's no ```
-        let flush = fmt.flush();
-        assert!(out.contains("Hello") || flush.contains("Hello"));
-    }
-
-    #[test]
-    fn test_markdown_formatter_code_block() {
-        let mut fmt = MarkdownFormatter::new();
-
-        // Start code block
-        let out1 = fmt.process("```rust\n");
-        assert!(out1.contains("```"));
-        assert!(out1.contains("\x1b[2m")); // dim color
-
-        // Code content
-        let out2 = fmt.process("fn main() {}\n");
-
-        // End code block
-        let out3 = fmt.process("```\n");
-        assert!(out3.contains("\x1b[0m")); // reset color
-
-        let flush = fmt.flush();
-        // Combined output should have code
-        let all = format!("{}{}{}{}", out1, out2, out3, flush);
-        assert!(all.contains("fn main"));
-    }
-
-    #[test]
-    fn test_markdown_formatter_flush() {
-        let mut fmt = MarkdownFormatter::new();
-        let out = fmt.process("partial text here");
-        let flush = fmt.flush();
-        // Combined output should have the full text
-        let all = format!("{}{}", out, flush);
-        assert!(all.contains("partial"));
     }
 }
