@@ -208,16 +208,11 @@ impl SessionManager {
     }
 
     /// Assemble context for a new query
-    pub async fn assemble_context(&self, _query: &str) -> Result<AssembledContext> {
+    pub async fn assemble_context(&self, query: &str) -> Result<AssembledContext> {
         let mut ctx = AssembledContext::default();
 
         // 1. Load recent messages (sliding window) - for summarization tracking
         ctx.recent_messages = self.load_recent_messages(WINDOW_SIZE).await?;
-
-        // REMOVED: Semantic recall and code index hints
-        // These were query-dependent and broke prefix caching on every turn.
-        // Cache hit rate went from ~80% to 0% because these changed every query.
-        // The model can use grep/glob/read_file tools to find what it needs.
 
         // 2. Load Mira context (corrections, goals, memories)
         ctx.mira_context = MiraContext::load(&self.db, &self.project_path).await?;
@@ -230,6 +225,18 @@ impl SessionManager {
 
         // 5. Get previous response ID
         ctx.previous_response_id = self.get_response_id().await?;
+
+        // 6. Semantic recall - relevant past conversation context
+        // Added at END of prompt to preserve prefix caching for stable content
+        if self.semantic.is_available() {
+            if let Ok(hits) = self.semantic_recall(query).await {
+                ctx.semantic_context = hits;
+            }
+        }
+
+        // 7. Code index hints - relevant symbols from codebase
+        // Added at END of prompt to preserve prefix caching for stable content
+        ctx.code_index_hints = self.load_code_index_hints(query).await;
 
         Ok(ctx)
     }
@@ -819,10 +826,49 @@ impl AssembledContext {
             sections.push(summary_section);
         }
 
-        // REMOVED: Semantic context and code index hints
-        // These were query-dependent and broke prefix caching on every turn.
-        // The model can use grep/glob/read_file tools to find what it needs.
-        // This single change should dramatically improve cache hit rates.
+        // 4. Semantic context - QUERY-DEPENDENT (at end for cache friendliness)
+        // Relevant past conversation snippets based on current query
+        if !self.semantic_context.is_empty() {
+            let mut semantic_section = String::from("## Relevant Past Context\n");
+            for hit in &self.semantic_context {
+                let preview = if hit.content.len() > 200 {
+                    // Find valid char boundary near 200
+                    let mut end = 200;
+                    while !hit.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}...", &hit.content[..end])
+                } else {
+                    hit.content.clone()
+                };
+                semantic_section.push_str(&format!("- [{}] {}\n", hit.role, preview));
+            }
+            sections.push(semantic_section);
+        }
+
+        // 5. Code index hints - QUERY-DEPENDENT (at end for cache friendliness)
+        // Relevant symbols from the codebase based on current query
+        if !self.code_index_hints.is_empty() {
+            let mut code_section = String::from("## Relevant Code Locations\n");
+            for hint in &self.code_index_hints {
+                code_section.push_str(&format!("**{}**\n", hint.file_path));
+                for sym in &hint.symbols {
+                    let sig = sym.signature.as_deref().unwrap_or("");
+                    if sig.is_empty() {
+                        code_section.push_str(&format!(
+                            "  - {} `{}` (L{})\n",
+                            sym.symbol_type, sym.name, sym.start_line
+                        ));
+                    } else {
+                        code_section.push_str(&format!(
+                            "  - {} `{}` (L{}): {}\n",
+                            sym.symbol_type, sym.name, sym.start_line, sig
+                        ));
+                    }
+                }
+            }
+            sections.push(code_section);
+        }
 
         if sections.is_empty() {
             String::new()
