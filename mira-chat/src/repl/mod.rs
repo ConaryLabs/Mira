@@ -11,6 +11,7 @@ mod commands;
 mod execution;
 mod formatter;
 mod helper;
+pub mod spend;
 mod streaming;
 
 use anyhow::Result;
@@ -31,6 +32,7 @@ use crate::tools::ToolExecutor;
 use commands::CommandHandler;
 use execution::{execute, ExecutionConfig};
 use helper::MiraHelper;
+use spend::SpendTracker;
 
 /// REPL state
 pub struct Repl {
@@ -56,6 +58,8 @@ pub struct Repl {
     cancelled: Arc<AtomicBool>,
     /// When this REPL instance started (used for /uptime)
     start_time: Instant,
+    /// Session spend tracker
+    spend: SpendTracker,
 }
 
 impl Repl {
@@ -94,6 +98,7 @@ impl Repl {
             session,
             cancelled: Arc::new(AtomicBool::new(false)),
             start_time: Instant::now(),
+            spend: SpendTracker::new(),
         })
     }
 
@@ -208,12 +213,20 @@ impl Repl {
             tools: &self.tools,
             context: &self.context,
             session: &self.session,
-            previous_response_id: self.previous_response_id.clone(),
             cancelled: &self.cancelled,
         };
 
         let result = execute(input, config).await?;
         self.previous_response_id = result.response_id;
+
+        // Track session spend
+        self.spend.add_usage(&result.usage);
+        println!("  {}", colors::status(&format!("[session: {}]", self.spend.format_spend())));
+
+        // Check for spend warnings
+        if let Some(warning) = self.spend.check_warnings() {
+            println!("  {}", colors::warning(&warning));
+        }
 
         Ok(())
     }

@@ -22,7 +22,6 @@ pub struct ExecutionConfig<'a> {
     pub tools: &'a ToolExecutor,
     pub context: &'a MiraContext,
     pub session: &'a Option<Arc<SessionManager>>,
-    pub previous_response_id: Option<String>,
     pub cancelled: &'a Arc<AtomicBool>,
 }
 
@@ -43,10 +42,11 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         }
     }
 
-    // Classify task complexity for reasoning effort
+    // Classify task complexity for reasoning effort and model routing
     let effort = classify(input);
-    let effort_str = effort.as_str();
-    println!("  {}", colors::reasoning(effort_str));
+    let effort_str = effort.effort_for_model(); // Use model-compatible effort
+    let model = effort.model();
+    println!("  {}", colors::reasoning(&format!("{} → {}", effort.as_str(), model)));
 
     // Assemble context using session manager (or fallback to static context)
     //
@@ -60,31 +60,29 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     //   6. Semantic context (changes per query)
     //
     // This ensures the longest possible prefix match for caching.
-    let (system_prompt, prev_response_id) = if let Some(session) = config.session {
+    //
+    // FRESH CHAIN PER TURN: We no longer use previous_response_id across turns.
+    // Each turn starts fresh with injected context (summaries, compaction, etc).
+    // Tool loops within a turn still chain via current_response_id.
+    // This prevents token explosion from accumulated tool call history.
+    let system_prompt = if let Some(session) = config.session {
         match session.assemble_context(input).await {
             Ok(assembled) => {
                 let base_prompt = build_system_prompt(&assembled.mira_context);
                 let extra_context = assembled.format_for_prompt();
-                let full_prompt = if extra_context.is_empty() {
+                if extra_context.is_empty() {
                     base_prompt
                 } else {
                     format!("{}\n\n{}", base_prompt, extra_context)
-                };
-                (full_prompt, assembled.previous_response_id)
+                }
             }
             Err(e) => {
                 tracing::warn!("Failed to assemble context: {}", e);
-                (
-                    build_system_prompt(config.context),
-                    config.previous_response_id.clone(),
-                )
+                build_system_prompt(config.context)
             }
         }
     } else {
-        (
-            build_system_prompt(config.context),
-            config.previous_response_id.clone(),
-        )
+        build_system_prompt(config.context)
     };
 
     let tools = get_tools();
@@ -97,8 +95,8 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         output_tokens_details: None,
     };
 
-    // Track current response ID
-    let mut current_response_id = prev_response_id;
+    // Track current response ID (starts fresh each turn, chains only within tool loops)
+    let mut current_response_id: Option<String> = None;
 
     // Initial streaming request
     let mut rx = match config
@@ -108,6 +106,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
             &system_prompt,
             current_response_id.as_deref(),
             effort_str,
+            model,
             &tools,
         )
         .await
@@ -220,6 +219,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
                 tool_results,
                 &system_prompt,
                 effort_str,
+                model,
                 &tools,
             )
             .await
@@ -249,8 +249,8 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         }
     }
 
-    // Post-processing: summarization and compaction
-    post_process(config.client, config.session, &current_response_id).await;
+    // Post-processing: per-turn summarization and compaction
+    post_process(config.client, config.session, &current_response_id, input, &full_response_text).await;
 
     // Show total usage stats
     print_usage(&total_usage);
@@ -306,15 +306,40 @@ async fn execute_tools(
     Ok(tool_results)
 }
 
-/// Post-process: check for summarization and auto-compaction
+/// Post-process: per-turn summarization and auto-compaction
 async fn post_process(
     client: &Client,
     session: &Option<Arc<SessionManager>>,
     response_id: &Option<String>,
+    user_input: &str,
+    assistant_response: &str,
 ) {
     let Some(session) = session else { return };
 
-    // Check if summarization is needed
+    // PER-TURN SUMMARIZATION: Summarize this turn immediately
+    // This keeps context compact since we no longer chain previous_response_id
+    if !user_input.is_empty() && !assistant_response.is_empty() {
+        // Only summarize if there's meaningful content
+        let user_preview = if user_input.len() > 200 { &user_input[..200] } else { user_input };
+        let asst_preview = if assistant_response.len() > 500 { &assistant_response[..500] } else { assistant_response };
+
+        // Skip summarization for very short exchanges
+        if user_input.len() + assistant_response.len() > 100 {
+            let messages = vec![
+                ("user".to_string(), user_preview.to_string()),
+                ("assistant".to_string(), asst_preview.to_string()),
+            ];
+
+            if let Ok(summary) = client.summarize_messages(&messages).await {
+                // Store as a turn summary (we don't delete messages yet - let threshold handle that)
+                if let Err(e) = session.store_turn_summary(&summary).await {
+                    tracing::debug!("Failed to store turn summary: {}", e);
+                }
+            }
+        }
+    }
+
+    // Check if message summarization is needed (level 1) - batch cleanup
     if let Ok(Some(messages_to_summarize)) = session.check_summarization_needed().await {
         println!(
             "  {}",
@@ -340,6 +365,33 @@ async fn post_process(
             }
         } else {
             tracing::debug!("Summarization API call failed, will retry later");
+        }
+    }
+
+    // Check if meta-summarization is needed (level 2: summarize summaries)
+    if let Ok(Some(summaries_to_compress)) = session.check_meta_summarization_needed().await {
+        println!(
+            "  {}",
+            colors::status(&format!("[meta-summarizing {} summaries...]", summaries_to_compress.len()))
+        );
+
+        // Format summaries for meta-summarization
+        let formatted: Vec<(String, String)> = summaries_to_compress
+            .iter()
+            .map(|(_, summary)| ("summary".to_string(), summary.clone()))
+            .collect();
+
+        // Call GPT to create meta-summary
+        if let Ok(meta_summary) = client.summarize_messages(&formatted).await {
+            let ids: Vec<String> = summaries_to_compress.iter().map(|(id, _)| id.clone()).collect();
+
+            if let Err(e) = session.store_meta_summary(&meta_summary, &ids).await {
+                tracing::warn!("Failed to store meta-summary: {}", e);
+            } else {
+                println!("  {}", colors::success("[compressed to meta-summary]"));
+            }
+        } else {
+            tracing::debug!("Meta-summarization API call failed, will retry later");
         }
     }
 

@@ -27,6 +27,29 @@ impl ReasoningEffort {
             Self::XHigh => "xhigh",
         }
     }
+
+    /// Get the appropriate model for this reasoning effort level
+    /// Routes simpler tasks to cheaper models (like Claude Code uses Haiku)
+    pub fn model(&self) -> &'static str {
+        match self {
+            // Simple tasks → mini (cheapest)
+            Self::None | Self::Low => "gpt-5.1-codex-mini",
+            // Standard tasks → codex-max (mid-tier)
+            Self::Medium => "gpt-5.1-codex-max",
+            // Complex tasks → 5.2 thinking (big brain)
+            Self::High | Self::XHigh => "gpt-5.2",
+        }
+    }
+
+    /// Get effort string compatible with the target model
+    /// Some models don't support "none" - map to "low" for those
+    pub fn effort_for_model(&self) -> &'static str {
+        match self {
+            // gpt-5.1-codex-mini doesn't support "none", use "low"
+            Self::None => "low",
+            _ => self.as_str(),
+        }
+    }
 }
 
 impl std::fmt::Display for ReasoningEffort {
