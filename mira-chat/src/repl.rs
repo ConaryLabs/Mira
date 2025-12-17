@@ -19,6 +19,7 @@ use std::borrow::Cow;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc;
 
 use crate::context::{build_system_prompt, MiraContext};
@@ -31,6 +32,8 @@ use crate::tools::{get_tools, ToolExecutor};
 /// Slash commands for tab completion
 const SLASH_COMMANDS: &[&str] = &[
     "/help",
+    "/version",
+    "/uptime",
     "/compact",
     "/clear",
     "/context",
@@ -128,6 +131,8 @@ pub struct Repl {
     session: Option<Arc<SessionManager>>,
     /// Cancellation flag for Ctrl+C during streaming
     cancelled: Arc<AtomicBool>,
+    /// When this REPL instance started (used for /uptime)
+    start_time: Instant,
 }
 
 impl Repl {
@@ -165,6 +170,7 @@ impl Repl {
             semantic,
             session,
             cancelled: Arc::new(AtomicBool::new(false)),
+            start_time: Instant::now(),
         })
     }
 
@@ -363,9 +369,21 @@ impl Repl {
         let arg = parts.get(1).copied().unwrap_or("");
 
         match command {
+            "/version" => {
+                println!("Mira Chat v{}", env!("CARGO_PKG_VERSION"));
+                println!("  Model: GPT-5.2 Thinking");
+                println!("  Backend: Mira Power Suit");
+            }
+            "/uptime" => {
+                let elapsed = self.start_time.elapsed();
+                println!("Uptime: {}", Self::format_duration(elapsed));
+            }
+
             "/help" => {
                 println!("Commands:");
                 println!("  /help              - Show this help");
+                println!("  /version           - Show version info");
+                println!("  /uptime            - Show session uptime");
                 println!("  /clear             - Clear conversation history");
                 println!("  /compact           - Compact code context");
                 println!("  /context           - Show current Mira context");
@@ -428,6 +446,27 @@ impl Repl {
             }
         }
         Ok(())
+    }
+
+    fn format_duration(d: std::time::Duration) -> String {
+        let mut secs = d.as_secs();
+
+        let days = secs / 86_400;
+        secs %= 86_400;
+        let hours = secs / 3_600;
+        secs %= 3_600;
+        let mins = secs / 60;
+        secs %= 60;
+
+        if days > 0 {
+            format!("{}d {}h {}m {}s", days, hours, mins, secs)
+        } else if hours > 0 {
+            format!("{}h {}m {}s", hours, mins, secs)
+        } else if mins > 0 {
+            format!("{}m {}s", mins, secs)
+        } else {
+            format!("{}s", secs)
+        }
     }
 
     /// /status - Show current state
