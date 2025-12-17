@@ -1,0 +1,32 @@
+# Mira Browser Fetch Sidecar (mira-fetchd)
+#
+# Installation:
+#   1. Copy the repo to /home/YOUR_USERNAME/.mira (or adjust paths)
+#   2. cd /home/YOUR_USERNAME/.mira/mira-fetchd && npm install
+#   3. npx playwright install chromium
+#   4. Edit this file: replace YOUR_USERNAME
+#   5. sudo cp mira-fetchd.service /etc/systemd/system/
+#   6. sudo systemctl daemon-reload
+#   7. sudo systemctl enable mira-fetchd
+#   8. sudo systemctl start mira-fetchd
+#
+# mira-chat uses this automatically on HTTP 403 if MIRA_FETCHD_URL is set
+# (defaults to http://127.0.0.1:7337).
+
+[Unit]
+Description=Mira Browser Fetch Sidecar (Playwright)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/.mira/mira-fetchd
+Environment=MIRA_FETCHD_HOST=127.0.0.1
+Environment=MIRA_FETCHD_PORT=7337
+Environment=MIRA_FETCHD_PROFILE_DIR=/home/YOUR_USERNAME/.cache/mira-fetchd-profile
+ExecStart=/usr/bin/node /home/YOUR_USERNAME/.mira/mira-fetchd/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
