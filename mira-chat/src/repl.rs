@@ -25,11 +25,13 @@ use crate::context::{build_system_prompt, MiraContext};
 use crate::reasoning::classify;
 use crate::responses::{Client, ResponsesResponse, StreamEvent, Tool, Usage};
 use crate::semantic::SemanticSearch;
+use crate::session::SessionManager;
 use crate::tools::{get_tools, ToolExecutor};
 
 /// Slash commands for tab completion
 const SLASH_COMMANDS: &[&str] = &[
     "/help",
+    "/compact",
     "/clear",
     "/context",
     "/status",
@@ -112,9 +114,9 @@ pub struct Repl {
     client: Option<Client>,
     /// Tool executor
     tools: ToolExecutor,
-    /// Mira context
+    /// Mira context (fallback if no session)
     context: MiraContext,
-    /// Previous response ID for conversation continuity
+    /// Previous response ID for conversation continuity (fallback if no session)
     previous_response_id: Option<String>,
     /// History file path
     history_path: std::path::PathBuf,
@@ -122,12 +124,18 @@ pub struct Repl {
     db: Option<SqlitePool>,
     /// Semantic search for slash commands
     semantic: Arc<SemanticSearch>,
+    /// Session manager for invisible persistence
+    session: Option<Arc<SessionManager>>,
     /// Cancellation flag for Ctrl+C during streaming
     cancelled: Arc<AtomicBool>,
 }
 
 impl Repl {
-    pub fn new(db: Option<SqlitePool>, semantic: Arc<SemanticSearch>) -> Result<Self> {
+    pub fn new(
+        db: Option<SqlitePool>,
+        semantic: Arc<SemanticSearch>,
+        session: Option<Arc<SessionManager>>,
+    ) -> Result<Self> {
         let mut editor = Editor::new()?;
         editor.set_helper(Some(MiraHelper::new()));
 
@@ -137,10 +145,13 @@ impl Repl {
             .join(".mira")
             .join("chat_history");
 
-        // Build ToolExecutor with db and semantic if available
+        // Build ToolExecutor with db, semantic, and session if available
         let mut tools = ToolExecutor::new().with_semantic(Arc::clone(&semantic));
         if let Some(ref pool) = db {
             tools = tools.with_db(pool.clone());
+        }
+        if let Some(ref sess) = session {
+            tools = tools.with_session(Arc::clone(sess));
         }
 
         Ok(Self {
@@ -152,6 +163,7 @@ impl Repl {
             history_path,
             db,
             semantic,
+            session,
             cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -355,6 +367,7 @@ impl Repl {
                 println!("Commands:");
                 println!("  /help              - Show this help");
                 println!("  /clear             - Clear conversation history");
+                println!("  /compact           - Compact code context");
                 println!("  /context           - Show current Mira context");
                 println!("  /status            - Show current state");
                 println!("  /switch [path]     - Switch project");
@@ -365,7 +378,16 @@ impl Repl {
             }
             "/clear" => {
                 self.previous_response_id = None;
+                // Also clear session if available
+                if let Some(ref session) = self.session {
+                    if let Err(e) = session.clear_conversation().await {
+                        println!("Warning: failed to clear session: {}", e);
+                    }
+                }
                 println!("Conversation cleared.");
+            }
+            "/compact" => {
+                self.cmd_compact().await;
             }
             "/context" => {
                 let ctx = self.context.as_system_prompt();
@@ -411,8 +433,21 @@ impl Repl {
     /// /status - Show current state
     async fn cmd_status(&self) {
         println!("Project: {}", self.context.project_path.as_deref().unwrap_or("(none)"));
-        println!("Conversation: {}", if self.previous_response_id.is_some() { "active" } else { "new" });
         println!("Semantic search: {}", if self.semantic.is_available() { "enabled" } else { "disabled" });
+
+        // Show session info
+        if let Some(ref session) = self.session {
+            if let Ok(stats) = session.stats().await {
+                println!("Session: {} messages, {} summaries{}{}",
+                    stats.total_messages,
+                    stats.summary_count,
+                    if stats.has_active_conversation { ", active" } else { "" },
+                    if stats.has_code_compaction { ", has compaction" } else { "" }
+                );
+            }
+        } else {
+            println!("Session: disabled");
+        }
 
         if let Some(ref db) = self.db {
             // Count goals
@@ -435,6 +470,72 @@ impl Repl {
                 .await
                 .unwrap_or((0,));
             println!("Memories: {}", memories.0);
+        }
+    }
+
+    /// /compact - Compact code context into encrypted blob
+    async fn cmd_compact(&self) {
+        let session = match &self.session {
+            Some(s) => s,
+            None => {
+                println!("Session not available for compaction.");
+                return;
+            }
+        };
+
+        let client = match &self.client {
+            Some(c) => c,
+            None => {
+                println!("API client not available.");
+                return;
+            }
+        };
+
+        // Get touched files
+        let files = session.get_touched_files();
+        if files.is_empty() {
+            println!("No files touched in this session.");
+            return;
+        }
+
+        // Get response ID for compaction
+        let response_id = match session.get_response_id().await {
+            Ok(Some(id)) => id,
+            _ => {
+                println!("No active conversation to compact.");
+                return;
+            }
+        };
+
+        println!("Compacting {} file(s)...", files.len());
+        for f in &files {
+            println!("  - {}", f);
+        }
+
+        // Build context description
+        let context = format!(
+            "Code context for project. Files touched: {}",
+            files.join(", ")
+        );
+
+        // Call compaction endpoint
+        match client.compact(&response_id, &context).await {
+            Ok(response) => {
+                // Store the compaction blob
+                if let Err(e) = session.store_compaction(&response.encrypted_content, &files).await {
+                    println!("Failed to store compaction: {}", e);
+                    return;
+                }
+
+                // Clear touched files
+                session.clear_touched_files();
+
+                let saved = response.tokens_saved.unwrap_or(0);
+                println!("Compacted! {} tokens saved.", saved);
+            }
+            Err(e) => {
+                println!("Compaction failed: {}", e);
+            }
         }
     }
 
@@ -624,13 +725,54 @@ impl Repl {
             }
         };
 
+        // Save user message to session (for invisible persistence)
+        if let Some(ref session) = self.session {
+            if let Err(e) = session.save_message("user", input).await {
+                tracing::debug!("Failed to save user message: {}", e);
+            }
+        }
+
         // Classify task complexity for reasoning effort
         let effort = classify(input);
         let effort_str = effort.as_str();
         println!("  [reasoning: {}]", effort_str);
 
-        // Build system prompt with context
-        let system_prompt = build_system_prompt(&self.context);
+        // Assemble context using session manager (or fallback to static context)
+        //
+        // CACHE OPTIMIZATION: Prompt is structured for maximum LLM cache hits.
+        // Order from most stable (first) to least stable (last):
+        //   1. Base instructions (static, never changes)
+        //   2. Project path (stable within session)
+        //   3. Corrections, goals, memories (change occasionally)
+        //   4. Compaction blob (changes on compaction)
+        //   5. Summaries (changes on summarization)
+        //   6. Semantic context (changes per query)
+        //
+        // This ensures the longest possible prefix match for caching.
+        let (system_prompt, prev_response_id) = if let Some(ref session) = self.session {
+            match session.assemble_context(input).await {
+                Ok(assembled) => {
+                    // Build full system prompt with assembled context
+                    // base_prompt = instructions + project + corrections/goals/memories
+                    // extra_context = compaction + summaries + semantic (cache-ordered)
+                    let base_prompt = build_system_prompt(&assembled.mira_context);
+                    let extra_context = assembled.format_for_prompt();
+                    let full_prompt = if extra_context.is_empty() {
+                        base_prompt
+                    } else {
+                        format!("{}\n\n{}", base_prompt, extra_context)
+                    };
+                    (full_prompt, assembled.previous_response_id)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to assemble context: {}", e);
+                    (build_system_prompt(&self.context), self.previous_response_id.clone())
+                }
+            }
+        } else {
+            (build_system_prompt(&self.context), self.previous_response_id.clone())
+        };
+
         let tools = get_tools();
 
         // Track total usage
@@ -646,7 +788,7 @@ impl Repl {
             .create_stream(
                 input,
                 &system_prompt,
-                self.previous_response_id.as_deref(),
+                prev_response_id.as_deref(),
                 effort_str,
                 &tools,
             )
@@ -659,11 +801,13 @@ impl Repl {
             }
         };
 
-        // Agentic loop
+        // Agentic loop - track assistant response text for saving
+        let mut full_response_text = String::new();
         const MAX_ITERATIONS: usize = 10;
         for iteration in 0..MAX_ITERATIONS {
-            // Process streaming events (returns (result, was_cancelled))
-            let (stream_result, was_cancelled) = self.process_stream(&mut rx).await?;
+            // Process streaming events (returns (result, was_cancelled, response_text))
+            let (stream_result, was_cancelled, response_text) = self.process_stream(&mut rx).await?;
+            full_response_text.push_str(&response_text);
 
             // If cancelled, break out of the loop
             if was_cancelled {
@@ -673,6 +817,13 @@ impl Repl {
             // Update response ID
             if let Some(ref resp) = stream_result.final_response {
                 self.previous_response_id = Some(resp.id.clone());
+
+                // Save response ID to session for persistence
+                if let Some(ref session) = self.session {
+                    if let Err(e) = session.set_response_id(&resp.id).await {
+                        tracing::debug!("Failed to save response ID: {}", e);
+                    }
+                }
 
                 // Accumulate usage
                 if let Some(ref usage) = resp.usage {
@@ -751,6 +902,74 @@ impl Repl {
             };
         }
 
+        // Save assistant response to session (for invisible persistence)
+        if !full_response_text.is_empty() {
+            if let Some(ref session) = self.session {
+                if let Err(e) = session.save_message("assistant", &full_response_text).await {
+                    tracing::debug!("Failed to save assistant message: {}", e);
+                }
+            }
+        }
+
+        // Check if summarization is needed and do it
+        if let Some(ref session) = self.session {
+            if let Ok(Some(messages_to_summarize)) = session.check_summarization_needed().await {
+                println!("  [summarizing {} old messages...]", messages_to_summarize.len());
+
+                // Format messages for summarization API
+                let formatted: Vec<(String, String)> = messages_to_summarize
+                    .iter()
+                    .map(|m| (m.role.clone(), m.content.clone()))
+                    .collect();
+
+                // Call GPT to summarize
+                if let Ok(summary) = client.summarize_messages(&formatted).await {
+                    // Collect message IDs
+                    let ids: Vec<String> = messages_to_summarize.iter().map(|m| m.id.clone()).collect();
+
+                    // Store summary and delete old messages
+                    if let Err(e) = session.store_summary(&summary, &ids).await {
+                        tracing::warn!("Failed to store summary: {}", e);
+                    } else {
+                        println!("  [compressed to summary]");
+                    }
+                } else {
+                    tracing::debug!("Summarization API call failed, will retry later");
+                }
+            }
+        }
+
+        // Auto-compact code context when enough files touched
+        const AUTO_COMPACT_THRESHOLD: usize = 10;
+        if let Some(ref session) = self.session {
+            let touched_files = session.get_touched_files();
+            if touched_files.len() >= AUTO_COMPACT_THRESHOLD {
+                if let Ok(Some(response_id)) = session.get_response_id().await {
+                    println!("  [auto-compacting {} files...]", touched_files.len());
+
+                    let context = format!(
+                        "Code context for project. Files: {}",
+                        touched_files.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
+                    );
+
+                    match client.compact(&response_id, &context).await {
+                        Ok(response) => {
+                            if let Err(e) = session.store_compaction(&response.encrypted_content, &touched_files).await {
+                                tracing::warn!("Failed to store compaction: {}", e);
+                            } else {
+                                session.clear_touched_files();
+                                let saved = response.tokens_saved.unwrap_or(0);
+                                println!("  [compacted, {} tokens saved]", saved);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Auto-compaction failed: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
         // Show total usage stats
         let cached = total_usage.cached_tokens();
         let cache_pct = if total_usage.input_tokens > 0 {
@@ -776,15 +995,16 @@ impl Repl {
     }
 
     /// Process a stream of events, printing text and collecting function calls
-    /// Returns (result, was_cancelled)
+    /// Returns (result, was_cancelled, accumulated_text)
     async fn process_stream(
         &self,
         rx: &mut mpsc::Receiver<StreamEvent>,
-    ) -> Result<(StreamResult, bool)> {
+    ) -> Result<(StreamResult, bool, String)> {
         let mut result = StreamResult::default();
         let mut printed_newline_before = false;
         let mut printed_any_text = false;
         let mut formatter = MarkdownFormatter::new();
+        let mut accumulated_text = String::new();
 
         loop {
             // Check for cancellation
@@ -799,7 +1019,7 @@ impl Repl {
                     println!();
                 }
                 println!("\n  [cancelled]");
-                return Ok((result, true));
+                return Ok((result, true, accumulated_text));
             }
 
             // Use select! to allow cancellation checks even if recv blocks
@@ -812,6 +1032,9 @@ impl Repl {
                                 println!();
                                 printed_newline_before = true;
                             }
+
+                            // Accumulate raw text for saving
+                            accumulated_text.push_str(&delta);
 
                             // Format and print delta immediately
                             let formatted = formatter.process(&delta);
@@ -869,7 +1092,7 @@ impl Repl {
             println!();
         }
 
-        Ok((result, false))
+        Ok((result, false, accumulated_text))
     }
 
     /// Check if operation was cancelled
@@ -1007,8 +1230,9 @@ pub async fn run_with_context(
     context: MiraContext,
     db: Option<SqlitePool>,
     semantic: Arc<SemanticSearch>,
+    session: Option<Arc<SessionManager>>,
 ) -> Result<()> {
-    let mut repl = Repl::new(db, semantic)?
+    let mut repl = Repl::new(db, semantic, session)?
         .with_api_key(api_key)
         .with_loaded_context(context);
 
@@ -1021,9 +1245,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_repl_new() {
-        // Create with no db or semantic
+        // Create with no db, semantic, or session
         let semantic = Arc::new(SemanticSearch::new(None, None).await);
-        let repl = Repl::new(None, semantic);
+        let repl = Repl::new(None, semantic, None);
         assert!(repl.is_ok());
     }
 

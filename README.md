@@ -272,6 +272,50 @@ Benefits of HTTP mode:
 - **Persistent** - Runs as a service, survives SSH disconnects
 - **Remote** - Access your dev box memory from anywhere
 
+## Mira-Chat (Standalone CLI)
+
+A standalone coding assistant powered by GPT-5.2 with Mira's memory layer built-in.
+
+```bash
+# Build
+cd mira-chat
+SQLX_OFFLINE=true cargo build --release
+
+# Run
+./target/release/mira-chat -p /path/to/project
+```
+
+### Key Features
+
+- **GPT-5.2 Responses API** with streaming and function calling
+- **Variable reasoning effort** - Auto-classified (none/low/medium/high/xhigh)
+- **Invisible sessions** - Context persists across restarts via:
+  - Sliding window of recent messages
+  - Semantic recall of relevant past conversation
+  - Auto-summarization when context grows large
+  - Auto-compaction of code context
+- **All MCP tools built-in** - tasks, goals, corrections, decisions, memories
+- **Cache-optimized** - Prompt structure maximizes LLM cache hits
+
+### Tools
+
+| Category | Tools |
+|----------|-------|
+| File | `read_file`, `write_file`, `edit_file`, `glob`, `grep` |
+| Shell | `bash` |
+| Web | `web_search`, `web_fetch` |
+| Memory | `remember`, `recall` |
+| Persistence | `task`, `goal`, `correction`, `store_decision`, `record_rejected_approach` |
+
+### HTTP Server Mode
+
+For web UI integration:
+```bash
+mira-chat --serve --port 3000
+```
+
+See `mira-chat/FEATURES.md` for detailed documentation.
+
 ## Manual Install (without Docker)
 
 ```bash

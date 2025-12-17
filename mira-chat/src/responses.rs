@@ -13,6 +13,7 @@ use std::pin::Pin;
 use tokio::sync::mpsc;
 
 const API_URL: &str = "https://api.openai.com/v1/responses";
+const COMPACT_URL: &str = "https://api.openai.com/v1/responses/compact";
 
 /// Request to the Responses API
 #[derive(Debug, Serialize)]
@@ -427,6 +428,99 @@ impl Client {
 
         Ok(rx)
     }
+
+    /// Compact conversation context into an encrypted blob
+    /// This preserves code-relevant state while reducing token count
+    pub async fn compact(
+        &self,
+        previous_response_id: &str,
+        context_description: &str,
+    ) -> Result<CompactionResponse> {
+        let request = CompactionRequest {
+            model: "gpt-5.2".into(),
+            previous_response_id: previous_response_id.into(),
+            context: context_description.into(),
+        };
+
+        let response = self
+            .http
+            .post(COMPACT_URL)
+            .bearer_auth(&self.api_key)
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await?;
+            anyhow::bail!("Compaction API error {}: {}", status, body);
+        }
+
+        let result: CompactionResponse = response.json().await?;
+        Ok(result)
+    }
+
+    /// Summarize a list of messages into a concise summary
+    /// Uses GPT-5.2 with low reasoning for efficiency
+    pub async fn summarize_messages(&self, messages: &[(String, String)]) -> Result<String> {
+        // Format messages for summarization
+        let formatted: Vec<String> = messages
+            .iter()
+            .map(|(role, content)| {
+                let preview = if content.len() > 500 {
+                    format!("{}...", &content[..500])
+                } else {
+                    content.clone()
+                };
+                format!("[{}]: {}", role, preview)
+            })
+            .collect();
+
+        let prompt = format!(
+            "Summarize the following conversation in 2-3 sentences, focusing on key decisions, code changes, and context that would be useful for continuing the conversation later:\n\n{}",
+            formatted.join("\n\n")
+        );
+
+        let request = ResponsesRequest {
+            model: "gpt-5.2".into(),
+            input: InputType::Text(prompt),
+            instructions: "You are a conversation summarizer. Be concise and focus on actionable context.".into(),
+            previous_response_id: None,
+            reasoning: ReasoningConfig {
+                effort: "low".into(), // Fast summarization
+            },
+            tools: vec![],
+            stream: false,
+        };
+
+        let response = self.send_request(&request).await?;
+
+        // Extract text from response
+        for item in response.output {
+            if let Some(text) = item.text() {
+                return Ok(text);
+            }
+        }
+
+        anyhow::bail!("No text in summarization response")
+    }
+}
+
+/// Request for compaction
+#[derive(Debug, Serialize)]
+struct CompactionRequest {
+    model: String,
+    previous_response_id: String,
+    context: String,
+}
+
+/// Response from compaction endpoint
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompactionResponse {
+    /// The encrypted compacted content blob
+    pub encrypted_content: String,
+    /// Approximate tokens saved
+    pub tokens_saved: Option<u32>,
 }
 
 /// Parse SSE event into StreamEvent

@@ -18,12 +18,22 @@ mod reasoning;
 mod repl;
 mod responses;
 mod semantic;
+mod server;
+mod session;
 mod tools;
 
 #[derive(Parser)]
 #[command(name = "mira-chat")]
 #[command(about = "Power-armored coding assistant with GPT-5.2")]
 struct Args {
+    /// Run as HTTP server instead of REPL (for Studio integration)
+    #[arg(long)]
+    serve: bool,
+
+    /// HTTP server port (default: 3000)
+    #[arg(long, default_value = "3000")]
+    port: u16,
+
     /// Database path (sqlite URL)
     #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,
@@ -157,9 +167,41 @@ async fn main() -> Result<()> {
         ctx
     };
 
+    // Initialize session manager for invisible persistence
+    let session = if let Some(ref pool) = db {
+        match session::SessionManager::new(pool.clone(), Arc::clone(&semantic), project_path.clone()).await {
+            Ok(sm) => {
+                let stats = sm.stats().await.unwrap_or(session::SessionStats {
+                    total_messages: 0,
+                    summary_count: 0,
+                    has_active_conversation: false,
+                    has_code_compaction: false,
+                });
+                if stats.has_active_conversation {
+                    println!("Session: resuming ({} messages, {} summaries)",
+                        stats.total_messages, stats.summary_count);
+                } else {
+                    println!("Session: new");
+                }
+                Some(Arc::new(sm))
+            }
+            Err(e) => {
+                println!("Session: not available ({})", e);
+                None
+            }
+        }
+    } else {
+        println!("Session: disabled (no database)");
+        None
+    };
+
     println!("{}", "=".repeat(50));
     println!();
 
-    // Run REPL
-    repl::run_with_context(api_key, context, db, semantic).await
+    // Run server or REPL based on --serve flag
+    if args.serve {
+        server::run(args.port, api_key, db, semantic, reasoning_effort).await
+    } else {
+        repl::run_with_context(api_key, context, db, semantic, session).await
+    }
 }

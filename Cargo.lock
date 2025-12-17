@@ -1875,6 +1875,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "axum 0.8.7",
  "chrono",
  "clap",
  "dirs",
@@ -1892,6 +1893,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "urlencoding",

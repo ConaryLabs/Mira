@@ -218,30 +218,43 @@ impl MiraContext {
 }
 
 /// Build the full system prompt including base instructions and context
+///
+/// IMPORTANT: Structure is optimized for LLM caching (prefix matching).
+/// Order from MOST STABLE to LEAST STABLE:
+///   1. Base instructions (never change)
+///   2. Project path (stable within session)
+///   3. Corrections, goals, memories (change occasionally)
+///
+/// The assembled context (compaction, summaries, semantic) is added by the caller
+/// AFTER this base prompt, maintaining cache-friendly ordering.
 pub fn build_system_prompt(context: &MiraContext) -> String {
-    let project_info = if let Some(path) = &context.project_path {
-        format!("Working in: {}\n\n", path)
-    } else {
-        String::new()
-    };
+    // Base instructions - COMPLETELY STATIC (maximum cache hits)
+    // Keep this text identical across all requests for best caching
+    let base = r#"You are Mira, a power-armored coding assistant. You help users with software engineering tasks using your tools to read, write, and search code.
 
-    let base = format!(r#"You are Mira, a power-armored coding assistant. You help users with software engineering tasks using your tools to read, write, and search code.
-
-{}Guidelines:
+Guidelines:
 - Be direct and concise
 - Read files before modifying them
 - Use grep/glob to find relevant code before making changes
 - Explain your reasoning briefly
 - Ask clarifying questions when requirements are ambiguous
 
-"#, project_info);
+"#;
 
+    // Project path - stable within session (good cache hits)
+    let project_info = if let Some(path) = &context.project_path {
+        format!("Working in: {}\n\n", path)
+    } else {
+        String::new()
+    };
+
+    // Mira context (corrections, goals, memories) - changes occasionally
     let context_section = context.as_system_prompt();
 
     if context_section.is_empty() {
-        base
+        format!("{}{}", base, project_info)
     } else {
-        format!("{}\n{}", base, context_section)
+        format!("{}{}{}", base, project_info, context_section)
     }
 }
 

@@ -21,10 +21,3 @@ save_permission(tool_name="Bash", input_field="command", input_pattern="cargo ",
 ```
 
 This enables auto-approval in future sessions via the PermissionRequest hook.
-
-## Development
-
-```bash
-SQLX_OFFLINE=true cargo build --release
-DATABASE_URL="sqlite://data/mira.db" ./target/release/mira
-```

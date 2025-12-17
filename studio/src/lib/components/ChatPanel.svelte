@@ -1,98 +1,91 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { marked } from 'marked';
+  import ToolCallBlock from './ToolCallBlock.svelte';
   import {
-    streamChat,
     checkApiStatus,
-    listConversations,
     getMessages,
-    type MessageInfo,
-    type ConversationInfo
+    streamChatEvents,
+    createMessageBuilder,
+    type Message,
+    type MessageBlock,
+    type StatusResponse,
   } from '$lib/api/client';
 
   // Configure marked for safe rendering
   marked.setOptions({
-    breaks: true,  // Convert \n to <br>
-    gfm: true,     // GitHub Flavored Markdown
+    breaks: true,
+    gfm: true,
   });
 
-  interface Message {
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: Date;
+  // Props
+  interface Props {
+    projectPath?: string;
   }
+  let { projectPath = '' }: Props = $props();
 
+  // State
   let messages = $state<Message[]>([]);
   let inputValue = $state('');
   let isLoading = $state(false);
-  let apiConfigured = $state(false);
+  let apiStatus = $state<StatusResponse | null>(null);
   let messagesContainer: HTMLElement;
-
-  // Conversation state
-  let conversationId = $state<string | null>(null);
-  let conversations = $state<ConversationInfo[]>([]);
   let hasMoreMessages = $state(false);
   let loadingMore = $state(false);
+  let currentProjectPath = $state(projectPath || '/home/peter/Mira');
+
+  // Streaming message (shown while response is being received)
+  let streamingMessage = $state<{ id: string; blocks: MessageBlock[] } | null>(null);
 
   onMount(async () => {
-    try {
-      const status = await checkApiStatus();
-      apiConfigured = status.anthropic_configured;
+    // Get project from URL if available
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlProject = urlParams.get('project');
+    if (urlProject) {
+      currentProjectPath = urlProject;
+    }
 
-      // Load conversations and resume the most recent one
-      await loadConversations();
+    // Load saved project from localStorage
+    const savedProject = localStorage.getItem('mira-project-path');
+    if (savedProject && !urlProject) {
+      currentProjectPath = savedProject;
+    }
+
+    try {
+      apiStatus = await checkApiStatus();
+      await loadMessages();
     } catch (e) {
       console.error('Failed to initialize:', e);
     }
   });
 
-  async function loadConversations() {
+  async function loadMessages() {
     try {
-      conversations = await listConversations();
-      if (conversations.length > 0) {
-        // Resume most recent conversation
-        await loadConversation(conversations[0].id);
-      }
-    } catch (e) {
-      console.error('Failed to load conversations:', e);
-    }
-  }
-
-  async function loadConversation(id: string) {
-    try {
-      conversationId = id;
-      const loaded = await getMessages(id, 20);
-      messages = loaded.map(m => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        timestamp: new Date(m.created_at * 1000)
-      }));
-      hasMoreMessages = loaded.length >= 20;
+      const loaded = await getMessages({ limit: 50 });
+      // Messages come newest first, reverse for display (oldest at top)
+      messages = loaded.reverse();
+      hasMoreMessages = loaded.length >= 50;
       setTimeout(scrollToBottom, 0);
     } catch (e) {
-      console.error('Failed to load conversation:', e);
+      console.error('Failed to load messages:', e);
     }
   }
 
   async function loadMoreMessages() {
-    if (!conversationId || loadingMore || !hasMoreMessages) return;
+    if (loadingMore || !hasMoreMessages || messages.length === 0) return;
 
-    const firstMessageId = messages[0]?.id;
-    if (!firstMessageId) return;
+    const oldestMessage = messages[0];
+    if (!oldestMessage) return;
 
     loadingMore = true;
     try {
-      const older = await getMessages(conversationId, 20, firstMessageId);
-      const olderMessages = older.map(m => ({
-        id: m.id,
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-        timestamp: new Date(m.created_at * 1000)
-      }));
-      messages = [...olderMessages, ...messages];
-      hasMoreMessages = older.length >= 20;
+      const older = await getMessages({
+        limit: 50,
+        before: oldestMessage.created_at,
+      });
+      // Prepend older messages (they come newest first, so reverse)
+      messages = [...older.reverse(), ...messages];
+      hasMoreMessages = older.length >= 50;
     } catch (e) {
       console.error('Failed to load more messages:', e);
     } finally {
@@ -113,22 +106,16 @@
     }
   }
 
-  async function startNewConversation() {
-    conversationId = null;
-    messages = [];
-    hasMoreMessages = false;
-  }
-
   async function sendMessage() {
     const content = inputValue.trim();
     if (!content || isLoading) return;
 
-    // Add user message (temporary ID until we get server response)
+    // Add user message
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content,
-      timestamp: new Date()
+      blocks: [{ type: 'text', content }],
+      created_at: Date.now() / 1000,
     };
     messages = [...messages, userMessage];
     inputValue = '';
@@ -136,66 +123,43 @@
 
     setTimeout(scrollToBottom, 0);
 
-    // Create assistant message placeholder
-    const assistantMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    };
-    messages = [...messages, assistantMessage];
+    // Create streaming message placeholder
+    const messageId = crypto.randomUUID();
+    streamingMessage = { id: messageId, blocks: [] };
 
     try {
-      const result = await streamChat({
+      const { message: builder, handleEvent } = createMessageBuilder(messageId);
+
+      for await (const event of streamChatEvents({
         message: content,
-        conversation_id: conversationId ?? undefined
-      });
-
-      // Update conversation ID if new
-      if (!conversationId) {
-        conversationId = result.conversationId;
-        // Refresh conversation list
-        loadConversations();
-      }
-
-      // Stream the response
-      for await (const chunk of result.chunks) {
-        // Debug: log chunks that might be problematic
-        if (chunk === '' || chunk.startsWith(' ') || chunk.endsWith(' ')) {
-          console.log('SSE chunk:', JSON.stringify(chunk));
-        }
-        const lastIndex = messages.length - 1;
-        messages[lastIndex] = {
-          ...messages[lastIndex],
-          content: messages[lastIndex].content + chunk
-        };
+        project_path: currentProjectPath,
+      })) {
+        handleEvent(event);
+        // Update reactive state
+        streamingMessage = { id: messageId, blocks: [...builder.blocks] };
         setTimeout(scrollToBottom, 0);
       }
 
-      // After streaming, check for Claude Code directive
-      const lastIndex = messages.length - 1;
-      const fullContent = messages[lastIndex].content;
-      const { cleanContent, task } = extractClaudeCodeDirective(fullContent);
-
-      // Update message with cleaned content (directive stripped)
-      if (cleanContent !== fullContent) {
-        messages[lastIndex] = {
-          ...messages[lastIndex],
-          content: cleanContent
-        };
-      }
-
-      // Launch Claude Code if directive was found
-      if (task) {
-        await launchClaudeCode(task);
-      }
+      // Move streaming message to permanent messages
+      const finalMessage: Message = {
+        id: messageId,
+        role: 'assistant',
+        blocks: builder.blocks,
+        created_at: Date.now() / 1000,
+      };
+      messages = [...messages, finalMessage];
+      streamingMessage = null;
     } catch (error) {
       console.error('Failed to send message:', error);
-      const lastIndex = messages.length - 1;
-      messages[lastIndex] = {
-        ...messages[lastIndex],
-        content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`
+      // Add error message
+      const errorMessage: Message = {
+        id: messageId,
+        role: 'assistant',
+        blocks: [{ type: 'text', content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}` }],
+        created_at: Date.now() / 1000,
       };
+      messages = [...messages, errorMessage];
+      streamingMessage = null;
     } finally {
       isLoading = false;
       setTimeout(scrollToBottom, 0);
@@ -209,10 +173,6 @@
     }
   }
 
-  function formatTime(date: Date): string {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
   function renderMarkdown(content: string): string {
     try {
       return marked.parse(content) as string;
@@ -221,67 +181,55 @@
     }
   }
 
-  // Parse and extract [LAUNCH_CC]...[/LAUNCH_CC] directives
-  function extractClaudeCodeDirective(content: string): { cleanContent: string; task: string | null } {
-    const regex = /\[LAUNCH_CC\]([\s\S]*?)\[\/LAUNCH_CC\]/g;
-    let task: string | null = null;
-
-    // Extract the first task (if multiple, only use first)
-    const match = regex.exec(content);
-    if (match) {
-      task = match[1].trim();
-    }
-
-    // Remove all directives from content
-    const cleanContent = content.replace(regex, '').trim();
-
-    return { cleanContent, task };
+  function handleProjectChange(event: Event) {
+    const target = event.target as HTMLInputElement;
+    currentProjectPath = target.value;
+    localStorage.setItem('mira-project-path', currentProjectPath);
   }
 
-  // Launch Claude Code with a task
-  async function launchClaudeCode(task: string) {
-    try {
-      await fetch('/api/claude-code/launch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task })
-      });
-    } catch (error) {
-      console.error('Failed to launch Claude Code:', error);
-    }
+  // Check if tool call is still loading (no result yet)
+  function isToolCallLoading(block: MessageBlock): boolean {
+    return block.type === 'tool_call' && !block.result;
   }
 </script>
 
 <div class="flex flex-col h-full">
-  <!-- Header -->
-  <header class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+  <!-- Header with project selector -->
+  <header class="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white">
     <div class="flex items-center gap-3">
       <div class="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
         <span class="text-white text-sm font-medium">M</span>
       </div>
       <h1 class="text-lg font-semibold text-gray-900">Mira Studio</h1>
     </div>
+
+    <!-- Project selector -->
     <div class="flex items-center gap-3">
-      <button
-        onclick={startNewConversation}
-        class="text-sm px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
-      >
-        New Chat
-      </button>
-      <div class="flex items-center gap-3 text-sm text-gray-500">
-        {#if apiConfigured}
-          <span class="flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-green-500"></span>
-            connected
-          </span>
-        {:else}
-          <span class="flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
-            API not configured
-          </span>
-        {/if}
-        <span>{messages.length} messages</span>
-      </div>
+      <label for="project-path" class="text-sm text-gray-500">Project:</label>
+      <input
+        id="project-path"
+        type="text"
+        value={currentProjectPath}
+        onchange={handleProjectChange}
+        class="text-sm px-3 py-1.5 rounded-lg border border-gray-300 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 w-64 font-mono"
+        placeholder="/path/to/project"
+      />
+    </div>
+
+    <!-- Status -->
+    <div class="flex items-center gap-3 text-sm text-gray-500">
+      {#if apiStatus?.status === 'ok'}
+        <span class="flex items-center gap-1">
+          <span class="w-2 h-2 rounded-full bg-green-500"></span>
+          connected
+        </span>
+      {:else}
+        <span class="flex items-center gap-1">
+          <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+          connecting...
+        </span>
+      {/if}
+      <span>{messages.length} messages</span>
     </div>
   </header>
 
@@ -308,44 +256,69 @@
       </div>
     {/if}
 
-    {#if messages.length === 0}
+    {#if messages.length === 0 && !streamingMessage}
       <div class="flex flex-col items-center justify-center h-full text-gray-400">
         <div class="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4">
           <span class="text-2xl">💭</span>
         </div>
-        <p class="text-lg font-medium">Start a conversation</p>
-        <p class="text-sm">Say hello, ask a question, or let's get to work.</p>
-        {#if !apiConfigured}
-          <p class="text-sm text-yellow-600 mt-2">Add ANTHROPIC_API_KEY to .env to enable chat</p>
-        {/if}
+        <p class="text-lg font-medium">Start chatting</p>
+        <p class="text-sm">GPT-5.2 powered coding assistant</p>
+        <p class="text-xs mt-2 text-gray-400">Working in: {currentProjectPath}</p>
       </div>
     {:else}
+      <!-- Render messages -->
       {#each messages as message (message.id)}
         <div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
           <div
-            class="max-w-[80%] rounded-2xl px-4 py-3 {message.role === 'user'
+            class="max-w-[85%] rounded-2xl px-4 py-3 {message.role === 'user'
               ? 'bg-[var(--chat-bubble-user)] text-gray-900'
               : 'bg-[var(--chat-bubble-ai)] border border-gray-200 text-gray-800 shadow-sm'}"
           >
-            {#if message.role === 'assistant'}
-              <div class="prose prose-sm prose-gray max-w-none">
-                {@html renderMarkdown(message.content)}
-              </div>
-            {:else}
-              <p class="whitespace-pre-wrap">{message.content}</p>
-            {/if}
+            {#each message.blocks as block}
+              {#if block.type === 'text'}
+                <div class="prose prose-sm prose-gray max-w-none">
+                  {@html renderMarkdown(block.content || '')}
+                </div>
+              {:else if block.type === 'tool_call'}
+                <ToolCallBlock
+                  name={block.name || 'unknown'}
+                  arguments={block.arguments || {}}
+                  result={block.result}
+                  isLoading={isToolCallLoading(block)}
+                />
+              {/if}
+            {/each}
           </div>
         </div>
       {/each}
 
-      {#if isLoading && messages[messages.length - 1]?.content === ''}
+      <!-- Streaming message -->
+      {#if streamingMessage}
         <div class="flex justify-start">
-          <div class="bg-[var(--chat-bubble-ai)] border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
-            <div class="flex gap-1">
-              <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
-              <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
-              <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
-            </div>
+          <div class="max-w-[85%] rounded-2xl px-4 py-3 bg-[var(--chat-bubble-ai)] border border-gray-200 text-gray-800 shadow-sm">
+            {#if streamingMessage.blocks.length === 0}
+              <!-- Loading indicator -->
+              <div class="flex gap-1">
+                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+              </div>
+            {:else}
+              {#each streamingMessage.blocks as block}
+                {#if block.type === 'text'}
+                  <div class="prose prose-sm prose-gray max-w-none">
+                    {@html renderMarkdown(block.content || '')}
+                  </div>
+                {:else if block.type === 'tool_call'}
+                  <ToolCallBlock
+                    name={block.name || 'unknown'}
+                    arguments={block.arguments || {}}
+                    result={block.result}
+                    isLoading={isToolCallLoading(block)}
+                  />
+                {/if}
+              {/each}
+            {/if}
           </div>
         </div>
       {/if}
@@ -358,14 +331,13 @@
       <textarea
         bind:value={inputValue}
         onkeydown={handleKeydown}
-        placeholder={apiConfigured ? "Message Mira..." : "Configure API key to chat..."}
-        disabled={!apiConfigured}
+        placeholder="Message Mira..."
         rows="1"
-        class="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
+        class="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 transition-colors"
       ></textarea>
       <button
         onclick={sendMessage}
-        disabled={!inputValue.trim() || isLoading || !apiConfigured}
+        disabled={!inputValue.trim() || isLoading}
         class="rounded-xl bg-violet-600 px-4 py-3 text-white font-medium hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         Send
