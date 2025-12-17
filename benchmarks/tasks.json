@@ -1,0 +1,45 @@
+{
+  "tasks": [
+    {
+      "id": "find-function",
+      "name": "Find Function Definition",
+      "description": "Find where a specific function is defined",
+      "prompt": "Find where the function `execute` is defined in the mira-chat tools module. Show me the file path and line number.",
+      "category": "search",
+      "expected_files": ["mira-chat/src/tools/mod.rs"]
+    },
+    {
+      "id": "read-understand",
+      "name": "Read and Understand Code",
+      "description": "Read a file and explain its purpose",
+      "prompt": "Read the file mira-chat/src/tools/file.rs and explain what the FileCache does, including its TTL and size limits.",
+      "category": "comprehension",
+      "expected_keywords": ["30", "TTL", "100", "512"]
+    },
+    {
+      "id": "multi-file-search",
+      "name": "Multi-file Search",
+      "description": "Search across multiple files for a pattern",
+      "prompt": "Search for all uses of 'spawn_blocking' in the mira-chat crate. List the files and what each usage does.",
+      "category": "search",
+      "expected_files": ["mira-chat/src/tools/file.rs"]
+    },
+    {
+      "id": "code-edit",
+      "name": "Simple Code Edit",
+      "description": "Make a small code change",
+      "prompt": "In mira-chat/src/tools/file.rs, change the MAX_MATCHES constant from 200 to 250. Show me the change.",
+      "category": "edit",
+      "verify_file": "mira-chat/src/tools/file.rs",
+      "verify_pattern": "MAX_MATCHES.*250"
+    },
+    {
+      "id": "multi-step",
+      "name": "Multi-step Task",
+      "description": "Task requiring multiple tool calls",
+      "prompt": "Find all Rust files in mira-chat/src/tools/ directory, count how many there are, and list the public functions in each file.",
+      "category": "multi-step",
+      "expected_count_min": 5
+    }
+  ]
+}
