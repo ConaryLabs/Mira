@@ -91,16 +91,27 @@ async fn main() -> Result<()> {
     let gemini_key = args.gemini_api_key
         .or(config.gemini_api_key);
 
-    // Determine project path
+    // Determine project path - resolve to absolute path for database lookup
     let project_path = args.project
         .or(config.project)
         .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string()))
         .unwrap_or_else(|| ".".to_string());
 
-    println!("Mira Chat v{}", env!("CARGO_PKG_VERSION"));
-    println!("{}", "=".repeat(50));
-    println!("GPT-5.2 Thinking | Reasoning: {}", reasoning_effort);
-    println!("Project: {}", project_path);
+    // Canonicalize to absolute path (required for project lookup in database)
+    let project_path = std::path::Path::new(&project_path)
+        .canonicalize()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or(project_path);
+
+    use repl::colors::ansi::*;
+
+    // Pretty startup banner
+    println!();
+    println!("{}{}  Mira Chat {}{}", BOLD, MAGENTA, env!("CARGO_PKG_VERSION"), RESET);
+    println!("{}", repl::colors::separator(50));
+    println!("{}Model{}       GPT-5.2 Thinking", DIM, RESET);
+    println!("{}Reasoning{}   {}", DIM, RESET, reasoning_effort);
+    println!("{}Project{}     {}", DIM, RESET, project_path);
 
     // Connect to database
     let db_url = if database_url.starts_with("sqlite:") {
@@ -115,11 +126,11 @@ async fn main() -> Result<()> {
         .await
     {
         Ok(pool) => {
-            println!("Database: connected");
+            println!("{}Database{}    {}connected{}", DIM, RESET, GREEN, RESET);
             Some(pool)
         }
         Err(e) => {
-            println!("Database: not available ({})", e);
+            println!("{}Database{}    {}unavailable{} ({})", DIM, RESET, YELLOW, RESET, e);
             None
         }
     };
@@ -130,32 +141,39 @@ async fn main() -> Result<()> {
     );
 
     if semantic.is_available() {
-        println!("Semantic: enabled (Qdrant + Gemini)");
+        println!("{}Semantic{}    {}enabled{}", DIM, RESET, GREEN, RESET);
         // Ensure collection exists
         if let Err(e) = semantic.ensure_collection(semantic::COLLECTION_MEMORY).await {
-            println!("Semantic: collection init failed ({})", e);
+            println!("{}Semantic{}    {}init failed{} ({})", DIM, RESET, RED, RESET, e);
         }
     } else {
-        println!("Semantic: disabled (Qdrant or Gemini not configured)");
+        println!("{}Semantic{}    {}disabled{}", DIM, RESET, YELLOW, RESET);
     }
 
     // Load context from Mira
     let context = if let Some(ref pool) = db {
         match context::MiraContext::load(pool, &project_path).await {
             Ok(ctx) => {
+                // Show persona status
+                if ctx.persona.is_some() {
+                    println!("{}Persona{}     {}loaded{}", DIM, RESET, GREEN, RESET);
+                } else {
+                    println!("{}Persona{}     {}fallback{}", DIM, RESET, YELLOW, RESET);
+                }
+
                 let n_corrections = ctx.corrections.len();
                 let n_goals = ctx.goals.len();
                 let n_memories = ctx.memories.len();
                 if n_corrections > 0 || n_goals > 0 || n_memories > 0 {
-                    println!("Context: {} corrections, {} goals, {} memories",
-                        n_corrections, n_goals, n_memories);
+                    println!("{}Context{}     {} corrections, {} goals, {} memories",
+                        DIM, RESET, n_corrections, n_goals, n_memories);
                 } else {
-                    println!("Context: (empty)");
+                    println!("{}Context{}     {}empty{}", DIM, RESET, DIM, RESET);
                 }
                 ctx
             }
             Err(e) => {
-                println!("Context: failed to load ({})", e);
+                println!("{}Context{}     {}failed{} ({})", DIM, RESET, RED, RESET, e);
                 let mut ctx = context::MiraContext::default();
                 ctx.project_path = Some(project_path.clone());
                 ctx
@@ -178,24 +196,24 @@ async fn main() -> Result<()> {
                     has_code_compaction: false,
                 });
                 if stats.has_active_conversation {
-                    println!("Session: resuming ({} messages, {} summaries)",
-                        stats.total_messages, stats.summary_count);
+                    println!("{}Session{}     {}resuming{} ({} messages, {} summaries)",
+                        DIM, RESET, CYAN, RESET, stats.total_messages, stats.summary_count);
                 } else {
-                    println!("Session: new");
+                    println!("{}Session{}     {}new{}", DIM, RESET, GREEN, RESET);
                 }
                 Some(Arc::new(sm))
             }
             Err(e) => {
-                println!("Session: not available ({})", e);
+                println!("{}Session{}     {}unavailable{} ({})", DIM, RESET, YELLOW, RESET, e);
                 None
             }
         }
     } else {
-        println!("Session: disabled (no database)");
+        println!("{}Session{}     {}disabled{}", DIM, RESET, YELLOW, RESET);
         None
     };
 
-    println!("{}", "=".repeat(50));
+    println!("{}", repl::colors::separator(50));
     println!();
 
     // Run server or REPL based on --serve flag

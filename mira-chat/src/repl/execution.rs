@@ -13,6 +13,7 @@ use crate::responses::{Client, Usage};
 use crate::session::SessionManager;
 use crate::tools::{get_tools, ToolExecutor};
 
+use super::colors;
 use super::streaming::{process_stream, StreamResult};
 
 /// Configuration for the execution loop
@@ -45,7 +46,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     // Classify task complexity for reasoning effort
     let effort = classify(input);
     let effort_str = effort.as_str();
-    println!("  [reasoning: {}]", effort_str);
+    println!("  {}", colors::reasoning(effort_str));
 
     // Assemble context using session manager (or fallback to static context)
     //
@@ -123,7 +124,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
 
     // Agentic loop - track assistant response text for saving
     let mut full_response_text = String::new();
-    const MAX_ITERATIONS: usize = 10;
+    const MAX_ITERATIONS: usize = 25;
 
     for iteration in 0..MAX_ITERATIONS {
         // Process streaming events
@@ -179,7 +180,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         let prev_id = match &current_response_id {
             Some(id) if !id.is_empty() => id.clone(),
             _ => {
-                eprintln!("  [error: no response ID for continuation]");
+                eprintln!("  {}", colors::error("[error: no response ID for continuation]"));
                 break;
             }
         };
@@ -187,12 +188,12 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         // Execute function calls in parallel for efficiency
         let num_calls = stream_result.function_calls.len();
         if num_calls > 1 {
-            println!("  [executing {} tools in parallel]", num_calls);
+            println!("  {}", colors::status(&format!("[executing {} tools in parallel]", num_calls)));
         }
 
         // Check for cancellation before starting
         if config.cancelled.load(Ordering::SeqCst) {
-            println!("  [cancelled]");
+            println!("  {}", colors::warning("[cancelled]"));
             break;
         }
 
@@ -201,17 +202,17 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
 
         // Check for cancellation after tool execution
         if config.cancelled.load(Ordering::SeqCst) {
-            println!("  [cancelled]");
+            println!("  {}", colors::warning("[cancelled]"));
             break;
         }
 
-        // Check iteration limit
-        if iteration >= MAX_ITERATIONS - 1 {
-            eprintln!("  [warning: max iterations reached]");
-            break;
+        // Check iteration limit - but still send tool results to keep conversation consistent
+        let at_limit = iteration >= MAX_ITERATIONS - 1;
+        if at_limit {
+            eprintln!("  {}", colors::warning("[max iterations reached, finalizing...]"));
         }
 
-        // Continue with tool results (streaming)
+        // Continue with tool results (streaming) - always send results to avoid dangling tool calls
         rx = match config
             .client
             .continue_with_tool_results_stream(
@@ -229,6 +230,14 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
                 break;
             }
         };
+
+        // Exit after sending results if we hit the limit
+        if at_limit {
+            // Drain the final response without executing more tools
+            let (_, _, response_text) = process_stream(&mut rx, config.cancelled).await?;
+            full_response_text.push_str(&response_text);
+            break;
+        }
     }
 
     // Save assistant response to session (for invisible persistence)
@@ -289,7 +298,7 @@ async fn execute_tools(
         } else {
             result.clone()
         };
-        println!("  [tool: {}] -> {}", name, display_result.trim());
+        println!("  {} {}", colors::tool_name(&format!("[{}]", name)), colors::tool_result(display_result.trim()));
 
         tool_results.push((call_id, result));
     }
@@ -308,8 +317,8 @@ async fn post_process(
     // Check if summarization is needed
     if let Ok(Some(messages_to_summarize)) = session.check_summarization_needed().await {
         println!(
-            "  [summarizing {} old messages...]",
-            messages_to_summarize.len()
+            "  {}",
+            colors::status(&format!("[summarizing {} old messages...]", messages_to_summarize.len()))
         );
 
         // Format messages for summarization API
@@ -327,7 +336,7 @@ async fn post_process(
             if let Err(e) = session.store_summary(&summary, &ids).await {
                 tracing::warn!("Failed to store summary: {}", e);
             } else {
-                println!("  [compressed to summary]");
+                println!("  {}", colors::success("[compressed to summary]"));
             }
         } else {
             tracing::debug!("Summarization API call failed, will retry later");
@@ -339,7 +348,7 @@ async fn post_process(
     let touched_files = session.get_touched_files();
     if touched_files.len() >= AUTO_COMPACT_THRESHOLD {
         if let Some(resp_id) = response_id {
-            println!("  [auto-compacting {} files...]", touched_files.len());
+            println!("  {}", colors::status(&format!("[auto-compacting {} files...]", touched_files.len())));
 
             let context = format!(
                 "Code context for project. Files: {}",
@@ -361,7 +370,7 @@ async fn post_process(
                     } else {
                         session.clear_touched_files();
                         let saved = response.tokens_saved.unwrap_or(0);
-                        println!("  [compacted, {} tokens saved]", saved);
+                        println!("  {}", colors::success(&format!("[compacted, {} tokens saved]", saved)));
                     }
                 }
                 Err(e) => {
@@ -382,15 +391,16 @@ fn print_usage(usage: &Usage) {
     };
 
     let reasoning = usage.reasoning_tokens();
-    if reasoning > 0 {
-        println!(
-            "  [tokens: {} in / {} out ({} reasoning), {:.0}% cached]",
+    let msg = if reasoning > 0 {
+        format!(
+            "[tokens: {} in / {} out ({} reasoning), {:.0}% cached]",
             usage.input_tokens, usage.output_tokens, reasoning, cache_pct
-        );
+        )
     } else {
-        println!(
-            "  [tokens: {} in / {} out, {:.0}% cached]",
+        format!(
+            "[tokens: {} in / {} out, {:.0}% cached]",
             usage.input_tokens, usage.output_tokens, cache_pct
-        );
-    }
+        )
+    };
+    println!("  {}", colors::status(&msg));
 }
