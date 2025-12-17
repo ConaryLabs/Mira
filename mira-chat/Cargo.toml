@@ -53,6 +53,7 @@ glob = "0.3"
 # Text processing
 regex = "1.10"
 urlencoding = "2.1"
+similar = "2.6"
 
 # Config file
 toml = "0.8"

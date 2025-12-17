@@ -112,3 +112,43 @@ pub fn banner_line(label: &str, value: &str) -> String {
 pub fn banner_accent(text: &str) -> String {
     format!("{}{}{}{}", BOLD, MAGENTA, text, RESET)
 }
+
+/// Format diff header (file path line)
+pub fn diff_header(text: &str) -> String {
+    format!("{}{}{}{}", BOLD, WHITE, text, RESET)
+}
+
+/// Format diff hunk header (@@ -x,y +x,y @@)
+pub fn diff_hunk(text: &str) -> String {
+    format!("{}{}{}", CYAN, text, RESET)
+}
+
+/// Format diff addition line (green)
+pub fn diff_add(text: &str) -> String {
+    format!("{}{}{}", GREEN, text, RESET)
+}
+
+/// Format diff deletion line (red)
+pub fn diff_del(text: &str) -> String {
+    format!("{}{}{}", RED, text, RESET)
+}
+
+/// Format a unified diff with colors
+pub fn format_diff(diff: &str) -> String {
+    let mut output = String::new();
+    for line in diff.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            output.push_str(&diff_header(line));
+        } else if line.starts_with("@@") {
+            output.push_str(&diff_hunk(line));
+        } else if line.starts_with('+') {
+            output.push_str(&diff_add(line));
+        } else if line.starts_with('-') {
+            output.push_str(&diff_del(line));
+        } else {
+            output.push_str(line);
+        }
+        output.push('\n');
+    }
+    output
+}

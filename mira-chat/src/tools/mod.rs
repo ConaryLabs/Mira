@@ -11,9 +11,11 @@
 
 mod definitions;
 mod file;
+mod git;
 mod memory;
 mod mira;
 mod shell;
+mod test;
 pub mod types;
 mod web;
 
@@ -107,9 +109,11 @@ impl FileCache {
 }
 
 use file::FileTools;
+use git::GitTools;
 use memory::MemoryTools;
 use mira::MiraTools;
 use shell::ShellTools;
+use test::TestTools;
 use web::WebTools;
 
 /// Tool executor handles tool invocation and result formatting
@@ -188,6 +192,15 @@ impl ToolExecutor {
             "store_decision" => self.mira_tools().store_decision(&args).await,
             "record_rejected_approach" => self.mira_tools().record_rejected_approach(&args).await,
 
+            // Git tools
+            "git_status" => self.git_tools().git_status(&args).await,
+            "git_diff" => self.git_tools().git_diff(&args).await,
+            "git_commit" => self.git_tools().git_commit(&args).await,
+            "git_log" => self.git_tools().git_log(&args).await,
+
+            // Test tools
+            "run_tests" => self.test_tools().run_tests(&args).await,
+
             _ => Ok(format!("Unknown tool: {}", name)),
         }
     }
@@ -246,6 +259,14 @@ impl ToolExecutor {
             semantic: &self.semantic,
             db: &self.db,
         }
+    }
+
+    fn git_tools(&self) -> GitTools<'_> {
+        GitTools { cwd: &self.cwd }
+    }
+
+    fn test_tools(&self) -> TestTools<'_> {
+        TestTools { cwd: &self.cwd }
     }
 }
 

@@ -29,8 +29,14 @@ pub use types::{
     AssembledContext, ChatMessage, CodeIndexFileHint, CodeIndexSymbolHint, SemanticHit, SessionStats,
 };
 
-/// Number of recent messages to keep in the sliding window
-const WINDOW_SIZE: usize = 20;
+/// Number of recent messages to keep raw in context (full fidelity)
+const RECENT_RAW_COUNT: usize = 5;
+
+/// Batch size for summarization (summarize this many at once)
+const SUMMARIZE_BATCH_SIZE: usize = 5;
+
+/// Message count threshold to trigger summarization (RECENT_RAW_COUNT + SUMMARIZE_BATCH_SIZE)
+const SUMMARIZE_THRESHOLD: usize = 10;
 
 /// Minimum similarity score for semantic recall (unused but kept for potential future use)
 const _RECALL_THRESHOLD: f32 = 0.65;
@@ -38,14 +44,11 @@ const _RECALL_THRESHOLD: f32 = 0.65;
 /// Number of semantic results to fetch (unused but kept for potential future use)
 const _RECALL_LIMIT: usize = 5;
 
-/// Message count threshold to trigger summarization
-const SUMMARIZE_THRESHOLD: usize = 30;
-
 /// Number of level-1 summaries before meta-summarization
 const META_SUMMARY_THRESHOLD: usize = 10;
 
 /// Max summaries to load into context (keeps prompt size bounded)
-const MAX_SUMMARIES_IN_CONTEXT: usize = 3;
+const MAX_SUMMARIES_IN_CONTEXT: usize = 5;
 
 /// Collection name for chat messages
 const COLLECTION_CHAT: &str = "mira_chat_messages";
@@ -211,14 +214,14 @@ impl SessionManager {
     pub async fn assemble_context(&self, query: &str) -> Result<AssembledContext> {
         let mut ctx = AssembledContext::default();
 
-        // 1. Load recent messages (sliding window) - for summarization tracking
-        ctx.recent_messages = self.load_recent_messages(WINDOW_SIZE).await?;
+        // 1. Load recent messages (raw, full fidelity)
+        ctx.recent_messages = self.load_recent_messages(RECENT_RAW_COUNT).await?;
 
         // 2. Load Mira context (corrections, goals, memories)
         ctx.mira_context = MiraContext::load(&self.db, &self.project_path).await?;
 
         // 3. Load rolling summaries
-        ctx.summaries = self.load_summaries(3).await?;
+        ctx.summaries = self.load_summaries(MAX_SUMMARIES_IN_CONTEXT).await?;
 
         // 4. Load code compaction blob
         ctx.code_compaction = self.load_code_compaction().await?;
@@ -554,15 +557,15 @@ impl SessionManager {
             return Ok(None);
         }
 
-        // Get oldest messages outside the window (to be summarized)
-        let to_summarize_count = count.0 as usize - WINDOW_SIZE;
-        if to_summarize_count < 10 {
+        // Get oldest messages outside the recent window (to be summarized)
+        let to_summarize_count = count.0 as usize - RECENT_RAW_COUNT;
+        if to_summarize_count < SUMMARIZE_BATCH_SIZE {
             return Ok(None);
         }
 
         info!(
-            "Summarization needed: {} messages to compress",
-            to_summarize_count
+            "Summarization needed: {} messages to compress (batch of {})",
+            to_summarize_count, SUMMARIZE_BATCH_SIZE
         );
 
         // Fetch the oldest messages that will be summarized
@@ -795,9 +798,10 @@ impl AssembledContext {
     /// Static/stable content comes FIRST for maximum cache hits:
     ///   1. Mira context (corrections, goals, memories) - stable per session
     ///   2. Code compaction blob - stable between compactions
-    ///   3. Summaries - stable between summarizations
-    ///   4. Semantic context - changes per query (LEAST cacheable)
-    ///   5. Code index hints - changes per query (LEAST cacheable)
+    ///   3. Summaries - stable between batch summarizations
+    ///   4. Semantic context - changes per query
+    ///   5. Code index hints - changes per query
+    ///   6. Recent messages (raw) - changes every turn (LEAST cacheable)
     pub fn format_for_prompt(&self) -> String {
         let mut sections = Vec::new();
 
@@ -868,6 +872,27 @@ impl AssembledContext {
                 }
             }
             sections.push(code_section);
+        }
+
+        // 6. Recent messages (raw) - CHANGES EVERY TURN (at very end)
+        // Full fidelity for the most recent conversation turns
+        if !self.recent_messages.is_empty() {
+            let mut recent_section = String::from("## Recent Conversation\n");
+            for msg in &self.recent_messages {
+                let role_label = if msg.role == "user" { "User" } else { "Assistant" };
+                // Truncate long messages for context efficiency
+                let content = if msg.content.len() > 500 {
+                    let mut end = 500;
+                    while !msg.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}...", &msg.content[..end])
+                } else {
+                    msg.content.clone()
+                };
+                recent_section.push_str(&format!("**{}**: {}\n\n", role_label, content));
+            }
+            sections.push(recent_section);
         }
 
         if sections.is_empty() {
