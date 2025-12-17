@@ -88,6 +88,19 @@ Prompt structure optimized for LLM prefix caching:
 | `remember` | Store fact in persistent memory |
 | `recall` | Semantic search of memories |
 
+### Git
+| Tool | Description |
+|------|-------------|
+| `git_status` | Working tree status (branch, staged, unstaged, untracked) |
+| `git_diff` | Show staged or unstaged changes |
+| `git_commit` | Create commit with optional stage-all |
+| `git_log` | Recent commit history |
+
+### Test Runner
+| Tool | Description |
+|------|-------------|
+| `run_tests` | Execute tests with auto-detection (cargo/pytest/npm/go) |
+
 ### Mira Power Armor (Persistence & Learning)
 | Tool | Description |
 |------|-------------|
@@ -169,20 +182,24 @@ Provides SSE streaming endpoint for web UI.
 - [x] Mira context injection
 - [x] Project switching
 - [x] HTTP server mode
+- [x] Studio web UI integration (SSE streaming, tool calls, diffs)
 - [x] Task management (create, list, update, complete, delete)
 - [x] Goal tracking with milestones
 - [x] Correction recording and learning
 - [x] Decision storage with semantic recall
 - [x] Rejected approach tracking
+- [x] Git tools (status, diff, commit, log)
+- [x] Test runner with auto-detection
+- [x] Terminal diff view with colors
 
 ---
 
 ## TODO / Possible Enhancements
 
 ### High Priority
-- [ ] **Diff view in terminal** - Show unified diff for file changes
-- [ ] **Git integration** - Auto-commit, branch awareness
-- [ ] **Test runner integration** - Run tests after code changes
+- [x] **Diff view in terminal** - Show unified diff for file changes
+- [x] **Git integration** - git_status, git_diff, git_commit, git_log tools
+- [x] **Test runner integration** - run_tests with auto-detection
 - [ ] **Linter integration** - Auto-fix lint errors
 
 ### Medium Priority
