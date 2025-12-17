@@ -176,6 +176,7 @@ impl ToolExecutor {
             // Web
             "web_search" => self.web_tools().web_search(&args).await,
             "web_fetch" => self.web_tools().web_fetch(&args).await,
+            "web_fetch_browser" => self.web_tools().web_fetch_browser(&args).await,
 
             // Memory
             "remember" => self.memory_tools().remember(&args).await,
