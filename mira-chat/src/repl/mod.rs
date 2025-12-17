@@ -860,18 +860,41 @@ impl Repl {
                 }
             };
 
-            // Execute function calls
+            // Execute function calls in parallel for efficiency
+            let num_calls = stream_result.function_calls.len();
+            if num_calls > 1 {
+                println!("  [executing {} tools in parallel]", num_calls);
+            }
+
+            // Check for cancellation before starting
+            if self.is_cancelled() {
+                println!("  [cancelled]");
+                return Ok(());
+            }
+
+            // Create futures for all tool calls
+            let tool_futures: Vec<_> = stream_result
+                .function_calls
+                .iter()
+                .map(|(name, call_id, arguments)| {
+                    let executor = self.tools.clone();
+                    let name = name.clone();
+                    let call_id = call_id.clone();
+                    let arguments = arguments.clone();
+                    async move {
+                        let result = executor.execute(&name, &arguments).await;
+                        (name, call_id, result)
+                    }
+                })
+                .collect();
+
+            // Execute all in parallel
+            let results = futures::future::join_all(tool_futures).await;
+
+            // Process results
             let mut tool_results: Vec<(String, String)> = Vec::new();
-            for (name, call_id, arguments) in &stream_result.function_calls {
-                // Check for cancellation before each tool
-                if self.is_cancelled() {
-                    println!("  [cancelled]");
-                    return Ok(());
-                }
-
-                println!("  [tool: {}]", name);
-
-                let result = self.tools.execute(name, arguments).await?;
+            for (name, call_id, result) in results {
+                let result = result?;
                 let result_len = result.len();
 
                 // Truncate for display
@@ -880,9 +903,9 @@ impl Repl {
                 } else {
                     result.clone()
                 };
-                println!("  [result: {}]", display_result.trim());
+                println!("  [tool: {}] -> {}", name, display_result.trim());
 
-                tool_results.push((call_id.clone(), result));
+                tool_results.push((call_id, result));
             }
 
             // Check for cancellation after tool execution
