@@ -14,6 +14,8 @@ use sqlx::Row;
 /// Context loaded from Mira's persistent storage
 #[derive(Debug, Default)]
 pub struct MiraContext {
+    /// Persona instructions (loaded from coding_guidelines)
+    pub persona: Option<String>,
     /// Active corrections the model should follow
     pub corrections: Vec<Correction>,
     /// Current project goals
@@ -59,6 +61,14 @@ impl MiraContext {
         let mut ctx = Self::default();
         ctx.project_path = Some(project_path.to_string());
 
+        // Load persona from coding_guidelines (global, not project-specific)
+        let persona: Option<(String,)> = sqlx::query_as(
+            "SELECT content FROM coding_guidelines WHERE category = 'persona' LIMIT 1"
+        )
+        .fetch_optional(db)
+        .await?;
+        ctx.persona = persona.map(|(content,)| content);
+
         // Get project ID
         let project: Option<(i64,)> = sqlx::query_as(
             "SELECT id FROM projects WHERE path = $1"
@@ -72,7 +82,7 @@ impl MiraContext {
                 ctx.project_id = Some(id);
                 id
             }
-            None => return Ok(ctx), // No project, return empty context
+            None => return Ok(ctx), // No project, return empty context (but persona still loaded)
         };
 
         // Load active corrections
@@ -221,53 +231,57 @@ impl MiraContext {
 ///
 /// IMPORTANT: Structure is optimized for LLM caching (prefix matching).
 /// Order from MOST STABLE to LEAST STABLE:
-///   1. Base instructions (never change)
-///   2. Project path (stable within session)
-///   3. Corrections, goals, memories (change occasionally)
+///   1. Persona (from database, rarely changes)
+///   2. Technical guidelines (static)
+///   3. Project path (stable within session)
+///   4. Corrections, goals, memories (change occasionally)
 ///
 /// The assembled context (compaction, summaries, semantic) is added by the caller
 /// AFTER this base prompt, maintaining cache-friendly ordering.
 pub fn build_system_prompt(context: &MiraContext) -> String {
-    // Base instructions - COMPLETELY STATIC (maximum cache hits)
-    // Keep this text identical across all requests for best caching
-    let base = r#"You are Mira, a power-armored coding assistant. You help users with software engineering tasks using your tools to read, write, and search code.
+    let mut sections = Vec::new();
 
-## Guidelines
-- Be direct and concise in explanations
+    // 1. Persona - FIRST AND STRONGEST (from database)
+    // This sets the tone for everything else
+    if let Some(ref persona) = context.persona {
+        sections.push(format!("# Persona\n\n{}", persona));
+    } else {
+        // Fallback if no persona in database
+        sections.push("# Persona\n\nYou are Mira, a power-armored coding assistant. Be direct, technically sharp, and never corporate.".to_string());
+    }
+
+    // 2. Technical guidelines - STATIC (good for caching)
+    let guidelines = r#"# Technical Guidelines
+
+## Code Operations
 - Read files before modifying them
 - Use grep/glob to find relevant code before making changes
 - Ask clarifying questions when requirements are ambiguous
 
 ## Anti-Over-Engineering
-When writing code, apply these principles:
-- Match existing code style - look at surrounding code before writing new code
+When writing code:
+- Match existing code style - look at surrounding code first
 - No speculative abstractions - only abstract when you have 3+ concrete uses
 - Prefer inline over extracted - a 5-line block repeated twice is fine
 - No premature error handling - use .unwrap()/.expect()/? unless caller handles differently
 - Hard-code reasonable defaults - only add configurability when explicitly needed
-- Trust internal code - only validate at system boundaries, not internal APIs
+- Trust internal code - only validate at system boundaries
 - Comments explain "why" not "what" - if code needs explanation, simplify it
-- One way to do things - don't add alternative approaches or backwards-compat shims
-- Delete dead code - don't comment out "in case we need it", git has history
-- Small functions over documented large ones - break up complex functions instead
+- Delete dead code - git has history"#;
+    sections.push(guidelines.to_string());
 
-"#;
-
-    // Project path - stable within session (good cache hits)
-    let project_info = if let Some(path) = &context.project_path {
-        format!("Working in: {}\n\n", path)
-    } else {
-        String::new()
-    };
-
-    // Mira context (corrections, goals, memories) - changes occasionally
-    let context_section = context.as_system_prompt();
-
-    if context_section.is_empty() {
-        format!("{}{}", base, project_info)
-    } else {
-        format!("{}{}{}", base, project_info, context_section)
+    // 3. Project path - stable within session
+    if let Some(path) = &context.project_path {
+        sections.push(format!("Working in: {}", path));
     }
+
+    // 4. Mira context (corrections, goals, memories)
+    let context_section = context.as_system_prompt();
+    if !context_section.is_empty() {
+        sections.push(context_section);
+    }
+
+    sections.join("\n\n")
 }
 
 #[cfg(test)]

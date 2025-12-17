@@ -13,6 +13,24 @@ pub struct ChatMessage {
     pub created_at: i64,
 }
 
+/// A small hint about a symbol from the background code index.
+#[derive(Debug, Clone)]
+pub struct CodeIndexSymbolHint {
+    pub name: String,
+    pub qualified_name: Option<String>,
+    pub symbol_type: String,
+    pub signature: Option<String>,
+    pub start_line: i64,
+    pub end_line: i64,
+}
+
+/// Code-index hints for a specific file.
+#[derive(Debug, Clone)]
+pub struct CodeIndexFileHint {
+    pub file_path: String,
+    pub symbols: Vec<CodeIndexSymbolHint>,
+}
+
 /// Assembled context for a query
 #[derive(Debug, Default)]
 pub struct AssembledContext {
@@ -26,6 +44,8 @@ pub struct AssembledContext {
     pub summaries: Vec<String>,
     /// Code compaction blob (if available)
     pub code_compaction: Option<String>,
+    /// Query-dependent hints from the background code index (symbols/files)
+    pub code_index_hints: Vec<CodeIndexFileHint>,
     /// Previous response ID for OpenAI continuity
     pub previous_response_id: Option<String>,
 }

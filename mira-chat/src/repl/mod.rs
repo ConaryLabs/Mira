@@ -6,6 +6,7 @@
 //! - Streaming response display
 //! - Tool execution feedback
 
+pub mod colors;
 mod commands;
 mod execution;
 mod formatter;
@@ -137,9 +138,9 @@ impl Repl {
             }
         });
 
-        println!("Type your message (Ctrl+D to exit, /help for commands)");
-        println!("  Use \\\\ at end of line for multi-line input, or \"\"\" to start/end block");
-        println!("  Press Ctrl+C to cancel in-flight requests");
+        println!("{}", colors::status("Type your message (Ctrl+D to exit, /help for commands)"));
+        println!("{}", colors::status("  Use \\\\ at end of line for multi-line input, or \"\"\" to start/end block"));
+        println!("{}", colors::status("  Press Ctrl+C to cancel in-flight requests"));
         println!();
 
         loop {
@@ -219,7 +220,7 @@ impl Repl {
 
     /// Read input with multi-line support
     fn read_input(&mut self) -> Result<Option<String>> {
-        let first_line = match self.editor.readline(">>> ") {
+        let first_line = match self.editor.readline(&colors::prompt()) {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
                 println!("^C");
@@ -267,7 +268,7 @@ impl Repl {
         }
 
         loop {
-            match self.editor.readline("... ") {
+            match self.editor.readline(&colors::continuation_prompt()) {
                 Ok(line) => {
                     if line.trim() == "\"\"\"" || line.trim().ends_with("\"\"\"") {
                         // End of block
@@ -308,7 +309,7 @@ impl Repl {
         );
 
         loop {
-            match self.editor.readline("... ") {
+            match self.editor.readline(&colors::continuation_prompt()) {
                 Ok(line) => {
                     let trimmed = line.trim();
                     if trimmed.ends_with('\\') {
