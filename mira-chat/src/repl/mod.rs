@@ -839,10 +839,22 @@ impl Repl {
                     }
                 }
 
-                // Accumulate usage
+                // Accumulate usage including cache details
                 if let Some(ref usage) = resp.usage {
                     total_usage.input_tokens += usage.input_tokens;
                     total_usage.output_tokens += usage.output_tokens;
+
+                    // Accumulate cached tokens
+                    if let Some(ref details) = usage.input_tokens_details {
+                        let current = total_usage.input_tokens_details.get_or_insert_with(Default::default);
+                        current.cached_tokens += details.cached_tokens;
+                    }
+
+                    // Accumulate reasoning tokens
+                    if let Some(ref details) = usage.output_tokens_details {
+                        let current = total_usage.output_tokens_details.get_or_insert_with(Default::default);
+                        current.reasoning_tokens += details.reasoning_tokens;
+                    }
                 }
             }
 
