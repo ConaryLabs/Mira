@@ -332,7 +332,7 @@ impl<'a> FileTools<'a> {
             .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?;
 
         let mut matches = Vec::new();
-        const MAX_MATCHES: usize = 200;   // Increased for fewer round-trips
+        const MAX_MATCHES: usize = 250;   // Increased for fewer round-trips
         const MAX_LINE_LEN: usize = 1000; // Show more context per match
 
         // Walk directory respecting .gitignore
