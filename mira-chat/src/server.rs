@@ -26,10 +26,11 @@ use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::{
-    context::MiraContext,
+    context::{build_system_prompt, MiraContext},
     reasoning::classify,
     responses::{Client as GptClient, StreamEvent},
     semantic::SemanticSearch,
+    session::SessionManager,
     tools::{get_tools, DiffInfo, ToolExecutor},
 };
 
@@ -321,8 +322,8 @@ async fn process_chat(
         .reasoning_effort
         .unwrap_or_else(|| effort.effort_for_model().to_string());
 
-    // Tool continuations: low reasoning
-    const CONTINUATION_EFFORT: &str = "low";
+    // Tool continuations: no reasoning needed
+    const CONTINUATION_EFFORT: &str = "none";
 
     // Save user message
     let user_msg_id = Uuid::new_v4().to_string();
@@ -345,32 +346,68 @@ async fn process_chat(
         .await;
     }
 
-    // Load Mira context for this project
-    let context = if let Some(db) = &state.db {
-        MiraContext::load(db, &request.project_path)
-            .await
-            .unwrap_or_default()
+    // Create session manager for full context assembly
+    let session = if let Some(db) = &state.db {
+        match SessionManager::new(db.clone(), state.semantic.clone(), request.project_path.clone()).await {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                tracing::warn!("Failed to create session manager: {}", e);
+                None
+            }
+        }
     } else {
-        MiraContext::default()
+        None
     };
 
-    // Build system prompt
-    let system_prompt = build_system_prompt(&context, &request.project_path);
+    // Assemble full context (summaries, semantic recall, code hints, etc.)
+    let system_prompt = if let Some(ref session) = session {
+        match session.assemble_context(&request.message).await {
+            Ok(assembled) => {
+                let base_prompt = build_system_prompt(&assembled.mira_context);
+                let extra_context = assembled.format_for_prompt();
+                if extra_context.is_empty() {
+                    base_prompt
+                } else {
+                    format!("{}\n\n{}", base_prompt, extra_context)
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to assemble context: {}", e);
+                // Fallback to basic context
+                let context = if let Some(db) = &state.db {
+                    MiraContext::load(db, &request.project_path).await.unwrap_or_default()
+                } else {
+                    MiraContext::default()
+                };
+                build_system_prompt(&context)
+            }
+        }
+    } else {
+        let context = MiraContext::default();
+        build_system_prompt(&context)
+    };
 
     // Create GPT client
     let client = GptClient::new(state.api_key.clone());
     let tools = get_tools();
 
-    // Create tool executor
+    // Create tool executor with session for file tracking
     let mut executor = ToolExecutor::new();
     executor.cwd = project_path.clone();
     if let Some(db) = &state.db {
         executor = executor.with_db(db.clone());
     }
     executor = executor.with_semantic(state.semantic.clone());
+    if let Some(ref s) = session {
+        executor = executor.with_session(s.clone());
+    }
 
-    // Get previous response ID for continuity
-    let previous_response_id = get_last_response_id(&state.db).await;
+    // Get previous response ID for continuity from session
+    let previous_response_id = if let Some(ref session) = session {
+        session.get_response_id().await.unwrap_or(None)
+    } else {
+        get_last_response_id(&state.db).await
+    };
 
     // Agentic loop
     let mut response_id: Option<String> = None;
@@ -536,17 +573,21 @@ async fn process_chat(
         .execute(db)
         .await;
 
-        // Save response ID for next request
+        // Save response ID for next request (prefer session, fallback to direct)
         if let Some(rid) = &response_id {
-            let _ = sqlx::query(
-                r#"
-                INSERT OR REPLACE INTO chat_state (key, value)
-                VALUES ('last_response_id', $1)
-                "#,
-            )
-            .bind(rid)
-            .execute(db)
-            .await;
+            if let Some(ref session) = session {
+                let _ = session.set_response_id(rid).await;
+            } else {
+                let _ = sqlx::query(
+                    r#"
+                    INSERT OR REPLACE INTO chat_state (key, value)
+                    VALUES ('last_response_id', $1)
+                    "#,
+                )
+                .bind(rid)
+                .execute(db)
+                .await;
+            }
         }
     }
 
@@ -567,40 +608,4 @@ async fn get_last_response_id(db: &Option<SqlitePool>) -> Option<String> {
     .flatten()
 }
 
-fn build_system_prompt(context: &MiraContext, project_path: &str) -> String {
-    let mut prompt = format!(
-        r#"You are a helpful coding assistant. You are working in the project at: {}
-
-You have access to tools for file operations, shell commands, web search, and memory.
-Use tools to help the user with their coding tasks.
-"#,
-        project_path
-    );
-
-    // Add corrections
-    if !context.corrections.is_empty() {
-        prompt.push_str("\n## User Corrections (follow these):\n");
-        for c in &context.corrections {
-            prompt.push_str(&format!("- {}: {}\n", c.what_was_wrong, c.what_is_right));
-        }
-    }
-
-    // Add active goals
-    if !context.goals.is_empty() {
-        prompt.push_str("\n## Active Goals:\n");
-        for g in &context.goals {
-            prompt.push_str(&format!("- {} ({})\n", g.title, g.status));
-        }
-    }
-
-    // Add memories
-    if !context.memories.is_empty() {
-        prompt.push_str("\n## Remembered Context:\n");
-        for m in &context.memories {
-            prompt.push_str(&format!("- {}\n", m.content));
-        }
-    }
-
-    prompt
-}
 

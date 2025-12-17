@@ -49,7 +49,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     println!("  {}", colors::reasoning(&format!("[{}]", effort_str)));
 
     // Tool continuations: no reasoning needed
-    const CONTINUATION_EFFORT: &str = "low";
+    const CONTINUATION_EFFORT: &str = "none";
 
     // Assemble context using session manager (or fallback to static context)
     //
@@ -270,7 +270,7 @@ async fn execute_tools(
     tools: &ToolExecutor,
     _cancelled: &Arc<AtomicBool>,
 ) -> Result<Vec<(String, String)>> {
-    // Create futures for all tool calls
+    // Create futures for all tool calls (use execute_rich for diff support)
     let tool_futures: Vec<_> = stream_result
         .function_calls
         .iter()
@@ -280,7 +280,7 @@ async fn execute_tools(
             let call_id = call_id.clone();
             let arguments = arguments.clone();
             async move {
-                let result = executor.execute(&name, &arguments).await;
+                let result = executor.execute_rich(&name, &arguments).await;
                 (name, call_id, result)
             }
         })
@@ -292,57 +292,55 @@ async fn execute_tools(
     // Process results
     let mut tool_results: Vec<(String, String)> = Vec::new();
     for (name, call_id, result) in results {
-        let result = result?;
-        let result_len = result.len();
+        let rich_result = result?;
+        let result_len = rich_result.output.len();
 
         // Truncate for display
         let display_result = if result_len > 200 {
-            format!("{}... ({} bytes)", &result[..200], result_len)
+            format!("{}... ({} bytes)", &rich_result.output[..200], result_len)
         } else {
-            result.clone()
+            rich_result.output.clone()
         };
         println!("  {} {}", colors::tool_name(&format!("[{}]", name)), colors::tool_result(display_result.trim()));
 
-        tool_results.push((call_id, result));
+        // Display diff if available
+        if let Some(ref diff) = rich_result.diff {
+            if diff.has_changes() {
+                let (added, removed) = diff.stats();
+                println!("  {} +{} -{}", colors::file_path(&diff.path), colors::success(&added.to_string()), colors::error(&removed.to_string()));
+
+                // Show unified diff (compact)
+                let unified = diff.unified_diff();
+                let colored = colors::format_diff(&unified);
+                // Indent diff output
+                for line in colored.lines().take(30) {
+                    println!("    {}", line);
+                }
+                let total_lines = colored.lines().count();
+                if total_lines > 30 {
+                    println!("    {} ... ({} more lines)", colors::status(""), total_lines - 30);
+                }
+            }
+        }
+
+        tool_results.push((call_id, rich_result.output));
     }
 
     Ok(tool_results)
 }
 
-/// Post-process: per-turn summarization and auto-compaction
+/// Post-process: batch summarization and auto-compaction
 async fn post_process(
     client: &Client,
     session: &Option<Arc<SessionManager>>,
     response_id: &Option<String>,
-    user_input: &str,
-    assistant_response: &str,
+    _user_input: &str,
+    _assistant_response: &str,
 ) {
     let Some(session) = session else { return };
 
-    // PER-TURN SUMMARIZATION: Summarize this turn immediately
-    // This keeps context compact since we no longer chain previous_response_id
-    if !user_input.is_empty() && !assistant_response.is_empty() {
-        // Only summarize if there's meaningful content
-        let user_preview = if user_input.len() > 200 { &user_input[..200] } else { user_input };
-        let asst_preview = if assistant_response.len() > 500 { &assistant_response[..500] } else { assistant_response };
-
-        // Skip summarization for very short exchanges
-        if user_input.len() + assistant_response.len() > 100 {
-            let messages = vec![
-                ("user".to_string(), user_preview.to_string()),
-                ("assistant".to_string(), asst_preview.to_string()),
-            ];
-
-            if let Ok(summary) = client.summarize_messages(&messages).await {
-                // Store as a turn summary (we don't delete messages yet - let threshold handle that)
-                if let Err(e) = session.store_turn_summary(&summary).await {
-                    tracing::debug!("Failed to store turn summary: {}", e);
-                }
-            }
-        }
-    }
-
-    // Check if message summarization is needed (level 1) - batch cleanup
+    // BATCH SUMMARIZATION: Summarize when messages exit the recent window
+    // Recent N messages stay raw for full fidelity, older ones get batched
     if let Ok(Some(messages_to_summarize)) = session.check_summarization_needed().await {
         println!(
             "  {}",

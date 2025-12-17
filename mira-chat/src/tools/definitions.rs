@@ -435,6 +435,102 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["problem_context", "approach", "rejection_reason"]
             }),
         },
+        // ================================================================
+        // Git Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "git_status".into(),
+            description: Some("Get git repository status: branch, staged, unstaged, and untracked files.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "git_diff".into(),
+            description: Some("Show git diff of changes. Use staged=true for staged changes.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "staged": {
+                        "type": "boolean",
+                        "description": "Show staged changes (default: unstaged)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Limit diff to specific file path"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "git_commit".into(),
+            description: Some("Create a git commit. Optionally stage all changes first.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Commit message"
+                    },
+                    "add_all": {
+                        "type": "boolean",
+                        "description": "Stage all changes before committing (git add -A)"
+                    }
+                },
+                "required": ["message"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "git_log".into(),
+            description: Some("Show recent git commit history.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of commits to show (default 10)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Show commits for specific file path"
+                    }
+                },
+                "required": []
+            }),
+        },
+        // ================================================================
+        // Test Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "run_tests".into(),
+            description: Some("Run tests for the project. Auto-detects runner (cargo/pytest/npm/go) or specify explicitly.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "runner": {
+                        "type": "string",
+                        "description": "Test runner: cargo/pytest/npm/go (auto-detected if omitted)"
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "Filter tests by name/pattern"
+                    },
+                    "verbose": {
+                        "type": "boolean",
+                        "description": "Show verbose output (default false)"
+                    }
+                },
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -445,8 +541,8 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 10 core tools + 5 power armor tools = 15
-        assert_eq!(tools.len(), 15);
+        // 10 core tools + 5 power armor tools + 4 git tools + 1 test tool = 20
+        assert_eq!(tools.len(), 20);
         assert_eq!(tools[0].name, "read_file");
         assert_eq!(tools[5].name, "edit_file");
         assert_eq!(tools[8].name, "remember");
@@ -457,5 +553,12 @@ mod tests {
         assert_eq!(tools[12].name, "correction");
         assert_eq!(tools[13].name, "store_decision");
         assert_eq!(tools[14].name, "record_rejected_approach");
+        // Git tools
+        assert_eq!(tools[15].name, "git_status");
+        assert_eq!(tools[16].name, "git_diff");
+        assert_eq!(tools[17].name, "git_commit");
+        assert_eq!(tools[18].name, "git_log");
+        // Test tools
+        assert_eq!(tools[19].name, "run_tests");
     }
 }

@@ -91,8 +91,8 @@ pub fn classify(input: &str) -> ReasoningEffort {
         return ReasoningEffort::None;
     }
 
-    // Default to medium for unknown queries
-    ReasoningEffort::Medium
+    // Default to low for unknown queries - classifier routes up for complex tasks
+    ReasoningEffort::Low
 }
 
 fn contains_any(text: &str, patterns: &[&str]) -> bool {
