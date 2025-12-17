@@ -120,15 +120,6 @@ impl WebTools {
         };
 
         let status = response.status();
-        if status.as_u16() == 403 {
-            // A lot of sites throw 403s at non-browser clients. If the Playwright sidecar is
-            // running, fall back to it.
-            if let Ok(text) = self.web_fetch_browser_inner(url, max_length, None, None, None).await
-            {
-                return Ok(text);
-            }
-        }
-
         if !status.is_success() {
             return Ok(format!("HTTP {}: {}", status.as_u16(), url));
         }
@@ -161,78 +152,6 @@ impl WebTools {
         } else {
             Ok(text)
         }
-    }
-
-    pub async fn web_fetch_browser(&self, args: &Value) -> Result<String> {
-        let url = args["url"].as_str().unwrap_or("");
-        let max_length = args["max_length"].as_u64().unwrap_or(20000) as usize;
-        let selector = args.get("selector").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let wait_until = args.get("wait_until").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_u64());
-
-        self.web_fetch_browser_inner(url, max_length, selector, wait_until, timeout_ms)
-            .await
-            .or_else(|e| Ok(format!("Error (browser fetch): {}", e)))
-    }
-
-    async fn web_fetch_browser_inner(
-        &self,
-        url: &str,
-        max_length: usize,
-        selector: Option<String>,
-        wait_until: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> Result<String> {
-        let fetchd = std::env::var("MIRA_FETCHD_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:7337".to_string());
-
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; MiraChat/1.0)")
-            .timeout(std::time::Duration::from_secs(75))
-            .build()?;
-
-        let payload = serde_json::json!({
-            "url": url,
-            "max_chars": max_length,
-            "selector": selector,
-            "wait_until": wait_until,
-            "timeout_ms": timeout_ms,
-        });
-
-        let resp = client
-            .post(format!("{}/fetch", fetchd.trim_end_matches('/')))
-            .json(&payload)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Ok(format!("HTTP {} from fetchd: {}\n{}", status.as_u16(), url, body));
-        }
-
-        let v: Value = resp.json().await?;
-
-        let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("");
-        let final_url = v.get("final_url").and_then(|x| x.as_str()).unwrap_or(url);
-        let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(0);
-        let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
-
-        let mut out = String::new();
-        if !title.is_empty() {
-            out.push_str(&format!("Title: {}\n", title));
-        }
-        if final_url != url {
-            out.push_str(&format!("Final URL: {}\n", final_url));
-        }
-        if status != 0 {
-            out.push_str(&format!("Status: {}\n\n", status));
-        } else {
-            out.push_str("\n");
-        }
-        out.push_str(text);
-
-        Ok(out)
     }
 }
 

@@ -169,37 +169,6 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             tool_type: "function".into(),
-            name: "web_fetch_browser".into(),
-            description: Some("Fetch content using a real browser (Playwright sidecar) to bypass bot/JS blocks".into()),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "URL to fetch"
-                    },
-                    "max_length": {
-                        "type": "integer",
-                        "description": "Max content length (default 20000)"
-                    },
-                    "selector": {
-                        "type": "string",
-                        "description": "Optional CSS selector to extract text from"
-                    },
-                    "wait_until": {
-                        "type": "string",
-                        "description": "Page load event to wait for: domcontentloaded | load | networkidle"
-                    },
-                    "timeout_ms": {
-                        "type": "integer",
-                        "description": "Navigation timeout in milliseconds (default 45000)"
-                    }
-                },
-                "required": ["url"]
-            }),
-        },
-        Tool {
-            tool_type: "function".into(),
             name: "remember".into(),
             description: Some("Store a fact, decision, or preference for future recall. Uses semantic search for intelligent retrieval.".into()),
             parameters: json!({
@@ -476,18 +445,17 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 11 core tools + 5 power armor tools = 16
-        assert_eq!(tools.len(), 16);
+        // 10 core tools + 5 power armor tools = 15
+        assert_eq!(tools.len(), 15);
         assert_eq!(tools[0].name, "read_file");
         assert_eq!(tools[5].name, "edit_file");
-        assert_eq!(tools[8].name, "web_fetch_browser");
-        assert_eq!(tools[9].name, "remember");
-        assert_eq!(tools[10].name, "recall");
+        assert_eq!(tools[8].name, "remember");
+        assert_eq!(tools[9].name, "recall");
         // Power armor tools
-        assert_eq!(tools[11].name, "task");
-        assert_eq!(tools[12].name, "goal");
-        assert_eq!(tools[13].name, "correction");
-        assert_eq!(tools[14].name, "store_decision");
-        assert_eq!(tools[15].name, "record_rejected_approach");
+        assert_eq!(tools[10].name, "task");
+        assert_eq!(tools[11].name, "goal");
+        assert_eq!(tools[12].name, "correction");
+        assert_eq!(tools[13].name, "store_decision");
+        assert_eq!(tools[14].name, "record_rejected_approach");
     }
 }
