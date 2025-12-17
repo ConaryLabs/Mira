@@ -42,11 +42,14 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         }
     }
 
-    // Classify task complexity for reasoning effort and model routing
+    // Always gpt-5.2, effort based on task complexity
+    const MODEL: &str = "gpt-5.2";
     let effort = classify(input);
-    let effort_str = effort.effort_for_model(); // Use model-compatible effort
-    let model = effort.model();
-    println!("  {}", colors::reasoning(&format!("{} → {}", effort.as_str(), model)));
+    let effort_str = effort.effort_for_model();
+    println!("  {}", colors::reasoning(&format!("[{}]", effort_str)));
+
+    // Tool continuations: no reasoning needed
+    const CONTINUATION_EFFORT: &str = "low";
 
     // Assemble context using session manager (or fallback to static context)
     //
@@ -106,7 +109,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
             &system_prompt,
             current_response_id.as_deref(),
             effort_str,
-            model,
+            MODEL,
             &tools,
         )
         .await
@@ -211,15 +214,15 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
             eprintln!("  {}", colors::warning("[max iterations reached, finalizing...]"));
         }
 
-        // Continue with tool results (streaming) - always send results to avoid dangling tool calls
+        // Continue with tool results - same model, low reasoning
         rx = match config
             .client
             .continue_with_tool_results_stream(
                 &prev_id,
                 tool_results,
                 &system_prompt,
-                effort_str,
-                model,
+                CONTINUATION_EFFORT,
+                MODEL,
                 &tools,
             )
             .await

@@ -314,12 +314,15 @@ async fn process_chat(
 ) -> Result<()> {
     let project_path = PathBuf::from(&request.project_path);
 
-    // Classify task complexity for model routing
+    // Always gpt-5.2, effort based on task complexity
+    const MODEL: &str = "gpt-5.2";
     let effort = classify(&request.message);
     let reasoning_effort = request
         .reasoning_effort
-        .unwrap_or_else(|| effort.as_str().to_string());
-    let model = effort.model();
+        .unwrap_or_else(|| effort.effort_for_model().to_string());
+
+    // Tool continuations: low reasoning
+    const CONTINUATION_EFFORT: &str = "low";
 
     // Save user message
     let user_msg_id = Uuid::new_v4().to_string();
@@ -383,12 +386,12 @@ async fn process_chat(
                     &system_prompt,
                     previous_response_id.as_deref(),
                     &reasoning_effort,
-                    model,
+                    MODEL,
                     &tools,
                 )
                 .await?
         } else {
-            // Continue with tool results
+            // Continue with tool results - same model, low reasoning
             let tool_results: Vec<(String, String)> = assistant_blocks
                 .iter()
                 .filter_map(|b| match b {
@@ -404,8 +407,8 @@ async fn process_chat(
                     response_id.as_ref().unwrap(),
                     tool_results,
                     &system_prompt,
-                    &reasoning_effort,
-                    model,
+                    CONTINUATION_EFFORT,
+                    MODEL,
                     &tools,
                 )
                 .await?
