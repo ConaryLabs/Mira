@@ -1,0 +1,219 @@
+{
+  "timestamp": "2025-12-16T18:04:19.942537",
+  "tasks": [
+    {
+      "task": {
+        "id": "find-function",
+        "name": "Find Function Definition",
+        "description": "Find where a specific function is defined",
+        "prompt": "Find where the function `execute` is defined in the mira-chat tools module. Show me the file path and line number.",
+        "category": "search",
+        "expected_files": [
+          "mira-chat/src/tools/mod.rs"
+        ]
+      },
+      "results": {
+        "claude-code": {
+          "metrics": {
+            "task_id": "find-function",
+            "system": "claude-code",
+            "start_time": "2025-12-16T18:04:19.942546",
+            "duration_seconds": 13.411093473434448,
+            "input_tokens": 0,
+            "output_tokens": 17,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "tool_calls": 0,
+            "tool_names": [],
+            "output": "The `execute` function is defined at `/home/peter/Mira/mira-chat/src/tools/mod.rs:162`.\n\nThere's also `execute_rich` at line 199 in the same file.\n",
+            "success": true,
+            "error": null
+          },
+          "verification": {
+            "passed": true,
+            "checks": [
+              {
+                "type": "file_mentioned",
+                "file": "mira-chat/src/tools/mod.rs",
+                "passed": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "task": {
+        "id": "read-understand",
+        "name": "Read and Understand Code",
+        "description": "Read a file and explain its purpose",
+        "prompt": "Read the file mira-chat/src/tools/file.rs and explain what the FileCache does, including its TTL and size limits.",
+        "category": "comprehension",
+        "expected_keywords": [
+          "30",
+          "TTL",
+          "100",
+          "512"
+        ]
+      },
+      "results": {
+        "claude-code": {
+          "metrics": {
+            "task_id": "read-understand",
+            "system": "claude-code",
+            "start_time": "2025-12-16T18:04:33.353927",
+            "duration_seconds": 24.15223002433777,
+            "input_tokens": 0,
+            "output_tokens": 180,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "tool_calls": 6,
+            "tool_names": [],
+            "output": "## FileCache Overview\n\nThe `FileCache` is a thread-safe in-memory cache for file contents, defined in `mira-chat/src/tools/mod.rs:43-107`. Here's what it does:\n\n### Purpose\nAvoids redundant disk reads by caching recently-read file contents. The cache is used by `read_file`, `edit_file`, and `write_file` operations.\n\n### Configuration Constants\n- **TTL**: `30 seconds` - Cached entries expire after 30 seconds\n- **MAX_ENTRIES**: `100` - Maximum number of files cached simultaneously\n- **MAX_FILE_SIZE**: `512 KB` - Files larger than this are not cached\n\n### Key Methods\n\n| Method | Description |\n|--------|-------------|\n| `get(path)` | Returns cached content if entry exists and is younger than TTL |\n| `put(path, content)` | Caches content if under size limit; evicts oldest entry if at capacity |\n| `invalidate(path)` | Removes entry from cache |\n| `update(path, content)` | Invalidates then re-caches (used after writes/edits) |\n\n### Eviction Policy\nWhen the cache reaches 100 entries, the oldest entry (by `cached_at` timestamp) is evicted before inserting a new one.\n\n### Thread Safety\nUses `Arc<RwLock<HashMap>>` for safe concurrent access. Read operations take a read lock; write operations take a write lock.\n",
+            "success": true,
+            "error": null
+          },
+          "verification": {
+            "passed": true,
+            "checks": [
+              {
+                "type": "keyword_found",
+                "keyword": "30",
+                "passed": true
+              },
+              {
+                "type": "keyword_found",
+                "keyword": "TTL",
+                "passed": true
+              },
+              {
+                "type": "keyword_found",
+                "keyword": "100",
+                "passed": true
+              },
+              {
+                "type": "keyword_found",
+                "keyword": "512",
+                "passed": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "task": {
+        "id": "multi-file-search",
+        "name": "Multi-file Search",
+        "description": "Search across multiple files for a pattern",
+        "prompt": "Search for all uses of 'spawn_blocking' in the mira-chat crate. List the files and what each usage does.",
+        "category": "search",
+        "expected_files": [
+          "mira-chat/src/tools/file.rs"
+        ]
+      },
+      "results": {
+        "claude-code": {
+          "metrics": {
+            "task_id": "multi-file-search",
+            "system": "claude-code",
+            "start_time": "2025-12-16T18:04:57.506278",
+            "duration_seconds": 20.954307556152344,
+            "input_tokens": 0,
+            "output_tokens": 66,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "tool_calls": 1,
+            "tool_names": [],
+            "output": "Here are the results for `spawn_blocking` in the mira-chat crate:\n\n**File: `/home/peter/Mira/mira-chat/src/tools/file.rs:316`**\n\n**Usage:** Runs the grep operation in a blocking task to avoid blocking the async runtime. The `grep_sync` function uses the `ignore` crate (which respects `.gitignore`) for file searching, and since it's a CPU-bound/blocking operation, it's wrapped in `spawn_blocking` to keep the async runtime responsive.\n\nThat's the only usage of `spawn_blocking` in the mira-chat crate.\n",
+            "success": true,
+            "error": null
+          },
+          "verification": {
+            "passed": true,
+            "checks": [
+              {
+                "type": "file_mentioned",
+                "file": "mira-chat/src/tools/file.rs",
+                "passed": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "task": {
+        "id": "code-edit",
+        "name": "Simple Code Edit",
+        "description": "Make a small code change",
+        "prompt": "In mira-chat/src/tools/file.rs, change the MAX_MATCHES constant from 200 to 250. Show me the change.",
+        "category": "edit",
+        "verify_file": "mira-chat/src/tools/file.rs",
+        "verify_pattern": "MAX_MATCHES.*250"
+      },
+      "results": {
+        "claude-code": {
+          "metrics": {
+            "task_id": "code-edit",
+            "system": "claude-code",
+            "start_time": "2025-12-16T18:05:18.460661",
+            "duration_seconds": 18.263622760772705,
+            "input_tokens": 0,
+            "output_tokens": 49,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "tool_calls": 1,
+            "tool_names": [],
+            "output": "I need permission to edit the file. Here's the change I want to make:\n\n**File:** `mira-chat/src/tools/file.rs:335`\n\n```diff\n-        const MAX_MATCHES: usize = 200;   // Increased for fewer round-trips\n+        const MAX_MATCHES: usize = 250;   // Increased for fewer round-trips\n```\n\nWould you like me to proceed with this edit?\n",
+            "success": true,
+            "error": null
+          },
+          "verification": {
+            "passed": false,
+            "checks": [
+              {
+                "type": "file_content",
+                "pattern": "MAX_MATCHES.*250",
+                "passed": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "task": {
+        "id": "multi-step",
+        "name": "Multi-step Task",
+        "description": "Task requiring multiple tool calls",
+        "prompt": "Find all Rust files in mira-chat/src/tools/ directory, count how many there are, and list the public functions in each file.",
+        "category": "multi-step",
+        "expected_count_min": 5
+      },
+      "results": {
+        "claude-code": {
+          "metrics": {
+            "task_id": "multi-step",
+            "system": "claude-code",
+            "start_time": "2025-12-16T18:05:36.724640",
+            "duration_seconds": 21.343164920806885,
+            "input_tokens": 0,
+            "output_tokens": 90,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "tool_calls": 0,
+            "tool_names": [],
+            "output": "Here's the summary:\n\n## Rust Files in `mira-chat/src/tools/` \u2014 **8 files**\n\n| File | Public Functions |\n|------|------------------|\n| **definitions.rs** | `get_tools()` |\n| **file.rs** | `read_file()`, `write_file()`, `write_file_rich()`, `edit_file()`, `edit_file_rich()`, `glob()`, `grep()` |\n| **memory.rs** | `remember()`, `recall()` |\n| **mira.rs** | `task()`, `goal()`, `correction()`, `store_decision()`, `record_rejected_approach()` |\n| **mod.rs** | `new()` (\u00d72), `get()`, `put()`, `invalidate()`, `update()`, `with_semantic()`, `with_db()`, `with_session()`, `execute()`, `execute_rich()` |\n| **shell.rs** | `bash()` |\n| **types.rs** | *(no public functions)* |\n| **web.rs** | `html_to_text()`, `web_search()`, `web_fetch()` |\n\n**Total: 8 Rust files, 28 public functions**\n",
+            "success": true,
+            "error": null
+          },
+          "verification": {
+            "passed": true,
+            "checks": []
+          }
+        }
+      }
+    }
+  ]
+}
