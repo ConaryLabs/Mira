@@ -1,0 +1,27 @@
+# Mira Chat - GPT-5.2 Coding Assistant Backend
+# Port 3001, proxied via nginx at /api
+
+[Unit]
+Description=Mira Chat - GPT-5.2 Coding Assistant Backend
+After=network.target mira-http.service
+Wants=mira-http.service
+
+[Service]
+Type=simple
+User=peter
+Group=peter
+WorkingDirectory=/home/peter/Mira
+ExecStart=/home/peter/Mira/target/release/mira-chat --serve --port 3001
+Restart=on-failure
+RestartSec=5
+
+# Environment
+EnvironmentFile=/home/peter/Mira/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mira-chat
+
+[Install]
+WantedBy=multi-user.target

@@ -31,11 +31,9 @@ mod indexer;
 mod hooks;
 mod server;
 mod daemon;
-mod studio;
 
 use server::{MiraServer, create_optimized_pool};
 use tools::SemanticSearch;
-use studio::StudioState;
 
 // === CLI Definition ===
 
@@ -189,25 +187,6 @@ async fn main() -> Result<()> {
             let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key).await);
             info!("Database connected");
 
-            // Create Studio state for chat API
-            let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
-            let studio_state = StudioState::new(
-                db.clone(),
-                semantic.clone(),
-                reqwest::Client::builder()
-                    .no_gzip()
-                    .no_deflate()
-                    .no_brotli()
-                    .build()
-                    .unwrap_or_else(|_| reqwest::Client::new()),
-                anthropic_key.clone(),
-            );
-            if anthropic_key.is_some() {
-                info!("Anthropic API key configured for Studio chat");
-            } else {
-                info!("Warning: ANTHROPIC_API_KEY not set, Studio chat disabled");
-            }
-
             // Optional auth token validation
             let expected_token = auth_token.clone();
 
@@ -271,9 +250,6 @@ async fn main() -> Result<()> {
                     "content-type".parse().unwrap(),
                 ]);
 
-            // Build Studio API router
-            let studio_router = studio::router(studio_state);
-
             // Build router with optional auth middleware
             // Health endpoint is public, MCP endpoint requires auth
             let app = if let Some(token) = expected_token {
@@ -286,7 +262,6 @@ async fn main() -> Result<()> {
                     }));
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
-                    .nest("/api", studio_router)
                     .merge(mcp_router)
                     .layer(cors)
                     .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
@@ -295,7 +270,6 @@ async fn main() -> Result<()> {
                 info!("Warning: No auth token set, server is open");
                 axum::Router::new()
                     .route("/health", axum::routing::get(health_handler))
-                    .nest("/api", studio_router)
                     .nest_service("/mcp", mcp_service)
                     .layer(cors)
                     .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))

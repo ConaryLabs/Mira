@@ -1,89 +1,107 @@
-// API client for Mira Studio
+// API client for Mira Studio (GPT-5.2 backend)
 
-export interface ChatMessage {
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface DiffInfo {
+  path: string;
+  old_content?: string;
+  new_content: string;
+  is_new_file: boolean;
+}
+
+export interface ToolCallResult {
+  success: boolean;
+  output: string;
+  diff?: DiffInfo;
+}
+
+export interface MessageBlock {
+  type: 'text' | 'tool_call';
+  content?: string;
+  call_id?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  result?: ToolCallResult;
+}
+
+export interface Message {
+  id: string;
   role: 'user' | 'assistant';
-  content: string;
+  blocks: MessageBlock[];
+  created_at: number;
 }
 
 export interface ChatRequest {
   message: string;
-  conversation_id?: string;
-  model?: string;
-  max_tokens?: number;
+  project_path: string;
+  reasoning_effort?: string;
 }
 
-export interface ConversationInfo {
-  id: string;
-  title: string | null;
-  created_at: number;
-  updated_at: number;
-  message_count: number;
+export interface StatusResponse {
+  status: string;
+  semantic_search: boolean;
+  database: boolean;
 }
 
-export interface MessageInfo {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  created_at: number;
-}
+// ============================================================================
+// SSE Events (from backend)
+// ============================================================================
 
-export async function checkApiStatus(): Promise<{ status: string; anthropic_configured: boolean }> {
+export type ChatEvent =
+  | { type: 'text_delta'; delta: string }
+  | { type: 'tool_call_start'; call_id: string; name: string; arguments: Record<string, unknown> }
+  | { type: 'tool_call_result'; call_id: string; name: string; success: boolean; output: string; diff?: DiffInfo }
+  | { type: 'reasoning'; effort: string; summary?: string }
+  | { type: 'usage'; input_tokens: number; output_tokens: number; reasoning_tokens: number; cached_tokens: number }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+
+// ============================================================================
+// API Functions
+// ============================================================================
+
+export async function checkApiStatus(): Promise<StatusResponse> {
   const response = await fetch('/api/status');
-  return response.json();
-}
-
-export async function listConversations(): Promise<ConversationInfo[]> {
-  const response = await fetch('/api/conversations');
   if (!response.ok) {
-    throw new Error(`Failed to list conversations: ${response.status}`);
+    throw new Error(`Failed to check status: ${response.status}`);
   }
   return response.json();
 }
 
-export async function createConversation(): Promise<ConversationInfo> {
-  const response = await fetch('/api/conversations', { method: 'POST' });
-  if (!response.ok) {
-    throw new Error(`Failed to create conversation: ${response.status}`);
-  }
-  return response.json();
+export interface MessagesQuery {
+  limit?: number;
+  before?: number; // created_at timestamp for cursor pagination
 }
 
-export async function getConversation(id: string): Promise<ConversationInfo> {
-  const response = await fetch(`/api/conversations/${id}`);
-  if (!response.ok) {
-    throw new Error(`Failed to get conversation: ${response.status}`);
-  }
-  return response.json();
-}
+export async function getMessages(query: MessagesQuery = {}): Promise<Message[]> {
+  const params = new URLSearchParams();
+  if (query.limit) params.set('limit', String(query.limit));
+  if (query.before) params.set('before', String(query.before));
 
-export async function getMessages(conversationId: string, limit = 20, beforeId?: string): Promise<MessageInfo[]> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (beforeId) {
-    params.set('before', beforeId);
-  }
-  const response = await fetch(`/api/conversations/${conversationId}/messages?${params}`);
+  const url = params.toString() ? `/api/messages?${params}` : '/api/messages';
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to get messages: ${response.status}`);
   }
   return response.json();
 }
 
-export interface StreamResult {
-  conversationId: string;
-  chunks: AsyncGenerator<string, void, unknown>;
-}
+// ============================================================================
+// SSE Streaming
+// ============================================================================
 
 /**
- * Parse SSE events from a buffer, handling event boundaries correctly.
- * Returns [parsedEvents, remainingBuffer]
+ * Parse SSE events from a buffer.
+ * Returns [parsedEventData, remainingBuffer]
  */
 function parseSSEEvents(buffer: string): [string[], string] {
   const events: string[] = [];
   let remaining = buffer;
 
-  // SSE events are separated by blank lines (\n\n or \r\n\r\n)
   while (true) {
-    // Find event boundary
+    // Find event boundary (\n\n or \r\n\r\n)
     let boundaryPos = remaining.indexOf('\r\n\r\n');
     let boundaryLen = 4;
     if (boundaryPos === -1) {
@@ -91,26 +109,20 @@ function parseSSEEvents(buffer: string): [string[], string] {
       boundaryLen = 2;
     }
 
-    if (boundaryPos === -1) {
-      // No complete event yet
-      break;
-    }
+    if (boundaryPos === -1) break;
 
     const eventBlock = remaining.substring(0, boundaryPos);
     remaining = remaining.substring(boundaryPos + boundaryLen);
 
-    // Parse the event block - collect all data: lines
+    // Parse data: lines
     const dataLines: string[] = [];
     for (const line of eventBlock.split(/\r?\n/)) {
       if (line.startsWith('data:')) {
-        // SSE spec: optional single space after colon is stripped
         const value = line.substring(5);
         dataLines.push(value.startsWith(' ') ? value.substring(1) : value);
       }
-      // Ignore event:, id:, retry:, and comment lines
     }
 
-    // Per SSE spec, multiple data lines are joined with newlines
     if (dataLines.length > 0) {
       events.push(dataLines.join('\n'));
     }
@@ -119,12 +131,14 @@ function parseSSEEvents(buffer: string): [string[], string] {
   return [events, remaining];
 }
 
-export async function streamChat(request: ChatRequest): Promise<StreamResult> {
+/**
+ * Stream chat events from the backend.
+ * Yields typed ChatEvent objects.
+ */
+export async function* streamChatEvents(request: ChatRequest): AsyncGenerator<ChatEvent, void, unknown> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   });
 
@@ -138,56 +152,10 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
     throw new Error('No response body');
   }
 
-  let conversationId = '';
   const decoder = new TextDecoder();
   let buffer = '';
-  let pendingEvents: string[] = []; // Events received after conversation ID
 
-  // Read until we get the conversation ID
-  while (!conversationId) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const [events, remaining] = parseSSEEvents(buffer);
-    buffer = remaining;
-
-    for (let i = 0; i < events.length; i++) {
-      const data = events[i];
-      // Check if this looks like a UUID (conversation ID)
-      if (data.match(/^[0-9a-f-]{36}$/i)) {
-        conversationId = data;
-        // Capture any events that came after the ID in this batch
-        pendingEvents = events.slice(i + 1);
-        break;
-      }
-    }
-  }
-
-  // Create async generator for the rest of the stream
-  async function* generateChunks(): AsyncGenerator<string, void, unknown> {
-    // First, yield any events that came after the conversation ID
-    for (const data of pendingEvents) {
-      if (data === '[DONE]') return;
-      if (data.startsWith('[ERROR]')) throw new Error(data);
-      if (data && !data.match(/^[0-9a-f-]{36}$/i)) {
-        yield data;
-      }
-    }
-
-    // Process any buffered events
-    const [initialEvents, remaining] = parseSSEEvents(buffer);
-    buffer = remaining;
-
-    for (const data of initialEvents) {
-      if (data === '[DONE]') return;
-      if (data.startsWith('[ERROR]')) throw new Error(data);
-      if (data && !data.match(/^[0-9a-f-]{36}$/i)) {
-        yield data;
-      }
-    }
-
-    // Continue reading stream
+  try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
@@ -197,30 +165,132 @@ export async function streamChat(request: ChatRequest): Promise<StreamResult> {
       }
 
       buffer += decoder.decode(value, { stream: true });
-      const [events, rem] = parseSSEEvents(buffer);
-      buffer = rem;
+      const [events, remaining] = parseSSEEvents(buffer);
+      buffer = remaining;
 
       for (const data of events) {
-        if (data === '[DONE]') return;
-        if (data.startsWith('[ERROR]')) throw new Error(data);
-        yield data;
+        try {
+          const event = JSON.parse(data) as ChatEvent;
+          yield event;
+        } catch {
+          console.warn('Failed to parse SSE event:', data);
+        }
       }
     }
 
     // Process any final buffered events
     if (buffer.trim()) {
-      // Add fake boundary to flush remaining
       const [finalEvents] = parseSSEEvents(buffer + '\n\n');
       for (const data of finalEvents) {
-        if (data === '[DONE]') return;
-        if (data.startsWith('[ERROR]')) throw new Error(data);
-        yield data;
+        try {
+          const event = JSON.parse(data) as ChatEvent;
+          yield event;
+        } catch {
+          console.warn('Failed to parse final SSE event:', data);
+        }
       }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ============================================================================
+// Helper for building message blocks from events
+// ============================================================================
+
+export interface StreamingMessage {
+  id: string;
+  role: 'assistant';
+  blocks: MessageBlock[];
+  isComplete: boolean;
+}
+
+/**
+ * Create a message builder that accumulates events into a message.
+ */
+export function createMessageBuilder(id: string): {
+  message: StreamingMessage;
+  handleEvent: (event: ChatEvent) => void;
+} {
+  const message: StreamingMessage = {
+    id,
+    role: 'assistant',
+    blocks: [],
+    isComplete: false,
+  };
+
+  // Track current text block index (if any)
+  let currentTextBlockIndex = -1;
+  // Track tool calls by call_id
+  const toolCallIndices = new Map<string, number>();
+
+  function handleEvent(event: ChatEvent) {
+    switch (event.type) {
+      case 'text_delta': {
+        if (currentTextBlockIndex === -1) {
+          // Create new text block
+          currentTextBlockIndex = message.blocks.length;
+          message.blocks.push({ type: 'text', content: '' });
+        }
+        const block = message.blocks[currentTextBlockIndex];
+        if (block.type === 'text') {
+          block.content = (block.content || '') + event.delta;
+        }
+        break;
+      }
+
+      case 'tool_call_start': {
+        // End current text block
+        currentTextBlockIndex = -1;
+        // Create new tool call block
+        const index = message.blocks.length;
+        toolCallIndices.set(event.call_id, index);
+        message.blocks.push({
+          type: 'tool_call',
+          call_id: event.call_id,
+          name: event.name,
+          arguments: event.arguments,
+        });
+        break;
+      }
+
+      case 'tool_call_result': {
+        const index = toolCallIndices.get(event.call_id);
+        if (index !== undefined) {
+          const block = message.blocks[index];
+          if (block.type === 'tool_call') {
+            block.result = {
+              success: event.success,
+              output: event.output,
+              diff: event.diff,
+            };
+          }
+        }
+        break;
+      }
+
+      case 'done': {
+        message.isComplete = true;
+        break;
+      }
+
+      case 'error': {
+        // Add error as text block
+        message.blocks.push({
+          type: 'text',
+          content: `Error: ${event.message}`,
+        });
+        message.isComplete = true;
+        break;
+      }
+
+      // Ignore reasoning and usage events for now (could display in UI later)
+      case 'reasoning':
+      case 'usage':
+        break;
     }
   }
 
-  return {
-    conversationId,
-    chunks: generateChunks(),
-  };
+  return { message, handleEvent };
 }
