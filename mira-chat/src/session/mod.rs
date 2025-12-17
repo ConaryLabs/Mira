@@ -12,9 +12,10 @@
 //! old code content. Semantic search is for conversation/memory only.
 //! Code compaction stores understanding metadata, not code itself.
 
+mod types;
+
 use anyhow::Result;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 use std::sync::Arc;
@@ -22,7 +23,9 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::context::MiraContext;
-use crate::semantic::{SemanticSearch, COLLECTION_MEMORY};
+use crate::semantic::SemanticSearch;
+
+pub use types::{AssembledContext, ChatMessage, SemanticHit, SessionStats};
 
 /// Number of recent messages to keep in the sliding window
 const WINDOW_SIZE: usize = 20;
@@ -38,41 +41,6 @@ const SUMMARIZE_THRESHOLD: usize = 30;
 
 /// Collection name for chat messages
 const COLLECTION_CHAT: &str = "mira_chat_messages";
-
-/// A chat message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub created_at: i64,
-}
-
-/// Assembled context for a query
-#[derive(Debug, Default)]
-pub struct AssembledContext {
-    /// Recent messages in the sliding window
-    pub recent_messages: Vec<ChatMessage>,
-    /// Semantically relevant past context
-    pub semantic_context: Vec<SemanticHit>,
-    /// Mira context (corrections, goals, memories)
-    pub mira_context: MiraContext,
-    /// Rolling summaries of older conversation
-    pub summaries: Vec<String>,
-    /// Code compaction blob (if available)
-    pub code_compaction: Option<String>,
-    /// Previous response ID for OpenAI continuity
-    pub previous_response_id: Option<String>,
-}
-
-/// A semantic search hit
-#[derive(Debug, Clone)]
-pub struct SemanticHit {
-    pub content: String,
-    pub score: f32,
-    pub role: String,
-    pub created_at: i64,
-}
 
 /// Session manager for invisible persistence
 pub struct SessionManager {
@@ -281,8 +249,7 @@ impl SessionManager {
                 let created_at: i64 = row.get("created_at");
 
                 // Extract text content from blocks
-                let blocks: Vec<serde_json::Value> =
-                    serde_json::from_str(&blocks_json).ok()?;
+                let blocks: Vec<serde_json::Value> = serde_json::from_str(&blocks_json).ok()?;
                 let content = blocks
                     .iter()
                     .filter_map(|b| b.get("content")?.as_str())
@@ -309,10 +276,7 @@ impl SessionManager {
         use qdrant_client::qdrant::{Condition, Filter};
 
         // Filter to only this project's messages
-        let filter = Filter::must([Condition::matches(
-            "project",
-            self.project_path.clone(),
-        )]);
+        let filter = Filter::must([Condition::matches("project", self.project_path.clone())]);
 
         let results = self
             .semantic
@@ -331,11 +295,7 @@ impl SessionManager {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string(),
-                created_at: r
-                    .metadata
-                    .get("created_at")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0),
+                created_at: r.metadata.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
             })
             .collect())
     }
@@ -381,11 +341,9 @@ impl SessionManager {
     /// Returns messages to summarize if threshold exceeded
     pub async fn check_summarization_needed(&self) -> Result<Option<Vec<ChatMessage>>> {
         // Count total messages
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM chat_messages",
-        )
-        .fetch_one(&self.db)
-        .await?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM chat_messages")
+            .fetch_one(&self.db)
+            .await?;
 
         if count.0 as usize <= SUMMARIZE_THRESHOLD {
             return Ok(None);
@@ -397,7 +355,10 @@ impl SessionManager {
             return Ok(None);
         }
 
-        info!("Summarization needed: {} messages to compress", to_summarize_count);
+        info!(
+            "Summarization needed: {} messages to compress",
+            to_summarize_count
+        );
 
         // Fetch the oldest messages that will be summarized
         let rows = sqlx::query(
@@ -420,8 +381,7 @@ impl SessionManager {
                 let blocks_json: String = row.get("blocks");
                 let created_at: i64 = row.get("created_at");
 
-                let blocks: Vec<serde_json::Value> =
-                    serde_json::from_str(&blocks_json).ok()?;
+                let blocks: Vec<serde_json::Value> = serde_json::from_str(&blocks_json).ok()?;
                 let content = blocks
                     .iter()
                     .filter_map(|b| b.get("content")?.as_str())
@@ -600,15 +560,6 @@ impl SessionManager {
     }
 }
 
-/// Session statistics
-#[derive(Debug)]
-pub struct SessionStats {
-    pub total_messages: usize,
-    pub summary_count: usize,
-    pub has_active_conversation: bool,
-    pub has_code_compaction: bool,
-}
-
 impl AssembledContext {
     /// Format context for injection into system prompt
     ///
@@ -681,7 +632,11 @@ impl AssembledContext {
 
         let mut history = String::from("## Recent Conversation\n");
         for msg in &self.recent_messages {
-            let role_label = if msg.role == "user" { "User" } else { "Assistant" };
+            let role_label = if msg.role == "user" {
+                "User"
+            } else {
+                "Assistant"
+            };
             let preview = if msg.content.len() > 500 {
                 format!("{}...", &msg.content[..500])
             } else {
@@ -690,22 +645,5 @@ impl AssembledContext {
             history.push_str(&format!("**{}**: {}\n\n", role_label, preview));
         }
         history
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_chat_message_serialize() {
-        let msg = ChatMessage {
-            id: "test".into(),
-            role: "user".into(),
-            content: "Hello".into(),
-            created_at: 0,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("Hello"));
     }
 }
