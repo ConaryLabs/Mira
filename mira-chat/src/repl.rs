@@ -1138,10 +1138,12 @@ impl MarkdownFormatter {
         let mut i = 0;
 
         while i < bytes.len() {
-            // Check for code block marker (```)
-            if i + 3 <= bytes.len() && &self.pending[i..i + 3] == "```" {
+            // Only check for code block marker at valid char boundaries
+            if self.pending.is_char_boundary(i)
+                && self.pending.get(i..i + 3) == Some("```")
+            {
                 // Output everything before the marker
-                if i > processed_up_to {
+                if i > processed_up_to && self.pending.is_char_boundary(processed_up_to) {
                     output.push_str(&self.format_text(&self.pending[processed_up_to..i]));
                 }
 
@@ -1161,14 +1163,14 @@ impl MarkdownFormatter {
                 while j < bytes.len() && bytes[j] != b'\n' {
                     j += 1;
                 }
-                if j < bytes.len() {
+                if j < bytes.len() && self.pending.is_char_boundary(i + 3) && self.pending.is_char_boundary(j + 1) {
                     output.push_str(&self.pending[i + 3..=j]);
                     processed_up_to = j + 1;
                     i = j + 1;
                 } else {
-                    // No newline yet, keep pending
+                    // No newline yet or invalid boundary, keep pending
                     processed_up_to = i + 3;
-                    i = j;
+                    i = if j < bytes.len() { j + 1 } else { j };
                 }
                 continue;
             }
@@ -1177,11 +1179,16 @@ impl MarkdownFormatter {
         }
 
         // Output remaining processed content
-        if processed_up_to < self.pending.len() {
+        if processed_up_to < self.pending.len() && self.pending.is_char_boundary(processed_up_to) {
             // Check if we might have an incomplete ``` at the end
             let remaining = &self.pending[processed_up_to..];
             let trailing = remaining.len().min(2);
-            let safe_len = remaining.len() - trailing;
+
+            // Find a valid char boundary for safe_len
+            let mut safe_len = remaining.len().saturating_sub(trailing);
+            while safe_len > 0 && !remaining.is_char_boundary(safe_len) {
+                safe_len -= 1;
+            }
 
             if safe_len > 0 {
                 output.push_str(&self.format_text(&remaining[..safe_len]));
@@ -1189,7 +1196,7 @@ impl MarkdownFormatter {
             } else {
                 self.pending = remaining.to_string();
             }
-        } else {
+        } else if processed_up_to >= self.pending.len() {
             self.pending.clear();
         }
 
