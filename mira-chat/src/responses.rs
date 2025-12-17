@@ -9,7 +9,6 @@
 use anyhow::Result;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
 use tokio::sync::mpsc;
 
 const API_URL: &str = "https://api.openai.com/v1/responses";
