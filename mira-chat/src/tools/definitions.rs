@@ -10,13 +10,21 @@ pub fn get_tools() -> Vec<Tool> {
         Tool {
             tool_type: "function".into(),
             name: "read_file".into(),
-            description: Some("Read the contents of a file".into()),
+            description: Some("Read the contents of a file. For large files (>1MB), use offset/limit to read portions.".into()),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Path to the file to read"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Line number to start reading from (0-indexed)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to read"
                     }
                 },
                 "required": ["path"]

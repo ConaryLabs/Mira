@@ -20,13 +20,91 @@ mod web;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::SqlitePool;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 pub use definitions::get_tools;
 pub use types::{DiffInfo, RichToolResult};
 
 use crate::semantic::SemanticSearch;
 use crate::session::SessionManager;
+
+/// Cached file entry with content and timestamp
+#[derive(Clone)]
+struct CacheEntry {
+    content: String,
+    cached_at: Instant,
+}
+
+/// Thread-safe file cache
+#[derive(Clone, Default)]
+pub struct FileCache {
+    entries: Arc<RwLock<HashMap<PathBuf, CacheEntry>>>,
+}
+
+impl FileCache {
+    const TTL: Duration = Duration::from_secs(30);
+    const MAX_ENTRIES: usize = 100;
+    const MAX_FILE_SIZE: usize = 512 * 1024; // 512KB max cached file
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get cached content if fresh
+    pub fn get(&self, path: &PathBuf) -> Option<String> {
+        let entries = self.entries.read().ok()?;
+        let entry = entries.get(path)?;
+
+        if entry.cached_at.elapsed() < Self::TTL {
+            Some(entry.content.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Cache file content
+    pub fn put(&self, path: PathBuf, content: String) {
+        // Don't cache large files
+        if content.len() > Self::MAX_FILE_SIZE {
+            return;
+        }
+
+        if let Ok(mut entries) = self.entries.write() {
+            // Evict oldest entries if at capacity
+            if entries.len() >= Self::MAX_ENTRIES {
+                // Find and remove oldest entry
+                if let Some(oldest_key) = entries
+                    .iter()
+                    .min_by_key(|(_, v)| v.cached_at)
+                    .map(|(k, _)| k.clone())
+                {
+                    entries.remove(&oldest_key);
+                }
+            }
+
+            entries.insert(path, CacheEntry {
+                content,
+                cached_at: Instant::now(),
+            });
+        }
+    }
+
+    /// Invalidate cache entry (on write/edit)
+    pub fn invalidate(&self, path: &PathBuf) {
+        if let Ok(mut entries) = self.entries.write() {
+            entries.remove(path);
+        }
+    }
+
+    /// Update cache with new content (after write/edit)
+    pub fn update(&self, path: PathBuf, content: String) {
+        self.invalidate(&path);
+        self.put(path, content);
+    }
+}
 
 use file::FileTools;
 use memory::MemoryTools;
@@ -35,15 +113,20 @@ use shell::ShellTools;
 use web::WebTools;
 
 /// Tool executor handles tool invocation and result formatting
+///
+/// Clone is cheap - uses Arc for shared state.
+#[derive(Clone)]
 pub struct ToolExecutor {
     /// Working directory for file operations
     pub cwd: std::path::PathBuf,
     /// Semantic search client (optional)
     semantic: Option<Arc<SemanticSearch>>,
-    /// SQLite database pool (optional)
+    /// SQLite database pool (optional, internally Arc-based)
     db: Option<SqlitePool>,
     /// Session manager for file tracking (optional)
     session: Option<Arc<SessionManager>>,
+    /// File content cache for avoiding re-reads
+    file_cache: FileCache,
 }
 
 impl ToolExecutor {
@@ -53,6 +136,7 @@ impl ToolExecutor {
             semantic: None,
             db: None,
             session: None,
+            file_cache: FileCache::new(),
         }
     }
 
@@ -137,6 +221,7 @@ impl ToolExecutor {
         FileTools {
             cwd: &self.cwd,
             session: &self.session,
+            cache: &self.file_cache,
         }
     }
 
