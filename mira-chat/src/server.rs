@@ -242,10 +242,10 @@ pub async fn run(
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
     println!("Server listening on http://{}", addr);
-    if let Some(ref token) = sync_token {
-        println!("Sync token:   {} (use as Bearer token for /api/chat/sync)", token);
+    if sync_token.is_some() {
+        println!("Sync auth:    ENABLED (via MIRA_SYNC_TOKEN)");
     } else {
-        println!("Sync token:   DISABLED (set MIRA_SYNC_TOKEN to enable auth)");
+        println!("Sync auth:    DISABLED (set MIRA_SYNC_TOKEN to enable)");
     }
     println!("Sync limit:   {} concurrent requests", SYNC_MAX_CONCURRENT);
 
