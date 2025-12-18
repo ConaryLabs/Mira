@@ -530,9 +530,9 @@ impl<'a> CommandHandler<'a> {
                 flags.push('T');
             }
 
-            // Chain reset
+            // Chain reset (N = NEW chain)
             if prev_resp_id.is_none() && i > 0 {
-                flags.push('R');
+                flags.push('N');
             }
 
             // Tool info for tooltip-style display
@@ -575,7 +575,7 @@ impl<'a> CommandHandler<'a> {
             format_tokens(total_output as i32), format_tokens(total_cached as i32),
             overall_cache, input_cost + output_cost - cached_savings
         );
-        println!("  Flags: ! input spike, C cache<50%, T tools≥3, R chain reset");
+        println!("  Flags: ! input spike, C cache<50%, T tools≥3, N new chain");
     }
 
     /// Show only turns with spikes/anomalies
