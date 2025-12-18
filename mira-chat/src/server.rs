@@ -398,32 +398,18 @@ async fn process_chat(
         None
     };
 
-    // Assemble full context (summaries, semantic recall, code hints, etc.)
-    let system_prompt = if let Some(ref session) = session {
-        match session.assemble_context(&request.message).await {
-            Ok(assembled) => {
-                let base_prompt = build_system_prompt(&assembled.mira_context);
-                let extra_context = assembled.format_for_prompt();
-                if extra_context.is_empty() {
-                    base_prompt
-                } else {
-                    format!("{}\n\n{}", base_prompt, extra_context)
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to assemble context: {}", e);
-                // Fallback to basic context
-                let context = if let Some(db) = &state.db {
-                    MiraContext::load(db, &request.project_path).await.unwrap_or_default()
-                } else {
-                    MiraContext::default()
-                };
-                build_system_prompt(&context)
-            }
-        }
-    } else {
-        let context = MiraContext::default();
+    // Assemble system prompt.
+    // CHEAP MODE: until token usage is under control, we do NOT inject the
+    // full assembled context blob (summaries/semantic/code index/recent msgs).
+    // We rely on server-side continuity via previous_response_id.
+    // Keep only persona + guidelines + small Mira context.
+    let system_prompt = if let Some(db) = &state.db {
+        let context = MiraContext::load(db, &request.project_path)
+            .await
+            .unwrap_or_default();
         build_system_prompt(&context)
+    } else {
+        build_system_prompt(&MiraContext::default())
     };
 
     // Create GPT client
@@ -657,6 +643,23 @@ async fn process_chat(
                 .bind(rid)
                 .execute(db)
                 .await;
+            }
+        }
+
+        // AUTO-RESET: If input tokens exceeded threshold, reset server-side conversation
+        // This prevents runaway token accumulation from previous_response_id continuity
+        const AUTO_RESET_THRESHOLD: u32 = 100_000;
+        if total_input_tokens > AUTO_RESET_THRESHOLD {
+            tracing::info!(
+                "Auto-resetting conversation: {} tokens exceeded {}k limit",
+                total_input_tokens, AUTO_RESET_THRESHOLD / 1000
+            );
+            if let Some(ref session) = session {
+                let _ = session.clear_response_id().await;
+            } else {
+                let _ = sqlx::query("DELETE FROM chat_state WHERE key = 'last_response_id'")
+                    .execute(db)
+                    .await;
             }
         }
     }

@@ -51,42 +51,13 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     // Tool continuations: no reasoning needed
     const CONTINUATION_EFFORT: &str = "none";
 
-    // Assemble context using session manager (or fallback to static context)
-    //
-    // CACHE OPTIMIZATION: Prompt is structured for maximum LLM cache hits.
-    // Order from most stable (first) to least stable (last):
-    //   1. Base instructions (static, never changes)
-    //   2. Project path (stable within session)
-    //   3. Corrections, goals, memories (change occasionally)
-    //   4. Compaction blob (changes on compaction)
-    //   5. Summaries (changes on summarization)
-    //   6. Semantic context (changes per query)
-    //
-    // This ensures the longest possible prefix match for caching.
-    //
-    // FRESH CHAIN PER TURN: We no longer use previous_response_id across turns.
-    // Each turn starts fresh with injected context (summaries, compaction, etc).
-    // Tool loops within a turn still chain via current_response_id.
-    // This prevents token explosion from accumulated tool call history.
-    let system_prompt = if let Some(session) = config.session {
-        match session.assemble_context(input).await {
-            Ok(assembled) => {
-                let base_prompt = build_system_prompt(&assembled.mira_context);
-                let extra_context = assembled.format_for_prompt();
-                if extra_context.is_empty() {
-                    base_prompt
-                } else {
-                    format!("{}\n\n{}", base_prompt, extra_context)
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to assemble context: {}", e);
-                build_system_prompt(config.context)
-            }
-        }
-    } else {
-        build_system_prompt(config.context)
-    };
+    // Assemble system prompt.
+    // CHEAP MODE: until token usage is under control, we do NOT inject the
+    // full assembled context blob (summaries/semantic/code index/recent msgs).
+    // We rely on server-side continuity via previous_response_id.
+    // Keep only persona + guidelines + small Mira context.
+    let system_prompt = build_system_prompt(config.context);
+
 
     let tools = get_tools();
 
@@ -98,8 +69,12 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         output_tokens_details: None,
     };
 
-    // Track current response ID (starts fresh each turn, chains only within tool loops)
-    let mut current_response_id: Option<String> = None;
+    // Get previous response ID for continuity (persists across turns)
+    let mut current_response_id: Option<String> = if let Some(session) = config.session {
+        session.get_response_id().await.unwrap_or(None)
+    } else {
+        None
+    };
 
     // Initial streaming request
     let mut rx = match config
@@ -254,6 +229,21 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
 
     // Post-processing: per-turn summarization and compaction
     post_process(config.client, config.session, &current_response_id, input, &full_response_text).await;
+
+    // AUTO-RESET: If input tokens exceeded threshold, reset server-side conversation
+    // This prevents runaway token accumulation from previous_response_id continuity
+    const AUTO_RESET_THRESHOLD: u32 = 100_000;
+    if total_usage.input_tokens > AUTO_RESET_THRESHOLD {
+        if let Some(session) = config.session {
+            println!("  {}", colors::warning(&format!(
+                "[resetting conversation - {} tokens exceeded {}k limit]",
+                total_usage.input_tokens, AUTO_RESET_THRESHOLD / 1000
+            )));
+            if let Err(e) = session.clear_response_id().await {
+                tracing::warn!("Failed to clear response ID: {}", e);
+            }
+        }
+    }
 
     // Show total usage stats
     print_usage(&total_usage);
