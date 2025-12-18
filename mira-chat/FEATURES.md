@@ -166,6 +166,25 @@ Provides SSE streaming endpoint for web UI.
 
 ---
 
+## Studio Web UI (`studio/`)
+
+SvelteKit-based terminal-style web interface.
+
+### Features
+- **Terminal aesthetic** - Monospace fonts, dark theme, prompt-style input
+- **Multiple themes** - Dark, Retro (CRT), Modern (Tokyo Night), Neon
+- **Streaming responses** - Real-time SSE with tool call visualization
+- **Collapsible sidebar** - Project selector, reasoning effort, status, theme picker
+- **Mobile responsive** - Hamburger menu, overlay sidebar, safe viewport height
+
+### Mobile Support
+- **iOS Safari safe area** - Uses `100dvh` for proper viewport height (no URL bar overlap)
+- **Responsive breakpoint** - 768px; sidebar hidden on mobile, shown as overlay
+- **Touch-friendly** - Larger tap targets, backdrop to close sidebar
+- **Compact header** - Mobile header with hamburger menu and status indicator
+
+---
+
 ## What's Working
 
 - [x] GPT-5.2 Responses API with streaming
