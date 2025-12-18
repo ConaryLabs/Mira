@@ -129,6 +129,16 @@ impl MiraServer {
         }
     }
 
+    // === Hotline - Talk to Mira (GPT-5.2) ===
+
+    #[tool(description = "Talk to Mira (GPT-5.2) for advice, second opinions, or collaboration. Returns Mira's response.")]
+    async fn hotline(&self, Parameters(req): Parameters<HotlineRequest>) -> Result<CallToolResult, McpError> {
+        match hotline::call_mira(req).await {
+            Ok(result) => Ok(json_response(result)),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!("Hotline error: {}", e))])),
+        }
+    }
+
     // === Memory (core - high usage) ===
 
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]

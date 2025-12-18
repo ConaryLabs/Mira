@@ -5,6 +5,18 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 // ============================================================================
+// Hotline Tool - Talk to Mira (GPT-5.2) via mira-chat sync endpoint
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HotlineRequest {
+    #[schemars(description = "Message to send to Mira")]
+    pub message: String,
+    #[schemars(description = "Optional context about what you're working on")]
+    pub context: Option<String>,
+}
+
+// ============================================================================
 // Memory Tools (keep separate - high usage, simple)
 // ============================================================================
 
