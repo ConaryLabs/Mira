@@ -1,22 +1,95 @@
 @import "tailwindcss";
 
-/* Mira Studio Theme */
+/* Mira Studio Terminal Theme */
 :root {
-  /* Warm chat panel colors */
-  --chat-bg: #faf9f7;
-  --chat-bubble-user: #e8e4df;
-  --chat-bubble-ai: #ffffff;
-  --chat-text: #1a1a1a;
+  /* Terminal colors - set dynamically by theme.ts */
+  --term-bg: #0d1117;
+  --term-bg-secondary: #161b22;
+  --term-text: #c9d1d9;
+  --term-text-dim: #8b949e;
+  --term-accent: #58a6ff;
+  --term-prompt: #7ee787;
+  --term-success: #3fb950;
+  --term-error: #f85149;
+  --term-warning: #d29922;
+  --term-border: #30363d;
+}
 
-  /* Sexy terminal colors */
-  --terminal-bg: #0d1117;
-  --terminal-hover: #161b22;
-  --terminal-text: #c9d1d9;
-  --terminal-accent: #58a6ff;
-  --terminal-success: #3fb950;
-  --terminal-error: #f85149;
-  --terminal-warning: #d29922;
-  --terminal-border: #30363d;
+/* Theme presets - applied via data-theme attribute */
+[data-theme="terminal-dark"] {
+  --term-bg: #0d1117;
+  --term-bg-secondary: #161b22;
+  --term-text: #c9d1d9;
+  --term-text-dim: #8b949e;
+  --term-accent: #58a6ff;
+  --term-prompt: #7ee787;
+  --term-success: #3fb950;
+  --term-error: #f85149;
+  --term-warning: #d29922;
+  --term-border: #30363d;
+}
+
+[data-theme="terminal-retro"] {
+  --term-bg: #0a0a0a;
+  --term-bg-secondary: #111111;
+  --term-text: #33ff33;
+  --term-text-dim: #1a991a;
+  --term-accent: #33ff33;
+  --term-prompt: #33ff33;
+  --term-success: #33ff33;
+  --term-error: #ff3333;
+  --term-warning: #ffff33;
+  --term-border: #1a331a;
+}
+
+[data-theme="terminal-modern"] {
+  --term-bg: #1a1b26;
+  --term-bg-secondary: #24283b;
+  --term-text: #a9b1d6;
+  --term-text-dim: #565f89;
+  --term-accent: #7aa2f7;
+  --term-prompt: #9ece6a;
+  --term-success: #9ece6a;
+  --term-error: #f7768e;
+  --term-warning: #e0af68;
+  --term-border: #3b4261;
+}
+
+[data-theme="terminal-neon"] {
+  --term-bg: #0a0014;
+  --term-bg-secondary: #150025;
+  --term-text: #f0f0f0;
+  --term-text-dim: #888888;
+  --term-accent: #ff00ff;
+  --term-prompt: #00ffff;
+  --term-success: #00ff00;
+  --term-error: #ff0055;
+  --term-warning: #ffff00;
+  --term-border: #ff00ff44;
+}
+
+/* Retro CRT effects for terminal-retro theme */
+[data-theme="terminal-retro"] .terminal-view {
+  text-shadow: 0 0 5px #33ff33;
+}
+
+[data-theme="terminal-retro"] .terminal-view::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15),
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+}
+
+/* Neon glow effects */
+[data-theme="terminal-neon"] .terminal-prompt-char {
+  text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
 }
 
 /* Global resets */
@@ -24,6 +97,42 @@ html, body {
   height: 100%;
   margin: 0;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Fix iOS Safari viewport height (100vh includes URL bar) */
+@supports (height: 100dvh) {
+  .h-screen-safe {
+    height: 100dvh;
+  }
+}
+
+@supports not (height: 100dvh) {
+  .h-screen-safe {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+}
+
+/* Mobile-first responsive utilities */
+@media (max-width: 768px) {
+  .mobile-hidden {
+    display: none !important;
+  }
+
+  .mobile-overlay {
+    position: fixed !important;
+    z-index: 50 !important;
+    left: 0 !important;
+    top: 0 !important;
+    height: 100% !important;
+  }
+
+  .mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+  }
 }
 
 /* Terminal font */

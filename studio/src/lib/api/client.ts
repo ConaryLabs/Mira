@@ -43,6 +43,8 @@ export interface StatusResponse {
   status: string;
   semantic_search: boolean;
   database: boolean;
+  model?: string;
+  default_reasoning_effort?: string;
 }
 
 // ============================================================================
