@@ -53,6 +53,7 @@ impl<'a> CommandHandler<'a> {
                 println!("  /remember <text>   - Store in memory");
                 println!("  /recall <query>    - Search memory");
                 println!("  /tasks             - List tasks");
+                println!("  /usage [args]       - Token/caching analytics (try: /usage, /usage last 20, /usage day, /usage effort)");
                 println!("  /quit              - Exit");
             }
             "/clear" => {
@@ -97,6 +98,9 @@ impl<'a> CommandHandler<'a> {
             }
             "/tasks" => {
                 self.cmd_tasks().await;
+            }
+            "/usage" => {
+                self.cmd_usage(arg).await;
             }
             "/quit" | "/exit" => {
                 std::process::exit(0);
@@ -429,6 +433,234 @@ impl<'a> CommandHandler<'a> {
         } else {
             println!("No database connected.");
         }
+    }
+
+    /// /usage - Token and caching analytics
+    /// Subcommands: /usage, /usage last N, /usage day, /usage effort, /usage totals
+    async fn cmd_usage(&self, arg: &str) {
+        let Some(db) = self.db else {
+            println!("No database connected.");
+            return;
+        };
+
+        let parts: Vec<&str> = arg.split_whitespace().collect();
+        let subcmd = parts.first().copied().unwrap_or("last");
+
+        match subcmd {
+            "day" | "daily" => self.usage_daily(db).await,
+            "effort" => self.usage_by_effort(db).await,
+            "totals" | "total" => self.usage_totals(db).await,
+            "last" | _ => {
+                let limit: i32 = parts.get(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(10);
+                self.usage_last(db, limit).await;
+            }
+        }
+    }
+
+    /// Show last N usage records
+    async fn usage_last(&self, db: &SqlitePool, limit: i32) {
+        let rows: Vec<(i64, String, i32, i32, i32, i32)> = sqlx::query_as(
+            r#"
+            SELECT u.created_at, u.reasoning_effort, u.input_tokens, u.output_tokens,
+                   u.reasoning_tokens, u.cached_tokens
+            FROM chat_usage u
+            ORDER BY u.created_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        if rows.is_empty() {
+            println!("No usage data recorded.");
+            return;
+        }
+
+        println!("┌─────────────────────┬────────┬──────────┬─────────┬───────────┬─────────┬────────┐");
+        println!("│ Time                │ Effort │ Input    │ Output  │ Reasoning │ Cached  │ Cache% │");
+        println!("├─────────────────────┼────────┼──────────┼─────────┼───────────┼─────────┼────────┤");
+
+        for (ts, effort, input, output, reasoning, cached) in rows.iter().rev() {
+            let cache_pct = if *input > 0 {
+                (*cached as f64 / *input as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            // Format timestamp
+            let dt = chrono::DateTime::from_timestamp(*ts, 0)
+                .map(|d| d.format("%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "?".to_string());
+
+            // Format effort (truncate to 6 chars)
+            let eff: String = effort.chars().take(6).collect();
+
+            println!(
+                "│ {:19} │ {:6} │ {:>8} │ {:>7} │ {:>9} │ {:>7} │ {:>5.1}% │",
+                dt, eff,
+                format_tokens(*input), format_tokens(*output),
+                format_tokens(*reasoning), format_tokens(*cached),
+                cache_pct
+            );
+        }
+        println!("└─────────────────────┴────────┴──────────┴─────────┴───────────┴─────────┴────────┘");
+
+        // Show quick totals
+        let total_input: i64 = rows.iter().map(|r| r.2 as i64).sum();
+        let total_output: i64 = rows.iter().map(|r| r.3 as i64).sum();
+        let total_cached: i64 = rows.iter().map(|r| r.5 as i64).sum();
+        let overall_cache = if total_input > 0 {
+            (total_cached as f64 / total_input as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        println!();
+        println!("  {} rows │ ↓{} in │ ↑{} out │ ⚡{} cached ({:.0}%)",
+            rows.len(), format_tokens(total_input as i32),
+            format_tokens(total_output as i32), format_tokens(total_cached as i32),
+            overall_cache
+        );
+    }
+
+    /// Show daily totals
+    async fn usage_daily(&self, db: &SqlitePool) {
+        let rows: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT date(created_at, 'unixepoch') as day,
+                   SUM(input_tokens), SUM(output_tokens),
+                   SUM(reasoning_tokens), SUM(cached_tokens)
+            FROM chat_usage
+            GROUP BY day
+            ORDER BY day DESC
+            LIMIT 14
+            "#,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        if rows.is_empty() {
+            println!("No usage data recorded.");
+            return;
+        }
+
+        println!("┌────────────┬───────────┬──────────┬───────────┬──────────┬────────┐");
+        println!("│ Date       │ Input     │ Output   │ Reasoning │ Cached   │ Cache% │");
+        println!("├────────────┼───────────┼──────────┼───────────┼──────────┼────────┤");
+
+        for (day, input, output, reasoning, cached) in rows.iter().rev() {
+            let cache_pct = if *input > 0 {
+                (*cached as f64 / *input as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!(
+                "│ {:10} │ {:>9} │ {:>8} │ {:>9} │ {:>8} │ {:>5.1}% │",
+                day,
+                format_tokens(*input as i32), format_tokens(*output as i32),
+                format_tokens(*reasoning as i32), format_tokens(*cached as i32),
+                cache_pct
+            );
+        }
+        println!("└────────────┴───────────┴──────────┴───────────┴──────────┴────────┘");
+    }
+
+    /// Show usage by effort level
+    async fn usage_by_effort(&self, db: &SqlitePool) {
+        let rows: Vec<(String, i64, i64, i64, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT reasoning_effort, COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                   SUM(reasoning_tokens), SUM(cached_tokens)
+            FROM chat_usage
+            GROUP BY reasoning_effort
+            ORDER BY SUM(input_tokens) DESC
+            "#,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        if rows.is_empty() {
+            println!("No usage data recorded.");
+            return;
+        }
+
+        println!("┌────────┬───────┬───────────┬──────────┬───────────┬──────────┬────────┐");
+        println!("│ Effort │ Count │ Input     │ Output   │ Reasoning │ Cached   │ Cache% │");
+        println!("├────────┼───────┼───────────┼──────────┼───────────┼──────────┼────────┤");
+
+        for (effort, count, input, output, reasoning, cached) in &rows {
+            let cache_pct = if *input > 0 {
+                (*cached as f64 / *input as f64) * 100.0
+            } else {
+                0.0
+            };
+            let eff: String = effort.chars().take(6).collect();
+            println!(
+                "│ {:6} │ {:>5} │ {:>9} │ {:>8} │ {:>9} │ {:>8} │ {:>5.1}% │",
+                eff, count,
+                format_tokens(*input as i32), format_tokens(*output as i32),
+                format_tokens(*reasoning as i32), format_tokens(*cached as i32),
+                cache_pct
+            );
+        }
+        println!("└────────┴───────┴───────────┴──────────┴───────────┴──────────┴────────┘");
+    }
+
+    /// Show all-time totals
+    async fn usage_totals(&self, db: &SqlitePool) {
+        let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                   SUM(reasoning_tokens), SUM(cached_tokens)
+            FROM chat_usage
+            "#,
+        )
+        .fetch_optional(db)
+        .await
+        .unwrap_or(None);
+
+        if let Some((count, input, output, reasoning, cached)) = row {
+            let cache_pct = if input > 0 {
+                (cached as f64 / input as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            println!("Token Usage (All Time)");
+            println!("──────────────────────");
+            println!("  Messages:  {}", count);
+            println!("  Input:     {} tokens", format_tokens(input as i32));
+            println!("  Output:    {} tokens", format_tokens(output as i32));
+            println!("  Reasoning: {} tokens", format_tokens(reasoning as i32));
+            println!("  Cached:    {} tokens ({:.1}%)", format_tokens(cached as i32), cache_pct);
+            println!();
+
+            // Estimate cost (rough: $2.50/1M input, $10/1M output for GPT-4 class)
+            let input_cost = (input as f64 / 1_000_000.0) * 2.50;
+            let output_cost = (output as f64 / 1_000_000.0) * 10.0;
+            let cached_savings = (cached as f64 / 1_000_000.0) * 2.50 * 0.5; // 50% discount
+            println!("  Est. cost: ${:.2} (saved ~${:.2} from cache)",
+                input_cost + output_cost - cached_savings, cached_savings);
+        } else {
+            println!("No usage data recorded.");
+        }
+    }
+}
+
+/// Format token count with k/M suffix
+fn format_tokens(n: i32) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
     }
 }
 
