@@ -137,13 +137,28 @@ impl MiraContext {
             });
         }
 
-        // Load recent memories
+        // Load recent memories - prioritize decisions/preferences over activity logs
         let memories = sqlx::query(r#"
             SELECT value, fact_type, category
             FROM memory_facts
-            WHERE project_id = $1 OR project_id IS NULL
-            ORDER BY times_used DESC, updated_at DESC
-            LIMIT 10
+            WHERE (project_id = $1 OR project_id IS NULL)
+              AND category NOT IN ('session_activity', 'research', 'compaction', 'testing', 'verification')
+              AND fact_type != 'test'
+            ORDER BY
+                CASE fact_type
+                    WHEN 'decision' THEN 1
+                    WHEN 'preference' THEN 2
+                    ELSE 3
+                END,
+                CASE category
+                    WHEN 'architecture' THEN 1
+                    WHEN 'design' THEN 2
+                    WHEN 'mira-chat' THEN 3
+                    ELSE 4
+                END,
+                times_used DESC,
+                updated_at DESC
+            LIMIT 15
         "#)
         .bind(project_id)
         .fetch_all(db)
