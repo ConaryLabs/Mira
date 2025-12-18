@@ -52,3 +52,15 @@ pub const SYNC_MAX_MESSAGE_BYTES: usize = 32 * 1024;
 
 /// Project size cap for artifacts (100MB)
 pub const PROJECT_ARTIFACT_CAP_BYTES: i64 = 100 * 1024 * 1024;
+
+// ============================================================================
+// Chain Reset Thresholds
+// ============================================================================
+
+/// Token threshold for considering a chain reset (400k)
+/// Only triggers if cache% is also low - prevents unnecessary resets when cache is working
+pub const CHAIN_RESET_TOKEN_THRESHOLD: u32 = 400_000;
+
+/// Minimum cache percentage to avoid reset (30%)
+/// If cache% is above this, we don't reset even if tokens are high
+pub const CHAIN_RESET_MIN_CACHE_PCT: u32 = 30;

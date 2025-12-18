@@ -29,14 +29,15 @@ pub async fn process_chat(
 ) -> Result<()> {
     let project_path = PathBuf::from(&request.project_path);
 
-    // Always gpt-5.2, effort based on task complexity
-    const MODEL: &str = "gpt-5.2";
+    // Model routing based on task complexity
     let effort = classify(&request.message);
+    let model = effort.model();
     let reasoning_effort = request
         .reasoning_effort
         .unwrap_or_else(|| effort.effort_for_model().to_string());
 
-    // Tool continuations: no reasoning needed
+    // Tool continuations: use codex-mini with no reasoning for speed
+    const CONTINUATION_MODEL: &str = "codex-mini";
     const CONTINUATION_EFFORT: &str = "none";
 
     // Save user message
@@ -150,12 +151,12 @@ pub async fn process_chat(
                     &system_prompt,
                     previous_response_id.as_deref(),
                     &reasoning_effort,
-                    MODEL,
+                    model,
                     &tools,
                 )
                 .await?
         } else {
-            // Continue with tool results - same model, low reasoning
+            // Continue with tool results - codex-mini for speed, no reasoning
             let tool_results: Vec<(String, String)> = assistant_blocks
                 .iter()
                 .filter_map(|b| match b {
@@ -172,7 +173,7 @@ pub async fn process_chat(
                     tool_results,
                     &system_prompt,
                     CONTINUATION_EFFORT,
-                    MODEL,
+                    CONTINUATION_MODEL,
                     &tools,
                 )
                 .await?
@@ -295,6 +296,7 @@ pub async fn process_chat(
         &response_id,
         &previous_response_id,
         &reasoning_effort,
+        model,
         total_input_tokens,
         total_output_tokens,
         total_reasoning_tokens,
@@ -318,12 +320,12 @@ async fn save_assistant_message(
     response_id: &Option<String>,
     previous_response_id: &Option<String>,
     reasoning_effort: &str,
+    model: &str,
     total_input_tokens: u32,
     total_output_tokens: u32,
     total_reasoning_tokens: u32,
     total_cached_tokens: u32,
 ) {
-    const MODEL: &str = "gpt-5.2";
 
     let Some(db) = db else { return };
 
@@ -377,7 +379,7 @@ async fn save_assistant_message(
         .bind(total_output_tokens as i32)
         .bind(total_reasoning_tokens as i32)
         .bind(total_cached_tokens as i32)
-        .bind(MODEL)
+        .bind(model)
         .bind(reasoning_effort)
         .bind(now)
         .bind(response_id)
@@ -405,13 +407,27 @@ async fn save_assistant_message(
         }
     }
 
-    // SMOOTH RESET: If input tokens exceeded threshold, prepare handoff for next turn
-    // This prevents runaway token accumulation while preserving continuity
-    const AUTO_RESET_THRESHOLD: u32 = 100_000;
-    if total_input_tokens > AUTO_RESET_THRESHOLD {
+    // SMOOTH RESET: Smart chain reset based on tokens AND cache efficiency
+    // Only reset if: tokens > threshold AND cache% < minimum
+    // This prevents resetting when cache is working well (saving money)
+    use mira_core::{CHAIN_RESET_TOKEN_THRESHOLD, CHAIN_RESET_MIN_CACHE_PCT};
+
+    let cache_pct = if total_input_tokens > 0 {
+        (total_cached_tokens as u64 * 100 / total_input_tokens as u64) as u32
+    } else {
+        100 // No input = effectively 100% cached
+    };
+
+    let should_reset = total_input_tokens > CHAIN_RESET_TOKEN_THRESHOLD
+        && cache_pct < CHAIN_RESET_MIN_CACHE_PCT;
+
+    if should_reset {
         tracing::info!(
-            "Preparing smooth reset: {} tokens exceeded {}k limit",
-            total_input_tokens, AUTO_RESET_THRESHOLD / 1000
+            "Preparing smooth reset: {}k tokens with {}% cache (threshold: {}k, min cache: {}%)",
+            total_input_tokens / 1000,
+            cache_pct,
+            CHAIN_RESET_TOKEN_THRESHOLD / 1000,
+            CHAIN_RESET_MIN_CACHE_PCT
         );
         if let Some(session) = session {
             let _ = session.clear_response_id_with_handoff().await;
@@ -421,6 +437,14 @@ async fn save_assistant_message(
                 .execute(db)
                 .await;
         }
+    } else if total_input_tokens > CHAIN_RESET_TOKEN_THRESHOLD {
+        // Above threshold but cache is good - log but don't reset
+        tracing::debug!(
+            "Skipping reset: {}k tokens but {}% cached (above {}% threshold)",
+            total_input_tokens / 1000,
+            cache_pct,
+            CHAIN_RESET_MIN_CACHE_PCT
+        );
     }
 }
 
