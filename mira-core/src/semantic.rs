@@ -1,24 +1,23 @@
-// src/tools/semantic.rs
-// Semantic search utilities for MCP tools using Google Gemini embeddings + Qdrant
+//! Semantic search with Qdrant + Gemini embeddings
+//!
+//! High-level semantic search operations including:
+//! - Embedding via Google Gemini (single and batch)
+//! - Vector storage and search via Qdrant
+//! - Collection management
+//! - Bulk operations (store_batch, delete_by_field)
 
 use anyhow::{Context, Result};
 use qdrant_client::qdrant::{
-    Condition, CreateCollectionBuilder, Distance, Filter, PointStruct, SearchPointsBuilder,
-    UpsertPointsBuilder, VectorParamsBuilder, DeletePointsBuilder, PointId,
-    Value as QdrantValue,
+    Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointId,
+    PointStruct, SearchPointsBuilder, UpsertPointsBuilder, Value as QdrantValue,
+    VectorParamsBuilder,
 };
 use qdrant_client::Qdrant;
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-/// Timeouts for external API calls
-const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-const EMBED_RETRY_ATTEMPTS: u32 = 2;
-const RETRY_DELAY: Duration = Duration::from_millis(500);
-
-/// Embedding dimensions for gemini-embedding-001 (max precision)
-const EMBEDDING_DIM: u64 = 3072;
+use crate::limits::{EMBED_RETRY_ATTEMPTS, EMBEDDING_DIM, HTTP_TIMEOUT_SECS, RETRY_DELAY_MS};
 
 /// Collection names
 pub const COLLECTION_CODE: &str = "mira_code";
@@ -43,7 +42,10 @@ impl SemanticSearch {
                     Some(client)
                 }
                 Err(e) => {
-                    warn!("Failed to connect to Qdrant: {} - semantic search disabled", e);
+                    warn!(
+                        "Failed to connect to Qdrant: {} - semantic search disabled",
+                        e
+                    );
                     None
                 }
             }
@@ -53,7 +55,7 @@ impl SemanticSearch {
         };
 
         let http_client = reqwest::Client::builder()
-            .timeout(HTTP_TIMEOUT)
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -71,7 +73,9 @@ impl SemanticSearch {
 
     /// Ensure a collection exists
     pub async fn ensure_collection(&self, collection: &str) -> Result<()> {
-        let qdrant = self.qdrant.as_ref()
+        let qdrant = self
+            .qdrant
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
         let exists = qdrant.collection_exists(collection).await?;
@@ -91,7 +95,9 @@ impl SemanticSearch {
     /// Get embedding for text using Google Gemini
     /// Includes retry logic for transient failures
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let api_key = self.gemini_key.as_ref()
+        let api_key = self
+            .gemini_key
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Gemini API key not configured"))?;
 
         let url = format!(
@@ -109,14 +115,17 @@ impl SemanticSearch {
             "outputDimensionality": EMBEDDING_DIM
         });
 
+        let retry_delay = Duration::from_millis(RETRY_DELAY_MS);
         let mut last_error = None;
+
         for attempt in 0..=EMBED_RETRY_ATTEMPTS {
             if attempt > 0 {
                 debug!("Retrying embed (attempt {})", attempt + 1);
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(retry_delay).await;
             }
 
-            let result = self.http_client
+            let result = self
+                .http_client
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .json(&body)
@@ -179,7 +188,9 @@ impl SemanticSearch {
             return Ok(results);
         }
 
-        let api_key = self.gemini_key.as_ref()
+        let api_key = self
+            .gemini_key
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Gemini API key not configured"))?;
 
         let url = format!(
@@ -188,30 +199,36 @@ impl SemanticSearch {
         );
 
         // Build batch request
-        let requests: Vec<serde_json::Value> = texts.iter().map(|text| {
-            serde_json::json!({
-                "model": "models/gemini-embedding-001",
-                "content": {
-                    "parts": [{
-                        "text": text
-                    }]
-                },
-                "outputDimensionality": EMBEDDING_DIM
+        let requests: Vec<serde_json::Value> = texts
+            .iter()
+            .map(|text| {
+                serde_json::json!({
+                    "model": "models/gemini-embedding-001",
+                    "content": {
+                        "parts": [{
+                            "text": text
+                        }]
+                    },
+                    "outputDimensionality": EMBEDDING_DIM
+                })
             })
-        }).collect();
+            .collect();
 
         let body = serde_json::json!({
             "requests": requests
         });
 
+        let retry_delay = Duration::from_millis(RETRY_DELAY_MS);
         let mut last_error = None;
+
         for attempt in 0..=EMBED_RETRY_ATTEMPTS {
             if attempt > 0 {
                 debug!("Retrying batch embed (attempt {})", attempt + 1);
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(retry_delay).await;
             }
 
-            let result = self.http_client
+            let result = self
+                .http_client
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .json(&body)
@@ -223,7 +240,8 @@ impl SemanticSearch {
                     let json: serde_json::Value = match response.json().await {
                         Ok(j) => j,
                         Err(e) => {
-                            last_error = Some(anyhow::anyhow!("Failed to parse batch response: {}", e));
+                            last_error =
+                                Some(anyhow::anyhow!("Failed to parse batch response: {}", e));
                             continue;
                         }
                     };
@@ -275,7 +293,9 @@ impl SemanticSearch {
             return Ok(0);
         }
 
-        let qdrant = self.qdrant.as_ref()
+        let qdrant = self
+            .qdrant
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
         // Get all embeddings in one batch call
@@ -283,11 +303,17 @@ impl SemanticSearch {
         let embeddings = self.embed_batch(&texts).await?;
 
         if embeddings.len() != items.len() {
-            anyhow::bail!("Embedding count mismatch: got {} for {} items", embeddings.len(), items.len());
+            anyhow::bail!(
+                "Embedding count mismatch: got {} for {} items",
+                embeddings.len(),
+                items.len()
+            );
         }
 
         // Build points
-        let points: Vec<PointStruct> = items.iter().zip(embeddings.iter())
+        let points: Vec<PointStruct> = items
+            .iter()
+            .zip(embeddings.iter())
             .map(|((id, content, metadata), embedding)| {
                 let mut payload: HashMap<String, QdrantValue> = HashMap::new();
                 payload.insert("content".to_string(), content.clone().into());
@@ -335,7 +361,9 @@ impl SemanticSearch {
         content: &str,
         metadata: HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        let qdrant = self.qdrant.as_ref()
+        let qdrant = self
+            .qdrant
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
         // Get embedding
@@ -385,15 +413,16 @@ impl SemanticSearch {
         limit: usize,
         filter: Option<Filter>,
     ) -> Result<Vec<SearchResult>> {
-        let qdrant = self.qdrant.as_ref()
+        let qdrant = self
+            .qdrant
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
         // Get query embedding
         let embedding = self.embed(query).await?;
 
         // Search
-        let mut search = SearchPointsBuilder::new(collection, embedding, limit as u64)
-            .with_payload(true);
+        let mut search = SearchPointsBuilder::new(collection, embedding, limit as u64).with_payload(true);
 
         if let Some(f) = filter {
             search = search.filter(f);
@@ -435,15 +464,16 @@ impl SemanticSearch {
 
     /// Delete a point by ID
     pub async fn delete(&self, collection: &str, id: &str) -> Result<()> {
-        let qdrant = self.qdrant.as_ref()
+        let qdrant = self
+            .qdrant
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
         let numeric_id = hash_string(id);
 
         qdrant
             .delete_points(
-                DeletePointsBuilder::new(collection)
-                    .points(vec![PointId::from(numeric_id)]),
+                DeletePointsBuilder::new(collection).points(vec![PointId::from(numeric_id)]),
             )
             .await
             .context("Failed to delete point")?;
@@ -453,7 +483,9 @@ impl SemanticSearch {
 
     /// Delete all points matching a field value (e.g., all embeddings for a file)
     pub async fn delete_by_field(&self, collection: &str, field: &str, value: &str) -> Result<u64> {
-        let qdrant = self.qdrant.as_ref()
+        let qdrant = self
+            .qdrant
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
         // Check if collection exists first
@@ -464,17 +496,17 @@ impl SemanticSearch {
         let result = qdrant
             .delete_points(
                 DeletePointsBuilder::new(collection)
-                    .points(Filter::must([Condition::matches(
-                        field,
-                        value.to_string(),
-                    )]))
+                    .points(Filter::must([Condition::matches(field, value.to_string())]))
                     .wait(true),
             )
             .await
             .context("Failed to delete points by filter")?;
 
         let deleted = result.result.map(|r| r.status).unwrap_or(0) as u64;
-        debug!("Deleted points where {}={} from {}", field, value, collection);
+        debug!(
+            "Deleted points where {}={} from {}",
+            field, value, collection
+        );
         Ok(deleted)
     }
 }
@@ -493,4 +525,24 @@ fn hash_string(s: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_string_deterministic() {
+        let id = "test-point-id";
+        let hash1 = hash_string(id);
+        let hash2 = hash_string(id);
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_string_unique() {
+        let hash1 = hash_string("point-a");
+        let hash2 = hash_string("point-b");
+        assert_ne!(hash1, hash2);
+    }
 }

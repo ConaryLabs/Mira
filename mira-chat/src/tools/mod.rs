@@ -294,7 +294,8 @@ impl ToolExecutor {
 
     /// Conditionally store large output as artifact and return preview
     async fn maybe_artifact(&self, tool_name: &str, output: &str) -> String {
-        use crate::artifacts::{ArtifactStore, ARTIFACT_THRESHOLD_BYTES};
+        use crate::artifacts::ArtifactStore;
+        use mira_core::ARTIFACT_THRESHOLD_BYTES;
 
         // Skip if no database or output is small enough
         let Some(db) = &self.db else {
@@ -326,7 +327,7 @@ impl ToolExecutor {
             None, // tool_call_id not available here
             output,
             decision.contains_secrets,
-            decision.secret_reason.as_deref(),
+            decision.secret_kind.as_deref(),
         ).await {
             Ok((artifact_id, was_dedupe)) => {
                 let dedupe_note = if was_dedupe { " (cached)" } else { "" };

@@ -1,9 +1,16 @@
-// src/tools/semantic_helpers.rs
-// Semantic search helper functions to reduce code duplication across tools
+//! Semantic search helper functions
+//!
+//! Utilities to reduce code duplication when working with semantic search:
+//! - MetadataBuilder for type-safe metadata construction
+//! - Helper functions for safe storage and search operations
+//! - Metadata extraction helpers
 
-use std::collections::HashMap;
+use qdrant_client::qdrant::Filter;
 use serde_json::Value;
-use super::semantic::SemanticSearch;
+use std::collections::HashMap;
+use tracing::warn;
+
+use crate::semantic::SemanticSearch;
 
 /// Build semantic metadata with common fields.
 /// Automatically adds "type" and optionally "project_id".
@@ -21,14 +28,16 @@ impl MetadataBuilder {
 
     /// Add a string field to the metadata.
     pub fn string(mut self, key: &str, value: impl Into<String>) -> Self {
-        self.metadata.insert(key.to_string(), Value::String(value.into()));
+        self.metadata
+            .insert(key.to_string(), Value::String(value.into()));
         self
     }
 
     /// Add a string field only if the value is Some.
     pub fn string_opt(mut self, key: &str, value: Option<impl Into<String>>) -> Self {
         if let Some(v) = value {
-            self.metadata.insert(key.to_string(), Value::String(v.into()));
+            self.metadata
+                .insert(key.to_string(), Value::String(v.into()));
         }
         self
     }
@@ -36,15 +45,22 @@ impl MetadataBuilder {
     /// Add a project_id field if present.
     pub fn project_id(mut self, project_id: Option<i64>) -> Self {
         if let Some(pid) = project_id {
-            self.metadata.insert("project_id".to_string(), Value::Number(pid.into()));
+            self.metadata
+                .insert("project_id".to_string(), Value::Number(pid.into()));
         }
         self
     }
 
     /// Add a number field.
-    #[allow(dead_code)]
     pub fn number(mut self, key: &str, value: i64) -> Self {
-        self.metadata.insert(key.to_string(), Value::Number(value.into()));
+        self.metadata
+            .insert(key.to_string(), Value::Number(value.into()));
+        self
+    }
+
+    /// Add a boolean field.
+    pub fn bool(mut self, key: &str, value: bool) -> Self {
+        self.metadata.insert(key.to_string(), Value::Bool(value));
         self
     }
 
@@ -68,66 +84,56 @@ pub async fn store_with_logging(
     }
 
     if let Err(e) = semantic.ensure_collection(collection).await {
-        tracing::warn!("Failed to ensure {} collection: {}", collection, e);
+        warn!("Failed to ensure {} collection: {}", collection, e);
     }
 
     if let Err(e) = semantic.store(collection, id, content, metadata).await {
-        tracing::warn!("Failed to store in {}: {}", collection, e);
+        warn!("Failed to store in {}: {}", collection, e);
     }
-}
-
-/// Result from semantic search with common fields.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub content: String,
-    pub score: f32,
-    pub metadata: HashMap<String, Value>,
 }
 
 /// Search with semantic search if available, with optional filter.
 /// Returns None if semantic search is unavailable or returns no results.
-#[allow(dead_code)]
 pub async fn search_semantic(
     semantic: &SemanticSearch,
     collection: &str,
     query: &str,
     limit: usize,
-    filter: Option<qdrant_client::qdrant::Filter>,
-) -> Option<Vec<SearchResult>> {
+    filter: Option<Filter>,
+) -> Option<Vec<crate::semantic::SearchResult>> {
     if !semantic.is_available() {
         return None;
     }
 
     match semantic.search(collection, query, limit, filter).await {
-        Ok(results) if !results.is_empty() => {
-            Some(results.into_iter().map(|r| SearchResult {
-                content: r.content,
-                score: r.score,
-                metadata: r.metadata,
-            }).collect())
-        }
+        Ok(results) if !results.is_empty() => Some(results),
         Ok(_) => {
             tracing::debug!("No semantic results for query in {}: {}", collection, query);
             None
         }
         Err(e) => {
-            tracing::warn!("Semantic search failed in {}, falling back: {}", collection, e);
+            warn!("Semantic search failed in {}, falling back: {}", collection, e);
             None
         }
     }
 }
 
 /// Helper to get a string value from metadata.
-#[allow(dead_code)]
 pub fn metadata_string(metadata: &HashMap<String, Value>, key: &str) -> Option<String> {
-    metadata.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    metadata
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Helper to get an i64 value from metadata.
-#[allow(dead_code)]
 pub fn metadata_i64(metadata: &HashMap<String, Value>, key: &str) -> Option<i64> {
     metadata.get(key).and_then(|v| v.as_i64())
+}
+
+/// Helper to get a bool value from metadata.
+pub fn metadata_bool(metadata: &HashMap<String, Value>, key: &str) -> Option<bool> {
+    metadata.get(key).and_then(|v| v.as_bool())
 }
 
 #[cfg(test)]
@@ -140,8 +146,14 @@ mod tests {
             .string("key", "value")
             .build();
 
-        assert_eq!(metadata.get("type").unwrap(), &Value::String("test_type".to_string()));
-        assert_eq!(metadata.get("key").unwrap(), &Value::String("value".to_string()));
+        assert_eq!(
+            metadata.get("type").unwrap(),
+            &Value::String("test_type".to_string())
+        );
+        assert_eq!(
+            metadata.get("key").unwrap(),
+            &Value::String("value".to_string())
+        );
     }
 
     #[test]
@@ -151,7 +163,10 @@ mod tests {
             .project_id(Some(42))
             .build();
 
-        assert_eq!(metadata.get("project_id").unwrap(), &Value::Number(42.into()));
+        assert_eq!(
+            metadata.get("project_id").unwrap(),
+            &Value::Number(42.into())
+        );
     }
 
     #[test]
@@ -164,11 +179,46 @@ mod tests {
     }
 
     #[test]
+    fn test_metadata_builder_number() {
+        let metadata = MetadataBuilder::new("test").number("count", 100).build();
+
+        assert_eq!(
+            metadata.get("count").unwrap(),
+            &Value::Number(100.into())
+        );
+    }
+
+    #[test]
+    fn test_metadata_builder_bool() {
+        let metadata = MetadataBuilder::new("test").bool("active", true).build();
+
+        assert_eq!(metadata.get("active").unwrap(), &Value::Bool(true));
+    }
+
+    #[test]
     fn test_metadata_string_helper() {
         let mut metadata = HashMap::new();
         metadata.insert("key".to_string(), Value::String("value".to_string()));
 
         assert_eq!(metadata_string(&metadata, "key"), Some("value".to_string()));
         assert_eq!(metadata_string(&metadata, "missing"), None);
+    }
+
+    #[test]
+    fn test_metadata_i64_helper() {
+        let mut metadata = HashMap::new();
+        metadata.insert("count".to_string(), Value::Number(42.into()));
+
+        assert_eq!(metadata_i64(&metadata, "count"), Some(42));
+        assert_eq!(metadata_i64(&metadata, "missing"), None);
+    }
+
+    #[test]
+    fn test_metadata_bool_helper() {
+        let mut metadata = HashMap::new();
+        metadata.insert("active".to_string(), Value::Bool(true));
+
+        assert_eq!(metadata_bool(&metadata, "active"), Some(true));
+        assert_eq!(metadata_bool(&metadata, "missing"), None);
     }
 }

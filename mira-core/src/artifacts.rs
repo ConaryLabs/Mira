@@ -1,11 +1,11 @@
-//! Artifact storage for tool outputs
+//! Artifact storage for large outputs
 //!
-//! Stores large tool outputs (git diff, grep, file contents) in DB with:
-//! - Compression (optional, via flate2/gzip)
+//! Stores large tool outputs in database with:
+//! - SHA256 deduplication
 //! - TTL for automatic cleanup
-//! - Secret detection
-//! - Head+tail excerpting for model-friendly previews
-//! - Targeted retrieval via fetch_artifact / search_artifact tools
+//! - Secret detection integration
+//! - Smart excerpting for model-friendly previews
+//! - Targeted retrieval via fetch/search
 
 use anyhow::Result;
 use chrono::Utc;
@@ -13,41 +13,27 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-/// Thresholds for artifact vs inline decision
-pub const INLINE_MAX_BYTES: usize = 2048;
-pub const ARTIFACT_THRESHOLD_BYTES: usize = 4096;
+use crate::limits::{
+    ARTIFACT_THRESHOLD_BYTES, DEFAULT_FETCH_LIMIT, EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS,
+    INLINE_MAX_BYTES, MAX_ARTIFACT_SIZE, PROJECT_ARTIFACT_CAP_BYTES, TTL_DIFF_SECS,
+    TTL_SECRET_SECS, TTL_TOOL_OUTPUT_SECS,
+};
 
-/// Max artifact size (10MB) - prevents unbounded storage/allocation
-pub const MAX_ARTIFACT_SIZE: usize = 10 * 1024 * 1024;
+#[cfg(feature = "secrets")]
+use crate::secrets::detect_secrets;
 
-/// TTL defaults (seconds)
-pub const TTL_TOOL_OUTPUT: i64 = 7 * 24 * 60 * 60;  // 7 days
-pub const TTL_DIFF: i64 = 30 * 24 * 60 * 60;        // 30 days
-pub const TTL_SECRET: i64 = 24 * 60 * 60;           // 24 hours
-
-/// Excerpt sizes for head+tail preview (chars, not bytes)
-const EXCERPT_HEAD: usize = 1200;
-const EXCERPT_TAIL: usize = 800;
+#[cfg(feature = "excerpts")]
+use crate::excerpts::create_smart_excerpt;
 
 /// Tools that should be artifacted when output exceeds threshold
 const ARTIFACT_TOOLS: &[&str] = &[
-    "bash", "git_diff", "git_log", "grep", "read_file", "cargo_build", "cargo_test",
-];
-
-/// Patterns that indicate secrets (case-insensitive prefix match)
-const SECRET_PATTERNS: &[(&str, &str)] = &[
-    ("-----BEGIN RSA PRIVATE KEY-----", "private_key"),
-    ("-----BEGIN EC PRIVATE KEY-----", "private_key"),
-    ("-----BEGIN OPENSSH PRIVATE KEY-----", "private_key"),
-    ("-----BEGIN PGP PRIVATE KEY-----", "private_key"),
-    ("sk-proj-", "openai_key"),
-    ("sk-ant-", "anthropic_key"),
-    ("AIzaSy", "google_api_key"),
-    ("ghp_", "github_pat"),
-    ("github_pat_", "github_pat"),
-    ("gho_", "github_oauth"),
-    ("AWS_SECRET_ACCESS_KEY", "aws_secret"),
-    ("PRIVATE_KEY=", "env_private_key"),
+    "bash",
+    "git_diff",
+    "git_log",
+    "grep",
+    "read_file",
+    "cargo_build",
+    "cargo_test",
 ];
 
 /// Result of artifact decision
@@ -58,7 +44,17 @@ pub struct ArtifactDecision {
     pub artifact_id: Option<String>,
     pub total_bytes: usize,
     pub contains_secrets: bool,
-    pub secret_reason: Option<String>,
+    pub secret_kind: Option<String>,
+}
+
+/// Lightweight reference to an artifact (for cross-crate sharing)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactRef {
+    pub id: String,
+    pub kind: String,
+    pub total_bytes: usize,
+    pub preview: Option<String>,
+    pub contains_secrets: bool,
 }
 
 /// Stored artifact metadata (without data blob)
@@ -73,7 +69,52 @@ pub struct ArtifactMeta {
     pub preview_text: Option<String>,
 }
 
-/// Artifact store for managing tool output storage
+/// Result of fetch_artifact
+#[derive(Debug, serde::Serialize)]
+pub struct FetchResult {
+    pub artifact_id: String,
+    pub offset: usize,
+    pub limit: usize,
+    pub total_bytes: usize,
+    pub content: String,
+    pub truncated: bool,
+}
+
+/// Result of search_artifact
+#[derive(Debug, serde::Serialize)]
+pub struct SearchResult {
+    pub artifact_id: String,
+    pub query: String,
+    pub total_bytes: usize,
+    pub matches: Vec<SearchMatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SearchMatch {
+    pub match_index: usize,
+    pub offset: usize,
+    pub preview: String,
+    pub suggest_fetch_offset: usize,
+    pub suggest_fetch_limit: usize,
+}
+
+/// Storage statistics
+#[derive(Debug)]
+pub struct ArtifactStats {
+    pub count: u64,
+    pub total_bytes: u64,
+}
+
+/// Loaded artifact data (internal)
+struct ArtifactData {
+    text: String,
+    total_bytes: usize,
+    contains_secrets: bool,
+}
+
+/// Artifact store for managing large output storage
 #[derive(Clone)]
 pub struct ArtifactStore {
     db: SqlitePool,
@@ -89,8 +130,15 @@ impl ArtifactStore {
     pub fn decide(&self, tool_name: &str, output: &str) -> ArtifactDecision {
         let total_bytes = output.len();
 
-        // Check for secrets first
-        let (contains_secrets, secret_reason) = detect_secrets(output);
+        // Check for secrets (if feature enabled)
+        #[cfg(feature = "secrets")]
+        let (contains_secrets, secret_kind) = {
+            let secret = detect_secrets(output);
+            (secret.is_some(), secret.map(|s| s.kind.to_string()))
+        };
+
+        #[cfg(not(feature = "secrets"))]
+        let (contains_secrets, secret_kind): (bool, Option<String>) = (false, None);
 
         // Decide based on tool + size
         let should_artifact = total_bytes > ARTIFACT_THRESHOLD_BYTES
@@ -98,7 +146,19 @@ impl ArtifactStore {
 
         // Create smart preview based on tool type
         let preview = if should_artifact || total_bytes > INLINE_MAX_BYTES {
-            create_smart_excerpt(tool_name, output)
+            #[cfg(feature = "excerpts")]
+            {
+                create_smart_excerpt(tool_name, output)
+            }
+            #[cfg(not(feature = "excerpts"))]
+            {
+                // Fallback: simple truncation
+                if output.len() > INLINE_MAX_BYTES {
+                    format!("{}…[truncated]", &output[..INLINE_MAX_BYTES])
+                } else {
+                    output.to_string()
+                }
+            }
         } else {
             output.to_string()
         };
@@ -109,7 +169,7 @@ impl ArtifactStore {
             artifact_id: None, // Set after storage
             total_bytes,
             contains_secrets,
-            secret_reason,
+            secret_kind,
         }
     }
 
@@ -137,11 +197,11 @@ impl ArtifactStore {
 
         // Compute TTL
         let ttl = if contains_secrets {
-            TTL_SECRET
+            TTL_SECRET_SECS
         } else if kind == "diff" {
-            TTL_DIFF
+            TTL_DIFF_SECS
         } else {
-            TTL_TOOL_OUTPUT
+            TTL_TOOL_OUTPUT_SECS
         };
         let expires_at = now + ttl;
 
@@ -155,10 +215,21 @@ impl ArtifactStore {
         let uncompressed_bytes = data.len() as i64;
         let compressed_bytes = uncompressed_bytes; // No compression yet
 
-        // Create preview and searchable text
-        let preview_text = create_excerpt(content, EXCERPT_HEAD, EXCERPT_TAIL);
+        // Create preview
+        #[cfg(feature = "excerpts")]
+        let preview_text = {
+            use crate::excerpts::create_excerpt;
+            create_excerpt(content, EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS)
+        };
+        #[cfg(not(feature = "excerpts"))]
+        let preview_text = if content.len() > 2000 {
+            format!("{}…", &content[..2000])
+        } else {
+            content.to_string()
+        };
+
+        // Searchable text (first 16KB)
         let searchable_text = if content.len() > 16384 {
-            // First 16KB for search
             content.chars().take(16384).collect::<String>()
         } else {
             content.to_string()
@@ -225,9 +296,14 @@ impl ArtifactStore {
     }
 
     /// Fetch a slice of an artifact
-    pub async fn fetch(&self, artifact_id: &str, offset: usize, limit: usize) -> Result<Option<FetchResult>> {
-        // Cap limit to 16KB
-        let limit = limit.min(16384);
+    pub async fn fetch(
+        &self,
+        artifact_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Option<FetchResult>> {
+        // Cap limit to default fetch limit
+        let limit = limit.min(DEFAULT_FETCH_LIMIT);
 
         let Some(artifact) = self.load_artifact_data(artifact_id).await? else {
             return Ok(None);
@@ -297,9 +373,11 @@ impl ArtifactStore {
 
                 // Get context around match using byte-safe slicing
                 let context_start = absolute_pos.saturating_sub(context_bytes / 2);
-                let context_end = (absolute_pos + query.len() + context_bytes / 2).min(artifact.text.len());
+                let context_end =
+                    (absolute_pos + query.len() + context_bytes / 2).min(artifact.text.len());
 
-                let (preview, _, _) = safe_utf8_slice(&artifact.text, context_start, context_end - context_start);
+                let (preview, _, _) =
+                    safe_utf8_slice(&artifact.text, context_start, context_end - context_start);
 
                 matches.push(SearchMatch {
                     match_index: matches.len() + 1,
@@ -337,10 +415,11 @@ impl ArtifactStore {
     /// Cleanup expired artifacts
     pub async fn cleanup_expired(&self) -> Result<u64> {
         let now = Utc::now().timestamp();
-        let result = sqlx::query("DELETE FROM artifacts WHERE expires_at IS NOT NULL AND expires_at < $1")
-            .bind(now)
-            .execute(&self.db)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM artifacts WHERE expires_at IS NOT NULL AND expires_at < $1")
+                .bind(now)
+                .execute(&self.db)
+                .await?;
         Ok(result.rows_affected())
     }
 
@@ -349,7 +428,7 @@ impl ArtifactStore {
     pub async fn enforce_size_cap(&self, max_bytes: i64) -> Result<u64> {
         // Get current total size for project
         let total: (i64,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(compressed_bytes), 0) FROM artifacts WHERE project_path = $1"
+            "SELECT COALESCE(SUM(compressed_bytes), 0) FROM artifacts WHERE project_path = $1",
         )
         .bind(&self.project_path)
         .fetch_one(&self.db)
@@ -364,9 +443,8 @@ impl ArtifactStore {
         let mut freed = 0i64;
 
         // Delete oldest artifacts until under cap
-        // Get oldest artifacts ordered by created_at
         let oldest: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT id, compressed_bytes FROM artifacts WHERE project_path = $1 ORDER BY created_at ASC LIMIT 100"
+            "SELECT id, compressed_bytes FROM artifacts WHERE project_path = $1 ORDER BY created_at ASC LIMIT 100",
         )
         .bind(&self.project_path)
         .fetch_all(&self.db)
@@ -388,10 +466,9 @@ impl ArtifactStore {
     }
 
     /// Check for existing artifact with same sha256 (dedupe)
-    /// Returns existing artifact ID if found
     pub async fn find_by_sha256(&self, sha256: &str) -> Result<Option<String>> {
         let row: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM artifacts WHERE project_path = $1 AND sha256 = $2 LIMIT 1"
+            "SELECT id FROM artifacts WHERE project_path = $1 AND sha256 = $2 LIMIT 1",
         )
         .bind(&self.project_path)
         .bind(sha256)
@@ -401,7 +478,15 @@ impl ArtifactStore {
         Ok(row.map(|(id,)| id))
     }
 
+    /// Compute SHA256 hash of content
+    pub fn compute_sha256(content: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
     /// Store an artifact with dedupe - returns existing ID if content already exists
+    /// Returns (id, was_dedupe_hit)
     pub async fn store_deduped(
         &self,
         kind: &str,
@@ -411,10 +496,7 @@ impl ArtifactStore {
         contains_secrets: bool,
         secret_reason: Option<&str>,
     ) -> Result<(String, bool)> {
-        // Compute hash first
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        let sha256 = format!("{:x}", hasher.finalize());
+        let sha256 = Self::compute_sha256(content);
 
         // Check for existing
         if let Some(existing_id) = self.find_by_sha256(&sha256).await? {
@@ -422,22 +504,31 @@ impl ArtifactStore {
         }
 
         // Store new
-        let id = self.store(kind, tool_name, tool_call_id, content, contains_secrets, secret_reason).await?;
+        let id = self
+            .store(
+                kind,
+                tool_name,
+                tool_call_id,
+                content,
+                contains_secrets,
+                secret_reason,
+            )
+            .await?;
         Ok((id, false))
     }
 
     /// Run full maintenance: TTL cleanup + size cap enforcement
     /// Returns (expired_deleted, cap_deleted)
-    pub async fn maintenance(&self, max_bytes: i64) -> Result<(u64, u64)> {
+    pub async fn maintenance(&self) -> Result<(u64, u64)> {
         let expired = self.cleanup_expired().await?;
-        let capped = self.enforce_size_cap(max_bytes).await?;
+        let capped = self.enforce_size_cap(PROJECT_ARTIFACT_CAP_BYTES).await?;
         Ok((expired, capped))
     }
 
     /// Get storage stats for project
     pub async fn stats(&self) -> Result<ArtifactStats> {
         let row: (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), COALESCE(SUM(compressed_bytes), 0) FROM artifacts WHERE project_path = $1"
+            "SELECT COUNT(*), COALESCE(SUM(compressed_bytes), 0) FROM artifacts WHERE project_path = $1",
         )
         .bind(&self.project_path)
         .fetch_one(&self.db)
@@ -448,51 +539,24 @@ impl ArtifactStore {
             total_bytes: row.1 as u64,
         })
     }
-}
 
-/// Storage statistics
-#[derive(Debug)]
-pub struct ArtifactStats {
-    pub count: u64,
-    pub total_bytes: u64,
-}
+    /// Create an ArtifactRef from stored artifact
+    pub async fn get_ref(&self, artifact_id: &str) -> Result<Option<ArtifactRef>> {
+        let row: Option<(String, String, i64, Option<String>, i32)> = sqlx::query_as(
+            "SELECT id, kind, uncompressed_bytes, preview_text, contains_secrets FROM artifacts WHERE id = $1",
+        )
+        .bind(artifact_id)
+        .fetch_optional(&self.db)
+        .await?;
 
-/// Loaded artifact data (internal)
-struct ArtifactData {
-    text: String,
-    total_bytes: usize,
-    contains_secrets: bool,
-}
-
-/// Result of fetch_artifact
-#[derive(Debug, serde::Serialize)]
-pub struct FetchResult {
-    pub artifact_id: String,
-    pub offset: usize,
-    pub limit: usize,
-    pub total_bytes: usize,
-    pub content: String,
-    pub truncated: bool,
-}
-
-/// Result of search_artifact
-#[derive(Debug, serde::Serialize)]
-pub struct SearchResult {
-    pub artifact_id: String,
-    pub query: String,
-    pub total_bytes: usize,
-    pub matches: Vec<SearchMatch>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct SearchMatch {
-    pub match_index: usize,
-    pub offset: usize,
-    pub preview: String,
-    pub suggest_fetch_offset: usize,
-    pub suggest_fetch_limit: usize,
+        Ok(row.map(|(id, kind, bytes, preview, secrets)| ArtifactRef {
+            id,
+            kind,
+            total_bytes: bytes as usize,
+            preview,
+            contains_secrets: secrets != 0,
+        }))
+    }
 }
 
 /// UTF-8 safe byte slicing - finds valid char boundaries
@@ -521,215 +585,23 @@ fn safe_utf8_slice(text: &str, start: usize, limit: usize) -> (String, usize, us
     (content, actual_start, actual_end)
 }
 
-/// Detect potential secrets in content
-fn detect_secrets(content: &str) -> (bool, Option<String>) {
-    let content_lower = content.to_lowercase();
-
-    for (pattern, reason) in SECRET_PATTERNS {
-        if content.contains(pattern) || content_lower.contains(&pattern.to_lowercase()) {
-            return (true, Some(reason.to_string()));
-        }
-    }
-
-    (false, None)
-}
-
-/// Create head+tail excerpt with UTF-8 safe slicing
-fn create_excerpt(content: &str, head_chars: usize, tail_chars: usize) -> String {
-    let chars: Vec<char> = content.chars().collect();
-    let total = chars.len();
-
-    if total <= head_chars + tail_chars + 50 {
-        // Small enough to include entirely
-        return content.to_string();
-    }
-
-    let head: String = chars[..head_chars].iter().collect();
-    let tail: String = chars[total - tail_chars..].iter().collect();
-
-    format!(
-        "{}\n\n…[truncated {} chars, use fetch_artifact for full content]…\n\n{}",
-        head,
-        total - head_chars - tail_chars,
-        tail
-    )
-}
-
-/// Create smart excerpt for grep output - show top N matches with context
-pub fn create_grep_excerpt(content: &str, max_matches: usize) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let total_lines = lines.len();
-
-    if total_lines <= max_matches * 2 {
-        return content.to_string();
-    }
-
-    // Take first N matches (grep output is typically file:line:content or just matches)
-    let preview_lines: Vec<&str> = lines.iter().take(max_matches).copied().collect();
-    let remaining = total_lines - max_matches;
-
-    format!(
-        "{}\n\n…[{} more matches, use search_artifact to find specific content]…",
-        preview_lines.join("\n"),
-        remaining
-    )
-}
-
-/// Create smart excerpt for git diff - show file headers + first hunk per file
-pub fn create_diff_excerpt(content: &str, max_files: usize) -> String {
-    let mut result = String::new();
-    let mut files_shown = 0;
-    let mut in_hunk = false;
-    let mut hunk_lines = 0;
-    let mut current_file_has_hunk = false;
-    let mut total_files = 0;
-
-    // Count total files first
-    for line in content.lines() {
-        if line.starts_with("diff --git") {
-            total_files += 1;
-        }
-    }
-
-    for line in content.lines() {
-        // New file header
-        if line.starts_with("diff --git") {
-            if files_shown >= max_files {
-                break;
-            }
-            files_shown += 1;
-            in_hunk = false;
-            hunk_lines = 0;
-            current_file_has_hunk = false;
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str(line);
-            result.push('\n');
-            continue;
-        }
-
-        // File metadata (index, ---, +++)
-        if line.starts_with("index ") || line.starts_with("--- ") || line.starts_with("+++ ") {
-            result.push_str(line);
-            result.push('\n');
-            continue;
-        }
-
-        // Hunk header
-        if line.starts_with("@@") {
-            if current_file_has_hunk {
-                // Skip subsequent hunks, just note them
-                continue;
-            }
-            in_hunk = true;
-            current_file_has_hunk = true;
-            hunk_lines = 0;
-            result.push_str(line);
-            result.push('\n');
-            continue;
-        }
-
-        // Hunk content - show first 15 lines of first hunk
-        if in_hunk && hunk_lines < 15 {
-            result.push_str(line);
-            result.push('\n');
-            hunk_lines += 1;
-            if hunk_lines == 15 {
-                result.push_str("  …[hunk truncated]…\n");
-            }
-        }
-    }
-
-    if total_files > max_files {
-        result.push_str(&format!(
-            "\n…[{} more files changed, use fetch_artifact for full diff]…",
-            total_files - max_files
-        ));
-    }
-
-    result
-}
-
-/// Create smart excerpt based on tool type
-pub fn create_smart_excerpt(tool_name: &str, content: &str) -> String {
-    match tool_name {
-        "grep" => create_grep_excerpt(content, 20),
-        "git_diff" => create_diff_excerpt(content, 5),
-        _ => create_excerpt(content, EXCERPT_HEAD, EXCERPT_TAIL),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_secrets() {
-        assert!(detect_secrets("sk-proj-abc123").0);
-        assert!(detect_secrets("ghp_xxxxxxxxxxxx").0);
-        assert!(detect_secrets("-----BEGIN RSA PRIVATE KEY-----").0);
-        assert!(!detect_secrets("normal output").0);
+    fn test_compute_sha256() {
+        let hash = ArtifactStore::compute_sha256("hello world");
+        assert_eq!(hash.len(), 64); // SHA256 produces 64 hex chars
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
-    fn test_create_excerpt() {
-        let short = "short content";
-        assert_eq!(create_excerpt(short, 1200, 800), short);
-
-        let long = "a".repeat(5000);
-        let excerpt = create_excerpt(&long, 100, 50);
-        assert!(excerpt.contains("truncated"));
-        assert!(excerpt.starts_with(&"a".repeat(100)));
-        assert!(excerpt.ends_with(&"a".repeat(50)));
-    }
-
-    #[test]
-    fn test_grep_excerpt() {
-        let grep_output = (1..=50).map(|i| format!("file.rs:{}:match {}", i, i)).collect::<Vec<_>>().join("\n");
-        let excerpt = create_grep_excerpt(&grep_output, 10);
-        assert!(excerpt.contains("file.rs:1:match 1"));
-        assert!(excerpt.contains("file.rs:10:match 10"));
-        assert!(!excerpt.contains("file.rs:11:match 11"));
-        assert!(excerpt.contains("40 more matches"));
-    }
-
-    #[test]
-    fn test_diff_excerpt() {
-        let diff = r#"diff --git a/foo.rs b/foo.rs
-index abc123..def456 100644
---- a/foo.rs
-+++ b/foo.rs
-@@ -1,5 +1,6 @@
- fn main() {
-+    println!("hello");
- }
-@@ -10,3 +11,3 @@
- fn other() {}
-diff --git a/bar.rs b/bar.rs
-index 111..222 100644
---- a/bar.rs
-+++ b/bar.rs
-@@ -1,2 +1,3 @@
-+// new comment
- fn bar() {}
-"#;
-        let excerpt = create_diff_excerpt(diff, 1);
-        assert!(excerpt.contains("diff --git a/foo.rs"));
-        assert!(excerpt.contains("println!"));
-        assert!(!excerpt.contains("diff --git a/bar.rs"));
-        assert!(excerpt.contains("1 more files changed"));
-    }
-
-    #[test]
-    fn test_smart_excerpt_routing() {
-        // Short content returns as-is
-        let short = "short";
-        assert_eq!(create_smart_excerpt("grep", short), short);
-
-        // Long grep uses grep-specific
-        let long_grep = (1..=100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
-        let excerpt = create_smart_excerpt("grep", &long_grep);
-        assert!(excerpt.contains("more matches"));
+    fn test_safe_utf8_slice() {
+        let text = "hello";
+        let (slice, start, end) = safe_utf8_slice(text, 0, 3);
+        assert_eq!(slice, "hel");
+        assert_eq!(start, 0);
+        assert_eq!(end, 3);
     }
 }
