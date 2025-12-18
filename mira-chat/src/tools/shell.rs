@@ -43,17 +43,28 @@ impl<'a> ShellTools<'a> {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let exit_code = output.status.code().unwrap_or(-1);
+        let cwd_display = self.cwd.display();
 
-        let result = if output.status.success() {
-            stdout.to_string()
-        } else {
-            format!(
-                "Exit code: {}\n{}\n{}",
-                output.status.code().unwrap_or(-1),
-                stdout,
-                stderr
-            )
-        };
+        // Always include metadata header for debugging
+        let mut result = String::new();
+
+        // Compact metadata line
+        result.push_str(&format!("$ {} [exit={}, cwd={}]\n", command, exit_code, cwd_display));
+
+        // Output content
+        if !stdout.is_empty() {
+            result.push_str(&stdout);
+        }
+
+        // Stderr (if any)
+        if !stderr.is_empty() {
+            if !stdout.is_empty() && !stdout.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push_str("[stderr]\n");
+            result.push_str(&stderr);
+        }
 
         Ok(Self::truncate_output(&result))
     }
