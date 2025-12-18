@@ -1879,6 +1879,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "dotenvy",
  "futures",
  "glob",
  "ignore",

@@ -92,6 +92,29 @@
   text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
 }
 
+/* Corporate light theme - looks like a boring business app */
+[data-theme="corporate-light"] {
+  --term-bg: #ffffff;
+  --term-bg-secondary: #f8f9fa;
+  --term-text: #212529;
+  --term-text-dim: #6c757d;
+  --term-accent: #0d6efd;
+  --term-prompt: #212529;
+  --term-success: #198754;
+  --term-error: #dc3545;
+  --term-warning: #fd7e14;
+  --term-border: #dee2e6;
+}
+
+/* Make corporate theme use sans-serif for extra blandness */
+[data-theme="corporate-light"] .font-mono {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+[data-theme="corporate-light"] .terminal-view {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
 /* Global resets */
 html, body {
   height: 100%;

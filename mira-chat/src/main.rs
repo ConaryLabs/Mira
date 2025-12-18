@@ -61,6 +61,16 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env file (from ~/.mira/.env or current dir)
+    let env_path = dirs::home_dir()
+        .map(|h| h.join(".mira").join(".env"))
+        .filter(|p| p.exists());
+    if let Some(path) = env_path {
+        let _ = dotenvy::from_path(&path);
+    } else {
+        let _ = dotenvy::dotenv(); // fallback to current dir
+    }
+
     // Initialize logging
     fmt()
         .with_env_filter(EnvFilter::from_default_env())

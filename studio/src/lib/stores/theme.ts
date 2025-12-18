@@ -4,7 +4,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { browser } from '$app/environment';
 
-export type ThemeName = 'terminal-dark' | 'terminal-retro' | 'terminal-modern' | 'terminal-neon';
+export type ThemeName = 'terminal-dark' | 'terminal-retro' | 'terminal-modern' | 'terminal-neon' | 'corporate-light';
 
 export interface ThemeColors {
   bg: string;
@@ -67,6 +67,18 @@ export const themes: Record<ThemeName, ThemeColors> = {
     error: '#ff0055',
     warning: '#ffff00',
     border: '#ff00ff44',
+  },
+  'corporate-light': {
+    bg: '#ffffff',
+    bgSecondary: '#f8f9fa',
+    text: '#212529',
+    textDim: '#6c757d',
+    accent: '#0d6efd',
+    prompt: '#212529',
+    success: '#198754',
+    error: '#dc3545',
+    warning: '#fd7e14',
+    border: '#dee2e6',
   },
 };
 
