@@ -12,6 +12,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod artifacts;
 mod config;
 mod context;
 mod reasoning;
