@@ -198,6 +198,23 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Clear the previous response ID (starts fresh conversation)
+    /// Use this when token usage is too high to reset server-side accumulation
+    pub async fn clear_response_id(&self) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE chat_context
+            SET last_response_id = NULL, updated_at = $1
+            WHERE project_path = $2
+            "#,
+        )
+        .bind(Utc::now().timestamp())
+        .bind(&self.project_path)
+        .execute(&self.db)
+        .await?;
+        Ok(())
+    }
+
     /// Get the previous response ID
     pub async fn get_response_id(&self) -> Result<Option<String>> {
         let row: Option<(Option<String>,)> = sqlx::query_as(
