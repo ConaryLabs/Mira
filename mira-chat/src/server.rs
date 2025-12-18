@@ -188,6 +188,7 @@ pub struct AppState {
     pub api_key: String,
     pub default_reasoning_effort: String,
     pub sync_token: Option<String>, // Bearer token for /api/chat/sync
+    pub sync_semaphore: Arc<tokio::sync::Semaphore>, // Limit concurrent sync requests
 }
 
 // ============================================================================
@@ -210,6 +211,9 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Max concurrent sync requests
+const SYNC_MAX_CONCURRENT: usize = 3;
+
 /// Run the HTTP server
 pub async fn run(
     port: u16,
@@ -225,6 +229,7 @@ pub async fn run(
         api_key,
         default_reasoning_effort: reasoning_effort,
         sync_token: sync_token.clone(),
+        sync_semaphore: Arc::new(tokio::sync::Semaphore::new(SYNC_MAX_CONCURRENT)),
     };
 
     let app = create_router(state);
@@ -236,6 +241,7 @@ pub async fn run(
     } else {
         println!("Sync token:   DISABLED (set MIRA_SYNC_TOKEN to enable auth)");
     }
+    println!("Sync limit:   {} concurrent requests", SYNC_MAX_CONCURRENT);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -362,6 +368,8 @@ async fn chat_stream_handler(
 /// Sync chat response (for Claude-to-Mira communication)
 #[derive(Debug, Serialize)]
 pub struct SyncChatResponse {
+    pub request_id: String,
+    pub timestamp: i64,
     pub role: String,
     pub content: String,
     pub blocks: Vec<MessageBlock>,
@@ -371,10 +379,15 @@ pub struct SyncChatResponse {
     pub response_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
+    /// Chain status: "NEW" if no previous_response_id, otherwise "…" + last 8 chars
+    pub chain: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+/// Max message size for sync endpoint (32KB)
+const SYNC_MAX_MESSAGE_BYTES: usize = 32 * 1024;
 
 /// Non-streaming chat endpoint for programmatic access (e.g., Claude calling Mira)
 async fn chat_sync_handler(
@@ -382,6 +395,9 @@ async fn chat_sync_handler(
     headers: HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Result<Json<SyncChatResponse>, (StatusCode, String)> {
+    let request_id = Uuid::new_v4().to_string();
+    let timestamp = chrono::Utc::now().timestamp();
+
     // Check auth token if configured
     if let Some(ref expected_token) = state.sync_token {
         let auth_header = headers
@@ -391,9 +407,51 @@ async fn chat_sync_handler(
 
         let provided_token = auth_header.strip_prefix("Bearer ").unwrap_or("");
         if provided_token != expected_token {
+            // Log without echoing the provided token
+            tracing::warn!(
+                request_id = %request_id,
+                "Sync endpoint auth failure: invalid or missing token"
+            );
             return Err((StatusCode::UNAUTHORIZED, "Invalid or missing sync token".to_string()));
         }
     }
+
+    // Size limit check
+    if request.message.len() > SYNC_MAX_MESSAGE_BYTES {
+        tracing::warn!(
+            request_id = %request_id,
+            size = request.message.len(),
+            max = SYNC_MAX_MESSAGE_BYTES,
+            "Sync endpoint rejected: message too large"
+        );
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!("Message exceeds {} byte limit", SYNC_MAX_MESSAGE_BYTES),
+        ));
+    }
+
+    // Rate limiting: acquire permit or reject
+    let semaphore = state.sync_semaphore.clone();
+    let _permit = match semaphore.try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            tracing::warn!(
+                request_id = %request_id,
+                "Sync endpoint rejected: too many concurrent requests"
+            );
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many concurrent requests, try again later".to_string(),
+            ));
+        }
+    };
+
+    tracing::info!(
+        request_id = %request_id,
+        message_len = request.message.len(),
+        project = %request.project_path,
+        "Sync endpoint request"
+    );
 
     let (tx, mut rx) = mpsc::channel::<ChatEvent>(100);
 
@@ -479,13 +537,33 @@ async fn chat_sync_handler(
         blocks.insert(0, MessageBlock::Text { content: content.clone() });
     }
 
+    // Derive chain status: "NEW" if no previous, otherwise "…" + last 8 chars
+    let chain = match &previous_response_id {
+        None => "NEW".to_string(),
+        Some(prev) => {
+            let suffix = if prev.len() > 8 { &prev[prev.len() - 8..] } else { prev };
+            format!("…{}", suffix)
+        }
+    };
+
+    tracing::info!(
+        request_id = %request_id,
+        chain = %chain,
+        input_tokens = usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
+        output_tokens = usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+        "Sync endpoint complete"
+    );
+
     Ok(Json(SyncChatResponse {
+        request_id,
+        timestamp,
         role: "assistant".to_string(),
         content,
         blocks,
         usage,
         response_id,
         previous_response_id,
+        chain,
         success: error.is_none(),
         error,
     }))
