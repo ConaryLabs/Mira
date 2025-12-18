@@ -8,6 +8,7 @@ pub mod code_intel;
 pub mod corrections;
 pub mod documents;
 pub mod format;
+pub mod hotline;
 pub mod ingest;
 pub mod git_intel;
 pub mod goals;
