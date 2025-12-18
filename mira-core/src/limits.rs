@@ -57,10 +57,21 @@ pub const PROJECT_ARTIFACT_CAP_BYTES: i64 = 100 * 1024 * 1024;
 // Chain Reset Thresholds
 // ============================================================================
 
-/// Token threshold for considering a chain reset (400k)
-/// Only triggers if cache% is also low - prevents unnecessary resets when cache is working
+/// Soft reset threshold (400k) - triggers if cache% is also low
+/// Prevents unnecessary resets when cache is working well
 pub const CHAIN_RESET_TOKEN_THRESHOLD: u32 = 400_000;
 
-/// Minimum cache percentage to avoid reset (30%)
-/// If cache% is above this, we don't reset even if tokens are high
+/// Hard reset ceiling (420k) - always reset regardless of cache%
+/// Quality guard: prevents silent truncation/degraded reasoning at context limits
+pub const CHAIN_RESET_HARD_CEILING: u32 = 420_000;
+
+/// Minimum cache percentage to avoid soft reset (30%)
+/// If cache% is above this, we don't soft-reset even if tokens are high
 pub const CHAIN_RESET_MIN_CACHE_PCT: u32 = 30;
+
+/// Consecutive low-cache turns required before soft reset (hysteresis)
+/// Prevents flappy resets from one bad turn
+pub const CHAIN_RESET_HYSTERESIS_TURNS: u32 = 2;
+
+/// Minimum turns between resets (cooldown)
+pub const CHAIN_RESET_COOLDOWN_TURNS: u32 = 3;

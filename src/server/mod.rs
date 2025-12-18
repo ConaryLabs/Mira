@@ -131,7 +131,7 @@ impl MiraServer {
 
     // === Hotline - Talk to Mira (GPT-5.2) ===
 
-    #[tool(description = "Talk to Mira (GPT-5.2) for advice, second opinions, or collaboration. Returns Mira's response.")]
+    #[tool(description = "Talk to Mira (GPT-5.2) for advice or collaboration.")]
     async fn hotline(&self, Parameters(req): Parameters<HotlineRequest>) -> Result<CallToolResult, McpError> {
         match hotline::call_mira(req).await {
             Ok(result) => Ok(json_response(result)),
@@ -210,7 +210,7 @@ impl MiraServer {
         Ok(json_response(result))
     }
 
-    #[tool(description = "Sync work state for seamless session resume. Stores active todos, current focus, etc.")]
+    #[tool(description = "Sync work state for session resume.")]
     async fn sync_work_state(&self, Parameters(req): Parameters<SyncWorkStateRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::sync_work_state(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
@@ -226,7 +226,7 @@ impl MiraServer {
 
     // === Project ===
 
-    #[tool(description = "Set active project. Call at session start for scoped data.")]
+    #[tool(description = "Set active project.")]
     async fn set_project(&self, Parameters(req): Parameters<SetProjectRequest>) -> Result<CallToolResult, McpError> {
         let result = project::set_project(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
 
@@ -259,13 +259,13 @@ impl MiraServer {
         }
     }
 
-    #[tool(description = "Get coding guidelines. Use category='mira_usage' for tool guidance.")]
+    #[tool(description = "Get coding guidelines.")]
     async fn get_guidelines(&self, Parameters(req): Parameters<GetGuidelinesRequest>) -> Result<CallToolResult, McpError> {
         let result = project::get_guidelines(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, "No guidelines found."))
     }
 
-    #[tool(description = "Add a coding guideline or convention.")]
+    #[tool(description = "Add a coding guideline.")]
     async fn add_guideline(&self, Parameters(req): Parameters<AddGuidelineRequest>) -> Result<CallToolResult, McpError> {
         let result = project::add_guideline(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
@@ -392,7 +392,7 @@ impl MiraServer {
 
     // === Consolidated Correction Tool (4→1) ===
 
-    #[tool(description = "Manage corrections. Actions: record/get/validate/list. Record when user corrects you.")]
+    #[tool(description = "Manage corrections. Actions: record/get/validate/list")]
     async fn correction(&self, Parameters(req): Parameters<CorrectionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         match req.action.as_str() {
@@ -492,7 +492,7 @@ impl MiraServer {
 
     // === Consolidated Permission Tool (3→1) ===
 
-    #[tool(description = "Manage permission rules. Actions: save/list/delete. Save when user approves a tool.")]
+    #[tool(description = "Manage permission rules. Actions: save/list/delete.")]
     async fn permission(&self, Parameters(req): Parameters<PermissionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         match req.action.as_str() {
@@ -566,7 +566,7 @@ impl MiraServer {
 
     // === Code Intelligence (keep separate - distinct use cases) ===
 
-    #[tool(description = "Get symbols (functions/classes/structs) from a file.")]
+    #[tool(description = "Get symbols from a file.")]
     async fn get_symbols(&self, Parameters(req): Parameters<GetSymbolsRequest>) -> Result<CallToolResult, McpError> {
         let file_path = req.file_path.clone();
         let result = code_intel::get_symbols(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
@@ -585,14 +585,14 @@ impl MiraServer {
         Ok(json_response(result))
     }
 
-    #[tool(description = "Search code by meaning (semantic search).")]
+    #[tool(description = "Search code by meaning.")]
     async fn semantic_code_search(&self, Parameters(req): Parameters<SemanticCodeSearchRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
         let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No code found for '{}'", query)))
     }
 
-    #[tool(description = "Get codebase style metrics (function lengths, abstraction level).")]
+    #[tool(description = "Get codebase style metrics.")]
     async fn get_codebase_style(&self, Parameters(req): Parameters<GetCodebaseStyleRequest>) -> Result<CallToolResult, McpError> {
         let project_path = match req.project_path {
             Some(p) => p,
@@ -604,7 +604,7 @@ impl MiraServer {
 
     // === Git Intelligence ===
 
-    #[tool(description = "Get recent commits, optionally filtered.")]
+    #[tool(description = "Get recent commits.")]
     async fn get_recent_commits(&self, Parameters(req): Parameters<GetRecentCommitsRequest>) -> Result<CallToolResult, McpError> {
         let result = git_intel::get_recent_commits(self.db.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, "No commits found"))
@@ -624,14 +624,14 @@ impl MiraServer {
         Ok(vec_response(result, format!("No co-changes for '{}'", file_path)))
     }
 
-    #[tool(description = "Find similar past error fixes (semantic search).")]
+    #[tool(description = "Find similar past error fixes.")]
     async fn find_similar_fixes(&self, Parameters(req): Parameters<FindSimilarFixesRequest>) -> Result<CallToolResult, McpError> {
         let error = req.error.clone();
         let result = git_intel::find_similar_fixes(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No fixes for: {}", error)))
     }
 
-    #[tool(description = "Record an error fix for future learning.")]
+    #[tool(description = "Record an error fix.")]
     async fn record_error_fix(&self, Parameters(req): Parameters<RecordErrorFixRequest>) -> Result<CallToolResult, McpError> {
         let result = git_intel::record_error_fix(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
@@ -646,7 +646,7 @@ impl MiraServer {
         Ok(json_response(result))
     }
 
-    #[tool(description = "Record a rejected approach to avoid re-suggesting it.")]
+    #[tool(description = "Record a rejected approach.")]
     async fn record_rejected_approach(&self, Parameters(req): Parameters<RecordRejectedApproachRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = goals::record_rejected_approach(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;

@@ -99,6 +99,37 @@ Prompt structure optimized for LLM prefix caching:
 5. Summaries (changes on summarization)
 6. Semantic context (changes per query)
 
+### Smart Chain Reset (GPT-5.2 Only)
+
+Intelligent chain management prevents context degradation while maximizing cache hits:
+
+**Thresholds:**
+| Threshold | Value | Purpose |
+|-----------|-------|---------|
+| `CHAIN_RESET_TOKEN_THRESHOLD` | 400k | Soft reset threshold |
+| `CHAIN_RESET_HARD_CEILING` | 420k | Hard reset (quality guard) |
+| `CHAIN_RESET_MIN_CACHE_PCT` | 30% | Cache efficiency threshold |
+| `CHAIN_RESET_HYSTERESIS_TURNS` | 2 | Consecutive low-cache turns required |
+| `CHAIN_RESET_COOLDOWN_TURNS` | 3 | Minimum turns between resets |
+
+**Reset Logic:**
+- **Hard Reset**: Triggers at 420k tokens regardless of cache% (prevents silent quality degradation)
+- **Soft Reset**: Triggers at 400k tokens + <30% cache for 2+ consecutive turns
+- **Hysteresis**: Prevents flappy resets from single bad turns
+- **Cooldown**: Minimum 3 turns between resets
+
+**Handoff Context** (preserves continuity after reset):
+- Recent conversation (last 6 messages, truncated)
+- Latest summary from summaries table
+- Active goals with progress
+- Recent decisions from memory
+- Working set (last ~10 touched files)
+- Last known failure (command + error)
+- Recent artifact IDs (last 5)
+- Continuity note for smooth transition
+
+**Context Deduplication**: On handoff turns, normal context assembly is skipped to avoid duplicating content already in the handoff blob.
+
 ---
 
 ## Tools (`tools.rs`)

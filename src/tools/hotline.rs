@@ -9,6 +9,27 @@ use super::types::HotlineRequest;
 
 const MIRA_CHAT_URL: &str = "http://localhost:3001/api/chat/sync";
 const DEFAULT_PROJECT_PATH: &str = "/home/peter/Mira";
+const SYNC_TOKEN_ENV: &str = "MIRA_SYNC_TOKEN";
+const DOTENV_PATH: &str = "/home/peter/Mira/.env";
+
+/// Get sync token from env var or .env file
+fn get_sync_token() -> Option<String> {
+    // First try env var
+    if let Ok(token) = std::env::var(SYNC_TOKEN_ENV) {
+        return Some(token);
+    }
+
+    // Fallback: read from .env file
+    if let Ok(contents) = std::fs::read_to_string(DOTENV_PATH) {
+        for line in contents.lines() {
+            if let Some(value) = line.strip_prefix("MIRA_SYNC_TOKEN=") {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+
+    None
+}
 
 #[derive(Serialize)]
 struct SyncRequest {
@@ -47,12 +68,18 @@ pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
         project_path: DEFAULT_PROJECT_PATH.to_string(),
     };
 
-    let response = client
+    // Build request with optional auth token
+    let mut request = client
         .post(MIRA_CHAT_URL)
         .json(&sync_req)
-        .timeout(std::time::Duration::from_secs(120))
-        .send()
-        .await?;
+        .timeout(std::time::Duration::from_secs(120));
+
+    // Add Bearer token if available (env var or .env file)
+    if let Some(token) = get_sync_token() {
+        request = request.bearer_auth(token);
+    }
+
+    let response = request.send().await?;
 
     if !response.status().is_success() {
         let status = response.status();
