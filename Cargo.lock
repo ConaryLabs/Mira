@@ -1883,6 +1883,7 @@ dependencies = [
  "futures",
  "glob",
  "ignore",
+ "once_cell",
  "qdrant-client",
  "regex",
  "reqwest",

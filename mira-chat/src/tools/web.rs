@@ -1,24 +1,29 @@
 //! Web tools: search and fetch
 
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
+
+// Cached regexes for HTML processing (compiled once at startup)
+static RE_SCRIPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").expect("valid regex"));
+static RE_STYLE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").expect("valid regex"));
+static RE_BLOCK: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)</?(p|div|br|h[1-6]|li|tr)[^>]*>").expect("valid regex"));
+static RE_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").expect("valid regex"));
+static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").expect("valid regex"));
+static RE_MULTI_SPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r" {2,}").expect("valid regex"));
 
 /// Convert HTML to plain text (basic implementation)
 pub fn html_to_text(html: &str) -> String {
     // Remove script and style tags with their content
-    let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
-    let style_re = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
-    let text = script_re.replace_all(html, "");
-    let text = style_re.replace_all(&text, "");
+    let text = RE_SCRIPT.replace_all(html, "");
+    let text = RE_STYLE.replace_all(&text, "");
 
     // Replace common block elements with newlines
-    let block_re = Regex::new(r"(?i)</?(p|div|br|h[1-6]|li|tr)[^>]*>").unwrap();
-    let text = block_re.replace_all(&text, "\n");
+    let text = RE_BLOCK.replace_all(&text, "\n");
 
     // Remove all remaining HTML tags
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
-    let text = tag_re.replace_all(&text, "");
+    let text = RE_TAG.replace_all(&text, "");
 
     // Decode common HTML entities
     let text = text
@@ -30,10 +35,8 @@ pub fn html_to_text(html: &str) -> String {
         .replace("&#39;", "'");
 
     // Collapse multiple newlines and spaces
-    let multi_newline = Regex::new(r"\n{3,}").unwrap();
-    let multi_space = Regex::new(r" {2,}").unwrap();
-    let text = multi_newline.replace_all(&text, "\n\n");
-    let text = multi_space.replace_all(&text, " ");
+    let text = RE_MULTI_NEWLINE.replace_all(&text, "\n\n");
+    let text = RE_MULTI_SPACE.replace_all(&text, " ");
 
     text.trim().to_string()
 }
