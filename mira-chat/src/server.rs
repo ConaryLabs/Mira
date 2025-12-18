@@ -8,7 +8,7 @@
 use anyhow::Result;
 use axum::{
     extract::{Query, State},
-    http::{header, Method, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         Json,
@@ -80,6 +80,13 @@ pub enum ChatEvent {
         output_tokens: u32,
         reasoning_tokens: u32,
         cached_tokens: u32,
+    },
+
+    /// Chain info for debugging (response_id linkage)
+    #[serde(rename = "chain")]
+    Chain {
+        response_id: Option<String>,
+        previous_response_id: Option<String>,
     },
 
     /// Stream complete
@@ -180,6 +187,7 @@ pub struct AppState {
     pub semantic: Arc<SemanticSearch>,
     pub api_key: String,
     pub default_reasoning_effort: String,
+    pub sync_token: Option<String>, // Bearer token for /api/chat/sync
 }
 
 // ============================================================================
@@ -209,18 +217,25 @@ pub async fn run(
     db: Option<SqlitePool>,
     semantic: Arc<SemanticSearch>,
     reasoning_effort: String,
+    sync_token: Option<String>,
 ) -> Result<()> {
     let state = AppState {
         db,
         semantic,
         api_key,
         default_reasoning_effort: reasoning_effort,
+        sync_token: sync_token.clone(),
     };
 
     let app = create_router(state);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
     println!("Server listening on http://{}", addr);
+    if let Some(ref token) = sync_token {
+        println!("Sync token:   {} (use as Bearer token for /api/chat/sync)", token);
+    } else {
+        println!("Sync token:   DISABLED (set MIRA_SYNC_TOKEN to enable auth)");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -352,6 +367,10 @@ pub struct SyncChatResponse {
     pub blocks: Vec<MessageBlock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsageInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -360,8 +379,22 @@ pub struct SyncChatResponse {
 /// Non-streaming chat endpoint for programmatic access (e.g., Claude calling Mira)
 async fn chat_sync_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Result<Json<SyncChatResponse>, (StatusCode, String)> {
+    // Check auth token if configured
+    if let Some(ref expected_token) = state.sync_token {
+        let auth_header = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let provided_token = auth_header.strip_prefix("Bearer ").unwrap_or("");
+        if provided_token != expected_token {
+            return Err((StatusCode::UNAUTHORIZED, "Invalid or missing sync token".to_string()));
+        }
+    }
+
     let (tx, mut rx) = mpsc::channel::<ChatEvent>(100);
 
     // Spawn the chat processing task
@@ -380,6 +413,8 @@ async fn chat_sync_handler(
     let mut content = String::new();
     let mut blocks: Vec<MessageBlock> = Vec::new();
     let mut usage: Option<UsageInfo> = None;
+    let mut response_id: Option<String> = None;
+    let mut previous_response_id: Option<String> = None;
     let mut error: Option<String> = None;
 
     while let Some(event) = rx.recv().await {
@@ -427,6 +462,10 @@ async fn chat_sync_handler(
                     },
                 });
             }
+            ChatEvent::Chain { response_id: rid, previous_response_id: prev } => {
+                response_id = rid;
+                previous_response_id = prev;
+            }
             ChatEvent::Error { message } => {
                 error = Some(message);
             }
@@ -445,6 +484,8 @@ async fn chat_sync_handler(
         content,
         blocks,
         usage,
+        response_id,
+        previous_response_id,
         success: error.is_none(),
         error,
     }))
@@ -817,6 +858,12 @@ async fn process_chat(
             }
         }
     }
+
+    // Send chain info for debugging (after all processing is done)
+    let _ = tx.send(ChatEvent::Chain {
+        response_id: response_id.clone(),
+        previous_response_id,
+    }).await;
 
     Ok(())
 }
