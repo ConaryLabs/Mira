@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use axum::{
-    extract::{Query, State},
+    extract::{DefaultBodyLimit, Query, State},
     http::{header, HeaderMap, Method, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -195,6 +195,9 @@ pub struct AppState {
 // Routes
 // ============================================================================
 
+/// Max request body size for sync endpoint (64KB - allows for project_path + message overhead)
+const SYNC_MAX_BODY_BYTES: usize = 64 * 1024;
+
 /// Create the router with all endpoints
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
@@ -205,7 +208,10 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/api/status", get(status_handler))
         .route("/api/chat/stream", post(chat_stream_handler))
-        .route("/api/chat/sync", post(chat_sync_handler))
+        .route(
+            "/api/chat/sync",
+            post(chat_sync_handler).layer(DefaultBodyLimit::max(SYNC_MAX_BODY_BYTES)),
+        )
         .route("/api/messages", get(messages_handler))
         .layer(cors)
         .with_state(state)
@@ -386,15 +392,53 @@ pub struct SyncChatResponse {
     pub error: Option<String>,
 }
 
+/// Structured error response for sync endpoint
+#[derive(Debug, Serialize)]
+pub struct SyncErrorResponse {
+    pub request_id: String,
+    pub timestamp: i64,
+    pub success: bool,
+    pub error: String,
+}
+
+/// Custom error type that returns structured JSON
+pub struct SyncError {
+    status: StatusCode,
+    request_id: String,
+    timestamp: i64,
+    message: String,
+}
+
+impl SyncError {
+    fn new(status: StatusCode, request_id: String, timestamp: i64, message: impl Into<String>) -> Self {
+        Self { status, request_id, timestamp, message: message.into() }
+    }
+}
+
+impl axum::response::IntoResponse for SyncError {
+    fn into_response(self) -> axum::response::Response {
+        let body = SyncErrorResponse {
+            request_id: self.request_id,
+            timestamp: self.timestamp,
+            success: false,
+            error: self.message,
+        };
+        (self.status, Json(body)).into_response()
+    }
+}
+
 /// Max message size for sync endpoint (32KB)
 const SYNC_MAX_MESSAGE_BYTES: usize = 32 * 1024;
 
 /// Non-streaming chat endpoint for programmatic access (e.g., Claude calling Mira)
+///
+/// Rate limiting: Uses semaphore for concurrency gating (max N concurrent requests),
+/// NOT a true rate limiter (requests/sec). For rate limiting, use token bucket at proxy layer.
 async fn chat_sync_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<ChatRequest>,
-) -> Result<Json<SyncChatResponse>, (StatusCode, String)> {
+) -> Result<Json<SyncChatResponse>, SyncError> {
     let request_id = Uuid::new_v4().to_string();
     let timestamp = chrono::Utc::now().timestamp();
 
@@ -412,7 +456,12 @@ async fn chat_sync_handler(
                 request_id = %request_id,
                 "Sync endpoint auth failure: invalid or missing token"
             );
-            return Err((StatusCode::UNAUTHORIZED, "Invalid or missing sync token".to_string()));
+            return Err(SyncError::new(
+                StatusCode::UNAUTHORIZED,
+                request_id,
+                timestamp,
+                "Invalid or missing sync token",
+            ));
         }
     }
 
@@ -424,13 +473,15 @@ async fn chat_sync_handler(
             max = SYNC_MAX_MESSAGE_BYTES,
             "Sync endpoint rejected: message too large"
         );
-        return Err((
+        return Err(SyncError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
+            request_id,
+            timestamp,
             format!("Message exceeds {} byte limit", SYNC_MAX_MESSAGE_BYTES),
         ));
     }
 
-    // Rate limiting: acquire permit or reject
+    // Concurrency gating: acquire permit or reject (not a rate limiter - see doc comment)
     let semaphore = state.sync_semaphore.clone();
     let _permit = match semaphore.try_acquire_owned() {
         Ok(permit) => permit,
@@ -439,9 +490,11 @@ async fn chat_sync_handler(
                 request_id = %request_id,
                 "Sync endpoint rejected: too many concurrent requests"
             );
-            return Err((
+            return Err(SyncError::new(
                 StatusCode::TOO_MANY_REQUESTS,
-                "Too many concurrent requests, try again later".to_string(),
+                request_id,
+                timestamp,
+                "Too many concurrent requests, try again later",
             ));
         }
     };
