@@ -403,13 +403,28 @@ async fn process_chat(
     // full assembled context blob (summaries/semantic/code index/recent msgs).
     // We rely on server-side continuity via previous_response_id.
     // Keep only persona + guidelines + small Mira context.
-    let system_prompt = if let Some(db) = &state.db {
+    let base_prompt = if let Some(db) = &state.db {
         let context = MiraContext::load(db, &request.project_path)
             .await
             .unwrap_or_default();
         build_system_prompt(&context)
     } else {
         build_system_prompt(&MiraContext::default())
+    };
+
+    // Check for handoff context (after a smooth reset)
+    let handoff = if let Some(ref session) = session {
+        session.consume_handoff().await.unwrap_or(None)
+    } else {
+        None
+    };
+
+    // If we have a handoff, append it to the system prompt for this turn only
+    let system_prompt = if let Some(ref handoff_blob) = handoff {
+        tracing::info!("Applying handoff context for smooth continuity");
+        format!("{}\n\n{}", base_prompt, handoff_blob)
+    } else {
+        base_prompt
     };
 
     // Create GPT client
@@ -428,6 +443,7 @@ async fn process_chat(
     }
 
     // Get previous response ID for continuity from session
+    // Note: if handoff was consumed, this should be None (starting fresh)
     let previous_response_id = if let Some(ref session) = session {
         session.get_response_id().await.unwrap_or(None)
     } else {
@@ -646,17 +662,18 @@ async fn process_chat(
             }
         }
 
-        // AUTO-RESET: If input tokens exceeded threshold, reset server-side conversation
-        // This prevents runaway token accumulation from previous_response_id continuity
+        // SMOOTH RESET: If input tokens exceeded threshold, prepare handoff for next turn
+        // This prevents runaway token accumulation while preserving continuity
         const AUTO_RESET_THRESHOLD: u32 = 100_000;
         if total_input_tokens > AUTO_RESET_THRESHOLD {
             tracing::info!(
-                "Auto-resetting conversation: {} tokens exceeded {}k limit",
+                "Preparing smooth reset: {} tokens exceeded {}k limit",
                 total_input_tokens, AUTO_RESET_THRESHOLD / 1000
             );
             if let Some(ref session) = session {
-                let _ = session.clear_response_id().await;
+                let _ = session.clear_response_id_with_handoff().await;
             } else {
+                // Fallback for non-session mode: hard reset
                 let _ = sqlx::query("DELETE FROM chat_state WHERE key = 'last_response_id'")
                     .execute(db)
                     .await;
