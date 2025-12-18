@@ -436,7 +436,7 @@ impl<'a> CommandHandler<'a> {
     }
 
     /// /usage - Token and caching analytics
-    /// Subcommands: /usage, /usage last N, /usage day, /usage effort, /usage totals
+    /// Subcommands: /usage, /usage last N, /usage day, /usage effort, /usage totals, /usage spikes
     async fn cmd_usage(&self, arg: &str) {
         let Some(db) = self.db else {
             println!("No database connected.");
@@ -450,6 +450,7 @@ impl<'a> CommandHandler<'a> {
             "day" | "daily" => self.usage_daily(db).await,
             "effort" => self.usage_by_effort(db).await,
             "totals" | "total" => self.usage_totals(db).await,
+            "spikes" | "spike" => self.usage_spikes(db).await,
             "last" | _ => {
                 let limit: i32 = parts.get(1)
                     .and_then(|s| s.parse().ok())
@@ -459,12 +460,13 @@ impl<'a> CommandHandler<'a> {
         }
     }
 
-    /// Show last N usage records
+    /// Show last N usage records with chain + tools + spike flags
     async fn usage_last(&self, db: &SqlitePool, limit: i32) {
-        let rows: Vec<(i64, String, i32, i32, i32, i32)> = sqlx::query_as(
+        let rows: Vec<(i64, String, i32, i32, i32, i32, Option<String>, i32, Option<String>)> = sqlx::query_as(
             r#"
             SELECT u.created_at, u.reasoning_effort, u.input_tokens, u.output_tokens,
-                   u.reasoning_tokens, u.cached_tokens
+                   u.reasoning_tokens, u.cached_tokens, u.previous_response_id,
+                   COALESCE(u.tool_count, 0), u.tool_names
             FROM chat_usage u
             ORDER BY u.created_at DESC
             LIMIT $1
@@ -480,11 +482,14 @@ impl<'a> CommandHandler<'a> {
             return;
         }
 
-        println!("┌─────────────────────┬────────┬──────────┬─────────┬───────────┬─────────┬────────┐");
-        println!("│ Time                │ Effort │ Input    │ Output  │ Reasoning │ Cached  │ Cache% │");
-        println!("├─────────────────────┼────────┼──────────┼─────────┼───────────┼─────────┼────────┤");
+        println!("┌─────────────────────┬────────┬───────┬──────────┬─────────┬─────────┬────────┬───────┐");
+        println!("│ Time                │ Effort │ Chain │ Input    │ Output  │ Cached  │ Cache% │ Flags │");
+        println!("├─────────────────────┼────────┼───────┼──────────┼─────────┼─────────┼────────┼───────┤");
 
-        for (ts, effort, input, output, reasoning, cached) in rows.iter().rev() {
+        let rows_vec: Vec<_> = rows.into_iter().rev().collect();
+        let mut prev_input: Option<i32> = None;
+
+        for (i, (ts, effort, input, output, _reasoning, cached, prev_resp_id, tool_count, tool_names)) in rows_vec.iter().enumerate() {
             let cache_pct = if *input > 0 {
                 (*cached as f64 / *input as f64) * 100.0
             } else {
@@ -499,32 +504,168 @@ impl<'a> CommandHandler<'a> {
             // Format effort (truncate to 6 chars)
             let eff: String = effort.chars().take(6).collect();
 
-            println!(
-                "│ {:19} │ {:6} │ {:>8} │ {:>7} │ {:>9} │ {:>7} │ {:>5.1}% │",
-                dt, eff,
-                format_tokens(*input), format_tokens(*output),
-                format_tokens(*reasoning), format_tokens(*cached),
-                cache_pct
-            );
-        }
-        println!("└─────────────────────┴────────┴──────────┴─────────┴───────────┴─────────┴────────┘");
+            // Chain indicator: NEW or last 4 chars of previous_response_id
+            let chain = match prev_resp_id {
+                None => "NEW".to_string(),
+                Some(id) => format!("…{}", id.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>()),
+            };
 
-        // Show quick totals
-        let total_input: i64 = rows.iter().map(|r| r.2 as i64).sum();
-        let total_output: i64 = rows.iter().map(|r| r.3 as i64).sum();
-        let total_cached: i64 = rows.iter().map(|r| r.5 as i64).sum();
+            // Build flags
+            let mut flags = String::new();
+
+            // Input spike: >50% jump from previous
+            if let Some(prev) = prev_input {
+                if prev > 0 && *input > prev + (prev / 2) {
+                    flags.push('!');
+                }
+            }
+
+            // Cache drop: below 50%
+            if cache_pct < 50.0 && *input > 1000 {
+                flags.push('C');
+            }
+
+            // Tool burst: 3+ tools
+            if *tool_count >= 3 {
+                flags.push('T');
+            }
+
+            // Chain reset
+            if prev_resp_id.is_none() && i > 0 {
+                flags.push('R');
+            }
+
+            // Tool info for tooltip-style display
+            let tools_hint = if *tool_count > 0 {
+                tool_names.as_ref().map(|n| format!(" [{}]", n)).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            println!(
+                "│ {:19} │ {:6} │ {:5} │ {:>8} │ {:>7} │ {:>7} │ {:>5.1}% │ {:5} │{}",
+                dt, eff, chain,
+                format_tokens(*input), format_tokens(*output),
+                format_tokens(*cached), cache_pct,
+                flags, tools_hint
+            );
+
+            prev_input = Some(*input);
+        }
+        println!("└─────────────────────┴────────┴───────┴──────────┴─────────┴─────────┴────────┴───────┘");
+
+        // Show quick totals with cost estimate
+        let total_input: i64 = rows_vec.iter().map(|r| r.2 as i64).sum();
+        let total_output: i64 = rows_vec.iter().map(|r| r.3 as i64).sum();
+        let total_cached: i64 = rows_vec.iter().map(|r| r.5 as i64).sum();
         let overall_cache = if total_input > 0 {
             (total_cached as f64 / total_input as f64) * 100.0
         } else {
             0.0
         };
 
+        // Cost estimate
+        let input_cost = (total_input as f64 / 1_000_000.0) * 2.50;
+        let output_cost = (total_output as f64 / 1_000_000.0) * 10.0;
+        let cached_savings = (total_cached as f64 / 1_000_000.0) * 2.50 * 0.5;
+
         println!();
-        println!("  {} rows │ ↓{} in │ ↑{} out │ ⚡{} cached ({:.0}%)",
-            rows.len(), format_tokens(total_input as i32),
+        println!("  {} rows │ ↓{} in │ ↑{} out │ ⚡{} cached ({:.0}%) │ ~${:.2}",
+            rows_vec.len(), format_tokens(total_input as i32),
             format_tokens(total_output as i32), format_tokens(total_cached as i32),
-            overall_cache
+            overall_cache, input_cost + output_cost - cached_savings
         );
+        println!("  Flags: ! input spike, C cache<50%, T tools≥3, R chain reset");
+    }
+
+    /// Show only turns with spikes/anomalies
+    async fn usage_spikes(&self, db: &SqlitePool) {
+        let rows: Vec<(i64, String, i32, i32, i32, i32, Option<String>, i32, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT u.created_at, u.reasoning_effort, u.input_tokens, u.output_tokens,
+                   u.reasoning_tokens, u.cached_tokens, u.previous_response_id,
+                   COALESCE(u.tool_count, 0), u.tool_names
+            FROM chat_usage u
+            ORDER BY u.created_at DESC
+            LIMIT 50
+            "#,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        if rows.is_empty() {
+            println!("No usage data recorded.");
+            return;
+        }
+
+        println!("Spike Report (anomalies in last 50 turns)");
+        println!("──────────────────────────────────────────");
+
+        let rows_vec: Vec<_> = rows.into_iter().rev().collect();
+        let mut prev_input: Option<i32> = None;
+        let mut spike_count = 0;
+
+        for (i, (ts, effort, input, output, _reasoning, cached, prev_resp_id, tool_count, tool_names)) in rows_vec.iter().enumerate() {
+            let cache_pct = if *input > 0 {
+                (*cached as f64 / *input as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let mut reasons: Vec<String> = Vec::new();
+
+            // Input spike
+            if let Some(prev) = prev_input {
+                if prev > 0 && *input > prev + (prev / 2) {
+                    let pct = ((*input - prev) as f64 / prev as f64) * 100.0;
+                    reasons.push(format!("Input +{:.0}% ({} → {})", pct, format_tokens(prev), format_tokens(*input)));
+                }
+            }
+
+            // Cache crash
+            if cache_pct < 50.0 && *input > 5000 {
+                if prev_resp_id.is_none() && i > 0 {
+                    reasons.push(format!("Cache {:.0}% (chain reset)", cache_pct));
+                } else {
+                    reasons.push(format!("Cache {:.0}% (prefix changed?)", cache_pct));
+                }
+            }
+
+            // Tool burst
+            if *tool_count >= 5 {
+                let names = tool_names.as_ref().map(|n| n.as_str()).unwrap_or("?");
+                reasons.push(format!("Tool burst: {} calls [{}]", tool_count, names));
+            }
+
+            // Chain reset (not first row)
+            if prev_resp_id.is_none() && i > 0 {
+                reasons.push("Chain reset (new conversation)".to_string());
+            }
+
+            if !reasons.is_empty() {
+                spike_count += 1;
+                let dt = chrono::DateTime::from_timestamp(*ts, 0)
+                    .map(|d| d.format("%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "?".to_string());
+
+                println!();
+                println!("  {} │ {} │ ↓{} ↑{} ⚡{:.0}%",
+                    dt, effort, format_tokens(*input), format_tokens(*output), cache_pct);
+                for reason in reasons {
+                    println!("    → {}", reason);
+                }
+            }
+
+            prev_input = Some(*input);
+        }
+
+        if spike_count == 0 {
+            println!("  No spikes detected. Everything looks normal.");
+        } else {
+            println!();
+            println!("  {} spike(s) found", spike_count);
+        }
     }
 
     /// Show daily totals

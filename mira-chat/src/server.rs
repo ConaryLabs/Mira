@@ -629,13 +629,33 @@ async fn process_chat(
         .execute(db)
         .await;
 
-        // Store token usage for this message
+        // Store token usage for this message (with chain and tool info)
         if total_input_tokens > 0 || total_output_tokens > 0 {
             let usage_id = Uuid::new_v4().to_string();
+
+            // Extract tool call info from assistant blocks
+            let tool_calls: Vec<&str> = assistant_blocks
+                .iter()
+                .filter_map(|b| match b {
+                    MessageBlock::ToolCall { name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let tool_count = tool_calls.len() as i32;
+            let tool_names = if tool_calls.is_empty() {
+                None
+            } else {
+                // Dedupe and join
+                let mut unique: Vec<&str> = tool_calls.clone();
+                unique.sort();
+                unique.dedup();
+                Some(unique.join(","))
+            };
+
             let _ = sqlx::query(
                 r#"
-                INSERT INTO chat_usage (id, message_id, input_tokens, output_tokens, reasoning_tokens, cached_tokens, model, reasoning_effort, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                INSERT INTO chat_usage (id, message_id, input_tokens, output_tokens, reasoning_tokens, cached_tokens, model, reasoning_effort, created_at, response_id, previous_response_id, tool_count, tool_names)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 "#,
             )
             .bind(&usage_id)
@@ -647,6 +667,10 @@ async fn process_chat(
             .bind(MODEL)
             .bind(&reasoning_effort)
             .bind(now)
+            .bind(&response_id)
+            .bind(&previous_response_id)
+            .bind(tool_count)
+            .bind(&tool_names)
             .execute(db)
             .await;
         }
