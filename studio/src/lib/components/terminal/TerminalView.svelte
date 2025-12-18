@@ -118,15 +118,16 @@
             {/each}
             <!-- Usage stats -->
             {#if message.usage}
+              {@const cachePct = message.usage.input_tokens > 0
+                ? Math.round((message.usage.cached_tokens / message.usage.input_tokens) * 100)
+                : 0}
               <div class="mt-2 text-xs text-[var(--term-text-dim)] font-mono">
                 <span title="Input tokens">↓{formatTokens(message.usage.input_tokens)}</span>
                 <span class="ml-2" title="Output tokens">↑{formatTokens(message.usage.output_tokens)}</span>
                 {#if message.usage.reasoning_tokens > 0}
                   <span class="ml-2" title="Reasoning tokens">🧠{formatTokens(message.usage.reasoning_tokens)}</span>
                 {/if}
-                {#if message.usage.cached_tokens > 0}
-                  <span class="ml-2 text-[var(--term-success)]" title="Cached tokens">⚡{formatTokens(message.usage.cached_tokens)}</span>
-                {/if}
+                <span class="ml-2" class:text-[var(--term-success)]={cachePct >= 50} title="Cached tokens">⚡{cachePct}%</span>
               </div>
             {/if}
           </div>
@@ -159,15 +160,16 @@
           {/if}
           <!-- Live usage stats during streaming -->
           {#if streamingMessage.usage}
+            {@const cachePct = streamingMessage.usage.input_tokens > 0
+              ? Math.round((streamingMessage.usage.cached_tokens / streamingMessage.usage.input_tokens) * 100)
+              : 0}
             <div class="mt-2 text-xs text-[var(--term-text-dim)] font-mono">
               <span title="Input tokens">↓{formatTokens(streamingMessage.usage.input_tokens)}</span>
               <span class="ml-2" title="Output tokens">↑{formatTokens(streamingMessage.usage.output_tokens)}</span>
               {#if streamingMessage.usage.reasoning_tokens > 0}
                 <span class="ml-2" title="Reasoning tokens">🧠{formatTokens(streamingMessage.usage.reasoning_tokens)}</span>
               {/if}
-              {#if streamingMessage.usage.cached_tokens > 0}
-                <span class="ml-2 text-[var(--term-success)]" title="Cached tokens">⚡{formatTokens(streamingMessage.usage.cached_tokens)}</span>
-              {/if}
+              <span class="ml-2" class:text-[var(--term-success)]={cachePct >= 50} title="Cached tokens">⚡{cachePct}%</span>
             </div>
           {/if}
         </div>
