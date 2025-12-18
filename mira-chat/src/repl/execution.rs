@@ -48,9 +48,9 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     let effort_str = effort.effort_for_model();
     println!("  {}", colors::reasoning(&format!("[{} @ {}]", effort_str, model)));
 
-    // Tool continuations: use gpt-5.2 with no reasoning for quality
+    // Tool continuations: gpt-5.2 with minimal reasoning for speed
     const CONTINUATION_MODEL: &str = "gpt-5.2";
-    const CONTINUATION_EFFORT: &str = "none";
+    const CONTINUATION_EFFORT: &str = "low";
 
     // Assemble system prompt.
     // CHEAP MODE: until token usage is under control, we do NOT inject the
@@ -211,7 +211,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
             eprintln!("  {}", colors::warning("[max iterations reached, finalizing...]"));
         }
 
-        // Continue with tool results - codex-mini for speed, no reasoning
+        // Continue with tool results - low reasoning for speed
         rx = match config
             .client
             .continue_with_tool_results_stream(

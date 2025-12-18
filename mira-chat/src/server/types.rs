@@ -82,6 +82,8 @@ pub struct ChatRequest {
     pub project_path: String,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 /// Message in the endless chat

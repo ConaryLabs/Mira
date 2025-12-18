@@ -274,7 +274,7 @@ Benefits of HTTP mode:
 
 ## Mira-Chat (Standalone CLI)
 
-A standalone coding assistant powered by GPT-5.2 with Mira's memory layer built-in.
+A standalone coding assistant with multi-model support and Mira's memory layer built-in.
 
 ```bash
 # Build
@@ -287,7 +287,9 @@ SQLX_OFFLINE=true cargo build --release
 
 ### Key Features
 
+- **Multi-model support** - GPT-5.2 and DeepSeek V3.2, switchable in UI
 - **GPT-5.2 Responses API** with streaming and function calling
+- **DeepSeek V3.2** - Cost-effective alternative with aggressive prefix caching
 - **Variable reasoning effort** - Auto-classified (none/low/medium/high/xhigh)
 - **Invisible sessions** - Context persists across restarts via:
   - Sliding window of recent messages

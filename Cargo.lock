@@ -1876,6 +1876,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "async-trait",
  "axum 0.8.7",
  "chrono",
  "clap",
@@ -1895,6 +1896,7 @@ dependencies = [
  "similar",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
  "toml",

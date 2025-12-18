@@ -30,6 +30,17 @@ use std::time::{Duration, Instant};
 pub use definitions::get_tools;
 pub use types::{DiffInfo, RichToolResult};
 
+use crate::provider::ToolDefinition;
+
+/// Get tool definitions in Provider-compatible format (for DeepSeek, etc.)
+pub fn get_tool_definitions() -> Vec<ToolDefinition> {
+    get_tools().into_iter().map(|t| ToolDefinition {
+        name: t.name,
+        description: t.description.unwrap_or_default(),
+        parameters: t.parameters,
+    }).collect()
+}
+
 use crate::artifacts::ArtifactStore;
 use crate::semantic::SemanticSearch;
 use crate::session::SessionManager;

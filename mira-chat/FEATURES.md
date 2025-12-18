@@ -1,8 +1,19 @@
 # Mira-Chat Features
 
-Power-armored coding assistant with GPT-5.2 Thinking model.
+Power-armored coding assistant with multi-model support: GPT-5.2 and DeepSeek V3.2.
 
 ## Core Architecture
+
+### Multi-Model Support
+
+Mira-Chat supports two model providers, selectable via the Studio UI:
+
+| Model | Use Case | Pricing | Caching |
+|-------|----------|---------|---------|
+| **GPT-5.2** | Full capability, complex reasoning | ~$2.50/M input, $10/M output | Server-side (response_id chain) |
+| **DeepSeek V3.2** | Cost-effective, fast | $0.27/M input (cache: $0.014/M) | Prefix caching (automatic) |
+
+Both models receive Mira persona and corrections. GPT-5.2 also gets goals and memories.
 
 ### GPT-5.2 Integration (`responses.rs`)
 - **Responses API** - Uses OpenAI's latest `/v1/responses` endpoint
@@ -10,6 +21,36 @@ Power-armored coding assistant with GPT-5.2 Thinking model.
 - **Variable Reasoning Effort** - `none`, `low`, `medium`, `high`, `xhigh`
 - **Conversation Continuity** - `previous_response_id` chains requests
 - **Function Calling** - Native tool use with parallel execution support
+
+### DeepSeek V3.2 Integration (`provider/deepseek.rs`)
+- **Chat Completions API** - OpenAI-compatible endpoint
+- **Streaming SSE** - Same real-time streaming as GPT
+- **Prefix Caching** - Aggressive server-side caching (95% discount on cache hits)
+- **Function Calling** - Full tool support with streaming
+- **Reasoning Tokens** - Supports `deepseek-reasoner` for visible chain-of-thought
+
+### Provider Abstraction (`provider/mod.rs`)
+Unified `Provider` trait for multi-model support:
+```rust
+pub trait Provider: Send + Sync {
+    async fn create_stream(&self, request: ChatRequest) -> Result<Receiver<StreamEvent>>;
+    async fn create(&self, request: ChatRequest) -> Result<ChatResponse>;
+    async fn continue_with_tools_stream(&self, request: ToolContinueRequest) -> Result<Receiver<StreamEvent>>;
+}
+```
+
+### Context Injection
+- **GPT-5.2**: Full context (persona + corrections + goals + memories)
+- **DeepSeek**: Focused context (persona + corrections only)
+
+Prompt structure optimized for prefix caching:
+```
+[PERSONA - stable]           ← cached
+[CORRECTIONS - stable]       ← cached
+[PROJECT PATH - stable]      ← cached
+[TOOL GUIDELINES - stable]   ← cached
+[USER MESSAGE - varies]      ← not cached
+```
 
 ### Automatic Reasoning Classification (`reasoning.rs`)
 Task complexity detection routes queries to appropriate reasoning level:
@@ -172,9 +213,10 @@ SvelteKit-based terminal-style web interface.
 
 ### Features
 - **Terminal aesthetic** - Monospace fonts, dark theme, prompt-style input
+- **Model selector** - Switch between GPT-5.2 and DeepSeek V3.2
 - **Multiple themes** - Dark, Retro (CRT), Modern (Tokyo Night), Neon
 - **Streaming responses** - Real-time SSE with tool call visualization
-- **Collapsible sidebar** - Project selector, reasoning effort, status, theme picker
+- **Collapsible sidebar** - Project selector, model, reasoning effort, status, theme picker
 - **Mobile responsive** - Hamburger menu, overlay sidebar, safe viewport height
 
 ### Mobile Support
@@ -231,7 +273,7 @@ SvelteKit-based terminal-style web interface.
 
 ### Low Priority / Nice to Have
 - [ ] **Custom tools** - User-defined tool plugins
-- [ ] **Multiple models** - Route to different models (Claude, etc.)
+- [x] **Multiple models** - GPT-5.2 and DeepSeek V3.2 with UI switcher
 - [ ] **Local models** - Ollama/llama.cpp support
 - [ ] **Workspace indexing** - Pre-index codebase for faster search
 - [ ] **Smart file watching** - Auto-reload changed files
@@ -269,6 +311,7 @@ SvelteKit-based terminal-style web interface.
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | Required for GPT-5.2 |
+| `DEEPSEEK_API_KEY` | Required for DeepSeek V3.2 |
 | `GEMINI_API_KEY` | For embeddings (Qdrant) |
 | `DATABASE_URL` | SQLite path |
 | `QDRANT_URL` | Qdrant server |

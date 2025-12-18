@@ -116,12 +116,13 @@
     try {
       const { message: builder, handleEvent } = createMessageBuilder(messageId);
 
-      // Build request with reasoning effort from settings
+      // Build request with settings
       const currentSettings = $settings;
       const request = {
         message: content,
         project_path: currentSettings.projectPath,
         reasoning_effort: currentSettings.reasoningEffort === 'auto' ? undefined : currentSettings.reasoningEffort,
+        provider: currentSettings.modelProvider,
       };
 
       for await (const event of streamChatEvents(request)) {

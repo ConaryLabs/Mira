@@ -12,7 +12,7 @@ use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 
 /// Context loaded from Mira's persistent storage
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MiraContext {
     /// Persona instructions (loaded from coding_guidelines)
     pub persona: Option<String>,
@@ -297,6 +297,45 @@ When writing code:
     }
 
     sections.join("\n\n")
+}
+
+/// Build system prompt for DeepSeek V3.2
+///
+/// Includes persona and corrections (which directly affect code quality).
+/// Skips goals and memories (too noisy for code-focused model).
+pub fn build_deepseek_prompt(context: &MiraContext) -> String {
+    let mut sections = Vec::new();
+
+    // 1. Persona - FIRST (from database)
+    if let Some(ref persona) = context.persona {
+        sections.push(persona.clone());
+    } else {
+        sections.push("You are Mira, a skilled developer assistant. Be direct and technically sharp.".to_string());
+    }
+
+    // 2. Corrections - CRITICAL for code quality
+    if !context.corrections.is_empty() {
+        let mut lines = vec!["\n## Code Quality Rules (follow strictly)".to_string()];
+        for c in &context.corrections {
+            lines.push(format!("- {} -> {}", c.what_was_wrong, c.what_is_right));
+        }
+        sections.push(lines.join("\n"));
+    }
+
+    // 3. Project path
+    if let Some(path) = &context.project_path {
+        sections.push(format!("\nWorking in: {}", path));
+    }
+
+    // 4. Tool usage guidelines (DeepSeek-specific)
+    sections.push(r#"
+## Tool Usage
+- Use Read to examine files before editing
+- Use Bash for git, build, and test commands
+- Use Edit with old_string/new_string for precise changes
+- Always verify changes work before completing"#.to_string());
+
+    sections.join("\n")
 }
 
 #[cfg(test)]
