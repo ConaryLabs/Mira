@@ -91,7 +91,7 @@ impl SpendTracker {
     /// Check for warning thresholds and return any new warnings
     pub fn check_warnings(&self) -> Option<String> {
         let cents = self.total_cents();
-        let mut warnings = self.warnings_shown.lock().unwrap();
+        let mut warnings = self.warnings_shown.lock().expect("warnings_shown mutex poisoned");
 
         for (i, &threshold) in self.warn_thresholds.iter().enumerate() {
             if cents >= threshold && !warnings[i] {

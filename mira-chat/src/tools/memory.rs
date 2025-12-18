@@ -41,7 +41,7 @@ impl<'a> MemoryTools<'a> {
 
         // Store in SQLite if available
         if let Some(db) = self.db {
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 r#"
                 INSERT INTO memory_facts (id, fact_type, key, value, category, source, confidence, times_used, created_at, updated_at)
                 VALUES ($1, $2, $3, $4, $5, 'mira-chat', 1.0, 0, $6, $6)
@@ -59,7 +59,9 @@ impl<'a> MemoryTools<'a> {
             .bind(category)
             .bind(now)
             .execute(db)
-            .await;
+            .await {
+                tracing::warn!("Failed to store memory in SQLite: {}", e);
+            }
         }
 
         // Store in Qdrant for semantic search

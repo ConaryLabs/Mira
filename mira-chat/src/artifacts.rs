@@ -17,12 +17,15 @@ use uuid::Uuid;
 pub const INLINE_MAX_BYTES: usize = 2048;
 pub const ARTIFACT_THRESHOLD_BYTES: usize = 4096;
 
+/// Max artifact size (10MB) - prevents unbounded storage/allocation
+pub const MAX_ARTIFACT_SIZE: usize = 10 * 1024 * 1024;
+
 /// TTL defaults (seconds)
 pub const TTL_TOOL_OUTPUT: i64 = 7 * 24 * 60 * 60;  // 7 days
 pub const TTL_DIFF: i64 = 30 * 24 * 60 * 60;        // 30 days
 pub const TTL_SECRET: i64 = 24 * 60 * 60;           // 24 hours
 
-/// Excerpt sizes for head+tail preview
+/// Excerpt sizes for head+tail preview (chars, not bytes)
 const EXCERPT_HEAD: usize = 1200;
 const EXCERPT_TAIL: usize = 800;
 
@@ -120,6 +123,15 @@ impl ArtifactStore {
         contains_secrets: bool,
         secret_reason: Option<&str>,
     ) -> Result<String> {
+        // Enforce max size to prevent unbounded storage
+        if content.len() > MAX_ARTIFACT_SIZE {
+            anyhow::bail!(
+                "Artifact too large: {} bytes (max {})",
+                content.len(),
+                MAX_ARTIFACT_SIZE
+            );
+        }
+
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
 
@@ -192,11 +204,8 @@ impl ArtifactStore {
         Ok(id)
     }
 
-    /// Fetch a slice of an artifact
-    pub async fn fetch(&self, artifact_id: &str, offset: usize, limit: usize) -> Result<Option<FetchResult>> {
-        // Cap limit to 16KB
-        let limit = limit.min(16384);
-
+    /// Load artifact data (shared by fetch/search)
+    async fn load_artifact_data(&self, artifact_id: &str) -> Result<Option<ArtifactData>> {
         let row: Option<(Vec<u8>, i64, i32)> = sqlx::query_as(
             "SELECT data, uncompressed_bytes, contains_secrets FROM artifacts WHERE id = $1",
         )
@@ -208,34 +217,43 @@ impl ArtifactStore {
             return Ok(None);
         };
 
+        Ok(Some(ArtifactData {
+            text: String::from_utf8_lossy(&data).into_owned(),
+            total_bytes: total_bytes as usize,
+            contains_secrets: contains_secrets != 0,
+        }))
+    }
+
+    /// Fetch a slice of an artifact
+    pub async fn fetch(&self, artifact_id: &str, offset: usize, limit: usize) -> Result<Option<FetchResult>> {
+        // Cap limit to 16KB
+        let limit = limit.min(16384);
+
+        let Some(artifact) = self.load_artifact_data(artifact_id).await? else {
+            return Ok(None);
+        };
+
         // Check secrets
-        if contains_secrets != 0 {
-            // For now, refuse to fetch secret artifacts
+        if artifact.contains_secrets {
             return Ok(Some(FetchResult {
                 artifact_id: artifact_id.to_string(),
                 offset,
                 limit,
-                total_bytes: total_bytes as usize,
+                total_bytes: artifact.total_bytes,
                 content: "[REDACTED: artifact contains potential secrets]".to_string(),
                 truncated: false,
             }));
         }
 
-        // Convert to string (assuming UTF-8, no compression)
-        let text = String::from_utf8_lossy(&data);
-
-        // Extract slice using chars to handle UTF-8 properly
-        let chars: Vec<char> = text.chars().collect();
-        let start = offset.min(chars.len());
-        let end = (start + limit).min(chars.len());
-        let content: String = chars[start..end].iter().collect();
-        let truncated = end < chars.len();
+        // UTF-8 safe slice using byte boundaries
+        let (content, actual_start, actual_end) = safe_utf8_slice(&artifact.text, offset, limit);
+        let truncated = actual_end < artifact.text.len();
 
         Ok(Some(FetchResult {
             artifact_id: artifact_id.to_string(),
-            offset: start,
-            limit: end - start,
-            total_bytes: total_bytes as usize,
+            offset: actual_start,
+            limit: actual_end - actual_start,
+            total_bytes: artifact.total_bytes,
             content,
             truncated,
         }))
@@ -253,30 +271,22 @@ impl ArtifactStore {
         let max_results = max_results.min(20);
         let context_bytes = context_bytes.min(500);
 
-        let row: Option<(Vec<u8>, i64, i32)> = sqlx::query_as(
-            "SELECT data, uncompressed_bytes, contains_secrets FROM artifacts WHERE id = $1",
-        )
-        .bind(artifact_id)
-        .fetch_optional(&self.db)
-        .await?;
-
-        let Some((data, total_bytes, contains_secrets)) = row else {
+        let Some(artifact) = self.load_artifact_data(artifact_id).await? else {
             return Ok(None);
         };
 
-        if contains_secrets != 0 {
+        if artifact.contains_secrets {
             return Ok(Some(SearchResult {
                 artifact_id: artifact_id.to_string(),
                 query: query.to_string(),
-                total_bytes: total_bytes as usize,
+                total_bytes: artifact.total_bytes,
                 matches: vec![],
                 note: Some("Cannot search artifact containing secrets".to_string()),
             }));
         }
 
-        let text = String::from_utf8_lossy(&data);
         let query_lower = query.to_lowercase();
-        let text_lower = text.to_lowercase();
+        let text_lower = artifact.text.to_lowercase();
 
         let mut matches = Vec::new();
         let mut search_start = 0;
@@ -285,15 +295,11 @@ impl ArtifactStore {
             if let Some(pos) = text_lower[search_start..].find(&query_lower) {
                 let absolute_pos = search_start + pos;
 
-                // Get context around match
+                // Get context around match using byte-safe slicing
                 let context_start = absolute_pos.saturating_sub(context_bytes / 2);
-                let context_end = (absolute_pos + query.len() + context_bytes / 2).min(text.len());
+                let context_end = (absolute_pos + query.len() + context_bytes / 2).min(artifact.text.len());
 
-                // Safe char slicing
-                let chars: Vec<char> = text.chars().collect();
-                let char_start = text[..context_start].chars().count();
-                let char_end = text[..context_end].chars().count().min(chars.len());
-                let preview: String = chars[char_start..char_end].iter().collect();
+                let (preview, _, _) = safe_utf8_slice(&artifact.text, context_start, context_end - context_start);
 
                 matches.push(SearchMatch {
                     match_index: matches.len() + 1,
@@ -312,7 +318,7 @@ impl ArtifactStore {
         Ok(Some(SearchResult {
             artifact_id: artifact_id.to_string(),
             query: query.to_string(),
-            total_bytes: total_bytes as usize,
+            total_bytes: artifact.total_bytes,
             matches,
             note: None,
         }))
@@ -451,6 +457,13 @@ pub struct ArtifactStats {
     pub total_bytes: u64,
 }
 
+/// Loaded artifact data (internal)
+struct ArtifactData {
+    text: String,
+    total_bytes: usize,
+    contains_secrets: bool,
+}
+
 /// Result of fetch_artifact
 #[derive(Debug, serde::Serialize)]
 pub struct FetchResult {
@@ -480,6 +493,32 @@ pub struct SearchMatch {
     pub preview: String,
     pub suggest_fetch_offset: usize,
     pub suggest_fetch_limit: usize,
+}
+
+/// UTF-8 safe byte slicing - finds valid char boundaries
+/// Returns (slice, actual_start, actual_end) where boundaries are adjusted to valid UTF-8
+fn safe_utf8_slice(text: &str, start: usize, limit: usize) -> (String, usize, usize) {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+
+    if start >= len {
+        return (String::new(), len, len);
+    }
+
+    // Find valid start boundary (move forward to char boundary)
+    let mut actual_start = start.min(len);
+    while actual_start < len && !text.is_char_boundary(actual_start) {
+        actual_start += 1;
+    }
+
+    // Find valid end boundary (move backward to char boundary)
+    let mut actual_end = (actual_start + limit).min(len);
+    while actual_end > actual_start && !text.is_char_boundary(actual_end) {
+        actual_end -= 1;
+    }
+
+    let content = text[actual_start..actual_end].to_string();
+    (content, actual_start, actual_end)
 }
 
 /// Detect potential secrets in content

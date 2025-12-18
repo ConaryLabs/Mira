@@ -772,7 +772,7 @@ async fn process_chat(
 
             client
                 .continue_with_tool_results_stream(
-                    response_id.as_ref().unwrap(),
+                    response_id.as_ref().expect("response_id must be set after first iteration"),
                     tool_results,
                     &system_prompt,
                     CONTINUATION_EFFORT,
