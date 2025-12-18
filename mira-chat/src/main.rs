@@ -228,7 +228,9 @@ async fn main() -> Result<()> {
 
     // Run server or REPL based on --serve flag
     if args.serve {
-        server::run(args.port, api_key, db, semantic, reasoning_effort).await
+        // Get sync token from env (optional auth for /api/chat/sync)
+        let sync_token = std::env::var("MIRA_SYNC_TOKEN").ok();
+        server::run(args.port, api_key, db, semantic, reasoning_effort, sync_token).await
     } else {
         repl::run_with_context(api_key, context, db, semantic, session).await
     }
