@@ -93,9 +93,9 @@ impl ArtifactStore {
         let should_artifact = total_bytes > ARTIFACT_THRESHOLD_BYTES
             && ARTIFACT_TOOLS.iter().any(|t| tool_name.contains(t));
 
-        // Create preview (head + tail for large outputs)
+        // Create smart preview based on tool type
         let preview = if should_artifact || total_bytes > INLINE_MAX_BYTES {
-            create_excerpt(output, EXCERPT_HEAD, EXCERPT_TAIL)
+            create_smart_excerpt(tool_name, output)
         } else {
             output.to_string()
         };
@@ -404,6 +404,111 @@ fn create_excerpt(content: &str, head_chars: usize, tail_chars: usize) -> String
     )
 }
 
+/// Create smart excerpt for grep output - show top N matches with context
+pub fn create_grep_excerpt(content: &str, max_matches: usize) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+
+    if total_lines <= max_matches * 2 {
+        return content.to_string();
+    }
+
+    // Take first N matches (grep output is typically file:line:content or just matches)
+    let preview_lines: Vec<&str> = lines.iter().take(max_matches).copied().collect();
+    let remaining = total_lines - max_matches;
+
+    format!(
+        "{}\n\n…[{} more matches, use search_artifact to find specific content]…",
+        preview_lines.join("\n"),
+        remaining
+    )
+}
+
+/// Create smart excerpt for git diff - show file headers + first hunk per file
+pub fn create_diff_excerpt(content: &str, max_files: usize) -> String {
+    let mut result = String::new();
+    let mut files_shown = 0;
+    let mut in_hunk = false;
+    let mut hunk_lines = 0;
+    let mut current_file_has_hunk = false;
+    let mut total_files = 0;
+
+    // Count total files first
+    for line in content.lines() {
+        if line.starts_with("diff --git") {
+            total_files += 1;
+        }
+    }
+
+    for line in content.lines() {
+        // New file header
+        if line.starts_with("diff --git") {
+            if files_shown >= max_files {
+                break;
+            }
+            files_shown += 1;
+            in_hunk = false;
+            hunk_lines = 0;
+            current_file_has_hunk = false;
+            if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // File metadata (index, ---, +++)
+        if line.starts_with("index ") || line.starts_with("--- ") || line.starts_with("+++ ") {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // Hunk header
+        if line.starts_with("@@") {
+            if current_file_has_hunk {
+                // Skip subsequent hunks, just note them
+                continue;
+            }
+            in_hunk = true;
+            current_file_has_hunk = true;
+            hunk_lines = 0;
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // Hunk content - show first 15 lines of first hunk
+        if in_hunk && hunk_lines < 15 {
+            result.push_str(line);
+            result.push('\n');
+            hunk_lines += 1;
+            if hunk_lines == 15 {
+                result.push_str("  …[hunk truncated]…\n");
+            }
+        }
+    }
+
+    if total_files > max_files {
+        result.push_str(&format!(
+            "\n…[{} more files changed, use fetch_artifact for full diff]…",
+            total_files - max_files
+        ));
+    }
+
+    result
+}
+
+/// Create smart excerpt based on tool type
+pub fn create_smart_excerpt(tool_name: &str, content: &str) -> String {
+    match tool_name {
+        "grep" => create_grep_excerpt(content, 20),
+        "git_diff" => create_diff_excerpt(content, 5),
+        _ => create_excerpt(content, EXCERPT_HEAD, EXCERPT_TAIL),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,5 +531,54 @@ mod tests {
         assert!(excerpt.contains("truncated"));
         assert!(excerpt.starts_with(&"a".repeat(100)));
         assert!(excerpt.ends_with(&"a".repeat(50)));
+    }
+
+    #[test]
+    fn test_grep_excerpt() {
+        let grep_output = (1..=50).map(|i| format!("file.rs:{}:match {}", i, i)).collect::<Vec<_>>().join("\n");
+        let excerpt = create_grep_excerpt(&grep_output, 10);
+        assert!(excerpt.contains("file.rs:1:match 1"));
+        assert!(excerpt.contains("file.rs:10:match 10"));
+        assert!(!excerpt.contains("file.rs:11:match 11"));
+        assert!(excerpt.contains("40 more matches"));
+    }
+
+    #[test]
+    fn test_diff_excerpt() {
+        let diff = r#"diff --git a/foo.rs b/foo.rs
+index abc123..def456 100644
+--- a/foo.rs
++++ b/foo.rs
+@@ -1,5 +1,6 @@
+ fn main() {
++    println!("hello");
+ }
+@@ -10,3 +11,3 @@
+ fn other() {}
+diff --git a/bar.rs b/bar.rs
+index 111..222 100644
+--- a/bar.rs
++++ b/bar.rs
+@@ -1,2 +1,3 @@
++// new comment
+ fn bar() {}
+"#;
+        let excerpt = create_diff_excerpt(diff, 1);
+        assert!(excerpt.contains("diff --git a/foo.rs"));
+        assert!(excerpt.contains("println!"));
+        assert!(!excerpt.contains("diff --git a/bar.rs"));
+        assert!(excerpt.contains("1 more files changed"));
+    }
+
+    #[test]
+    fn test_smart_excerpt_routing() {
+        // Short content returns as-is
+        let short = "short";
+        assert_eq!(create_smart_excerpt("grep", short), short);
+
+        // Long grep uses grep-specific
+        let long_grep = (1..=100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let excerpt = create_smart_excerpt("grep", &long_grep);
+        assert!(excerpt.contains("more matches"));
     }
 }
