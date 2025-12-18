@@ -42,13 +42,14 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         }
     }
 
-    // Always gpt-5.2, effort based on task complexity
-    const MODEL: &str = "gpt-5.2";
+    // Model routing based on task complexity
     let effort = classify(input);
+    let model = effort.model();
     let effort_str = effort.effort_for_model();
-    println!("  {}", colors::reasoning(&format!("[{}]", effort_str)));
+    println!("  {}", colors::reasoning(&format!("[{} @ {}]", effort_str, model)));
 
-    // Tool continuations: no reasoning needed
+    // Tool continuations: use codex-mini with no reasoning for speed
+    const CONTINUATION_MODEL: &str = "codex-mini";
     const CONTINUATION_EFFORT: &str = "none";
 
     // Assemble system prompt.
@@ -105,7 +106,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
             &system_prompt,
             current_response_id.as_deref(),
             effort_str,
-            MODEL,
+            model,
             &tools,
         )
         .await
@@ -210,7 +211,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
             eprintln!("  {}", colors::warning("[max iterations reached, finalizing...]"));
         }
 
-        // Continue with tool results - same model, low reasoning
+        // Continue with tool results - codex-mini for speed, no reasoning
         rx = match config
             .client
             .continue_with_tool_results_stream(
@@ -218,7 +219,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
                 tool_results,
                 &system_prompt,
                 CONTINUATION_EFFORT,
-                MODEL,
+                CONTINUATION_MODEL,
                 &tools,
             )
             .await
@@ -251,20 +252,43 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     // Post-processing: per-turn summarization and compaction
     post_process(config.client, config.session, &current_response_id, input, &full_response_text).await;
 
-    // SMOOTH RESET: If input tokens exceeded threshold, prepare handoff for next turn
-    // This prevents runaway token accumulation while preserving continuity
-    const AUTO_RESET_THRESHOLD: u32 = 100_000;
-    if total_usage.input_tokens > AUTO_RESET_THRESHOLD {
+    // SMOOTH RESET: Smart chain reset based on tokens AND cache efficiency
+    // Only reset if: tokens > threshold AND cache% < minimum
+    // This prevents resetting when cache is working well (saving money)
+    use mira_core::{CHAIN_RESET_TOKEN_THRESHOLD, CHAIN_RESET_MIN_CACHE_PCT};
+
+    let cached = total_usage.cached_tokens();
+    let cache_pct = if total_usage.input_tokens > 0 {
+        (cached as u64 * 100 / total_usage.input_tokens as u64) as u32
+    } else {
+        100 // No input = effectively 100% cached
+    };
+
+    let should_reset = total_usage.input_tokens > CHAIN_RESET_TOKEN_THRESHOLD
+        && cache_pct < CHAIN_RESET_MIN_CACHE_PCT;
+
+    if should_reset {
         if let Some(session) = config.session {
             // Don't announce loudly - just log it. User will see "[context refreshed]" next turn.
             tracing::info!(
-                "Preparing smooth reset: {} tokens exceeded {}k limit",
-                total_usage.input_tokens, AUTO_RESET_THRESHOLD / 1000
+                "Preparing smooth reset: {}k tokens with {}% cache (threshold: {}k, min cache: {}%)",
+                total_usage.input_tokens / 1000,
+                cache_pct,
+                CHAIN_RESET_TOKEN_THRESHOLD / 1000,
+                CHAIN_RESET_MIN_CACHE_PCT
             );
             if let Err(e) = session.clear_response_id_with_handoff().await {
                 tracing::warn!("Failed to prepare handoff: {}", e);
             }
         }
+    } else if total_usage.input_tokens > CHAIN_RESET_TOKEN_THRESHOLD {
+        // Above threshold but cache is good - log but don't reset
+        tracing::debug!(
+            "Skipping reset: {}k tokens but {}% cached (above {}% threshold)",
+            total_usage.input_tokens / 1000,
+            cache_pct,
+            CHAIN_RESET_MIN_CACHE_PCT
+        );
     }
 
     // Show total usage stats

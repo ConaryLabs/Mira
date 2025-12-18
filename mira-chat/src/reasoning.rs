@@ -28,12 +28,23 @@ impl ReasoningEffort {
         }
     }
 
-    /// Map effort for 5.2 - cap at high, low minimum
+    /// Map effort for model - cap at high, low minimum
     pub fn effort_for_model(&self) -> &'static str {
         match self {
             Self::None => "low",
             Self::XHigh => "high",
             _ => self.as_str(),
+        }
+    }
+
+    /// Get the appropriate model for this complexity level
+    ///
+    /// Simple tasks (None, Low) use codex-mini for speed and cost.
+    /// Complex tasks (Medium+) use gpt-5.2 for deeper reasoning.
+    pub fn model(&self) -> &'static str {
+        match self {
+            Self::None | Self::Low => "codex-mini",
+            Self::Medium | Self::High | Self::XHigh => "gpt-5.2",
         }
     }
 }
@@ -131,5 +142,17 @@ mod tests {
     fn test_classify_none() {
         assert_eq!(classify("read src/main.rs"), ReasoningEffort::None);
         assert_eq!(classify("git status"), ReasoningEffort::None);
+    }
+
+    #[test]
+    fn test_model_routing() {
+        // Simple tasks use codex-mini
+        assert_eq!(ReasoningEffort::None.model(), "codex-mini");
+        assert_eq!(ReasoningEffort::Low.model(), "codex-mini");
+
+        // Complex tasks use gpt-5.2
+        assert_eq!(ReasoningEffort::Medium.model(), "gpt-5.2");
+        assert_eq!(ReasoningEffort::High.model(), "gpt-5.2");
+        assert_eq!(ReasoningEffort::XHigh.model(), "gpt-5.2");
     }
 }
