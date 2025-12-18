@@ -56,8 +56,22 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     // full assembled context blob (summaries/semantic/code index/recent msgs).
     // We rely on server-side continuity via previous_response_id.
     // Keep only persona + guidelines + small Mira context.
-    let system_prompt = build_system_prompt(config.context);
+    let base_prompt = build_system_prompt(config.context);
 
+    // Check for handoff context (after a smooth reset)
+    let handoff = if let Some(session) = config.session {
+        session.consume_handoff().await.unwrap_or(None)
+    } else {
+        None
+    };
+
+    // If we have a handoff, append it to the system prompt for this turn only
+    let system_prompt = if let Some(ref handoff_blob) = handoff {
+        println!("  {}", colors::status("[context refreshed]"));
+        format!("{}\n\n{}", base_prompt, handoff_blob)
+    } else {
+        base_prompt
+    };
 
     let tools = get_tools();
 
@@ -70,6 +84,7 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     };
 
     // Get previous response ID for continuity (persists across turns)
+    // Note: if handoff was consumed, response_id should be None (we're starting fresh)
     let mut current_response_id: Option<String> = if let Some(session) = config.session {
         session.get_response_id().await.unwrap_or(None)
     } else {
@@ -230,17 +245,18 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     // Post-processing: per-turn summarization and compaction
     post_process(config.client, config.session, &current_response_id, input, &full_response_text).await;
 
-    // AUTO-RESET: If input tokens exceeded threshold, reset server-side conversation
-    // This prevents runaway token accumulation from previous_response_id continuity
+    // SMOOTH RESET: If input tokens exceeded threshold, prepare handoff for next turn
+    // This prevents runaway token accumulation while preserving continuity
     const AUTO_RESET_THRESHOLD: u32 = 100_000;
     if total_usage.input_tokens > AUTO_RESET_THRESHOLD {
         if let Some(session) = config.session {
-            println!("  {}", colors::warning(&format!(
-                "[resetting conversation - {} tokens exceeded {}k limit]",
+            // Don't announce loudly - just log it. User will see "[context refreshed]" next turn.
+            tracing::info!(
+                "Preparing smooth reset: {} tokens exceeded {}k limit",
                 total_usage.input_tokens, AUTO_RESET_THRESHOLD / 1000
-            )));
-            if let Err(e) = session.clear_response_id().await {
-                tracing::warn!("Failed to clear response ID: {}", e);
+            );
+            if let Err(e) = session.clear_response_id_with_handoff().await {
+                tracing::warn!("Failed to prepare handoff: {}", e);
             }
         }
     }
