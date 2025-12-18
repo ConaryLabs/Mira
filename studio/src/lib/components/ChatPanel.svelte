@@ -25,8 +25,8 @@
   let mobileSidebarOpen = $state(false);
   let isMobile = $state(false);
 
-  // Streaming message
-  let streamingMessage = $state<{ id: string; blocks: MessageBlock[] } | null>(null);
+  // Streaming message (includes usage for live display)
+  let streamingMessage = $state<{ id: string; blocks: MessageBlock[]; usage?: import('$lib/api/client').UsageInfo } | null>(null);
 
   // Reference to terminal view for scrolling
   let terminalView: { scrollToBottom: () => void };
@@ -126,16 +126,17 @@
 
       for await (const event of streamChatEvents(request)) {
         handleEvent(event);
-        streamingMessage = { id: messageId, blocks: [...builder.blocks] };
+        streamingMessage = { id: messageId, blocks: [...builder.blocks], usage: builder.usage };
         setTimeout(() => terminalView?.scrollToBottom(), 0);
       }
 
-      // Move streaming message to permanent messages
+      // Move streaming message to permanent messages (including usage)
       const finalMessage: Message = {
         id: messageId,
         role: 'assistant',
         blocks: builder.blocks,
         created_at: Date.now() / 1000,
+        usage: builder.usage,
       };
       messages = [...messages, finalMessage];
       streamingMessage = null;
