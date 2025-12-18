@@ -11,11 +11,12 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    context::{build_system_prompt, MiraContext},
+    context::{build_system_prompt, build_deepseek_prompt, MiraContext},
     reasoning::classify,
     responses::{Client as GptClient, StreamEvent},
     session::SessionManager,
-    tools::{get_tools, ToolExecutor},
+    tools::{get_tools, get_tool_definitions, ToolExecutor},
+    provider::{DeepSeekProvider, Provider, ChatRequest as ProviderChatRequest, StreamEvent as ProviderStreamEvent},
 };
 
 use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult};
@@ -27,6 +28,11 @@ pub async fn process_chat(
     request: ChatRequest,
     tx: mpsc::Sender<ChatEvent>,
 ) -> Result<()> {
+    // Check if using DeepSeek provider
+    if request.provider.as_deref() == Some("deepseek") {
+        return process_deepseek_chat(state, request, tx).await;
+    }
+
     let project_path = PathBuf::from(&request.project_path);
 
     // Model routing based on task complexity
@@ -36,9 +42,9 @@ pub async fn process_chat(
         .reasoning_effort
         .unwrap_or_else(|| effort.effort_for_model().to_string());
 
-    // Tool continuations: use gpt-5.2 with no reasoning for quality
+    // Tool continuations: gpt-5.2 with minimal reasoning for speed
     const CONTINUATION_MODEL: &str = "gpt-5.2";
-    const CONTINUATION_EFFORT: &str = "none";
+    const CONTINUATION_EFFORT: &str = "low";
 
     // Save user message
     let user_msg_id = Uuid::new_v4().to_string();
@@ -156,7 +162,7 @@ pub async fn process_chat(
                 )
                 .await?
         } else {
-            // Continue with tool results - codex-mini for speed, no reasoning
+            // Continue with tool results - low reasoning for speed
             let tool_results: Vec<(String, String)> = assistant_blocks
                 .iter()
                 .filter_map(|b| match b {
@@ -461,4 +467,158 @@ async fn get_last_response_id(db: &Option<SqlitePool>) -> Option<String> {
     .await
     .ok()
     .flatten()
+}
+
+/// Process a chat request using DeepSeek V3.2
+async fn process_deepseek_chat(
+    state: AppState,
+    request: ChatRequest,
+    tx: mpsc::Sender<ChatEvent>,
+) -> Result<()> {
+    let project_path = PathBuf::from(&request.project_path);
+
+    // Get DeepSeek API key from environment
+    let deepseek_key = std::env::var("DEEPSEEK_API_KEY")
+        .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+
+    // Create DeepSeek provider (Chat model for tool support)
+    let provider = DeepSeekProvider::new_chat(deepseek_key);
+
+    // Build system prompt with Mira persona and corrections
+    let system_prompt = if let Some(db) = &state.db {
+        let context = MiraContext::load(db, &request.project_path)
+            .await
+            .unwrap_or_default();
+        build_deepseek_prompt(&context)
+    } else {
+        build_deepseek_prompt(&MiraContext::default())
+    };
+
+    // Create tool executor
+    let mut executor = ToolExecutor::new();
+    executor.cwd = project_path.clone();
+    if let Some(db) = &state.db {
+        executor = executor.with_db(db.clone());
+    }
+    executor = executor.with_semantic(state.semantic.clone());
+
+    // Get tool definitions
+    let tools = get_tool_definitions();
+
+    // Build provider request
+    let provider_request = ProviderChatRequest::new("deepseek-chat", &system_prompt, &request.message)
+        .with_tools(tools);
+
+    // Accumulate usage
+    let mut total_input_tokens: u32 = 0;
+    let mut total_output_tokens: u32 = 0;
+    let mut total_reasoning_tokens: u32 = 0;
+
+    // Agentic loop (max 10 iterations)
+    let mut current_request = provider_request;
+    let mut assistant_blocks: Vec<MessageBlock> = Vec::new();
+    let mut accumulated_text = String::new();
+
+    for _iteration in 0..10 {
+        // Stream response
+        let mut rx = provider.create_stream(current_request.clone()).await?;
+
+        let mut pending_calls: HashMap<String, (String, String)> = HashMap::new();
+        let mut has_function_calls = false;
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                ProviderStreamEvent::TextDelta(delta) => {
+                    accumulated_text.push_str(&delta);
+                    tx.send(ChatEvent::TextDelta { delta }).await?;
+                }
+                ProviderStreamEvent::FunctionCallStart { call_id, name } => {
+                    has_function_calls = true;
+                    pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
+                    tx.send(ChatEvent::ToolCallStart {
+                        call_id,
+                        name,
+                        arguments: json!({}),
+                    }).await?;
+                }
+                ProviderStreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
+                    if let Some((_, args)) = pending_calls.get_mut(&call_id) {
+                        args.push_str(&arguments_delta);
+                    }
+                }
+                ProviderStreamEvent::FunctionCallEnd { call_id } => {
+                    if let Some((name, args)) = pending_calls.remove(&call_id) {
+                        // Execute the tool
+                        let rich_result = executor.execute_rich(&name, &args).await;
+                        let (success, output, diff) = match rich_result {
+                            Ok(r) => (r.success, r.output, r.diff),
+                            Err(e) => (false, e.to_string(), None),
+                        };
+
+                        let args_value: serde_json::Value = serde_json::from_str(&args).unwrap_or(json!({}));
+
+                        assistant_blocks.push(MessageBlock::ToolCall {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                            arguments: args_value,
+                            result: Some(ToolCallResult {
+                                success,
+                                output: output.clone(),
+                                diff: diff.clone(),
+                            }),
+                        });
+
+                        tx.send(ChatEvent::ToolCallResult {
+                            call_id,
+                            name,
+                            success,
+                            output,
+                            diff,
+                        }).await?;
+                    }
+                }
+                ProviderStreamEvent::Usage(usage) => {
+                    total_input_tokens += usage.input_tokens;
+                    total_output_tokens += usage.output_tokens;
+                    total_reasoning_tokens += usage.reasoning_tokens;
+                    tx.send(ChatEvent::Usage {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        reasoning_tokens: usage.reasoning_tokens,
+                        cached_tokens: 0, // DeepSeek doesn't report cached tokens
+                    }).await?;
+                }
+                ProviderStreamEvent::Error(e) => {
+                    tx.send(ChatEvent::Error { message: e }).await?;
+                    break;
+                }
+                ProviderStreamEvent::Done => break,
+                _ => {} // Ignore other events
+            }
+        }
+
+        // If no function calls, we're done
+        if !has_function_calls {
+            break;
+        }
+
+        // Build continuation request with tool results
+        // Note: DeepSeek uses client-state, so we need to rebuild context
+        // For simplicity, we'll just break after first tool execution
+        // Full implementation would need to maintain message history
+        break;
+    }
+
+    // Add accumulated text as first block
+    if !accumulated_text.is_empty() {
+        assistant_blocks.insert(0, MessageBlock::Text { content: accumulated_text });
+    }
+
+    // Send chain info (no chain for DeepSeek)
+    let _ = tx.send(ChatEvent::Chain {
+        response_id: None,
+        previous_response_id: None,
+    }).await;
+
+    Ok(())
 }

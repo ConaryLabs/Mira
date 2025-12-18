@@ -12,8 +12,10 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod conductor;
 mod config;
 mod context;
+mod provider;
 mod reasoning;
 mod repl;
 mod responses;
@@ -52,6 +54,10 @@ struct Args {
     /// OpenAI API key
     #[arg(long, env = "OPENAI_API_KEY")]
     openai_api_key: Option<String>,
+
+    /// DeepSeek API key
+    #[arg(long, env = "DEEPSEEK_API_KEY")]
+    deepseek_api_key: Option<String>,
 
     /// Gemini API key for embeddings
     #[arg(long, env = "GEMINI_API_KEY")]
@@ -108,6 +114,9 @@ async fn main() -> Result<()> {
     let gemini_key = args.gemini_api_key
         .or(config.gemini_api_key);
 
+    let deepseek_key = args.deepseek_api_key
+        .or(config.deepseek_api_key);
+
     // Determine project path - resolve to absolute path for database lookup
     let project_path = args.project
         .or(config.project)
@@ -128,6 +137,9 @@ async fn main() -> Result<()> {
     println!("{}", repl::colors::separator(50));
     println!("{}Model{}       GPT-5.2 Thinking", DIM, RESET);
     println!("{}Reasoning{}   {}", DIM, RESET, reasoning_effort);
+    println!("{}DeepSeek{}    {}", DIM, RESET,
+        if deepseek_key.is_some() { format!("{}available{}", GREEN, RESET) }
+        else { format!("{}not configured{}", YELLOW, RESET) });
     println!("{}Project{}     {}", DIM, RESET, project_path);
 
     // Connect to database

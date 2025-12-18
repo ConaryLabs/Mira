@@ -39,11 +39,8 @@ impl ReasoningEffort {
 
     /// Get the appropriate model for this complexity level
     ///
-    /// All personal interactions use gpt-5.2 for quality.
-    /// Tool continuations use codex-mini (handled separately in execution loop).
+    /// All interactions use gpt-5.2 with varying reasoning effort.
     pub fn model(&self) -> &'static str {
-        // Always gpt-5.2 for user-facing responses
-        // codex-mini is only used for tool result continuations
         "gpt-5.2"
     }
 }
@@ -145,8 +142,7 @@ mod tests {
 
     #[test]
     fn test_model_routing() {
-        // All personal interactions use gpt-5.2
-        // (codex-mini is only for tool continuations, not initial requests)
+        // All interactions use gpt-5.2 with varying reasoning effort
         assert_eq!(ReasoningEffort::None.model(), "gpt-5.2");
         assert_eq!(ReasoningEffort::Low.model(), "gpt-5.2");
         assert_eq!(ReasoningEffort::Medium.model(), "gpt-5.2");

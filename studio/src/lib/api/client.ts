@@ -45,6 +45,7 @@ export interface ChatRequest {
   message: string;
   project_path: string;
   reasoning_effort?: string;
+  provider?: 'gpt' | 'deepseek';
 }
 
 export interface StatusResponse {

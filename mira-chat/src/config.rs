@@ -11,6 +11,9 @@ pub struct Config {
     /// OpenAI API key
     pub openai_api_key: Option<String>,
 
+    /// DeepSeek API key
+    pub deepseek_api_key: Option<String>,
+
     /// Gemini API key for embeddings
     pub gemini_api_key: Option<String>,
 

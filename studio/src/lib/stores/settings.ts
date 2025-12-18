@@ -5,9 +5,11 @@ import { writable, get } from 'svelte/store';
 import { browser } from '$app/environment';
 
 export type ReasoningEffort = 'auto' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ModelProvider = 'gpt' | 'deepseek';
 
 export interface Settings {
   reasoningEffort: ReasoningEffort;
+  modelProvider: ModelProvider;
   projectPath: string;
   projectHistory: string[];
   sidebarCollapsed: boolean;
@@ -19,6 +21,7 @@ const MAX_PROJECT_HISTORY = 10;
 function getInitialSettings(): Settings {
   const defaults: Settings = {
     reasoningEffort: 'auto',
+    modelProvider: 'gpt',
     projectPath: '/home/peter/Mira',
     projectHistory: [],
     sidebarCollapsed: false,
@@ -60,6 +63,13 @@ function createSettingsStore() {
     setReasoningEffort: (effort: ReasoningEffort) => {
       update((s) => {
         const newSettings = { ...s, reasoningEffort: effort };
+        persist(newSettings);
+        return newSettings;
+      });
+    },
+    setModelProvider: (provider: ModelProvider) => {
+      update((s) => {
+        const newSettings = { ...s, modelProvider: provider };
         persist(newSettings);
         return newSettings;
       });
@@ -111,4 +121,9 @@ export const reasoningOptions: { value: ReasoningEffort; label: string; descript
   { value: 'medium', label: 'Medium', description: 'Standard development tasks' },
   { value: 'high', label: 'High', description: 'Complex problems and debugging' },
   { value: 'xhigh', label: 'X-High', description: 'Critical analysis and architecture' },
+];
+
+export const modelProviderOptions: { value: ModelProvider; label: string; description: string }[] = [
+  { value: 'gpt', label: 'GPT 5.2', description: 'Full capability with reasoning' },
+  { value: 'deepseek', label: 'DeepSeek V3.2', description: 'Cost effective with reasoning' },
 ];
