@@ -39,13 +39,12 @@ impl ReasoningEffort {
 
     /// Get the appropriate model for this complexity level
     ///
-    /// Simple tasks (None, Low) use codex-mini for speed and cost.
-    /// Complex tasks (Medium+) use gpt-5.2 for deeper reasoning.
+    /// All personal interactions use gpt-5.2 for quality.
+    /// Tool continuations use codex-mini (handled separately in execution loop).
     pub fn model(&self) -> &'static str {
-        match self {
-            Self::None | Self::Low => "codex-mini",
-            Self::Medium | Self::High | Self::XHigh => "gpt-5.2",
-        }
+        // Always gpt-5.2 for user-facing responses
+        // codex-mini is only used for tool result continuations
+        "gpt-5.2"
     }
 }
 
@@ -146,11 +145,10 @@ mod tests {
 
     #[test]
     fn test_model_routing() {
-        // Simple tasks use codex-mini
-        assert_eq!(ReasoningEffort::None.model(), "codex-mini");
-        assert_eq!(ReasoningEffort::Low.model(), "codex-mini");
-
-        // Complex tasks use gpt-5.2
+        // All personal interactions use gpt-5.2
+        // (codex-mini is only for tool continuations, not initial requests)
+        assert_eq!(ReasoningEffort::None.model(), "gpt-5.2");
+        assert_eq!(ReasoningEffort::Low.model(), "gpt-5.2");
         assert_eq!(ReasoningEffort::Medium.model(), "gpt-5.2");
         assert_eq!(ReasoningEffort::High.model(), "gpt-5.2");
         assert_eq!(ReasoningEffort::XHigh.model(), "gpt-5.2");

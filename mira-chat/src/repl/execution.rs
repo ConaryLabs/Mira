@@ -48,8 +48,8 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     let effort_str = effort.effort_for_model();
     println!("  {}", colors::reasoning(&format!("[{} @ {}]", effort_str, model)));
 
-    // Tool continuations: use codex-mini with no reasoning for speed
-    const CONTINUATION_MODEL: &str = "codex-mini";
+    // Tool continuations: use gpt-5.2 with no reasoning for quality
+    const CONTINUATION_MODEL: &str = "gpt-5.2";
     const CONTINUATION_EFFORT: &str = "none";
 
     // Assemble system prompt.

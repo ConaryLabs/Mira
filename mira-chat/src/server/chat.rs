@@ -36,8 +36,8 @@ pub async fn process_chat(
         .reasoning_effort
         .unwrap_or_else(|| effort.effort_for_model().to_string());
 
-    // Tool continuations: use codex-mini with no reasoning for speed
-    const CONTINUATION_MODEL: &str = "codex-mini";
+    // Tool continuations: use gpt-5.2 with no reasoning for quality
+    const CONTINUATION_MODEL: &str = "gpt-5.2";
     const CONTINUATION_EFFORT: &str = "none";
 
     // Save user message
