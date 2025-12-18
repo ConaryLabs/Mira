@@ -295,9 +295,9 @@ impl SessionManager {
                 if let Ok(blocks) = serde_json::from_str::<Vec<serde_json::Value>>(&blocks_json) {
                     for block in blocks {
                         if let Some(content) = block.get("content").and_then(|c| c.as_str()) {
-                            // Truncate long messages
-                            let text = if content.len() > 500 {
-                                format!("{}...", &content[..500])
+                            // Truncate long messages (use chars to avoid UTF-8 boundary panic)
+                            let text = if content.chars().count() > 500 {
+                                format!("{}...", content.chars().take(500).collect::<String>())
                             } else {
                                 content.to_string()
                             };
@@ -1102,8 +1102,9 @@ impl AssembledContext {
             } else {
                 "Assistant"
             };
-            let preview = if msg.content.len() > 500 {
-                format!("{}...", &msg.content[..500])
+            // Use chars to avoid UTF-8 boundary panic
+            let preview = if msg.content.chars().count() > 500 {
+                format!("{}...", msg.content.chars().take(500).collect::<String>())
             } else {
                 msg.content.clone()
             };

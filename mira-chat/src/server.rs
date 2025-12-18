@@ -414,7 +414,13 @@ async fn process_chat(
 
     // Check for handoff context (after a smooth reset)
     let handoff = if let Some(ref session) = session {
-        session.consume_handoff().await.unwrap_or(None)
+        match session.consume_handoff().await {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("Failed to consume handoff (continuity may be lost): {}", e);
+                None
+            }
+        }
     } else {
         None
     };
