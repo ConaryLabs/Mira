@@ -12,7 +12,7 @@ use serde::Deserialize;
 pub struct HotlineRequest {
     #[schemars(description = "Message to send to Mira")]
     pub message: String,
-    #[schemars(description = "Optional context about what you're working on")]
+    #[schemars(description = "Optional context")]
     pub context: Option<String>,
 }
 
@@ -26,7 +26,7 @@ pub struct RememberRequest {
     pub content: String,
     #[schemars(description = "Type: preference/decision/context/general")]
     pub fact_type: Option<String>,
-    #[schemars(description = "Category for filtering")]
+    #[schemars(description = "Category")]
     pub category: Option<String>,
     #[schemars(description = "Key for upsert")]
     pub key: Option<String>,
@@ -40,7 +40,7 @@ pub struct RecallRequest {
     pub fact_type: Option<String>,
     #[schemars(description = "Filter by category")]
     pub category: Option<String>,
-    #[schemars(description = "Max results (default: 10)")]
+    #[schemars(description = "Max results")]
     pub limit: Option<i64>,
 }
 
@@ -58,9 +58,9 @@ pub struct ForgetRequest {
 pub struct TaskRequest {
     #[schemars(description = "Action: create/list/get/update/complete/delete")]
     pub action: String,
-    #[schemars(description = "Task ID (for get/update/complete/delete)")]
+    #[schemars(description = "Task ID")]
     pub task_id: Option<String>,
-    #[schemars(description = "Title (for create/update)")]
+    #[schemars(description = "Title")]
     pub title: Option<String>,
     #[schemars(description = "Description")]
     pub description: Option<String>,
@@ -72,7 +72,7 @@ pub struct TaskRequest {
     pub parent_id: Option<String>,
     #[schemars(description = "Completion notes")]
     pub notes: Option<String>,
-    #[schemars(description = "Include completed (for list)")]
+    #[schemars(description = "Include completed")]
     pub include_completed: Option<bool>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
@@ -88,7 +88,7 @@ pub struct GoalRequest {
     pub action: String,
     #[schemars(description = "Goal ID")]
     pub goal_id: Option<String>,
-    #[schemars(description = "Milestone ID (for complete_milestone)")]
+    #[schemars(description = "Milestone ID")]
     pub milestone_id: Option<String>,
     #[schemars(description = "Title")]
     pub title: Option<String>,
@@ -118,7 +118,7 @@ pub struct GoalRequest {
 pub struct CorrectionRequest {
     #[schemars(description = "Action: record/get/validate/list")]
     pub action: String,
-    #[schemars(description = "Correction ID (for validate)")]
+    #[schemars(description = "Correction ID")]
     pub correction_id: Option<String>,
     #[schemars(description = "Type: style/approach/pattern/preference/anti_pattern")]
     pub correction_type: Option<String>,
@@ -130,11 +130,11 @@ pub struct CorrectionRequest {
     pub rationale: Option<String>,
     #[schemars(description = "Scope: global/project/file/topic")]
     pub scope: Option<String>,
-    #[schemars(description = "Keywords for matching")]
+    #[schemars(description = "Keywords")]
     pub keywords: Option<String>,
-    #[schemars(description = "File path (for get)")]
+    #[schemars(description = "File path")]
     pub file_path: Option<String>,
-    #[schemars(description = "Topic (for get)")]
+    #[schemars(description = "Topic")]
     pub topic: Option<String>,
     #[schemars(description = "Outcome: validated/overridden/deprecated")]
     pub outcome: Option<String>,
@@ -150,11 +150,11 @@ pub struct CorrectionRequest {
 pub struct DocumentRequest {
     #[schemars(description = "Action: list/search/get/ingest/delete")]
     pub action: String,
-    #[schemars(description = "Document ID (for get/delete)")]
+    #[schemars(description = "Document ID")]
     pub document_id: Option<String>,
-    #[schemars(description = "File path (for ingest)")]
+    #[schemars(description = "File path")]
     pub path: Option<String>,
-    #[schemars(description = "Document name (for ingest, defaults to filename)")]
+    #[schemars(description = "Document name")]
     pub name: Option<String>,
     #[schemars(description = "Search query")]
     pub query: Option<String>,
@@ -174,13 +174,13 @@ pub struct DocumentRequest {
 pub struct PermissionRequest {
     #[schemars(description = "Action: save/list/delete")]
     pub action: String,
-    #[schemars(description = "Rule ID (for delete)")]
+    #[schemars(description = "Rule ID")]
     pub rule_id: Option<String>,
-    #[schemars(description = "Tool name (e.g., Bash, Edit)")]
+    #[schemars(description = "Tool name")]
     pub tool_name: Option<String>,
-    #[schemars(description = "Field to match (e.g., command)")]
+    #[schemars(description = "Field to match")]
     pub input_field: Option<String>,
-    #[schemars(description = "Pattern to match")]
+    #[schemars(description = "Pattern")]
     pub input_pattern: Option<String>,
     #[schemars(description = "Match type: exact/prefix/glob")]
     pub match_type: Option<String>,
@@ -200,7 +200,7 @@ pub struct PermissionRequest {
 pub struct BuildRequest {
     #[schemars(description = "Action: record/record_error/get_errors/resolve")]
     pub action: String,
-    #[schemars(description = "Error ID (for resolve)")]
+    #[schemars(description = "Error ID")]
     pub error_id: Option<i64>,
     #[schemars(description = "Build command")]
     pub command: Option<String>,
@@ -210,7 +210,7 @@ pub struct BuildRequest {
     pub duration_ms: Option<i64>,
     #[schemars(description = "Error message")]
     pub message: Option<String>,
-    #[schemars(description = "Error category")]
+    #[schemars(description = "Category")]
     pub category: Option<String>,
     #[schemars(description = "Severity: error/warning")]
     pub severity: Option<String>,
@@ -234,7 +234,7 @@ pub struct BuildRequest {
 pub struct GetGuidelinesRequest {
     #[schemars(description = "Category: mira_usage/naming/style/architecture/testing")]
     pub category: Option<String>,
-    #[schemars(description = "Project path filter")]
+    #[schemars(description = "Project path")]
     pub project_path: Option<String>,
 }
 
@@ -244,9 +244,9 @@ pub struct AddGuidelineRequest {
     pub content: String,
     #[schemars(description = "Category")]
     pub category: String,
-    #[schemars(description = "Project path (global if omitted)")]
+    #[schemars(description = "Project path")]
     pub project_path: Option<String>,
-    #[schemars(description = "Priority (higher = more important)")]
+    #[schemars(description = "Priority")]
     pub priority: Option<i32>,
 }
 
@@ -258,7 +258,7 @@ pub struct AddGuidelineRequest {
 pub struct GetSymbolsRequest {
     #[schemars(description = "File path")]
     pub file_path: String,
-    #[schemars(description = "Type: function/class/struct/trait")]
+    #[schemars(description = "Symbol type")]
     pub symbol_type: Option<String>,
 }
 
@@ -266,7 +266,7 @@ pub struct GetSymbolsRequest {
 pub struct GetCallGraphRequest {
     #[schemars(description = "Symbol name")]
     pub symbol: String,
-    #[schemars(description = "Depth (default: 2)")]
+    #[schemars(description = "Depth")]
     pub depth: Option<i32>,
 }
 
@@ -274,7 +274,7 @@ pub struct GetCallGraphRequest {
 pub struct GetRelatedFilesRequest {
     #[schemars(description = "File path")]
     pub file_path: String,
-    #[schemars(description = "Type: imports/cochange/all")]
+    #[schemars(description = "Relation type")]
     pub relation_type: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
@@ -282,9 +282,9 @@ pub struct GetRelatedFilesRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SemanticCodeSearchRequest {
-    #[schemars(description = "Natural language query")]
+    #[schemars(description = "Query")]
     pub query: String,
-    #[schemars(description = "Language filter")]
+    #[schemars(description = "Language")]
     pub language: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
@@ -292,7 +292,7 @@ pub struct SemanticCodeSearchRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetCodebaseStyleRequest {
-    #[schemars(description = "Project path (defaults to active project)")]
+    #[schemars(description = "Project path")]
     pub project_path: Option<String>,
 }
 
@@ -304,9 +304,9 @@ pub struct GetCodebaseStyleRequest {
 pub struct GetRecentCommitsRequest {
     #[schemars(description = "Max commits")]
     pub limit: Option<i64>,
-    #[schemars(description = "Filter by file")]
+    #[schemars(description = "File path")]
     pub file_path: Option<String>,
-    #[schemars(description = "Filter by author")]
+    #[schemars(description = "Author")]
     pub author: Option<String>,
 }
 
@@ -330,9 +330,9 @@ pub struct FindCochangeRequest {
 pub struct FindSimilarFixesRequest {
     #[schemars(description = "Error message")]
     pub error: String,
-    #[schemars(description = "Category filter")]
+    #[schemars(description = "Category")]
     pub category: Option<String>,
-    #[schemars(description = "Language filter")]
+    #[schemars(description = "Language")]
     pub language: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
@@ -352,7 +352,7 @@ pub struct RecordErrorFixRequest {
     pub file_pattern: Option<String>,
     #[schemars(description = "Diff")]
     pub fix_diff: Option<String>,
-    #[schemars(description = "Commit hash")]
+    #[schemars(description = "Commit")]
     pub fix_commit: Option<String>,
 }
 
@@ -372,7 +372,7 @@ pub struct GetSessionContextRequest {
     pub include_goals: Option<bool>,
     #[schemars(description = "Include corrections")]
     pub include_corrections: Option<bool>,
-    #[schemars(description = "Max items per category")]
+    #[schemars(description = "Max items")]
     pub limit: Option<i64>,
 }
 
@@ -441,13 +441,13 @@ pub struct QueryRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetProactiveContextRequest {
-    #[schemars(description = "Files being worked on")]
+    #[schemars(description = "Files")]
     pub files: Option<Vec<String>>,
-    #[schemars(description = "Topics/keywords")]
+    #[schemars(description = "Topics")]
     pub topics: Option<Vec<String>>,
-    #[schemars(description = "Current error")]
+    #[schemars(description = "Error")]
     pub error: Option<String>,
-    #[schemars(description = "Current task")]
+    #[schemars(description = "Task")]
     pub task: Option<String>,
     #[schemars(description = "Max per category")]
     pub limit_per_category: Option<i32>,
@@ -475,7 +475,7 @@ pub struct RecordRejectedApproachRequest {
 pub struct SessionStartRequest {
     #[schemars(description = "Project root path")]
     pub project_path: String,
-    #[schemars(description = "Project name (auto-detected if omitted)")]
+    #[schemars(description = "Project name")]
     pub name: Option<String>,
 }
 
@@ -483,21 +483,21 @@ pub struct SessionStartRequest {
 pub struct SyncWorkStateRequest {
     #[schemars(description = "Context type: active_todos/current_file/active_goal")]
     pub context_type: String,
-    #[schemars(description = "Context key (e.g., session ID)")]
+    #[schemars(description = "Context key")]
     pub context_key: String,
     #[schemars(description = "Context value (JSON)")]
     pub context_value: serde_json::Value,
-    #[schemars(description = "Time-to-live in hours (default: 24)")]
+    #[schemars(description = "TTL in hours")]
     pub ttl_hours: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetWorkStateRequest {
-    #[schemars(description = "Context type filter")]
+    #[schemars(description = "Context type")]
     pub context_type: Option<String>,
-    #[schemars(description = "Context key filter")]
+    #[schemars(description = "Context key")]
     pub context_key: Option<String>,
-    #[schemars(description = "Include expired entries")]
+    #[schemars(description = "Include expired")]
     pub include_expired: Option<bool>,
 }
 
@@ -509,15 +509,15 @@ pub struct GetWorkStateRequest {
 pub struct IndexRequest {
     #[schemars(description = "Action: project/file/status")]
     pub action: String,
-    #[schemars(description = "Project or file path")]
+    #[schemars(description = "Path")]
     pub path: Option<String>,
-    #[schemars(description = "Include git indexing (default: true)")]
+    #[schemars(description = "Include git")]
     pub include_git: Option<bool>,
-    #[schemars(description = "Max commits to index (default: 500)")]
+    #[schemars(description = "Commit limit")]
     pub commit_limit: Option<i64>,
-    #[schemars(description = "Use parallel indexing for faster performance (default: true)")]
+    #[schemars(description = "Parallel")]
     pub parallel: Option<bool>,
-    #[schemars(description = "Max concurrent workers for parallel indexing (default: 4)")]
+    #[schemars(description = "Max workers")]
     pub max_workers: Option<i64>,
 }
 

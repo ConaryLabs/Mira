@@ -252,10 +252,10 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     // Post-processing: per-turn summarization and compaction
     post_process(config.client, config.session, &current_response_id, input, &full_response_text).await;
 
-    // SMOOTH RESET: Smart chain reset based on tokens AND cache efficiency
-    // Only reset if: tokens > threshold AND cache% < minimum
-    // This prevents resetting when cache is working well (saving money)
-    use mira_core::{CHAIN_RESET_TOKEN_THRESHOLD, CHAIN_RESET_MIN_CACHE_PCT};
+    // SMOOTH RESET: Smart chain reset with hysteresis
+    // Uses hard ceiling (quality guard) + soft reset (cost optimization with hysteresis)
+    // Only applies to OpenAI REPL - DeepSeek has separate path
+    use crate::session::ResetDecision;
 
     let cached = total_usage.cached_tokens();
     let cache_pct = if total_usage.input_tokens > 0 {
@@ -264,31 +264,35 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
         100 // No input = effectively 100% cached
     };
 
-    let should_reset = total_usage.input_tokens > CHAIN_RESET_TOKEN_THRESHOLD
-        && cache_pct < CHAIN_RESET_MIN_CACHE_PCT;
-
-    if should_reset {
-        if let Some(session) = config.session {
-            // Don't announce loudly - just log it. User will see "[context refreshed]" next turn.
-            tracing::info!(
-                "Preparing smooth reset: {}k tokens with {}% cache (threshold: {}k, min cache: {}%)",
-                total_usage.input_tokens / 1000,
-                cache_pct,
-                CHAIN_RESET_TOKEN_THRESHOLD / 1000,
-                CHAIN_RESET_MIN_CACHE_PCT
-            );
-            if let Err(e) = session.clear_response_id_with_handoff().await {
-                tracing::warn!("Failed to prepare handoff: {}", e);
+    if let Some(session) = config.session {
+        match session.should_reset(total_usage.input_tokens, cache_pct).await {
+            Ok(ResetDecision::HardReset { reason }) => {
+                tracing::info!("Hard reset triggered: {}", reason);
+                if let Err(e) = session.clear_response_id_with_handoff().await {
+                    tracing::warn!("Failed to prepare handoff: {}", e);
+                }
+                let _ = session.record_reset().await;
+            }
+            Ok(ResetDecision::SoftReset { reason }) => {
+                tracing::info!("Soft reset triggered: {}", reason);
+                if let Err(e) = session.clear_response_id_with_handoff().await {
+                    tracing::warn!("Failed to prepare handoff: {}", e);
+                }
+                let _ = session.record_reset().await;
+            }
+            Ok(ResetDecision::Cooldown { turns_remaining }) => {
+                tracing::debug!(
+                    "Reset skipped: cooldown active ({} turns remaining)",
+                    turns_remaining
+                );
+            }
+            Ok(ResetDecision::NoReset) => {
+                // Normal operation
+            }
+            Err(e) => {
+                tracing::warn!("Failed to evaluate reset decision: {}", e);
             }
         }
-    } else if total_usage.input_tokens > CHAIN_RESET_TOKEN_THRESHOLD {
-        // Above threshold but cache is good - log but don't reset
-        tracing::debug!(
-            "Skipping reset: {}k tokens but {}% cached (above {}% threshold)",
-            total_usage.input_tokens / 1000,
-            cache_pct,
-            CHAIN_RESET_MIN_CACHE_PCT
-        );
     }
 
     // Show total usage stats

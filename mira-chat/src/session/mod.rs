@@ -29,6 +29,7 @@ use uuid::Uuid;
 use crate::context::MiraContext;
 use crate::semantic::SemanticSearch;
 
+pub use chain::ResetDecision;
 pub use types::{
     AssembledContext, ChatMessage, CodeIndexFileHint, CodeIndexSymbolHint, SemanticHit, SessionStats,
 };
@@ -183,8 +184,47 @@ impl SessionManager {
     }
 
     /// Assemble context for a new query
+    ///
+    /// If a handoff is pending (after chain reset), uses the handoff blob instead
+    /// of normal context to avoid duplication and maintain continuity.
     pub async fn assemble_context(&self, query: &str) -> Result<AssembledContext> {
         let mut ctx = AssembledContext::default();
+
+        // Check if we have a pending handoff (after chain reset)
+        if let Ok(Some(handoff_blob)) = self.consume_handoff().await {
+            debug!("Injecting handoff context (chain was reset)");
+
+            // Handoff mode: use the handoff blob instead of normal context
+            // This prevents duplicating summaries/goals/decisions that are already in the blob
+
+            // The handoff blob becomes our summary (it includes recent convo + summary + goals + decisions)
+            ctx.summaries = vec![handoff_blob];
+
+            // Skip normal context that would duplicate handoff content:
+            // - recent_messages: already in handoff
+            // - mira_context: goals/decisions already in handoff
+            // - summaries: already in handoff
+
+            // Still load these (query-dependent, not in handoff):
+            ctx.code_compaction = self.load_code_compaction().await?;
+
+            // No previous_response_id (chain was reset)
+            ctx.previous_response_id = None;
+
+            // Semantic recall is query-specific, still useful
+            if self.semantic.is_available() {
+                if let Ok(hits) = self.semantic_recall(query).await {
+                    ctx.semantic_context = hits;
+                }
+            }
+
+            // Code index hints are query-specific
+            ctx.code_index_hints = self.load_code_index_hints(query).await;
+
+            return Ok(ctx);
+        }
+
+        // Normal mode: assemble full context
 
         // 1. Load recent messages (raw, full fidelity)
         ctx.recent_messages = self.load_recent_messages(RECENT_RAW_COUNT).await?;

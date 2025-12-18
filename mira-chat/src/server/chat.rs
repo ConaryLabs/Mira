@@ -413,10 +413,10 @@ async fn save_assistant_message(
         }
     }
 
-    // SMOOTH RESET: Smart chain reset based on tokens AND cache efficiency
-    // Only reset if: tokens > threshold AND cache% < minimum
-    // This prevents resetting when cache is working well (saving money)
-    use mira_core::{CHAIN_RESET_TOKEN_THRESHOLD, CHAIN_RESET_MIN_CACHE_PCT};
+    // SMOOTH RESET: Smart chain reset with hysteresis
+    // Uses hard ceiling (quality guard) + soft reset (cost optimization with hysteresis)
+    // Only applies to OpenAI - DeepSeek uses its own path without chain state
+    use crate::session::ResetDecision;
 
     let cache_pct = if total_input_tokens > 0 {
         (total_cached_tokens as u64 * 100 / total_input_tokens as u64) as u32
@@ -424,33 +424,31 @@ async fn save_assistant_message(
         100 // No input = effectively 100% cached
     };
 
-    let should_reset = total_input_tokens > CHAIN_RESET_TOKEN_THRESHOLD
-        && cache_pct < CHAIN_RESET_MIN_CACHE_PCT;
-
-    if should_reset {
-        tracing::info!(
-            "Preparing smooth reset: {}k tokens with {}% cache (threshold: {}k, min cache: {}%)",
-            total_input_tokens / 1000,
-            cache_pct,
-            CHAIN_RESET_TOKEN_THRESHOLD / 1000,
-            CHAIN_RESET_MIN_CACHE_PCT
-        );
-        if let Some(session) = session {
-            let _ = session.clear_response_id_with_handoff().await;
-        } else {
-            // Fallback for non-session mode: hard reset
-            let _ = sqlx::query("DELETE FROM chat_state WHERE key = 'last_response_id'")
-                .execute(db)
-                .await;
+    if let Some(session) = session {
+        match session.should_reset(total_input_tokens, cache_pct).await {
+            Ok(ResetDecision::HardReset { reason }) => {
+                tracing::info!("Hard reset triggered: {}", reason);
+                let _ = session.clear_response_id_with_handoff().await;
+                let _ = session.record_reset().await;
+            }
+            Ok(ResetDecision::SoftReset { reason }) => {
+                tracing::info!("Soft reset triggered: {}", reason);
+                let _ = session.clear_response_id_with_handoff().await;
+                let _ = session.record_reset().await;
+            }
+            Ok(ResetDecision::Cooldown { turns_remaining }) => {
+                tracing::debug!(
+                    "Reset skipped: cooldown active ({} turns remaining)",
+                    turns_remaining
+                );
+            }
+            Ok(ResetDecision::NoReset) => {
+                // Normal operation, no logging needed
+            }
+            Err(e) => {
+                tracing::warn!("Failed to evaluate reset decision: {}", e);
+            }
         }
-    } else if total_input_tokens > CHAIN_RESET_TOKEN_THRESHOLD {
-        // Above threshold but cache is good - log but don't reset
-        tracing::debug!(
-            "Skipping reset: {}k tokens but {}% cached (above {}% threshold)",
-            total_input_tokens / 1000,
-            cache_pct,
-            CHAIN_RESET_MIN_CACHE_PCT
-        );
     }
 }
 
