@@ -9,7 +9,8 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::semantic::{SemanticSearch, COLLECTION_MEMORY};
+use crate::semantic::SemanticSearch;
+use crate::COLLECTION_MEMORY;
 
 /// Mira power armor tool implementations
 pub struct MiraTools<'a> {

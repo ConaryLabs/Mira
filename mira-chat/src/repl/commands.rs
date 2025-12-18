@@ -334,7 +334,7 @@ impl<'a> CommandHandler<'a> {
 
                         if let Err(e) = self
                             .semantic
-                            .store(crate::semantic::COLLECTION_MEMORY, &id, content, metadata)
+                            .store(crate::COLLECTION_MEMORY, &id, content, metadata)
                             .await
                         {
                             println!("  (semantic index failed: {})", e);
@@ -354,7 +354,7 @@ impl<'a> CommandHandler<'a> {
         if self.semantic.is_available() {
             match self
                 .semantic
-                .search(crate::semantic::COLLECTION_MEMORY, query, 5, None)
+                .search(crate::COLLECTION_MEMORY, query, 5, None)
                 .await
             {
                 Ok(results) if !results.is_empty() => {

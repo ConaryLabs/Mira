@@ -3,7 +3,6 @@
 
 pub mod analytics;
 pub mod helpers;
-pub mod semantic_helpers;
 pub mod build_intel;
 pub mod code_intel;
 pub mod corrections;
@@ -17,11 +16,14 @@ pub mod permissions;
 pub mod proactive;
 pub mod project;
 pub mod response;
-pub mod semantic;
 pub mod sessions;
 pub mod tasks;
 pub mod types;
 pub mod work_state;
+
+// Re-export from mira-core for backward compatibility
+pub use mira_core::semantic;
+pub use mira_core::semantic_helpers;
 
 // Re-export for use in main.rs
 pub use types::*;

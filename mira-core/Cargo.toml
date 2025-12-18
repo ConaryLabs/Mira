@@ -1,0 +1,42 @@
+[package]
+name = "mira-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Shared utilities for Mira: semantic search, artifacts, secrets, excerpts"
+
+[features]
+default = []
+
+# Lightweight helpers (no heavy deps)
+secrets = []
+excerpts = []
+
+# Semantic search with Qdrant + Gemini (heavy deps)
+semantic = ["dep:qdrant-client", "dep:reqwest"]
+
+# Artifact storage (requires sqlite)
+artifacts = ["dep:sha2"]
+
+# Full feature set
+full = ["secrets", "excerpts", "semantic", "artifacts"]
+
+[dependencies]
+# Core (always included)
+tokio = { version = "1.38", features = ["sync"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+chrono = "0.4"
+uuid = { version = "1.8", features = ["v4"] }
+
+# Database (needed for artifacts and semantic storage)
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "chrono"] }
+
+# Optional: Semantic search
+qdrant-client = { version = "1.16", optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true }
+
+# Optional: Artifact storage
+sha2 = { version = "0.10", optional = true }

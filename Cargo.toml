@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "mira-chat"]
+members = [".", "mira-core", "mira-chat"]
 resolver = "2"
 
 [package]
@@ -79,6 +79,9 @@ tokio-stream = "0.1"
 # Document processing
 pdf-extract = "0.10"
 pulldown-cmark = "0.13"
+
+# Shared core utilities
+mira-core = { path = "mira-core", features = ["semantic"] }
 
 [dev-dependencies]
 tempfile = "3.8"

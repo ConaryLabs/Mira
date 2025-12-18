@@ -12,16 +12,22 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tracing_subscriber::{fmt, EnvFilter};
 
-mod artifacts;
 mod config;
 mod context;
 mod reasoning;
 mod repl;
 mod responses;
-mod semantic;
 mod server;
 mod session;
 mod tools;
+
+// Re-export from mira-core for use by submodules
+pub use mira_core::artifacts;
+pub use mira_core::semantic;
+
+// COLLECTION_MEMORY alias for backwards compatibility
+pub use mira_core::COLLECTION_CONVERSATION;
+pub const COLLECTION_MEMORY: &str = mira_core::COLLECTION_CONVERSATION;
 
 #[derive(Parser)]
 #[command(name = "mira-chat")]
@@ -154,7 +160,7 @@ async fn main() -> Result<()> {
     if semantic.is_available() {
         println!("{}Semantic{}    {}enabled{}", DIM, RESET, GREEN, RESET);
         // Ensure collection exists
-        if let Err(e) = semantic.ensure_collection(semantic::COLLECTION_MEMORY).await {
+        if let Err(e) = semantic.ensure_collection(COLLECTION_CONVERSATION).await {
             println!("{}Semantic{}    {}init failed{} ({})", DIM, RESET, RED, RESET, e);
         }
     } else {
@@ -225,11 +231,9 @@ async fn main() -> Result<()> {
     };
 
     // Artifact maintenance: cleanup expired + enforce size cap
-    // 100MB cap per project
-    const ARTIFACT_CAP_BYTES: i64 = 100 * 1024 * 1024;
     if let Some(ref pool) = db {
         let store = artifacts::ArtifactStore::new(pool.clone(), project_path.clone());
-        match store.maintenance(ARTIFACT_CAP_BYTES).await {
+        match store.maintenance().await {
             Ok((expired, capped)) => {
                 if expired > 0 || capped > 0 {
                     println!("{}Artifacts{}   cleaned {} expired, {} over cap",
@@ -250,7 +254,7 @@ async fn main() -> Result<()> {
             loop {
                 interval.tick().await;
                 let store = artifacts::ArtifactStore::new(maint_pool.clone(), maint_path.clone());
-                if let Ok((expired, capped)) = store.maintenance(ARTIFACT_CAP_BYTES).await {
+                if let Ok((expired, capped)) = store.maintenance().await {
                     if expired > 0 || capped > 0 {
                         tracing::info!("Artifact maintenance: {} expired, {} capped", expired, capped);
                     }
