@@ -224,6 +224,41 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Artifact maintenance: cleanup expired + enforce size cap
+    // 100MB cap per project
+    const ARTIFACT_CAP_BYTES: i64 = 100 * 1024 * 1024;
+    if let Some(ref pool) = db {
+        let store = artifacts::ArtifactStore::new(pool.clone(), project_path.clone());
+        match store.maintenance(ARTIFACT_CAP_BYTES).await {
+            Ok((expired, capped)) => {
+                if expired > 0 || capped > 0 {
+                    println!("{}Artifacts{}   cleaned {} expired, {} over cap",
+                        DIM, RESET, expired, capped);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Artifact maintenance failed: {}", e);
+            }
+        }
+
+        // Spawn background maintenance task (every hour)
+        let maint_pool = pool.clone();
+        let maint_path = project_path.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            interval.tick().await; // Skip immediate tick
+            loop {
+                interval.tick().await;
+                let store = artifacts::ArtifactStore::new(maint_pool.clone(), maint_path.clone());
+                if let Ok((expired, capped)) = store.maintenance(ARTIFACT_CAP_BYTES).await {
+                    if expired > 0 || capped > 0 {
+                        tracing::info!("Artifact maintenance: {} expired, {} capped", expired, capped);
+                    }
+                }
+            }
+        });
+    }
+
     println!("{}", repl::colors::separator(50));
     println!();
 
