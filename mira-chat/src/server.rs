@@ -196,6 +196,7 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/api/status", get(status_handler))
         .route("/api/chat/stream", post(chat_stream_handler))
+        .route("/api/chat/sync", post(chat_sync_handler))
         .route("/api/messages", get(messages_handler))
         .layer(cors)
         .with_state(state)
@@ -341,6 +342,112 @@ async fn chat_stream_handler(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Sync chat response (for Claude-to-Mira communication)
+#[derive(Debug, Serialize)]
+pub struct SyncChatResponse {
+    pub role: String,
+    pub content: String,
+    pub blocks: Vec<MessageBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageInfo>,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Non-streaming chat endpoint for programmatic access (e.g., Claude calling Mira)
+async fn chat_sync_handler(
+    State(state): State<AppState>,
+    Json(request): Json<ChatRequest>,
+) -> Result<Json<SyncChatResponse>, (StatusCode, String)> {
+    let (tx, mut rx) = mpsc::channel::<ChatEvent>(100);
+
+    // Spawn the chat processing task
+    tokio::spawn(async move {
+        if let Err(e) = process_chat(state, request, tx.clone()).await {
+            let _ = tx
+                .send(ChatEvent::Error {
+                    message: e.to_string(),
+                })
+                .await;
+        }
+        let _ = tx.send(ChatEvent::Done).await;
+    });
+
+    // Collect all events into a single response
+    let mut content = String::new();
+    let mut blocks: Vec<MessageBlock> = Vec::new();
+    let mut usage: Option<UsageInfo> = None;
+    let mut error: Option<String> = None;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            ChatEvent::TextDelta { delta } => {
+                content.push_str(&delta);
+            }
+            ChatEvent::ToolCallStart { call_id, name, arguments } => {
+                blocks.push(MessageBlock::ToolCall {
+                    call_id,
+                    name,
+                    arguments,
+                    result: None,
+                });
+            }
+            ChatEvent::ToolCallResult { call_id, success, output, diff, .. } => {
+                // Update the matching block with the result
+                for block in &mut blocks {
+                    if let MessageBlock::ToolCall { call_id: id, result, .. } = block {
+                        if id == &call_id {
+                            *result = Some(ToolCallResult {
+                                success,
+                                output: output.clone(),
+                                diff: diff.clone(),
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+            ChatEvent::Usage { input_tokens, output_tokens, reasoning_tokens, cached_tokens } => {
+                // Accumulate usage across iterations
+                usage = Some(match usage {
+                    Some(u) => UsageInfo {
+                        input_tokens: u.input_tokens + input_tokens,
+                        output_tokens: u.output_tokens + output_tokens,
+                        reasoning_tokens: u.reasoning_tokens + reasoning_tokens,
+                        cached_tokens: u.cached_tokens + cached_tokens,
+                    },
+                    None => UsageInfo {
+                        input_tokens,
+                        output_tokens,
+                        reasoning_tokens,
+                        cached_tokens,
+                    },
+                });
+            }
+            ChatEvent::Error { message } => {
+                error = Some(message);
+            }
+            ChatEvent::Done => break,
+            ChatEvent::Reasoning { .. } => {} // Ignore reasoning summaries for sync
+        }
+    }
+
+    // Prepend text content as first block if non-empty
+    if !content.is_empty() {
+        blocks.insert(0, MessageBlock::Text { content: content.clone() });
+    }
+
+    Ok(Json(SyncChatResponse {
+        role: "assistant".to_string(),
+        content,
+        blocks,
+        usage,
+        success: error.is_none(),
+        error,
+    }))
 }
 
 // ============================================================================
