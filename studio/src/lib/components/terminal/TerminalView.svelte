@@ -1,11 +1,11 @@
 <script lang="ts">
   import { marked } from 'marked';
-  import type { Message, MessageBlock } from '$lib/api/client';
+  import type { Message, MessageBlock, UsageInfo } from '$lib/api/client';
   import TerminalToolCall from './TerminalToolCall.svelte';
 
   interface Props {
     messages: Message[];
-    streamingMessage?: { id: string; blocks: MessageBlock[] } | null;
+    streamingMessage?: { id: string; blocks: MessageBlock[]; usage?: UsageInfo } | null;
     onLoadMore?: () => void;
     hasMore?: boolean;
     loadingMore?: boolean;
@@ -18,6 +18,13 @@
     hasMore = false,
     loadingMore = false,
   }: Props = $props();
+
+  function formatTokens(n: number): string {
+    if (n >= 1000) {
+      return (n / 1000).toFixed(1) + 'k';
+    }
+    return n.toString();
+  }
 
   let containerEl: HTMLElement;
 
@@ -109,6 +116,19 @@
                 />
               {/if}
             {/each}
+            <!-- Usage stats -->
+            {#if message.usage}
+              <div class="mt-2 text-xs text-[var(--term-text-dim)] font-mono">
+                <span title="Input tokens">↓{formatTokens(message.usage.input_tokens)}</span>
+                <span class="ml-2" title="Output tokens">↑{formatTokens(message.usage.output_tokens)}</span>
+                {#if message.usage.reasoning_tokens > 0}
+                  <span class="ml-2" title="Reasoning tokens">🧠{formatTokens(message.usage.reasoning_tokens)}</span>
+                {/if}
+                {#if message.usage.cached_tokens > 0}
+                  <span class="ml-2 text-[var(--term-success)]" title="Cached tokens">⚡{formatTokens(message.usage.cached_tokens)}</span>
+                {/if}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -136,6 +156,19 @@
               {/if}
             {/each}
             <span class="text-[var(--term-accent)] animate-pulse">_</span>
+          {/if}
+          <!-- Live usage stats during streaming -->
+          {#if streamingMessage.usage}
+            <div class="mt-2 text-xs text-[var(--term-text-dim)] font-mono">
+              <span title="Input tokens">↓{formatTokens(streamingMessage.usage.input_tokens)}</span>
+              <span class="ml-2" title="Output tokens">↑{formatTokens(streamingMessage.usage.output_tokens)}</span>
+              {#if streamingMessage.usage.reasoning_tokens > 0}
+                <span class="ml-2" title="Reasoning tokens">🧠{formatTokens(streamingMessage.usage.reasoning_tokens)}</span>
+              {/if}
+              {#if streamingMessage.usage.cached_tokens > 0}
+                <span class="ml-2 text-[var(--term-success)]" title="Cached tokens">⚡{formatTokens(streamingMessage.usage.cached_tokens)}</span>
+              {/if}
+            </div>
           {/if}
         </div>
       </div>

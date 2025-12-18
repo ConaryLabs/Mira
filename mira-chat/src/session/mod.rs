@@ -612,7 +612,7 @@ impl SessionManager {
         }
     }
 
-    /// Store a summary and delete the summarized messages
+    /// Store a summary and archive the summarized messages (no longer deletes!)
     pub async fn store_summary(&self, summary: &str, message_ids: &[String]) -> Result<()> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
@@ -633,18 +633,24 @@ impl SessionManager {
         .execute(&self.db)
         .await?;
 
-        // Delete the old messages
+        // Archive the old messages (don't delete - preserve for recall)
         for msg_id in message_ids {
-            sqlx::query("DELETE FROM chat_messages WHERE id = $1")
-                .bind(msg_id)
-                .execute(&self.db)
-                .await?;
+            sqlx::query(
+                "UPDATE chat_messages SET archived_at = $1, summary_id = $2 WHERE id = $3",
+            )
+            .bind(now)
+            .bind(&id)
+            .bind(msg_id)
+            .execute(&self.db)
+            .await?;
         }
 
-        // Update message count
-        let remaining: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM chat_messages")
-            .fetch_one(&self.db)
-            .await?;
+        // Update message count (only active, non-archived)
+        let remaining: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM chat_messages WHERE archived_at IS NULL",
+        )
+        .fetch_one(&self.db)
+        .await?;
 
         sqlx::query(
             "UPDATE chat_context SET total_messages = $1, updated_at = $2 WHERE project_path = $3",
@@ -655,7 +661,7 @@ impl SessionManager {
         .execute(&self.db)
         .await?;
 
-        info!("Stored summary, deleted {} old messages", message_ids.len());
+        info!("Stored summary, archived {} old messages", message_ids.len());
         Ok(())
     }
 

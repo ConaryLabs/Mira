@@ -114,6 +114,26 @@ pub struct Message {
     pub created_at: i64,
 }
 
+/// Message with optional usage info (for API response)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageWithUsage {
+    pub id: String,
+    pub role: String,
+    pub blocks: Vec<MessageBlock>,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageInfo>,
+}
+
+/// Token usage info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageInfo {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub reasoning_tokens: u32,
+    pub cached_tokens: u32,
+}
+
 /// Block within a message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -224,18 +244,21 @@ async fn status_handler(State(state): State<AppState>) -> Json<Value> {
 async fn messages_handler(
     State(state): State<AppState>,
     Query(params): Query<MessagesQuery>,
-) -> Result<Json<Vec<Message>>, (StatusCode, String)> {
+) -> Result<Json<Vec<MessageWithUsage>>, (StatusCode, String)> {
     let Some(db) = &state.db else {
         return Ok(Json(vec![]));
     };
 
-    let messages: Vec<(String, String, String, i64)> = if let Some(before) = params.before {
+    // Query active (non-archived) messages with their usage data
+    let messages: Vec<(String, String, String, i64, Option<i32>, Option<i32>, Option<i32>, Option<i32>)> = if let Some(before) = params.before {
         sqlx::query_as(
             r#"
-            SELECT id, role, blocks, created_at
-            FROM chat_messages
-            WHERE created_at < $1
-            ORDER BY created_at DESC
+            SELECT m.id, m.role, m.blocks, m.created_at,
+                   u.input_tokens, u.output_tokens, u.reasoning_tokens, u.cached_tokens
+            FROM chat_messages m
+            LEFT JOIN chat_usage u ON u.message_id = m.id
+            WHERE m.archived_at IS NULL AND m.created_at < $1
+            ORDER BY m.created_at DESC
             LIMIT $2
             "#,
         )
@@ -247,9 +270,12 @@ async fn messages_handler(
     } else {
         sqlx::query_as(
             r#"
-            SELECT id, role, blocks, created_at
-            FROM chat_messages
-            ORDER BY created_at DESC
+            SELECT m.id, m.role, m.blocks, m.created_at,
+                   u.input_tokens, u.output_tokens, u.reasoning_tokens, u.cached_tokens
+            FROM chat_messages m
+            LEFT JOIN chat_usage u ON u.message_id = m.id
+            WHERE m.archived_at IS NULL
+            ORDER BY m.created_at DESC
             LIMIT $1
             "#,
         )
@@ -259,16 +285,27 @@ async fn messages_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     };
 
-    let result: Vec<Message> = messages
+    let result: Vec<MessageWithUsage> = messages
         .into_iter()
-        .map(|(id, role, blocks_json, created_at)| {
+        .map(|(id, role, blocks_json, created_at, input, output, reasoning, cached)| {
             let blocks: Vec<MessageBlock> =
                 serde_json::from_str(&blocks_json).unwrap_or_default();
-            Message {
+            let usage = if input.is_some() || output.is_some() {
+                Some(UsageInfo {
+                    input_tokens: input.unwrap_or(0) as u32,
+                    output_tokens: output.unwrap_or(0) as u32,
+                    reasoning_tokens: reasoning.unwrap_or(0) as u32,
+                    cached_tokens: cached.unwrap_or(0) as u32,
+                })
+            } else {
+                None
+            };
+            MessageWithUsage {
                 id,
                 role,
                 blocks,
                 created_at,
+                usage,
             }
         })
         .collect();
@@ -415,6 +452,11 @@ async fn process_chat(
     let mut response_id: Option<String> = None;
     let mut assistant_blocks: Vec<MessageBlock> = Vec::new();
     let mut accumulated_text = String::new();
+    // Accumulate usage across all iterations
+    let mut total_input_tokens: u32 = 0;
+    let mut total_output_tokens: u32 = 0;
+    let mut total_reasoning_tokens: u32 = 0;
+    let mut total_cached_tokens: u32 = 0;
 
     for iteration in 0..10 {
         // Stream the response
@@ -524,8 +566,12 @@ async fn process_chat(
                 StreamEvent::Done(response) => {
                     response_id = Some(response.id.clone());
 
-                    // Send usage
+                    // Accumulate and send usage
                     if let Some(usage) = response.usage {
+                        total_input_tokens += usage.input_tokens;
+                        total_output_tokens += usage.output_tokens;
+                        total_reasoning_tokens += usage.reasoning_tokens();
+                        total_cached_tokens += usage.cached_tokens();
                         tx.send(ChatEvent::Usage {
                             input_tokens: usage.input_tokens,
                             output_tokens: usage.output_tokens,
@@ -574,6 +620,28 @@ async fn process_chat(
         .bind(now)
         .execute(db)
         .await;
+
+        // Store token usage for this message
+        if total_input_tokens > 0 || total_output_tokens > 0 {
+            let usage_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO chat_usage (id, message_id, input_tokens, output_tokens, reasoning_tokens, cached_tokens, model, reasoning_effort, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                "#,
+            )
+            .bind(&usage_id)
+            .bind(&assistant_msg_id)
+            .bind(total_input_tokens as i32)
+            .bind(total_output_tokens as i32)
+            .bind(total_reasoning_tokens as i32)
+            .bind(total_cached_tokens as i32)
+            .bind(MODEL)
+            .bind(&reasoning_effort)
+            .bind(now)
+            .execute(db)
+            .await;
+        }
 
         // Save response ID for next request (prefer session, fallback to direct)
         if let Some(rid) = &response_id {

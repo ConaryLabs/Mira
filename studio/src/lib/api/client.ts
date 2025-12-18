@@ -26,11 +26,19 @@ export interface MessageBlock {
   result?: ToolCallResult;
 }
 
+export interface UsageInfo {
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
   blocks: MessageBlock[];
   created_at: number;
+  usage?: UsageInfo;
 }
 
 export interface ChatRequest {
@@ -206,6 +214,7 @@ export interface StreamingMessage {
   role: 'assistant';
   blocks: MessageBlock[];
   isComplete: boolean;
+  usage?: UsageInfo;
 }
 
 /**
@@ -287,9 +296,25 @@ export function createMessageBuilder(id: string): {
         break;
       }
 
-      // Ignore reasoning and usage events for now (could display in UI later)
+      case 'usage': {
+        // Accumulate usage (multiple events possible in agentic loop)
+        if (!message.usage) {
+          message.usage = {
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            cached_tokens: 0,
+          };
+        }
+        message.usage.input_tokens += event.input_tokens;
+        message.usage.output_tokens += event.output_tokens;
+        message.usage.reasoning_tokens += event.reasoning_tokens;
+        message.usage.cached_tokens += event.cached_tokens;
+        break;
+      }
+
+      // Ignore reasoning events for now
       case 'reasoning':
-      case 'usage':
         break;
     }
   }
