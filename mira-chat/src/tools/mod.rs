@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 pub use definitions::get_tools;
 pub use types::{DiffInfo, RichToolResult};
 
+use crate::artifacts::ArtifactStore;
 use crate::semantic::SemanticSearch;
 use crate::session::SessionManager;
 
@@ -123,6 +124,8 @@ use web::WebTools;
 pub struct ToolExecutor {
     /// Working directory for file operations
     pub cwd: std::path::PathBuf,
+    /// Project path for artifact storage
+    pub project_path: String,
     /// Semantic search client (optional)
     semantic: Option<Arc<SemanticSearch>>,
     /// SQLite database pool (optional, internally Arc-based)
@@ -135,13 +138,21 @@ pub struct ToolExecutor {
 
 impl ToolExecutor {
     pub fn new() -> Self {
+        let cwd = std::env::current_dir().unwrap_or_default();
         Self {
-            cwd: std::env::current_dir().unwrap_or_default(),
+            project_path: cwd.to_string_lossy().to_string(),
+            cwd,
             semantic: None,
             db: None,
             session: None,
             file_cache: FileCache::new(),
         }
+    }
+
+    /// Configure with project path
+    pub fn with_project_path(mut self, project_path: String) -> Self {
+        self.project_path = project_path;
+        self
     }
 
     /// Configure with semantic search
@@ -201,7 +212,55 @@ impl ToolExecutor {
             // Test tools
             "run_tests" => self.test_tools().run_tests(&args).await,
 
+            // Artifact tools
+            "fetch_artifact" => self.fetch_artifact(&args).await,
+            "search_artifact" => self.search_artifact(&args).await,
+
             _ => Ok(format!("Unknown tool: {}", name)),
+        }
+    }
+
+    /// Fetch a slice of an artifact
+    async fn fetch_artifact(&self, args: &Value) -> Result<String> {
+        let Some(db) = &self.db else {
+            return Ok("Error: Artifacts unavailable (database disabled)".to_string());
+        };
+
+        let artifact_id = args.get("artifact_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("artifact_id required"))?;
+
+        let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(8192) as usize;
+
+        let store = ArtifactStore::new(db.clone(), self.project_path.clone());
+        match store.fetch(artifact_id, offset, limit).await? {
+            Some(result) => Ok(serde_json::to_string_pretty(&result)?),
+            None => Ok(format!("Error: Artifact not found: {}", artifact_id)),
+        }
+    }
+
+    /// Search within an artifact
+    async fn search_artifact(&self, args: &Value) -> Result<String> {
+        let Some(db) = &self.db else {
+            return Ok("Error: Artifacts unavailable (database disabled)".to_string());
+        };
+
+        let artifact_id = args.get("artifact_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("artifact_id required"))?;
+
+        let query = args.get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("query required"))?;
+
+        let max_results = args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        let context_bytes = args.get("context_bytes").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+
+        let store = ArtifactStore::new(db.clone(), self.project_path.clone());
+        match store.search(artifact_id, query, max_results, context_bytes).await? {
+            Some(result) => Ok(serde_json::to_string_pretty(&result)?),
+            None => Ok(format!("Error: Artifact not found: {}", artifact_id)),
         }
     }
 
@@ -209,6 +268,7 @@ impl ToolExecutor {
     ///
     /// For write_file and edit_file, captures before/after content for diff display.
     /// Other tools return simple output without diff info.
+    /// Large outputs are automatically stored as artifacts with a preview returned.
     pub async fn execute_rich(&self, name: &str, arguments: &str) -> Result<RichToolResult> {
         let args: Value = serde_json::from_str(arguments)?;
 
@@ -219,11 +279,66 @@ impl ToolExecutor {
             _ => {
                 let output = self.execute(name, arguments).await?;
                 let success = !output.starts_with("Error") && !output.contains("Error:");
+
+                // Check if output should be artifacted
+                let final_output = self.maybe_artifact(name, &output).await;
+
                 Ok(RichToolResult {
                     success,
-                    output,
+                    output: final_output,
                     diff: None,
                 })
+            }
+        }
+    }
+
+    /// Conditionally store large output as artifact and return preview
+    async fn maybe_artifact(&self, tool_name: &str, output: &str) -> String {
+        use crate::artifacts::{ArtifactStore, ARTIFACT_THRESHOLD_BYTES};
+
+        // Skip if no database or output is small enough
+        let Some(db) = &self.db else {
+            return output.to_string();
+        };
+
+        if output.len() <= ARTIFACT_THRESHOLD_BYTES {
+            return output.to_string();
+        }
+
+        // Only artifact certain tools
+        let artifact_tools = ["bash", "grep", "read_file", "git_diff", "git_log", "run_tests"];
+        if !artifact_tools.iter().any(|t| tool_name.contains(t)) {
+            return output.to_string();
+        }
+
+        // Store artifact
+        let store = ArtifactStore::new(db.clone(), self.project_path.clone());
+        let decision = store.decide(tool_name, output);
+
+        if !decision.should_artifact {
+            return output.to_string();
+        }
+
+        // Store and return preview with artifact ID
+        match store.store(
+            "tool_output",
+            Some(tool_name),
+            None, // tool_call_id not available here
+            output,
+            decision.contains_secrets,
+            decision.secret_reason.as_deref(),
+        ).await {
+            Ok(artifact_id) => {
+                format!(
+                    "{}\n\n📦 [artifact_id: {} | {} bytes total | use fetch_artifact/search_artifact for more]",
+                    decision.preview,
+                    artifact_id,
+                    decision.total_bytes
+                )
+            }
+            Err(e) => {
+                tracing::warn!("Failed to store artifact: {}", e);
+                output.to_string()
             }
         }
     }

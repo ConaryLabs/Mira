@@ -531,6 +531,59 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": []
             }),
         },
+        // ================================================================
+        // Artifact Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "fetch_artifact".into(),
+            description: Some("Fetch a slice of a stored artifact. Use when tool output was truncated and you need more content.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "artifact_id": {
+                        "type": "string",
+                        "description": "The artifact ID from the truncated tool output"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Character offset to start from (default 0)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max characters to fetch (default 8192, max 16384)"
+                    }
+                },
+                "required": ["artifact_id"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "search_artifact".into(),
+            description: Some("Search within a stored artifact. Use to find specific content in large tool outputs.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "artifact_id": {
+                        "type": "string",
+                        "description": "The artifact ID to search within"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Text to search for (case-insensitive)"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max matches to return (default 5, max 20)"
+                    },
+                    "context_bytes": {
+                        "type": "integer",
+                        "description": "Bytes of context around each match (default 200)"
+                    }
+                },
+                "required": ["artifact_id", "query"]
+            }),
+        },
     ]
 }
 
@@ -541,8 +594,8 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 10 core tools + 5 power armor tools + 4 git tools + 1 test tool = 20
-        assert_eq!(tools.len(), 20);
+        // 10 core + 5 power armor + 4 git + 1 test + 2 artifact = 22
+        assert_eq!(tools.len(), 22);
         assert_eq!(tools[0].name, "read_file");
         assert_eq!(tools[5].name, "edit_file");
         assert_eq!(tools[8].name, "remember");
@@ -560,5 +613,8 @@ mod tests {
         assert_eq!(tools[18].name, "git_log");
         // Test tools
         assert_eq!(tools[19].name, "run_tests");
+        // Artifact tools
+        assert_eq!(tools[20].name, "fetch_artifact");
+        assert_eq!(tools[21].name, "search_artifact");
     }
 }
