@@ -337,6 +337,118 @@ impl ArtifactStore {
             .await?;
         Ok(result.rows_affected())
     }
+
+    /// Enforce size cap per project - delete oldest artifacts if over limit
+    /// Returns number of artifacts deleted
+    pub async fn enforce_size_cap(&self, max_bytes: i64) -> Result<u64> {
+        // Get current total size for project
+        let total: (i64,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(compressed_bytes), 0) FROM artifacts WHERE project_path = $1"
+        )
+        .bind(&self.project_path)
+        .fetch_one(&self.db)
+        .await?;
+
+        if total.0 <= max_bytes {
+            return Ok(0);
+        }
+
+        let excess = total.0 - max_bytes;
+        let mut deleted = 0u64;
+        let mut freed = 0i64;
+
+        // Delete oldest artifacts until under cap
+        // Get oldest artifacts ordered by created_at
+        let oldest: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT id, compressed_bytes FROM artifacts WHERE project_path = $1 ORDER BY created_at ASC LIMIT 100"
+        )
+        .bind(&self.project_path)
+        .fetch_all(&self.db)
+        .await?;
+
+        for (id, size) in oldest {
+            if freed >= excess {
+                break;
+            }
+            sqlx::query("DELETE FROM artifacts WHERE id = $1")
+                .bind(&id)
+                .execute(&self.db)
+                .await?;
+            freed += size;
+            deleted += 1;
+        }
+
+        Ok(deleted)
+    }
+
+    /// Check for existing artifact with same sha256 (dedupe)
+    /// Returns existing artifact ID if found
+    pub async fn find_by_sha256(&self, sha256: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM artifacts WHERE project_path = $1 AND sha256 = $2 LIMIT 1"
+        )
+        .bind(&self.project_path)
+        .bind(sha256)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Store an artifact with dedupe - returns existing ID if content already exists
+    pub async fn store_deduped(
+        &self,
+        kind: &str,
+        tool_name: Option<&str>,
+        tool_call_id: Option<&str>,
+        content: &str,
+        contains_secrets: bool,
+        secret_reason: Option<&str>,
+    ) -> Result<(String, bool)> {
+        // Compute hash first
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let sha256 = format!("{:x}", hasher.finalize());
+
+        // Check for existing
+        if let Some(existing_id) = self.find_by_sha256(&sha256).await? {
+            return Ok((existing_id, true)); // true = was dedupe hit
+        }
+
+        // Store new
+        let id = self.store(kind, tool_name, tool_call_id, content, contains_secrets, secret_reason).await?;
+        Ok((id, false))
+    }
+
+    /// Run full maintenance: TTL cleanup + size cap enforcement
+    /// Returns (expired_deleted, cap_deleted)
+    pub async fn maintenance(&self, max_bytes: i64) -> Result<(u64, u64)> {
+        let expired = self.cleanup_expired().await?;
+        let capped = self.enforce_size_cap(max_bytes).await?;
+        Ok((expired, capped))
+    }
+
+    /// Get storage stats for project
+    pub async fn stats(&self) -> Result<ArtifactStats> {
+        let row: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(SUM(compressed_bytes), 0) FROM artifacts WHERE project_path = $1"
+        )
+        .bind(&self.project_path)
+        .fetch_one(&self.db)
+        .await?;
+
+        Ok(ArtifactStats {
+            count: row.0 as u64,
+            total_bytes: row.1 as u64,
+        })
+    }
+}
+
+/// Storage statistics
+#[derive(Debug)]
+pub struct ArtifactStats {
+    pub count: u64,
+    pub total_bytes: u64,
 }
 
 /// Result of fetch_artifact

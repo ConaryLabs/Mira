@@ -319,8 +319,8 @@ impl ToolExecutor {
             return output.to_string();
         }
 
-        // Store and return preview with artifact ID
-        match store.store(
+        // Store (with dedupe) and return preview with artifact ID
+        match store.store_deduped(
             "tool_output",
             Some(tool_name),
             None, // tool_call_id not available here
@@ -328,11 +328,13 @@ impl ToolExecutor {
             decision.contains_secrets,
             decision.secret_reason.as_deref(),
         ).await {
-            Ok(artifact_id) => {
+            Ok((artifact_id, was_dedupe)) => {
+                let dedupe_note = if was_dedupe { " (cached)" } else { "" };
                 format!(
-                    "{}\n\n📦 [artifact_id: {} | {} bytes total | use fetch_artifact/search_artifact for more]",
+                    "{}\n\n📦 [artifact_id: {}{} | {} bytes total | use fetch_artifact/search_artifact for more]",
                     decision.preview,
                     artifact_id,
+                    dedupe_note,
                     decision.total_bytes
                 )
             }
