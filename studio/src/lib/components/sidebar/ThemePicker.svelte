@@ -6,6 +6,7 @@
     'terminal-retro': 'Retro',
     'terminal-modern': 'Modern',
     'terminal-neon': 'Neon',
+    'corporate-light': 'Office',
   };
 </script>
 
