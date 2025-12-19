@@ -19,6 +19,8 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@types/dompurify": "^3.0.5",
+    "dompurify": "^3.3.1",
     "marked": "^17.0.1"
   }
 }

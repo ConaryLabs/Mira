@@ -1,5 +1,6 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
 
   interface Props {
     content: string;
@@ -7,14 +8,35 @@
 
   let { content }: Props = $props();
 
-  // Configure marked
-  marked.setOptions({ breaks: true, gfm: true });
+  // Configure marked - disable raw HTML for safety
+  marked.setOptions({
+    breaks: true,
+    gfm: true,
+  });
+
+  // DOMPurify config - allow safe tags only
+  const PURIFY_CONFIG = {
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'b', 'i', 'u', 's', 'del',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'ul', 'ol', 'li',
+      'blockquote', 'pre', 'code',
+      'a', 'hr',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    ],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
+    ALLOW_DATA_ATTR: false,
+    // Block dangerous protocols
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+  };
 
   function renderMarkdown(text: string): string {
     try {
-      return marked.parse(text) as string;
+      const html = marked.parse(text) as string;
+      return DOMPurify.sanitize(html, PURIFY_CONFIG);
     } catch {
-      return text;
+      // Fallback: escape and return as text
+      return DOMPurify.sanitize(text);
     }
   }
 </script>
