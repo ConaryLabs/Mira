@@ -23,6 +23,7 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::semantic::SemanticSearch;
+use crate::tools::WebSearchConfig;
 
 // Types available for external use (currently internal only)
 pub(crate) use types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult, UsageInfo};
@@ -39,6 +40,7 @@ pub struct AppState {
     pub default_reasoning_effort: String,
     pub sync_token: Option<String>, // Bearer token for /api/chat/sync
     pub sync_semaphore: Arc<tokio::sync::Semaphore>, // Limit concurrent sync requests
+    pub web_search_config: WebSearchConfig, // Google Custom Search config
 }
 
 // ============================================================================
@@ -78,6 +80,7 @@ pub async fn run(
     semantic: Arc<SemanticSearch>,
     reasoning_effort: String,
     sync_token: Option<String>,
+    web_search_config: WebSearchConfig,
 ) -> Result<()> {
     let state = AppState {
         db,
@@ -86,6 +89,7 @@ pub async fn run(
         default_reasoning_effort: reasoning_effort,
         sync_token: sync_token.clone(),
         sync_semaphore: Arc::new(tokio::sync::Semaphore::new(SYNC_MAX_CONCURRENT)),
+        web_search_config,
     };
 
     let app = create_router(state);
