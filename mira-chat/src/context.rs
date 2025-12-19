@@ -431,7 +431,26 @@ GOOD: "Main decisions are X, Y, Z. Which one do you want to revisit?""#.to_strin
 - Use Read to examine files before editing
 - Use Bash for git, build, and test commands
 - Use Edit with old_string/new_string for precise changes
-- Always verify changes work before completing"#.to_string());
+- Always verify changes work before completing
+
+# AUTO-SEARCH POLICY (important)
+
+Your knowledge cutoff is early 2024. Use web_search AUTOMATICALLY when:
+- User asks about events, releases, or news from 2024 or 2025
+- Keywords: "latest", "current", "today", "recently", "new version", "just released"
+- Questions about prices, rates, stocks, or other dynamic data
+- Checking if documentation or APIs have changed
+- User mentions a date past your knowledge cutoff
+- Anything you're unsure about that could have changed
+
+DON'T search for:
+- Timeless concepts, syntax, or fundamentals
+- Things clearly within your training data
+- The user's own codebase (use Read/Grep instead)
+
+When searching: do it silently, incorporate results naturally. Don't announce "let me search" unless the query will take time.
+
+CRITICAL: After using web_search or web_fetch, you MUST generate a text response summarizing or answering based on what you found. Never end your turn with just tool calls - always follow up with your answer."#.to_string());
 
     // 4. Project path
     if let Some(path) = &context.project_path {
