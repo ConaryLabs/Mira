@@ -299,7 +299,9 @@ impl ToolExecutor {
             // All other tools don't produce diffs
             _ => {
                 let output = self.execute(name, arguments).await?;
-                let success = !output.starts_with("Error") && !output.contains("Error:");
+                // Check for error at the start only - content may contain "Error" strings
+                // (e.g., search results discussing error handling)
+                let success = !output.starts_with("Error") && !output.starts_with("error:");
 
                 // Check if output should be artifacted
                 let final_output = self.maybe_artifact(name, &output).await;
