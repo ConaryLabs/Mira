@@ -34,6 +34,11 @@ pub mod semantic_helpers;
 #[cfg(feature = "artifacts")]
 pub mod artifacts;
 
+#[cfg(feature = "semantic")]
+pub mod memory;
+
+pub mod streaming;
+
 // Re-export common types
 pub use limits::*;
 
@@ -53,3 +58,11 @@ pub use semantic_helpers::MetadataBuilder;
 
 #[cfg(feature = "artifacts")]
 pub use artifacts::{ArtifactDecision, ArtifactRef, ArtifactStore, FetchResult};
+
+#[cfg(feature = "semantic")]
+pub use memory::{
+    forget_memory_fact, make_memory_key, recall_memory_facts, recall_text_search,
+    upsert_memory_fact, MemoryFact, MemoryScope, RecallConfig, SearchType,
+};
+
+pub use streaming::{SseDecoder, SseFrame};
