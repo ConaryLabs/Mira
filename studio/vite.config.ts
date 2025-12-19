@@ -8,11 +8,11 @@ export default defineConfig({
     allowedHosts: ['mira.conarylabs.com', 'localhost'],
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3000',
         changeOrigin: true
       },
       '/mcp': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3000',
         changeOrigin: true
       }
     }

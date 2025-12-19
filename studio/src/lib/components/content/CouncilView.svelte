@@ -12,17 +12,17 @@
   let copied = $state(false);
 
   // Order providers consistently
-  const providerOrder = ['gpt-5.2', 'deepseek', 'gemini-3-pro'];
+  const providerOrder = ['gpt-5.2', 'opus-4.5', 'gemini-3-pro'];
 
-  const providers = $derived(
-    providerOrder
+  const providers = $derived.by(() => {
+    return providerOrder
       .filter(key => responses[key])
       .map((key, index) => ({
         key,
         response: responses[key]!,
         isFirst: index === 0,
-      }))
-  );
+      }));
+  });
 
   async function copyAll() {
     try {

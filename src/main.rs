@@ -26,6 +26,7 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use std::time::Duration;
 
+mod chat;
 mod tools;
 mod indexer;
 mod hooks;
@@ -34,6 +35,7 @@ mod daemon;
 
 use server::{MiraServer, create_optimized_pool};
 use tools::SemanticSearch;
+use chat::tools::WebSearchConfig;
 
 // === CLI Definition ===
 
@@ -49,19 +51,14 @@ struct Cli {
 enum Commands {
     /// Run the MCP server over stdio (default)
     Serve,
-    /// Run the MCP server over HTTP/SSE
+    /// Run the full Mira server (MCP + Chat + Indexer)
     ServeHttp {
         /// Port to listen on
         #[arg(short, long, default_value = "3000")]
         port: u16,
-        /// Auth token (required for connections)
+        /// Auth token (required for MCP connections)
         #[arg(short, long, env = "MIRA_AUTH_TOKEN")]
         auth_token: Option<String>,
-    },
-    /// Daemon management commands
-    Daemon {
-        #[command(subcommand)]
-        action: DaemonAction,
     },
     /// Claude Code hook handlers (for use in settings.json)
     Hook {
@@ -84,19 +81,6 @@ enum HookAction {
     Sessionstart,
 }
 
-#[derive(Subcommand)]
-enum DaemonAction {
-    /// Start the background watcher daemon
-    Start {
-        /// Project paths to watch (can specify multiple: -p /path1 -p /path2)
-        #[arg(short, long, action = clap::ArgAction::Append)]
-        path: Vec<String>,
-    },
-    /// Stop the daemon
-    Stop,
-    /// Check daemon status
-    Status,
-}
 
 // === Middleware ===
 
@@ -172,8 +156,8 @@ async fn main() -> Result<()> {
             service.waiting().await?;
         }
         Some(Commands::ServeHttp { port, auth_token }) => {
-            // Run MCP server over HTTP/SSE
-            info!("Starting Mira MCP Server (HTTP/SSE) on port {}...", port);
+            // Run consolidated MCP + Chat + Indexer server over HTTP
+            info!("Starting Mira Server on port {}...", port);
 
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
@@ -181,6 +165,20 @@ async fn main() -> Result<()> {
             let gemini_key = std::env::var("GEMINI_API_KEY")
                 .or_else(|_| std::env::var("GOOGLE_API_KEY"))
                 .ok();
+
+            // DeepSeek API key for chat
+            let deepseek_key = std::env::var("DEEPSEEK_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty());
+
+            // Google Custom Search config for web search tool
+            let web_search_config = WebSearchConfig {
+                google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
+                google_cx: std::env::var("GOOGLE_CX").ok(),
+            };
+
+            // Sync token for chat sync endpoint
+            let sync_token = std::env::var("MIRA_SYNC_TOKEN").ok();
 
             // Create shared state that will be cloned for each session
             let db = Arc::new(create_optimized_pool(&database_url).await?);
@@ -207,6 +205,40 @@ async fn main() -> Result<()> {
                 Arc::new(LocalSessionManager::default()),
                 StreamableHttpServerConfig::default(),
             );
+
+            // Create chat router (if DeepSeek API key is available)
+            let chat_router = if let Some(api_key) = deepseek_key {
+                info!("Chat endpoints enabled (DeepSeek API key found)");
+                let chat_state = chat::AppState {
+                    db: Some((*db).clone()),
+                    semantic: semantic.clone(),
+                    api_key,
+                    default_reasoning_effort: "medium".to_string(),
+                    sync_token: sync_token.clone(),
+                    sync_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
+                    web_search_config,
+                };
+                Some(chat::create_router(chat_state))
+            } else {
+                info!("Chat endpoints disabled (no DEEPSEEK_API_KEY)");
+                None
+            };
+
+            // Start background indexer (watches current directory)
+            let project_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            info!("Indexer watching: {}", project_path.display());
+            let daemon = daemon::Daemon::with_shared(
+                vec![project_path],
+                (*db).clone(),
+                semantic.clone(),
+            );
+            let _daemon_tasks = match daemon.spawn_background_tasks().await {
+                Ok(tasks) => Some(tasks),
+                Err(e) => {
+                    tracing::warn!("Failed to start indexer: {}", e);
+                    None
+                }
+            };
 
             // Health check handler
             let health_db = db.clone();
@@ -251,25 +283,31 @@ async fn main() -> Result<()> {
                 ]);
 
             // Build router with optional auth middleware
-            // Health endpoint is public, MCP endpoint requires auth
+            // Health endpoint and chat endpoints are public, MCP endpoint requires auth
+            let mut base_router = axum::Router::new()
+                .route("/health", axum::routing::get(health_handler));
+
+            // Add chat routes (already has its own CORS)
+            if let Some(chat) = chat_router {
+                base_router = base_router.merge(chat);
+            }
+
             let app = if let Some(token) = expected_token {
-                info!("Auth token required for connections");
+                info!("Auth token required for MCP connections");
                 let mcp_router = axum::Router::new()
                     .nest_service("/mcp", mcp_service)
                     .layer(axum::middleware::from_fn(move |req, next| {
                         let token = token.clone();
                         auth_middleware(req, next, token)
                     }));
-                axum::Router::new()
-                    .route("/health", axum::routing::get(health_handler))
+                base_router
                     .merge(mcp_router)
                     .layer(cors)
                     .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
                     .layer(TraceLayer::new_for_http())
             } else {
                 info!("Warning: No auth token set, server is open");
-                axum::Router::new()
-                    .route("/health", axum::routing::get(health_handler))
+                base_router
                     .nest_service("/mcp", mcp_service)
                     .layer(cors)
                     .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
@@ -277,62 +315,13 @@ async fn main() -> Result<()> {
             };
 
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-            info!("Listening on http://0.0.0.0:{}/mcp", port);
+            info!("Listening on http://0.0.0.0:{}", port);
+            info!("  MCP:  /mcp");
+            info!("  Chat: /api/chat/stream, /api/chat/sync");
 
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await?;
-        }
-        Some(Commands::Daemon { action }) => {
-            let database_url = std::env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite://data/mira.db".to_string());
-            let qdrant_url = std::env::var("QDRANT_URL").ok();
-            let gemini_key = std::env::var("GEMINI_API_KEY")
-                .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-                .ok();
-
-            match action {
-                DaemonAction::Start { path } => {
-                    // Collect project paths - default to current directory if none specified
-                    let project_paths: Vec<std::path::PathBuf> = if path.is_empty() {
-                        vec![std::env::current_dir().unwrap()]
-                    } else {
-                        path.into_iter().map(std::path::PathBuf::from).collect()
-                    };
-
-                    // Check if already running
-                    if let Some(pid) = daemon::is_running() {
-                        println!("Daemon already running with PID {}", pid);
-                        return Ok(());
-                    }
-
-                    info!("Starting Mira daemon for {} project(s)", project_paths.len());
-                    for p in &project_paths {
-                        info!("  - {}", p.display());
-                    }
-                    let d = daemon::Daemon::new(
-                        project_paths,
-                        &database_url,
-                        qdrant_url.as_deref(),
-                        gemini_key,
-                    ).await?;
-                    d.run().await?;
-                }
-                DaemonAction::Stop => {
-                    if daemon::stop()? {
-                        println!("Daemon stopped");
-                    } else {
-                        println!("No daemon running");
-                    }
-                }
-                DaemonAction::Status => {
-                    if let Some(pid) = daemon::is_running() {
-                        println!("Daemon running with PID {}", pid);
-                    } else {
-                        println!("Daemon not running");
-                    }
-                }
-            }
         }
         Some(Commands::Hook { action }) => {
             match action {

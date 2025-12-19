@@ -5,7 +5,8 @@ import { writable, get } from 'svelte/store';
 import { browser } from '$app/environment';
 
 export type ReasoningEffort = 'auto' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
-export type ModelProvider = 'gpt' | 'deepseek';
+// Note: Backend is now DeepSeek-only. This type kept for localStorage compatibility.
+export type ModelProvider = 'deepseek';
 
 export interface Settings {
   reasoningEffort: ReasoningEffort;
@@ -21,7 +22,7 @@ const MAX_PROJECT_HISTORY = 10;
 function getInitialSettings(): Settings {
   const defaults: Settings = {
     reasoningEffort: 'auto',
-    modelProvider: 'gpt',
+    modelProvider: 'deepseek',
     projectPath: '/home/peter/Mira',
     projectHistory: [],
     sidebarCollapsed: false,
@@ -123,7 +124,7 @@ export const reasoningOptions: { value: ReasoningEffort; label: string; descript
   { value: 'xhigh', label: 'X-High', description: 'Critical analysis and architecture' },
 ];
 
+// Model options - DeepSeek is now the only option (council tool provides access to other models)
 export const modelProviderOptions: { value: ModelProvider; label: string; description: string }[] = [
-  { value: 'gpt', label: 'GPT 5.2', description: 'Full capability with reasoning' },
-  { value: 'deepseek', label: 'DeepSeek V3.2', description: 'Cost effective with reasoning' },
+  { value: 'deepseek', label: 'DeepSeek V3.2', description: 'Primary model (use council tool for GPT/Opus/Gemini)' },
 ];
