@@ -4,6 +4,36 @@
 
 use super::types::AssembledContext;
 
+/// Budget limits for DeepSeek context assembly
+/// Keeps context lean and prioritized to avoid bloat
+pub struct DeepSeekBudget {
+    /// Max recent messages to include (3 is usually enough with checkpointing)
+    pub max_recent_messages: usize,
+    /// Max summaries to include
+    pub max_summaries: usize,
+    /// Max semantic hits to include
+    pub max_semantic_hits: usize,
+    /// Max memories to include (aggressive cap - most turns only need a few)
+    pub max_memories: usize,
+    /// Max goals to include
+    pub max_goals: usize,
+    /// Rough token budget for entire context blob
+    pub token_budget: usize,
+}
+
+impl Default for DeepSeekBudget {
+    fn default() -> Self {
+        Self {
+            max_recent_messages: 3,
+            max_summaries: 2,
+            max_semantic_hits: 2,
+            max_memories: 5,
+            max_goals: 3,
+            token_budget: 8000, // ~8k tokens for context, leaves room for response
+        }
+    }
+}
+
 impl AssembledContext {
     /// Format context for injection into system prompt
     ///
@@ -106,6 +136,163 @@ impl AssembledContext {
                 recent_section.push_str(&format!("**{}**: {}\n\n", role_label, content));
             }
             sections.push(recent_section);
+        }
+
+        if sections.is_empty() {
+            String::new()
+        } else {
+            sections.join("\n\n")
+        }
+    }
+
+    /// Format context for DeepSeek with budget awareness
+    ///
+    /// Priority order (highest to lowest):
+    /// 1. Corrections (always include - they're rules)
+    /// 2. Goals (capped)
+    /// 3. Recent messages (capped, most recent first)
+    /// 4. Summaries (capped)
+    /// 5. Semantic context (capped, highest score first)
+    /// 6. Memories (aggressively capped)
+    ///
+    /// Skips code_compaction (OpenAI-specific) and code_index_hints (usually verbose).
+    pub fn format_for_deepseek(&self, budget: &super::context::DeepSeekBudget) -> String {
+        let mut sections = Vec::new();
+        let mut estimated_tokens = 0;
+
+        // Helper to estimate tokens (rough: 1 token ≈ 4 chars)
+        let estimate_tokens = |s: &str| s.len() / 4;
+
+        // 1. Corrections - ALWAYS include (they're rules to follow)
+        if !self.mira_context.corrections.is_empty() {
+            let mut lines = vec!["## Corrections".to_string()];
+            for c in &self.mira_context.corrections {
+                lines.push(format!("- {}: \"{}\" → \"{}\"",
+                    c.correction_type, c.what_was_wrong, c.what_is_right));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            sections.push(section);
+        }
+
+        // 2. Goals - capped
+        if !self.mira_context.goals.is_empty() {
+            let mut lines = vec!["## Active Goals".to_string()];
+            for g in self.mira_context.goals.iter().take(budget.max_goals) {
+                let status_icon = match g.status.as_str() {
+                    "in_progress" => "→",
+                    "blocked" => "!",
+                    _ => "○",
+                };
+                lines.push(format!("{} {} ({}%)", status_icon, g.title, g.progress));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        // 3. Recent messages - capped, for conversation continuity
+        if !self.recent_messages.is_empty() {
+            let mut lines = vec!["## Recent".to_string()];
+            // Take most recent N messages
+            let recent: Vec<_> = self.recent_messages.iter()
+                .rev()
+                .take(budget.max_recent_messages)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+
+            for msg in recent {
+                let role = if msg.role == "user" { "U" } else { "A" };
+                // Truncate to 300 chars for budget
+                let content = if msg.content.len() > 300 {
+                    let mut end = 300;
+                    while !msg.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &msg.content[..end])
+                } else {
+                    msg.content.clone()
+                };
+                lines.push(format!("[{}] {}", role, content));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        // 4. Summaries - capped
+        if !self.summaries.is_empty() {
+            let mut lines = vec!["## Context Summary".to_string()];
+            for s in self.summaries.iter().take(budget.max_summaries) {
+                // Truncate long summaries
+                let summary = if s.len() > 500 {
+                    let mut end = 500;
+                    while !s.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &s[..end])
+                } else {
+                    s.clone()
+                };
+                lines.push(format!("- {}", summary));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        // 5. Semantic context - capped, highest score first
+        if !self.semantic_context.is_empty() {
+            let mut lines = vec!["## Related Context".to_string()];
+            // semantic_context should already be sorted by score
+            for hit in self.semantic_context.iter().take(budget.max_semantic_hits) {
+                let preview = if hit.content.len() > 150 {
+                    let mut end = 150;
+                    while !hit.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &hit.content[..end])
+                } else {
+                    hit.content.clone()
+                };
+                lines.push(format!("- {}", preview));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        // 6. Memories - aggressively capped (least priority)
+        if !self.mira_context.memories.is_empty() {
+            let mut lines = vec!["## Preferences".to_string()];
+            for m in self.mira_context.memories.iter().take(budget.max_memories) {
+                // Very short preview for memories
+                let content = if m.content.len() > 100 {
+                    let mut end = 100;
+                    while !m.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &m.content[..end])
+                } else {
+                    m.content.clone()
+                };
+                lines.push(format!("- {}", content));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
         }
 
         if sections.is_empty() {

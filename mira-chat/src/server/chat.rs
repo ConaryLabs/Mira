@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
+    conductor::validation::{repair_json, ToolSchemas},
     context::{build_system_prompt, build_deepseek_prompt, format_deepseek_context, MiraContext},
     reasoning::classify,
     responses::{Client as GptClient, StreamEvent},
@@ -562,6 +563,9 @@ async fn process_deepseek_chat(
     // Get tool definitions
     let tools = get_tool_definitions();
 
+    // Tool validation schemas for auto-repair
+    let tool_schemas = ToolSchemas::default();
+
     // Accumulate usage
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
@@ -613,14 +617,32 @@ async fn process_deepseek_chat(
                 }
                 ProviderStreamEvent::FunctionCallEnd { call_id } => {
                     if let Some((name, args)) = pending_calls.remove(&call_id) {
-                        // Execute the tool
-                        let rich_result = executor.execute_rich(&name, &args).await;
+                        // Parse and validate/repair args before execution
+                        let args_value = match repair_json(&args) {
+                            Ok(v) => v,
+                            Err(_) => json!({}),
+                        };
+
+                        // Validate and potentially repair args
+                        let validation = tool_schemas.validate(&name, &args_value);
+                        let final_args = if let Some(repaired) = validation.repaired_args {
+                            tracing::debug!("DeepSeek tool {} args repaired: {:?}",
+                                name, validation.issues.iter()
+                                    .filter(|i| i.repaired)
+                                    .map(|i| &i.message)
+                                    .collect::<Vec<_>>());
+                            repaired
+                        } else {
+                            args_value.clone()
+                        };
+
+                        // Execute with validated/repaired args
+                        let args_str = final_args.to_string();
+                        let rich_result = executor.execute_rich(&name, &args_str).await;
                         let (success, output, diff) = match rich_result {
                             Ok(r) => (r.success, r.output, r.diff),
                             Err(e) => (false, e.to_string(), None),
                         };
-
-                        let args_value: serde_json::Value = serde_json::from_str(&args).unwrap_or(json!({}));
 
                         assistant_blocks.push(MessageBlock::ToolCall {
                             call_id: call_id.clone(),
@@ -724,13 +746,28 @@ async fn process_deepseek_chat(
                 }
                 ProviderStreamEvent::FunctionCallEnd { call_id } => {
                     if let Some((name, args)) = pending_calls.remove(&call_id) {
-                        let rich_result = executor.execute_rich(&name, &args).await;
+                        // Parse and validate/repair args before execution
+                        let args_value = match repair_json(&args) {
+                            Ok(v) => v,
+                            Err(_) => json!({}),
+                        };
+
+                        // Validate and potentially repair args
+                        let validation = tool_schemas.validate(&name, &args_value);
+                        let final_args = if let Some(repaired) = validation.repaired_args {
+                            tracing::debug!("DeepSeek continuation tool {} args repaired", name);
+                            repaired
+                        } else {
+                            args_value.clone()
+                        };
+
+                        // Execute with validated/repaired args
+                        let args_str = final_args.to_string();
+                        let rich_result = executor.execute_rich(&name, &args_str).await;
                         let (success, output, diff) = match rich_result {
                             Ok(r) => (r.success, r.output, r.diff),
                             Err(e) => (false, e.to_string(), None),
                         };
-
-                        let args_value: serde_json::Value = serde_json::from_str(&args).unwrap_or(json!({}));
 
                         assistant_blocks.push(MessageBlock::ToolCall {
                             call_id: call_id.clone(),

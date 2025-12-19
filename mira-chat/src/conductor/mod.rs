@@ -20,7 +20,7 @@ mod orchestrator;
 mod planning;
 mod session;
 mod state;
-mod validation;
+pub mod validation;
 
 pub use ast_context::{ContextBuilder, FileOutline, Language, Symbol, SymbolKind};
 pub use config::ConductorConfig;

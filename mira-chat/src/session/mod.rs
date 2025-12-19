@@ -30,6 +30,7 @@ use crate::context::MiraContext;
 use crate::semantic::SemanticSearch;
 
 pub use chain::ResetDecision;
+pub use context::DeepSeekBudget;
 pub use types::{
     AssembledContext, ChatMessage, CodeIndexFileHint, CodeIndexSymbolHint, SemanticHit, SessionStats,
 };
@@ -43,11 +44,13 @@ const SUMMARIZE_BATCH_SIZE: usize = 5;
 /// Message count threshold to trigger summarization (RECENT_RAW_COUNT + SUMMARIZE_BATCH_SIZE)
 const SUMMARIZE_THRESHOLD: usize = 10;
 
-/// Minimum similarity score for semantic recall (unused but kept for potential future use)
-const _RECALL_THRESHOLD: f32 = 0.65;
+/// Minimum similarity score for semantic recall
+/// Raised from 0.65 to 0.75 to reduce "confident irrelevance"
+const _RECALL_THRESHOLD: f32 = 0.75;
 
-/// Number of semantic results to fetch (unused but kept for potential future use)
-const _RECALL_LIMIT: usize = 5;
+/// Number of semantic results to fetch
+/// Lowered from 5 to 3 - budget will cap further for DeepSeek
+const _RECALL_LIMIT: usize = 3;
 
 /// Number of level-1 summaries before meta-summarization
 const META_SUMMARY_THRESHOLD: usize = 10;
