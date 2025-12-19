@@ -1,10 +1,12 @@
 //! DeepSeek provider implementation (Chat Completions API)
 //!
 //! Implements the OpenAI-compatible Chat Completions API for DeepSeek models.
+//! Uses mira_core::SseDecoder for SSE stream parsing.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
+use mira_core::SseDecoder;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -128,17 +130,129 @@ impl DeepSeekProvider {
             .collect()
     }
 
-    /// Parse SSE line
-    fn parse_sse_line(line: &str) -> Option<ChatStreamChunk> {
-        if line.starts_with("data: ") {
-            let data = &line[6..];
-            if data == "[DONE]" {
-                return None;
+    /// Process SSE stream and send events to channel
+    ///
+    /// Shared logic for both create_stream and continue_with_tools_stream.
+    /// Uses SseDecoder from mira-core for consistent SSE parsing.
+    async fn process_sse_stream(
+        response: reqwest::Response,
+        tx: mpsc::Sender<StreamEvent>,
+    ) {
+        let mut stream = response.bytes_stream();
+        let mut decoder = SseDecoder::new();
+        let mut current_tool_call: Option<(String, String, String)> = None; // (id, name, args)
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                    break;
+                }
+            };
+
+            // Use SseDecoder to parse SSE frames
+            for frame in decoder.push(&chunk) {
+                if frame.is_done() {
+                    continue;
+                }
+
+                // Parse as ChatStreamChunk
+                let chunk_data: ChatStreamChunk = match frame.try_parse() {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                for choice in chunk_data.choices {
+                    let delta = choice.delta;
+
+                    // Handle text content
+                    if let Some(content) = delta.content {
+                        if !content.is_empty() {
+                            let _ = tx.send(StreamEvent::TextDelta(content)).await;
+                        }
+                    }
+
+                    // Handle reasoning content (DeepSeek reasoner)
+                    if let Some(reasoning) = delta.reasoning_content {
+                        if !reasoning.is_empty() {
+                            let _ = tx.send(StreamEvent::ReasoningDelta(reasoning)).await;
+                        }
+                    }
+
+                    // Handle tool calls
+                    if let Some(tool_calls) = delta.tool_calls {
+                        for tc in tool_calls {
+                            if let Some(ref id) = tc.id {
+                                // New tool call - end previous if any
+                                if let Some((old_id, _, _)) = current_tool_call.take() {
+                                    let _ = tx
+                                        .send(StreamEvent::FunctionCallEnd { call_id: old_id })
+                                        .await;
+                                }
+
+                                let name = tc
+                                    .function
+                                    .as_ref()
+                                    .and_then(|f| f.name.clone())
+                                    .unwrap_or_default();
+
+                                let _ = tx
+                                    .send(StreamEvent::FunctionCallStart {
+                                        call_id: id.clone(),
+                                        name: name.clone(),
+                                    })
+                                    .await;
+
+                                current_tool_call = Some((id.clone(), name, String::new()));
+                            }
+
+                            // Arguments delta
+                            if let Some(ref func) = tc.function {
+                                if let Some(ref args) = func.arguments {
+                                    if !args.is_empty() {
+                                        if let Some((ref id, _, ref mut full_args)) =
+                                            current_tool_call
+                                        {
+                                            full_args.push_str(args);
+                                            let _ = tx
+                                                .send(StreamEvent::FunctionCallDelta {
+                                                    call_id: id.clone(),
+                                                    arguments_delta: args.clone(),
+                                                })
+                                                .await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Handle finish
+                    if choice.finish_reason.is_some() {
+                        if let Some((id, _, _)) = current_tool_call.take() {
+                            let _ = tx
+                                .send(StreamEvent::FunctionCallEnd { call_id: id })
+                                .await;
+                        }
+                    }
+                }
+
+                // Usage info
+                if let Some(usage) = chunk_data.usage {
+                    let _ = tx
+                        .send(StreamEvent::Usage(Usage {
+                            input_tokens: usage.prompt_tokens,
+                            output_tokens: usage.completion_tokens,
+                            reasoning_tokens: usage.reasoning_tokens.unwrap_or(0),
+                            cached_tokens: usage.prompt_cache_hit_tokens.unwrap_or(0),
+                        }))
+                        .await;
+                }
             }
-            serde_json::from_str(data).ok()
-        } else {
-            None
         }
+
+        let _ = tx.send(StreamEvent::Done).await;
     }
 }
 
@@ -182,133 +296,17 @@ impl Provider for DeepSeekProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("(failed to read body: {})", e));
             anyhow::bail!("DeepSeek API error {}: {}", status, text);
         }
 
         let (tx, rx) = mpsc::channel(100);
 
-        // Spawn task to process SSE stream
-        tokio::spawn(async move {
-            let mut stream = response.bytes_stream();
-            let mut buffer = String::new();
-            let mut current_tool_call: Option<(String, String, String)> = None; // (id, name, args)
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(StreamEvent::Error(e.to_string())).await;
-                        break;
-                    }
-                };
-
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                // Process complete lines
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    if let Some(chunk) = Self::parse_sse_line(&line) {
-                        for choice in chunk.choices {
-                            let delta = choice.delta;
-
-                            // Handle text content
-                            if let Some(content) = delta.content {
-                                if !content.is_empty() {
-                                    let _ = tx.send(StreamEvent::TextDelta(content)).await;
-                                }
-                            }
-
-                            // Handle reasoning content (DeepSeek reasoner)
-                            if let Some(reasoning) = delta.reasoning_content {
-                                if !reasoning.is_empty() {
-                                    let _ = tx.send(StreamEvent::ReasoningDelta(reasoning)).await;
-                                }
-                            }
-
-                            // Handle tool calls
-                            if let Some(tool_calls) = delta.tool_calls {
-                                for tc in tool_calls {
-                                    if let Some(ref id) = tc.id {
-                                        // New tool call
-                                        if let Some((old_id, _, _)) = current_tool_call.take() {
-                                            let _ = tx
-                                                .send(StreamEvent::FunctionCallEnd {
-                                                    call_id: old_id,
-                                                })
-                                                .await;
-                                        }
-
-                                        let name = tc
-                                            .function
-                                            .as_ref()
-                                            .and_then(|f| f.name.clone())
-                                            .unwrap_or_default();
-
-                                        let _ = tx
-                                            .send(StreamEvent::FunctionCallStart {
-                                                call_id: id.clone(),
-                                                name: name.clone(),
-                                            })
-                                            .await;
-
-                                        current_tool_call =
-                                            Some((id.clone(), name, String::new()));
-                                    }
-
-                                    // Arguments delta
-                                    if let Some(ref func) = tc.function {
-                                        if let Some(ref args) = func.arguments {
-                                            if !args.is_empty() {
-                                                if let Some((ref id, _, ref mut full_args)) =
-                                                    current_tool_call
-                                                {
-                                                    full_args.push_str(args);
-                                                    let _ = tx
-                                                        .send(StreamEvent::FunctionCallDelta {
-                                                            call_id: id.clone(),
-                                                            arguments_delta: args.clone(),
-                                                        })
-                                                        .await;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Handle finish
-                            if choice.finish_reason.is_some() {
-                                if let Some((id, _, _)) = current_tool_call.take() {
-                                    let _ =
-                                        tx.send(StreamEvent::FunctionCallEnd { call_id: id }).await;
-                                }
-                            }
-                        }
-
-                        // Usage info
-                        if let Some(usage) = chunk.usage {
-                            let _ = tx
-                                .send(StreamEvent::Usage(Usage {
-                                    input_tokens: usage.prompt_tokens,
-                                    output_tokens: usage.completion_tokens,
-                                    reasoning_tokens: usage.reasoning_tokens.unwrap_or(0),
-                                    cached_tokens: 0, // DeepSeek doesn't report cached tokens
-                                }))
-                                .await;
-                        }
-                    }
-                }
-            }
-
-            let _ = tx.send(StreamEvent::Done).await;
-        });
+        // Spawn task to process SSE stream using shared helper
+        tokio::spawn(Self::process_sse_stream(response, tx));
 
         Ok(rx)
     }
@@ -340,7 +338,10 @@ impl Provider for DeepSeekProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("(failed to read body: {})", e));
             anyhow::bail!("DeepSeek API error {}: {}", status, text);
         }
 
@@ -377,7 +378,7 @@ impl Provider for DeepSeekProvider {
             input_tokens: u.prompt_tokens,
             output_tokens: u.completion_tokens,
             reasoning_tokens: u.reasoning_tokens.unwrap_or(0),
-            cached_tokens: 0,
+            cached_tokens: u.prompt_cache_hit_tokens.unwrap_or(0),
         });
 
         Ok(ChatResponse {
@@ -420,125 +421,16 @@ impl Provider for DeepSeekProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+            let text = response
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("(failed to read body: {})", e));
             anyhow::bail!("DeepSeek API error {}: {}", status, text);
         }
 
-        // Reuse the same streaming logic
+        // Reuse the shared streaming logic
         let (tx, rx) = mpsc::channel(100);
-
-        tokio::spawn(async move {
-            let mut stream = response.bytes_stream();
-            let mut buffer = String::new();
-            let mut current_tool_call: Option<(String, String, String)> = None;
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(StreamEvent::Error(e.to_string())).await;
-                        break;
-                    }
-                };
-
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    if let Some(chunk) = Self::parse_sse_line(&line) {
-                        for choice in chunk.choices {
-                            let delta = choice.delta;
-
-                            if let Some(content) = delta.content {
-                                if !content.is_empty() {
-                                    let _ = tx.send(StreamEvent::TextDelta(content)).await;
-                                }
-                            }
-
-                            if let Some(reasoning) = delta.reasoning_content {
-                                if !reasoning.is_empty() {
-                                    let _ = tx.send(StreamEvent::ReasoningDelta(reasoning)).await;
-                                }
-                            }
-
-                            if let Some(tool_calls) = delta.tool_calls {
-                                for tc in tool_calls {
-                                    if let Some(ref id) = tc.id {
-                                        if let Some((old_id, _, _)) = current_tool_call.take() {
-                                            let _ = tx
-                                                .send(StreamEvent::FunctionCallEnd {
-                                                    call_id: old_id,
-                                                })
-                                                .await;
-                                        }
-
-                                        let name = tc
-                                            .function
-                                            .as_ref()
-                                            .and_then(|f| f.name.clone())
-                                            .unwrap_or_default();
-
-                                        let _ = tx
-                                            .send(StreamEvent::FunctionCallStart {
-                                                call_id: id.clone(),
-                                                name: name.clone(),
-                                            })
-                                            .await;
-
-                                        current_tool_call =
-                                            Some((id.clone(), name, String::new()));
-                                    }
-
-                                    if let Some(ref func) = tc.function {
-                                        if let Some(ref args) = func.arguments {
-                                            if !args.is_empty() {
-                                                if let Some((ref id, _, ref mut full_args)) =
-                                                    current_tool_call
-                                                {
-                                                    full_args.push_str(args);
-                                                    let _ = tx
-                                                        .send(StreamEvent::FunctionCallDelta {
-                                                            call_id: id.clone(),
-                                                            arguments_delta: args.clone(),
-                                                        })
-                                                        .await;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if choice.finish_reason.is_some() {
-                                if let Some((id, _, _)) = current_tool_call.take() {
-                                    let _ =
-                                        tx.send(StreamEvent::FunctionCallEnd { call_id: id }).await;
-                                }
-                            }
-                        }
-
-                        if let Some(usage) = chunk.usage {
-                            let _ = tx
-                                .send(StreamEvent::Usage(Usage {
-                                    input_tokens: usage.prompt_tokens,
-                                    output_tokens: usage.completion_tokens,
-                                    reasoning_tokens: usage.reasoning_tokens.unwrap_or(0),
-                                    cached_tokens: 0,
-                                }))
-                                .await;
-                        }
-                    }
-                }
-            }
-
-            let _ = tx.send(StreamEvent::Done).await;
-        });
+        tokio::spawn(Self::process_sse_stream(response, tx));
 
         Ok(rx)
     }
@@ -624,6 +516,8 @@ struct ChatUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     reasoning_tokens: Option<u32>,
+    /// DeepSeek reports cached tokens via prompt_cache_hit_tokens
+    prompt_cache_hit_tokens: Option<u32>,
 }
 
 // Streaming types
