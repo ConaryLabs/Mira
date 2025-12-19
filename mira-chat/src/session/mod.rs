@@ -32,7 +32,7 @@ use crate::semantic::SemanticSearch;
 pub use chain::ResetDecision;
 pub use context::DeepSeekBudget;
 pub use types::{
-    AssembledContext, ChatMessage, CodeIndexFileHint, CodeIndexSymbolHint, SemanticHit, SessionStats,
+    AssembledContext, ChatMessage, Checkpoint, CodeIndexFileHint, CodeIndexSymbolHint, SemanticHit, SessionStats,
 };
 
 /// Number of recent messages to keep raw in context (full fidelity)
