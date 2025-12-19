@@ -2,6 +2,7 @@
   import type { ParsedContent } from '$lib/types/content';
   import CodeBlock from './CodeBlock.svelte';
   import CouncilView from './CouncilView.svelte';
+  import CouncilLoading from './CouncilLoading.svelte';
   import ErrorBlock from './ErrorBlock.svelte';
   import WarningBlock from './WarningBlock.svelte';
   import TextBlock from './TextBlock.svelte';
@@ -22,6 +23,8 @@
   />
 {:else if content.type === 'council'}
   <CouncilView id={content.id} responses={content.responses} />
+{:else if content.type === 'council_loading'}
+  <CouncilLoading partial={content.partial} />
 {:else if content.type === 'error'}
   <ErrorBlock message={content.message} code={content.code} />
 {:else if content.type === 'warning'}

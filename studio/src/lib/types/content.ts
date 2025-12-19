@@ -5,6 +5,7 @@ export type ParsedContent =
   | { type: 'text'; id: string; content: string }
   | { type: 'code_block'; id: string; language: string; code: string; filename?: string }
   | { type: 'council'; id: string; responses: CouncilResponses }
+  | { type: 'council_loading'; id: string; partial?: Partial<CouncilResponses> }
   | { type: 'error'; id: string; message: string; code?: string }
   | { type: 'warning'; id: string; message: string }
   | { type: 'diff'; id: string; path: string; oldContent?: string; newContent: string; isNewFile: boolean };
@@ -21,6 +22,7 @@ export interface CouncilResponses {
 export type ContentKind =
   | 'code_block'
   | 'council'
+  | 'council_loading'
   | 'error'
   | 'warning'
   | 'diff'

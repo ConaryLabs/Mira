@@ -3,15 +3,20 @@
  *
  * Tracks which content blocks are expanded/collapsed.
  * Persists to localStorage so state survives page refresh.
+ * Uses debounced writes to prevent localStorage thrashing.
  */
 
 import { browser } from '$app/environment';
 
 const STORAGE_KEY = 'mira-expansion-state';
 const MAX_STORED_IDS = 500; // Limit storage size
+const PERSIST_DEBOUNCE_MS = 1000; // Debounce localStorage writes
 
-// In-memory state
+// In-memory state (updates immediately)
 const expandedIds = new Set<string>();
+
+// Debounce timer for localStorage writes
+let persistTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Load from localStorage on init
 if (browser) {
@@ -85,19 +90,28 @@ export function clearExpansionState(): void {
 }
 
 /**
- * Persist to localStorage
+ * Persist to localStorage (debounced)
  */
 function persist(): void {
   if (!browser) return;
 
-  try {
-    // Limit size by keeping only most recent IDs
-    const ids = Array.from(expandedIds);
-    const toStore = ids.slice(-MAX_STORED_IDS);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
-  } catch {
-    // Ignore storage errors (quota exceeded, etc.)
+  // Clear existing timer
+  if (persistTimeout) {
+    clearTimeout(persistTimeout);
   }
+
+  // Debounce the write
+  persistTimeout = setTimeout(() => {
+    try {
+      // Limit size by keeping only most recent IDs
+      const ids = Array.from(expandedIds);
+      const toStore = ids.slice(-MAX_STORED_IDS);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    } catch {
+      // Ignore storage errors (quota exceeded, etc.)
+    }
+    persistTimeout = null;
+  }, PERSIST_DEBOUNCE_MS);
 }
 
 /**
