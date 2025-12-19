@@ -16,7 +16,15 @@ use crate::{
     responses::{Client as GptClient, StreamEvent},
     session::SessionManager,
     tools::{get_tools, get_tool_definitions, ToolExecutor},
-    provider::{DeepSeekProvider, Provider, ChatRequest as ProviderChatRequest, StreamEvent as ProviderStreamEvent},
+    provider::{
+        DeepSeekProvider, Provider,
+        ChatRequest as ProviderChatRequest,
+        StreamEvent as ProviderStreamEvent,
+        Message as ProviderMessage,
+        MessageRole,
+        ToolContinueRequest,
+        ToolResult as ProviderToolResult,
+    },
 };
 
 use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult};
@@ -483,8 +491,8 @@ async fn process_deepseek_chat(
     let provider = DeepSeekProvider::new_chat(deepseek_key);
 
     // Build system prompt with FULL assembled context (same as GPT-5.2)
-    // DeepSeek doesn't have server-side chain state, so we need to include everything
-    let system_prompt = if let Some(db) = &state.db {
+    // DeepSeek doesn't have server-side chain state, so we include everything client-side
+    let (system_prompt, history_messages) = if let Some(db) = &state.db {
         // Create session manager for full context assembly
         let session = SessionManager::new(
             db.clone(),
@@ -506,25 +514,41 @@ async fn process_deepseek_chat(
                     assembled.mira_context.memories.len(),
                 );
 
+                // Convert recent messages to provider format for conversation history
+                let history: Vec<ProviderMessage> = assembled.recent_messages.iter().map(|m| {
+                    let role = match m.role.as_str() {
+                        "user" => MessageRole::User,
+                        "assistant" => MessageRole::Assistant,
+                        "tool" => MessageRole::Tool,
+                        _ => MessageRole::User,
+                    };
+                    ProviderMessage {
+                        role,
+                        content: m.content.clone(),
+                    }
+                }).collect();
+
                 let base_prompt = build_deepseek_prompt(&assembled.mira_context);
                 let context_blob = format_deepseek_context(&assembled);
 
-                if context_blob.is_empty() {
+                let prompt = if context_blob.is_empty() {
                     base_prompt
                 } else {
                     format!("{}\n\n{}", base_prompt, context_blob)
-                }
+                };
+
+                (prompt, history)
             }
             Err(e) => {
                 tracing::warn!("Failed to create session for DeepSeek: {}", e);
                 let context = MiraContext::load(db, &request.project_path)
                     .await
                     .unwrap_or_default();
-                build_deepseek_prompt(&context)
+                (build_deepseek_prompt(&context), Vec::new())
             }
         }
     } else {
-        build_deepseek_prompt(&MiraContext::default())
+        (build_deepseek_prompt(&MiraContext::default()), Vec::new())
     };
 
     // Create tool executor
@@ -538,35 +562,43 @@ async fn process_deepseek_chat(
     // Get tool definitions
     let tools = get_tool_definitions();
 
-    // Build provider request
-    let provider_request = ProviderChatRequest::new("deepseek-chat", &system_prompt, &request.message)
-        .with_tools(tools);
-
     // Accumulate usage
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
     let mut total_reasoning_tokens: u32 = 0;
 
+    // Track conversation for multi-turn tool use (includes history)
+    let mut conversation_messages = history_messages;
+    // Add user's current message to conversation
+    conversation_messages.push(ProviderMessage {
+        role: MessageRole::User,
+        content: request.message.clone(),
+    });
+
     // Agentic loop (max 10 iterations)
-    let mut current_request = provider_request;
     let mut assistant_blocks: Vec<MessageBlock> = Vec::new();
     let mut accumulated_text = String::new();
 
-    for _iteration in 0..10 {
-        // Stream response
-        let mut rx = provider.create_stream(current_request.clone()).await?;
+    // First request
+    let initial_request = ProviderChatRequest::new("deepseek-chat", &system_prompt, &request.message)
+        .with_messages(conversation_messages.clone())
+        .with_tools(tools.clone());
+    let mut rx = provider.create_stream(initial_request).await?;
+
+    for iteration in 0..10 {
 
         let mut pending_calls: HashMap<String, (String, String)> = HashMap::new();
-        let mut has_function_calls = false;
+        let mut iteration_tool_results: Vec<ProviderToolResult> = Vec::new();
+        let mut iteration_text = String::new();
 
         while let Some(event) = rx.recv().await {
             match event {
                 ProviderStreamEvent::TextDelta(delta) => {
                     accumulated_text.push_str(&delta);
+                    iteration_text.push_str(&delta);
                     tx.send(ChatEvent::TextDelta { delta }).await?;
                 }
                 ProviderStreamEvent::FunctionCallStart { call_id, name } => {
-                    has_function_calls = true;
                     pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
                     tx.send(ChatEvent::ToolCallStart {
                         call_id,
@@ -601,6 +633,13 @@ async fn process_deepseek_chat(
                             }),
                         });
 
+                        // Track tool result for continuation
+                        iteration_tool_results.push(ProviderToolResult {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                            output: output.clone(),
+                        });
+
                         tx.send(ChatEvent::ToolCallResult {
                             call_id,
                             name,
@@ -630,16 +669,127 @@ async fn process_deepseek_chat(
             }
         }
 
-        // If no function calls, we're done
-        if !has_function_calls {
+        // If no tool calls this iteration, we're done
+        if iteration_tool_results.is_empty() {
             break;
         }
 
-        // Build continuation request with tool results
-        // Note: DeepSeek uses client-state, so we need to rebuild context
-        // For simplicity, we'll just break after first tool execution
-        // Full implementation would need to maintain message history
-        break;
+        // Add assistant's response to conversation (for context in next iteration)
+        if !iteration_text.is_empty() {
+            conversation_messages.push(ProviderMessage {
+                role: MessageRole::Assistant,
+                content: iteration_text,
+            });
+        }
+
+        // Continue with tool results
+        tracing::debug!("DeepSeek iteration {}: continuing with {} tool results", iteration, iteration_tool_results.len());
+
+        let continue_request = ToolContinueRequest {
+            model: "deepseek-chat".into(),
+            system: system_prompt.clone(),
+            previous_response_id: None,
+            messages: conversation_messages.clone(),
+            tool_results: iteration_tool_results,
+            reasoning_effort: None,
+            tools: tools.clone(),
+        };
+
+        rx = provider.continue_with_tools_stream(continue_request).await?;
+
+        // Process the continuation response in the next loop iteration
+        // We need to handle the response stream again
+        let mut continue_text = String::new();
+        let mut continue_tool_results: Vec<ProviderToolResult> = Vec::new();
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                ProviderStreamEvent::TextDelta(delta) => {
+                    accumulated_text.push_str(&delta);
+                    continue_text.push_str(&delta);
+                    tx.send(ChatEvent::TextDelta { delta }).await?;
+                }
+                ProviderStreamEvent::FunctionCallStart { call_id, name } => {
+                    pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
+                    tx.send(ChatEvent::ToolCallStart {
+                        call_id,
+                        name,
+                        arguments: json!({}),
+                    }).await?;
+                }
+                ProviderStreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
+                    if let Some((_, args)) = pending_calls.get_mut(&call_id) {
+                        args.push_str(&arguments_delta);
+                    }
+                }
+                ProviderStreamEvent::FunctionCallEnd { call_id } => {
+                    if let Some((name, args)) = pending_calls.remove(&call_id) {
+                        let rich_result = executor.execute_rich(&name, &args).await;
+                        let (success, output, diff) = match rich_result {
+                            Ok(r) => (r.success, r.output, r.diff),
+                            Err(e) => (false, e.to_string(), None),
+                        };
+
+                        let args_value: serde_json::Value = serde_json::from_str(&args).unwrap_or(json!({}));
+
+                        assistant_blocks.push(MessageBlock::ToolCall {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                            arguments: args_value,
+                            result: Some(ToolCallResult {
+                                success,
+                                output: output.clone(),
+                                diff: diff.clone(),
+                            }),
+                        });
+
+                        continue_tool_results.push(ProviderToolResult {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                            output: output.clone(),
+                        });
+
+                        tx.send(ChatEvent::ToolCallResult {
+                            call_id,
+                            name,
+                            success,
+                            output,
+                            diff,
+                        }).await?;
+                    }
+                }
+                ProviderStreamEvent::Usage(usage) => {
+                    total_input_tokens += usage.input_tokens;
+                    total_output_tokens += usage.output_tokens;
+                    total_reasoning_tokens += usage.reasoning_tokens;
+                    tx.send(ChatEvent::Usage {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        reasoning_tokens: usage.reasoning_tokens,
+                        cached_tokens: 0,
+                    }).await?;
+                }
+                ProviderStreamEvent::Error(e) => {
+                    tx.send(ChatEvent::Error { message: e }).await?;
+                    break;
+                }
+                ProviderStreamEvent::Done => break,
+                _ => {}
+            }
+        }
+
+        // If no more tool calls, we're done
+        if continue_tool_results.is_empty() {
+            break;
+        }
+
+        // Update conversation for next iteration
+        if !continue_text.is_empty() {
+            conversation_messages.push(ProviderMessage {
+                role: MessageRole::Assistant,
+                content: continue_text,
+            });
+        }
     }
 
     // Add accumulated text as first block
