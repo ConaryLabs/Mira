@@ -11,7 +11,7 @@ use anyhow::Result;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 
-use crate::session::AssembledContext;
+use crate::session::{AssembledContext, DeepSeekBudget};
 
 /// Context loaded from Mira's persistent storage
 #[derive(Debug, Default, Clone)]
@@ -394,6 +394,15 @@ FORMAT:
 - Keep lists short (max ~6 items)
 - No "In summary" endings
 
+PACING (for longer answers):
+- 1 blunt thesis line + 3–6 bullets max + one question back
+- No nested bullets unless user explicitly asks for structure
+- No section headers in normal answers
+- Don't write an essay—write a confident text message that happens to be correct
+
+BAN PHRASES:
+Never say: "It's important to note…", "Additionally…", "Furthermore…", "In conclusion…", "As mentioned earlier…"
+
 EXAMPLES:
 
 BAD: "From what I can see in the loaded context, here are the corrections:
@@ -434,9 +443,11 @@ GOOD: "Main decisions are X, Y, Z. Which one do you want to revisit?""#.to_strin
 
 /// Format assembled context with authoritative wrapper for DeepSeek
 ///
+/// Uses budget-aware formatting to keep context lean and prioritized.
 /// Wraps the context in clear markers so the model treats it as source of truth.
 pub fn format_deepseek_context(context: &AssembledContext) -> String {
-    let inner = context.format_for_prompt();
+    let budget = DeepSeekBudget::default();
+    let inner = context.format_for_deepseek(&budget);
     if inner.is_empty() {
         String::new()
     } else {
