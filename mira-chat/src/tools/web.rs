@@ -220,21 +220,37 @@ impl WebTools {
     pub async fn web_fetch(&self, args: &Value) -> Result<String> {
         let url = args["url"].as_str().unwrap_or("");
         let max_length = args["max_length"].as_u64().unwrap_or(10000) as usize;
+        let use_cache = args["use_cache"].as_bool().unwrap_or(false);
 
         let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; MiraChat/1.0)")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
-        let response = match client.get(url).send().await {
-            Ok(r) => r,
-            Err(e) => return Ok(format!("Error fetching {}: {}", url, e)),
+        // Try direct fetch first (unless use_cache is explicitly requested)
+        let (response, from_cache) = if use_cache {
+            // Go straight to cache
+            match self.fetch_from_cache(&client, url).await {
+                Ok(r) => (r, true),
+                Err(e) => return Ok(format!("Cache fetch failed for {}: {}", url, e)),
+            }
+        } else {
+            // Try direct, fall back to cache on 403
+            match client.get(url).send().await {
+                Ok(r) if r.status().as_u16() == 403 => {
+                    // Try Google cache as fallback
+                    match self.fetch_from_cache(&client, url).await {
+                        Ok(cached) => (cached, true),
+                        Err(_) => return Ok(format!("HTTP 403 Forbidden (cache also unavailable): {}", url)),
+                    }
+                }
+                Ok(r) if !r.status().is_success() => {
+                    return Ok(format!("HTTP {}: {}", r.status().as_u16(), url));
+                }
+                Ok(r) => (r, false),
+                Err(e) => return Ok(format!("Error fetching {}: {}", url, e)),
+            }
         };
-
-        let status = response.status();
-        if !status.is_success() {
-            return Ok(format!("HTTP {}: {}", status.as_u16(), url));
-        }
 
         let content_type = response
             .headers()
@@ -254,6 +270,13 @@ impl WebTools {
         // Convert HTML to plain text (basic)
         let text = if is_html { html_to_text(&body) } else { body };
 
+        // Add cache notice if from cache
+        let text = if from_cache {
+            format!("[Retrieved from Google Cache]\n\n{}", text)
+        } else {
+            text
+        };
+
         // Truncate if too long
         if text.len() > max_length {
             Ok(format!(
@@ -263,6 +286,20 @@ impl WebTools {
             ))
         } else {
             Ok(text)
+        }
+    }
+
+    /// Fetch a URL from Google's web cache
+    async fn fetch_from_cache(&self, client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
+        let cache_url = format!(
+            "https://webcache.googleusercontent.com/search?q=cache:{}",
+            urlencoding::encode(url)
+        );
+        let response = client.get(&cache_url).send().await?;
+        if response.status().is_success() {
+            Ok(response)
+        } else {
+            anyhow::bail!("Cache returned {}", response.status())
         }
     }
 }
