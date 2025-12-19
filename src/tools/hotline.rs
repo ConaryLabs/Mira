@@ -212,36 +212,21 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
     Ok(result)
 }
 
-/// Call Mira via the mira-chat sync endpoint (or Gemini directly)
-pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
-    // Build message with optional context
-    let message = if let Some(ctx) = &req.context {
-        format!("Context: {}\n\n{}", ctx, req.message)
-    } else {
-        req.message.clone()
-    };
-
-    // Route to Gemini directly if requested (bypasses mira-chat)
-    if req.provider.as_deref() == Some("gemini") {
-        return call_gemini(&message).await;
-    }
-
-    // Otherwise, go through mira-chat sync endpoint
+/// Call mira-chat sync endpoint with a specific provider
+async fn call_mira_chat(message: &str, provider: Option<&str>) -> Result<serde_json::Value> {
     let client = Client::new();
 
     let sync_req = SyncRequest {
-        message,
+        message: message.to_string(),
         project_path: DEFAULT_PROJECT_PATH.to_string(),
-        provider: req.provider,
+        provider: provider.map(String::from),
     };
 
-    // Build request with optional auth token
     let mut request = client
         .post(MIRA_CHAT_URL)
         .json(&sync_req)
-        .timeout(std::time::Duration::from_secs(120));
+        .timeout(std::time::Duration::from_secs(180)); // Longer timeout for council
 
-    // Add Bearer token if available (env var or .env file)
     if let Some(token) = get_sync_token() {
         request = request.bearer_auth(token);
     }
@@ -256,13 +241,11 @@ pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
 
     let sync_response: SyncResponse = response.json().await?;
 
+    let provider_name = provider.unwrap_or("openai");
     let mut result = serde_json::json!({
         "response": sync_response.content,
+        "provider": provider_name,
     });
-
-    if !sync_response.tool_calls.is_empty() {
-        result["tool_calls"] = serde_json::json!(sync_response.tool_calls.len());
-    }
 
     if let Some(usage) = sync_response.usage {
         result["tokens"] = serde_json::json!({
@@ -272,6 +255,56 @@ pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
     }
 
     Ok(result)
+}
+
+/// Consult the council - all three models in parallel
+async fn call_council(message: &str) -> Result<serde_json::Value> {
+    // Run all three in parallel
+    let (gpt_result, deepseek_result, gemini_result) = tokio::join!(
+        call_mira_chat(message, Some("openai")),
+        call_mira_chat(message, Some("deepseek")),
+        call_gemini(message)
+    );
+
+    // Format responses, handling errors gracefully
+    let gpt = match gpt_result {
+        Ok(r) => r["response"].as_str().unwrap_or("(error)").to_string(),
+        Err(e) => format!("(error: {})", e),
+    };
+    let deepseek = match deepseek_result {
+        Ok(r) => r["response"].as_str().unwrap_or("(error)").to_string(),
+        Err(e) => format!("(error: {})", e),
+    };
+    let gemini = match gemini_result {
+        Ok(r) => r["response"].as_str().unwrap_or("(error)").to_string(),
+        Err(e) => format!("(error: {})", e),
+    };
+
+    Ok(serde_json::json!({
+        "council": {
+            "gpt-5.2": gpt,
+            "deepseek": deepseek,
+            "gemini-3-pro": gemini,
+        }
+    }))
+}
+
+/// Call Mira via the mira-chat sync endpoint (or Gemini/Council directly)
+pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
+    // Build message with optional context
+    let message = if let Some(ctx) = &req.context {
+        format!("Context: {}\n\n{}", ctx, req.message)
+    } else {
+        req.message.clone()
+    };
+
+    // Route based on provider
+    match req.provider.as_deref() {
+        Some("gemini") => call_gemini(&message).await,
+        Some("council") => call_council(&message).await,
+        Some("deepseek") => call_mira_chat(&message, Some("deepseek")).await,
+        _ => call_mira_chat(&message, Some("openai")).await, // default to GPT-5.2
+    }
 }
 
 #[cfg(test)]

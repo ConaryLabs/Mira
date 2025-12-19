@@ -14,7 +14,7 @@ pub struct HotlineRequest {
     pub message: String,
     #[schemars(description = "Optional context")]
     pub context: Option<String>,
-    #[schemars(description = "Provider: 'openai' (GPT-5.2, default) or 'deepseek' (DeepSeek V3.2) or 'gemini' (Gemini 3 Pro)")]
+    #[schemars(description = "Provider: 'openai' (GPT-5.2, default), 'deepseek' (DeepSeek V3.2), 'gemini' (Gemini 3 Pro), or 'council' (all three in parallel)")]
     pub provider: Option<String>,
 }
 
