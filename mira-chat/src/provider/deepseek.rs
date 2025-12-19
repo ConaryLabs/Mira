@@ -102,6 +102,30 @@ impl DeepSeekProvider {
             });
         }
 
+        // Assistant message with tool_calls (required before tool results)
+        // Reconstruct from tool_results - the API requires this ordering
+        if !request.tool_results.is_empty() {
+            let tool_calls: Vec<ChatToolCall> = request
+                .tool_results
+                .iter()
+                .map(|r| ChatToolCall {
+                    id: r.call_id.clone(),
+                    call_type: "function".into(),
+                    function: ChatToolCallFunction {
+                        name: r.name.clone(),
+                        arguments: "{}".into(), // Args already executed, just need structure
+                    },
+                })
+                .collect();
+
+            messages.push(ChatMessage {
+                role: "assistant".into(),
+                content: None,
+                tool_calls: Some(tool_calls),
+                tool_call_id: None,
+            });
+        }
+
         // Tool results as tool messages
         for result in &request.tool_results {
             messages.push(ChatMessage {
