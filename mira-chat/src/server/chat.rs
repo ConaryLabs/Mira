@@ -485,6 +485,26 @@ async fn process_deepseek_chat(
 ) -> Result<()> {
     let project_path = PathBuf::from(&request.project_path);
 
+    // Save user message to database (for frontend display)
+    let now = chrono::Utc::now().timestamp();
+    if let Some(db) = &state.db {
+        let user_msg_id = Uuid::new_v4().to_string();
+        let user_blocks = vec![MessageBlock::Text {
+            content: request.message.clone(),
+        }];
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO chat_messages (id, role, blocks, created_at)
+            VALUES ($1, 'user', $2, $3)
+            "#,
+        )
+        .bind(&user_msg_id)
+        .bind(serde_json::to_string(&user_blocks).unwrap_or_default())
+        .bind(now)
+        .execute(db)
+        .await;
+    }
+
     // Get DeepSeek API key from environment
     let deepseek_key = std::env::var("DEEPSEEK_API_KEY")
         .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
@@ -907,7 +927,43 @@ async fn process_deepseek_chat(
 
     // Add accumulated text as first block
     if !accumulated_text.is_empty() {
-        assistant_blocks.insert(0, MessageBlock::Text { content: accumulated_text });
+        assistant_blocks.insert(0, MessageBlock::Text { content: accumulated_text.clone() });
+    }
+
+    // Save assistant message to database (for frontend display)
+    if let Some(db) = &state.db {
+        let assistant_msg_id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp();
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO chat_messages (id, role, blocks, created_at)
+            VALUES ($1, 'assistant', $2, $3)
+            "#,
+        )
+        .bind(&assistant_msg_id)
+        .bind(serde_json::to_string(&assistant_blocks).unwrap_or_default())
+        .bind(now)
+        .execute(db)
+        .await;
+
+        // Store token usage
+        if total_input_tokens > 0 || total_output_tokens > 0 {
+            let usage_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO token_usage (id, message_id, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, created_at)
+                VALUES ($1, $2, 'deepseek-chat', $3, $4, $5, 0, $6)
+                "#,
+            )
+            .bind(&usage_id)
+            .bind(&assistant_msg_id)
+            .bind(total_input_tokens as i64)
+            .bind(total_output_tokens as i64)
+            .bind(total_reasoning_tokens as i64)
+            .bind(now)
+            .execute(db)
+            .await;
+        }
     }
 
     // Send chain info (no chain for DeepSeek)
