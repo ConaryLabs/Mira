@@ -28,7 +28,7 @@ impl Default for DeepSeekBudget {
             max_recent_messages: 8,   // was 3 - more conversation continuity
             max_summaries: 5,         // was 2 - more historical context
             max_semantic_hits: 5,     // was 2 - more relevant past discussion
-            max_memories: 10,         // was 5 - more preferences/decisions
+            max_memories: 15,         // match GPT-5.2
             max_goals: 5,             // was 3 - show more active goals
             token_budget: 24000,      // was 8k - plenty of room in 128K context
         }
