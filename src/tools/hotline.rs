@@ -1,5 +1,6 @@
 // src/tools/hotline.rs
-// Hotline - Talk to Mira (GPT-5.2) via mira-chat sync endpoint
+// Hotline - Talk to Mira via mira-chat sync endpoint
+// Supports GPT-5.2 (default) or DeepSeek V3.2 via provider param
 
 use anyhow::Result;
 use reqwest::Client;
@@ -35,6 +36,8 @@ fn get_sync_token() -> Option<String> {
 struct SyncRequest {
     message: String,
     project_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +69,7 @@ pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
     let sync_req = SyncRequest {
         message,
         project_path: DEFAULT_PROJECT_PATH.to_string(),
+        provider: req.provider,
     };
 
     // Build request with optional auth token

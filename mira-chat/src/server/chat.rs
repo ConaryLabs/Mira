@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    context::{build_system_prompt, build_deepseek_prompt, MiraContext},
+    context::{build_system_prompt, build_deepseek_prompt, format_deepseek_context, MiraContext},
     reasoning::classify,
     responses::{Client as GptClient, StreamEvent},
     session::SessionManager,
@@ -482,12 +482,47 @@ async fn process_deepseek_chat(
     // Create DeepSeek provider (Chat model for tool support)
     let provider = DeepSeekProvider::new_chat(deepseek_key);
 
-    // Build system prompt with Mira persona and corrections
+    // Build system prompt with FULL assembled context (same as GPT-5.2)
+    // DeepSeek doesn't have server-side chain state, so we need to include everything
     let system_prompt = if let Some(db) = &state.db {
-        let context = MiraContext::load(db, &request.project_path)
-            .await
-            .unwrap_or_default();
-        build_deepseek_prompt(&context)
+        // Create session manager for full context assembly
+        let session = SessionManager::new(
+            db.clone(),
+            state.semantic.clone(),
+            request.project_path.clone(),
+        ).await;
+
+        match session {
+            Ok(s) => {
+                // Assemble full context (summaries, semantic, code hints, etc.)
+                let assembled = s.assemble_context(&request.message).await.unwrap_or_default();
+
+                tracing::debug!(
+                    "DeepSeek context: {} recent msgs, {} summaries, {} semantic hits, {} corrections, {} memories",
+                    assembled.recent_messages.len(),
+                    assembled.summaries.len(),
+                    assembled.semantic_context.len(),
+                    assembled.mira_context.corrections.len(),
+                    assembled.mira_context.memories.len(),
+                );
+
+                let base_prompt = build_deepseek_prompt(&assembled.mira_context);
+                let context_blob = format_deepseek_context(&assembled);
+
+                if context_blob.is_empty() {
+                    base_prompt
+                } else {
+                    format!("{}\n\n{}", base_prompt, context_blob)
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create session for DeepSeek: {}", e);
+                let context = MiraContext::load(db, &request.project_path)
+                    .await
+                    .unwrap_or_default();
+                build_deepseek_prompt(&context)
+            }
+        }
     } else {
         build_deepseek_prompt(&MiraContext::default())
     };

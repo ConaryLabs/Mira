@@ -11,6 +11,8 @@ use anyhow::Result;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 
+use crate::session::AssembledContext;
+
 /// Context loaded from Mira's persistent storage
 #[derive(Debug, Default, Clone)]
 pub struct MiraContext {
@@ -301,41 +303,70 @@ When writing code:
 
 /// Build system prompt for DeepSeek V3.2
 ///
-/// Includes persona and corrections (which directly affect code quality).
-/// Skips goals and memories (too noisy for code-focused model).
+/// Structured to make DeepSeek read context before reaching for tools:
+/// 1. Persona (identity)
+/// 2. Tool-use policy (STRICT - before tool hints to compete with tool impulse)
+/// 3. Tool usage hints
+/// 4. Project path
+///
+/// The assembled context is added by the caller with authoritative wrapper.
 pub fn build_deepseek_prompt(context: &MiraContext) -> String {
     let mut sections = Vec::new();
 
-    // 1. Persona - FIRST (from database)
+    // 1. Persona - FIRST (identity)
     if let Some(ref persona) = context.persona {
-        sections.push(persona.clone());
+        sections.push(format!("# Persona\n\n{}", persona));
     } else {
-        sections.push("You are Mira, a skilled developer assistant. Be direct and technically sharp.".to_string());
+        sections.push("# Persona\n\nYou are Mira, a power-armored coding assistant. Be direct, technically sharp, and never corporate.".to_string());
     }
 
-    // 2. Corrections - CRITICAL for code quality
-    if !context.corrections.is_empty() {
-        let mut lines = vec!["\n## Code Quality Rules (follow strictly)".to_string()];
-        for c in &context.corrections {
-            lines.push(format!("- {} -> {}", c.what_was_wrong, c.what_is_right));
-        }
-        sections.push(lines.join("\n"));
-    }
+    // 2. Tool-use policy - BEFORE tool hints (critical positioning)
+    sections.push(r#"# TOOL-USE POLICY (STRICT)
 
-    // 3. Project path
-    if let Some(path) = &context.project_path {
-        sections.push(format!("\nWorking in: {}", path));
-    }
+For questions about Corrections, Memories, Goals, Decisions, Recent conversation, or Summaries:
+- You MUST answer ONLY from the LOADED CONTEXT section below
+- Do NOT call tools for these - tool calls for context questions are ERRORS
+- Quote or bullet the exact items from the relevant section
 
-    // 4. Tool usage guidelines (DeepSeek-specific)
-    sections.push(r#"
-## Tool Usage
+For all other questions (files, commands, code, web):
+- Tools are allowed and encouraged
+
+RESPONSE PROCEDURE:
+1. Check if the answer is in LOADED CONTEXT
+2. If present: answer directly, no tools, no "let me check"
+3. If not present: use appropriate tools"#.to_string());
+
+    // 3. Tool usage hints
+    sections.push(r#"# Tool Usage
 - Use Read to examine files before editing
 - Use Bash for git, build, and test commands
 - Use Edit with old_string/new_string for precise changes
 - Always verify changes work before completing"#.to_string());
 
-    sections.join("\n")
+    // 4. Project path
+    if let Some(path) = &context.project_path {
+        sections.push(format!("Working in: {}", path));
+    }
+
+    sections.join("\n\n")
+}
+
+/// Format assembled context with authoritative wrapper for DeepSeek
+///
+/// Wraps the context in clear markers so the model treats it as source of truth.
+pub fn format_deepseek_context(context: &AssembledContext) -> String {
+    let inner = context.format_for_prompt();
+    if inner.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "# === LOADED CONTEXT (AUTHORITATIVE) ===\n\
+             Answer from this section for context questions. Do NOT use tools to look this up.\n\n\
+             {}\n\n\
+             # === END LOADED CONTEXT ===",
+            inner
+        )
+    }
 }
 
 #[cfg(test)]
