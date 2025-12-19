@@ -1,8 +1,18 @@
-//! Tool definitions for GPT-5.2 function calling
+//! Tool definitions for DeepSeek function calling
 
+use serde::Serialize;
 use serde_json::json;
 
-use crate::responses::Tool;
+/// Tool definition for function calling
+#[derive(Debug, Clone, Serialize)]
+pub struct Tool {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub parameters: serde_json::Value,
+}
 
 /// Get all tool definitions for GPT-5.2
 pub fn get_tools() -> Vec<Tool> {

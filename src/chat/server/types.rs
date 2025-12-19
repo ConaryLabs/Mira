@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::tools::DiffInfo;
+use crate::chat::tools::DiffInfo;
 
 // ============================================================================
 // SSE Event Types

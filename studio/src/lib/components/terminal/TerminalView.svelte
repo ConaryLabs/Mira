@@ -1,8 +1,18 @@
 <script lang="ts">
   import type { Message, MessageBlock, UsageInfo } from '$lib/api/client';
+  import type { CouncilResponses } from '$lib/types/content';
   import TerminalToolCall from './TerminalToolCall.svelte';
-  import { ContentBlock, StreamingTextBlock } from '$lib/components/content';
+  import { ContentBlock, StreamingTextBlock, CodeBlock, CouncilView } from '$lib/components/content';
   import { parseTextContent } from '$lib/parser/contentParser';
+
+  // Convert MessageBlock council fields to CouncilResponses format
+  function toCouncilResponses(block: MessageBlock): CouncilResponses {
+    return {
+      'gpt-5.2': block.gpt,
+      'opus-4.5': block.opus,
+      'gemini-3-pro': block.gemini,
+    };
+  }
 
   interface Props {
     messages: Message[];
@@ -113,6 +123,20 @@
                 {#each parsed.segments as segment (segment.id)}
                   <ContentBlock content={segment} />
                 {/each}
+              {:else if block.type === 'code_block'}
+                <!-- Typed code block from backend - no parsing needed -->
+                <CodeBlock
+                  id={`${message.id}-${blockIndex}`}
+                  language={block.language || ''}
+                  code={block.code || ''}
+                  filename={block.filename}
+                />
+              {:else if block.type === 'council'}
+                <!-- Typed council from backend - no parsing needed -->
+                <CouncilView
+                  id={`${message.id}-${blockIndex}`}
+                  responses={toCouncilResponses(block)}
+                />
               {:else if block.type === 'tool_call'}
                 <TerminalToolCall
                   name={block.name || 'unknown'}
@@ -154,6 +178,20 @@
                 <StreamingTextBlock
                   content={block.content || ''}
                   blockId={`streaming-${blockIndex}`}
+                />
+              {:else if block.type === 'code_block'}
+                <!-- Streaming code block from backend -->
+                <CodeBlock
+                  id={`streaming-${blockIndex}`}
+                  language={block.language || ''}
+                  code={block.code || ''}
+                  filename={block.filename}
+                />
+              {:else if block.type === 'council'}
+                <!-- Streaming council from backend -->
+                <CouncilView
+                  id={`streaming-${blockIndex}`}
+                  responses={toCouncilResponses(block)}
                 />
               {:else if block.type === 'tool_call'}
                 <TerminalToolCall

@@ -179,29 +179,9 @@ permission(action="save", tool_name="Bash", input_field="command",
 
 Future sessions can auto-approve matching tool calls via hooks.
 
-## Daemon Mode (Optional)
+## HTTP Server Mode
 
-For continuous background indexing, run Mira as a daemon:
-
-```bash
-# Start daemon (indexes code changes in real-time)
-~/.mira/mira daemon start -p /path/to/your/project
-
-# Check status
-~/.mira/mira daemon status -p /path/to/your/project
-
-# Stop
-~/.mira/mira daemon stop -p /path/to/your/project
-```
-
-The daemon:
-- Watches for file changes and re-indexes automatically
-- Syncs git history periodically
-- Generates embeddings for semantic code search
-
-## HTTP Mode (Remote Access)
-
-Run Mira as an HTTP server for multi-device/multi-session access. Uses the MCP **Streamable HTTP** transport.
+Run Mira as an HTTP server for multi-device access or Studio integration. Includes MCP, Chat API, and background indexer all on one port.
 
 ```bash
 # Start HTTP server
@@ -271,52 +251,6 @@ Benefits of HTTP mode:
 - **Shared memory** - All sessions share the same database
 - **Persistent** - Runs as a service, survives SSH disconnects
 - **Remote** - Access your dev box memory from anywhere
-
-## Mira-Chat (Standalone CLI)
-
-A standalone coding assistant with multi-model support and Mira's memory layer built-in.
-
-```bash
-# Build
-cd mira-chat
-SQLX_OFFLINE=true cargo build --release
-
-# Run
-./target/release/mira-chat -p /path/to/project
-```
-
-### Key Features
-
-- **Multi-model support** - GPT-5.2 and DeepSeek V3.2, switchable in UI
-- **GPT-5.2 Responses API** with streaming and function calling
-- **DeepSeek V3.2** - Cost-effective alternative with aggressive prefix caching
-- **Variable reasoning effort** - Auto-classified (none/low/medium/high/xhigh)
-- **Invisible sessions** - Context persists across restarts via:
-  - Sliding window of recent messages
-  - Semantic recall of relevant past conversation
-  - Auto-summarization when context grows large
-  - Auto-compaction of code context
-- **All MCP tools built-in** - tasks, goals, corrections, decisions, memories
-- **Cache-optimized** - Prompt structure maximizes LLM cache hits
-
-### Tools
-
-| Category | Tools |
-|----------|-------|
-| File | `read_file`, `write_file`, `edit_file`, `glob`, `grep` |
-| Shell | `bash` |
-| Web | `web_search`, `web_fetch` |
-| Memory | `remember`, `recall` |
-| Persistence | `task`, `goal`, `correction`, `store_decision`, `record_rejected_approach` |
-
-### HTTP Server Mode
-
-For web UI integration:
-```bash
-mira-chat --serve --port 3000
-```
-
-See `mira-chat/FEATURES.md` for detailed documentation.
 
 ## Manual Install (without Docker)
 

@@ -13,46 +13,37 @@ use crate::indexer::{CodeIndexer, GitIndexer, Watcher};
 use crate::tools::SemanticSearch;
 use git2::Repository;
 
-/// Global PID file location - stored in ~/.mira/ for system-wide daemon
-fn pid_file_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".mira").join("mira-daemon.pid")
-}
-
 pub struct Daemon {
     project_paths: Vec<PathBuf>,
     db: SqlitePool,
     semantic: Arc<SemanticSearch>,
 }
 
-impl Daemon {
-    pub async fn new(
-        project_paths: Vec<PathBuf>,
-        database_url: &str,
-        qdrant_url: Option<&str>,
-        gemini_key: Option<String>,
-    ) -> Result<Self> {
-        let db = SqlitePool::connect(database_url).await?;
-        let semantic = SemanticSearch::new(qdrant_url, gemini_key).await;
+/// Handles to background daemon tasks (for integration with serve-http)
+pub struct DaemonTasks {
+    /// Watcher handles (kept alive to maintain file watching)
+    _watchers: Vec<Watcher>,
+    /// Git sync task handle
+    _git_sync: tokio::task::JoinHandle<()>,
+}
 
-        Ok(Self {
+impl Daemon {
+    /// Create daemon with shared db and semantic instances
+    pub fn with_shared(
+        project_paths: Vec<PathBuf>,
+        db: SqlitePool,
+        semantic: Arc<SemanticSearch>,
+    ) -> Self {
+        Self {
             project_paths,
             db,
-            semantic: Arc::new(semantic),
-        })
+            semantic,
+        }
     }
 
-    /// Run the daemon - watches files and periodically syncs git for all projects
-    pub async fn run(&self) -> Result<()> {
-        // Write PID file
-        let pid = std::process::id();
-        let pid_path = pid_file_path();
-        if let Some(parent) = pid_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&pid_path, pid.to_string())?;
-        tracing::info!("Daemon started with PID {} (file: {})", pid, pid_path.display());
-
+    /// Spawn background indexing tasks without blocking
+    /// Returns handles that must be kept alive for tasks to continue
+    pub async fn spawn_background_tasks(&self) -> Result<DaemonTasks> {
         // Do initial index for all projects
         for project_path in &self.project_paths {
             if let Err(e) = self.initial_index(project_path).await {
@@ -80,7 +71,7 @@ impl Daemon {
         let db = self.db.clone();
         let semantic = self.semantic.clone();
         let project_paths = self.project_paths.clone();
-        tokio::spawn(async move {
+        let git_sync = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(300));
             loop {
                 interval.tick().await;
@@ -125,17 +116,10 @@ impl Daemon {
             }
         });
 
-        // Wait for shutdown signal
-        tracing::info!(
-            "Daemon running, watching {} project(s). Press Ctrl+C to stop.",
-            self.project_paths.len()
-        );
-        tokio::signal::ctrl_c().await?;
-
-        // Cleanup
-        let _ = std::fs::remove_file(&pid_path);
-        tracing::info!("Daemon stopped");
-        Ok(())
+        Ok(DaemonTasks {
+            _watchers: watchers,
+            _git_sync: git_sync,
+        })
     }
 
     async fn initial_index(&self, project_path: &Path) -> Result<()> {
@@ -180,34 +164,6 @@ impl Daemon {
     }
 }
 
-/// Check if daemon is running (uses global PID file)
-pub fn is_running() -> Option<u32> {
-    let pid_path = pid_file_path();
-    if let Ok(contents) = std::fs::read_to_string(&pid_path) {
-        if let Ok(pid) = contents.trim().parse::<u32>() {
-            // Check if process exists
-            if Path::new(&format!("/proc/{}", pid)).exists() {
-                return Some(pid);
-            }
-        }
-    }
-    None
-}
-
-/// Stop the daemon (uses global PID file)
-pub fn stop() -> Result<bool> {
-    if let Some(pid) = is_running() {
-        // Send SIGTERM
-        unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
-        }
-        // Remove PID file
-        let _ = std::fs::remove_file(pid_file_path());
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
 
 /// Sync from remote (fetch + pull) and re-index changed files
 /// Returns the number of files that were re-indexed

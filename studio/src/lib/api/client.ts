@@ -17,13 +17,27 @@ export interface ToolCallResult {
   diff?: DiffInfo;
 }
 
+export interface CouncilResponses {
+  gpt?: string;
+  opus?: string;
+  gemini?: string;
+}
+
 export interface MessageBlock {
-  type: 'text' | 'tool_call';
+  type: 'text' | 'tool_call' | 'code_block' | 'council';
   content?: string;
   call_id?: string;
   name?: string;
   arguments?: Record<string, unknown>;
   result?: ToolCallResult;
+  // Code block fields
+  language?: string;
+  code?: string;
+  filename?: string;
+  // Council fields
+  gpt?: string;
+  opus?: string;
+  gemini?: string;
 }
 
 export interface UsageInfo {
@@ -45,7 +59,6 @@ export interface ChatRequest {
   message: string;
   project_path: string;
   reasoning_effort?: string;
-  provider?: 'gpt' | 'deepseek';
 }
 
 export interface StatusResponse {
@@ -61,11 +74,24 @@ export interface StatusResponse {
 // ============================================================================
 
 export type ChatEvent =
+  // Message boundaries
+  | { type: 'message_start'; message_id: string }
+  | { type: 'message_end'; message_id: string }
+  // Text streaming
   | { type: 'text_delta'; delta: string }
+  // Code block streaming
+  | { type: 'code_block_start'; id: string; language: string; filename?: string }
+  | { type: 'code_block_delta'; id: string; delta: string }
+  | { type: 'code_block_end'; id: string }
+  // Council (multi-model)
+  | { type: 'council'; gpt?: string; opus?: string; gemini?: string }
+  // Tool execution
   | { type: 'tool_call_start'; call_id: string; name: string; arguments: Record<string, unknown> }
   | { type: 'tool_call_result'; call_id: string; name: string; success: boolean; output: string; diff?: DiffInfo }
+  // Metadata
   | { type: 'reasoning'; effort: string; summary?: string }
   | { type: 'usage'; input_tokens: number; output_tokens: number; reasoning_tokens: number; cached_tokens: number }
+  | { type: 'chain'; response_id?: string; previous_response_id?: string }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -236,6 +262,8 @@ export function createMessageBuilder(id: string): {
   let currentTextBlockIndex = -1;
   // Track tool calls by call_id
   const toolCallIndices = new Map<string, number>();
+  // Track code blocks by id
+  const codeBlockIndices = new Map<string, number>();
 
   function handleEvent(event: ChatEvent) {
     switch (event.type) {
@@ -249,6 +277,51 @@ export function createMessageBuilder(id: string): {
         if (block.type === 'text') {
           block.content = (block.content || '') + event.delta;
         }
+        break;
+      }
+
+      case 'code_block_start': {
+        // End current text block
+        currentTextBlockIndex = -1;
+        // Create new code block
+        const index = message.blocks.length;
+        codeBlockIndices.set(event.id, index);
+        message.blocks.push({
+          type: 'code_block',
+          language: event.language,
+          code: '',
+          filename: event.filename,
+        });
+        break;
+      }
+
+      case 'code_block_delta': {
+        const index = codeBlockIndices.get(event.id);
+        if (index !== undefined) {
+          const block = message.blocks[index];
+          if (block.type === 'code_block') {
+            block.code = (block.code || '') + event.delta;
+          }
+        }
+        break;
+      }
+
+      case 'code_block_end': {
+        // Code block complete, remove from tracking
+        codeBlockIndices.delete(event.id);
+        break;
+      }
+
+      case 'council': {
+        // End current text block
+        currentTextBlockIndex = -1;
+        // Add council block
+        message.blocks.push({
+          type: 'council',
+          gpt: event.gpt,
+          opus: event.opus,
+          gemini: event.gemini,
+        });
         break;
       }
 
@@ -314,7 +387,10 @@ export function createMessageBuilder(id: string): {
         break;
       }
 
-      // Ignore reasoning events for now
+      // Ignore events we don't need for message building
+      case 'message_start':
+      case 'message_end':
+      case 'chain':
       case 'reasoning':
         break;
     }

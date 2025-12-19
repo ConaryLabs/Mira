@@ -10,6 +10,9 @@
 
 import type { ParsedContent, ParseResult, ContentKind, CouncilResponses } from '$lib/types/content';
 
+// Re-export types for consumers
+export type { ParseResult, ParsedContent, ContentKind, CouncilResponses };
+
 // ============================================
 // LRU CACHE (100 entries max)
 // ============================================
@@ -61,7 +64,7 @@ class LRUCache<K, V> {
 const parseCache = new LRUCache<string, ParsedContent[]>(100);
 
 // Parser version - increment when parser logic changes to invalidate old cache
-const PARSER_VERSION = 'v3';
+const PARSER_VERSION = 'v4';
 
 // ============================================
 // FAST HASH (non-crypto, for streaming)
@@ -175,7 +178,8 @@ export function classify(text: string): ContentKind[] {
 // ============================================
 
 // Valid provider keys we expect in council responses
-const VALID_PROVIDER_KEYS = new Set(['openai', 'deepseek', 'gemini', 'gpt-5.2']);
+// Must match the keys returned by council.rs
+const VALID_PROVIDER_KEYS = new Set(['gpt-5.2', 'opus-4.5', 'gemini-3-pro']);
 
 // Pattern to detect council JSON start
 const COUNCIL_START_PATTERN = /^\s*\{\s*"council"\s*:/;
@@ -220,15 +224,15 @@ export function isCouncilResponse(text: string): boolean {
   try {
     const parsed = JSON.parse(text);
     if (parsed.council && typeof parsed.council === 'object') {
-      // Verify it has at least one valid provider key
+      // Verify it has at least one valid provider key (exact match)
       const keys = Object.keys(parsed.council);
-      return keys.some(k => VALID_PROVIDER_KEYS.has(k.toLowerCase()));
+      return keys.some(k => VALID_PROVIDER_KEYS.has(k));
     }
   } catch {
     // Not valid JSON at top level, but might have council embedded
     // Check if it looks like council JSON structure
     const hasProviderKey = Array.from(VALID_PROVIDER_KEYS).some(
-      provider => text.includes(`"${provider}"`) || text.includes(`"${provider.toUpperCase()}"`)
+      provider => text.includes(`"${provider}"`)
     );
     return hasProviderKey && COUNCIL_PATTERN.test(text);
   }
@@ -247,16 +251,14 @@ export function parseCouncilResponse(text: string): CouncilResponses | null {
     if (parsed.council && typeof parsed.council === 'object') {
       // Validate that it has at least one valid provider
       const council = parsed.council as Record<string, string>;
-      const validKeys = Object.keys(council).filter(k =>
-        VALID_PROVIDER_KEYS.has(k.toLowerCase())
-      );
+      const validKeys = Object.keys(council).filter(k => VALID_PROVIDER_KEYS.has(k));
       if (validKeys.length > 0) {
-        // Normalize keys to lowercase
+        // Keep original keys as-is (they match CouncilResponses type)
         const normalized: CouncilResponses = {};
-        for (const [key, value] of Object.entries(council)) {
-          const normalizedKey = key.toLowerCase() === 'gpt-5.2' ? 'openai' : key.toLowerCase();
-          if (VALID_PROVIDER_KEYS.has(key.toLowerCase()) && typeof value === 'string') {
-            normalized[normalizedKey as keyof CouncilResponses] = value;
+        for (const key of validKeys) {
+          const value = council[key];
+          if (typeof value === 'string') {
+            normalized[key as keyof CouncilResponses] = value;
           }
         }
         return normalized;
@@ -309,16 +311,14 @@ export function parseCouncilResponse(text: string): CouncilResponses | null {
 
       if (end > 0) {
         const council = JSON.parse(councilStr.slice(0, end));
-        // Validate and normalize
-        const validKeys = Object.keys(council).filter(k =>
-          VALID_PROVIDER_KEYS.has(k.toLowerCase())
-        );
+        // Validate - keys must match VALID_PROVIDER_KEYS exactly
+        const validKeys = Object.keys(council).filter(k => VALID_PROVIDER_KEYS.has(k));
         if (validKeys.length > 0) {
           const normalized: CouncilResponses = {};
-          for (const [key, value] of Object.entries(council)) {
-            const normalizedKey = key.toLowerCase() === 'gpt-5.2' ? 'openai' : key.toLowerCase();
-            if (VALID_PROVIDER_KEYS.has(key.toLowerCase()) && typeof value === 'string') {
-              normalized[normalizedKey as keyof CouncilResponses] = value;
+          for (const key of validKeys) {
+            const value = council[key];
+            if (typeof value === 'string') {
+              normalized[key as keyof CouncilResponses] = value;
             }
           }
           return normalized;
@@ -335,21 +335,20 @@ export function parseCouncilResponse(text: string): CouncilResponses | null {
 // Partial council parser for streaming
 export function parsePartialCouncil(text: string): Partial<CouncilResponses> | null {
   const result: Partial<CouncilResponses> = {};
-  const providers = ['openai', 'deepseek', 'gemini', 'gpt-5.2'];
+  // Match the exact provider keys from the backend
+  const providers = ['gpt-5.2', 'opus-4.5', 'gemini-3-pro'];
 
   for (const provider of providers) {
     // Match "provider": "content..." even if incomplete
     const pattern = new RegExp(`"${provider}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`, 'i');
     const match = text.match(pattern);
     if (match) {
-      // Unescape the string content
-      const key = provider === 'gpt-5.2' ? 'openai' : provider;
       try {
         // Try to parse as complete JSON string
-        result[key as keyof CouncilResponses] = JSON.parse(`"${match[1]}"`);
+        result[provider as keyof CouncilResponses] = JSON.parse(`"${match[1]}"`);
       } catch {
         // Use raw content if JSON parse fails (incomplete string)
-        result[key as keyof CouncilResponses] = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        result[provider as keyof CouncilResponses] = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
       }
     }
   }

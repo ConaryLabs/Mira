@@ -10,7 +10,7 @@ use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::{
+use crate::chat::{
     conductor::validation::{repair_json, ToolSchemas},
     context::{build_deepseek_prompt, format_deepseek_context, MiraContext},
     session::{Checkpoint, SessionManager},

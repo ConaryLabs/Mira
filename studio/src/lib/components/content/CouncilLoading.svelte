@@ -14,7 +14,7 @@
   );
 
   const pendingProviders = $derived(
-    ['gpt-5.2', 'deepseek', 'gemini-3-pro'].filter(p => !receivedProviders.includes(p))
+    ['gpt-5.2', 'opus-4.5', 'gemini-3-pro'].filter(p => !receivedProviders.includes(p))
   );
 </script>
 
