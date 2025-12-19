@@ -1,5 +1,6 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
   import { PROVIDER_DISPLAY_NAMES } from '$lib/types/content';
   import { isExpanded, setExpanded } from '$lib/stores/expansionState';
 
@@ -26,6 +27,21 @@
   // Configure marked
   marked.setOptions({ breaks: true, gfm: true });
 
+  // DOMPurify config - allow safe tags only
+  const PURIFY_CONFIG = {
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'b', 'i', 'u', 's', 'del',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'ul', 'ol', 'li',
+      'blockquote', 'pre', 'code',
+      'a', 'hr',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    ],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
+    ALLOW_DATA_ATTR: false,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+  };
+
   const displayName = $derived(PROVIDER_DISPLAY_NAMES[provider] || provider);
   const lines = $derived(response.split('\n'));
   const previewText = $derived(lines.slice(0, previewLines).join('\n'));
@@ -33,9 +49,10 @@
 
   function renderMarkdown(content: string): string {
     try {
-      return marked.parse(content) as string;
+      const html = marked.parse(content) as string;
+      return DOMPurify.sanitize(html, PURIFY_CONFIG);
     } catch {
-      return content;
+      return DOMPurify.sanitize(content);
     }
   }
 
