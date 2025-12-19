@@ -452,4 +452,80 @@ impl SessionManager {
             has_code_compaction: has_compaction.0 > 0,
         })
     }
+
+    /// Save a checkpoint after successful tool execution (DeepSeek continuity)
+    ///
+    /// Checkpoints replace server-side chain state for DeepSeek.
+    /// Stored in work_context with 24h TTL.
+    pub async fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let expires_at = now + (24 * 3600); // 24 hour TTL
+        let value = serde_json::to_string(checkpoint)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO work_context (context_type, context_key, context_value, priority, expires_at, created_at, updated_at, project_id)
+            VALUES ('deepseek_checkpoint', $1, $2, 0, $3, $4, $4, NULL)
+            ON CONFLICT(context_type, context_key) DO UPDATE SET
+                context_value = excluded.context_value,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&self.project_path)
+        .bind(&value)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&self.db)
+        .await?;
+
+        debug!("Saved checkpoint: {}", checkpoint.id);
+        Ok(())
+    }
+
+    /// Load the most recent checkpoint for this project
+    pub async fn load_checkpoint(&self) -> Result<Option<Checkpoint>> {
+        let now = Utc::now().timestamp();
+
+        let row: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT context_value FROM work_context
+            WHERE context_type = 'deepseek_checkpoint'
+              AND context_key = $1
+              AND expires_at > $2
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(&self.project_path)
+        .bind(now)
+        .fetch_optional(&self.db)
+        .await?;
+
+        match row {
+            Some((json,)) => {
+                let checkpoint: Checkpoint = serde_json::from_str(&json)?;
+                debug!("Loaded checkpoint: {}", checkpoint.id);
+                Ok(Some(checkpoint))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Clear checkpoint (call after conversation reset)
+    pub async fn clear_checkpoint(&self) -> Result<()> {
+        sqlx::query(
+            r#"
+            DELETE FROM work_context
+            WHERE context_type = 'deepseek_checkpoint'
+              AND context_key = $1
+            "#,
+        )
+        .bind(&self.project_path)
+        .execute(&self.db)
+        .await?;
+
+        debug!("Cleared checkpoint for {}", self.project_path);
+        Ok(())
+    }
 }

@@ -4,6 +4,7 @@
 //! and message persistence.
 
 use anyhow::Result;
+use chrono::Utc;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -15,7 +16,7 @@ use crate::{
     context::{build_system_prompt, build_deepseek_prompt, format_deepseek_context, MiraContext},
     reasoning::classify,
     responses::{Client as GptClient, StreamEvent},
-    session::SessionManager,
+    session::{Checkpoint, SessionManager},
     tools::{get_tools, get_tool_definitions, ToolExecutor},
     provider::{
         DeepSeekProvider, Provider,
@@ -492,8 +493,9 @@ async fn process_deepseek_chat(
     let provider = DeepSeekProvider::new_chat(deepseek_key);
 
     // Build system prompt with FULL assembled context (same as GPT-5.2)
-    // DeepSeek doesn't have server-side chain state, so we include everything client-side
-    let (system_prompt, history_messages) = if let Some(db) = &state.db {
+    // DeepSeek doesn't have server-side chain state, so we use checkpoints for continuity
+    let mut session_manager: Option<SessionManager> = None;
+    let (system_prompt, history_messages, checkpoint) = if let Some(db) = &state.db {
         // Create session manager for full context assembly
         let session = SessionManager::new(
             db.clone(),
@@ -505,6 +507,12 @@ async fn process_deepseek_chat(
             Ok(s) => {
                 // Assemble full context (summaries, semantic, code hints, etc.)
                 let assembled = s.assemble_context(&request.message).await.unwrap_or_default();
+
+                // Load any existing checkpoint for continuity
+                let checkpoint = s.load_checkpoint().await.ok().flatten();
+                if checkpoint.is_some() {
+                    tracing::debug!("DeepSeek: loaded checkpoint for continuity");
+                }
 
                 tracing::debug!(
                     "DeepSeek context: {} recent msgs, {} summaries, {} semantic hits, {} corrections, {} memories",
@@ -538,18 +546,33 @@ async fn process_deepseek_chat(
                     format!("{}\n\n{}", base_prompt, context_blob)
                 };
 
-                (prompt, history)
+                // Store session manager for checkpoint saving
+                session_manager = Some(s);
+
+                (prompt, history, checkpoint)
             }
             Err(e) => {
                 tracing::warn!("Failed to create session for DeepSeek: {}", e);
                 let context = MiraContext::load(db, &request.project_path)
                     .await
                     .unwrap_or_default();
-                (build_deepseek_prompt(&context), Vec::new())
+                (build_deepseek_prompt(&context), Vec::new(), None)
             }
         }
     } else {
-        (build_deepseek_prompt(&MiraContext::default()), Vec::new())
+        (build_deepseek_prompt(&MiraContext::default()), Vec::new(), None)
+    };
+
+    // Format checkpoint as context if present
+    let system_prompt = if let Some(ref cp) = checkpoint {
+        format!("{}\n\n# Last Checkpoint\nTask: {}\nLast action: {}\nRemaining: {}\nFiles: {}",
+            system_prompt,
+            cp.current_task,
+            cp.last_action,
+            cp.remaining.as_deref().unwrap_or("none"),
+            cp.working_files.join(", "))
+    } else {
+        system_prompt
     };
 
     // Create tool executor
@@ -661,6 +684,33 @@ async fn process_deepseek_chat(
                             name: name.clone(),
                             output: output.clone(),
                         });
+
+                        // Save checkpoint after successful tool execution
+                        if success {
+                            if let Some(ref session) = session_manager {
+                                // Extract file paths from args if this is a file operation
+                                let mut working_files = Vec::new();
+                                if let Some(path) = final_args.get("file_path").and_then(|v| v.as_str()) {
+                                    working_files.push(path.to_string());
+                                }
+                                if let Some(path) = final_args.get("path").and_then(|v| v.as_str()) {
+                                    working_files.push(path.to_string());
+                                }
+
+                                let cp = Checkpoint {
+                                    id: Uuid::new_v4().to_string(),
+                                    current_task: request.message.chars().take(100).collect(),
+                                    last_action: format!("{}: {}", name, output.chars().take(200).collect::<String>()),
+                                    remaining: None,
+                                    working_files,
+                                    artifact_ids: vec![call_id.clone()],
+                                    created_at: Utc::now().timestamp(),
+                                };
+                                if let Err(e) = session.save_checkpoint(&cp).await {
+                                    tracing::warn!("Failed to save checkpoint: {}", e);
+                                }
+                            }
+                        }
 
                         tx.send(ChatEvent::ToolCallResult {
                             call_id,
@@ -785,6 +835,32 @@ async fn process_deepseek_chat(
                             name: name.clone(),
                             output: output.clone(),
                         });
+
+                        // Save checkpoint after successful continuation tool
+                        if success {
+                            if let Some(ref session) = session_manager {
+                                let mut working_files = Vec::new();
+                                if let Some(path) = final_args.get("file_path").and_then(|v| v.as_str()) {
+                                    working_files.push(path.to_string());
+                                }
+                                if let Some(path) = final_args.get("path").and_then(|v| v.as_str()) {
+                                    working_files.push(path.to_string());
+                                }
+
+                                let cp = Checkpoint {
+                                    id: Uuid::new_v4().to_string(),
+                                    current_task: request.message.chars().take(100).collect(),
+                                    last_action: format!("{}: {}", name, output.chars().take(200).collect::<String>()),
+                                    remaining: None,
+                                    working_files,
+                                    artifact_ids: vec![call_id.clone()],
+                                    created_at: Utc::now().timestamp(),
+                                };
+                                if let Err(e) = session.save_checkpoint(&cp).await {
+                                    tracing::warn!("Failed to save continuation checkpoint: {}", e);
+                                }
+                            }
+                        }
 
                         tx.send(ChatEvent::ToolCallResult {
                             call_id,
