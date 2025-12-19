@@ -24,12 +24,13 @@ pub struct DeepSeekBudget {
 impl Default for DeepSeekBudget {
     fn default() -> Self {
         Self {
-            max_recent_messages: 3,
-            max_summaries: 2,
-            max_semantic_hits: 2,
-            max_memories: 5,
-            max_goals: 3,
-            token_budget: 8000, // ~8k tokens for context, leaves room for response
+            // With 128K context and cheap tokens, no need to be stingy
+            max_recent_messages: 8,   // was 3 - more conversation continuity
+            max_summaries: 5,         // was 2 - more historical context
+            max_semantic_hits: 5,     // was 2 - more relevant past discussion
+            max_memories: 10,         // was 5 - more preferences/decisions
+            max_goals: 5,             // was 3 - show more active goals
+            token_budget: 24000,      // was 8k - plenty of room in 128K context
         }
     }
 }
@@ -207,9 +208,9 @@ impl AssembledContext {
 
             for msg in recent {
                 let role = if msg.role == "user" { "U" } else { "A" };
-                // Truncate to 300 chars for budget
-                let content = if msg.content.len() > 300 {
-                    let mut end = 300;
+                // Truncate to 800 chars - enough for substantial responses
+                let content = if msg.content.len() > 800 {
+                    let mut end = 800;
                     while !msg.content.is_char_boundary(end) && end > 0 {
                         end -= 1;
                     }
@@ -230,9 +231,9 @@ impl AssembledContext {
         if !self.summaries.is_empty() {
             let mut lines = vec!["## Context Summary".to_string()];
             for s in self.summaries.iter().take(budget.max_summaries) {
-                // Truncate long summaries
-                let summary = if s.len() > 500 {
-                    let mut end = 500;
+                // Truncate long summaries to 1000 chars
+                let summary = if s.len() > 1000 {
+                    let mut end = 1000;
                     while !s.is_char_boundary(end) && end > 0 {
                         end -= 1;
                     }
@@ -254,8 +255,8 @@ impl AssembledContext {
             let mut lines = vec!["## Related Context".to_string()];
             // semantic_context should already be sorted by score
             for hit in self.semantic_context.iter().take(budget.max_semantic_hits) {
-                let preview = if hit.content.len() > 150 {
-                    let mut end = 150;
+                let preview = if hit.content.len() > 400 {
+                    let mut end = 400;
                     while !hit.content.is_char_boundary(end) && end > 0 {
                         end -= 1;
                     }
@@ -272,13 +273,13 @@ impl AssembledContext {
             }
         }
 
-        // 6. Memories - aggressively capped (least priority)
+        // 6. Memories - capped but not aggressively
         if !self.mira_context.memories.is_empty() {
             let mut lines = vec!["## Preferences".to_string()];
             for m in self.mira_context.memories.iter().take(budget.max_memories) {
-                // Very short preview for memories
-                let content = if m.content.len() > 100 {
-                    let mut end = 100;
+                // 200 chars is enough for most memory items
+                let content = if m.content.len() > 200 {
+                    let mut end = 200;
                     while !m.content.is_char_boundary(end) && end > 0 {
                         end -= 1;
                     }
