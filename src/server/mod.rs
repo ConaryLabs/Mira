@@ -132,6 +132,7 @@ impl MiraServer {
     // === Hotline - Talk to Mira (GPT-5.2) ===
 
     #[tool(description = "Talk to Mira (GPT-5.2) for advice or collaboration.")]
+    // Note: Provider param allows switching to DeepSeek V3.2. See HotlineRequest schema.
     async fn hotline(&self, Parameters(req): Parameters<HotlineRequest>) -> Result<CallToolResult, McpError> {
         match hotline::call_mira(req).await {
             Ok(result) => Ok(json_response(result)),
