@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { ToolCallResult } from '$lib/api/client';
   import DiffView from '../DiffView.svelte';
+  import { CouncilView, ContentBlock } from '$lib/components/content';
+  import { parseToolOutput } from '$lib/parser/contentParser';
 
   interface Props {
     name: string;
@@ -23,6 +25,8 @@
     bash: '$',
     list_files: 'ls',
     search: 'rg',
+    mcp__mira__hotline: '📞',
+    hotline: '📞',
     default: '>>',
   };
 
@@ -38,6 +42,11 @@
       return cmd.length > 50 ? cmd.slice(0, 50) + '...' : cmd;
     }
     if (args.file_path) return String(args.file_path);
+    if (args.message) {
+      const msg = String(args.message);
+      return msg.length > 50 ? msg.slice(0, 50) + '...' : msg;
+    }
+    if (args.provider) return String(args.provider);
     return '';
   }
 
@@ -56,6 +65,11 @@
     }
     return output;
   }
+
+  // Parse tool output for rich rendering
+  const parsedOutput = $derived(
+    result?.output ? parseToolOutput(name, result.output) : null
+  );
 
   const status = $derived(getStatus());
 </script>
@@ -95,7 +109,25 @@
             newContent={result.diff.new_content}
             isNewFile={result.diff.is_new_file}
           />
+        {:else if result.output && parsedOutput}
+          <!-- Render parsed output with rich components -->
+          {#if parsedOutput.metadata.isCouncil}
+            <!-- Council response - render with CouncilView -->
+            {#each parsedOutput.segments as segment (segment.id)}
+              {#if segment.type === 'council'}
+                <CouncilView responses={segment.responses} />
+              {:else}
+                <ContentBlock content={segment} />
+              {/if}
+            {/each}
+          {:else}
+            <!-- Regular output - render with ContentBlock or fallback -->
+            {#each parsedOutput.segments as segment (segment.id)}
+              <ContentBlock content={segment} />
+            {/each}
+          {/if}
         {:else if result.output}
+          <!-- Fallback: raw output -->
           <div class="bg-[var(--term-bg)] p-2 rounded text-xs overflow-x-auto">
             <pre class="text-[var(--term-text)] whitespace-pre-wrap">{formatOutput(result.output)}</pre>
           </div>
