@@ -127,6 +127,7 @@ use mira::MiraTools;
 use shell::ShellTools;
 use test::TestTools;
 use web::WebTools;
+pub use web::WebSearchConfig;
 
 /// Tool executor handles tool invocation and result formatting
 ///
@@ -145,6 +146,8 @@ pub struct ToolExecutor {
     session: Option<Arc<SessionManager>>,
     /// File content cache for avoiding re-reads
     file_cache: FileCache,
+    /// Web search configuration (Google Custom Search)
+    web_search_config: WebSearchConfig,
 }
 
 impl ToolExecutor {
@@ -157,6 +160,7 @@ impl ToolExecutor {
             db: None,
             session: None,
             file_cache: FileCache::new(),
+            web_search_config: WebSearchConfig::default(),
         }
     }
 
@@ -181,6 +185,12 @@ impl ToolExecutor {
     /// Configure with session manager for file tracking
     pub fn with_session(mut self, session: Arc<SessionManager>) -> Self {
         self.session = Some(session);
+        self
+    }
+
+    /// Configure with web search (Google Custom Search)
+    pub fn with_web_search(mut self, config: WebSearchConfig) -> Self {
+        self.web_search_config = config;
         self
     }
 
@@ -372,7 +382,7 @@ impl ToolExecutor {
     }
 
     fn web_tools(&self) -> WebTools {
-        WebTools
+        WebTools::new(self.web_search_config.clone())
     }
 
     fn memory_tools(&self) -> MemoryTools<'_> {

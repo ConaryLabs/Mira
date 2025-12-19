@@ -3,6 +3,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // Cached regexes for HTML processing (compiled once at startup)
@@ -12,6 +13,35 @@ static RE_BLOCK: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)</?(p|div|br|h[1-6]
 static RE_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").expect("valid regex"));
 static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").expect("valid regex"));
 static RE_MULTI_SPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r" {2,}").expect("valid regex"));
+
+/// Google Custom Search API response
+#[derive(Debug, Deserialize)]
+struct GoogleSearchResponse {
+    items: Option<Vec<GoogleSearchItem>>,
+    error: Option<GoogleSearchError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleSearchItem {
+    title: String,
+    link: String,
+    snippet: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleSearchError {
+    code: i32,
+    message: String,
+}
+
+/// Configuration for web search
+#[derive(Debug, Clone, Default)]
+pub struct WebSearchConfig {
+    /// Google API key (for Custom Search JSON API)
+    pub google_api_key: Option<String>,
+    /// Google Custom Search Engine ID (cx)
+    pub google_cx: Option<String>,
+}
 
 /// Convert HTML to plain text (basic implementation)
 pub fn html_to_text(html: &str) -> String {
@@ -42,14 +72,93 @@ pub fn html_to_text(html: &str) -> String {
 }
 
 /// Web tool implementations
-pub struct WebTools;
+pub struct WebTools {
+    config: WebSearchConfig,
+}
 
 impl WebTools {
+    /// Create WebTools with optional Google Search configuration
+    pub fn new(config: WebSearchConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create WebTools with default (no Google Search) configuration
+    pub fn new_default() -> Self {
+        Self {
+            config: WebSearchConfig::default(),
+        }
+    }
+
+    /// Check if Google Custom Search is configured
+    pub fn has_google_search(&self) -> bool {
+        self.config.google_api_key.is_some() && self.config.google_cx.is_some()
+    }
+
     pub async fn web_search(&self, args: &Value) -> Result<String> {
         let query = args["query"].as_str().unwrap_or("");
         let limit = args["limit"].as_u64().unwrap_or(5) as usize;
 
-        // Use DuckDuckGo HTML search (no API key required)
+        // Use Google Custom Search if configured, otherwise fall back to DuckDuckGo
+        if self.has_google_search() {
+            self.google_search(query, limit).await
+        } else {
+            self.duckduckgo_search(query, limit).await
+        }
+    }
+
+    /// Search using Google Custom Search JSON API
+    async fn google_search(&self, query: &str, limit: usize) -> Result<String> {
+        let api_key = self.config.google_api_key.as_ref().unwrap();
+        let cx = self.config.google_cx.as_ref().unwrap();
+
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (compatible; MiraChat/1.0)")
+            .build()?;
+
+        // Google Custom Search API - max 10 results per request
+        let num = limit.min(10);
+        let url = format!(
+            "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
+            api_key,
+            cx,
+            urlencoding::encode(query),
+            num
+        );
+
+        let response = client.get(&url).send().await?;
+        let status = response.status();
+
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Ok(format!("Google Search API error {}: {}", status, text));
+        }
+
+        let search_result: GoogleSearchResponse = response.json().await?;
+
+        // Check for API errors in response body
+        if let Some(error) = search_result.error {
+            return Ok(format!("Google Search API error {}: {}", error.code, error.message));
+        }
+
+        let items = search_result.items.unwrap_or_default();
+        if items.is_empty() {
+            return Ok(format!("No results found for: {}", query));
+        }
+
+        let results: Vec<String> = items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let snippet = item.snippet.as_deref().unwrap_or("").replace('\n', " ");
+                format!("{}. {} - {}\n   {}", i + 1, item.title, item.link, snippet)
+            })
+            .collect();
+
+        Ok(results.join("\n\n"))
+    }
+
+    /// Search using DuckDuckGo HTML (fallback, may get rate limited)
+    async fn duckduckgo_search(&self, query: &str, limit: usize) -> Result<String> {
         let client = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (compatible; MiraChat/1.0)")
             .build()?;
@@ -102,7 +211,7 @@ impl WebTools {
         }
 
         if results.is_empty() {
-            Ok(format!("No results found for: {}", query))
+            Ok(format!("No results found for: {} (DuckDuckGo may be rate limiting)", query))
         } else {
             Ok(results.join("\n"))
         }

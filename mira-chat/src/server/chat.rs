@@ -130,7 +130,8 @@ pub async fn process_chat(
     let tools = get_tools();
 
     // Create tool executor with session for file tracking
-    let mut executor = ToolExecutor::new();
+    let mut executor = ToolExecutor::new()
+        .with_web_search(state.web_search_config.clone());
     executor.cwd = project_path.clone();
     if let Some(db) = &state.db {
         executor = executor.with_db(db.clone());
@@ -596,7 +597,8 @@ async fn process_deepseek_chat(
     };
 
     // Create tool executor
-    let mut executor = ToolExecutor::new();
+    let mut executor = ToolExecutor::new()
+        .with_web_search(state.web_search_config.clone());
     executor.cwd = project_path.clone();
     if let Some(db) = &state.db {
         executor = executor.with_db(db.clone());

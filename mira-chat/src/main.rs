@@ -282,7 +282,20 @@ async fn main() -> Result<()> {
     if args.serve {
         // Get sync token from env (optional auth for /api/chat/sync)
         let sync_token = std::env::var("MIRA_SYNC_TOKEN").ok();
-        server::run(args.port, api_key, db, semantic, reasoning_effort, sync_token).await
+
+        // Load Google Custom Search config from environment
+        let web_search_config = tools::WebSearchConfig {
+            google_api_key: std::env::var("GOOGLE_SEARCH_API_KEY").ok(),
+            google_cx: std::env::var("GOOGLE_SEARCH_CX").ok(),
+        };
+
+        if web_search_config.google_api_key.is_some() && web_search_config.google_cx.is_some() {
+            println!("Web search:   Google Custom Search ENABLED");
+        } else {
+            println!("Web search:   DuckDuckGo fallback (set GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX for Google)");
+        }
+
+        server::run(args.port, api_key, db, semantic, reasoning_effort, sync_token, web_search_config).await
     } else {
         repl::run_with_context(api_key, context, db, semantic, session).await
     }
