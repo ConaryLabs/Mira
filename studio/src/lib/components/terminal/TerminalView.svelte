@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { marked } from 'marked';
   import type { Message, MessageBlock, UsageInfo } from '$lib/api/client';
   import TerminalToolCall from './TerminalToolCall.svelte';
+  import { ContentBlock, StreamingTextBlock } from '$lib/components/content';
+  import { parseTextContent } from '$lib/parser/contentParser';
 
   interface Props {
     messages: Message[];
@@ -27,20 +28,15 @@
   }
 
   let containerEl: HTMLElement;
-
-  // Configure marked
-  marked.setOptions({ breaks: true, gfm: true });
-
-  function renderMarkdown(content: string): string {
-    try {
-      return marked.parse(content) as string;
-    } catch {
-      return content;
-    }
-  }
+  let isAtBottom = $state(true);
 
   function handleScroll(event: Event) {
     const target = event.target as HTMLElement;
+    // Check if at bottom for sticky scroll
+    const threshold = 50;
+    isAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight < threshold;
+
+    // Load more when scrolled near top
     if (target.scrollTop < 100 && hasMore && !loadingMore && onLoadMore) {
       onLoadMore();
     }
@@ -51,8 +47,16 @@
   }
 
   export function scrollToBottom() {
+    if (containerEl && isAtBottom) {
+      containerEl.scrollTop = containerEl.scrollHeight;
+    }
+  }
+
+  // Force scroll to bottom (ignoring isAtBottom)
+  export function forceScrollToBottom() {
     if (containerEl) {
       containerEl.scrollTop = containerEl.scrollHeight;
+      isAtBottom = true;
     }
   }
 </script>
@@ -102,11 +106,13 @@
         {:else}
           <!-- Assistant message -->
           <div class="pl-4 border-l-2 border-[var(--term-border)]">
-            {#each message.blocks as block}
+            {#each message.blocks as block, blockIndex}
               {#if block.type === 'text'}
-                <div class="terminal-prose text-[var(--term-text)]">
-                  {@html renderMarkdown(block.content || '')}
-                </div>
+                <!-- Parse completed text blocks into rich content (isStreaming=false for caching) -->
+                {@const parsed = parseTextContent(block.content || '', `${message.id}-${blockIndex}`, false)}
+                {#each parsed.segments as segment (segment.id)}
+                  <ContentBlock content={segment} />
+                {/each}
               {:else if block.type === 'tool_call'}
                 <TerminalToolCall
                   name={block.name || 'unknown'}
@@ -142,11 +148,13 @@
           {#if streamingMessage.blocks.length === 0}
             <span class="text-[var(--term-accent)] animate-pulse">_</span>
           {:else}
-            {#each streamingMessage.blocks as block}
+            {#each streamingMessage.blocks as block, blockIndex}
               {#if block.type === 'text'}
-                <div class="terminal-prose text-[var(--term-text)]">
-                  {@html renderMarkdown(block.content || '')}
-                </div>
+                <!-- Debounced streaming parser - only parses when content stabilizes -->
+                <StreamingTextBlock
+                  content={block.content || ''}
+                  blockId={`streaming-${blockIndex}`}
+                />
               {:else if block.type === 'tool_call'}
                 <TerminalToolCall
                   name={block.name || 'unknown'}
@@ -179,67 +187,5 @@
 </div>
 
 <style>
-  /* Terminal-specific prose styles */
-  .terminal-prose :global(p) {
-    margin: 0.5em 0;
-  }
-
-  .terminal-prose :global(p:first-child) {
-    margin-top: 0;
-  }
-
-  .terminal-prose :global(code) {
-    background: var(--term-bg-secondary);
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
-    font-size: 0.9em;
-  }
-
-  .terminal-prose :global(pre) {
-    background: var(--term-bg-secondary);
-    padding: 0.75em;
-    border-radius: 4px;
-    overflow-x: auto;
-    margin: 0.5em 0;
-  }
-
-  .terminal-prose :global(pre code) {
-    background: none;
-    padding: 0;
-  }
-
-  .terminal-prose :global(a) {
-    color: var(--term-accent);
-    text-decoration: underline;
-  }
-
-  .terminal-prose :global(strong) {
-    color: var(--term-text);
-    font-weight: 600;
-  }
-
-  .terminal-prose :global(ul), .terminal-prose :global(ol) {
-    margin: 0.5em 0;
-    padding-left: 1.5em;
-  }
-
-  .terminal-prose :global(li) {
-    margin: 0.25em 0;
-  }
-
-  .terminal-prose :global(h1),
-  .terminal-prose :global(h2),
-  .terminal-prose :global(h3),
-  .terminal-prose :global(h4) {
-    color: var(--term-accent);
-    font-weight: 600;
-    margin: 1em 0 0.5em;
-  }
-
-  .terminal-prose :global(blockquote) {
-    border-left: 2px solid var(--term-border);
-    padding-left: 1em;
-    color: var(--term-text-dim);
-    margin: 0.5em 0;
-  }
+  /* Styles moved to individual content components */
 </style>
