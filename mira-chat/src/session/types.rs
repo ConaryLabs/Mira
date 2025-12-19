@@ -67,6 +67,28 @@ pub struct SessionStats {
     pub has_code_compaction: bool,
 }
 
+/// A checkpoint for DeepSeek continuity
+///
+/// Created after each successful unit of progress (tool success, test pass, etc.)
+/// Provides compact state summary to replace server-side chain continuity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Checkpoint {
+    /// Unique checkpoint ID
+    pub id: String,
+    /// What task/goal we're working on
+    pub current_task: String,
+    /// What just changed (last action summary)
+    pub last_action: String,
+    /// What's remaining to do
+    pub remaining: Option<String>,
+    /// Files being actively worked on
+    pub working_files: Vec<String>,
+    /// Relevant artifact IDs for context
+    pub artifact_ids: Vec<String>,
+    /// When this checkpoint was created
+    pub created_at: i64,
+}
+
 
 #[cfg(test)]
 mod tests {
