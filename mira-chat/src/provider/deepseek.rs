@@ -9,10 +9,11 @@ use futures::StreamExt;
 use mira_core::SseDecoder;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use super::{
-    Capabilities, ChatRequest, ChatResponse, FinishReason, Provider,
+    Capabilities, ChatRequest, ChatResponse, FinishReason, MessageRole, Provider,
     StreamEvent, ToolCall, ToolContinueRequest, ToolDefinition, Usage,
 };
 
@@ -136,6 +137,31 @@ impl DeepSeekProvider {
             });
         }
 
+        // Add user nudge to force response after tool results
+        // Without this, DeepSeek often ends the turn silently after multi-tool chains
+        // Reference the original question to help the model focus on answering it
+        let original_question = request.messages.last()
+            .filter(|m| m.role == MessageRole::User)
+            .map(|m| m.content.chars().take(200).collect::<String>())
+            .unwrap_or_default();
+
+        let nudge = if original_question.is_empty() {
+            "Now use the tool results above to write your response.".to_string()
+        } else {
+            format!(
+                "The tool results are above. Now answer the original question: \"{}\"\n\
+                 Write your response now (no more tool calls unless absolutely necessary).",
+                original_question
+            )
+        };
+
+        messages.push(ChatMessage {
+            role: "user".into(),
+            content: Some(nudge),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
         messages
     }
 
@@ -158,13 +184,24 @@ impl DeepSeekProvider {
     ///
     /// Shared logic for both create_stream and continue_with_tools_stream.
     /// Uses SseDecoder from mira-core for consistent SSE parsing.
+    ///
+    /// Tracks multiple parallel tool calls by index to handle DeepSeek's
+    /// interleaved streaming of multiple tool calls in one response.
     async fn process_sse_stream(
         response: reqwest::Response,
         tx: mpsc::Sender<StreamEvent>,
     ) {
+        // Track in-flight tool calls by index: (id, name, args, started)
+        struct InFlightCall {
+            id: String,
+            name: String,
+            args: String,
+            started: bool,
+        }
+
         let mut stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
-        let mut current_tool_call: Option<(String, String, String)> = None; // (id, name, args)
+        let mut tool_calls: HashMap<usize, InFlightCall> = HashMap::new();
 
         while let Some(chunk) = stream.next().await {
             let chunk = match chunk {
@@ -204,44 +241,51 @@ impl DeepSeekProvider {
                         }
                     }
 
-                    // Handle tool calls
-                    if let Some(tool_calls) = delta.tool_calls {
-                        for tc in tool_calls {
+                    // Handle tool calls - track by index for parallel calls
+                    if let Some(delta_tool_calls) = delta.tool_calls {
+                        for tc in delta_tool_calls {
+                            let idx = tc.index;
+
+                            // Get or create the in-flight call for this index
+                            let call = tool_calls.entry(idx).or_insert_with(|| InFlightCall {
+                                id: String::new(),
+                                name: String::new(),
+                                args: String::new(),
+                                started: false,
+                            });
+
+                            // Update ID if present
                             if let Some(ref id) = tc.id {
-                                // New tool call - end previous if any
-                                if let Some((old_id, _, _)) = current_tool_call.take() {
-                                    let _ = tx
-                                        .send(StreamEvent::FunctionCallEnd { call_id: old_id })
-                                        .await;
-                                }
-
-                                let name = tc
-                                    .function
-                                    .as_ref()
-                                    .and_then(|f| f.name.clone())
-                                    .unwrap_or_default();
-
-                                let _ = tx
-                                    .send(StreamEvent::FunctionCallStart {
-                                        call_id: id.clone(),
-                                        name: name.clone(),
-                                    })
-                                    .await;
-
-                                current_tool_call = Some((id.clone(), name, String::new()));
+                                call.id = id.clone();
                             }
 
-                            // Arguments delta
+                            // Update name if present
+                            if let Some(ref func) = tc.function {
+                                if let Some(ref name) = func.name {
+                                    call.name = name.clone();
+                                }
+                            }
+
+                            // Emit FunctionCallStart once we have both id and name
+                            if !call.started && !call.id.is_empty() && !call.name.is_empty() {
+                                call.started = true;
+                                let _ = tx
+                                    .send(StreamEvent::FunctionCallStart {
+                                        call_id: call.id.clone(),
+                                        name: call.name.clone(),
+                                    })
+                                    .await;
+                            }
+
+                            // Accumulate arguments delta
                             if let Some(ref func) = tc.function {
                                 if let Some(ref args) = func.arguments {
                                     if !args.is_empty() {
-                                        if let Some((ref id, _, ref mut full_args)) =
-                                            current_tool_call
-                                        {
-                                            full_args.push_str(args);
+                                        call.args.push_str(args);
+                                        if call.started {
                                             let _ = tx
                                                 .send(StreamEvent::FunctionCallDelta {
-                                                    call_id: id.clone(),
+                                                    call_id: call.id.clone(),
                                                     arguments_delta: args.clone(),
                                                 })
                                                 .await;
@@ -252,12 +296,14 @@ impl DeepSeekProvider {
                         }
                     }
 
-                    // Handle finish
+                    // Handle finish - emit FunctionCallEnd for all pending calls
                     if choice.finish_reason.is_some() {
-                        if let Some((id, _, _)) = current_tool_call.take() {
-                            let _ = tx
-                                .send(StreamEvent::FunctionCallEnd { call_id: id })
-                                .await;
+                        for (_, call) in tool_calls.drain() {
+                            if call.started {
+                                let _ = tx
+                                    .send(StreamEvent::FunctionCallEnd { call_id: call.id })
+                                    .await;
+                            }
                         }
                     }
                 }

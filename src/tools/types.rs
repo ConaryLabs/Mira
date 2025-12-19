@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 // ============================================================================
-// Hotline Tool - Talk to Mira (GPT-5.2) via mira-chat sync endpoint
+// Hotline Tool - Talk to other AI models for collaboration/second opinion
 // ============================================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -14,7 +14,7 @@ pub struct HotlineRequest {
     pub message: String,
     #[schemars(description = "Optional context")]
     pub context: Option<String>,
-    #[schemars(description = "Provider: 'openai' (GPT-5.2, default) or 'deepseek' (DeepSeek V3.2)")]
+    #[schemars(description = "Provider: 'openai' (GPT-5.2, default) or 'deepseek' (DeepSeek V3.2) or 'gemini' (Gemini 3 Pro)")]
     pub provider: Option<String>,
 }
 

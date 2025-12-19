@@ -52,32 +52,28 @@ pub async fn execute(input: &str, config: ExecutionConfig<'_>) -> Result<Executi
     const CONTINUATION_MODEL: &str = "gpt-5.2";
     const CONTINUATION_EFFORT: &str = "low";
 
-    // Assemble system prompt.
-    // CHEAP MODE: until token usage is under control, we do NOT inject the
-    // full assembled context blob (summaries/semantic/code index/recent msgs).
-    // We rely on server-side continuity via previous_response_id.
-    // Keep only persona + guidelines + small Mira context.
-    let base_prompt = build_system_prompt(config.context);
-
-    // Check for handoff context (after a smooth reset)
-    let handoff = if let Some(session) = config.session {
-        match session.consume_handoff().await {
-            Ok(h) => h,
+    // Assemble full context: persona, corrections, goals, memories, summaries,
+    // semantic recall, code index hints, and recent messages.
+    // This gives the model maximum context for understanding the conversation.
+    let system_prompt = if let Some(session) = config.session {
+        match session.assemble_context(input).await {
+            Ok(assembled) => {
+                // Base prompt with Mira context
+                let base = build_system_prompt(&assembled.mira_context);
+                let rich_context = assembled.format_for_prompt();
+                if rich_context.is_empty() {
+                    base
+                } else {
+                    format!("{}\n\n{}", base, rich_context)
+                }
+            }
             Err(e) => {
-                tracing::warn!("Failed to consume handoff (continuity may be lost): {}", e);
-                None
+                tracing::warn!("Failed to assemble context, using basic: {}", e);
+                build_system_prompt(config.context)
             }
         }
     } else {
-        None
-    };
-
-    // If we have a handoff, append it to the system prompt for this turn only
-    let system_prompt = if let Some(ref handoff_blob) = handoff {
-        println!("  {}", colors::status("[context refreshed]"));
-        format!("{}\n\n{}", base_prompt, handoff_blob)
-    } else {
-        base_prompt
+        build_system_prompt(config.context)
     };
 
     let tools = get_tools();

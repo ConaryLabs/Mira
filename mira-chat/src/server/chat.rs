@@ -90,39 +90,35 @@ pub async fn process_chat(
         None
     };
 
-    // Assemble system prompt.
-    // CHEAP MODE: until token usage is under control, we do NOT inject the
-    // full assembled context blob (summaries/semantic/code index/recent msgs).
-    // We rely on server-side continuity via previous_response_id.
-    // Keep only persona + guidelines + small Mira context.
-    let base_prompt = if let Some(db) = &state.db {
+    // Assemble full context: persona, corrections, goals, memories, summaries,
+    // semantic recall, code index hints, and recent messages.
+    // This gives the model maximum context for understanding the conversation.
+    let system_prompt = if let Some(ref session) = session {
+        // Full context assembly from session
+        match session.assemble_context(&request.message).await {
+            Ok(assembled) => {
+                // Base prompt with Mira context already included in assembled
+                let base = build_system_prompt(&assembled.mira_context);
+                let rich_context = assembled.format_for_prompt();
+                if rich_context.is_empty() {
+                    base
+                } else {
+                    format!("{}\n\n{}", base, rich_context)
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to assemble context, using basic: {}", e);
+                build_system_prompt(&MiraContext::default())
+            }
+        }
+    } else if let Some(db) = &state.db {
+        // No session but have DB - load basic Mira context
         let context = MiraContext::load(db, &request.project_path)
             .await
             .unwrap_or_default();
         build_system_prompt(&context)
     } else {
         build_system_prompt(&MiraContext::default())
-    };
-
-    // Check for handoff context (after a smooth reset)
-    let handoff = if let Some(ref session) = session {
-        match session.consume_handoff().await {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!("Failed to consume handoff (continuity may be lost): {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // If we have a handoff, append it to the system prompt for this turn only
-    let system_prompt = if let Some(ref handoff_blob) = handoff {
-        tracing::info!("Applying handoff context for smooth continuity");
-        format!("{}\n\n{}", base_prompt, handoff_blob)
-    } else {
-        base_prompt
     };
 
     // Create GPT client
@@ -776,25 +772,58 @@ async fn process_deepseek_chat(
             });
         }
 
-        // Continue with tool results
-        tracing::debug!("DeepSeek iteration {}: continuing with {} tool results", iteration, iteration_tool_results.len());
+        // Add initial tool calls to conversation history for context
+        // (The continuation loop will add subsequent tool interactions)
+        if !iteration_tool_results.is_empty() {
+            let tool_calls_summary: String = iteration_tool_results
+                .iter()
+                .map(|r| format!("[Called {} tool]", r.name))
+                .collect::<Vec<_>>()
+                .join(" ");
+            conversation_messages.push(ProviderMessage {
+                role: MessageRole::Assistant,
+                content: tool_calls_summary,
+            });
 
-        let continue_request = ToolContinueRequest {
-            model: "deepseek-chat".into(),
-            system: system_prompt.clone(),
-            previous_response_id: None,
-            messages: conversation_messages.clone(),
-            tool_results: iteration_tool_results,
-            reasoning_effort: None,
-            tools: tools.clone(),
-        };
+            for result in &iteration_tool_results {
+                let truncated = if result.output.len() > 2000 {
+                    format!("{}...[truncated]", &result.output[..2000])
+                } else {
+                    result.output.clone()
+                };
+                conversation_messages.push(ProviderMessage {
+                    role: MessageRole::User,
+                    content: format!("[{} result]: {}", result.name, truncated),
+                });
+            }
+        }
 
-        rx = provider.continue_with_tools_stream(continue_request).await?;
+        // Continue with tool results in a loop until no more tool calls
+        // This handles multi-step chains like: search → fetch → summarize
+        let mut current_tool_results = iteration_tool_results;
 
-        // Process the continuation response in the next loop iteration
-        // We need to handle the response stream again
-        let mut continue_text = String::new();
-        let mut continue_tool_results: Vec<ProviderToolResult> = Vec::new();
+        loop {
+            if current_tool_results.is_empty() {
+                break;
+            }
+
+            tracing::debug!("DeepSeek iteration {}: continuing with {} tool results", iteration, current_tool_results.len());
+
+            let continue_request = ToolContinueRequest {
+                model: "deepseek-chat".into(),
+                system: system_prompt.clone(),
+                previous_response_id: None,
+                messages: conversation_messages.clone(),
+                tool_results: current_tool_results,
+                reasoning_effort: None,
+                tools: tools.clone(),
+            };
+
+            rx = provider.continue_with_tools_stream(continue_request).await?;
+
+            // Process the continuation response
+            let mut continue_text = String::new();
+            current_tool_results = Vec::new(); // Reset for this round
 
         while let Some(event) = rx.recv().await {
             match event {
@@ -852,7 +881,7 @@ async fn process_deepseek_chat(
                             }),
                         });
 
-                        continue_tool_results.push(ProviderToolResult {
+                        current_tool_results.push(ProviderToolResult {
                             call_id: call_id.clone(),
                             name: name.clone(),
                             output: output.clone(),
@@ -913,18 +942,49 @@ async fn process_deepseek_chat(
             }
         }
 
-        // If no more tool calls, we're done
-        if continue_tool_results.is_empty() {
-            break;
-        }
+            // Update conversation for next continuation round
+            // Include both any text AND tool interactions to maintain full history
+            if !continue_text.is_empty() {
+                conversation_messages.push(ProviderMessage {
+                    role: MessageRole::Assistant,
+                    content: continue_text,
+                });
+            }
 
-        // Update conversation for next iteration
-        if !continue_text.is_empty() {
-            conversation_messages.push(ProviderMessage {
-                role: MessageRole::Assistant,
-                content: continue_text,
-            });
-        }
+            // If there were tool calls this round, add them to conversation history
+            // This ensures the next continuation has full context of what happened
+            if !current_tool_results.is_empty() {
+                // Add assistant's tool calls as text (since ProviderMessage doesn't support tool_calls)
+                let tool_calls_summary: String = current_tool_results
+                    .iter()
+                    .map(|r| format!("[Called {} tool]", r.name))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                conversation_messages.push(ProviderMessage {
+                    role: MessageRole::Assistant,
+                    content: tool_calls_summary,
+                });
+
+                // Add tool results as user messages (OpenAI format puts these as user context)
+                for result in &current_tool_results {
+                    let truncated = if result.output.len() > 2000 {
+                        format!("{}...[truncated]", &result.output[..2000])
+                    } else {
+                        result.output.clone()
+                    };
+                    conversation_messages.push(ProviderMessage {
+                        role: MessageRole::User,
+                        content: format!("[{} result]: {}", result.name, truncated),
+                    });
+                }
+            }
+
+            // current_tool_results will be checked at top of loop
+            // If empty, the loop breaks; if not, we continue with more tool results
+        } // end of continuation loop
+
+        // After all continuations complete, break the outer loop
+        break;
     }
 
     // Add accumulated text as first block
