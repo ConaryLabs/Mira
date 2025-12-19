@@ -2,6 +2,7 @@
 export { default as ContentBlock } from './ContentBlock.svelte';
 export { default as CodeBlock } from './CodeBlock.svelte';
 export { default as CouncilView } from './CouncilView.svelte';
+export { default as CouncilLoading } from './CouncilLoading.svelte';
 export { default as ProviderCard } from './ProviderCard.svelte';
 export { default as ErrorBlock } from './ErrorBlock.svelte';
 export { default as WarningBlock } from './WarningBlock.svelte';

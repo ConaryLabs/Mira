@@ -177,6 +177,35 @@ export function classify(text: string): ContentKind[] {
 // Valid provider keys we expect in council responses
 const VALID_PROVIDER_KEYS = new Set(['openai', 'deepseek', 'gemini', 'gpt-5.2']);
 
+// Pattern to detect council JSON start
+const COUNCIL_START_PATTERN = /^\s*\{\s*"council"\s*:/;
+
+/**
+ * Check if text is incomplete council JSON (for streaming)
+ * Returns true if it looks like council JSON is being streamed but not complete
+ */
+export function isIncompleteCouncilJson(text: string): boolean {
+  const trimmed = text.trim();
+
+  // Must start like council JSON
+  if (!COUNCIL_START_PATTERN.test(trimmed)) {
+    return false;
+  }
+
+  // If it ends with } or ], try parsing - if it fails, it's incomplete
+  if (trimmed.endsWith('}') || trimmed.endsWith(']')) {
+    try {
+      JSON.parse(trimmed);
+      return false; // Valid JSON, not incomplete
+    } catch {
+      return true; // Ends with } but invalid - incomplete
+    }
+  }
+
+  // Doesn't end with closing brace - definitely incomplete
+  return true;
+}
+
 /**
  * Check if text looks like a council response
  * Uses try-catch JSON.parse with provider key validation to avoid false positives
@@ -519,7 +548,22 @@ export function parseTextContent(
 function parseStreaming(text: string, idPrefix: string): ParseResult {
   const segments: ParsedContent[] = [];
 
-  // Check for council response (even partial)
+  // Check for incomplete council JSON first (show loading state)
+  if (isIncompleteCouncilJson(text)) {
+    // Try to extract any partial responses we can show
+    const partial = parsePartialCouncil(text);
+    segments.push({
+      type: 'council_loading',
+      id: generateId(idPrefix),
+      partial: partial || undefined,
+    });
+    return {
+      segments,
+      metadata: { hasCode: false, hasErrors: false, hasWarnings: false, isCouncil: true },
+    };
+  }
+
+  // Check for complete council response
   if (isCouncilResponse(text)) {
     const council = parseCouncilResponse(text);
     if (council) {
@@ -527,20 +571,6 @@ function parseStreaming(text: string, idPrefix: string): ParseResult {
         type: 'council',
         id: generateId(idPrefix),
         responses: council,
-      });
-      return {
-        segments,
-        metadata: { hasCode: false, hasErrors: false, hasWarnings: false, isCouncil: true },
-      };
-    }
-
-    // Try partial council parsing
-    const partial = parsePartialCouncil(text);
-    if (partial && Object.keys(partial).length > 0) {
-      segments.push({
-        type: 'council',
-        id: generateId(idPrefix),
-        responses: partial as CouncilResponses,
       });
       return {
         segments,

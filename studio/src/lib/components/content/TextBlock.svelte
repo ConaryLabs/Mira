@@ -8,6 +8,21 @@
 
   let { content }: Props = $props();
 
+  // Performance threshold - skip markdown for large content until expanded
+  const LARGE_CONTENT_THRESHOLD = 10000; // 10KB
+  const PREVIEW_LINES = 5;
+
+  // For large content, start collapsed
+  const isLarge = $derived(content.length > LARGE_CONTENT_THRESHOLD);
+  let expanded = $state(false);
+
+  // Preview for large content
+  const previewContent = $derived(() => {
+    if (!isLarge) return content;
+    const lines = content.split('\n').slice(0, PREVIEW_LINES);
+    return lines.join('\n') + '\n...';
+  });
+
   // Configure marked - disable raw HTML for safety
   marked.setOptions({
     breaks: true,
@@ -39,11 +54,29 @@
       return DOMPurify.sanitize(text);
     }
   }
+
+  function toggle() {
+    expanded = !expanded;
+  }
 </script>
 
-<div class="text-block terminal-prose text-[var(--term-text)]">
-  {@html renderMarkdown(content)}
-</div>
+{#if isLarge && !expanded}
+  <!-- Large content: plain text preview until expanded -->
+  <div class="text-block text-[var(--term-text)]">
+    <pre class="whitespace-pre-wrap text-sm">{previewContent()}</pre>
+    <button
+      type="button"
+      onclick={toggle}
+      class="mt-1 text-xs text-[var(--term-accent)] hover:underline"
+    >
+      [{Math.round(content.length / 1024)}KB - click to expand]
+    </button>
+  </div>
+{:else}
+  <div class="text-block terminal-prose text-[var(--term-text)]">
+    {@html renderMarkdown(content)}
+  </div>
+{/if}
 
 <style>
   .terminal-prose :global(p) {
