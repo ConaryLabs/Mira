@@ -151,7 +151,7 @@ pub fn get_tools() -> Vec<Tool> {
         Tool {
             tool_type: "function".into(),
             name: "web_fetch".into(),
-            description: Some("Fetch content from a URL and convert to text".into()),
+            description: Some("Fetch content from a URL and convert to text. Automatically falls back to Google Cache on 403 errors.".into()),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -162,6 +162,10 @@ pub fn get_tools() -> Vec<Tool> {
                     "max_length": {
                         "type": "integer",
                         "description": "Max content length (default 10000)"
+                    },
+                    "use_cache": {
+                        "type": "boolean",
+                        "description": "Force fetch from Google Cache instead of direct URL (useful for sites that block bots)"
                     }
                 },
                 "required": ["url"]
