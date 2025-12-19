@@ -24,8 +24,9 @@ Both models receive Mira persona and corrections. GPT-5.2 also gets goals and me
 
 ### DeepSeek V3.2 Integration (`provider/deepseek.rs`)
 - **Chat Completions API** - OpenAI-compatible endpoint
-- **Streaming SSE** - Same real-time streaming as GPT
+- **Streaming SSE** - Uses `mira_core::SseDecoder` for consistent parsing
 - **Prefix Caching** - Aggressive server-side caching (95% discount on cache hits)
+- **Cached Token Reporting** - Reports `prompt_cache_hit_tokens` in usage stats
 - **Function Calling** - Full tool support with streaming
 - **Reasoning Tokens** - Supports `deepseek-reasoner` for visible chain-of-thought
 
@@ -319,6 +320,31 @@ SvelteKit-based terminal-style web interface.
 - [ ] **Hierarchical summaries** - Summary of summaries for very long sessions
 - [ ] **Topic-based summarization** - Group by topic before summarizing
 - [ ] **Keep important messages** - Don't summarize starred/pinned messages
+
+---
+
+## Shared Infrastructure (`mira-core`)
+
+Mira-chat shares core functionality with the MCP server via the `mira-core` crate:
+
+### Memory Operations (`mira_core::memory`)
+- `make_memory_key()` - Normalized key generation (50 char, lowercase, alphanumeric)
+- `upsert_memory_fact()` - Insert/update with `MemoryScope` (Global/ProjectId)
+- `recall_memory_facts()` - Semantic-first search with text fallback
+- `forget_memory_fact()` - Delete from SQLite + Qdrant
+- **Batch updates** - Fixes N+1 query issue for `times_used` tracking
+
+### SSE Streaming (`mira_core::streaming`)
+- `SseDecoder` - Buffered SSE frame parser with partial chunk handling
+- `SseFrame` - Parsed frame with `is_done()`, `parse<T>()`, `try_parse<T>()`
+- Used by DeepSeek provider (and ready for OpenAI migration)
+
+### Other Shared Modules
+- `secrets` - Secret detection and redaction
+- `excerpts` - Smart text excerpting and UTF-8 helpers
+- `semantic` - Qdrant + Gemini embedding integration
+- `artifacts` - Large output storage with deduplication
+- `limits` - Shared constants (token thresholds, chain reset settings)
 
 ---
 
