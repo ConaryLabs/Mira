@@ -601,7 +601,7 @@ impl MiraServer {
     #[tool(description = "Search code by meaning.")]
     async fn semantic_code_search(&self, Parameters(req): Parameters<SemanticCodeSearchRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
-        let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.clone(), req).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No code found for '{}'", query)))
     }
 

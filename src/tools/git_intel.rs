@@ -1,159 +1,86 @@
 // src/tools/git_intel.rs
-// Git intelligence tools - commits, cochange patterns, error fixes
+// Git intelligence tools - thin wrapper over core::ops::git
 
 use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 use std::collections::HashMap;
 
+use crate::core::ops::git as core_git;
+use crate::core::OpContext;
 use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
 
-/// Normalize an absolute path to a relative path for database lookups.
-/// Cochange patterns are stored with relative paths (e.g., "src/main.rs").
-fn normalize_to_relative(path: &str) -> String {
-    // Common project root patterns to strip
-    if path.starts_with('/') {
-        // Try to find "src/" or other common directories
-        for marker in ["src/", "lib/", "tests/", "examples/", "benches/"] {
-            if let Some(idx) = path.find(marker) {
-                return path[idx..].to_string();
-            }
-        }
-        // Try stripping everything up to and including the last project-like directory
-        // e.g., /home/user/MyProject/foo.rs -> foo.rs
-        if let Some(last_slash) = path.rfind('/') {
-            // Get filename if no better match
-            let filename = &path[last_slash + 1..];
-            // But also check if there's a recognizable relative path
-            // Look for patterns like "project_name/src/..." or "project_name/lib/..."
-            let parts: Vec<&str> = path.split('/').collect();
-            for (i, part) in parts.iter().enumerate() {
-                // Common project indicators: Cargo.toml sibling dirs, etc.
-                if *part == "src" || *part == "lib" || *part == "tests" {
-                    return parts[i..].join("/");
-                }
-            }
-            // Last resort: use just the filename
-            if !filename.is_empty() {
-                return filename.to_string();
-            }
-        }
-    }
-    path.to_string()
-}
-
 /// Get recent commits
 pub async fn get_recent_commits(db: &SqlitePool, req: GetRecentCommitsRequest) -> anyhow::Result<Vec<serde_json::Value>> {
+    let ctx = OpContext::just_db(db.clone());
     let limit = req.limit.unwrap_or(20);
 
-    let query = r#"
-        SELECT commit_hash, author_name, author_email, message, files_changed,
-               insertions, deletions,
-               datetime(committed_at, 'unixepoch', 'localtime') as committed_at
-        FROM git_commits
-        WHERE ($1 IS NULL OR files_changed LIKE $1)
-          AND ($2 IS NULL OR author_email = $2)
-        ORDER BY committed_at DESC
-        LIMIT $3
-    "#;
+    let input = core_git::GetRecentCommitsInput {
+        file_path: req.file_path,
+        author: req.author,
+        limit,
+    };
 
-    let file_pattern = req.file_path.as_ref().map(|f| format!("%{}%", f));
-    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, i64, i64, String)>(query)
-        .bind(&file_pattern)
-        .bind(&req.author)
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let commits = core_git::get_recent_commits(&ctx, input).await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|(hash, author, email, message, files, insertions, deletions, committed_at)| {
-            serde_json::json!({
-                "commit_hash": hash,
-                "author": author,
-                "email": email,
-                "message": message,
-                "files_changed": files,
-                "insertions": insertions,
-                "deletions": deletions,
-                "committed_at": committed_at,
-            })
+    Ok(commits.into_iter().map(|c| {
+        serde_json::json!({
+            "commit_hash": c.commit_hash,
+            "author": c.author,
+            "email": c.email,
+            "message": c.message,
+            "files_changed": c.files_changed,
+            "insertions": c.insertions,
+            "deletions": c.deletions,
+            "committed_at": c.committed_at,
         })
-        .collect())
+    }).collect())
 }
 
 /// Search commits by message
 pub async fn search_commits(db: &SqlitePool, req: SearchCommitsRequest) -> anyhow::Result<Vec<serde_json::Value>> {
+    let ctx = OpContext::just_db(db.clone());
     let limit = req.limit.unwrap_or(20);
-    let search_pattern = format!("%{}%", req.query);
 
-    let query = r#"
-        SELECT commit_hash, author_name, author_email, message, files_changed,
-               datetime(committed_at, 'unixepoch', 'localtime') as committed_at
-        FROM git_commits
-        WHERE message LIKE $1
-        ORDER BY committed_at DESC
-        LIMIT $2
-    "#;
+    let input = core_git::SearchCommitsInput {
+        query: req.query,
+        limit,
+    };
 
-    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, String)>(query)
-        .bind(&search_pattern)
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let commits = core_git::search_commits(&ctx, input).await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|(hash, author, email, message, files, committed_at)| {
-            serde_json::json!({
-                "commit_hash": hash,
-                "author": author,
-                "email": email,
-                "message": message,
-                "files_changed": files,
-                "committed_at": committed_at,
-            })
+    Ok(commits.into_iter().map(|c| {
+        serde_json::json!({
+            "commit_hash": c.commit_hash,
+            "author": c.author,
+            "email": c.email,
+            "message": c.message,
+            "files_changed": c.files_changed,
+            "committed_at": c.committed_at,
         })
-        .collect())
+    }).collect())
 }
 
 /// Find co-change patterns for a file
 pub async fn find_cochange_patterns(db: &SqlitePool, req: FindCochangeRequest) -> anyhow::Result<Vec<serde_json::Value>> {
+    let ctx = OpContext::just_db(db.clone());
     let limit = req.limit.unwrap_or(10);
 
-    // Normalize path: cochange_patterns stores relative paths (e.g., "src/main.rs")
-    // but requests often come with absolute paths (e.g., "/home/user/project/src/main.rs")
-    let file_path = normalize_to_relative(&req.file_path);
+    let input = core_git::FindCochangeInput {
+        file_path: req.file_path,
+        limit,
+    };
 
-    let query = r#"
-        SELECT
-            CASE WHEN file_a = $1 THEN file_b ELSE file_a END as related_file,
-            cochange_count,
-            confidence,
-            datetime(last_seen, 'unixepoch', 'localtime') as last_seen
-        FROM cochange_patterns
-        WHERE file_a = $1 OR file_b = $1
-        ORDER BY confidence DESC
-        LIMIT $2
-    "#;
+    let patterns = core_git::find_cochange_patterns(&ctx, input).await?;
 
-    let rows = sqlx::query_as::<_, (String, i64, f64, String)>(query)
-        .bind(&file_path)
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(file, count, confidence, last_seen)| {
-            serde_json::json!({
-                "file": file,
-                "cochange_count": count,
-                "confidence": confidence,
-                "last_seen": last_seen,
-            })
+    Ok(patterns.into_iter().map(|p| {
+        serde_json::json!({
+            "file": p.file,
+            "cochange_count": p.cochange_count,
+            "confidence": p.confidence,
+            "last_seen": p.last_seen,
         })
-        .collect())
+    }).collect())
 }
 
 /// Find similar error fixes - uses semantic search if available
@@ -164,7 +91,7 @@ pub async fn find_similar_fixes(
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(5) as usize;
 
-    // Try semantic search first for better "this error feels like..." matching
+    // Try semantic search first for better matching
     if semantic.is_available() {
         let filter = req.category.as_ref().map(|category| qdrant_client::qdrant::Filter::must([
             qdrant_client::qdrant::Condition::matches("category", category.clone())
@@ -298,7 +225,7 @@ pub async fn record_error_fix(
         ("recorded", result.last_insert_rowid())
     };
 
-    // Store in Qdrant for semantic search (use error pattern + fix as content)
+    // Store in Qdrant for semantic search
     if semantic.is_available() {
         let content = format!("{}\n\nFix: {}", req.error_pattern, req.fix_description);
         let mut metadata = HashMap::new();

@@ -76,6 +76,22 @@ impl OpContext {
         self
     }
 
+    // =========================================================================
+    // Convenience constructors for common patterns
+    // =========================================================================
+
+    /// Create context with just a database (common for MCP tools)
+    pub fn just_db(db: SqlitePool) -> Self {
+        Self::default().with_db(db)
+    }
+
+    /// Create context with database and semantic search (common for MCP tools)
+    pub fn with_db_and_semantic(db: SqlitePool, semantic: Arc<SemanticSearch>) -> Self {
+        Self::default()
+            .with_db(db)
+            .with_semantic(semantic)
+    }
+
     /// Check if database is available
     pub fn has_db(&self) -> bool {
         self.db.is_some()
