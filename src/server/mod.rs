@@ -465,7 +465,7 @@ impl MiraServer {
             }
             "search" => {
                 let query = require!(req.query, "query required");
-                let result = documents::search_documents(self.db.as_ref(), self.semantic.as_ref(), &query, req.limit).await.map_err(to_mcp_err)?;
+                let result = documents::search_documents(self.db.as_ref(), self.semantic.clone(), &query, req.limit).await.map_err(to_mcp_err)?;
                 Ok(vec_response(result, format!("No documents found matching '{}'", query)))
             }
             "get" => {

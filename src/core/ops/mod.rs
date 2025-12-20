@@ -23,10 +23,14 @@ pub mod git;
 pub mod web;
 pub mod code_intel;
 
+// Phase 5: Documents, build, work state, session
+pub mod documents;
+pub mod build;
+pub mod work_state;
+pub mod session;
+
 // Future phases:
-// pub mod session;
 // pub mod council;
-// pub mod build;
 // pub mod index;
 // pub mod artifacts;
 // pub mod analytics;
