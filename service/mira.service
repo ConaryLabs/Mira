@@ -1,0 +1,34 @@
+[Unit]
+Description=Mira Intelligence Layer for Claude Code
+Documentation=https://github.com/ConaryLabs/Mira
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mira
+Restart=always
+RestartSec=5
+
+# Environment
+Environment=MIRA_PORT=3199
+Environment=DATABASE_URL=sqlite://%h/.mira/mira.db
+
+# Optional: uncomment and set these for full functionality
+# Environment=QDRANT_URL=http://localhost:6334
+# Environment=GEMINI_API_KEY=your-key
+# Environment=DEEPSEEK_API_KEY=your-key
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mira
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.mira
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
