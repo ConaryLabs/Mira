@@ -74,6 +74,8 @@ struct AnthropicResponse {
 
 #[derive(Deserialize)]
 struct AnthropicContent {
+    #[serde(rename = "type")]
+    content_type: Option<String>,
     text: Option<String>,
 }
 
@@ -123,10 +125,18 @@ async fn call_opus(message: &str) -> Result<String> {
         anyhow::bail!("Anthropic error: {}", error.message);
     }
 
+    // With extended thinking, response has multiple content blocks
+    // Filter for "text" type blocks (skip "thinking" blocks)
     let text = api_response
         .content
-        .and_then(|c| c.into_iter().next())
-        .and_then(|c| c.text)
+        .map(|blocks| {
+            blocks
+                .into_iter()
+                .filter(|c| c.content_type.as_deref() == Some("text"))
+                .filter_map(|c| c.text)
+                .collect::<Vec<_>>()
+                .join("")
+        })
         .unwrap_or_default();
 
     Ok(text)
