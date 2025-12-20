@@ -1,6 +1,7 @@
 // src/tools/hotline.rs
 // Hotline - Talk to other AI models for collaboration/second opinion
 // Supports: GPT-5.2 (default), DeepSeek V3.2, Gemini 3 Pro
+// All providers are called directly via their APIs (no mira-chat dependency)
 
 use anyhow::Result;
 use reqwest::Client;
@@ -8,23 +9,29 @@ use serde::{Deserialize, Serialize};
 
 use super::types::HotlineRequest;
 
-const MIRA_CHAT_URL: &str = "http://localhost:3001/api/chat/sync";
-const DEFAULT_PROJECT_PATH: &str = "/home/peter/Mira";
-const SYNC_TOKEN_ENV: &str = "MIRA_SYNC_TOKEN";
 const DOTENV_PATH: &str = "/home/peter/Mira/.env";
+const TIMEOUT_SECS: u64 = 120;
+
+// API endpoints
+const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
+const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
 const GEMINI_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
 
-/// Get sync token from env var or .env file
-fn get_sync_token() -> Option<String> {
+// ============================================================================
+// Environment helpers
+// ============================================================================
+
+fn get_env_var(name: &str) -> Option<String> {
     // First try env var
-    if let Ok(token) = std::env::var(SYNC_TOKEN_ENV) {
-        return Some(token);
+    if let Ok(val) = std::env::var(name) {
+        return Some(val);
     }
 
     // Fallback: read from .env file
     if let Ok(contents) = std::fs::read_to_string(DOTENV_PATH) {
+        let prefix = format!("{}=", name);
         for line in contents.lines() {
-            if let Some(value) = line.strip_prefix("MIRA_SYNC_TOKEN=") {
+            if let Some(value) = line.strip_prefix(&prefix) {
                 return Some(value.trim().to_string());
             }
         }
@@ -33,49 +40,217 @@ fn get_sync_token() -> Option<String> {
     None
 }
 
-/// Get Gemini API key from env var or .env file
-fn get_gemini_key() -> Option<String> {
-    // First try env var
-    if let Ok(key) = std::env::var("GEMINI_API_KEY") {
-        return Some(key);
-    }
+// ============================================================================
+// OpenAI API (GPT 5.2)
+// ============================================================================
 
-    // Fallback: read from .env file
-    if let Ok(contents) = std::fs::read_to_string(DOTENV_PATH) {
-        for line in contents.lines() {
-            if let Some(value) = line.strip_prefix("GEMINI_API_KEY=") {
-                return Some(value.trim().to_string());
-            }
-        }
-    }
-
-    None
+#[derive(Serialize)]
+struct OpenAIRequest {
+    model: String,
+    messages: Vec<OpenAIMessage>,
+    max_completion_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Serialize)]
-struct SyncRequest {
-    message: String,
-    project_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SyncResponse {
+struct OpenAIMessage {
+    role: String,
     content: String,
-    #[serde(default)]
-    tool_calls: Vec<serde_json::Value>,
-    #[serde(default)]
-    usage: Option<Usage>,
 }
 
 #[derive(Deserialize)]
-struct Usage {
-    input_tokens: u32,
-    output_tokens: u32,
+struct OpenAIResponse {
+    choices: Option<Vec<OpenAIChoice>>,
+    error: Option<OpenAIError>,
+    usage: Option<OpenAIUsage>,
 }
 
-// Gemini API types
+#[derive(Deserialize)]
+struct OpenAIChoice {
+    message: OpenAIMessageResponse,
+}
+
+#[derive(Deserialize)]
+struct OpenAIMessageResponse {
+    content: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenAIError {
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAIUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
+async fn call_gpt(message: &str) -> Result<serde_json::Value> {
+    let api_key = get_env_var("OPENAI_API_KEY")
+        .ok_or_else(|| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
+
+    let client = Client::new();
+
+    let request = OpenAIRequest {
+        model: "gpt-5.2".to_string(),
+        messages: vec![OpenAIMessage {
+            role: "user".to_string(),
+            content: message.to_string(),
+        }],
+        max_completion_tokens: 32000,
+        reasoning_effort: Some("high".to_string()),
+    };
+
+    let response = client
+        .post(OPENAI_API_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("OpenAI API error: {} - {}", status, body);
+    }
+
+    let api_response: OpenAIResponse = response.json().await?;
+
+    if let Some(error) = api_response.error {
+        anyhow::bail!("OpenAI error: {}", error.message);
+    }
+
+    let text = api_response
+        .choices
+        .and_then(|c| c.into_iter().next())
+        .and_then(|c| c.message.content)
+        .unwrap_or_default();
+
+    let mut result = serde_json::json!({
+        "response": text,
+        "provider": "gpt-5.2",
+    });
+
+    if let Some(usage) = api_response.usage {
+        result["tokens"] = serde_json::json!({
+            "input": usage.prompt_tokens,
+            "output": usage.completion_tokens,
+        });
+    }
+
+    Ok(result)
+}
+
+// ============================================================================
+// DeepSeek API (V3.2)
+// ============================================================================
+
+#[derive(Serialize)]
+struct DeepSeekRequest {
+    model: String,
+    messages: Vec<DeepSeekMessage>,
+    max_tokens: u32,
+}
+
+#[derive(Serialize)]
+struct DeepSeekMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct DeepSeekResponse {
+    choices: Option<Vec<DeepSeekChoice>>,
+    error: Option<DeepSeekError>,
+    usage: Option<DeepSeekUsage>,
+}
+
+#[derive(Deserialize)]
+struct DeepSeekChoice {
+    message: DeepSeekMessageResponse,
+}
+
+#[derive(Deserialize)]
+struct DeepSeekMessageResponse {
+    content: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DeepSeekError {
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct DeepSeekUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
+async fn call_deepseek(message: &str) -> Result<serde_json::Value> {
+    let api_key = get_env_var("DEEPSEEK_API_KEY")
+        .ok_or_else(|| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+
+    let client = Client::new();
+
+    let request = DeepSeekRequest {
+        model: "deepseek-chat".to_string(),
+        messages: vec![DeepSeekMessage {
+            role: "user".to_string(),
+            content: message.to_string(),
+        }],
+        max_tokens: 32000,
+    };
+
+    let response = client
+        .post(DEEPSEEK_API_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("DeepSeek API error: {} - {}", status, body);
+    }
+
+    let api_response: DeepSeekResponse = response.json().await?;
+
+    if let Some(error) = api_response.error {
+        anyhow::bail!("DeepSeek error: {}", error.message);
+    }
+
+    let text = api_response
+        .choices
+        .and_then(|c| c.into_iter().next())
+        .and_then(|c| c.message.content)
+        .unwrap_or_default();
+
+    let mut result = serde_json::json!({
+        "response": text,
+        "provider": "deepseek",
+    });
+
+    if let Some(usage) = api_response.usage {
+        result["tokens"] = serde_json::json!({
+            "input": usage.prompt_tokens,
+            "output": usage.completion_tokens,
+        });
+    }
+
+    Ok(result)
+}
+
+// ============================================================================
+// Google API (Gemini 2.5 Pro)
+// ============================================================================
+
 #[derive(Serialize)]
 struct GeminiRequest {
     contents: Vec<GeminiContent>,
@@ -97,7 +272,6 @@ struct GeminiPart {
 struct GeminiGenerationConfig {
     #[serde(rename = "thinkingConfig")]
     thinking_config: GeminiThinkingConfig,
-    // No maxOutputTokens - let the model explain fully
 }
 
 #[derive(Serialize)]
@@ -142,15 +316,14 @@ struct GeminiError {
     message: String,
 }
 
-/// Call Gemini 3 Pro directly
 async fn call_gemini(message: &str) -> Result<serde_json::Value> {
-    let api_key = get_gemini_key()
+    let api_key = get_env_var("GEMINI_API_KEY")
         .ok_or_else(|| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
 
     let client = Client::new();
     let url = format!("{}?key={}", GEMINI_API_URL, api_key);
 
-    let gemini_req = GeminiRequest {
+    let request = GeminiRequest {
         contents: vec![GeminiContent {
             parts: vec![GeminiPart {
                 text: message.to_string(),
@@ -165,8 +338,8 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
 
     let response = client
         .post(&url)
-        .json(&gemini_req)
-        .timeout(std::time::Duration::from_secs(120))
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
         .send()
         .await?;
 
@@ -176,15 +349,13 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
         anyhow::bail!("Gemini API error: {} - {}", status, body);
     }
 
-    let gemini_response: GeminiResponse = response.json().await?;
+    let api_response: GeminiResponse = response.json().await?;
 
-    // Check for API error
-    if let Some(error) = gemini_response.error {
+    if let Some(error) = api_response.error {
         anyhow::bail!("Gemini error: {}", error.message);
     }
 
-    // Extract text from response
-    let text = gemini_response
+    let text = api_response
         .candidates
         .and_then(|c| c.into_iter().next())
         .map(|c| {
@@ -202,7 +373,7 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
         "provider": "gemini",
     });
 
-    if let Some(usage) = gemini_response.usage_metadata {
+    if let Some(usage) = api_response.usage_metadata {
         result["tokens"] = serde_json::json!({
             "input": usage.prompt_token_count.unwrap_or(0),
             "output": usage.candidates_token_count.unwrap_or(0),
@@ -212,57 +383,15 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
     Ok(result)
 }
 
-/// Call mira-chat sync endpoint with a specific provider
-async fn call_mira_chat(message: &str, provider: Option<&str>) -> Result<serde_json::Value> {
-    let client = Client::new();
+// ============================================================================
+// Council - All models in parallel
+// ============================================================================
 
-    let sync_req = SyncRequest {
-        message: message.to_string(),
-        project_path: DEFAULT_PROJECT_PATH.to_string(),
-        provider: provider.map(String::from),
-    };
-
-    let mut request = client
-        .post(MIRA_CHAT_URL)
-        .json(&sync_req)
-        .timeout(std::time::Duration::from_secs(180)); // Longer timeout for council
-
-    if let Some(token) = get_sync_token() {
-        request = request.bearer_auth(token);
-    }
-
-    let response = request.send().await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Mira hotline error: {} - {}", status, body);
-    }
-
-    let sync_response: SyncResponse = response.json().await?;
-
-    let provider_name = provider.unwrap_or("openai");
-    let mut result = serde_json::json!({
-        "response": sync_response.content,
-        "provider": provider_name,
-    });
-
-    if let Some(usage) = sync_response.usage {
-        result["tokens"] = serde_json::json!({
-            "input": usage.input_tokens,
-            "output": usage.output_tokens,
-        });
-    }
-
-    Ok(result)
-}
-
-/// Consult the council - all three models in parallel
 async fn call_council(message: &str) -> Result<serde_json::Value> {
     // Run all three in parallel
     let (gpt_result, deepseek_result, gemini_result) = tokio::join!(
-        call_mira_chat(message, Some("openai")),
-        call_mira_chat(message, Some("deepseek")),
+        call_gpt(message),
+        call_deepseek(message),
         call_gemini(message)
     );
 
@@ -284,12 +413,17 @@ async fn call_council(message: &str) -> Result<serde_json::Value> {
         "council": {
             "gpt-5.2": gpt,
             "deepseek": deepseek,
-            "gemini-3-pro": gemini,
+            "gemini": gemini,
         }
     }))
 }
 
-/// Call Mira via the mira-chat sync endpoint (or Gemini/Council directly)
+// ============================================================================
+// Public API
+// ============================================================================
+
+/// Call Mira hotline - talk to another AI model
+/// Providers: openai (GPT-5.2, default), deepseek, gemini, council (all three)
 pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
     // Build message with optional context
     let message = if let Some(ctx) = &req.context {
@@ -301,9 +435,9 @@ pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
     // Route based on provider
     match req.provider.as_deref() {
         Some("gemini") => call_gemini(&message).await,
+        Some("deepseek") => call_deepseek(&message).await,
         Some("council") => call_council(&message).await,
-        Some("deepseek") => call_mira_chat(&message, Some("deepseek")).await,
-        _ => call_mira_chat(&message, Some("openai")).await, // default to GPT-5.2
+        _ => call_gpt(&message).await, // default to GPT-5.2
     }
 }
 
@@ -312,8 +446,8 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore] // Requires mira-chat running
-    async fn test_hotline() {
+    #[ignore] // Requires OPENAI_API_KEY
+    async fn test_hotline_gpt() {
         let req = HotlineRequest {
             message: "What's 2+2?".to_string(),
             context: None,
@@ -321,6 +455,7 @@ mod tests {
         };
         let result = call_mira(req).await;
         assert!(result.is_ok());
+        println!("GPT result: {:?}", result);
     }
 
     #[tokio::test]
@@ -333,5 +468,19 @@ mod tests {
         };
         let result = call_mira(req).await;
         assert!(result.is_ok());
+        println!("Gemini result: {:?}", result);
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires all API keys
+    async fn test_council() {
+        let req = HotlineRequest {
+            message: "What's 2+2?".to_string(),
+            context: None,
+            provider: Some("council".to_string()),
+        };
+        let result = call_mira(req).await;
+        assert!(result.is_ok());
+        println!("Council result: {:?}", result);
     }
 }
