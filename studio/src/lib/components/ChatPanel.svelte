@@ -6,17 +6,18 @@
     streamChatEvents,
     createMessageBuilder,
     type Message,
-    type MessageBlock,
     type StatusResponse,
   } from '$lib/api/client';
   import { settings } from '$lib/stores/settings';
+  import { streamState } from '$lib/stores/streamState.svelte';
   import SettingsSidebar from './sidebar/SettingsSidebar.svelte';
   import TerminalView from './terminal/TerminalView.svelte';
   import TerminalPrompt from './terminal/TerminalPrompt.svelte';
+  import ArtifactViewer from './ArtifactViewer.svelte';
+  import { artifactViewer } from '$lib/stores/artifacts.svelte';
 
   // State
   let messages = $state<Message[]>([]);
-  let isLoading = $state(false);
   let apiStatus = $state<StatusResponse | null>(null);
   let hasMoreMessages = $state(false);
   let loadingMore = $state(false);
@@ -26,11 +27,11 @@
   let mobileSidebarOpen = $state(false);
   let isMobile = $state(false);
 
-  // Streaming message (includes usage for live display)
-  let streamingMessage = $state<{ id: string; blocks: MessageBlock[]; usage?: import('$lib/api/client').UsageInfo } | null>(null);
-
   // Reference to terminal view for scrolling
   let terminalView: { scrollToBottom: () => void; forceScrollToBottom: () => void };
+
+  // Reference to terminal prompt for keyboard shortcuts
+  let terminalPrompt: { focus: () => void };
 
   function checkMobile() {
     isMobile = window.innerWidth < 768;
@@ -39,10 +40,28 @@
     }
   }
 
+  // Global keyboard shortcuts
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    // Cmd/Ctrl + / - Focus input
+    if ((event.metaKey || event.ctrlKey) && event.key === '/') {
+      event.preventDefault();
+      terminalPrompt?.focus();
+      return;
+    }
+
+    // Escape - Cancel streaming (when not focused on input)
+    if (event.key === 'Escape' && streamState.canCancel) {
+      event.preventDefault();
+      streamState.cancelStream();
+      return;
+    }
+  }
+
   onMount(async () => {
     // Check if mobile on mount and resize
     checkMobile();
     window.addEventListener('resize', checkMobile);
+    window.addEventListener('keydown', handleGlobalKeydown);
 
     // Get project from URL if available
     const urlParams = new URLSearchParams(window.location.search);
@@ -60,6 +79,7 @@
 
     return () => {
       window.removeEventListener('resize', checkMobile);
+      window.removeEventListener('keydown', handleGlobalKeydown);
     };
   });
 
@@ -102,7 +122,7 @@
   }
 
   async function sendMessage(content: string) {
-    if (!content || isLoading) return;
+    if (!content || streamState.isLoading) return;
 
     // Add user message
     const userMessage: Message = {
@@ -112,13 +132,12 @@
       created_at: Date.now() / 1000,
     };
     messages = [...messages, userMessage];
-    isLoading = true;
 
     setTimeout(() => terminalView?.scrollToBottom(), 0);
 
-    // Create streaming message placeholder
+    // Start streaming via state machine
     const messageId = crypto.randomUUID();
-    streamingMessage = { id: messageId, blocks: [] };
+    const controller = streamState.startStream(messageId);
 
     try {
       const { message: builder, handleEvent } = createMessageBuilder(messageId);
@@ -130,13 +149,29 @@
         project_path: currentSettings.projectPath,
         reasoning_effort: currentSettings.reasoningEffort === 'auto' ? undefined : currentSettings.reasoningEffort,
         provider: currentSettings.modelProvider,
+        signal: controller.signal,
+      };
+
+      // Batch UI updates to ~60fps using requestAnimationFrame
+      let rafPending = false;
+      const scheduleUpdate = () => {
+        if (!rafPending) {
+          rafPending = true;
+          requestAnimationFrame(() => {
+            rafPending = false;
+            streamState.updateStream([...builder.blocks], builder.usage);
+            terminalView?.scrollToBottom();
+          });
+        }
       };
 
       for await (const event of streamChatEvents(request)) {
         handleEvent(event);
-        streamingMessage = { id: messageId, blocks: [...builder.blocks], usage: builder.usage };
-        setTimeout(() => terminalView?.scrollToBottom(), 0);
+        scheduleUpdate();
       }
+
+      // Ensure final state is rendered
+      streamState.updateStream([...builder.blocks], builder.usage);
 
       // Move streaming message to permanent messages (including usage)
       const finalMessage: Message = {
@@ -147,19 +182,34 @@
         usage: builder.usage,
       };
       messages = [...messages, finalMessage];
-      streamingMessage = null;
+      streamState.completeStream();
     } catch (error) {
-      console.error('Failed to send message:', error);
-      const errorMessage: Message = {
-        id: messageId,
-        role: 'assistant',
-        blocks: [{ type: 'text', content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}` }],
-        created_at: Date.now() / 1000,
-      };
-      messages = [...messages, errorMessage];
-      streamingMessage = null;
+      // Handle cancellation gracefully
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Append cancelled marker to partial message
+        const cancelledMessage: Message = {
+          id: messageId,
+          role: 'assistant',
+          blocks: [
+            ...streamState.getFinalBlocks(),
+            { type: 'text', content: '\n\n*[Cancelled]*' }
+          ],
+          created_at: Date.now() / 1000,
+        };
+        messages = [...messages, cancelledMessage];
+      } else {
+        console.error('Failed to send message:', error);
+        streamState.errorStream(error instanceof Error ? error : new Error('Failed to get response'));
+        const errorMessage: Message = {
+          id: messageId,
+          role: 'assistant',
+          blocks: [{ type: 'text', content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}` }],
+          created_at: Date.now() / 1000,
+        };
+        messages = [...messages, errorMessage];
+      }
     } finally {
-      isLoading = false;
+      streamState.reset();
       setTimeout(() => terminalView?.scrollToBottom(), 0);
     }
   }
@@ -207,15 +257,27 @@
     <TerminalView
       bind:this={terminalView}
       {messages}
-      {streamingMessage}
+      streamingMessage={streamState.streamingMessage}
       onLoadMore={loadMoreMessages}
       hasMore={hasMoreMessages}
       {loadingMore}
     />
     <TerminalPrompt
+      bind:this={terminalPrompt}
       onSend={sendMessage}
-      disabled={isLoading}
-      placeholder={isLoading ? 'Processing...' : 'Enter command...'}
+      onCancel={() => streamState.cancelStream()}
+      disabled={streamState.isLoading}
+      isStreaming={streamState.isLoading}
+      placeholder={streamState.isLoading ? 'Processing...' : 'Enter command...'}
     />
   </main>
 </div>
+
+<!-- Artifact viewer modal -->
+<ArtifactViewer
+  isOpen={artifactViewer.isOpen}
+  filename={artifactViewer.filename}
+  language={artifactViewer.language}
+  code={artifactViewer.code}
+  onClose={artifactViewer.close}
+/>

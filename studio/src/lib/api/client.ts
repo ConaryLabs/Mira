@@ -59,6 +59,7 @@ export interface ChatRequest {
   message: string;
   project_path: string;
   reasoning_effort?: string;
+  signal?: AbortSignal; // For cancellation
 }
 
 export interface StatusResponse {
@@ -171,12 +172,16 @@ function parseSSEEvents(buffer: string): [string[], string] {
 /**
  * Stream chat events from the backend.
  * Yields typed ChatEvent objects.
+ * Supports cancellation via AbortSignal.
  */
 export async function* streamChatEvents(request: ChatRequest): AsyncGenerator<ChatEvent, void, unknown> {
+  const { signal, ...requestBody } = request;
+
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+    body: JSON.stringify(requestBody),
+    signal, // Pass AbortSignal to fetch
   });
 
   if (!response.ok) {

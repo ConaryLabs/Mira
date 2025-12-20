@@ -122,6 +122,17 @@ html, body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Accessibility: Visible focus styles */
+:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: 2px;
+}
+
+/* Remove outline for mouse clicks, keep for keyboard */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 /* Fix iOS Safari viewport height (100vh includes URL bar) */
 @supports (height: 100dvh) {
   .h-screen-safe {

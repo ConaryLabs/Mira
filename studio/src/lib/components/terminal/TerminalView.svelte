@@ -74,6 +74,10 @@
 <div
   bind:this={containerEl}
   onscroll={handleScroll}
+  role="log"
+  aria-live="polite"
+  aria-busy={streamingMessage !== null}
+  aria-label="Chat messages"
   class="terminal-view relative flex-1 overflow-y-auto terminal-scroll bg-[var(--term-bg)] p-4 font-mono text-sm"
 >
   {#if loadingMore}
@@ -106,7 +110,7 @@
   {:else}
     <!-- Messages -->
     {#each messages as message (message.id)}
-      <div class="mb-4">
+      <div class="terminal-message mb-4">
         {#if message.role === 'user'}
           <!-- User message -->
           <div class="flex items-start gap-2">
@@ -167,7 +171,7 @@
 
     <!-- Streaming message -->
     {#if streamingMessage}
-      <div class="mb-4">
+      <div class="terminal-message-streaming mb-4">
         <div class="pl-4 border-l-2 border-[var(--term-accent)]">
           {#if streamingMessage.blocks.length === 0}
             <span class="text-[var(--term-accent)] animate-pulse">_</span>
@@ -225,5 +229,14 @@
 </div>
 
 <style>
-  /* Styles moved to individual content components */
+  /* Performance: allow browser to skip rendering off-screen messages */
+  .terminal-message {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 100px;
+  }
+
+  /* Don't apply to streaming message (always needs to be rendered) */
+  .terminal-message-streaming {
+    content-visibility: visible;
+  }
 </style>
