@@ -691,46 +691,5 @@ pub async fn call_mira(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore] // Requires OPENAI_API_KEY
-    async fn test_hotline_gpt() {
-        let req = HotlineRequest {
-            message: "What's 2+2?".to_string(),
-            context: None,
-            provider: None,
-        };
-        let result = call_mira(req).await;
-        assert!(result.is_ok());
-        println!("GPT result: {:?}", result);
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires GEMINI_API_KEY
-    async fn test_hotline_gemini() {
-        let req = HotlineRequest {
-            message: "What's 2+2?".to_string(),
-            context: None,
-            provider: Some("gemini".to_string()),
-        };
-        let result = call_mira(req).await;
-        assert!(result.is_ok());
-        println!("Gemini result: {:?}", result);
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires all API keys
-    async fn test_council() {
-        let req = HotlineRequest {
-            message: "What's 2+2?".to_string(),
-            context: None,
-            provider: Some("council".to_string()),
-        };
-        let result = call_mira(req).await;
-        assert!(result.is_ok());
-        println!("Council result: {:?}", result);
-    }
-}
+// Tests removed - require database and API keys.
+// Integration tests should be in tests/ directory.

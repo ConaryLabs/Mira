@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "mira": {
-      "command": "/home/peter/Mira/target/release/mira",
-      "args": ["serve"]
+      "command": "/usr/local/bin/mira",
+      "args": ["connect"]
     }
   }
 }
