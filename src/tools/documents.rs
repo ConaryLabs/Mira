@@ -1,9 +1,12 @@
 // src/tools/documents.rs
-// Document storage and search tools with semantic search
+// Document storage and search tools - thin wrapper over core::ops::documents
 
 use sqlx::sqlite::SqlitePool;
+use std::sync::Arc;
 
-use super::semantic::{SemanticSearch, COLLECTION_DOCS};
+use crate::core::ops::documents as core_docs;
+use crate::core::OpContext;
+use super::semantic::SemanticSearch;
 
 // === Parameter structs for consolidated document tool ===
 
@@ -14,184 +17,105 @@ pub struct ListDocumentsParams {
 
 /// List documents
 pub async fn list_documents(db: &SqlitePool, req: ListDocumentsParams) -> anyhow::Result<Vec<serde_json::Value>> {
-    let limit = req.limit.unwrap_or(20);
+    let ctx = OpContext::just_db(db.clone());
 
-    let query = r#"
-        SELECT id, name, file_path, doc_type, summary, chunk_count, total_tokens,
-               datetime(created_at, 'unixepoch', 'localtime') as created_at
-        FROM documents
-        WHERE ($1 IS NULL OR doc_type = $1)
-        ORDER BY created_at DESC
-        LIMIT $2
-    "#;
+    let input = core_docs::ListDocumentsInput {
+        doc_type: req.doc_type,
+        limit: req.limit.unwrap_or(20),
+    };
 
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, i64, i64, String)>(query)
-        .bind(&req.doc_type)
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let docs = core_docs::list_documents(&ctx, input).await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|(id, name, file_path, doc_type, summary, chunk_count, total_tokens, created_at)| {
-            serde_json::json!({
-                "id": id,
-                "name": name,
-                "file_path": file_path,
-                "doc_type": doc_type,
-                "summary": summary,
-                "chunk_count": chunk_count,
-                "total_tokens": total_tokens,
-                "created_at": created_at,
-            })
+    Ok(docs.into_iter().map(|d| {
+        serde_json::json!({
+            "id": d.id,
+            "name": d.name,
+            "file_path": d.file_path,
+            "doc_type": d.doc_type,
+            "summary": d.summary,
+            "chunk_count": d.chunk_count,
+            "total_tokens": d.total_tokens,
+            "created_at": d.created_at,
         })
-        .collect())
+    }).collect())
 }
 
 /// Search documents - uses semantic search if available
 pub async fn search_documents(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: Arc<SemanticSearch>,
     query_str: &str,
     limit: Option<i64>,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
+    let ctx = OpContext::with_db_and_semantic(db.clone(), semantic);
     let limit = limit.unwrap_or(10) as usize;
 
-    // Try semantic search first if available
-    if semantic.is_available() {
-        match semantic.search(COLLECTION_DOCS, query_str, limit, None).await {
-            Ok(results) if !results.is_empty() => {
-                return Ok(results.into_iter().map(|r| {
-                    serde_json::json!({
-                        "content": r.content,
-                        "score": r.score,
-                        "search_type": "semantic",
-                        "document_id": r.metadata.get("document_id"),
-                        "document_name": r.metadata.get("document_name"),
-                        "doc_type": r.metadata.get("doc_type"),
-                        "chunk_index": r.metadata.get("chunk_index"),
-                    })
-                }).collect());
-            }
-            Ok(_) => {
-                tracing::debug!("No semantic results for document query: {}", query_str);
-            }
-            Err(e) => {
-                tracing::warn!("Semantic document search failed, falling back to text: {}", e);
-            }
-        }
-    }
+    let input = core_docs::SearchDocumentsInput {
+        query: query_str.to_string(),
+        limit,
+    };
 
-    // Fallback to SQLite text search
-    let search_pattern = format!("%{}%", query_str);
+    let results = core_docs::search_documents(&ctx, input).await?;
 
-    let sql_query = r#"
-        SELECT dc.id, dc.document_id, dc.chunk_index, dc.content,
-               d.name, d.doc_type
-        FROM document_chunks dc
-        JOIN documents d ON dc.document_id = d.id
-        WHERE dc.content LIKE $1
-        ORDER BY d.created_at DESC, dc.chunk_index
-        LIMIT $2
-    "#;
-
-    let rows = sqlx::query_as::<_, (String, String, i64, String, String, String)>(sql_query)
-        .bind(&search_pattern)
-        .bind(limit as i64)
-        .fetch_all(db)
-        .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(chunk_id, doc_id, chunk_idx, content, doc_name, doc_type)| {
-            let display_content = if content.len() > 500 {
-                if let Some(pos) = content.to_lowercase().find(&query_str.to_lowercase()) {
-                    let start = pos.saturating_sub(100);
-                    let end = (pos + query_str.len() + 100).min(content.len());
-                    let snippet = &content[start..end];
-                    if start > 0 { format!("...{}", snippet) } else { snippet.to_string() }
-                } else {
-                    format!("{}...", &content[..500])
-                }
-            } else {
-                content
-            };
-
-            serde_json::json!({
-                "chunk_id": chunk_id,
-                "document_id": doc_id,
-                "document_name": doc_name,
-                "doc_type": doc_type,
-                "chunk_index": chunk_idx,
-                "content": display_content,
-                "search_type": "text",
-            })
+    Ok(results.into_iter().map(|r| {
+        serde_json::json!({
+            "content": r.content,
+            "score": r.score,
+            "search_type": r.search_type,
+            "document_id": r.document_id,
+            "document_name": r.document_name,
+            "doc_type": r.doc_type,
+            "chunk_index": r.chunk_index,
         })
-        .collect())
+    }).collect())
 }
 
 /// Get a specific document
 pub async fn get_document(db: &SqlitePool, document_id: &str, include_content: bool) -> anyhow::Result<Option<serde_json::Value>> {
-    let doc_query = r#"
-        SELECT id, name, file_path, doc_type, content, summary, chunk_count, total_tokens, metadata,
-               datetime(created_at, 'unixepoch', 'localtime') as created_at
-        FROM documents
-        WHERE id = $1
-    "#;
+    let ctx = OpContext::just_db(db.clone());
 
-    let doc = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, Option<String>, i64, i64, Option<String>, String)>(doc_query)
-        .bind(document_id)
-        .fetch_optional(db)
-        .await?;
+    let input = core_docs::GetDocumentInput {
+        document_id: document_id.to_string(),
+        include_content,
+    };
 
-    match doc {
-        Some((id, name, file_path, doc_type, content, summary, chunk_count, total_tokens, metadata, created_at)) => {
-            let mut result = serde_json::json!({
-                "id": id,
-                "name": name,
-                "file_path": file_path,
-                "doc_type": doc_type,
-                "summary": summary,
-                "chunk_count": chunk_count,
-                "total_tokens": total_tokens,
-                "metadata": metadata.and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok()),
-                "created_at": created_at,
-            });
+    let doc = core_docs::get_document(&ctx, input).await?;
 
-            if include_content {
-                if let Some(doc_content) = content {
-                    result["content"] = serde_json::json!(doc_content);
-                } else {
-                    let chunks_query = r#"
-                        SELECT chunk_index, content, token_count
-                        FROM document_chunks
-                        WHERE document_id = $1
-                        ORDER BY chunk_index
-                    "#;
+    Ok(doc.map(|d| {
+        let mut result = serde_json::json!({
+            "id": d.id,
+            "name": d.name,
+            "file_path": d.file_path,
+            "doc_type": d.doc_type,
+            "summary": d.summary,
+            "chunk_count": d.chunk_count,
+            "total_tokens": d.total_tokens,
+            "metadata": d.metadata,
+            "created_at": d.created_at,
+        });
 
-                    let chunk_rows = sqlx::query_as::<_, (i64, String, Option<i64>)>(chunks_query)
-                        .bind(document_id)
-                        .fetch_all(db)
-                        .await
-                        .unwrap_or_default();
-
-                    let chunks: Vec<serde_json::Value> = chunk_rows
-                        .into_iter()
-                        .map(|(idx, content, tokens)| {
-                            serde_json::json!({
-                                "index": idx,
-                                "content": content,
-                                "token_count": tokens,
-                            })
-                        })
-                        .collect();
-
-                    result["chunks"] = serde_json::json!(chunks);
-                }
-            }
-
-            Ok(Some(result))
+        if let Some(content) = d.content {
+            result["content"] = serde_json::json!(content);
         }
-        None => Ok(None),
-    }
+
+        if let Some(chunks) = d.chunks {
+            let chunks_json: Vec<serde_json::Value> = chunks.into_iter().map(|c| {
+                serde_json::json!({
+                    "index": c.index,
+                    "content": c.content,
+                    "token_count": c.token_count,
+                })
+            }).collect();
+            result["chunks"] = serde_json::json!(chunks_json);
+        }
+
+        result
+    }))
+}
+
+/// Delete a document
+pub async fn delete_document(db: &SqlitePool, document_id: &str) -> anyhow::Result<bool> {
+    let ctx = OpContext::just_db(db.clone());
+    let deleted = core_docs::delete_document(&ctx, document_id).await?;
+    Ok(deleted)
 }
