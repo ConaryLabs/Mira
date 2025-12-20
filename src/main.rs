@@ -144,8 +144,10 @@ async fn auth_middleware(
     next: Next,
     expected_token: String,
 ) -> Result<Response, StatusCode> {
-    // Skip auth for health endpoint
-    if req.uri().path() == "/health" {
+    let path = req.uri().path();
+
+    // Skip auth for public endpoints
+    if path == "/health" || path.starts_with("/api/") {
         return Ok(next.run(req).await);
     }
 
