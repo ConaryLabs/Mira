@@ -302,7 +302,7 @@ async fn call_gemini(message: &str) -> Result<String> {
         }],
         generation_config: Some(GeminiGenerationConfig {
             thinking_config: GeminiThinkingConfig {
-                thinking_level: "high".to_string(),
+                thinking_level: "high".to_string(),  // Maximum reasoning depth
             },
         }),
     };
