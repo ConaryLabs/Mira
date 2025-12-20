@@ -48,6 +48,23 @@ pub struct PastDecision {
     pub context: Option<String>,
 }
 
+/// A related file from cochange patterns
+#[derive(Debug, Clone)]
+pub struct RelatedFile {
+    pub file_path: String,
+    pub cochange_count: i64,
+    pub confidence: f64,
+}
+
+/// A call reference from the call graph
+#[derive(Debug, Clone)]
+pub struct CallReference {
+    pub symbol_name: String,
+    pub file_path: String,
+    pub direction: String,  // "caller" or "callee"
+    pub call_type: Option<String>,
+}
+
 /// Assembled context for a query
 #[derive(Debug, Default)]
 pub struct AssembledContext {
@@ -71,6 +88,10 @@ pub struct AssembledContext {
     pub rejected_approaches: Vec<RejectedApproach>,
     /// Past decisions with context (anti-amnesia)
     pub past_decisions: Vec<PastDecision>,
+    /// Related files from cochange patterns
+    pub related_files: Vec<RelatedFile>,
+    /// Call graph context for active symbols
+    pub call_context: Vec<CallReference>,
 }
 
 /// A semantic search hit
