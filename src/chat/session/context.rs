@@ -412,6 +412,64 @@ impl AssembledContext {
             }
         }
 
+        // 7. Code Relationships - cochange patterns and call graph
+        // Shows what files/functions are related to current focus
+        if !self.related_files.is_empty() || !self.call_context.is_empty() {
+            let mut lines = vec!["## Code Relationships".to_string()];
+
+            // Related files from cochange patterns
+            if !self.related_files.is_empty() {
+                lines.push("Files that change together:".to_string());
+                for rf in self.related_files.iter().take(5) {
+                    // Shorten file path for display
+                    let short_path = rf.file_path
+                        .split('/')
+                        .skip_while(|p| *p != "src" && *p != "lib" && *p != "studio")
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    let path = if short_path.is_empty() { &rf.file_path } else { &short_path };
+                    lines.push(format!("  {} ({:.0}% confidence)", path, rf.confidence * 100.0));
+                }
+            }
+
+            // Call graph context
+            if !self.call_context.is_empty() {
+                if !self.related_files.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push("Call relationships:".to_string());
+
+                // Group by direction
+                let callers: Vec<_> = self.call_context.iter()
+                    .filter(|c| c.direction == "caller")
+                    .take(5)
+                    .collect();
+                let callees: Vec<_> = self.call_context.iter()
+                    .filter(|c| c.direction == "callee")
+                    .take(5)
+                    .collect();
+
+                if !callers.is_empty() {
+                    lines.push("  Called by:".to_string());
+                    for c in callers {
+                        lines.push(format!("    - {}()", c.symbol_name));
+                    }
+                }
+                if !callees.is_empty() {
+                    lines.push("  Calls:".to_string());
+                    for c in callees {
+                        lines.push(format!("    - {}()", c.symbol_name));
+                    }
+                }
+            }
+
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
         if sections.is_empty() {
             String::new()
         } else {

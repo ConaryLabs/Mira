@@ -1,6 +1,7 @@
 //! Code index hints
 //!
 //! Provides relevant code symbols from the codebase based on query analysis.
+//! Uses semantic search when available (Qdrant + Gemini), with SQL fallback.
 
 use anyhow::Result;
 use sqlx::Row;
@@ -8,22 +9,141 @@ use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use super::{CodeIndexFileHint, CodeIndexSymbolHint, SessionManager};
+use mira_core::semantic::COLLECTION_CODE;
 
 impl SessionManager {
     /// Load code index hints for a query
+    /// Uses semantic search when available, falls back to SQL term matching
     pub(super) async fn load_code_index_hints(&self, query: &str) -> Vec<CodeIndexFileHint> {
-        match self.load_code_index_hints_inner(query).await {
-            Ok(hints) => hints,
+        // Try semantic search first
+        if self.semantic.is_available() {
+            match self.load_code_hints_semantic(query).await {
+                Ok(hints) if !hints.is_empty() => {
+                    debug!("Loaded {} code hints via semantic search", hints.len());
+                    return hints;
+                }
+                Ok(_) => {
+                    debug!("Semantic search returned no results, falling back to SQL");
+                }
+                Err(e) => {
+                    debug!("Semantic code search failed: {}, falling back to SQL", e);
+                }
+            }
+        }
+
+        // Fallback to SQL term matching
+        match self.load_code_hints_sql(query).await {
+            Ok(hints) => {
+                debug!("Loaded {} code hints via SQL", hints.len());
+                hints
+            }
             Err(e) => {
-                // This is an optional enhancement. If the DB doesn't have the code tables,
-                // we just skip it.
                 debug!("Code index hints unavailable: {}", e);
                 Vec::new()
             }
         }
     }
 
-    async fn load_code_index_hints_inner(&self, query: &str) -> Result<Vec<CodeIndexFileHint>> {
+    /// Semantic code search using COLLECTION_CODE
+    /// Returns conceptually related code based on natural language query
+    async fn load_code_hints_semantic(&self, query: &str) -> Result<Vec<CodeIndexFileHint>> {
+        use qdrant_client::qdrant::{Condition, Filter};
+
+        // Filter to project path
+        let filter = Filter::must([
+            Condition::matches("file_path", format!("{}%", self.project_path))
+        ]);
+
+        let results = self
+            .semantic
+            .search(COLLECTION_CODE, query, 15, Some(filter))
+            .await?;
+
+        if results.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Group by file_path
+        let mut files: HashMap<String, Vec<CodeIndexSymbolHint>> = HashMap::new();
+        let mut seen: HashSet<(String, i64)> = HashSet::new();
+
+        for result in results {
+            let file_path = result
+                .metadata
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if file_path.is_empty() {
+                continue;
+            }
+
+            let name = result
+                .metadata
+                .get("symbol_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let start_line = result
+                .metadata
+                .get("start_line")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            // Dedup
+            if seen.contains(&(name.clone(), start_line)) {
+                continue;
+            }
+            seen.insert((name.clone(), start_line));
+
+            let hint = CodeIndexSymbolHint {
+                name,
+                qualified_name: result
+                    .metadata
+                    .get("qualified_name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                symbol_type: result
+                    .metadata
+                    .get("symbol_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                signature: result
+                    .metadata
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                start_line,
+                end_line: result
+                    .metadata
+                    .get("end_line")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(start_line),
+            };
+
+            files.entry(file_path).or_default().push(hint);
+        }
+
+        // Convert to ranked list
+        let mut file_list: Vec<CodeIndexFileHint> = files
+            .into_iter()
+            .map(|(file_path, mut symbols)| {
+                symbols.truncate(8);
+                CodeIndexFileHint { file_path, symbols }
+            })
+            .collect();
+
+        file_list.sort_by_key(|f| std::cmp::Reverse(f.symbols.len()));
+        file_list.truncate(8);
+
+        Ok(file_list)
+    }
+
+    /// SQL-based term matching fallback
+    async fn load_code_hints_sql(&self, query: &str) -> Result<Vec<CodeIndexFileHint>> {
         let terms = extract_terms(query);
         if terms.is_empty() {
             return Ok(Vec::new());
