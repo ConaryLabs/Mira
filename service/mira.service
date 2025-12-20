@@ -11,12 +11,7 @@ RestartSec=5
 
 # Environment
 Environment=MIRA_PORT=3199
-Environment=DATABASE_URL=sqlite://%h/.mira/mira.db
-
-# Optional: uncomment and set these for full functionality
-# Environment=QDRANT_URL=http://localhost:6334
-# Environment=GEMINI_API_KEY=your-key
-# Environment=DEEPSEEK_API_KEY=your-key
+EnvironmentFile=%h/.mira/.env
 
 # Logging
 StandardOutput=journal
