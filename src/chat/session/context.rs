@@ -470,6 +470,65 @@ impl AssembledContext {
             }
         }
 
+        // 8. Similar Fixes - proactive error pattern matching
+        // When errors are detected, show relevant past fixes
+        if !self.similar_fixes.is_empty() {
+            let mut lines = vec!["## Relevant Past Fixes".to_string()];
+            lines.push("Similar errors have been fixed before:".to_string());
+
+            for fix in self.similar_fixes.iter().take(3) {
+                // Truncate error pattern for display
+                let error_preview = if fix.error_pattern.len() > 60 {
+                    format!("{}...", &fix.error_pattern[..60])
+                } else {
+                    fix.error_pattern.clone()
+                };
+                // Truncate fix description
+                let fix_preview = if fix.fix_description.len() > 150 {
+                    format!("{}...", &fix.fix_description[..150])
+                } else {
+                    fix.fix_description.clone()
+                };
+                lines.push(format!("  • \"{}\"", error_preview));
+                lines.push(format!("    Fix: {}", fix_preview));
+            }
+
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        // 9. Index Freshness - warn about potentially stale code intelligence
+        if let Some(ref status) = self.index_status {
+            if !status.stale_files.is_empty() {
+                let mut lines = vec!["## Index Status".to_string()];
+                lines.push(format!("[!] {} files may have outdated symbol info:", status.stale_files.len()));
+
+                for file in status.stale_files.iter().take(5) {
+                    // Shorten path for display
+                    let short = file
+                        .split('/')
+                        .skip_while(|p| *p != "src" && *p != "lib" && *p != "studio")
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    let display = if short.is_empty() { file.as_str() } else { &short };
+                    lines.push(format!("  - {}", display));
+                }
+
+                if status.stale_files.len() > 5 {
+                    lines.push(format!("  ... and {} more", status.stale_files.len() - 5));
+                }
+
+                let section = lines.join("\n");
+                estimated_tokens += estimate_tokens(&section);
+                if estimated_tokens < budget.token_budget {
+                    sections.push(section);
+                }
+            }
+        }
+
         if sections.is_empty() {
             String::new()
         } else {

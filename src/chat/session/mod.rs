@@ -35,8 +35,8 @@ pub use chain::ResetDecision;
 pub use context::{DeepSeekBudget, TokenUsage};
 pub use types::{
     AssembledContext, CallReference, ChatMessage, Checkpoint, CodeIndexFileHint,
-    CodeIndexSymbolHint, PastDecision, RejectedApproach, RelatedFile, SemanticHit,
-    SessionStats,
+    CodeIndexSymbolHint, IndexStatus, PastDecision, RejectedApproach, RelatedFile,
+    SemanticHit, SessionStats, SimilarFix,
 };
 
 /// Number of recent messages to keep raw in context (full fidelity)
@@ -307,6 +307,25 @@ impl SessionManager {
         if !ctx.related_files.is_empty() || !ctx.call_context.is_empty() {
             debug!("Loaded graph context: {} related files, {} call refs",
                 ctx.related_files.len(), ctx.call_context.len());
+        }
+
+        // 11. Smart error pattern matching: detect errors and find similar fixes
+        // Scan recent messages for error patterns and suggest relevant past fixes
+        let error_patterns = Self::detect_error_patterns(&ctx.recent_messages);
+        if !error_patterns.is_empty() {
+            ctx.similar_fixes = self.load_similar_fixes(&error_patterns, 5).await;
+            if !ctx.similar_fixes.is_empty() {
+                debug!("Found {} similar fixes for detected error patterns", ctx.similar_fixes.len());
+            }
+        }
+
+        // 12. Index freshness check: warn about stale index entries
+        // Helps the LLM know if code intelligence might be outdated
+        ctx.index_status = self.check_index_freshness().await;
+        if let Some(ref status) = ctx.index_status {
+            if !status.stale_files.is_empty() {
+                debug!("Index freshness: {} stale files detected", status.stale_files.len());
+            }
         }
 
         Ok(ctx)
@@ -644,6 +663,272 @@ impl SessionManager {
             .flat_map(|h| h.symbols.iter().map(|s| s.name.clone()))
             .take(10)
             .collect()
+    }
+
+    /// Detect error patterns in recent messages
+    /// Returns a list of error strings that can be used to find similar past fixes
+    fn detect_error_patterns(messages: &[ChatMessage]) -> Vec<String> {
+        use regex::Regex;
+        use std::collections::HashSet;
+
+        let mut patterns: HashSet<String> = HashSet::new();
+
+        // Common error pattern regexes
+        let error_patterns = [
+            // Rust errors
+            r"error\[E\d+\]:\s*(.+)",
+            r"cannot\s+(find|move|borrow|infer)\s+(.+)",
+            r"the trait .+ is not implemented",
+            r"no method named .+ found",
+            r"mismatched types",
+            // General errors
+            r"(?i)error:\s*(.+)",
+            r"(?i)failed:\s*(.+)",
+            r"(?i)panic(ked)?:\s*(.+)",
+            r"(?i)exception:\s*(.+)",
+            // Stack traces
+            r"at .+:\d+:\d+",
+            // Build/test failures
+            r"(?i)build failed",
+            r"(?i)test failed",
+            r"(?i)compilation error",
+        ];
+
+        // Compile regexes
+        let compiled: Vec<Regex> = error_patterns
+            .iter()
+            .filter_map(|p| Regex::new(p).ok())
+            .collect();
+
+        // Check each message for error patterns
+        for msg in messages {
+            // Skip assistant messages for error detection (focus on user-reported errors)
+            // But check both for debugging context
+            for line in msg.content.lines().take(50) {
+                for re in &compiled {
+                    if re.is_match(line) {
+                        // Truncate long error lines
+                        let error = if line.len() > 150 {
+                            format!("{}...", &line[..150])
+                        } else {
+                            line.to_string()
+                        };
+                        patterns.insert(error);
+
+                        // Limit patterns to avoid query bloat
+                        if patterns.len() >= 10 {
+                            return patterns.into_iter().collect();
+                        }
+                    }
+                }
+            }
+
+            // Also check for explicit error indicators in message content
+            let lower = msg.content.to_lowercase();
+            if lower.contains("not working")
+                || lower.contains("doesn't work")
+                || lower.contains("broken")
+                || lower.contains("fix this")
+                || lower.contains("getting an error")
+            {
+                // Mark as "implicit error" for context
+                patterns.insert("__implicit_error__".to_string());
+            }
+        }
+
+        patterns.into_iter().collect()
+    }
+
+    /// Load similar fixes from error_fixes table
+    /// Uses semantic search when available, falls back to text matching
+    async fn load_similar_fixes(&self, error_patterns: &[String], limit: usize) -> Vec<types::SimilarFix> {
+        if error_patterns.is_empty() {
+            return Vec::new();
+        }
+
+        // Skip implicit error marker for search
+        let searchable: Vec<&String> = error_patterns
+            .iter()
+            .filter(|p| *p != "__implicit_error__")
+            .collect();
+
+        if searchable.is_empty() {
+            return Vec::new();
+        }
+
+        // Build a combined search query
+        let combined_query = searchable.iter().take(3).map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
+
+        // Try semantic search first if available
+        if self.semantic.is_available() {
+            if let Ok(results) = self.semantic
+                .search("mira_error_fixes", &combined_query, limit, None)
+                .await
+            {
+                if !results.is_empty() {
+                    return results
+                        .into_iter()
+                        .map(|r| types::SimilarFix {
+                            error_pattern: r.metadata
+                                .get("error_pattern")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            fix_description: r.content,
+                            score: r.score,
+                        })
+                        .collect();
+                }
+            }
+        }
+
+        // Fallback to SQL text matching
+        let mut fixes: Vec<types::SimilarFix> = Vec::new();
+
+        for pattern in searchable.iter().take(3) {
+            let like_pattern = format!("%{}%", pattern);
+
+            let rows = sqlx::query_as::<_, (String, String)>(
+                r#"
+                SELECT error_pattern, fix_description
+                FROM error_fixes
+                WHERE error_pattern LIKE $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(&like_pattern)
+            .bind(limit as i64)
+            .fetch_all(&self.db)
+            .await
+            .unwrap_or_default();
+
+            for (error_pattern, fix_description) in rows {
+                fixes.push(types::SimilarFix {
+                    error_pattern,
+                    fix_description,
+                    score: 0.5, // Default score for text match
+                });
+            }
+        }
+
+        fixes.truncate(limit);
+        fixes
+    }
+
+    /// Check index freshness for files in the project
+    /// Returns status showing stale files that may have outdated symbol information
+    async fn check_index_freshness(&self) -> Option<types::IndexStatus> {
+        // Get last indexed time for the project
+        let last_indexed: Option<(i64,)> = sqlx::query_as(
+            r#"
+            SELECT MAX(analyzed_at) FROM code_symbols
+            WHERE file_path LIKE $1
+            "#,
+        )
+        .bind(format!("{}%", self.project_path))
+        .fetch_optional(&self.db)
+        .await
+        .ok()?;
+
+        let last_indexed_ts = last_indexed.and_then(|r| Some(r.0));
+
+        // Get list of files modified since last index
+        let stale_files = self.get_stale_files(last_indexed_ts).await;
+
+        if stale_files.is_empty() && last_indexed_ts.is_none() {
+            return None;
+        }
+
+        Some(types::IndexStatus {
+            stale_files,
+            last_indexed: last_indexed_ts,
+        })
+    }
+
+    /// Get files modified since last index
+    async fn get_stale_files(&self, since: Option<i64>) -> Vec<String> {
+        use std::process::Command;
+
+        let Some(since_ts) = since else {
+            return Vec::new();
+        };
+
+        // Use git to find files modified since the timestamp
+        let since_date = chrono::DateTime::from_timestamp(since_ts, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_default();
+
+        if since_date.is_empty() {
+            return Vec::new();
+        }
+
+        // Get files modified since the index time using git
+        let output = Command::new("git")
+            .args([
+                "diff", "--name-only",
+                &format!("--since={}", since_date),
+                "HEAD",
+            ])
+            .current_dir(&self.project_path)
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|l| l.ends_with(".rs") || l.ends_with(".ts") || l.ends_with(".py"))
+                    .take(10)
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+            _ => {
+                // Fallback: check file mtime vs index time
+                self.check_file_mtimes(since_ts).await
+            }
+        }
+    }
+
+    /// Fallback: check file modification times vs index time
+    async fn check_file_mtimes(&self, since_ts: i64) -> Vec<String> {
+        // Get indexed files with their analyzed_at times
+        let indexed_files: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT DISTINCT file_path, MAX(analyzed_at) as last_analyzed
+            FROM code_symbols
+            WHERE file_path LIKE $1
+            GROUP BY file_path
+            LIMIT 100
+            "#,
+        )
+        .bind(format!("{}%", self.project_path))
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+
+        let mut stale = Vec::new();
+
+        for (file_path, analyzed_at) in indexed_files {
+            if let Ok(metadata) = std::fs::metadata(&file_path) {
+                if let Ok(mtime) = metadata.modified() {
+                    let mtime_ts = mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+
+                    if mtime_ts > analyzed_at {
+                        // File was modified after indexing
+                        stale.push(file_path);
+                    }
+                }
+            }
+
+            if stale.len() >= 10 {
+                break;
+            }
+        }
+
+        stale
     }
 
     /// Load the most recent code compaction blob
