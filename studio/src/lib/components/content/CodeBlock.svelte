@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isExpanded, setExpanded } from '$lib/stores/expansionState';
+  import { artifactViewer, shouldShowViewerButton } from '$lib/stores/artifacts.svelte';
 
   interface Props {
     id: string;
@@ -22,6 +23,13 @@
   // Use persisted expansion state, fallback to default
   let expanded = $state(isExpanded(id) || defaultExpanded);
   let copied = $state(false);
+
+  // Show "Open in viewer" button for large files
+  const showViewerButton = $derived(shouldShowViewerButton(code));
+
+  function openInViewer() {
+    artifactViewer.open({ filename, language, code });
+  }
 
   const lines = $derived(code.split('\n'));
   const previewCode = $derived(lines.slice(0, previewLines).join('\n'));
@@ -77,6 +85,8 @@
     <button
       type="button"
       onclick={toggle}
+      aria-expanded={expanded}
+      aria-label="{expanded ? 'Collapse' : 'Expand'} code block{filename ? `: ${filename}` : ''}"
       class="flex items-center gap-2 text-xs hover:text-[var(--term-accent)] transition-colors"
     >
       <span class="text-[var(--term-text-dim)] font-mono select-none">
@@ -91,13 +101,26 @@
       {/if}
     </button>
 
-    <button
-      type="button"
-      onclick={copyCode}
-      class="text-xs px-2 py-0.5 rounded hover:bg-[var(--term-bg-secondary)] text-[var(--term-text-dim)] hover:text-[var(--term-accent)] transition-colors"
-    >
-      {copied ? 'Copied!' : 'Copy'}
-    </button>
+    <div class="flex items-center gap-1">
+      {#if showViewerButton}
+        <button
+          type="button"
+          onclick={openInViewer}
+          aria-label="Open in full viewer"
+          class="text-xs px-2 py-0.5 rounded hover:bg-[var(--term-bg-secondary)] text-[var(--term-text-dim)] hover:text-[var(--term-accent)] transition-colors"
+        >
+          Expand
+        </button>
+      {/if}
+      <button
+        type="button"
+        onclick={copyCode}
+        aria-label={copied ? 'Code copied to clipboard' : 'Copy code to clipboard'}
+        class="text-xs px-2 py-0.5 rounded hover:bg-[var(--term-bg-secondary)] text-[var(--term-text-dim)] hover:text-[var(--term-accent)] transition-colors"
+      >
+        {copied ? 'Copied!' : 'Copy'}
+      </button>
+    </div>
   </div>
 
   <!-- Code content -->
@@ -107,6 +130,7 @@
       <button
         type="button"
         onclick={toggle}
+        aria-label="Show all {lineCount} lines"
         class="mt-2 text-xs text-[var(--term-text-dim)] hover:text-[var(--term-accent)]"
       >
         ... {lineCount - previewLines} more lines
