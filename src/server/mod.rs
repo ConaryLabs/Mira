@@ -142,7 +142,7 @@ impl MiraServer {
         match hotline::call_mira(
             req,
             self.db.as_ref(),
-            self.semantic.as_ref(),
+            &self.semantic,
             project_id,
             project_name,
             project_type,
@@ -410,7 +410,7 @@ impl MiraServer {
         let project_id = self.get_active_project().await.map(|p| p.id);
         match req.action.as_str() {
             "record" => {
-                let result = corrections::record_correction(self.db.as_ref(), self.semantic.as_ref(), corrections::RecordCorrectionParams {
+                let result = corrections::record_correction(self.db.as_ref(), &self.semantic, corrections::RecordCorrectionParams {
                     correction_type: require!(req.correction_type, "correction_type required"),
                     what_was_wrong: require!(req.what_was_wrong, "what_was_wrong required"),
                     what_is_right: require!(req.what_is_right, "what_is_right required"),
@@ -421,7 +421,7 @@ impl MiraServer {
                 Ok(json_response(result))
             }
             "get" => {
-                let result = corrections::get_corrections(self.db.as_ref(), self.semantic.as_ref(), corrections::GetCorrectionsParams {
+                let result = corrections::get_corrections(self.db.as_ref(), &self.semantic, corrections::GetCorrectionsParams {
                     file_path: req.file_path.clone(),
                     topic: req.topic.clone(),
                     correction_type: req.correction_type.clone(),
@@ -655,14 +655,14 @@ impl MiraServer {
     #[tool(description = "Get all context for current work: corrections, decisions, goals, errors.")]
     async fn get_proactive_context(&self, Parameters(req): Parameters<GetProactiveContextRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let result = proactive::get_proactive_context(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        let result = proactive::get_proactive_context(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
     #[tool(description = "Record a rejected approach.")]
     async fn record_rejected_approach(&self, Parameters(req): Parameters<RecordRejectedApproachRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let result = goals::record_rejected_approach(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        let result = goals::record_rejected_approach(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 

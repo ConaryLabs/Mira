@@ -11,7 +11,8 @@ use sqlx::SqlitePool;
 
 use super::proactive;
 use super::git_intel;
-use super::semantic::SemanticSearch;
+use mira_core::semantic::SemanticSearch;
+use std::sync::Arc;
 use super::types::{HotlineRequest, GetProactiveContextRequest, GetRecentCommitsRequest};
 
 const DOTENV_PATH: &str = "/home/peter/Mira/.env";
@@ -493,7 +494,7 @@ async fn call_council(message: &str) -> Result<serde_json::Value> {
 /// Fetch and format project context for hotline calls
 async fn get_project_context(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     project_id: Option<i64>,
     project_name: Option<&str>,
     project_type: Option<&str>,
@@ -654,7 +655,7 @@ fn format_context_for_llm(
 pub async fn call_mira(
     req: HotlineRequest,
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     project_id: Option<i64>,
     project_name: Option<&str>,
     project_type: Option<&str>,

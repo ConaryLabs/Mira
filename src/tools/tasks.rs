@@ -1,31 +1,14 @@
 // src/tools/tasks.rs
-// Task management tools - persistent tasks across sessions
+// Task management tools - thin wrapper delegating to core::ops::mira
+//
+// Keeps MCP-specific types separate from the shared core.
 
-use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
-use uuid::Uuid;
 
-/// Resolve a task ID - supports both full UUIDs and short prefixes
-async fn resolve_task_id(db: &SqlitePool, task_id: &str) -> anyhow::Result<Option<String>> {
-    // If it looks like a full UUID, use directly
-    if task_id.len() == 36 && task_id.contains('-') {
-        return Ok(Some(task_id.to_string()));
-    }
+use crate::core::ops::mira as core_mira;
+use crate::core::OpContext;
 
-    // Otherwise, treat as prefix and find matching task
-    let pattern = format!("{}%", task_id);
-    let result = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM tasks WHERE id LIKE $1 LIMIT 1"
-    )
-    .bind(&pattern)
-    .fetch_optional(db)
-    .await?;
-
-    Ok(result)
-}
-
-// === Parameter structs for consolidated task tool ===
-
+// Parameter structs matching MCP request types
 pub struct CreateTaskParams {
     pub title: String,
     pub description: Option<String>,
@@ -49,188 +32,131 @@ pub struct UpdateTaskParams {
 }
 
 /// Create a new task
-pub async fn create_task(db: &SqlitePool, req: CreateTaskParams) -> anyhow::Result<serde_json::Value> {
-    let now = Utc::now().timestamp();
-    let id = Uuid::new_v4().to_string();
-    let priority = req.priority.as_deref().unwrap_or("medium");
+pub async fn create_task(
+    db: &SqlitePool,
+    req: CreateTaskParams,
+) -> anyhow::Result<serde_json::Value> {
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
 
-    let result = sqlx::query(r#"
-        INSERT INTO tasks (id, parent_id, title, description, status, priority, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $6)
-    "#)
-    .bind(&id)
-    .bind(&req.parent_id)
-    .bind(&req.title)
-    .bind(&req.description)
-    .bind(priority)
-    .bind(now)
-    .execute(db)
-    .await?;
+    let input = core_mira::CreateTaskInput {
+        title: req.title,
+        description: req.description,
+        priority: req.priority,
+        parent_id: req.parent_id,
+    };
+
+    let output = core_mira::create_task(&ctx, input).await?;
 
     Ok(serde_json::json!({
         "status": "created",
-        "task_id": id,
-        "title": req.title,
-        "priority": priority,
-        "rows_affected": result.rows_affected(),
+        "task_id": output.task_id,
+        "title": output.title,
+        "priority": output.priority,
     }))
 }
 
 /// List tasks with optional filters
-pub async fn list_tasks(db: &SqlitePool, req: ListTasksParams) -> anyhow::Result<Vec<serde_json::Value>> {
-    let limit = req.limit.unwrap_or(20);
-    let include_completed = req.include_completed.unwrap_or(false);
+pub async fn list_tasks(
+    db: &SqlitePool,
+    req: ListTasksParams,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
 
-    let query = r#"
-        SELECT id, parent_id, title, description, status, priority, project_path, tags,
-               datetime(created_at, 'unixepoch', 'localtime') as created_at,
-               datetime(updated_at, 'unixepoch', 'localtime') as updated_at,
-               datetime(completed_at, 'unixepoch', 'localtime') as completed_at
-        FROM tasks
-        WHERE ($1 IS NULL OR status = $1)
-          AND ($2 IS NULL OR parent_id = $2)
-          AND ($3 = 1 OR status != 'completed')
-        ORDER BY
-            CASE status
-                WHEN 'in_progress' THEN 0
-                WHEN 'blocked' THEN 1
-                WHEN 'pending' THEN 2
-                ELSE 3
-            END,
-            CASE priority
-                WHEN 'urgent' THEN 0
-                WHEN 'high' THEN 1
-                WHEN 'medium' THEN 2
-                ELSE 3
-            END,
-            created_at DESC
-        LIMIT $4
-    "#;
+    let input = core_mira::ListTasksInput {
+        status: req.status,
+        parent_id: req.parent_id,
+        include_completed: req.include_completed.unwrap_or(false),
+        limit: req.limit.unwrap_or(20),
+    };
 
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, Option<String>, String, String, Option<String>, Option<String>, String, String, Option<String>)>(query)
-        .bind(&req.status)
-        .bind(&req.parent_id)
-        .bind(if include_completed { 1 } else { 0 })
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let tasks = core_mira::list_tasks(&ctx, input).await?;
 
-    Ok(rows
+    Ok(tasks
         .into_iter()
-        .map(|(id, parent_id, title, desc, status, priority, project_path, tags, created, updated, completed)| {
+        .map(|t| {
             serde_json::json!({
-                "id": id,
-                "parent_id": parent_id,
-                "title": title,
-                "description": desc,
-                "status": status,
-                "priority": priority,
-                "project_path": project_path,
-                "tags": tags,
-                "created_at": created,
-                "updated_at": updated,
-                "completed_at": completed,
+                "id": t.id,
+                "parent_id": t.parent_id,
+                "title": t.title,
+                "description": t.description,
+                "status": t.status,
+                "priority": t.priority,
+                "project_path": t.project_path,
+                "tags": t.tags,
+                "created_at": t.created_at,
+                "updated_at": t.updated_at,
+                "completed_at": t.completed_at,
             })
         })
         .collect())
 }
 
 /// Get a specific task with its subtasks
-pub async fn get_task(db: &SqlitePool, task_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
-    let task_query = r#"
-        SELECT id, parent_id, title, description, status, priority, project_path, tags,
-               completion_notes,
-               datetime(created_at, 'unixepoch', 'localtime') as created_at,
-               datetime(updated_at, 'unixepoch', 'localtime') as updated_at,
-               datetime(completed_at, 'unixepoch', 'localtime') as completed_at
-        FROM tasks
-        WHERE id = $1
-    "#;
+pub async fn get_task(
+    db: &SqlitePool,
+    task_id: &str,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
 
-    let task = sqlx::query_as::<_, (String, Option<String>, String, Option<String>, String, String, Option<String>, Option<String>, Option<String>, String, String, Option<String>)>(task_query)
-        .bind(task_id)
-        .fetch_optional(db)
-        .await?;
+    let task = core_mira::get_task(&ctx, task_id).await?;
 
-    match task {
-        Some((id, parent_id, title, desc, status, priority, project_path, tags, completion_notes, created, updated, completed)) => {
-            // Get subtasks
-            let subtasks_query = r#"
-                SELECT id, title, status, priority
-                FROM tasks
-                WHERE parent_id = $1
-                ORDER BY
-                    CASE status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-                    created_at
-            "#;
-
-            let subtasks = sqlx::query_as::<_, (String, String, String, String)>(subtasks_query)
-                .bind(task_id)
-                .fetch_all(db)
-                .await
-                .unwrap_or_default();
-
-            let subtask_list: Vec<serde_json::Value> = subtasks
-                .into_iter()
-                .map(|(id, title, status, priority)| {
-                    serde_json::json!({
-                        "id": id,
-                        "title": title,
-                        "status": status,
-                        "priority": priority,
-                    })
+    Ok(task.map(|t| {
+        let subtasks: Vec<serde_json::Value> = t
+            .subtasks
+            .into_iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "title": s.title,
+                    "status": s.status,
+                    "priority": s.priority,
                 })
-                .collect();
+            })
+            .collect();
 
-            Ok(Some(serde_json::json!({
-                "id": id,
-                "parent_id": parent_id,
-                "title": title,
-                "description": desc,
-                "status": status,
-                "priority": priority,
-                "project_path": project_path,
-                "tags": tags,
-                "completion_notes": completion_notes,
-                "created_at": created,
-                "updated_at": updated,
-                "completed_at": completed,
-                "subtasks": subtask_list,
-            })))
-        }
-        None => Ok(None),
-    }
+        serde_json::json!({
+            "id": t.id,
+            "parent_id": t.parent_id,
+            "title": t.title,
+            "description": t.description,
+            "status": t.status,
+            "priority": t.priority,
+            "project_path": t.project_path,
+            "tags": t.tags,
+            "completion_notes": t.completion_notes,
+            "created_at": t.created_at,
+            "updated_at": t.updated_at,
+            "completed_at": t.completed_at,
+            "subtasks": subtasks,
+        })
+    }))
 }
 
 /// Update an existing task
-pub async fn update_task(db: &SqlitePool, req: UpdateTaskParams) -> anyhow::Result<Option<serde_json::Value>> {
-    let now = Utc::now().timestamp();
+pub async fn update_task(
+    db: &SqlitePool,
+    req: UpdateTaskParams,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let task_id = req.task_id.clone();
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
 
-    let result = sqlx::query(r#"
-        UPDATE tasks
-        SET updated_at = $1,
-            title = COALESCE($2, title),
-            description = COALESCE($3, description),
-            status = COALESCE($4, status),
-            priority = COALESCE($5, priority)
-        WHERE id = $6
-    "#)
-    .bind(now)
-    .bind(&req.title)
-    .bind(&req.description)
-    .bind(&req.status)
-    .bind(&req.priority)
-    .bind(&req.task_id)
-    .execute(db)
-    .await?;
+    let input = core_mira::UpdateTaskInput {
+        task_id: req.task_id,
+        title: req.title.clone(),
+        description: req.description.clone(),
+        status: req.status.clone(),
+        priority: req.priority.clone(),
+    };
 
-    if result.rows_affected() == 0 {
+    let updated = core_mira::update_task(&ctx, input).await?;
+
+    if !updated {
         return Ok(None);
     }
 
     Ok(Some(serde_json::json!({
         "status": "updated",
-        "task_id": req.task_id,
+        "task_id": task_id,
         "changes": {
             "title": req.title,
             "description": req.description,
@@ -241,74 +167,29 @@ pub async fn update_task(db: &SqlitePool, req: UpdateTaskParams) -> anyhow::Resu
 }
 
 /// Mark a task as completed
-/// Supports both full UUIDs and short ID prefixes (e.g., "3ec77d3f")
-pub async fn complete_task(db: &SqlitePool, task_id: &str, notes: Option<String>) -> anyhow::Result<Option<serde_json::Value>> {
-    let now = Utc::now().timestamp();
+pub async fn complete_task(
+    db: &SqlitePool,
+    task_id: &str,
+    notes: Option<String>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
 
-    // Support short ID prefixes by finding the full ID first
-    let full_id = resolve_task_id(db, task_id).await?;
-    let full_id = match full_id {
-        Some(id) => id,
-        None => return Ok(None),
-    };
+    let output = core_mira::complete_task(&ctx, task_id, notes).await?;
 
-    let result = sqlx::query(r#"
-        UPDATE tasks
-        SET status = 'completed',
-            completed_at = $1,
-            updated_at = $1,
-            completion_notes = $2
-        WHERE id = $3
-    "#)
-    .bind(now)
-    .bind(&notes)
-    .bind(&full_id)
-    .execute(db)
-    .await?;
-
-    if result.rows_affected() == 0 {
-        return Ok(None);
-    }
-
-    // Get the title for the response
-    let title = sqlx::query_scalar::<_, String>("SELECT title FROM tasks WHERE id = $1")
-        .bind(&full_id)
-        .fetch_optional(db)
-        .await?
-        .unwrap_or_else(|| "?".to_string());
-
-    Ok(Some(serde_json::json!({
-        "status": "completed",
-        "task_id": full_id,
-        "title": title,
-        "completed_at": Utc::now().to_rfc3339(),
-        "notes": notes,
-    })))
+    Ok(output.map(|o| {
+        serde_json::json!({
+            "status": "completed",
+            "task_id": o.task_id,
+            "title": o.title,
+            "completed_at": o.completed_at,
+            "notes": o.notes,
+        })
+    }))
 }
 
 /// Delete a task and its subtasks
 pub async fn delete_task(db: &SqlitePool, task_id: &str) -> anyhow::Result<Option<String>> {
-    let task = sqlx::query_as::<_, (String,)>("SELECT title FROM tasks WHERE id = $1")
-        .bind(task_id)
-        .fetch_optional(db)
-        .await?;
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
 
-    match task {
-        Some((title,)) => {
-            // Delete subtasks first
-            sqlx::query("DELETE FROM tasks WHERE parent_id = $1")
-                .bind(task_id)
-                .execute(db)
-                .await?;
-
-            // Delete the task itself
-            sqlx::query("DELETE FROM tasks WHERE id = $1")
-                .bind(task_id)
-                .execute(db)
-                .await?;
-
-            Ok(Some(title))
-        }
-        None => Ok(None),
-    }
+    core_mira::delete_task(&ctx, task_id).await.map_err(Into::into)
 }
