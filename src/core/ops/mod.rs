@@ -10,19 +10,20 @@
 //! - Input/output types are defined in each module or shared in `types`
 //! - No MCP or Chat-specific types allowed here
 
-// Phase 1: Memory operations (pilot)
+// Phase 1: Memory operations
 pub mod memory;
 
 // Phase 2: Mira tools (task, goal, correction, decision, rejected_approach)
 pub mod mira;
 
+// Phase 3: File, shell, git, web, code intelligence
+pub mod file;
+pub mod shell;
+pub mod git;
+pub mod web;
+pub mod code_intel;
+
 // Future phases:
-// pub mod file;
-// pub mod shell;
-// pub mod git;
-// pub mod web;
-// pub mod code_intel;
-// pub mod git_intel;
 // pub mod session;
 // pub mod council;
 // pub mod build;
