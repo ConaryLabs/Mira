@@ -4,8 +4,8 @@ use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
 
-/// Maximum output size (8KB) - keeps token usage sane
-const MAX_OUTPUT_SIZE: usize = 8 * 1024;
+/// Maximum output size (64KB) - DeepSeek has 128K context
+const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
 /// Shell tool implementations
 pub struct ShellTools<'a> {

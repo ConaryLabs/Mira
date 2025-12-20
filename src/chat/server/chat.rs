@@ -380,8 +380,9 @@ async fn process_deepseek_chat(
             });
 
             for result in &iteration_tool_results {
-                let truncated = if result.output.len() > 2000 {
-                    format!("{}...[truncated]", &result.output[..2000])
+                // DeepSeek has 128K context - allow larger tool outputs
+                let truncated = if result.output.len() > 64000 {
+                    format!("{}...[truncated]", &result.output[..64000])
                 } else {
                     result.output.clone()
                 };
@@ -587,8 +588,9 @@ async fn process_deepseek_chat(
 
                 // Add tool results as user messages (OpenAI format puts these as user context)
                 for result in &current_tool_results {
-                    let truncated = if result.output.len() > 2000 {
-                        format!("{}...[truncated]", &result.output[..2000])
+                    // DeepSeek has 128K context - allow larger tool outputs
+                    let truncated = if result.output.len() > 64000 {
+                        format!("{}...[truncated]", &result.output[..64000])
                     } else {
                         result.output.clone()
                     };

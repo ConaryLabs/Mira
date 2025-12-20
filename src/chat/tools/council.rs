@@ -90,12 +90,11 @@ async fn call_opus(message: &str) -> Result<String> {
 
     let request = AnthropicRequest {
         model: "claude-opus-4-5-20251101".to_string(),
-        max_tokens: 32000,
+        max_tokens: 64000, // Must be > budget_tokens
         messages: vec![AnthropicMessage {
             role: "user".to_string(),
             content: message.to_string(),
         }],
-        // Enable extended thinking with generous budget
         thinking: Some(ThinkingConfig {
             thinking_type: "enabled".to_string(),
             budget_tokens: 50000,
