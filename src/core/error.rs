@@ -28,6 +28,12 @@ pub enum CoreError {
     #[error("File too large: {path} ({size} bytes, max {max} bytes)")]
     FileTooLarge { path: PathBuf, size: u64, max: u64 },
 
+    #[error("Failed to read file {0}: {1}")]
+    FileRead(PathBuf, String),
+
+    #[error("Failed to write file {0}: {1}")]
+    FileWrite(PathBuf, String),
+
     // Edit operations
     #[error("String not found in file: {0}")]
     StringNotFound(String),
@@ -35,12 +41,35 @@ pub enum CoreError {
     #[error("String not unique: found {count} occurrences (use replace_all=true)")]
     StringNotUnique { count: usize },
 
+    #[error("Edit target not found in {0}: {1}")]
+    EditNotFound(String, String),
+
+    #[error("Edit ambiguous in {0}: found {1} times (use replace_all=true)")]
+    EditAmbiguous(String, usize),
+
+    // Glob/Grep operations
+    #[error("Invalid glob pattern: {0}")]
+    GlobPattern(String),
+
+    #[error("Invalid regex: {0}")]
+    RegexInvalid(String),
+
     // Shell operations
     #[error("Command failed with exit code {code}: {stderr}")]
     CommandFailed { code: i32, stderr: String },
 
     #[error("Command timed out after {seconds}s")]
     CommandTimeout { seconds: u64 },
+
+    #[error("Shell execution failed for '{0}': {1}")]
+    ShellExec(String, String),
+
+    #[error("Shell command '{0}' timed out after {1}s")]
+    ShellTimeout(String, u64),
+
+    // Web operations
+    #[error("Failed to fetch {0}: {1}")]
+    WebFetch(String, String),
 
     // Database operations
     #[error("Database error: {0}")]
