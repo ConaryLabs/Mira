@@ -10,7 +10,7 @@ Restart=always
 RestartSec=5
 
 # Environment
-Environment=MIRA_PORT=3199
+Environment=MIRA_PORT=3000
 EnvironmentFile=%h/.mira/.env
 
 # Logging
@@ -22,7 +22,7 @@ SyslogIdentifier=mira
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.mira
+ReadWritePaths=%h/.mira %h/Mira/data
 PrivateTmp=true
 
 [Install]
