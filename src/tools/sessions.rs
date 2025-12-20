@@ -557,6 +557,9 @@ pub async fn session_start(
     // 10. Get working documents from work state (for seamless resume)
     let working_docs = get_working_docs(db, Some(project_id)).await.unwrap_or_default();
 
+    // 11. Check index freshness
+    let (index_fresh, stale_count) = check_index_freshness(db, project_id).await.unwrap_or((true, 0));
+
     Ok(SessionStartResult {
         project_id,
         project_name: name,
@@ -577,7 +580,57 @@ pub async fn session_start(
         active_todos,
         active_plan,
         working_docs,
+        index_fresh,
+        stale_file_count: stale_count,
     })
+}
+
+/// Check if the code index is fresh
+/// Returns (is_fresh, stale_count)
+async fn check_index_freshness(db: &SqlitePool, project_id: i64) -> anyhow::Result<(bool, usize)> {
+    // Get indexed files with their analyzed_at times
+    let indexed_files: Vec<(String, i64)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT file_path, MAX(analyzed_at) as last_analyzed
+        FROM code_symbols
+        WHERE project_id = $1
+        GROUP BY file_path
+        ORDER BY last_analyzed DESC
+        LIMIT 50
+        "#,
+    )
+    .bind(project_id)
+    .fetch_all(db)
+    .await?;
+
+    if indexed_files.is_empty() {
+        // No index yet
+        return Ok((false, 0));
+    }
+
+    // Check file mtimes
+    let mut stale_count = 0;
+    for (file_path, analyzed_at) in indexed_files {
+        if let Ok(metadata) = std::fs::metadata(&file_path) {
+            if let Ok(mtime) = metadata.modified() {
+                let mtime_ts = mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+
+                if mtime_ts > analyzed_at {
+                    stale_count += 1;
+                }
+            }
+        }
+
+        // Stop early if we've found enough stale files
+        if stale_count >= 10 {
+            break;
+        }
+    }
+
+    Ok((stale_count == 0, stale_count))
 }
 
 /// Detect project type from marker files
@@ -625,6 +678,8 @@ pub struct SessionStartResult {
     pub active_todos: Option<Vec<WorkStateTodo>>,
     pub active_plan: Option<ActivePlan>,
     pub working_docs: Vec<WorkingDoc>,
+    pub index_fresh: bool,
+    pub stale_file_count: usize,
 }
 
 #[derive(Debug)]

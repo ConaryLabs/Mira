@@ -172,6 +172,17 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
         }
     }
 
+    // Index status
+    if !result.index_fresh {
+        out.push('\n');
+        if result.stale_file_count > 0 {
+            out.push_str(&format!("⚠ {} files have changed since last index. Run `index(action: \"project\")` to refresh.\n",
+                result.stale_file_count));
+        } else {
+            out.push_str("⚠ No code index found. Run `index(action: \"project\")` to enable code intelligence.\n");
+        }
+    }
+
     // Footer with guidelines count
     out.push('\n');
     out.push_str(&format!("{} usage guidelines loaded. Ready.", result.usage_guidelines_loaded));
