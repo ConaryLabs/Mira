@@ -4,19 +4,35 @@
 
 use super::types::AssembledContext;
 
+/// Token usage breakdown by tier for debugging/monitoring
+#[derive(Debug, Default)]
+pub struct TokenUsage {
+    pub corrections: usize,
+    pub goals: usize,
+    pub git_activity: usize,
+    pub recent_messages: usize,
+    pub summaries: usize,
+    pub semantic_context: usize,
+    pub memories: usize,
+    pub constraints: usize,  // rejected approaches + decisions
+    pub total: usize,
+}
+
 /// Budget limits for DeepSeek context assembly
 /// Keeps context lean and prioritized to avoid bloat
 pub struct DeepSeekBudget {
-    /// Max recent messages to include (3 is usually enough with checkpointing)
+    /// Max recent messages to include
     pub max_recent_messages: usize,
     /// Max summaries to include
     pub max_summaries: usize,
     /// Max semantic hits to include
     pub max_semantic_hits: usize,
-    /// Max memories to include (aggressive cap - most turns only need a few)
+    /// Max memories to include
     pub max_memories: usize,
     /// Max goals to include
     pub max_goals: usize,
+    /// Max rejected approaches + decisions to include
+    pub max_constraints: usize,
     /// Rough token budget for entire context blob
     pub token_budget: usize,
 }
@@ -24,13 +40,15 @@ pub struct DeepSeekBudget {
 impl Default for DeepSeekBudget {
     fn default() -> Self {
         Self {
-            // With 128K context and cheap tokens, no need to be stingy
-            max_recent_messages: 8,   // was 3 - more conversation continuity
-            max_summaries: 5,         // was 2 - more historical context
-            max_semantic_hits: 5,     // was 2 - more relevant past discussion
-            max_memories: 15,         // match GPT-5.2
-            max_goals: 5,             // was 3 - show more active goals
-            token_budget: 24000,      // was 8k - plenty of room in 128K context
+            // DeepSeek V3.2 has 128K context with DSA sparse attention
+            // Verified Dec 2025: 128K context, ~50% cost reduction for long-context
+            max_recent_messages: 15,  // was 8 - full conversation continuity
+            max_summaries: 8,         // was 5 - rich historical context
+            max_semantic_hits: 10,    // was 5 - more relevant past discussion
+            max_memories: 25,         // was 15 - room for preferences
+            max_goals: 8,             // was 5 - show active goals
+            max_constraints: 10,      // rejected approaches + past decisions
+            token_budget: 90000,      // was 24k - utilize 128K context (leaving 38K for output)
         }
     }
 }
@@ -150,6 +168,7 @@ impl AssembledContext {
     ///
     /// Priority order (highest to lowest):
     /// 1. Corrections (always include - they're rules)
+    /// 1.5. Anti-amnesia: rejected approaches + past decisions (prevent repeating mistakes)
     /// 2. Goals (capped)
     /// 3. Recent messages (capped, most recent first)
     /// 4. Summaries (capped)
@@ -174,6 +193,56 @@ impl AssembledContext {
             let section = lines.join("\n");
             estimated_tokens += estimate_tokens(&section);
             sections.push(section);
+        }
+
+        // 1.5. Anti-amnesia: rejected approaches and past decisions
+        // These prevent repeating mistakes and ensure past decisions are respected
+        let half_constraints = budget.max_constraints / 2;
+
+        if !self.rejected_approaches.is_empty() {
+            let mut lines = vec!["## Constraints (DO NOT repeat these approaches)".to_string()];
+            for ra in self.rejected_approaches.iter().take(half_constraints) {
+                // Format: [!] problem: approach → reason
+                let problem_preview = if ra.problem_context.len() > 60 {
+                    format!("{}...", &ra.problem_context[..60])
+                } else {
+                    ra.problem_context.clone()
+                };
+                let approach_preview = if ra.approach.len() > 80 {
+                    format!("{}...", &ra.approach[..80])
+                } else {
+                    ra.approach.clone()
+                };
+                lines.push(format!("[!] {}: \"{}\" → rejected: {}",
+                    problem_preview, approach_preview, ra.rejection_reason));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        if !self.past_decisions.is_empty() {
+            let mut lines = vec!["## Past Decisions".to_string()];
+            for d in self.past_decisions.iter().take(half_constraints) {
+                let context_str = d.context.as_deref().unwrap_or("");
+                if context_str.is_empty() {
+                    lines.push(format!("- {}: {}", d.key, d.decision));
+                } else {
+                    let context_preview = if context_str.len() > 50 {
+                        format!("{}...", &context_str[..50])
+                    } else {
+                        context_str.to_string()
+                    };
+                    lines.push(format!("- {}: {} ({})", d.key, d.decision, context_preview));
+                }
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
         }
 
         // 2. Goals - capped

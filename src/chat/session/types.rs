@@ -32,6 +32,22 @@ pub struct CodeIndexFileHint {
     pub symbols: Vec<CodeIndexSymbolHint>,
 }
 
+/// A rejected approach that didn't work
+#[derive(Debug, Clone, Default)]
+pub struct RejectedApproach {
+    pub problem_context: String,
+    pub approach: String,
+    pub rejection_reason: String,
+}
+
+/// A past decision with context
+#[derive(Debug, Clone, Default)]
+pub struct PastDecision {
+    pub key: String,
+    pub decision: String,
+    pub context: Option<String>,
+}
+
 /// Assembled context for a query
 #[derive(Debug, Default)]
 pub struct AssembledContext {
@@ -51,6 +67,10 @@ pub struct AssembledContext {
     pub previous_response_id: Option<String>,
     /// Recent git activity (commits, changed files)
     pub repo_activity: Option<RepoActivity>,
+    /// Rejected approaches - things that didn't work (anti-amnesia)
+    pub rejected_approaches: Vec<RejectedApproach>,
+    /// Past decisions with context (anti-amnesia)
+    pub past_decisions: Vec<PastDecision>,
 }
 
 /// A semantic search hit
