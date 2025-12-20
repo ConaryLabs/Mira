@@ -13,12 +13,14 @@
 // Phase 1: Memory operations (pilot)
 pub mod memory;
 
+// Phase 2: Mira tools (task, goal, correction, decision, rejected_approach)
+pub mod mira;
+
 // Future phases:
 // pub mod file;
 // pub mod shell;
 // pub mod git;
 // pub mod web;
-// pub mod mira;
 // pub mod code_intel;
 // pub mod git_intel;
 // pub mod session;
