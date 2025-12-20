@@ -4,7 +4,8 @@
 use sqlx::sqlite::SqlitePool;
 
 use super::types::{GetProactiveContextRequest, FindSimilarFixesRequest, GetRelatedFilesRequest};
-use super::semantic::SemanticSearch;
+use mira_core::semantic::SemanticSearch;
+use std::sync::Arc;
 use super::corrections::{self, GetCorrectionsParams};
 use super::goals;
 use super::git_intel;
@@ -13,7 +14,7 @@ use super::code_intel;
 /// Get all relevant context for the current work, combined into one response
 pub async fn get_proactive_context(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     req: GetProactiveContextRequest,
     project_id: Option<i64>,
 ) -> anyhow::Result<serde_json::Value> {
