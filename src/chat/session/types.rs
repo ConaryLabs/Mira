@@ -65,6 +65,21 @@ pub struct CallReference {
     pub call_type: Option<String>,
 }
 
+/// A similar error fix from past experience
+#[derive(Debug, Clone)]
+pub struct SimilarFix {
+    pub error_pattern: String,
+    pub fix_description: String,
+    pub score: f32,
+}
+
+/// Index freshness status for a file
+#[derive(Debug, Clone)]
+pub struct IndexStatus {
+    pub stale_files: Vec<String>,
+    pub last_indexed: Option<i64>,
+}
+
 /// Assembled context for a query
 #[derive(Debug, Default)]
 pub struct AssembledContext {
@@ -92,6 +107,10 @@ pub struct AssembledContext {
     pub related_files: Vec<RelatedFile>,
     /// Call graph context for active symbols
     pub call_context: Vec<CallReference>,
+    /// Similar fixes for detected error patterns
+    pub similar_fixes: Vec<SimilarFix>,
+    /// Index freshness status
+    pub index_status: Option<IndexStatus>,
 }
 
 /// A semantic search hit
