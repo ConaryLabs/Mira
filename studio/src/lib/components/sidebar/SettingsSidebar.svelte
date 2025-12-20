@@ -1,7 +1,6 @@
 <script lang="ts">
   import { settings } from '$lib/stores/settings';
   import type { StatusResponse } from '$lib/api/client';
-  import ModelSelector from './ModelSelector.svelte';
   import ReasoningSelector from './ReasoningSelector.svelte';
   import ProjectInput from './ProjectInput.svelte';
   import StatusDashboard from './StatusDashboard.svelte';
@@ -63,7 +62,6 @@
   {#if isMobile || !$settings.sidebarCollapsed}
     <div class="flex-1 overflow-y-auto p-4 space-y-6">
       <ProjectInput />
-      <ModelSelector />
       <ReasoningSelector />
       <StatusDashboard {status} />
       <ThemePicker />
@@ -71,9 +69,7 @@
 
     <!-- Footer -->
     <div class="p-3 border-t border-[var(--term-border)] text-center">
-      <span class="text-xs text-[var(--term-text-dim)] font-mono">
-        {$settings.modelProvider === 'gpt' ? 'GPT-5.2' : 'DeepSeek V3.2'}
-      </span>
+      <span class="text-xs text-[var(--term-text-dim)] font-mono">DeepSeek V3.2</span>
     </div>
   {:else if !isMobile}
     <!-- Collapsed icons -->
