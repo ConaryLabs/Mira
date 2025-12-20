@@ -15,6 +15,7 @@
 mod chain;
 mod code_hints;
 mod context;
+pub mod git_tracker;
 mod summarization;
 mod types;
 
@@ -22,6 +23,7 @@ use anyhow::Result;
 use chrono::Utc;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
+use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -224,6 +226,14 @@ impl SessionManager {
             // Code index hints are query-specific
             ctx.code_index_hints = self.load_code_index_hints(query).await;
 
+            // Git activity - still useful in handoff mode
+            let repo_path = Path::new(&self.project_path);
+            if let Ok(activity) = git_tracker::get_recent_activity(repo_path, 5) {
+                if !activity.is_empty() {
+                    ctx.repo_activity = Some(activity);
+                }
+            }
+
             return Ok(ctx);
         }
 
@@ -255,6 +265,23 @@ impl SessionManager {
         // 7. Code index hints - relevant symbols from codebase
         // Added at END of prompt to preserve prefix caching for stable content
         ctx.code_index_hints = self.load_code_index_hints(query).await;
+
+        // 8. Git activity - recent commits and changes
+        // Gives the LLM awareness of "what just happened" in the codebase
+        let repo_path = Path::new(&self.project_path);
+        match git_tracker::get_recent_activity(repo_path, 5) {
+            Ok(activity) if !activity.is_empty() => {
+                debug!("Loaded git activity: {} commits, {} files changed",
+                    activity.recent_commits.len(), activity.changed_files.len());
+                ctx.repo_activity = Some(activity);
+            }
+            Ok(_) => {
+                debug!("No recent git activity");
+            }
+            Err(e) => {
+                debug!("Failed to load git activity: {}", e);
+            }
+        }
 
         Ok(ctx)
     }

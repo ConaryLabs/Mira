@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::chat::context::MiraContext;
+use super::git_tracker::RepoActivity;
 
 /// A chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +49,8 @@ pub struct AssembledContext {
     pub code_index_hints: Vec<CodeIndexFileHint>,
     /// Previous response ID for OpenAI continuity
     pub previous_response_id: Option<String>,
+    /// Recent git activity (commits, changed files)
+    pub repo_activity: Option<RepoActivity>,
 }
 
 /// A semantic search hit
