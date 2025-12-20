@@ -1,6 +1,7 @@
 // src/tools/hotline.rs
 // Hotline - Talk to other AI models for collaboration/second opinion
-// Supports: GPT-5.2 (default), DeepSeek V3.2, Gemini 3 Pro
+// Supports: GPT-5.2 (default), DeepSeek (chat), Gemini 3 Pro
+// Council mode: GPT-5.2 + DeepSeek Reasoner + Gemini 3 Pro (no Opus - we're already on Opus)
 // All providers are called directly via their APIs (no mira-chat dependency)
 
 use anyhow::Result;
@@ -202,7 +203,7 @@ async fn call_deepseek(message: &str) -> Result<serde_json::Value> {
             role: "user".to_string(),
             content: message.to_string(),
         }],
-        max_tokens: 32000,
+        max_tokens: 8192,
     };
 
     let response = client
@@ -248,7 +249,68 @@ async fn call_deepseek(message: &str) -> Result<serde_json::Value> {
 }
 
 // ============================================================================
-// Google API (Gemini 2.5 Pro)
+// DeepSeek Reasoner (for council - needs more thinking time)
+// ============================================================================
+
+async fn call_deepseek_reasoner(message: &str) -> Result<serde_json::Value> {
+    let api_key = get_env_var("DEEPSEEK_API_KEY")
+        .ok_or_else(|| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+
+    let client = Client::new();
+
+    let request = DeepSeekRequest {
+        model: "deepseek-reasoner".to_string(),
+        messages: vec![DeepSeekMessage {
+            role: "user".to_string(),
+            content: message.to_string(),
+        }],
+        max_tokens: 8192, // Reasoner has same limit
+    };
+
+    let response = client
+        .post(DEEPSEEK_API_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(180)) // Longer timeout for reasoning
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("DeepSeek Reasoner API error: {} - {}", status, body);
+    }
+
+    let api_response: DeepSeekResponse = response.json().await?;
+
+    if let Some(error) = api_response.error {
+        anyhow::bail!("DeepSeek Reasoner error: {}", error.message);
+    }
+
+    let text = api_response
+        .choices
+        .and_then(|c| c.into_iter().next())
+        .and_then(|c| c.message.content)
+        .unwrap_or_default();
+
+    let mut result = serde_json::json!({
+        "response": text,
+        "provider": "deepseek-reasoner",
+    });
+
+    if let Some(usage) = api_response.usage {
+        result["tokens"] = serde_json::json!({
+            "input": usage.prompt_tokens,
+            "output": usage.completion_tokens,
+        });
+    }
+
+    Ok(result)
+}
+
+// ============================================================================
+// Google API (Gemini 3 Pro)
 // ============================================================================
 
 #[derive(Serialize)]
@@ -389,9 +451,11 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
 
 async fn call_council(message: &str) -> Result<serde_json::Value> {
     // Run all three in parallel
+    // Note: Using deepseek-reasoner for council (reasoning power)
+    // Opus is omitted since we're already running on Opus in Claude Code
     let (gpt_result, deepseek_result, gemini_result) = tokio::join!(
         call_gpt(message),
-        call_deepseek(message),
+        call_deepseek_reasoner(message),
         call_gemini(message)
     );
 
@@ -412,8 +476,8 @@ async fn call_council(message: &str) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
         "council": {
             "gpt-5.2": gpt,
-            "deepseek": deepseek,
-            "gemini": gemini,
+            "deepseek-reasoner": deepseek,
+            "gemini-3-pro": gemini,
         }
     }))
 }
