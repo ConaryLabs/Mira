@@ -152,8 +152,9 @@ fn format_value(v: &Value) -> String {
             }
         }
 
-        // Proactive context
-        if obj.contains_key("corrections") || obj.contains_key("decisions") || obj.contains_key("goals") {
+        // Proactive context (keys: corrections, related_decisions, active_goals, relevant_memories)
+        if obj.contains_key("corrections") || obj.contains_key("related_decisions") ||
+           obj.contains_key("active_goals") || obj.contains_key("relevant_memories") {
             return format::proactive_context(v);
         }
 

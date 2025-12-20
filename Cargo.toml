@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "mira-core", "mira-chat"]
+members = [".", "mira-core"]
 resolver = "2"
 
 [package]

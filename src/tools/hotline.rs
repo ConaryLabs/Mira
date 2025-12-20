@@ -7,8 +7,12 @@
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
-use super::types::HotlineRequest;
+use super::proactive;
+use super::git_intel;
+use super::semantic::SemanticSearch;
+use super::types::{HotlineRequest, GetProactiveContextRequest, GetRecentCommitsRequest};
 
 const DOTENV_PATH: &str = "/home/peter/Mira/.env";
 const TIMEOUT_SECS: u64 = 120;
@@ -483,17 +487,199 @@ async fn call_council(message: &str) -> Result<serde_json::Value> {
 }
 
 // ============================================================================
+// Context Injection
+// ============================================================================
+
+/// Fetch and format project context for hotline calls
+async fn get_project_context(
+    db: &SqlitePool,
+    semantic: &SemanticSearch,
+    project_id: Option<i64>,
+    project_name: Option<&str>,
+    project_type: Option<&str>,
+) -> Option<String> {
+    // Fetch proactive context with generous limits
+    let ctx_result = proactive::get_proactive_context(
+        db,
+        semantic,
+        GetProactiveContextRequest {
+            files: None,
+            topics: None,
+            error: None,
+            task: None,
+            limit_per_category: Some(5),
+        },
+        project_id,
+    ).await;
+
+    let ctx = match ctx_result {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    // Fetch recent commits
+    let commits = git_intel::get_recent_commits(
+        db,
+        GetRecentCommitsRequest {
+            limit: Some(5),
+            file_path: None,
+            author: None,
+        },
+    ).await.unwrap_or_default();
+
+    Some(format_context_for_llm(&ctx, &commits, project_name, project_type))
+}
+
+/// Format context into a readable string for LLM consumption
+fn format_context_for_llm(
+    ctx: &serde_json::Value,
+    commits: &[serde_json::Value],
+    project_name: Option<&str>,
+    project_type: Option<&str>,
+) -> String {
+    let mut parts = vec![];
+
+    // Project header
+    if let (Some(name), Some(ptype)) = (project_name, project_type) {
+        parts.push(format!("# Project: {} ({})\n", name, ptype));
+    }
+
+    // Corrections - full detail
+    if let Some(corrections) = ctx["corrections"].as_array() {
+        if !corrections.is_empty() {
+            parts.push("## Corrections (learned mistakes to avoid)".to_string());
+            for c in corrections {
+                let wrong = c["what_was_wrong"].as_str().unwrap_or("");
+                let right = c["what_is_right"].as_str().unwrap_or("");
+                let rationale = c["rationale"].as_str().unwrap_or("");
+                parts.push(format!("- **{}** -> {}", wrong, right));
+                if !rationale.is_empty() {
+                    parts.push(format!("  Rationale: {}", rationale));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Active goals with progress
+    if let Some(goals) = ctx["active_goals"].as_array() {
+        if !goals.is_empty() {
+            parts.push("## Active Goals".to_string());
+            for g in goals {
+                let title = g["title"].as_str().unwrap_or("");
+                let status = g["status"].as_str().unwrap_or("");
+                let progress = g["progress_percent"].as_i64().unwrap_or(0);
+                let desc = g["description"].as_str().unwrap_or("");
+                parts.push(format!("- **{}** [{}] {}%", title, status, progress));
+                if !desc.is_empty() {
+                    parts.push(format!("  {}", desc));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Related decisions
+    if let Some(decisions) = ctx["related_decisions"].as_array() {
+        if !decisions.is_empty() {
+            parts.push("## Past Decisions".to_string());
+            for d in decisions {
+                let content = d["content"].as_str().unwrap_or("");
+                if !content.is_empty() {
+                    parts.push(format!("- {}", content));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Relevant memories
+    if let Some(memories) = ctx["relevant_memories"].as_array() {
+        if !memories.is_empty() {
+            parts.push("## Relevant Context".to_string());
+            for m in memories {
+                let content = m["content"].as_str().unwrap_or("");
+                if !content.is_empty() {
+                    parts.push(format!("- {}", content));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Rejected approaches
+    if let Some(rejected) = ctx["rejected_approaches"].as_array() {
+        if !rejected.is_empty() {
+            parts.push("## Rejected Approaches (don't suggest these)".to_string());
+            for r in rejected {
+                let approach = r["approach"].as_str().unwrap_or("");
+                let reason = r["rejection_reason"].as_str().unwrap_or("");
+                if !approach.is_empty() {
+                    parts.push(format!("- **{}**: {}", approach, reason));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Recent commits
+    if !commits.is_empty() {
+        parts.push("## Recent Commits".to_string());
+        for c in commits {
+            let msg = c["message"].as_str().unwrap_or("");
+            let author = c["author_name"].as_str().unwrap_or("");
+            // Truncate long commit messages
+            let msg_short = if msg.len() > 80 {
+                format!("{}...", &msg[..77])
+            } else {
+                msg.to_string()
+            };
+            parts.push(format!("- {} ({})", msg_short, author));
+        }
+        parts.push(String::new());
+    }
+
+    parts.join("\n")
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
 /// Call Mira hotline - talk to another AI model
 /// Providers: openai (GPT-5.2, default), deepseek, gemini, council (all three)
-pub async fn call_mira(req: HotlineRequest) -> Result<serde_json::Value> {
-    // Build message with optional context
-    let message = if let Some(ctx) = &req.context {
-        format!("Context: {}\n\n{}", ctx, req.message)
-    } else {
+///
+/// If inject_context is true (default), automatically injects project context
+/// (corrections, goals, decisions, memories, rejected approaches, recent commits)
+pub async fn call_mira(
+    req: HotlineRequest,
+    db: &SqlitePool,
+    semantic: &SemanticSearch,
+    project_id: Option<i64>,
+    project_name: Option<&str>,
+    project_type: Option<&str>,
+) -> Result<serde_json::Value> {
+    let mut context_parts = vec![];
+
+    // Auto-inject project context unless explicitly disabled
+    if req.inject_context.unwrap_or(true) {
+        if let Some(ctx) = get_project_context(db, semantic, project_id, project_name, project_type).await {
+            if !ctx.trim().is_empty() {
+                context_parts.push(ctx);
+            }
+        }
+    }
+
+    // Add manual context if provided
+    if let Some(ctx) = &req.context {
+        context_parts.push(ctx.clone());
+    }
+
+    // Build final message
+    let message = if context_parts.is_empty() {
         req.message.clone()
+    } else {
+        format!("{}\n\n---\n\n{}", context_parts.join("\n\n"), req.message)
     };
 
     // Route based on provider

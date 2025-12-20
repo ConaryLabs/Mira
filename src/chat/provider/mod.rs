@@ -1,16 +1,20 @@
-//! Provider abstraction for DeepSeek chat
+//! Provider abstraction for chat models
 //!
-//! DeepSeek V3.2 as the primary model with:
+//! Supports multiple LLM backends:
+//! - DeepSeek V3.2 as the primary model
+//! - GPT-5.2 via Responses API
 //! - Unified streaming interface
 //! - Tool calling support
 //! - Reasoning capabilities
 
 mod capabilities;
 mod deepseek;
+pub mod responses;
 mod types;
 
 pub use capabilities::{Capabilities, StateMode, UsageReporting};
 pub use deepseek::DeepSeekProvider;
+pub use responses::Client as ResponsesClient;
 pub use types::*;
 
 use anyhow::Result;
