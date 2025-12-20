@@ -98,16 +98,33 @@ pub async fn get_proactive_context(
         .map(|a| a.len())
         .unwrap_or(0);
 
+    // 8. Get call graph context for key symbols
+    let call_graph = if let Some(files) = &req.files {
+        get_call_graph_context(db, files, limit).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // 9. Get index freshness status
+    let index_status = get_index_freshness(db, project_id).await.unwrap_or_default();
+
     // Build summary
+    let stale_count = index_status.get("stale_files")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
     let summary_parts: Vec<String> = vec![
         if !corrections.is_empty() { Some(format!("{} corrections", corrections.len())) } else { None },
         if !active_goals.is_empty() { Some(format!("{} active goals", active_goals.len())) } else { None },
         if !rejected_approaches.is_empty() { Some(format!("{} rejected approaches", rejected_approaches.len())) } else { None },
         if !related_decisions.is_empty() { Some(format!("{} related decisions", related_decisions.len())) } else { None },
         if !relevant_memories.is_empty() { Some(format!("{} relevant memories", relevant_memories.len())) } else { None },
-        if !similar_errors.is_empty() { Some(format!("{} similar errors", similar_errors.len())) } else { None },
+        if !similar_errors.is_empty() { Some(format!("{} similar fixes", similar_errors.len())) } else { None },
         if has_code_context { Some("code context".to_string()) } else { None },
         if improvement_count > 0 { Some(format!("{} code improvements", improvement_count)) } else { None },
+        if !call_graph.is_empty() { Some(format!("{} call relationships", call_graph.len())) } else { None },
+        if stale_count > 0 { Some(format!("{} stale index files", stale_count)) } else { None },
     ].into_iter().flatten().collect();
 
     let summary = if summary_parts.is_empty() {
@@ -131,8 +148,10 @@ pub async fn get_proactive_context(
         "rejected_approaches": rejected_approaches,
         "related_decisions": related_decisions,
         "relevant_memories": relevant_memories,
-        "similar_errors": similar_errors,
+        "similar_fixes": similar_errors,
         "code_context": code_context,
+        "call_graph": call_graph,
+        "index_status": index_status,
     }))
 }
 
@@ -565,5 +584,172 @@ async fn get_code_context(
         "key_symbols": key_symbols,
         "codebase_style": style_context,
         "improvement_suggestions": improvement_suggestions,
+    }))
+}
+
+/// Get call graph context for symbols in the specified files
+async fn get_call_graph_context(
+    db: &SqlitePool,
+    files: &[String],
+    limit: i64,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut call_refs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Get symbols from the specified files
+    for file_path in files.iter().take(3) {
+        let symbols = sqlx::query_as::<_, (i64, String)>(
+            r#"
+            SELECT id, name FROM code_symbols
+            WHERE file_path LIKE $1
+              AND symbol_type IN ('function', 'method')
+            ORDER BY start_line
+            LIMIT 5
+            "#,
+        )
+        .bind(format!("%{}", file_path))
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        for (symbol_id, symbol_name) in symbols {
+            // Get callers (who calls this symbol)
+            let callers = sqlx::query_as::<_, (String, String)>(
+                r#"
+                SELECT caller.name, caller.file_path
+                FROM call_graph cg
+                JOIN code_symbols caller ON cg.caller_id = caller.id
+                WHERE cg.callee_id = $1
+                LIMIT 5
+                "#,
+            )
+            .bind(symbol_id)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+
+            for (caller_name, caller_file) in callers {
+                let key = format!("{}->{}:{}", caller_name, symbol_name, caller_file);
+                if seen.contains(&key) {
+                    continue;
+                }
+                seen.insert(key);
+
+                call_refs.push(serde_json::json!({
+                    "caller": caller_name,
+                    "callee": symbol_name,
+                    "caller_file": caller_file,
+                    "direction": "caller",
+                }));
+            }
+
+            // Get callees (what this symbol calls)
+            let callees = sqlx::query_as::<_, (String, String)>(
+                r#"
+                SELECT callee.name, callee.file_path
+                FROM call_graph cg
+                JOIN code_symbols callee ON cg.callee_id = callee.id
+                WHERE cg.caller_id = $1
+                LIMIT 5
+                "#,
+            )
+            .bind(symbol_id)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
+
+            for (callee_name, callee_file) in callees {
+                let key = format!("{}->{}:{}", symbol_name, callee_name, callee_file);
+                if seen.contains(&key) {
+                    continue;
+                }
+                seen.insert(key);
+
+                call_refs.push(serde_json::json!({
+                    "caller": symbol_name,
+                    "callee": callee_name,
+                    "callee_file": callee_file,
+                    "direction": "callee",
+                }));
+            }
+        }
+    }
+
+    call_refs.truncate(limit as usize);
+    Ok(call_refs)
+}
+
+/// Get index freshness status
+async fn get_index_freshness(
+    db: &SqlitePool,
+    project_id: Option<i64>,
+) -> anyhow::Result<serde_json::Value> {
+    // Get last indexed time for the project
+    let last_indexed: Option<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT MAX(analyzed_at) FROM code_symbols
+        WHERE project_id = $1 OR $1 IS NULL
+        "#,
+    )
+    .bind(project_id)
+    .fetch_optional(db)
+    .await?;
+
+    let last_indexed_ts = last_indexed.and_then(|r| Some(r.0));
+
+    // Get files modified since last index (using git)
+    let stale_files = if let Some(since_ts) = last_indexed_ts {
+        // Query for indexed files that might be stale
+        let indexed_files: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT DISTINCT file_path, MAX(analyzed_at) as last_analyzed
+            FROM code_symbols
+            WHERE project_id = $1 OR $1 IS NULL
+            GROUP BY file_path
+            ORDER BY last_analyzed DESC
+            LIMIT 50
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+
+        // Check file mtimes
+        let mut stale = Vec::new();
+        for (file_path, analyzed_at) in indexed_files {
+            if let Ok(metadata) = std::fs::metadata(&file_path) {
+                if let Ok(mtime) = metadata.modified() {
+                    let mtime_ts = mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+
+                    if mtime_ts > analyzed_at {
+                        stale.push(file_path);
+                    }
+                }
+            }
+
+            if stale.len() >= 10 {
+                break;
+            }
+        }
+        stale
+    } else {
+        Vec::new()
+    };
+
+    // Format last indexed as human-readable
+    let last_indexed_str = last_indexed_ts.map(|ts| {
+        chrono::DateTime::from_timestamp(ts, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    });
+
+    Ok(serde_json::json!({
+        "last_indexed": last_indexed_str,
+        "stale_files": stale_files,
+        "is_fresh": stale_files.is_empty(),
     }))
 }
