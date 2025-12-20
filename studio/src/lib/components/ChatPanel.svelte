@@ -20,6 +20,7 @@
   let apiStatus = $state<StatusResponse | null>(null);
   let hasMoreMessages = $state(false);
   let loadingMore = $state(false);
+  let initialLoadComplete = $state(false);
 
   // Mobile sidebar state (transient, not persisted)
   let mobileSidebarOpen = $state(false);
@@ -67,15 +68,20 @@
       const loaded = await getMessages({ limit: 50 });
       messages = loaded.reverse();
       hasMoreMessages = loaded.length >= 50;
-      // Force scroll to bottom on initial load (ignores isAtBottom check)
-      setTimeout(() => terminalView?.forceScrollToBottom(), 0);
+      // Force scroll to bottom on initial load, then mark complete
+      setTimeout(() => {
+        terminalView?.forceScrollToBottom();
+        // Delay marking complete to prevent scroll handler from immediately loading more
+        setTimeout(() => { initialLoadComplete = true; }, 100);
+      }, 0);
     } catch (e) {
       console.error('Failed to load messages:', e);
     }
   }
 
   async function loadMoreMessages() {
-    if (loadingMore || !hasMoreMessages || messages.length === 0) return;
+    // Don't auto-load more until initial load + scroll is complete
+    if (!initialLoadComplete || loadingMore || !hasMoreMessages || messages.length === 0) return;
 
     const oldestMessage = messages[0];
     if (!oldestMessage) return;
