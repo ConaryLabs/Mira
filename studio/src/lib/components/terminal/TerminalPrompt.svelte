@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+
   interface Props {
     onSend: (message: string) => void;
     disabled?: boolean;
@@ -9,6 +11,11 @@
 
   let inputValue = $state('');
   let textareaEl: HTMLTextAreaElement;
+
+  // Auto-focus on mount
+  onMount(() => {
+    textareaEl?.focus();
+  });
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter' && !event.shiftKey) {
