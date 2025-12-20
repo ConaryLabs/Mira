@@ -32,9 +32,10 @@ use crate::chat::context::MiraContext;
 use mira_core::semantic::SemanticSearch;
 
 pub use chain::ResetDecision;
-pub use context::DeepSeekBudget;
+pub use context::{DeepSeekBudget, TokenUsage};
 pub use types::{
-    AssembledContext, ChatMessage, Checkpoint, CodeIndexFileHint, CodeIndexSymbolHint, SemanticHit, SessionStats,
+    AssembledContext, ChatMessage, Checkpoint, CodeIndexFileHint, CodeIndexSymbolHint,
+    PastDecision, RejectedApproach, SemanticHit, SessionStats,
 };
 
 /// Number of recent messages to keep raw in context (full fidelity)
@@ -283,6 +284,16 @@ impl SessionManager {
             }
         }
 
+        // 9. Anti-amnesia: rejected approaches and past decisions
+        // Prevents repeating mistakes and ensures past decisions are remembered
+        ctx.rejected_approaches = self.load_rejected_approaches(query, 5).await;
+        ctx.past_decisions = self.load_past_decisions(query, 5).await;
+
+        if !ctx.rejected_approaches.is_empty() || !ctx.past_decisions.is_empty() {
+            debug!("Loaded anti-amnesia context: {} rejected approaches, {} past decisions",
+                ctx.rejected_approaches.len(), ctx.past_decisions.len());
+        }
+
         Ok(ctx)
     }
 
@@ -358,6 +369,121 @@ impl SessionManager {
                 created_at: r.metadata.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
             })
             .collect())
+    }
+
+    /// Load rejected approaches relevant to the query (anti-amnesia)
+    /// Searches by keyword matching in problem_context, approach, and related_topics
+    async fn load_rejected_approaches(&self, query: &str, limit: usize) -> Vec<types::RejectedApproach> {
+        // Extract keywords from query for matching
+        let keywords: Vec<&str> = query
+            .split_whitespace()
+            .filter(|w| w.len() > 3)  // Skip short words
+            .take(5)
+            .collect();
+
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+
+        // Build LIKE conditions for each keyword
+        let like_conditions: Vec<String> = keywords
+            .iter()
+            .map(|_| "(problem_context LIKE ? OR approach LIKE ? OR related_topics LIKE ?)".to_string())
+            .collect();
+
+        let query_str = format!(
+            r#"
+            SELECT problem_context, approach, rejection_reason
+            FROM rejected_approaches
+            WHERE {}
+            ORDER BY created_at DESC
+            LIMIT ?
+            "#,
+            like_conditions.join(" OR ")
+        );
+
+        // Build the query with bound parameters
+        let mut sql_query = sqlx::query_as::<_, (String, String, String)>(&query_str);
+
+        for kw in &keywords {
+            let pattern = format!("%{}%", kw);
+            sql_query = sql_query.bind(pattern.clone()).bind(pattern.clone()).bind(pattern);
+        }
+        sql_query = sql_query.bind(limit as i64);
+
+        match sql_query.fetch_all(&self.db).await {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|(problem_context, approach, rejection_reason)| {
+                    types::RejectedApproach {
+                        problem_context,
+                        approach,
+                        rejection_reason,
+                    }
+                })
+                .collect(),
+            Err(e) => {
+                debug!("Failed to load rejected approaches: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Load past decisions relevant to the query (anti-amnesia)
+    /// Uses semantic search when available, falls back to keyword matching
+    async fn load_past_decisions(&self, query: &str, limit: usize) -> Vec<types::PastDecision> {
+        // Try keyword-based search first (simpler, always works)
+        let keywords: Vec<&str> = query
+            .split_whitespace()
+            .filter(|w| w.len() > 3)
+            .take(5)
+            .collect();
+
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+
+        // Build LIKE conditions
+        let like_conditions: Vec<String> = keywords
+            .iter()
+            .map(|_| "(key LIKE ? OR decision LIKE ? OR context LIKE ?)".to_string())
+            .collect();
+
+        let query_str = format!(
+            r#"
+            SELECT key, decision, context
+            FROM decisions
+            WHERE {}
+            ORDER BY created_at DESC
+            LIMIT ?
+            "#,
+            like_conditions.join(" OR ")
+        );
+
+        let mut sql_query = sqlx::query_as::<_, (String, String, Option<String>)>(&query_str);
+
+        for kw in &keywords {
+            let pattern = format!("%{}%", kw);
+            sql_query = sql_query.bind(pattern.clone()).bind(pattern.clone()).bind(pattern);
+        }
+        sql_query = sql_query.bind(limit as i64);
+
+        match sql_query.fetch_all(&self.db).await {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|(key, decision, context)| {
+                    types::PastDecision {
+                        key,
+                        decision,
+                        context,
+                    }
+                })
+                .collect(),
+            Err(e) => {
+                debug!("Failed to load past decisions: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     /// Load the most recent code compaction blob
