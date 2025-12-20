@@ -194,6 +194,53 @@ impl AssembledContext {
             }
         }
 
+        // 2.5. Git activity - recent commits and changes
+        // This gives the LLM awareness of "what just happened" in the codebase
+        if let Some(ref activity) = self.repo_activity {
+            if !activity.is_empty() {
+                let mut lines = vec!["## Recent Project Activity".to_string()];
+
+                // Recent commits
+                if !activity.recent_commits.is_empty() {
+                    lines.push("Commits:".to_string());
+                    for commit in activity.recent_commits.iter().take(5) {
+                        lines.push(format!("- {}: \"{}\" ({})",
+                            commit.hash, commit.message, commit.relative_time));
+                    }
+                }
+
+                // Changed files (show stat summary, not full diff)
+                if !activity.changed_files.is_empty() {
+                    lines.push(String::new());
+                    lines.push("Changed files:".to_string());
+                    for file in activity.changed_files.iter().take(15) {
+                        let change = if file.is_new {
+                            format!("{} (new file, +{} lines)", file.path, file.insertions)
+                        } else {
+                            format!("{} (+{}, -{})", file.path, file.insertions, file.deletions)
+                        };
+                        lines.push(format!("  {}", change));
+                    }
+                    if activity.changed_files.len() > 15 {
+                        lines.push(format!("  ... and {} more files",
+                            activity.changed_files.len() - 15));
+                    }
+                }
+
+                // Note uncommitted changes
+                if activity.has_uncommitted {
+                    lines.push(String::new());
+                    lines.push("[Uncommitted changes present]".to_string());
+                }
+
+                let section = lines.join("\n");
+                estimated_tokens += estimate_tokens(&section);
+                if estimated_tokens < budget.token_budget {
+                    sections.push(section);
+                }
+            }
+        }
+
         // 3. Recent messages - capped, for conversation continuity
         if !self.recent_messages.is_empty() {
             let mut lines = vec!["## Recent".to_string()];
