@@ -29,7 +29,7 @@
   let streamingMessage = $state<{ id: string; blocks: MessageBlock[]; usage?: import('$lib/api/client').UsageInfo } | null>(null);
 
   // Reference to terminal view for scrolling
-  let terminalView: { scrollToBottom: () => void };
+  let terminalView: { scrollToBottom: () => void; forceScrollToBottom: () => void };
 
   function checkMobile() {
     isMobile = window.innerWidth < 768;
@@ -67,7 +67,8 @@
       const loaded = await getMessages({ limit: 50 });
       messages = loaded.reverse();
       hasMoreMessages = loaded.length >= 50;
-      setTimeout(() => terminalView?.scrollToBottom(), 0);
+      // Force scroll to bottom on initial load (ignores isAtBottom check)
+      setTimeout(() => terminalView?.forceScrollToBottom(), 0);
     } catch (e) {
       console.error('Failed to load messages:', e);
     }
