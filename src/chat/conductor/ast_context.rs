@@ -103,7 +103,6 @@ impl FileOutline {
     pub fn format(&self, max_tokens: usize) -> String {
         let mut output = String::new();
         let mut current_tokens = 0;
-        let tokens_per_char = 0.25; // Rough estimate
 
         output.push_str(&format!("// File: {} ({} lines)\n", self.path, self.total_lines));
         current_tokens += estimate_tokens(&output);

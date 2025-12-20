@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/home/peter/Mira/target/release/mira",
+      "args": ["serve"]
+    }
+  }
+}

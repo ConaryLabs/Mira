@@ -258,7 +258,30 @@ async fn get_related_decisions(
     limit: i64,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     if context.is_empty() {
-        return Ok(Vec::new());
+        // Return recent decisions when no context (useful for hotline)
+        let results = sqlx::query_as::<_, (String, String, Option<String>, String)>(r#"
+            SELECT key, value, category,
+                   datetime(updated_at, 'unixepoch', 'localtime') as updated
+            FROM memory_facts
+            WHERE fact_type = 'decision'
+              AND (project_id IS NULL OR project_id = $1)
+              AND key NOT LIKE 'compaction-%'
+            ORDER BY updated_at DESC
+            LIMIT $2
+        "#)
+        .bind(project_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+
+        return Ok(results.into_iter().map(|(key, value, category, updated)| {
+            serde_json::json!({
+                "key": key,
+                "decision": value,
+                "category": category,
+                "updated_at": updated,
+            })
+        }).collect());
     }
 
     // Try semantic search first
@@ -327,7 +350,7 @@ async fn get_related_decisions(
     }).collect())
 }
 
-/// Get relevant memories (preferences, context)
+/// Get relevant memories (preferences, context, general)
 async fn get_relevant_memories(
     db: &SqlitePool,
     semantic: &SemanticSearch,
@@ -336,13 +359,14 @@ async fn get_relevant_memories(
     limit: i64,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     if context.is_empty() {
-        // Return recent preferences if no context
-        let results = sqlx::query_as::<_, (String, String, String, Option<String>, String)>(r#"
-            SELECT id, key, value, category,
+        // Return recent non-decision memories when no context (useful for hotline)
+        let results = sqlx::query_as::<_, (String, String, String, String, Option<String>, String)>(r#"
+            SELECT id, key, value, fact_type, category,
                    datetime(updated_at, 'unixepoch', 'localtime') as updated
             FROM memory_facts
-            WHERE fact_type = 'preference'
+            WHERE fact_type != 'decision'
               AND (project_id IS NULL OR project_id = $1)
+              AND key NOT LIKE 'compaction-%'
             ORDER BY times_used DESC, updated_at DESC
             LIMIT $2
         "#)
@@ -351,13 +375,13 @@ async fn get_relevant_memories(
         .fetch_all(db)
         .await?;
 
-        return Ok(results.into_iter().map(|(id, key, value, category, updated)| {
+        return Ok(results.into_iter().map(|(id, key, value, fact_type, category, updated)| {
             serde_json::json!({
                 "id": id,
                 "key": key,
-                "value": value,
+                "content": value,
+                "fact_type": fact_type,
                 "category": category,
-                "fact_type": "preference",
                 "updated_at": updated,
             })
         }).collect());

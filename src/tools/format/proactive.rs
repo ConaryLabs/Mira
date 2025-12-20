@@ -36,8 +36,9 @@ pub fn proactive_context(ctx: &Value) -> String {
         }
     }
 
-    // Relevant decisions
-    if let Some(decisions) = ctx.get("decisions").and_then(|v| v.as_array()) {
+    // Relevant decisions (key is "related_decisions" from proactive context)
+    if let Some(decisions) = ctx.get("related_decisions").and_then(|v| v.as_array())
+        .or_else(|| ctx.get("decisions").and_then(|v| v.as_array())) {
         if !decisions.is_empty() {
             if !out.is_empty() { out.push('\n'); }
             out.push_str("Relevant decisions:\n");
@@ -51,8 +52,24 @@ pub fn proactive_context(ctx: &Value) -> String {
         }
     }
 
-    // Active goals (brief)
-    if let Some(goals) = ctx.get("goals").and_then(|v| v.as_array()) {
+    // Relevant memories (from proactive context)
+    if let Some(memories) = ctx.get("relevant_memories").and_then(|v| v.as_array()) {
+        if !memories.is_empty() {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str("Relevant context:\n");
+            for m in memories.iter().take(3) {
+                let content = m.get("content").and_then(|v| v.as_str())
+                    .or_else(|| m.get("value").and_then(|v| v.as_str()))
+                    .unwrap_or("?");
+                let display = if content.len() > 60 { format!("{}...", &content[..57]) } else { content.to_string() };
+                out.push_str(&format!("  {}\n", display));
+            }
+        }
+    }
+
+    // Active goals (key is "active_goals" from proactive context)
+    if let Some(goals) = ctx.get("active_goals").and_then(|v| v.as_array())
+        .or_else(|| ctx.get("goals").and_then(|v| v.as_array())) {
         if !goals.is_empty() {
             if !out.is_empty() { out.push('\n'); }
             out.push_str("Active goals:\n");
