@@ -1,98 +1,85 @@
 // src/tools/memory.rs
 // Memory tools - persistent facts, decisions, preferences across sessions
 //
-// Uses mira_core::memory for shared logic, keeps only MCP-specific wrappers.
+// Thin wrapper that delegates to core::ops::memory for the actual implementation.
+// This keeps MCP-specific types separate from the shared core.
 
 use sqlx::sqlite::SqlitePool;
+use std::sync::Arc;
 
-use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
-use super::semantic_helpers::{MetadataBuilder, store_with_logging};
+use super::semantic::SemanticSearch;
 use super::types::*;
-
-use mira_core::{make_memory_key, upsert_memory_fact, MemoryScope};
+use crate::core::ops::memory as core_memory;
+use crate::core::OpContext;
 
 /// Remember a fact, decision, or preference
-/// project_id is used for smart scoping:
-/// - "preference" fact_type -> always global (project_id = NULL)
-/// - Other fact_types -> scoped to project if provided
+///
+/// Delegates to core::ops::memory::remember
 pub async fn remember(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     req: RememberRequest,
     project_id: Option<i64>,
 ) -> anyhow::Result<serde_json::Value> {
-    let fact_type = req.fact_type.clone().unwrap_or_else(|| "general".to_string());
+    // Build OpContext from MCP server state
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+        .with_db(db.clone())
+        .with_semantic(semantic.clone());
 
-    // Smart scoping: preferences are always global
-    let effective_project_id = if fact_type == "preference" {
-        None
-    } else {
-        project_id
+    // Convert MCP request to core input
+    let input = core_memory::RememberInput {
+        content: req.content,
+        fact_type: req.fact_type,
+        category: req.category,
+        key: req.key,
+        project_id,
+        source: "claude-code".to_string(),
     };
 
-    // Generate key from content if not provided
-    let key = req.key.clone().unwrap_or_else(|| make_memory_key(&req.content));
+    // Call core operation
+    let output = core_memory::remember(&ctx, input).await?;
 
-    // Use shared upsert logic
-    let scope = match effective_project_id {
-        Some(pid) => MemoryScope::ProjectId(pid),
-        None => MemoryScope::Global,
-    };
-
-    let id = upsert_memory_fact(
-        db,
-        scope,
-        &key,
-        &req.content,
-        &fact_type,
-        req.category.as_deref(),
-        "claude-code",
-    )
-    .await?;
-
-    // Also store in Qdrant for semantic search
-    let metadata = MetadataBuilder::new("memory_fact")
-        .string("fact_type", &fact_type)
-        .string("key", &key)
-        .string_opt("category", req.category.as_ref())
-        .project_id(effective_project_id)
-        .build();
-    store_with_logging(semantic, COLLECTION_CONVERSATION, &id, &req.content, metadata).await;
-
+    // Convert to JSON response
     Ok(serde_json::json!({
         "status": "remembered",
-        "key": key,
-        "fact_type": fact_type,
-        "category": req.category,
-        "project_id": effective_project_id,
-        "project_scoped": effective_project_id.is_some(),
-        "semantic_search": semantic.is_available(),
+        "key": output.key,
+        "fact_type": output.fact_type,
+        "category": output.category,
+        "project_id": output.project_id,
+        "project_scoped": output.project_id.is_some(),
+        "semantic_search": output.semantic_stored,
     }))
 }
 
-/// Recall memories matching a query - uses semantic search if available
-/// Returns both project-scoped (if project_id provided) AND global memories
+/// Recall memories matching a query
 ///
-/// Uses mira_core::recall_memory_facts for shared logic with batch times_used updates.
+/// Delegates to core::ops::memory::recall
 pub async fn recall(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     req: RecallRequest,
     project_id: Option<i64>,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    use mira_core::{recall_memory_facts, RecallConfig};
+    // Build OpContext from MCP server state
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+        .with_db(db.clone())
+        .with_semantic(semantic.clone());
 
-    let limit = req.limit.unwrap_or(10) as usize;
-
-    let cfg = RecallConfig {
-        collection: COLLECTION_CONVERSATION,
-        fact_type: req.fact_type.as_deref(),
-        category: req.category.as_deref(),
+    // Convert MCP request to core input
+    let input = core_memory::RecallInput {
+        query: req.query,
+        limit: req.limit.map(|l| l as usize),
+        fact_type: req.fact_type,
+        category: req.category,
+        project_id,
     };
 
-    let facts = recall_memory_facts(db, Some(semantic), cfg, &req.query, limit, project_id).await?;
+    // Call core operation
+    let output = core_memory::recall(&ctx, input).await?;
 
-    Ok(facts
+    // Convert to JSON response
+    Ok(output
+        .facts
         .into_iter()
         .map(|f| {
             serde_json::json!({
@@ -111,25 +98,33 @@ pub async fn recall(
 
 /// Forget (delete) a memory
 ///
-/// Uses mira_core::forget_memory_fact for shared logic.
+/// Delegates to core::ops::memory::forget
 pub async fn forget(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     req: ForgetRequest,
 ) -> anyhow::Result<serde_json::Value> {
-    use mira_core::forget_memory_fact;
+    // Build OpContext from MCP server state
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+        .with_db(db.clone())
+        .with_semantic(semantic.clone());
 
-    let deleted = forget_memory_fact(db, Some(semantic), COLLECTION_CONVERSATION, &req.id).await?;
+    // Convert MCP request to core input
+    let input = core_memory::ForgetInput { id: req.id };
 
-    if deleted {
+    // Call core operation
+    let output = core_memory::forget(&ctx, input).await?;
+
+    // Convert to JSON response
+    if output.deleted {
         Ok(serde_json::json!({
             "status": "forgotten",
-            "id": req.id,
+            "id": output.id,
         }))
     } else {
         Ok(serde_json::json!({
             "status": "not_found",
-            "id": req.id,
+            "id": output.id,
         }))
     }
 }

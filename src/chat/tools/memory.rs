@@ -1,17 +1,17 @@
 //! Memory tools: remember and recall
 //!
-//! Uses mira_core::memory for shared logic, keeps only mira-chat specific wrappers.
+//! Thin wrapper that delegates to core::ops::memory for the actual implementation.
+//! This keeps Chat-specific types separate from the shared core.
 
 use anyhow::Result;
-use mira_core::{make_memory_key, recall_memory_facts, upsert_memory_fact, MemoryScope, RecallConfig};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use mira_core::semantic::SemanticSearch;
 
-use crate::chat::COLLECTION_MEMORY;
+use crate::core::ops::memory as core_memory;
+use crate::core::OpContext;
 
 /// Memory tool implementations
 pub struct MemoryTools<'a> {
@@ -22,69 +22,49 @@ pub struct MemoryTools<'a> {
 impl<'a> MemoryTools<'a> {
     pub async fn remember(&self, args: &Value) -> Result<String> {
         let content = args["content"].as_str().unwrap_or("");
-        let fact_type = args["fact_type"].as_str().unwrap_or("general");
+        let fact_type = args["fact_type"].as_str();
         let category = args["category"].as_str();
 
         if content.is_empty() {
             return Ok("Error: content is required".into());
         }
 
-        // Generate key using shared function
-        let key = make_memory_key(content);
+        // Need database for core ops
+        let Some(db) = self.db else {
+            return Ok("Error: database not available".into());
+        };
 
-        // Store in SQLite using shared upsert
-        let mut sqlite_stored = false;
-        if let Some(db) = self.db {
-            match upsert_memory_fact(
-                db,
-                MemoryScope::Global, // mira-chat doesn't use project scoping
-                &key,
-                content,
-                fact_type,
-                category,
-                "mira-chat",
-            )
-            .await
-            {
-                Ok(_id) => {
-                    sqlite_stored = true;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to store memory in SQLite: {}", e);
-                }
-            }
-        }
+        // Build OpContext
+        let mut ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+            .with_db(db.clone());
 
-        // Store in Qdrant for semantic search
-        let mut semantic_stored = false;
         if let Some(semantic) = self.semantic {
-            if semantic.is_available() {
-                let mut metadata = HashMap::new();
-                metadata.insert("fact_type".into(), json!(fact_type));
-                metadata.insert("key".into(), json!(key));
-                if let Some(cat) = category {
-                    metadata.insert("category".into(), json!(cat));
-                }
-
-                // Generate ID for Qdrant storage
-                let id = uuid::Uuid::new_v4().to_string();
-                if let Err(e) = semantic.store(COLLECTION_MEMORY, &id, content, metadata).await {
-                    tracing::warn!("Failed to store in Qdrant: {}", e);
-                } else {
-                    semantic_stored = true;
-                }
-            }
+            ctx = ctx.with_semantic(semantic.clone());
         }
 
-        Ok(json!({
-            "status": "remembered",
-            "key": key,
-            "fact_type": fact_type,
-            "category": category,
-            "sqlite": sqlite_stored,
-            "semantic_search": semantic_stored,
-        })
-        .to_string())
+        // Convert to core input
+        let input = core_memory::RememberInput {
+            content: content.to_string(),
+            fact_type: fact_type.map(|s| s.to_string()),
+            category: category.map(|s| s.to_string()),
+            key: None,
+            project_id: None, // mira-chat doesn't use project scoping
+            source: "mira-chat".to_string(),
+        };
+
+        // Call core operation
+        match core_memory::remember(&ctx, input).await {
+            Ok(output) => Ok(json!({
+                "status": "remembered",
+                "key": output.key,
+                "fact_type": output.fact_type,
+                "category": output.category,
+                "sqlite": true,
+                "semantic_search": output.semantic_stored,
+            })
+            .to_string()),
+            Err(e) => Ok(format!("Error: {}", e)),
+        }
     }
 
     pub async fn recall(&self, args: &Value) -> Result<String> {
@@ -97,55 +77,76 @@ impl<'a> MemoryTools<'a> {
             return Ok("Error: query is required".into());
         }
 
-        // Use shared recall function if we have a database
-        if let Some(db) = self.db {
-            let cfg = RecallConfig {
-                collection: COLLECTION_MEMORY,
-                fact_type,
-                category,
-            };
+        // Need database for core ops
+        let Some(db) = self.db else {
+            return Ok(json!({
+                "results": [],
+                "search_type": "none",
+                "count": 0,
+                "message": "Database not available",
+            })
+            .to_string());
+        };
 
-            // Get semantic reference if available
-            let semantic_ref = self.semantic.as_ref().map(|arc| arc.as_ref());
+        // Build OpContext
+        let mut ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+            .with_db(db.clone());
 
-            match recall_memory_facts(db, semantic_ref, cfg, query, limit, None).await {
-                Ok(facts) if !facts.is_empty() => {
-                    let items: Vec<Value> = facts
-                        .iter()
-                        .map(|f| {
-                            json!({
-                                "content": f.value,
-                                "key": f.key,
-                                "fact_type": f.fact_type,
-                                "category": f.category,
-                                "score": f.score,
-                                "search_type": f.search_type.as_str(),
-                            })
-                        })
-                        .collect();
-
-                    return Ok(json!({
-                        "results": items,
-                        "search_type": facts[0].search_type.as_str(),
-                        "count": items.len(),
-                    })
-                    .to_string());
-                }
-                Ok(_) => {
-                    // No results
-                }
-                Err(e) => {
-                    tracing::warn!("Recall failed: {}", e);
-                }
-            }
+        if let Some(semantic) = self.semantic {
+            ctx = ctx.with_semantic(semantic.clone());
         }
 
-        Ok(json!({
-            "results": [],
-            "search_type": "none",
-            "count": 0,
-            "message": "No memories found matching query",
-        })
-        .to_string())
+        // Convert to core input
+        let input = core_memory::RecallInput {
+            query: query.to_string(),
+            limit: Some(limit),
+            fact_type: fact_type.map(|s| s.to_string()),
+            category: category.map(|s| s.to_string()),
+            project_id: None,
+        };
+
+        // Call core operation
+        match core_memory::recall(&ctx, input).await {
+            Ok(output) if !output.facts.is_empty() => {
+                let items: Vec<Value> = output
+                    .facts
+                    .iter()
+                    .map(|f| {
+                        json!({
+                            "content": f.value,
+                            "key": f.key,
+                            "fact_type": f.fact_type,
+                            "category": f.category,
+                            "score": f.score,
+                            "search_type": f.search_type.as_str(),
+                        })
+                    })
+                    .collect();
+
+                Ok(json!({
+                    "results": items,
+                    "search_type": output.search_type,
+                    "count": items.len(),
+                })
+                .to_string())
+            }
+            Ok(_) => Ok(json!({
+                "results": [],
+                "search_type": "none",
+                "count": 0,
+                "message": "No memories found matching query",
+            })
+            .to_string()),
+            Err(e) => {
+                tracing::warn!("Recall failed: {}", e);
+                Ok(json!({
+                    "results": [],
+                    "search_type": "none",
+                    "count": 0,
+                    "message": format!("Recall failed: {}", e),
+                })
+                .to_string())
+            }
+        }
     }
 }

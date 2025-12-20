@@ -157,7 +157,7 @@ impl MiraServer {
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
     async fn remember(&self, Parameters(req): Parameters<RememberRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let result = memory::remember(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        let result = memory::remember(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 
@@ -165,13 +165,13 @@ impl MiraServer {
     async fn recall(&self, Parameters(req): Parameters<RecallRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
         let project_id = self.get_active_project().await.map(|p| p.id);
-        let result = memory::recall(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+        let result = memory::recall(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No memories found matching '{}'", query)))
     }
 
     #[tool(description = "Delete a memory by ID.")]
     async fn forget(&self, Parameters(req): Parameters<ForgetRequest>) -> Result<CallToolResult, McpError> {
-        let result = memory::forget(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let result = memory::forget(self.db.as_ref(), &self.semantic, req).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 

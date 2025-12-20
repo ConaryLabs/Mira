@@ -249,6 +249,98 @@ Returns:
 }
 ```
 
+## Troubleshooting
+
+### MCP Connection Fails ("Failed to reconnect to mira")
+
+**Symptoms:**
+- `/mcp` shows `mira ✘ failed`
+- Claude Code logs show "Starting Mira Daemon on port 3000" then "Address already in use"
+
+**Diagnosis steps:**
+
+1. **Check daemon is running:**
+   ```bash
+   systemctl --user status mira
+   # Should show "active (running)"
+   ```
+
+2. **Check MCP config is correct:**
+   ```bash
+   cat ~/.mcp.json
+   # Or for project-specific:
+   cat /path/to/project/.mcp.json
+   ```
+   Should contain:
+   ```json
+   {
+     "mcpServers": {
+       "mira": {
+         "command": "/usr/local/bin/mira",
+         "args": ["connect"]
+       }
+     }
+   }
+   ```
+
+3. **Test connect command manually:**
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | /usr/local/bin/mira connect
+   ```
+   Should return JSON with `serverInfo`.
+
+4. **Check Claude Code MCP logs:**
+   ```bash
+   ls ~/.cache/claude-cli-nodejs/*/mcp-logs-mira/
+   cat ~/.cache/claude-cli-nodejs/*/mcp-logs-mira/$(ls -t ~/.cache/claude-cli-nodejs/*/mcp-logs-mira/ | head -1)
+   ```
+   Look for "Starting Mira Daemon" - this means wrong command is being used.
+
+**Common causes & fixes:**
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| "Starting Mira Daemon" in logs | Claude Code cached old config | Quit Claude Code completely, restart |
+| "Address already in use" | Daemon running but connect not used | Check `.mcp.json` has `args: ["connect"]` |
+| "Cannot connect to Mira daemon" | Daemon not running | `systemctl --user start mira` |
+| Wrapper not being called | Claude Code cached old config | `/mcp disable mira` then `/mcp enable mira` |
+
+**Nuclear option - force refresh:**
+```bash
+# 1. Quit Claude Code completely
+# 2. Clear MCP cache
+rm -rf ~/.cache/claude-cli-nodejs/*/mcp-logs-mira/
+# 3. Restart daemon
+systemctl --user restart mira
+# 4. Start Claude Code fresh
+```
+
+### Port Mismatch
+
+The daemon port should match between:
+- `~/.config/systemd/user/mira.service` (Environment=MIRA_PORT=...)
+- `~/.mira/.env` (MIRA_PORT=...)
+- What `mira connect` expects (default: 3000)
+
+Check current port:
+```bash
+curl http://localhost:3000/health
+# Or check service:
+journalctl --user -u mira | grep "listening on"
+```
+
+### Semantic Search Not Working
+
+Check Qdrant is running:
+```bash
+curl http://localhost:6334/health
+```
+
+Check Gemini key is set in `~/.mira/.env`:
+```bash
+grep GEMINI ~/.mira/.env
+```
+
 ## License
 
 MIT

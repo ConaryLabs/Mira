@@ -28,6 +28,7 @@ use tracing_subscriber::FmtSubscriber;
 use std::time::Duration;
 
 mod chat;
+mod core;
 mod tools;
 mod indexer;
 mod hooks;
@@ -41,7 +42,7 @@ use chat::tools::WebSearchConfig;
 
 // === Constants ===
 
-const DEFAULT_PORT: u16 = 3199;
+const DEFAULT_PORT: u16 = 3000;
 const TOKEN_FILE: &str = ".mira/token";
 
 // === CLI Definition ===
@@ -59,28 +60,28 @@ struct Cli {
 enum Commands {
     /// Start the daemon (default when no command given)
     Daemon {
-        /// Port to listen on (default: 3199, env: MIRA_PORT)
+        /// Port to listen on (default: 3000, env: MIRA_PORT)
         #[arg(short, long, env = "MIRA_PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
     },
 
     /// Connect stdio to running daemon (for Claude Code MCP)
     Connect {
-        /// Daemon URL (default: http://localhost:3199)
+        /// Daemon URL (default: http://localhost:3000)
         #[arg(short, long, env = "MIRA_URL")]
         url: Option<String>,
     },
 
     /// Check daemon status
     Status {
-        /// Daemon URL (default: http://localhost:3199)
+        /// Daemon URL (default: http://localhost:3000)
         #[arg(short, long, env = "MIRA_URL")]
         url: Option<String>,
     },
 
     /// Stop running daemon
     Stop {
-        /// Daemon URL (default: http://localhost:3199)
+        /// Daemon URL (default: http://localhost:3000)
         #[arg(short, long, env = "MIRA_URL")]
         url: Option<String>,
     },

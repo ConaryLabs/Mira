@@ -4,6 +4,7 @@
 //! - Reads MCP JSON-RPC messages from stdin
 //! - Forwards them to the daemon via HTTP
 //! - Writes responses to stdout
+//! - Maintains session state via mcp-session-id header
 //!
 //! Claude Code config:
 //! ```json
@@ -74,6 +75,9 @@ pub async fn run(daemon_url: String) -> Result<()> {
 
     let mcp_url = format!("{}/mcp", daemon_url);
 
+    // Track session ID from initialize response
+    let mut session_id: Option<String> = None;
+
     // Read stdin line by line (MCP uses newline-delimited JSON)
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -89,11 +93,20 @@ pub async fn run(daemon_url: String) -> Result<()> {
         let request: Value = serde_json::from_str(&line)
             .context("Invalid JSON from stdin")?;
 
-        // Forward to daemon
-        let response = client
+        // Build request with auth
+        let mut req = client
             .post(&mcp_url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream");
+
+        // Include session ID if we have one (required after initialize)
+        if let Some(ref sid) = session_id {
+            req = req.header("mcp-session-id", sid);
+        }
+
+        // Forward to daemon
+        let response = req
             .json(&request)
             .send()
             .await
@@ -106,13 +119,24 @@ pub async fn run(daemon_url: String) -> Result<()> {
             continue;
         }
 
-        // Get response body
+        // Capture session ID from response headers (set after initialize)
+        if let Some(sid) = response.headers().get("mcp-session-id") {
+            if let Ok(sid_str) = sid.to_str() {
+                session_id = Some(sid_str.to_string());
+            }
+        }
+
+        // Get response body and parse SSE format
         let response_text = response.text().await
             .context("Failed to read daemon response")?;
 
-        // Write response to stdout
-        writeln!(stdout, "{}", response_text)
-            .context("Failed to write to stdout")?;
+        // Parse SSE format - extract JSON from "data: {...}" lines
+        for line in response_text.lines() {
+            if let Some(json_data) = line.strip_prefix("data: ") {
+                writeln!(stdout, "{}", json_data)
+                    .context("Failed to write to stdout")?;
+            }
+        }
         stdout.flush()?;
     }
 
