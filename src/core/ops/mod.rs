@@ -31,6 +31,9 @@ pub mod session;
 pub mod chat_summary;
 pub mod chat_chain;
 
+// Phase 6: Observability
+pub mod audit;
+
 // Future phases:
 // pub mod council;
 // pub mod index;

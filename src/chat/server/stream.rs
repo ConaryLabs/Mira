@@ -19,6 +19,7 @@ use super::types::{
     ToolCallResult, UsageInfo,
 };
 use super::AppState;
+use crate::core::ops::audit::{AuditEvent, AuditEventType, AuditSource};
 
 /// SSE streaming chat endpoint
 pub async fn chat_stream_handler(
@@ -106,6 +107,20 @@ pub async fn chat_sync_handler(
                 request_id = %request_id,
                 "Sync endpoint auth failure: invalid or missing token"
             );
+            // Audit log (async, fire-and-forget)
+            if let Some(db) = &state.db {
+                let db = db.clone();
+                let req_id = request_id.clone();
+                tokio::spawn(async move {
+                    let _ = crate::core::ops::audit::log_audit(
+                        &db,
+                        AuditEvent::new(AuditEventType::AuthFailure, AuditSource::Sync)
+                            .request_id(req_id)
+                            .details(serde_json::json!({"reason": "invalid_or_missing_token"}))
+                            .warn(),
+                    ).await;
+                });
+            }
             return Err(SyncError::new(
                 StatusCode::UNAUTHORIZED,
                 request_id,
@@ -140,6 +155,21 @@ pub async fn chat_sync_handler(
                 request_id = %request_id,
                 "Sync endpoint rejected: too many concurrent requests"
             );
+            // Audit log (async, fire-and-forget)
+            if let Some(db) = &state.db {
+                let db = db.clone();
+                let req_id = request_id.clone();
+                let proj = request.project_path.clone();
+                tokio::spawn(async move {
+                    let _ = crate::core::ops::audit::log_audit(
+                        &db,
+                        AuditEvent::new(AuditEventType::RateLimited, AuditSource::Sync)
+                            .request_id(req_id)
+                            .project(proj)
+                            .warn(),
+                    ).await;
+                });
+            }
             return Err(SyncError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 request_id,
