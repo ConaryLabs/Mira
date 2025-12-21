@@ -104,8 +104,12 @@ pub async fn list_documents(ctx: &OpContext, input: ListDocumentsInput) -> CoreR
 }
 
 /// Search documents - uses semantic search if available
+/// Checks for cancellation before making external API calls
 pub async fn search_documents(ctx: &OpContext, input: SearchDocumentsInput) -> CoreResult<Vec<DocumentSearchResult>> {
     let db = ctx.require_db()?;
+
+    // Check cancellation before potentially slow operations
+    ctx.check_cancelled()?;
 
     // Try semantic search first if available
     if let Some(semantic) = &ctx.semantic {

@@ -249,8 +249,12 @@ pub struct RecordErrorFixOutput {
 }
 
 /// Find similar error fixes - uses semantic search if available, falls back to text
+/// Checks for cancellation before making external API calls
 pub async fn find_similar_fixes(ctx: &OpContext, input: FindSimilarFixesInput) -> CoreResult<Vec<ErrorFix>> {
     let db = ctx.require_db()?;
+
+    // Check cancellation before potentially slow operations
+    ctx.check_cancelled()?;
 
     // Try semantic search first for better matching
     if let Some(semantic) = &ctx.semantic {
