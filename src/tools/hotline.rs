@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 
 use super::proactive;
 use super::git_intel;
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 use std::sync::Arc;
 use super::types::{HotlineRequest, GetProactiveContextRequest, GetRecentCommitsRequest};
 

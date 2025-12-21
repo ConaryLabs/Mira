@@ -16,7 +16,7 @@ pub mod session;
 pub mod tools;
 
 /// Memory collection name (alias for backwards compatibility)
-pub const COLLECTION_MEMORY: &str = mira_core::COLLECTION_CONVERSATION;
+pub const COLLECTION_MEMORY: &str = crate::core::COLLECTION_CONVERSATION;
 
 // Re-export key types for external use
 pub use server::{create_router, AppState};

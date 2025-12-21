@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::Utc;
-use mira_core::semantic::COLLECTION_CONVERSATION;
+use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
 
 use super::super::{CoreResult, OpContext};
 use super::work_state::{get_active_plan, get_active_todos, get_working_docs, ActivePlan, WorkingDoc, WorkStateTodo};

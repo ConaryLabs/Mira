@@ -3,13 +3,13 @@
 //! Unified implementation for storing and retrieving facts, decisions,
 //! and preferences. Both MCP and Chat tools call into this module.
 //!
-//! Uses mira_core::memory for the heavy lifting (DB operations, semantic search).
+//! Uses core::primitives::memory for the heavy lifting (DB operations, semantic search).
 
 use crate::core::{CoreError, CoreResult, OpContext};
-use mira_core::semantic::COLLECTION_CONVERSATION;
-use mira_core::semantic_helpers::{store_with_logging, MetadataBuilder};
-use mira_core::{make_memory_key, forget_memory_fact, recall_memory_facts, upsert_memory_fact};
-use mira_core::{MemoryFact, MemoryScope, RecallConfig};
+use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
+use crate::core::primitives::semantic_helpers::{store_with_logging, MetadataBuilder};
+use crate::core::primitives::{make_memory_key, forget_memory_fact, recall_memory_facts, upsert_memory_fact};
+use crate::core::primitives::{MemoryFact, MemoryScope, RecallConfig};
 
 // ============================================================================
 // Input Types

@@ -3,7 +3,7 @@
 //! OpContext bundles all the dependencies that operations need,
 //! avoiding parameter spaghetti in function signatures.
 
-use mira_core::semantic::SemanticSearch;
+use super::primitives::semantic::SemanticSearch;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;

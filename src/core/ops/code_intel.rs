@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use mira_core::semantic::{SemanticSearch, COLLECTION_CODE};
+use crate::core::primitives::semantic::{SemanticSearch, COLLECTION_CODE};
 
 use super::super::{CoreError, CoreResult, OpContext};
 

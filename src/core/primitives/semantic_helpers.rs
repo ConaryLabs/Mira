@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tracing::warn;
 
-use crate::semantic::SemanticSearch;
+use super::semantic::SemanticSearch;
 
 /// Build semantic metadata with common fields.
 /// Automatically adds "type" and optionally "project_id".
@@ -100,7 +100,7 @@ pub async fn search_semantic(
     query: &str,
     limit: usize,
     filter: Option<Filter>,
-) -> Option<Vec<crate::semantic::SearchResult>> {
+) -> Option<Vec<super::semantic::SearchResult>> {
     if !semantic.is_available() {
         return None;
     }

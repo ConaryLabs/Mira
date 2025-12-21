@@ -11,8 +11,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-#[cfg(feature = "semantic")]
-use crate::semantic::SemanticSearch;
+use super::semantic::SemanticSearch;
 
 // ============================================================================
 // Types
@@ -146,7 +145,6 @@ pub async fn upsert_memory_fact(
 ///
 /// Uses semantic search first (if available), falls back to text LIKE search.
 /// Automatically updates times_used in a single batch query.
-#[cfg(feature = "semantic")]
 pub async fn recall_memory_facts(
     db: &SqlitePool,
     semantic: Option<&SemanticSearch>,
@@ -290,7 +288,6 @@ pub async fn recall_text_search(
 /// Delete a memory fact by ID
 ///
 /// Returns true if deleted, false if not found.
-#[cfg(feature = "semantic")]
 pub async fn forget_memory_fact(
     db: &SqlitePool,
     semantic: Option<&SemanticSearch>,

@@ -42,8 +42,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     }).collect()
 }
 
-use mira_core::artifacts::ArtifactStore;
-use mira_core::semantic::SemanticSearch;
+use crate::core::{ArtifactStore, SemanticSearch};
 use crate::chat::session::SessionManager;
 
 /// Cached file entry with content and timestamp
@@ -341,8 +340,7 @@ impl ToolExecutor {
 
     /// Conditionally store large output as artifact and return preview
     async fn maybe_artifact(&self, tool_name: &str, output: &str) -> String {
-        use mira_core::artifacts::ArtifactStore;
-        use mira_core::ARTIFACT_THRESHOLD_BYTES;
+        use crate::core::{ArtifactStore, ARTIFACT_THRESHOLD_BYTES};
 
         // Skip if no database or output is small enough
         let Some(db) = &self.db else {

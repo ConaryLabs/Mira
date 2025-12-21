@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use super::{CodeIndexFileHint, CodeIndexSymbolHint, SessionManager};
-use mira_core::semantic::COLLECTION_CODE;
+use crate::core::COLLECTION_CODE;
 
 impl SessionManager {
     /// Load code index hints for a query

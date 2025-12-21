@@ -29,7 +29,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::chat::context::MiraContext;
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 
 pub use chain::ResetDecision;
 pub use context::{DeepSeekBudget, TokenUsage};

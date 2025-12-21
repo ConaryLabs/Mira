@@ -23,7 +23,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 use crate::chat::tools::WebSearchConfig;
 
 // Types available for external use (currently internal only)
