@@ -35,6 +35,10 @@ pub const TTL_DIFF_SECS: i64 = 30 * 24 * 60 * 60;
 /// TTL for artifacts containing secrets (24 hours)
 pub const TTL_SECRET_SECS: i64 = 24 * 60 * 60;
 
+// ============================================================================
+// Semantic Search Scaling Controls
+// ============================================================================
+
 /// Gemini embedding dimensions
 pub const EMBEDDING_DIM: u64 = 3072;
 
@@ -46,6 +50,21 @@ pub const EMBED_RETRY_ATTEMPTS: u32 = 2;
 
 /// Delay between retries (ms)
 pub const RETRY_DELAY_MS: u64 = 500;
+
+/// Max items per embedding batch (Gemini limit is 100, we use 50 for safety margin)
+pub const EMBED_BATCH_MAX: usize = 50;
+
+/// Max text length for single embedding (Gemini limit is ~10k tokens, we use 8k chars)
+pub const EMBED_TEXT_MAX_CHARS: usize = 8000;
+
+/// Default search result limit
+pub const SEMANTIC_SEARCH_DEFAULT_LIMIT: usize = 10;
+
+/// Max search result limit (prevents excessive memory/latency)
+pub const SEMANTIC_SEARCH_MAX_LIMIT: usize = 100;
+
+/// Minimum similarity score for search results (0.0-1.0)
+pub const SEMANTIC_SEARCH_MIN_SCORE: f32 = 0.3;
 
 /// Max size for sync endpoint messages
 pub const SYNC_MAX_MESSAGE_BYTES: usize = 32 * 1024;

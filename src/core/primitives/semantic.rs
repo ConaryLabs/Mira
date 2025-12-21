@@ -17,7 +17,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use super::limits::{EMBED_RETRY_ATTEMPTS, EMBEDDING_DIM, HTTP_TIMEOUT_SECS, RETRY_DELAY_MS};
+use super::limits::{
+    EMBED_BATCH_MAX, EMBED_RETRY_ATTEMPTS, EMBED_TEXT_MAX_CHARS, EMBEDDING_DIM,
+    HTTP_TIMEOUT_SECS, RETRY_DELAY_MS, SEMANTIC_SEARCH_MAX_LIMIT, SEMANTIC_SEARCH_MIN_SCORE,
+};
 
 /// Collection names
 pub const COLLECTION_CODE: &str = "mira_code";
@@ -94,11 +97,20 @@ impl SemanticSearch {
 
     /// Get embedding for text using Google Gemini
     /// Includes retry logic for transient failures
+    /// Text is truncated to EMBED_TEXT_MAX_CHARS if too long
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let api_key = self
             .gemini_key
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Gemini API key not configured"))?;
+
+        // Truncate text if too long (Gemini has token limits)
+        let text = if text.len() > EMBED_TEXT_MAX_CHARS {
+            debug!("Truncating text from {} to {} chars for embedding", text.len(), EMBED_TEXT_MAX_CHARS);
+            &text[..EMBED_TEXT_MAX_CHARS]
+        } else {
+            text
+        };
 
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={}",
@@ -174,6 +186,7 @@ impl SemanticSearch {
 
     /// Batch embed multiple texts in a single API call (more efficient)
     /// Returns embeddings in the same order as input texts
+    /// Texts are truncated to EMBED_TEXT_MAX_CHARS and batches are chunked to EMBED_BATCH_MAX
     pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
@@ -186,6 +199,37 @@ impl SemanticSearch {
                 results.push(self.embed(text).await?);
             }
             return Ok(results);
+        }
+
+        // Truncate texts that are too long
+        let truncated: Vec<String> = texts
+            .iter()
+            .map(|t| {
+                if t.len() > EMBED_TEXT_MAX_CHARS {
+                    t[..EMBED_TEXT_MAX_CHARS].to_string()
+                } else {
+                    t.clone()
+                }
+            })
+            .collect();
+
+        // If batch is too large, process in chunks
+        if truncated.len() > EMBED_BATCH_MAX {
+            let mut all_results = Vec::with_capacity(truncated.len());
+            for chunk in truncated.chunks(EMBED_BATCH_MAX) {
+                let chunk_results = self.embed_batch_inner(chunk).await?;
+                all_results.extend(chunk_results);
+            }
+            return Ok(all_results);
+        }
+
+        self.embed_batch_inner(&truncated).await
+    }
+
+    /// Internal batch embed (assumes texts are already truncated and within batch limit)
+    async fn embed_batch_inner(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
         }
 
         let api_key = self
@@ -406,6 +450,7 @@ impl SemanticSearch {
     }
 
     /// Search a collection for similar content
+    /// Limit is capped at SEMANTIC_SEARCH_MAX_LIMIT and results below SEMANTIC_SEARCH_MIN_SCORE are filtered
     pub async fn search(
         &self,
         collection: &str,
@@ -417,6 +462,9 @@ impl SemanticSearch {
             .qdrant
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
+
+        // Enforce maximum limit
+        let limit = limit.min(SEMANTIC_SEARCH_MAX_LIMIT);
 
         // Get query embedding
         let embedding = self.embed(query).await?;
@@ -434,8 +482,14 @@ impl SemanticSearch {
             .result
             .into_iter()
             .filter_map(|point| {
-                let content = point.payload.get("content")?.as_str()?.to_string();
                 let score = point.score;
+
+                // Filter out low-quality matches
+                if score < SEMANTIC_SEARCH_MIN_SCORE {
+                    return None;
+                }
+
+                let content = point.payload.get("content")?.as_str()?.to_string();
 
                 // Extract all metadata
                 let mut metadata: HashMap<String, serde_json::Value> = HashMap::new();
