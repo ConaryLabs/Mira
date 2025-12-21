@@ -217,8 +217,12 @@ pub async fn search_sessions(ctx: &OpContext, input: SearchSessionsInput) -> Cor
 }
 
 /// Combined session startup
+/// This is a multi-step operation that checks for cancellation between steps
 pub async fn session_start(ctx: &OpContext, input: SessionStartInput) -> CoreResult<SessionStartOutput> {
     let db = ctx.require_db()?;
+
+    // Check cancellation before starting
+    ctx.check_cancelled()?;
 
     // 1. Set up project
     let path = Path::new(&input.project_path);
@@ -265,6 +269,9 @@ pub async fn session_start(ctx: &OpContext, input: SessionStartInput) -> CoreRes
         .bind(&path_str)
         .fetch_one(db)
         .await?;
+
+    // Check cancellation after project setup
+    ctx.check_cancelled()?;
 
     // 2. Count mira_usage guidelines
     let (usage_count,): (i64,) = sqlx::query_as(

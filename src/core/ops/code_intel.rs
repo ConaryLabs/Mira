@@ -333,8 +333,12 @@ pub async fn get_related_files(ctx: &OpContext, input: GetRelatedFilesInput) -> 
 }
 
 /// Semantic code search
+/// Checks for cancellation before making external API calls
 pub async fn semantic_code_search(ctx: &OpContext, input: SemanticSearchInput) -> CoreResult<Vec<SemanticSearchResult>> {
     let db = ctx.require_db()?;
+
+    // Check cancellation before potentially slow operations
+    ctx.check_cancelled()?;
 
     // Try semantic search if available
     if let Some(semantic) = &ctx.semantic {
