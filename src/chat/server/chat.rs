@@ -48,6 +48,13 @@ async fn process_deepseek_chat(
 ) -> Result<()> {
     let project_path = PathBuf::from(&request.project_path);
 
+    // Acquire per-project lock to prevent race conditions
+    // This ensures only one request per project is processed at a time,
+    // preventing races in: message counts, summary/archival, chain reset, handoff
+    let project_lock = state.project_locks.get_lock(&request.project_path).await;
+    let _guard = project_lock.lock().await;
+    tracing::debug!(project = %request.project_path, "Acquired project lock");
+
     // Save user message to database (for frontend display)
     let now = chrono::Utc::now().timestamp();
     if let Some(db) = &state.db {

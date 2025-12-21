@@ -20,11 +20,136 @@ use axum::{
     Router,
 };
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::core::SemanticSearch;
 use crate::chat::tools::WebSearchConfig;
+
+// ============================================================================
+// Per-Project Locking
+// ============================================================================
+
+/// Manages per-project locks to prevent concurrent operations on the same project.
+/// This prevents race conditions in:
+/// - Message count updates
+/// - Summary/archival operations
+/// - Chain reset hysteresis
+/// - Handoff blob creation/consumption
+#[derive(Default)]
+pub struct ProjectLocks {
+    locks: RwLock<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+impl ProjectLocks {
+    pub fn new() -> Self {
+        Self {
+            locks: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Get or create a lock for a project. Returns an Arc to the mutex.
+    pub async fn get_lock(&self, project_path: &str) -> Arc<Mutex<()>> {
+        // Fast path: check if lock exists
+        {
+            let locks = self.locks.read().await;
+            if let Some(lock) = locks.get(project_path) {
+                return lock.clone();
+            }
+        }
+
+        // Slow path: create lock if needed
+        let mut locks = self.locks.write().await;
+        locks
+            .entry(project_path.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    /// Clean up unused locks (call periodically if needed)
+    #[allow(dead_code)]
+    pub async fn cleanup_unused(&self) {
+        let mut locks = self.locks.write().await;
+        // Remove locks that only have one reference (this one)
+        locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_project_locks_get_or_create() {
+        let locks = ProjectLocks::new();
+
+        // First call creates the lock
+        let lock1 = locks.get_lock("/project/a").await;
+
+        // Second call returns the same lock
+        let lock2 = locks.get_lock("/project/a").await;
+
+        // Should be the same Arc (same address)
+        assert!(Arc::ptr_eq(&lock1, &lock2));
+    }
+
+    #[tokio::test]
+    async fn test_project_locks_different_projects() {
+        let locks = ProjectLocks::new();
+
+        let lock_a = locks.get_lock("/project/a").await;
+        let lock_b = locks.get_lock("/project/b").await;
+
+        // Different projects should have different locks
+        assert!(!Arc::ptr_eq(&lock_a, &lock_b));
+    }
+
+    #[tokio::test]
+    async fn test_project_locks_serialization() {
+        let locks = Arc::new(ProjectLocks::new());
+        let project = "/test/project";
+
+        // Simulate concurrent access
+        let locks1 = locks.clone();
+        let locks2 = locks.clone();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<i32>(10);
+
+        // Task 1: acquires lock, sends 1, waits, sends 3
+        let tx1 = tx.clone();
+        let t1 = tokio::spawn(async move {
+            let lock = locks1.get_lock(project).await;
+            let _guard = lock.lock().await;
+            tx1.send(1).await.unwrap();
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            tx1.send(3).await.unwrap();
+        });
+
+        // Task 2: tries to acquire lock immediately, sends 2 when it gets it
+        let tx2 = tx.clone();
+        let t2 = tokio::spawn(async move {
+            // Small delay to ensure task 1 gets lock first
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            let lock = locks2.get_lock(project).await;
+            let _guard = lock.lock().await;
+            tx2.send(2).await.unwrap();
+        });
+
+        t1.await.unwrap();
+        t2.await.unwrap();
+        drop(tx);
+
+        // Collect results - should be 1, 3, 2 (task 1 completes fully before task 2)
+        let mut results = Vec::new();
+        while let Some(v) = rx.recv().await {
+            results.push(v);
+        }
+
+        assert_eq!(results, vec![1, 3, 2], "Lock should serialize access");
+    }
+}
 
 // Types available for external use (currently internal only)
 pub(crate) use types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult, UsageInfo};
@@ -42,6 +167,7 @@ pub struct AppState {
     pub sync_token: Option<String>, // Bearer token for /api/chat/sync
     pub sync_semaphore: Arc<tokio::sync::Semaphore>, // Limit concurrent sync requests
     pub web_search_config: WebSearchConfig, // Google Custom Search config
+    pub project_locks: Arc<ProjectLocks>, // Per-project locking for concurrency safety
 }
 
 // ============================================================================
@@ -91,6 +217,7 @@ pub async fn run(
         sync_token: sync_token.clone(),
         sync_semaphore: Arc::new(tokio::sync::Semaphore::new(SYNC_MAX_CONCURRENT)),
         web_search_config,
+        project_locks: Arc::new(ProjectLocks::new()),
     };
 
     let app = create_router(state);
