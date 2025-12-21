@@ -2,7 +2,7 @@
 //!
 //! Document storage, search, and retrieval.
 
-use mira_core::semantic::COLLECTION_DOCS;
+use crate::core::primitives::semantic::COLLECTION_DOCS;
 
 use super::super::{CoreResult, OpContext};
 

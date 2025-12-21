@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "mira-core"]
+members = ["."]
 resolver = "2"
 
 [package]
@@ -90,8 +90,8 @@ once_cell = "1.21"
 async-trait = "0.1"
 thiserror = "2.0"
 
-# Shared core utilities
-mira-core = { path = "mira-core", features = ["full"] }
+# Core utilities (previously in mira-core)
+sha2 = "0.10"
 tokio-util = "0.7.17"
 url = "2.5.7"
 

@@ -13,17 +13,15 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::limits::{
+use super::limits::{
     ARTIFACT_THRESHOLD_BYTES, DEFAULT_FETCH_LIMIT, EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS,
     INLINE_MAX_BYTES, MAX_ARTIFACT_SIZE, PROJECT_ARTIFACT_CAP_BYTES, TTL_DIFF_SECS,
     TTL_SECRET_SECS, TTL_TOOL_OUTPUT_SECS,
 };
 
-#[cfg(feature = "secrets")]
-use crate::secrets::detect_secrets;
+use super::secrets::detect_secrets;
 
-#[cfg(feature = "excerpts")]
-use crate::excerpts::create_smart_excerpt;
+use super::excerpts::create_smart_excerpt;
 
 /// Tools that should be artifacted when output exceeds threshold
 const ARTIFACT_TOOLS: &[&str] = &[
@@ -130,15 +128,11 @@ impl ArtifactStore {
     pub fn decide(&self, tool_name: &str, output: &str) -> ArtifactDecision {
         let total_bytes = output.len();
 
-        // Check for secrets (if feature enabled)
-        #[cfg(feature = "secrets")]
+        // Check for secrets
         let (contains_secrets, secret_kind) = {
             let secret = detect_secrets(output);
             (secret.is_some(), secret.map(|s| s.kind.to_string()))
         };
-
-        #[cfg(not(feature = "secrets"))]
-        let (contains_secrets, secret_kind): (bool, Option<String>) = (false, None);
 
         // Decide based on tool + size
         let should_artifact = total_bytes > ARTIFACT_THRESHOLD_BYTES
@@ -146,19 +140,7 @@ impl ArtifactStore {
 
         // Create smart preview based on tool type
         let preview = if should_artifact || total_bytes > INLINE_MAX_BYTES {
-            #[cfg(feature = "excerpts")]
-            {
-                create_smart_excerpt(tool_name, output)
-            }
-            #[cfg(not(feature = "excerpts"))]
-            {
-                // Fallback: simple truncation
-                if output.len() > INLINE_MAX_BYTES {
-                    format!("{}…[truncated]", &output[..INLINE_MAX_BYTES])
-                } else {
-                    output.to_string()
-                }
-            }
+            create_smart_excerpt(tool_name, output)
         } else {
             output.to_string()
         };
@@ -216,16 +198,9 @@ impl ArtifactStore {
         let compressed_bytes = uncompressed_bytes; // No compression yet
 
         // Create preview
-        #[cfg(feature = "excerpts")]
         let preview_text = {
-            use crate::excerpts::create_excerpt;
+            use super::excerpts::create_excerpt;
             create_excerpt(content, EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS)
-        };
-        #[cfg(not(feature = "excerpts"))]
-        let preview_text = if content.len() > 2000 {
-            format!("{}…", &content[..2000])
-        } else {
-            content.to_string()
         };
 
         // Searchable text (first 16KB)

@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 
 use crate::core::ops::memory as core_memory;
 use crate::core::OpContext;

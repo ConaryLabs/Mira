@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use crate::limits::{EMBED_RETRY_ATTEMPTS, EMBEDDING_DIM, HTTP_TIMEOUT_SECS, RETRY_DELAY_MS};
+use super::limits::{EMBED_RETRY_ATTEMPTS, EMBEDDING_DIM, HTTP_TIMEOUT_SECS, RETRY_DELAY_MS};
 
 /// Collection names
 pub const COLLECTION_CODE: &str = "mira_code";

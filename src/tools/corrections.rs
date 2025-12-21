@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::core::ops::mira as core_mira;
 use crate::core::OpContext;
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 
 // Re-export param structs for backwards compatibility
 pub struct RecordCorrectionParams {

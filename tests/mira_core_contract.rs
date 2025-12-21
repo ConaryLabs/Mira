@@ -1,11 +1,11 @@
-//! Contract tests for mira-core shared functionality
+//! Contract tests for core primitives
 //!
-//! These tests ensure mira MCP and mira-core stay in sync.
+//! These tests ensure core constants and types stay consistent.
 //! If these fail, it means shared behavior has drifted.
 
-use mira_core::semantic::{COLLECTION_CODE, COLLECTION_CONVERSATION, COLLECTION_DOCS};
-use mira_core::semantic_helpers::MetadataBuilder;
-use mira_core::{EMBEDDING_DIM, HTTP_TIMEOUT_SECS, EMBED_RETRY_ATTEMPTS};
+use mira::core::primitives::semantic::{COLLECTION_CODE, COLLECTION_CONVERSATION, COLLECTION_DOCS};
+use mira::core::primitives::semantic_helpers::MetadataBuilder;
+use mira::core::primitives::{EMBEDDING_DIM, HTTP_TIMEOUT_SECS, EMBED_RETRY_ATTEMPTS};
 
 // ============================================================================
 // Semantic Constants Contract
@@ -108,7 +108,7 @@ fn contract_metadata_builder_bool() {
 
 #[test]
 fn contract_metadata_string_helper() {
-    use mira_core::semantic_helpers::metadata_string;
+    use mira::core::primitives::semantic_helpers::metadata_string;
     use std::collections::HashMap;
 
     let mut metadata = HashMap::new();
@@ -122,7 +122,7 @@ fn contract_metadata_string_helper() {
 
 #[test]
 fn contract_metadata_i64_helper() {
-    use mira_core::semantic_helpers::metadata_i64;
+    use mira::core::primitives::semantic_helpers::metadata_i64;
     use std::collections::HashMap;
 
     let mut metadata = HashMap::new();
@@ -136,7 +136,7 @@ fn contract_metadata_i64_helper() {
 
 #[test]
 fn contract_metadata_bool_helper() {
-    use mira_core::semantic_helpers::metadata_bool;
+    use mira::core::primitives::semantic_helpers::metadata_bool;
     use std::collections::HashMap;
 
     let mut metadata = HashMap::new();

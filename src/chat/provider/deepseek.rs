@@ -1,12 +1,12 @@
 //! DeepSeek provider implementation (Chat Completions API)
 //!
 //! Implements the OpenAI-compatible Chat Completions API for DeepSeek models.
-//! Uses mira_core::SseDecoder for SSE stream parsing.
+//! Uses core::SseDecoder for SSE stream parsing.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
-use mira_core::SseDecoder;
+use crate::core::SseDecoder;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

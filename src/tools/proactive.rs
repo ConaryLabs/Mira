@@ -4,7 +4,7 @@
 use sqlx::sqlite::SqlitePool;
 
 use super::types::{GetProactiveContextRequest, FindSimilarFixesRequest, GetRelatedFilesRequest};
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 use std::sync::Arc;
 use super::corrections::{self, GetCorrectionsParams};
 use super::goals;

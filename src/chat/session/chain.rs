@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use mira_core::{
+use crate::core::primitives::{
     CHAIN_RESET_HARD_CEILING, CHAIN_RESET_HYSTERESIS_TURNS, CHAIN_RESET_MIN_CACHE_PCT,
     CHAIN_RESET_TOKEN_THRESHOLD, CHAIN_RESET_COOLDOWN_TURNS,
 };

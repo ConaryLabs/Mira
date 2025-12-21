@@ -1003,8 +1003,8 @@ pub async fn record_correction(
     // Store in semantic search for fuzzy matching
     if let Some(semantic) = &ctx.semantic {
         if semantic.is_available() {
-            use mira_core::semantic::COLLECTION_CONVERSATION;
-            use mira_core::semantic_helpers::{store_with_logging, MetadataBuilder};
+            use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
+            use crate::core::primitives::semantic_helpers::{store_with_logging, MetadataBuilder};
 
             let content = format!(
                 "Correction: {} -> {}. Rationale: {}",
@@ -1216,8 +1216,8 @@ pub async fn store_decision(ctx: &OpContext, input: StoreDecisionInput) -> CoreR
     // Store in semantic search
     if let Some(semantic) = &ctx.semantic {
         if semantic.is_available() {
-            use mira_core::semantic::COLLECTION_CONVERSATION;
-            use mira_core::semantic_helpers::{store_with_logging, MetadataBuilder};
+            use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
+            use crate::core::primitives::semantic_helpers::{store_with_logging, MetadataBuilder};
 
             let metadata = MetadataBuilder::new("decision")
                 .string("key", &input.key)
@@ -1301,8 +1301,8 @@ pub async fn record_rejected_approach(
     // Store in semantic search
     if let Some(semantic) = &ctx.semantic {
         if semantic.is_available() {
-            use mira_core::semantic::COLLECTION_CONVERSATION;
-            use mira_core::semantic_helpers::{store_with_logging, MetadataBuilder};
+            use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
+            use crate::core::primitives::semantic_helpers::{store_with_logging, MetadataBuilder};
 
             let content = format!(
                 "Rejected approach for {}: {} - Reason: {}",

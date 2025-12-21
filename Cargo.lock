@@ -1803,7 +1803,6 @@ dependencies = [
  "ignore",
  "libc",
  "md5",
- "mira-core",
  "notify",
  "once_cell",
  "pdf-extract",
@@ -1815,6 +1814,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "sqlx",
  "tempfile",
@@ -1837,23 +1837,6 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "mira-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "qdrant-client",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;
 
-use mira_core::semantic::SemanticSearch;
+use crate::core::SemanticSearch;
 
 use crate::core::ops::mira as core_mira;
 use crate::core::OpContext;

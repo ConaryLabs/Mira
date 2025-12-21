@@ -22,11 +22,11 @@ pub mod tasks;
 pub mod types;
 pub mod work_state;
 
-// Re-export from mira-core for backward compatibility
-pub use mira_core::semantic;
-pub use mira_core::semantic_helpers;
+// Re-export from core primitives for backward compatibility
+pub use crate::core::primitives::semantic;
+pub use crate::core::primitives::semantic_helpers;
 
 // Re-export for use in main.rs
 pub use types::*;
-pub use semantic::{SemanticSearch, COLLECTION_CODE};
+pub use crate::core::{SemanticSearch, COLLECTION_CODE};
 pub use response::{to_mcp_err, json_response, text_response, vec_response, option_response};

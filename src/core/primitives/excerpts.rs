@@ -2,7 +2,7 @@
 //!
 //! Utilities for creating model-friendly previews of large content.
 
-use crate::limits::{EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS, MAX_DIFF_FILES, MAX_GREP_MATCHES};
+use super::limits::{EXCERPT_HEAD_CHARS, EXCERPT_TAIL_CHARS, MAX_DIFF_FILES, MAX_GREP_MATCHES};
 
 /// UTF-8 safe byte slicing - finds valid char boundaries
 /// Returns (slice, actual_start, actual_end) where boundaries are adjusted to valid UTF-8
