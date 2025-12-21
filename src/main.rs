@@ -36,7 +36,7 @@ mod server;
 mod daemon;
 mod connect;
 
-use server::{MiraServer, create_optimized_pool};
+use server::{MiraServer, create_optimized_pool, run_migrations};
 use tools::SemanticSearch;
 use chat::tools::WebSearchConfig;
 
@@ -238,8 +238,30 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
 
     // Create shared state that will be cloned for each session
     let db = Arc::new(create_optimized_pool(&database_url).await?);
-    let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key).await);
     info!("Database connected: {}", database_url);
+
+    // Run pending migrations
+    // Look for migrations in the standard location relative to the executable
+    let migrations_path = std::env::var("MIRA_MIGRATIONS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            // Try relative to executable first, then fall back to current dir
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(parent) = exe.parent() {
+                    let path = parent.join("migrations");
+                    if path.exists() {
+                        return path;
+                    }
+                }
+            }
+            PathBuf::from("migrations")
+        });
+
+    if migrations_path.exists() {
+        run_migrations(&db, &migrations_path).await?;
+    }
+
+    let semantic = Arc::new(SemanticSearch::new(qdrant_url.as_deref(), gemini_key).await);
 
     // Create the MCP service with StreamableHttpService
     let mcp_service = StreamableHttpService::new(
