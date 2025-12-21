@@ -63,6 +63,10 @@ enum Commands {
         /// Port to listen on (default: 3000, env: MIRA_PORT)
         #[arg(short, long, env = "MIRA_PORT", default_value_t = DEFAULT_PORT)]
         port: u16,
+
+        /// Bind address (default: 127.0.0.1 for security, use 0.0.0.0 to expose)
+        #[arg(short, long, env = "MIRA_LISTEN", default_value = "127.0.0.1")]
+        listen: String,
     },
 
     /// Connect stdio to running daemon (for Claude Code MCP)
@@ -140,15 +144,23 @@ fn get_daemon_url(url: Option<String>, port: u16) -> String {
 // === Middleware ===
 
 /// Auth middleware that checks for Bearer token
+/// When exposed (not localhost), requires auth for all endpoints except /health
 async fn auth_middleware(
     req: Request<Body>,
     next: Next,
     expected_token: String,
+    is_localhost: bool,
 ) -> Result<Response, StatusCode> {
     let path = req.uri().path();
 
-    // Skip auth for public endpoints
-    if path == "/health" || path.starts_with("/api/") {
+    // Health check is always public
+    if path == "/health" {
+        return Ok(next.run(req).await);
+    }
+
+    // When bound to localhost only, /api/* can skip auth (trusted local access)
+    // When exposed (0.0.0.0), require auth for everything
+    if is_localhost && path.starts_with("/api/") {
         return Ok(next.run(req).await);
     }
 
@@ -185,8 +197,14 @@ async fn shutdown_signal() {
 
 // === Daemon Implementation ===
 
-async fn run_daemon(port: u16) -> Result<()> {
-    info!("Starting Mira Daemon on port {}...", port);
+async fn run_daemon(port: u16, listen: &str) -> Result<()> {
+    let is_localhost = listen == "127.0.0.1" || listen == "localhost" || listen == "::1";
+
+    info!("Starting Mira Daemon on {}:{}...", listen, port);
+    if !is_localhost {
+        warn!("⚠️  Exposed mode: binding to {} - auth required for ALL endpoints", listen);
+        warn!("   Use Bearer token from ~/.mira/token for /api/* access");
+    }
 
     // Get or create auth token
     let auth_token = get_or_create_token()?;
@@ -308,15 +326,51 @@ async fn run_daemon(port: u16) -> Result<()> {
         }
     };
 
-    // CORS configuration for browser-based clients (Claude.ai web)
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-        .expose_headers([
-            "mcp-session-id".parse().unwrap(),
-            "content-type".parse().unwrap(),
-        ]);
+    // CORS configuration
+    // - Localhost: permissive (trusted local access)
+    // - Exposed: restricted to configured origins or same-origin only
+    let cors = if is_localhost {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .expose_headers([
+                "mcp-session-id".parse().unwrap(),
+                "content-type".parse().unwrap(),
+            ])
+    } else {
+        // When exposed, only allow same-origin or explicitly configured origins
+        // For now, be restrictive - users can configure MIRA_CORS_ORIGINS if needed
+        let allowed_origins = std::env::var("MIRA_CORS_ORIGINS")
+            .ok()
+            .map(|s| s.split(',').map(|o| o.trim().to_string()).collect::<Vec<_>>());
+
+        if let Some(origins) = allowed_origins {
+            info!("CORS allowed origins: {:?}", origins);
+            let origins: Vec<_> = origins
+                .iter()
+                .filter_map(|o| o.parse().ok())
+                .collect();
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+                .expose_headers([
+                    "mcp-session-id".parse().unwrap(),
+                    "content-type".parse().unwrap(),
+                ])
+        } else {
+            // No origins configured - very restrictive (same-origin only effectively)
+            warn!("No MIRA_CORS_ORIGINS set - cross-origin requests will be blocked");
+            CorsLayer::new()
+                .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+                .expose_headers([
+                    "mcp-session-id".parse().unwrap(),
+                    "content-type".parse().unwrap(),
+                ])
+        }
+    };
 
     // Build router with auth middleware
     let mut base_router = axum::Router::new()
@@ -333,17 +387,22 @@ async fn run_daemon(port: u16) -> Result<()> {
         .nest_service("/mcp", mcp_service)
         .layer(axum::middleware::from_fn(move |req, next| {
             let token = token.clone();
-            auth_middleware(req, next, token)
+            auth_middleware(req, next, token, is_localhost)
         }))
         .layer(cors)
         .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(60)))
         .layer(TraceLayer::new_for_http());
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    info!("Mira Daemon listening on http://0.0.0.0:{}", port);
+    let bind_addr = format!("{}:{}", listen, port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    info!("Mira Daemon listening on http://{}", bind_addr);
     info!("  Health: /health");
     info!("  MCP:    /mcp (requires auth)");
-    info!("  Chat:   /api/chat/stream, /api/chat/sync");
+    if is_localhost {
+        info!("  Chat:   /api/chat/stream, /api/chat/sync (local access, no auth)");
+    } else {
+        info!("  Chat:   /api/chat/stream, /api/chat/sync (requires auth)");
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -427,15 +486,17 @@ async fn main() -> Result<()> {
 
     match cli.command {
         None => {
-            // Default: run daemon on default port
+            // Default: run daemon on default port and localhost
             let port = std::env::var("MIRA_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(DEFAULT_PORT);
-            run_daemon(port).await?;
+            let listen = std::env::var("MIRA_LISTEN")
+                .unwrap_or_else(|_| "127.0.0.1".to_string());
+            run_daemon(port, &listen).await?;
         }
-        Some(Commands::Daemon { port }) => {
-            run_daemon(port).await?;
+        Some(Commands::Daemon { port, listen }) => {
+            run_daemon(port, &listen).await?;
         }
         Some(Commands::Connect { url }) => {
             // Run stdio shim that connects to daemon
