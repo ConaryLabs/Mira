@@ -1,13 +1,14 @@
 // src/tools/git_intel.rs
-// Git intelligence tools - thin wrapper over core::ops::git
+// Git intelligence tools - thin wrapper over core::ops::git and core::ops::build
 
-use chrono::Utc;
+use std::sync::Arc;
+
 use sqlx::sqlite::SqlitePool;
-use std::collections::HashMap;
 
+use crate::core::ops::build as core_build;
 use crate::core::ops::git as core_git;
+use crate::core::primitives::semantic::SemanticSearch;
 use crate::core::OpContext;
-use super::semantic::{SemanticSearch, COLLECTION_CONVERSATION};
 use super::types::*;
 
 /// Get recent commits
@@ -86,172 +87,70 @@ pub async fn find_cochange_patterns(db: &SqlitePool, req: FindCochangeRequest) -
 /// Find similar error fixes - uses semantic search if available
 pub async fn find_similar_fixes(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     req: FindSimilarFixesRequest,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let limit = req.limit.unwrap_or(5) as usize;
 
-    // Try semantic search first for better matching
-    if semantic.is_available() {
-        let filter = req.category.as_ref().map(|category| qdrant_client::qdrant::Filter::must([
-            qdrant_client::qdrant::Condition::matches("category", category.clone())
-        ]));
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+        .with_db(db.clone())
+        .with_semantic(semantic.clone());
 
-        match semantic.search(COLLECTION_CONVERSATION, &req.error, limit, filter).await {
-            Ok(results) => {
-                let error_fixes: Vec<_> = results.into_iter()
-                    .filter(|r| r.metadata.get("type").map(|v| v.as_str()) == Some(Some("error_fix")))
-                    .map(|r| {
-                        serde_json::json!({
-                            "error_pattern": r.metadata.get("error_pattern"),
-                            "fix_description": r.content,
-                            "score": r.score,
-                            "search_type": "semantic",
-                            "category": r.metadata.get("category"),
-                            "language": r.metadata.get("language"),
-                        })
-                    })
-                    .collect();
+    let input = core_build::FindSimilarFixesInput {
+        error: req.error,
+        category: req.category,
+        language: req.language,
+        limit,
+    };
 
-                if !error_fixes.is_empty() {
-                    return Ok(error_fixes);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Semantic fix search failed, falling back to text: {}", e);
-            }
-        }
-    }
+    let fixes = core_build::find_similar_fixes(&ctx, input).await?;
 
-    // Fallback to SQLite text search
-    let error_pattern = format!("%{}%", req.error);
-
-    let query = r#"
-        SELECT id, error_pattern, error_category, language, file_pattern,
-               fix_description, fix_diff, fix_commit, times_seen, times_fixed,
-               datetime(last_seen, 'unixepoch', 'localtime') as last_seen
-        FROM error_fixes
-        WHERE error_pattern LIKE $1
-          AND ($2 IS NULL OR error_category = $2)
-          AND ($3 IS NULL OR language = $3)
-        ORDER BY times_fixed DESC, last_seen DESC
-        LIMIT $4
-    "#;
-
-    let rows = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64, i64, String)>(query)
-        .bind(&error_pattern)
-        .bind(&req.category)
-        .bind(&req.language)
-        .bind(limit as i64)
-        .fetch_all(db)
-        .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(id, pattern, category, language, file_pattern, fix_desc, fix_diff, commit, seen, fixed, last_seen)| {
-            serde_json::json!({
-                "id": id,
-                "error_pattern": pattern,
-                "category": category,
-                "language": language,
-                "file_pattern": file_pattern,
-                "fix_description": fix_desc,
-                "fix_diff": fix_diff,
-                "commit": commit,
-                "times_seen": seen,
-                "times_fixed": fixed,
-                "last_seen": last_seen,
-                "search_type": "text",
-            })
+    Ok(fixes.into_iter().map(|f| {
+        serde_json::json!({
+            "id": f.id,
+            "error_pattern": f.error_pattern,
+            "category": f.category,
+            "language": f.language,
+            "file_pattern": f.file_pattern,
+            "fix_description": f.fix_description,
+            "fix_diff": f.fix_diff,
+            "commit": f.fix_commit,
+            "times_seen": f.times_seen,
+            "times_fixed": f.times_fixed,
+            "last_seen": f.last_seen,
+            "score": f.score,
+            "search_type": f.search_type,
         })
-        .collect())
+    }).collect())
 }
 
 /// Record an error fix for future learning
 pub async fn record_error_fix(
     db: &SqlitePool,
-    semantic: &SemanticSearch,
+    semantic: &Arc<SemanticSearch>,
     req: RecordErrorFixRequest,
 ) -> anyhow::Result<serde_json::Value> {
-    let now = Utc::now().timestamp();
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+        .with_db(db.clone())
+        .with_semantic(semantic.clone());
 
-    // Try to update existing pattern or insert new one
-    let existing = sqlx::query_as::<_, (i64,)>(
-        "SELECT id FROM error_fixes WHERE error_pattern = $1"
-    )
-    .bind(&req.error_pattern)
-    .fetch_optional(db)
-    .await?;
-
-    let (status, id) = if let Some((id,)) = existing {
-        // Update existing
-        sqlx::query(r#"
-            UPDATE error_fixes
-            SET times_fixed = times_fixed + 1,
-                fix_description = COALESCE($1, fix_description),
-                fix_diff = COALESCE($2, fix_diff),
-                fix_commit = COALESCE($3, fix_commit),
-                last_seen = $4
-            WHERE id = $5
-        "#)
-        .bind(&req.fix_description)
-        .bind(&req.fix_diff)
-        .bind(&req.fix_commit)
-        .bind(now)
-        .bind(id)
-        .execute(db)
-        .await?;
-
-        ("updated", id)
-    } else {
-        // Insert new
-        let result = sqlx::query(r#"
-            INSERT INTO error_fixes (error_pattern, error_category, language, file_pattern,
-                                     fix_description, fix_diff, fix_commit,
-                                     times_seen, times_fixed, last_seen, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $8)
-        "#)
-        .bind(&req.error_pattern)
-        .bind(&req.category)
-        .bind(&req.language)
-        .bind(&req.file_pattern)
-        .bind(&req.fix_description)
-        .bind(&req.fix_diff)
-        .bind(&req.fix_commit)
-        .bind(now)
-        .execute(db)
-        .await?;
-
-        ("recorded", result.last_insert_rowid())
+    let input = core_build::RecordErrorFixInput {
+        error_pattern: req.error_pattern.clone(),
+        fix_description: req.fix_description.clone(),
+        category: req.category.clone(),
+        language: req.language.clone(),
+        file_pattern: req.file_pattern.clone(),
+        fix_diff: req.fix_diff.clone(),
+        fix_commit: req.fix_commit.clone(),
     };
 
-    // Store in Qdrant for semantic search
-    if semantic.is_available() {
-        let content = format!("{}\n\nFix: {}", req.error_pattern, req.fix_description);
-        let mut metadata = HashMap::new();
-        metadata.insert("type".to_string(), serde_json::Value::String("error_fix".to_string()));
-        metadata.insert("error_pattern".to_string(), serde_json::Value::String(req.error_pattern.clone()));
-        if let Some(ref cat) = req.category {
-            metadata.insert("category".to_string(), serde_json::Value::String(cat.clone()));
-        }
-        if let Some(ref lang) = req.language {
-            metadata.insert("language".to_string(), serde_json::Value::String(lang.clone()));
-        }
-
-        if let Err(e) = semantic.ensure_collection(COLLECTION_CONVERSATION).await {
-            tracing::warn!("Failed to ensure conversation collection: {}", e);
-        }
-
-        if let Err(e) = semantic.store(COLLECTION_CONVERSATION, &id.to_string(), &content, metadata).await {
-            tracing::warn!("Failed to store error fix in Qdrant: {}", e);
-        }
-    }
+    let output = core_build::record_error_fix(&ctx, input).await?;
 
     Ok(serde_json::json!({
-        "status": status,
-        "id": id,
-        "error_pattern": req.error_pattern,
+        "status": output.status,
+        "id": output.id,
+        "error_pattern": output.error_pattern,
         "category": req.category,
-        "semantic_search": semantic.is_available(),
+        "semantic_search": output.semantic_indexed,
     }))
 }

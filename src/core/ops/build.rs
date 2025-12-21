@@ -1,12 +1,14 @@
 //! Core build operations - shared by MCP and Chat
 //!
-//! Build error tracking and management.
+//! Build error tracking, management, and error fix learning.
 
 use chrono::Utc;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use super::super::{CoreResult, OpContext};
+use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
 
 // ============================================================================
 // Input/Output Types
@@ -196,4 +198,232 @@ pub async fn resolve_error(ctx: &OpContext, error_id: i64) -> CoreResult<bool> {
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+// ============================================================================
+// Error Fix Learning Operations
+// ============================================================================
+
+/// Input for finding similar error fixes
+pub struct FindSimilarFixesInput {
+    pub error: String,
+    pub category: Option<String>,
+    pub language: Option<String>,
+    pub limit: usize,
+}
+
+/// An error fix suggestion
+pub struct ErrorFix {
+    pub id: i64,
+    pub error_pattern: String,
+    pub category: Option<String>,
+    pub language: Option<String>,
+    pub file_pattern: Option<String>,
+    pub fix_description: Option<String>,
+    pub fix_diff: Option<String>,
+    pub fix_commit: Option<String>,
+    pub times_seen: i64,
+    pub times_fixed: i64,
+    pub last_seen: String,
+    pub score: f32,
+    pub search_type: String,
+}
+
+/// Input for recording an error fix
+pub struct RecordErrorFixInput {
+    pub error_pattern: String,
+    pub fix_description: String,
+    pub category: Option<String>,
+    pub language: Option<String>,
+    pub file_pattern: Option<String>,
+    pub fix_diff: Option<String>,
+    pub fix_commit: Option<String>,
+}
+
+/// Output from recording an error fix
+pub struct RecordErrorFixOutput {
+    pub id: i64,
+    pub status: String,
+    pub error_pattern: String,
+    pub semantic_indexed: bool,
+}
+
+/// Find similar error fixes - uses semantic search if available, falls back to text
+pub async fn find_similar_fixes(ctx: &OpContext, input: FindSimilarFixesInput) -> CoreResult<Vec<ErrorFix>> {
+    let db = ctx.require_db()?;
+
+    // Try semantic search first for better matching
+    if let Some(semantic) = &ctx.semantic {
+        if semantic.is_available() {
+            let filter = input.category.as_ref().map(|category| {
+                qdrant_client::qdrant::Filter::must([
+                    qdrant_client::qdrant::Condition::matches("category", category.clone())
+                ])
+            });
+
+            match semantic.search(COLLECTION_CONVERSATION, &input.error, input.limit, filter).await {
+                Ok(results) => {
+                    let fixes: Vec<ErrorFix> = results.into_iter()
+                        .filter(|r| r.metadata.get("type").and_then(|v| v.as_str()) == Some("error_fix"))
+                        .map(|r| ErrorFix {
+                            id: r.metadata.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                            error_pattern: r.metadata.get("error_pattern")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            category: r.metadata.get("category").and_then(|v| v.as_str()).map(String::from),
+                            language: r.metadata.get("language").and_then(|v| v.as_str()).map(String::from),
+                            file_pattern: None,
+                            fix_description: Some(r.content),
+                            fix_diff: None,
+                            fix_commit: None,
+                            times_seen: 0,
+                            times_fixed: 0,
+                            last_seen: String::new(),
+                            score: r.score,
+                            search_type: "semantic".to_string(),
+                        })
+                        .collect();
+
+                    if !fixes.is_empty() {
+                        return Ok(fixes);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Semantic fix search failed, falling back to text: {}", e);
+                }
+            }
+        }
+    }
+
+    // Fallback to SQLite text search
+    let error_pattern = format!("%{}%", input.error);
+
+    let query = r#"
+        SELECT id, error_pattern, error_category, language, file_pattern,
+               fix_description, fix_diff, fix_commit, times_seen, times_fixed,
+               datetime(last_seen, 'unixepoch', 'localtime') as last_seen
+        FROM error_fixes
+        WHERE error_pattern LIKE $1
+          AND ($2 IS NULL OR error_category = $2)
+          AND ($3 IS NULL OR language = $3)
+        ORDER BY times_fixed DESC, last_seen DESC
+        LIMIT $4
+    "#;
+
+    let rows = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i64, i64, String)>(query)
+        .bind(&error_pattern)
+        .bind(&input.category)
+        .bind(&input.language)
+        .bind(input.limit as i64)
+        .fetch_all(db)
+        .await?;
+
+    Ok(rows.into_iter().map(|(id, pattern, category, language, file_pattern, fix_desc, fix_diff, commit, seen, fixed, last_seen)| {
+        ErrorFix {
+            id,
+            error_pattern: pattern,
+            category,
+            language,
+            file_pattern,
+            fix_description: fix_desc,
+            fix_diff,
+            fix_commit: commit,
+            times_seen: seen,
+            times_fixed: fixed,
+            last_seen,
+            score: 1.0,
+            search_type: "text".to_string(),
+        }
+    }).collect())
+}
+
+/// Record an error fix for future learning
+pub async fn record_error_fix(ctx: &OpContext, input: RecordErrorFixInput) -> CoreResult<RecordErrorFixOutput> {
+    let db = ctx.require_db()?;
+    let now = Utc::now().timestamp();
+
+    // Try to update existing pattern or insert new one
+    let existing = sqlx::query_as::<_, (i64,)>(
+        "SELECT id FROM error_fixes WHERE error_pattern = $1"
+    )
+    .bind(&input.error_pattern)
+    .fetch_optional(db)
+    .await?;
+
+    let (status, id) = if let Some((id,)) = existing {
+        // Update existing
+        sqlx::query(r#"
+            UPDATE error_fixes
+            SET times_fixed = times_fixed + 1,
+                fix_description = COALESCE($1, fix_description),
+                fix_diff = COALESCE($2, fix_diff),
+                fix_commit = COALESCE($3, fix_commit),
+                last_seen = $4
+            WHERE id = $5
+        "#)
+        .bind(&input.fix_description)
+        .bind(&input.fix_diff)
+        .bind(&input.fix_commit)
+        .bind(now)
+        .bind(id)
+        .execute(db)
+        .await?;
+
+        ("updated".to_string(), id)
+    } else {
+        // Insert new
+        let result = sqlx::query(r#"
+            INSERT INTO error_fixes (error_pattern, error_category, language, file_pattern,
+                                     fix_description, fix_diff, fix_commit,
+                                     times_seen, times_fixed, last_seen, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $8)
+        "#)
+        .bind(&input.error_pattern)
+        .bind(&input.category)
+        .bind(&input.language)
+        .bind(&input.file_pattern)
+        .bind(&input.fix_description)
+        .bind(&input.fix_diff)
+        .bind(&input.fix_commit)
+        .bind(now)
+        .execute(db)
+        .await?;
+
+        ("recorded".to_string(), result.last_insert_rowid())
+    };
+
+    // Store in Qdrant for semantic search
+    let mut semantic_indexed = false;
+    if let Some(semantic) = &ctx.semantic {
+        if semantic.is_available() {
+            let content = format!("{}\n\nFix: {}", input.error_pattern, input.fix_description);
+            let mut metadata = HashMap::new();
+            metadata.insert("type".to_string(), serde_json::Value::String("error_fix".to_string()));
+            metadata.insert("id".to_string(), serde_json::Value::Number(id.into()));
+            metadata.insert("error_pattern".to_string(), serde_json::Value::String(input.error_pattern.clone()));
+            if let Some(ref cat) = input.category {
+                metadata.insert("category".to_string(), serde_json::Value::String(cat.clone()));
+            }
+            if let Some(ref lang) = input.language {
+                metadata.insert("language".to_string(), serde_json::Value::String(lang.clone()));
+            }
+
+            if let Err(e) = semantic.ensure_collection(COLLECTION_CONVERSATION).await {
+                tracing::warn!("Failed to ensure conversation collection: {}", e);
+            }
+
+            match semantic.store(COLLECTION_CONVERSATION, &id.to_string(), &content, metadata).await {
+                Ok(_) => semantic_indexed = true,
+                Err(e) => tracing::warn!("Failed to store error fix in Qdrant: {}", e),
+            }
+        }
+    }
+
+    Ok(RecordErrorFixOutput {
+        id,
+        status,
+        error_pattern: input.error_pattern,
+        semantic_indexed,
+    })
 }

@@ -2,13 +2,16 @@
 //!
 //! Handles response ID persistence and handoff for smooth context resets.
 //! Includes hysteresis logic to prevent flappy resets.
+//! Uses core::ops::chat_chain for all database operations.
 
 use anyhow::Result;
-use chrono::Utc;
+
+use crate::core::ops::chat_chain as core_chain;
 use crate::core::primitives::{
-    CHAIN_RESET_HARD_CEILING, CHAIN_RESET_HYSTERESIS_TURNS, CHAIN_RESET_MIN_CACHE_PCT,
-    CHAIN_RESET_TOKEN_THRESHOLD, CHAIN_RESET_COOLDOWN_TURNS,
+    CHAIN_RESET_COOLDOWN_TURNS, CHAIN_RESET_HARD_CEILING, CHAIN_RESET_HYSTERESIS_TURNS,
+    CHAIN_RESET_MIN_CACHE_PCT, CHAIN_RESET_TOKEN_THRESHOLD,
 };
+use crate::core::OpContext;
 
 use super::SessionManager;
 
@@ -26,20 +29,33 @@ pub enum ResetDecision {
 }
 
 impl SessionManager {
+    /// Build OpContext for core operations
+    fn chain_context(&self) -> OpContext {
+        OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(self.db.clone())
+    }
+
+    // ========================================================================
+    // Response ID Management
+    // ========================================================================
+
     /// Update the previous response ID
     pub async fn set_response_id(&self, response_id: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE chat_context
-            SET last_response_id = $1, updated_at = $2
-            WHERE project_path = $3
-            "#,
-        )
-        .bind(response_id)
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
+        let ctx = self.chain_context();
+        core_chain::set_response_id(&ctx, &self.project_path, response_id).await?;
+        Ok(())
+    }
+
+    /// Get the previous response ID
+    pub async fn get_response_id(&self) -> Result<Option<String>> {
+        let ctx = self.chain_context();
+        let id = core_chain::get_response_id(&ctx, &self.project_path).await?;
+        Ok(id)
+    }
+
+    /// Clear the previous response ID (no handoff - hard reset)
+    pub async fn clear_response_id(&self) -> Result<()> {
+        let ctx = self.chain_context();
+        core_chain::clear_response_id(&ctx, &self.project_path).await?;
         Ok(())
     }
 
@@ -50,106 +66,44 @@ impl SessionManager {
         // Build handoff blob BEFORE clearing (captures current state)
         let handoff = self.build_handoff_blob().await?;
 
-        sqlx::query(
-            r#"
-            UPDATE chat_context
-            SET last_response_id = NULL, needs_handoff = 1, handoff_blob = $1, updated_at = $2
-            WHERE project_path = $3
-            "#,
-        )
-        .bind(&handoff)
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
+        let ctx = self.chain_context();
+        core_chain::clear_response_id_with_handoff(&ctx, &self.project_path, &handoff).await?;
         Ok(())
     }
 
-    /// Clear the previous response ID (no handoff - hard reset)
-    pub async fn clear_response_id(&self) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE chat_context
-            SET last_response_id = NULL, updated_at = $1
-            WHERE project_path = $2
-            "#,
-        )
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
-        Ok(())
-    }
+    // ========================================================================
+    // Handoff Management
+    // ========================================================================
 
     /// Check if next request needs handoff context
     pub async fn needs_handoff(&self) -> Result<bool> {
-        let row: Option<(i32,)> = sqlx::query_as(
-            "SELECT needs_handoff FROM chat_context WHERE project_path = $1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-        Ok(row.map(|(v,)| v != 0).unwrap_or(false))
+        let ctx = self.chain_context();
+        let needs = core_chain::needs_handoff(&ctx, &self.project_path).await?;
+        Ok(needs)
     }
 
     /// Get the handoff blob (if any) and clear the flag
     pub async fn consume_handoff(&self) -> Result<Option<String>> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT handoff_blob FROM chat_context WHERE project_path = $1 AND needs_handoff = 1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-
-        if let Some((blob,)) = row {
-            // Clear the handoff flag
-            sqlx::query(
-                "UPDATE chat_context SET needs_handoff = 0, handoff_blob = NULL, updated_at = $1 WHERE project_path = $2",
-            )
-            .bind(Utc::now().timestamp())
-            .bind(&self.project_path)
-            .execute(&self.db)
-            .await?;
-            Ok(blob)
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Get the previous response ID
-    pub async fn get_response_id(&self) -> Result<Option<String>> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT last_response_id FROM chat_context WHERE project_path = $1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-
-        Ok(row.and_then(|(id,)| id))
+        let ctx = self.chain_context();
+        let blob = core_chain::consume_handoff(&ctx, &self.project_path).await?;
+        Ok(blob)
     }
 
     /// Build a compact handoff blob for continuity after reset
     /// This captures: recent turns, current plan/decisions, persona reminders
     pub(super) async fn build_handoff_blob(&self) -> Result<String> {
+        let ctx = self.chain_context();
         let mut sections = Vec::new();
 
         // 1. Recent conversation (last 3-4 turns for immediate context)
-        let recent: Vec<(String, String, i64)> = sqlx::query_as(
-            r#"
-            SELECT role, blocks, created_at FROM chat_messages
-            WHERE archived_at IS NULL
-            ORDER BY created_at DESC
-            LIMIT 6
-            "#,
-        )
-        .fetch_all(&self.db)
-        .await?;
+        let recent = core_chain::get_recent_messages(&ctx, 6).await.unwrap_or_default();
 
         if !recent.is_empty() {
             let mut convo_lines = vec!["## Recent Conversation".to_string()];
-            for (role, blocks_json, _) in recent.into_iter().rev() {
+            for msg in recent.into_iter().rev() {
                 // Extract just text content from blocks
-                if let Ok(blocks) = serde_json::from_str::<Vec<serde_json::Value>>(&blocks_json) {
+                if let Ok(blocks) = serde_json::from_str::<Vec<serde_json::Value>>(&msg.blocks_json)
+                {
                     for block in blocks {
                         if let Some(content) = block.get("content").and_then(|c| c.as_str()) {
                             // Truncate long messages (use chars to avoid UTF-8 boundary panic)
@@ -158,7 +112,7 @@ impl SessionManager {
                             } else {
                                 content.to_string()
                             };
-                            convo_lines.push(format!("**{}**: {}", role, text));
+                            convo_lines.push(format!("**{}**: {}", msg.role, text));
                         }
                     }
                 }
@@ -169,60 +123,42 @@ impl SessionManager {
         }
 
         // 2. Latest summary (captures older context)
-        let summary: Option<(String,)> = sqlx::query_as(
-            "SELECT summary FROM chat_summaries WHERE project_path = $1 ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-
-        if let Some((summary_text,)) = summary {
+        if let Ok(Some(summary_text)) =
+            core_chain::get_latest_summary(&ctx, &self.project_path).await
+        {
             sections.push(format!("## Earlier Context (Summary)\n{}", summary_text));
         }
 
         // 3. Active goals/tasks
-        let goals: Vec<(String, String, i32)> = sqlx::query_as(
-            r#"
-            SELECT title, status, progress_percent FROM goals
-            WHERE project_id = (SELECT id FROM projects WHERE path = $1)
-              AND status IN ('planning', 'in_progress', 'blocked')
-            ORDER BY updated_at DESC LIMIT 3
-            "#,
-        )
-        .bind(&self.project_path)
-        .fetch_all(&self.db)
-        .await?;
+        let goals = core_chain::get_active_goals_for_handoff(&ctx, &self.project_path, 3)
+            .await
+            .unwrap_or_default();
 
         if !goals.is_empty() {
             let mut goal_lines = vec!["## Active Goals".to_string()];
-            for (title, status, progress) in goals {
-                goal_lines.push(format!("- {} [{}] ({}%)", title, status, progress));
+            for goal in goals {
+                goal_lines.push(format!(
+                    "- {} [{}] ({}%)",
+                    goal.title, goal.status, goal.progress_percent
+                ));
             }
             sections.push(goal_lines.join("\n"));
         }
 
         // 4. Key decisions (recent ones that might be relevant)
-        let decisions: Vec<(String,)> = sqlx::query_as(
-            r#"
-            SELECT value FROM memory_facts
-            WHERE (project_id = (SELECT id FROM projects WHERE path = $1) OR project_id IS NULL)
-              AND fact_type = 'decision'
-            ORDER BY updated_at DESC LIMIT 5
-            "#,
-        )
-        .bind(&self.project_path)
-        .fetch_all(&self.db)
-        .await?;
+        let decisions = core_chain::get_recent_decisions_for_handoff(&ctx, &self.project_path, 5)
+            .await
+            .unwrap_or_default();
 
         if !decisions.is_empty() {
             let mut dec_lines = vec!["## Recent Decisions".to_string()];
-            for (decision,) in decisions {
-                dec_lines.push(format!("- {}", decision));
+            for decision in decisions {
+                dec_lines.push(format!("- {}", decision.value));
             }
             sections.push(dec_lines.join("\n"));
         }
 
-        // 5. Working set (touched files)
+        // 5. Working set (touched files) - in-memory, not from DB
         let touched = self.get_touched_files();
         if !touched.is_empty() {
             let mut file_lines = vec!["## Working Set (Recently Touched Files)".to_string()];
@@ -233,23 +169,31 @@ impl SessionManager {
         }
 
         // 6. Last failure (if any)
-        if let Ok(Some(failure)) = self.get_last_failure().await {
+        if let Ok(Some(failure)) =
+            core_chain::get_last_failure(&ctx, &self.project_path).await
+        {
             sections.push(format!(
                 "## Last Known Failure\n**Command:** `{}`\n**Error (first 500 chars):**\n```\n{}\n```",
-                failure.0,
-                if failure.1.len() > 500 { &failure.1[..500] } else { &failure.1 }
+                failure.command,
+                if failure.error.len() > 500 {
+                    &failure.error[..500]
+                } else {
+                    &failure.error
+                }
             ));
         }
 
         // 7. Recent artifacts
-        if let Ok(Some(artifact_ids)) = self.get_recent_artifact_ids().await {
-            if !artifact_ids.is_empty() {
-                let mut art_lines = vec!["## Recent Artifacts".to_string()];
-                for id in artifact_ids.iter().take(5) {
-                    art_lines.push(format!("- `{}`", id));
-                }
-                sections.push(art_lines.join("\n"));
+        let artifact_ids = core_chain::get_recent_artifact_ids(&ctx, &self.project_path)
+            .await
+            .unwrap_or_default();
+
+        if !artifact_ids.is_empty() {
+            let mut art_lines = vec!["## Recent Artifacts".to_string()];
+            for id in artifact_ids.iter().take(5) {
+                art_lines.push(format!("- `{}`", id));
             }
+            sections.push(art_lines.join("\n"));
         }
 
         // 8. Continuity note
@@ -273,13 +217,15 @@ impl SessionManager {
     /// Evaluate whether a reset should occur based on token count and cache%
     /// Uses hysteresis to prevent flappy resets
     pub async fn should_reset(&self, input_tokens: u32, cache_pct: u32) -> Result<ResetDecision> {
+        let ctx = self.chain_context();
+
         // Get current tracking state
-        let (consecutive_low, turns_since) = self.get_reset_tracking().await?;
+        let state = core_chain::get_reset_tracking(&ctx, &self.project_path).await?;
 
         // Check cooldown first
-        if turns_since < CHAIN_RESET_COOLDOWN_TURNS {
+        if state.turns_since_reset < CHAIN_RESET_COOLDOWN_TURNS {
             return Ok(ResetDecision::Cooldown {
-                turns_remaining: CHAIN_RESET_COOLDOWN_TURNS - turns_since,
+                turns_remaining: CHAIN_RESET_COOLDOWN_TURNS - state.turns_since_reset,
             });
         }
 
@@ -300,8 +246,9 @@ impl SessionManager {
 
         if above_threshold && is_low_cache {
             // Check if we've had enough consecutive low-cache turns
-            let new_consecutive = consecutive_low + 1;
-            self.update_consecutive_low_cache(new_consecutive).await?;
+            let new_consecutive = state.consecutive_low_cache_turns + 1;
+            core_chain::update_consecutive_low_cache(&ctx, &self.project_path, new_consecutive)
+                .await?;
 
             if new_consecutive >= CHAIN_RESET_HYSTERESIS_TURNS {
                 return Ok(ResetDecision::SoftReset {
@@ -315,66 +262,21 @@ impl SessionManager {
             }
         } else {
             // Reset the consecutive counter if conditions aren't met
-            if consecutive_low > 0 {
-                self.update_consecutive_low_cache(0).await?;
+            if state.consecutive_low_cache_turns > 0 {
+                core_chain::update_consecutive_low_cache(&ctx, &self.project_path, 0).await?;
             }
         }
 
         // Increment turns since reset
-        self.increment_turns_since_reset().await?;
+        core_chain::increment_turns_since_reset(&ctx, &self.project_path).await?;
 
         Ok(ResetDecision::NoReset)
     }
 
     /// Record that a reset occurred
     pub async fn record_reset(&self) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE chat_context
-            SET consecutive_low_cache_turns = 0, turns_since_reset = 0, updated_at = $1
-            WHERE project_path = $2
-            "#,
-        )
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
-        Ok(())
-    }
-
-    /// Get current reset tracking state
-    async fn get_reset_tracking(&self) -> Result<(u32, u32)> {
-        let row: Option<(i32, i32)> = sqlx::query_as(
-            "SELECT consecutive_low_cache_turns, turns_since_reset FROM chat_context WHERE project_path = $1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-        Ok(row.map(|(c, t)| (c as u32, t as u32)).unwrap_or((0, 999))) // 999 = no cooldown on first run
-    }
-
-    /// Update consecutive low-cache counter
-    async fn update_consecutive_low_cache(&self, count: u32) -> Result<()> {
-        sqlx::query(
-            "UPDATE chat_context SET consecutive_low_cache_turns = $1, updated_at = $2 WHERE project_path = $3",
-        )
-        .bind(count as i32)
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
-        Ok(())
-    }
-
-    /// Increment turns since last reset
-    async fn increment_turns_since_reset(&self) -> Result<()> {
-        sqlx::query(
-            "UPDATE chat_context SET turns_since_reset = turns_since_reset + 1, updated_at = $1 WHERE project_path = $2",
-        )
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
+        let ctx = self.chain_context();
+        core_chain::record_reset(&ctx, &self.project_path).await?;
         Ok(())
     }
 
@@ -384,85 +286,40 @@ impl SessionManager {
 
     /// Record a failure for handoff context
     pub async fn record_failure(&self, command: &str, error: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE chat_context
-            SET last_failure_command = $1, last_failure_error = $2, last_failure_at = $3, updated_at = $3
-            WHERE project_path = $4
-            "#,
-        )
-        .bind(command)
-        .bind(error)
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
+        let ctx = self.chain_context();
+        core_chain::record_failure(&ctx, &self.project_path, command, error).await?;
         Ok(())
     }
 
     /// Clear failure after success
     pub async fn clear_failure(&self) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE chat_context
-            SET last_failure_command = NULL, last_failure_error = NULL, last_failure_at = NULL, updated_at = $1
-            WHERE project_path = $2
-            "#,
-        )
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
+        let ctx = self.chain_context();
+        core_chain::clear_failure(&ctx, &self.project_path).await?;
         Ok(())
     }
 
-    /// Get last failure (command, error)
+    /// Get last failure (command, error) - used internally for handoff
     async fn get_last_failure(&self) -> Result<Option<(String, String)>> {
-        let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT last_failure_command, last_failure_error FROM chat_context WHERE project_path = $1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-        Ok(row.and_then(|(c, e)| c.zip(e)))
+        let ctx = self.chain_context();
+        let info = core_chain::get_last_failure(&ctx, &self.project_path).await?;
+        Ok(info.map(|f| (f.command, f.error)))
     }
 
     /// Add an artifact ID to recent list (keeps last 10)
     pub async fn track_artifact(&self, artifact_id: &str) -> Result<()> {
-        // Get current list
-        let current = self.get_recent_artifact_ids().await?.unwrap_or_default();
-        let mut ids: Vec<String> = current;
-
-        // Add new, keep last 10
-        ids.push(artifact_id.to_string());
-        if ids.len() > 10 {
-            let skip_count = ids.len() - 10;
-            ids = ids.into_iter().skip(skip_count).collect();
-        }
-
-        sqlx::query(
-            "UPDATE chat_context SET recent_artifact_ids = $1, updated_at = $2 WHERE project_path = $3",
-        )
-        .bind(serde_json::to_string(&ids)?)
-        .bind(Utc::now().timestamp())
-        .bind(&self.project_path)
-        .execute(&self.db)
-        .await?;
+        let ctx = self.chain_context();
+        core_chain::track_artifact(&ctx, &self.project_path, artifact_id, 10).await?;
         Ok(())
     }
 
-    /// Get recent artifact IDs
+    /// Get recent artifact IDs - used internally for handoff
     async fn get_recent_artifact_ids(&self) -> Result<Option<Vec<String>>> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT recent_artifact_ids FROM chat_context WHERE project_path = $1",
-        )
-        .bind(&self.project_path)
-        .fetch_optional(&self.db)
-        .await?;
-
-        match row {
-            Some((Some(json),)) => Ok(Some(serde_json::from_str(&json)?)),
-            _ => Ok(None),
+        let ctx = self.chain_context();
+        let ids = core_chain::get_recent_artifact_ids(&ctx, &self.project_path).await?;
+        if ids.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(ids))
         }
     }
 }
