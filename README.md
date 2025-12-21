@@ -204,7 +204,19 @@ Then just talk naturally:
 ### Hotline
 | Tool | Description |
 |------|-------------|
-| `hotline` | Consult GPT-5.2, DeepSeek, or Gemini for advice |
+| `hotline` | Consult GPT-5.2, DeepSeek, Gemini, or all three (council) |
+
+**Automatic Context Injection:** By default (`inject_context=true`), hotline automatically includes project context:
+- Corrections (learned mistakes to avoid)
+- Active goals and progress
+- Past decisions
+- Relevant memories
+- Recent commits
+- Similar past fixes
+- Related files and key symbols
+- Call graph relationships
+
+Set `inject_context=false` to send raw messages without context.
 
 ## Requirements
 

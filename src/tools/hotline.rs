@@ -640,6 +640,106 @@ fn format_context_for_llm(
         parts.push(String::new());
     }
 
+    // Similar fixes (error patterns that have been solved before)
+    if let Some(fixes) = ctx["similar_fixes"].as_array() {
+        if !fixes.is_empty() {
+            parts.push("## Similar Past Fixes".to_string());
+            for f in fixes {
+                let pattern = f["error_pattern"].as_str().unwrap_or("");
+                let fix = f["fix_description"].as_str().unwrap_or("");
+                if !pattern.is_empty() && !fix.is_empty() {
+                    parts.push(format!("- **{}**: {}", pattern, fix));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Code context - related files and key symbols
+    if let Some(code_ctx) = ctx.get("code_context") {
+        // Related files (cochange patterns and imports)
+        if let Some(related) = code_ctx["related_files"].as_array() {
+            if !related.is_empty() {
+                parts.push("## Related Files".to_string());
+                for r in related.iter().take(5) {
+                    let file = r["file"].as_str().unwrap_or("");
+                    let relation = r["relation"].as_str().unwrap_or("");
+                    let related_to = r["related_to"].as_str().unwrap_or("");
+                    if !file.is_empty() {
+                        parts.push(format!("- {} ({} of {})", file, relation, related_to));
+                    }
+                }
+                parts.push(String::new());
+            }
+        }
+
+        // Key symbols in the codebase
+        if let Some(symbols) = code_ctx["key_symbols"].as_array() {
+            if !symbols.is_empty() {
+                parts.push("## Key Symbols".to_string());
+                for s in symbols.iter().take(8) {
+                    let name = s["name"].as_str().unwrap_or("");
+                    let stype = s["type"].as_str().unwrap_or("");
+                    let file = s["file"].as_str().unwrap_or("");
+                    if !name.is_empty() {
+                        parts.push(format!("- `{}` ({}) in {}", name, stype, file));
+                    }
+                }
+                parts.push(String::new());
+            }
+        }
+
+        // Codebase style guidance
+        if let Some(style) = code_ctx.get("codebase_style") {
+            if let Some(guidance) = style["guidance"].as_str() {
+                parts.push("## Code Style".to_string());
+                parts.push(format!("- {}", guidance));
+                parts.push(String::new());
+            }
+        }
+
+        // Improvement suggestions
+        if let Some(improvements) = code_ctx["improvement_suggestions"].as_array() {
+            if !improvements.is_empty() {
+                parts.push("## Suggested Improvements".to_string());
+                for i in improvements.iter().take(3) {
+                    let symbol = i["symbol_name"].as_str().unwrap_or("");
+                    let suggestion = i["suggestion"].as_str().unwrap_or("");
+                    if !symbol.is_empty() && !suggestion.is_empty() {
+                        parts.push(format!("- `{}`: {}", symbol, suggestion));
+                    }
+                }
+                parts.push(String::new());
+            }
+        }
+    }
+
+    // Call graph relationships
+    if let Some(call_graph) = ctx["call_graph"].as_array() {
+        if !call_graph.is_empty() {
+            parts.push("## Call Relationships".to_string());
+            for cg in call_graph.iter().take(8) {
+                let caller = cg["caller"].as_str().unwrap_or("");
+                let callee = cg["callee"].as_str().unwrap_or("");
+                if !caller.is_empty() && !callee.is_empty() {
+                    parts.push(format!("- `{}` → `{}`", caller, callee));
+                }
+            }
+            parts.push(String::new());
+        }
+    }
+
+    // Index status (alert if stale)
+    if let Some(index) = ctx.get("index_status") {
+        if let Some(stale) = index["stale_files"].as_array() {
+            if !stale.is_empty() {
+                parts.push("## Index Status".to_string());
+                parts.push(format!("⚠️ {} files may be out of date in the index", stale.len()));
+                parts.push(String::new());
+            }
+        }
+    }
+
     parts.join("\n")
 }
 
