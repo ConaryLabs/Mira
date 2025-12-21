@@ -13,6 +13,7 @@ use serde::de::DeserializeOwned;
 /// SSE stream decoder with buffering
 ///
 /// Handles partial chunks and extracts complete SSE frames.
+/// Buffer is bounded to prevent unbounded memory growth.
 ///
 /// # Example
 /// ```ignore
@@ -32,6 +33,9 @@ pub struct SseDecoder {
 }
 
 impl SseDecoder {
+    /// Maximum buffer size (1MB) - prevents unbounded growth from malformed streams
+    const MAX_BUFFER_SIZE: usize = 1024 * 1024;
+
     /// Create a new SSE decoder
     pub fn new() -> Self {
         Self {
@@ -42,10 +46,21 @@ impl SseDecoder {
     /// Push a chunk of bytes and extract complete SSE frames
     ///
     /// Returns a vector of complete frames. Incomplete data is buffered
-    /// for the next push.
+    /// for the next push. Buffer is bounded to MAX_BUFFER_SIZE.
     pub fn push(&mut self, chunk: &[u8]) -> Vec<SseFrame> {
         // Append chunk to buffer (lossy UTF-8 conversion for robustness)
         self.buffer.push_str(&String::from_utf8_lossy(chunk));
+
+        // Safety: prevent unbounded buffer growth from malformed streams
+        if self.buffer.len() > Self::MAX_BUFFER_SIZE {
+            tracing::warn!(
+                "SSE buffer exceeded {}KB limit, truncating",
+                Self::MAX_BUFFER_SIZE / 1024
+            );
+            // Keep only the last portion that might contain a complete frame
+            let keep_from = self.buffer.len() - (Self::MAX_BUFFER_SIZE / 2);
+            self.buffer = self.buffer[keep_from..].to_string();
+        }
 
         let mut frames = Vec::new();
 
