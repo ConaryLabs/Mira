@@ -1800,6 +1800,8 @@ dependencies = [
  "futures",
  "git2",
  "glob",
+ "http-body-util",
+ "hyper",
  "ignore",
  "libc",
  "md5",

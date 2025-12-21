@@ -19,4 +19,4 @@ pub mod tools;
 pub const COLLECTION_MEMORY: &str = crate::core::COLLECTION_CONVERSATION;
 
 // Re-export key types for external use
-pub use server::{create_router, AppState};
+pub use server::{create_router, AppState, ProjectLocks};
