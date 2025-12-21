@@ -28,6 +28,8 @@ pub mod documents;
 pub mod build;
 pub mod work_state;
 pub mod session;
+pub mod chat_summary;
+pub mod chat_chain;
 
 // Future phases:
 // pub mod council;

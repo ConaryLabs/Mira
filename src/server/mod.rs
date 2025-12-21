@@ -640,13 +640,13 @@ impl MiraServer {
     #[tool(description = "Find similar past error fixes.")]
     async fn find_similar_fixes(&self, Parameters(req): Parameters<FindSimilarFixesRequest>) -> Result<CallToolResult, McpError> {
         let error = req.error.clone();
-        let result = git_intel::find_similar_fixes(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let result = git_intel::find_similar_fixes(self.db.as_ref(), &self.semantic, req).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, format!("No fixes for: {}", error)))
     }
 
     #[tool(description = "Record an error fix.")]
     async fn record_error_fix(&self, Parameters(req): Parameters<RecordErrorFixRequest>) -> Result<CallToolResult, McpError> {
-        let result = git_intel::record_error_fix(self.db.as_ref(), self.semantic.as_ref(), req).await.map_err(to_mcp_err)?;
+        let result = git_intel::record_error_fix(self.db.as_ref(), &self.semantic, req).await.map_err(to_mcp_err)?;
         Ok(json_response(result))
     }
 

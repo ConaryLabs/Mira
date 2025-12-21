@@ -4,13 +4,23 @@
 //! - Error fix lookup (find_similar_fixes)
 //! - Rejected approach filtering
 //! - Cochange pattern context
-//! - Smart excerpts for large output
+//!
+//! Uses core::ops for all business logic - this is a thin interface layer.
+
+use std::sync::Arc;
 
 use sqlx::sqlite::SqlitePool;
+
+use crate::core::ops::build as core_build;
+use crate::core::ops::git as core_git;
+use crate::core::ops::mira as core_mira;
+use crate::core::primitives::semantic::SemanticSearch;
+use crate::core::OpContext;
 
 /// Mira intelligence provider for the conductor
 pub struct MiraIntel {
     db: SqlitePool,
+    semantic: Option<Arc<SemanticSearch>>,
     project_id: Option<i64>,
 }
 
@@ -41,127 +51,133 @@ pub struct CochangePattern {
 impl MiraIntel {
     /// Create a new Mira intelligence provider
     pub fn new(db: SqlitePool, project_id: Option<i64>) -> Self {
-        Self { db, project_id }
+        Self {
+            db,
+            semantic: None,
+            project_id,
+        }
+    }
+
+    /// Create with semantic search support
+    pub fn with_semantic(db: SqlitePool, semantic: Arc<SemanticSearch>, project_id: Option<i64>) -> Self {
+        Self {
+            db,
+            semantic: Some(semantic),
+            project_id,
+        }
+    }
+
+    /// Build OpContext for core operations
+    fn context(&self) -> OpContext {
+        let mut ctx = OpContext::new(std::env::current_dir().unwrap_or_default())
+            .with_db(self.db.clone());
+        if let Some(ref semantic) = self.semantic {
+            ctx = ctx.with_semantic(semantic.clone());
+        }
+        ctx
     }
 
     /// Find similar error fixes from past sessions
     ///
     /// Called before retry when a step fails
     pub async fn find_similar_fixes(&self, error_message: &str) -> Vec<FixSuggestion> {
-        // Extract key terms from error (simple approach - first 100 chars)
-        let error_snippet = if error_message.len() > 100 {
-            &error_message[..100]
-        } else {
-            error_message
+        let ctx = self.context();
+
+        let input = core_build::FindSimilarFixesInput {
+            error: error_message.to_string(),
+            category: None,
+            language: None,
+            limit: 3,
         };
 
-        let fixes: Vec<(String, String, i32)> = sqlx::query_as(
-            r#"
-            SELECT error_pattern, fix_description, times_fixed
-            FROM error_fixes
-            WHERE error_pattern LIKE '%' || $1 || '%'
-               OR $1 LIKE '%' || error_pattern || '%'
-            ORDER BY times_fixed DESC
-            LIMIT 3
-            "#
-        )
-        .bind(error_snippet)
-        .fetch_all(&self.db)
-        .await
-        .unwrap_or_default();
-
-        fixes.into_iter()
-            .map(|(pattern, fix, times)| FixSuggestion {
-                error_pattern: pattern,
-                fix_description: fix,
-                times_applied: times,
-            })
-            .collect()
+        match core_build::find_similar_fixes(&ctx, input).await {
+            Ok(fixes) => fixes
+                .into_iter()
+                .map(|f| FixSuggestion {
+                    error_pattern: f.error_pattern,
+                    fix_description: f.fix_description.unwrap_or_default(),
+                    times_applied: f.times_fixed as i32,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to find similar fixes: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     /// Get rejected approaches relevant to a task
     ///
     /// Called during planning to avoid re-suggesting failed solutions
     pub async fn get_rejected_approaches(&self, task_context: &str) -> Vec<RejectedApproach> {
-        let project_filter = self.project_id.unwrap_or(0);
+        let ctx = self.context();
 
-        let approaches: Vec<(String, String, String)> = sqlx::query_as(
-            r#"
-            SELECT problem_context, approach, rejection_reason
-            FROM rejected_approaches
-            WHERE project_id = $1 OR project_id IS NULL
-            ORDER BY created_at DESC
-            LIMIT 5
-            "#
-        )
-        .bind(project_filter)
-        .fetch_all(&self.db)
-        .await
-        .unwrap_or_default();
+        let input = core_mira::GetRejectedApproachesInput {
+            task_context: Some(task_context.to_string()),
+            project_id: self.project_id,
+            limit: 5,
+        };
 
-        // Filter to relevant ones (simple keyword match)
-        let task_lower = task_context.to_lowercase();
-        approaches.into_iter()
-            .filter(|(ctx, _, _)| {
-                let ctx_lower = ctx.to_lowercase();
-                // Check for any word overlap
-                task_lower.split_whitespace()
-                    .any(|word| word.len() > 3 && ctx_lower.contains(word))
-            })
-            .map(|(ctx, approach, reason)| RejectedApproach {
-                problem_context: ctx,
-                approach,
-                rejection_reason: reason,
-            })
-            .collect()
+        match core_mira::get_rejected_approaches(&ctx, input).await {
+            Ok(approaches) => approaches
+                .into_iter()
+                .map(|r| RejectedApproach {
+                    problem_context: r.problem_context,
+                    approach: r.approach,
+                    rejection_reason: r.rejection_reason,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to get rejected approaches: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     /// Get cochange patterns for a file
     ///
     /// Called when planning edits to include related files
     pub async fn get_cochange_patterns(&self, file_path: &str) -> Vec<CochangePattern> {
-        let patterns: Vec<(String, i32, f64)> = sqlx::query_as(
-            r#"
-            SELECT
-                CASE WHEN file_a = $1 THEN file_b ELSE file_a END as related,
-                cochange_count,
-                confidence
-            FROM cochange_patterns
-            WHERE file_a = $1 OR file_b = $1
-            ORDER BY confidence DESC, cochange_count DESC
-            LIMIT 5
-            "#
-        )
-        .bind(file_path)
-        .fetch_all(&self.db)
-        .await
-        .unwrap_or_default();
+        let ctx = self.context();
 
-        patterns.into_iter()
-            .map(|(file, count, conf)| CochangePattern {
-                related_file: file,
-                cochange_count: count,
-                confidence: conf,
-            })
-            .collect()
+        let input = core_git::FindCochangeInput {
+            file_path: file_path.to_string(),
+            limit: 5,
+        };
+
+        match core_git::find_cochange_patterns(&ctx, input).await {
+            Ok(patterns) => patterns
+                .into_iter()
+                .map(|p| CochangePattern {
+                    related_file: p.file,
+                    cochange_count: p.cochange_count as i32,
+                    confidence: p.confidence,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("Failed to get cochange patterns: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     /// Record an error fix for future learning
     pub async fn record_fix(&self, error_pattern: &str, fix_description: &str) {
-        let _ = sqlx::query(
-            r#"
-            INSERT INTO error_fixes (error_pattern, fix_description, times_seen, times_fixed, last_seen, created_at, project_id)
-            VALUES ($1, $2, 1, 1, unixepoch(), unixepoch(), $3)
-            ON CONFLICT(error_pattern) DO UPDATE SET
-                times_fixed = times_fixed + 1,
-                last_seen = unixepoch()
-            "#
-        )
-        .bind(error_pattern)
-        .bind(fix_description)
-        .bind(self.project_id.unwrap_or(0))
-        .execute(&self.db)
-        .await;
+        let ctx = self.context();
+
+        let input = core_build::RecordErrorFixInput {
+            error_pattern: error_pattern.to_string(),
+            fix_description: fix_description.to_string(),
+            category: None,
+            language: None,
+            file_pattern: None,
+            fix_diff: None,
+            fix_commit: None,
+        };
+
+        if let Err(e) = core_build::record_error_fix(&ctx, input).await {
+            tracing::warn!("Failed to record error fix: {}", e);
+        }
     }
 
     /// Format fix suggestions as a prompt hint
