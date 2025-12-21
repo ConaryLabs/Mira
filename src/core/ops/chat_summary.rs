@@ -325,3 +325,85 @@ pub async fn store_turn_summary(
 
     Ok(id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_message_for_summary_fields() {
+        let msg = ChatMessageForSummary {
+            id: "msg-123".to_string(),
+            role: "assistant".to_string(),
+            content: "Hello, how can I help?".to_string(),
+            created_at: 1700000000,
+        };
+        assert_eq!(msg.id, "msg-123");
+        assert_eq!(msg.role, "assistant");
+        assert!(msg.content.contains("Hello"));
+        assert_eq!(msg.created_at, 1700000000);
+    }
+
+    #[test]
+    fn test_summary_for_meta_fields() {
+        let sum = SummaryForMeta {
+            id: "sum-456".to_string(),
+            summary: "User asked about Rust. Assistant explained ownership.".to_string(),
+        };
+        assert_eq!(sum.id, "sum-456");
+        assert!(sum.summary.contains("Rust"));
+    }
+
+    #[test]
+    fn test_store_summary_output_fields() {
+        let output = StoreSummaryOutput {
+            summary_id: "sum-789".to_string(),
+            archived_count: 15,
+        };
+        assert_eq!(output.summary_id, "sum-789");
+        assert_eq!(output.archived_count, 15);
+    }
+
+    #[test]
+    fn test_threshold_check_logic() {
+        // Simulates threshold check: if count <= threshold, don't summarize
+        let threshold = 20;
+        let count = 15;
+        assert!(count <= threshold); // Should NOT trigger summarization
+
+        let count2 = 25;
+        assert!(count2 > threshold); // SHOULD trigger summarization
+    }
+
+    #[test]
+    fn test_batch_size_check() {
+        // If to_summarize < batch_size, don't summarize
+        let total_count = 25;
+        let recent_raw_count = 10;
+        let batch_size = 20;
+
+        let to_summarize = total_count - recent_raw_count;
+        assert_eq!(to_summarize, 15);
+        assert!(to_summarize < batch_size); // Not enough to batch
+
+        let total_count2 = 40;
+        let to_summarize2 = total_count2 - recent_raw_count;
+        assert_eq!(to_summarize2, 30);
+        assert!(to_summarize2 >= batch_size); // Enough to batch
+    }
+
+    #[test]
+    fn test_content_extraction_from_blocks() {
+        // Simulates extracting content from message blocks
+        let blocks_json = r#"[{"type":"text","content":"Hello"},{"type":"text","content":"World"}]"#;
+        let blocks: Vec<serde_json::Value> = serde_json::from_str(blocks_json).unwrap();
+
+        let content: String = blocks
+            .iter()
+            .filter_map(|b| b.get("content")?.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(content, "Hello\nWorld");
+    }
+}

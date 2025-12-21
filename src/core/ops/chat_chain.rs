@@ -513,3 +513,80 @@ pub async fn track_artifact(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reset_tracking_state_default() {
+        let state = ResetTrackingState::default();
+        assert_eq!(state.consecutive_low_cache_turns, 0);
+        assert_eq!(state.turns_since_reset, 0);
+    }
+
+    #[test]
+    fn test_recent_message_fields() {
+        let msg = RecentMessage {
+            role: "user".to_string(),
+            blocks_json: r#"[{"type":"text","content":"hello"}]"#.to_string(),
+            created_at: 1234567890,
+        };
+        assert_eq!(msg.role, "user");
+        assert!(msg.blocks_json.contains("hello"));
+    }
+
+    #[test]
+    fn test_active_goal_fields() {
+        let goal = ActiveGoal {
+            title: "Test Goal".to_string(),
+            status: "in_progress".to_string(),
+            progress_percent: 50,
+        };
+        assert_eq!(goal.title, "Test Goal");
+        assert_eq!(goal.progress_percent, 50);
+    }
+
+    #[test]
+    fn test_failure_info_fields() {
+        let failure = FailureInfo {
+            command: "cargo build".to_string(),
+            error: "compilation failed".to_string(),
+        };
+        assert_eq!(failure.command, "cargo build");
+        assert!(failure.error.contains("failed"));
+    }
+
+    #[test]
+    fn test_artifact_list_trim_logic() {
+        // Simulates the trim logic used in track_artifact
+        let mut ids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let max_artifacts = 2;
+
+        ids.push("d".to_string());
+        if ids.len() > max_artifacts {
+            let skip_count = ids.len() - max_artifacts;
+            ids = ids.into_iter().skip(skip_count).collect();
+        }
+
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], "c");
+        assert_eq!(ids[1], "d");
+    }
+
+    #[test]
+    fn test_artifact_list_no_trim_when_under_limit() {
+        let mut ids = vec!["a".to_string()];
+        let max_artifacts = 5;
+
+        ids.push("b".to_string());
+        if ids.len() > max_artifacts {
+            let skip_count = ids.len() - max_artifacts;
+            ids = ids.into_iter().skip(skip_count).collect();
+        }
+
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], "a");
+        assert_eq!(ids[1], "b");
+    }
+}

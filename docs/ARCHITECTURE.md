@@ -152,6 +152,106 @@ let ctx = OpContext::just_db(db);
 4. **Maintainability** - Changes to logic only need to happen once
 5. **Flexibility** - Easy to add new interfaces (CLI, API, etc.)
 
+## Design Decisions
+
+### User-Facing Strings
+`core::ops` does **not** construct user-facing display strings. All formatting for prompts, UI, or responses happens in the adapter layers (MCP tools, Chat session). The ops return structured data types.
+
+Exceptions:
+- Error messages in `CoreError` (technical, not user-facing)
+- Metadata strings for semantic search storage
+
+### Auth/Policy Enforcement
+Authorization and policy checks happen in the **adapter layer**, not in `core::ops`. Operations assume they're being called by authorized code.
+
+- MCP: Tool permissions managed via `permissions` tool in `server/mod.rs`
+- Studio: Session-scoped (no cross-user access)
+
+### OpContext Size
+Current `OpContext` has 6 fields - intentionally minimal:
+- `db: Option<SqlitePool>` - database access
+- `semantic: Option<Arc<SemanticSearch>>` - vector search
+- `http: reqwest::Client` - external API calls
+- `cwd: PathBuf` - file operations root
+- `project_path: String` - scoping
+- `cancel: CancellationToken` - cancellation
+
+If this grows beyond ~10 fields, consider splitting into capability traits (`HasDb`, `HasSemantic`, etc.).
+
+## Chat Chain Invariants
+
+The `chat_chain` module manages response chain state with these invariants:
+
+### Reset Decision State Machine
+
+```
+                          ┌──────────────────┐
+                          │   Every Turn     │
+                          └────────┬─────────┘
+                                   │
+                    ┌──────────────▼───────────────┐
+                    │ Check: turns_since_reset     │
+                    │        < COOLDOWN (3)?       │
+                    └──────────────┬───────────────┘
+                            yes    │    no
+                    ┌──────────────┴───────────────┐
+                    ▼                              ▼
+            ┌───────────┐              ┌───────────────────┐
+            │ Cooldown  │              │ Check: tokens >   │
+            │ (skip)    │              │ HARD_CEILING(420k)│
+            └───────────┘              └─────────┬─────────┘
+                                          yes    │    no
+                                    ┌────────────┴────────────┐
+                                    ▼                         ▼
+                            ┌───────────┐        ┌────────────────────┐
+                            │ HardReset │        │ Check: tokens >    │
+                            └───────────┘        │ THRESHOLD(400k) && │
+                                                 │ cache < 30%        │
+                                                 └─────────┬──────────┘
+                                                    yes    │    no
+                                        ┌──────────────────┴─────────────┐
+                                        ▼                                ▼
+                              ┌─────────────────────┐          ┌─────────────────┐
+                              │ consecutive_low++   │          │ consecutive_low │
+                              │ Check: >= HYSTER(2) │          │ = 0             │
+                              └─────────┬───────────┘          └─────────────────┘
+                                 yes    │    no
+                              ┌─────────┴─────────┐
+                              ▼                   ▼
+                      ┌───────────┐       ┌───────────┐
+                      │ SoftReset │       │ NoReset   │
+                      └───────────┘       └───────────┘
+```
+
+### Key Invariants
+
+1. **Cooldown**: After any reset, wait `COOLDOWN_TURNS` (3) before considering another
+2. **Hard ceiling**: If tokens > 420k, always reset (quality guard)
+3. **Hysteresis**: Soft reset requires `HYSTERESIS_TURNS` (2) consecutive low-cache turns
+4. **Cache threshold**: Low cache = below 30%
+5. **Handoff preservation**: On soft reset, `build_handoff_blob()` captures context before clearing
+
+### Handoff Blob Contents
+
+When a soft reset occurs, the handoff blob captures:
+1. Recent conversation (last 6 messages, truncated to 500 chars each)
+2. Latest summary (older context)
+3. Active goals (up to 3)
+4. Recent decisions (up to 5)
+5. Working set (touched files, up to 10)
+6. Last failure (if any)
+7. Recent artifacts (up to 5)
+8. Continuity note
+
+### State Variables
+
+| Variable | Purpose | Reset on |
+|----------|---------|----------|
+| `consecutive_low_cache_turns` | Hysteresis counter | Reset or good cache turn |
+| `turns_since_reset` | Cooldown tracking | Every reset |
+| `needs_handoff` | Flag for next turn | After consumption |
+| `handoff_blob` | Context for next turn | After consumption |
+
 ## Database Tables
 
 The database schema is defined in `migrations/`. Key tables:

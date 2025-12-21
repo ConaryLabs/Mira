@@ -427,3 +427,115 @@ pub async fn record_error_fix(ctx: &OpContext, input: RecordErrorFixInput) -> Co
         semantic_indexed,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_error_normalizes_numbers() {
+        // Numbers should be replaced with 'N' for better deduplication
+        let hash1 = hash_error("error at line 42");
+        let hash2 = hash_error("error at line 99");
+        assert_eq!(hash1, hash2); // Same pattern, different numbers
+    }
+
+    #[test]
+    fn test_hash_error_case_insensitive() {
+        let hash1 = hash_error("Error: Not Found");
+        let hash2 = hash_error("error: not found");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_error_first_line_only() {
+        let hash1 = hash_error("error on line 1\nmore details\nstack trace");
+        let hash2 = hash_error("error on line 1");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_build_error_fields() {
+        let err = BuildError {
+            id: 1,
+            build_run_id: Some(10),
+            error_hash: "abc123".to_string(),
+            category: Some("type".to_string()),
+            severity: "error".to_string(),
+            message: "cannot find type".to_string(),
+            file_path: Some("src/main.rs".to_string()),
+            line_number: Some(42),
+            column_number: Some(10),
+            code: Some("E0412".to_string()),
+            suggestion: Some("did you mean Vec?".to_string()),
+            resolved: false,
+            created_at: "2024-01-01 12:00:00".to_string(),
+            resolved_at: None,
+        };
+        assert_eq!(err.id, 1);
+        assert_eq!(err.severity, "error");
+        assert!(!err.resolved);
+    }
+
+    #[test]
+    fn test_error_fix_fields() {
+        let fix = ErrorFix {
+            id: 5,
+            error_pattern: "cannot find crate".to_string(),
+            category: Some("dependency".to_string()),
+            language: Some("rust".to_string()),
+            file_pattern: Some("Cargo.toml".to_string()),
+            fix_description: Some("Add missing dependency".to_string()),
+            fix_diff: Some("+serde = \"1.0\"".to_string()),
+            fix_commit: Some("abc123".to_string()),
+            times_seen: 10,
+            times_fixed: 8,
+            last_seen: "2024-01-01".to_string(),
+            score: 0.95,
+            search_type: "semantic".to_string(),
+        };
+        assert_eq!(fix.id, 5);
+        assert_eq!(fix.times_fixed, 8);
+        assert_eq!(fix.score, 0.95);
+    }
+
+    #[test]
+    fn test_record_error_fix_input_fields() {
+        let input = RecordErrorFixInput {
+            error_pattern: "undefined variable".to_string(),
+            fix_description: "Declare the variable first".to_string(),
+            category: Some("syntax".to_string()),
+            language: Some("rust".to_string()),
+            file_pattern: None,
+            fix_diff: None,
+            fix_commit: None,
+        };
+        assert_eq!(input.error_pattern, "undefined variable");
+        assert!(input.file_pattern.is_none());
+    }
+
+    #[test]
+    fn test_record_error_fix_output_fields() {
+        let output = RecordErrorFixOutput {
+            id: 100,
+            status: "recorded".to_string(),
+            error_pattern: "missing semicolon".to_string(),
+            semantic_indexed: true,
+        };
+        assert_eq!(output.id, 100);
+        assert_eq!(output.status, "recorded");
+        assert!(output.semantic_indexed);
+    }
+
+    #[test]
+    fn test_get_build_errors_input_defaults() {
+        let input = GetBuildErrorsInput {
+            file_path: None,
+            category: None,
+            include_resolved: false,
+            limit: 10,
+        };
+        assert!(!input.include_resolved);
+        assert_eq!(input.limit, 10);
+    }
+}
