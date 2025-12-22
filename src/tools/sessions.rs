@@ -560,6 +560,26 @@ pub async fn session_start(
     // 11. Check index freshness
     let (index_fresh, stale_count) = check_index_freshness(db, project_id).await.unwrap_or((true, 0));
 
+    // 12. Get recent MCP history (tool calls from Claude Code)
+    let recent_mcp_history = sqlx::query_as::<_, (String, Option<String>, String)>(r#"
+        SELECT tool_name, result_summary, created_at
+        FROM mcp_history
+        WHERE (project_id IS NULL OR project_id = $1)
+        ORDER BY created_at DESC
+        LIMIT 10
+    "#)
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(tool_name, summary, created_at)| McpHistorySummary {
+        tool_name,
+        summary: summary.unwrap_or_default(),
+        created_at,
+    })
+    .collect();
+
     Ok(SessionStartResult {
         project_id,
         project_name: name,
@@ -580,6 +600,7 @@ pub async fn session_start(
         active_todos,
         active_plan,
         working_docs,
+        recent_mcp_history,
         index_fresh,
         stale_file_count: stale_count,
     })
@@ -678,8 +699,16 @@ pub struct SessionStartResult {
     pub active_todos: Option<Vec<WorkStateTodo>>,
     pub active_plan: Option<ActivePlan>,
     pub working_docs: Vec<WorkingDoc>,
+    pub recent_mcp_history: Vec<McpHistorySummary>,
     pub index_fresh: bool,
     pub stale_file_count: usize,
+}
+
+#[derive(Debug)]
+pub struct McpHistorySummary {
+    pub tool_name: String,
+    pub summary: String,
+    pub created_at: String,
 }
 
 #[derive(Debug)]
