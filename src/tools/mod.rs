@@ -12,6 +12,7 @@ pub mod hotline;
 pub mod ingest;
 pub mod git_intel;
 pub mod goals;
+pub mod mcp_history;
 pub mod memory;
 pub mod permissions;
 pub mod proactive;
