@@ -10,6 +10,7 @@ use super::corrections::{self, GetCorrectionsParams};
 use super::goals;
 use super::git_intel;
 use super::code_intel;
+use super::mcp_history;
 
 /// Get all relevant context for the current work, combined into one response
 pub async fn get_proactive_context(
@@ -109,6 +110,22 @@ pub async fn get_proactive_context(
     // 9. Get index freshness status
     let index_status = get_index_freshness(db, project_id).await.unwrap_or_default();
 
+    // 10. Get relevant MCP history (semantic search if query available)
+    let relevant_mcp_history = if !combined_context.is_empty() {
+        mcp_history::semantic_search(db, semantic, &combined_context, project_id, limit as usize)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| serde_json::json!({
+                "tool": h.tool_name,
+                "summary": h.result_summary.unwrap_or_default(),
+                "when": h.created_at,
+            }))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
     // Build summary
     let stale_count = index_status.get("stale_files")
         .and_then(|v| v.as_array())
@@ -122,6 +139,7 @@ pub async fn get_proactive_context(
         if !related_decisions.is_empty() { Some(format!("{} related decisions", related_decisions.len())) } else { None },
         if !relevant_memories.is_empty() { Some(format!("{} relevant memories", relevant_memories.len())) } else { None },
         if !similar_errors.is_empty() { Some(format!("{} similar fixes", similar_errors.len())) } else { None },
+        if !relevant_mcp_history.is_empty() { Some(format!("{} related tool calls", relevant_mcp_history.len())) } else { None },
         if has_code_context { Some("code context".to_string()) } else { None },
         if improvement_count > 0 { Some(format!("{} code improvements", improvement_count)) } else { None },
         if !call_graph.is_empty() { Some(format!("{} call relationships", call_graph.len())) } else { None },
@@ -150,6 +168,7 @@ pub async fn get_proactive_context(
         "related_decisions": related_decisions,
         "relevant_memories": relevant_memories,
         "similar_fixes": similar_errors,
+        "related_tool_calls": relevant_mcp_history,
         "code_context": code_context,
         "call_graph": call_graph,
         "index_status": index_status,

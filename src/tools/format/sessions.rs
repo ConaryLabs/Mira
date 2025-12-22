@@ -163,6 +163,20 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
         }
     }
 
+    // Recent MCP tool calls (from Claude Code sessions)
+    if !result.recent_mcp_history.is_empty() {
+        out.push('\n');
+        out.push_str("# Recent tool calls:\n");
+        for entry in &result.recent_mcp_history {
+            let summary = if entry.summary.len() > 60 {
+                format!("{}...", &entry.summary[..57])
+            } else {
+                entry.summary.clone()
+            };
+            out.push_str(&format!("  {} - {}\n", entry.tool_name, summary));
+        }
+    }
+
     // Recent session context
     if !result.recent_session_topics.is_empty() {
         out.push('\n');
