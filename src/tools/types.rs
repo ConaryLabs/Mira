@@ -401,6 +401,16 @@ pub struct SearchSessionsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchMcpHistoryRequest {
+    #[schemars(description = "Search query (searches result summaries and arguments)")]
+    pub query: Option<String>,
+    #[schemars(description = "Filter by tool name (e.g., 'remember', 'recall')")]
+    pub tool_name: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct StoreDecisionRequest {
     #[schemars(description = "Unique key")]
     pub key: String,

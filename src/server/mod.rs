@@ -182,6 +182,9 @@ impl MiraServer {
         let project_id = project.as_ref().map(|p| p.id);
         let project_name = project.as_ref().map(|p| p.name.as_str());
         let project_type = project.as_ref().and_then(|p| p.project_type.as_deref());
+        let message_preview: String = req.message.chars().take(100).collect();
+        let provider = req.provider.clone().unwrap_or_else(|| "openai".to_string());
+        let start = std::time::Instant::now();
 
         match hotline::call_mira(
             req,
@@ -191,8 +194,34 @@ impl MiraServer {
             project_name,
             project_type,
         ).await {
-            Ok(result) => Ok(json_response(result)),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!("Hotline error: {}", e))])),
+            Ok(result) => {
+                let _ = mcp_history::log_call_semantic(
+                    self.db.as_ref(),
+                    &self.semantic,
+                    None,
+                    project_id,
+                    "hotline",
+                    Some(&serde_json::json!({"message": &message_preview, "provider": &provider})),
+                    &format!("Asked {}: {}", provider, message_preview),
+                    true,
+                    Some(start.elapsed().as_millis() as i64),
+                ).await;
+                Ok(json_response(result))
+            }
+            Err(e) => {
+                let _ = mcp_history::log_call_semantic(
+                    self.db.as_ref(),
+                    &self.semantic,
+                    None,
+                    project_id,
+                    "hotline",
+                    Some(&serde_json::json!({"message": &message_preview, "provider": &provider})),
+                    &format!("Failed {}: {}", provider, e),
+                    false,
+                    Some(start.elapsed().as_millis() as i64),
+                ).await;
+                Ok(CallToolResult::error(vec![Content::text(format!("Hotline error: {}", e))]))
+            }
         }
     }
 
@@ -201,7 +230,25 @@ impl MiraServer {
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
     async fn remember(&self, Parameters(req): Parameters<RememberRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
+        let content_preview: String = req.content.chars().take(100).collect();
+        let category = req.category.clone();
+        let start = std::time::Instant::now();
+
         let result = memory::remember(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
+
+        // Log to MCP history with semantic embedding
+        let _ = mcp_history::log_call_semantic(
+            self.db.as_ref(),
+            &self.semantic,
+            None, // session_id not available at tool level
+            project_id,
+            "remember",
+            Some(&serde_json::json!({"content": &content_preview, "category": category})),
+            &format!("Stored: {}", content_preview),
+            true,
+            Some(start.elapsed().as_millis() as i64),
+        ).await;
+
         Ok(json_response(result))
     }
 
@@ -209,7 +256,23 @@ impl MiraServer {
     async fn recall(&self, Parameters(req): Parameters<RecallRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
         let project_id = self.get_active_project().await.map(|p| p.id);
+        let start = std::time::Instant::now();
+
         let result = memory::recall(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
+
+        // Log to MCP history with semantic embedding
+        let _ = mcp_history::log_call_semantic(
+            self.db.as_ref(),
+            &self.semantic,
+            None,
+            project_id,
+            "recall",
+            Some(&serde_json::json!({"query": &query})),
+            &format!("Searched: {} ({} results)", query, result.len()),
+            true,
+            Some(start.elapsed().as_millis() as i64),
+        ).await;
+
         Ok(vec_response(result, format!("No memories found matching '{}'", query)))
     }
 
@@ -248,7 +311,24 @@ impl MiraServer {
     #[tool(description = "Store session summary. Call at session end.")]
     async fn store_session(&self, Parameters(req): Parameters<StoreSessionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
+        let summary_preview = req.summary.chars().take(100).collect::<String>();
+        let start = std::time::Instant::now();
+
         let result = sessions::store_session(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+
+        // Log to MCP history with semantic embedding
+        let _ = mcp_history::log_call_semantic(
+            self.db.as_ref(),
+            &self.semantic,
+            None,
+            project_id,
+            "store_session",
+            None,
+            &format!("Session saved: {}", summary_preview),
+            true,
+            Some(start.elapsed().as_millis() as i64),
+        ).await;
+
         Ok(json_response(result))
     }
 
@@ -260,10 +340,54 @@ impl MiraServer {
         Ok(vec_response(result, format!("No sessions found matching '{}'", query)))
     }
 
+    #[tool(description = "Search MCP tool call history. Useful for recalling what tools were used and their results.")]
+    async fn search_mcp_history(&self, Parameters(req): Parameters<SearchMcpHistoryRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let limit = req.limit.unwrap_or(20) as usize;
+
+        // Use semantic search when query is provided, otherwise use regular search
+        let result = if let Some(query) = &req.query {
+            mcp_history::semantic_search(
+                self.db.as_ref(),
+                &self.semantic,
+                query,
+                project_id,
+                limit,
+            ).await.map_err(to_mcp_err)?
+        } else {
+            mcp_history::search_history(
+                self.db.as_ref(),
+                project_id,
+                req.tool_name.as_deref(),
+                None,
+                limit as i64,
+            ).await.map_err(to_mcp_err)?
+        };
+
+        Ok(vec_response(result, "No MCP history found".to_string()))
+    }
+
     #[tool(description = "Store an important decision with context.")]
     async fn store_decision(&self, Parameters(req): Parameters<StoreDecisionRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
+        let decision_key = req.key.clone();
+        let start = std::time::Instant::now();
+
         let result = sessions::store_decision(self.db.as_ref(), self.semantic.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
+
+        // Log to MCP history with semantic embedding
+        let _ = mcp_history::log_call_semantic(
+            self.db.as_ref(),
+            &self.semantic,
+            None,
+            project_id,
+            "store_decision",
+            Some(&serde_json::json!({"key": &decision_key})),
+            &format!("Decision: {}", decision_key),
+            true,
+            Some(start.elapsed().as_millis() as i64),
+        ).await;
+
         Ok(json_response(result))
     }
 
@@ -334,12 +458,27 @@ impl MiraServer {
     async fn task(&self, Parameters(req): Parameters<TaskRequest>) -> Result<CallToolResult, McpError> {
         match req.action.as_str() {
             "create" => {
+                let title = require!(req.title, "title required for create");
+                let project_id = self.get_active_project().await.map(|p| p.id);
                 let result = tasks::create_task(self.db.as_ref(), tasks::CreateTaskParams {
-                    title: require!(req.title, "title required for create"),
+                    title: title.clone(),
                     description: req.description.clone(),
                     priority: req.priority.clone(),
                     parent_id: req.parent_id.clone(),
                 }).await.map_err(to_mcp_err)?;
+
+                let _ = mcp_history::log_call_semantic(
+                    self.db.as_ref(),
+                    &self.semantic,
+                    None,
+                    project_id,
+                    "task",
+                    Some(&serde_json::json!({"action": "create", "title": &title})),
+                    &format!("Created task: {}", title),
+                    true,
+                    None,
+                ).await;
+
                 Ok(json_response(result))
             }
             "list" => {
@@ -368,7 +507,24 @@ impl MiraServer {
             }
             "complete" => {
                 let task_id = require!(req.task_id, "task_id required");
+                let project_id = self.get_active_project().await.map(|p| p.id);
                 let result = tasks::complete_task(self.db.as_ref(), &task_id, req.notes.clone()).await.map_err(to_mcp_err)?;
+
+                if let Some(ref task) = result {
+                    let title = task.get("title").and_then(|t| t.as_str()).unwrap_or("unknown");
+                    let _ = mcp_history::log_call_semantic(
+                        self.db.as_ref(),
+                        &self.semantic,
+                        None,
+                        project_id,
+                        "task",
+                        Some(&serde_json::json!({"action": "complete", "task_id": &task_id, "title": title})),
+                        &format!("Completed task: {}", title),
+                        true,
+                        None,
+                    ).await;
+                }
+
                 Ok(option_response(result, format!("Task {} not found", task_id)))
             }
             "delete" => {
@@ -393,12 +549,26 @@ impl MiraServer {
         let project_id = self.get_active_project().await.map(|p| p.id);
         match req.action.as_str() {
             "create" => {
+                let title = require!(req.title, "title required");
                 let result = goals::create_goal(self.db.as_ref(), goals::CreateGoalParams {
-                    title: require!(req.title, "title required"),
+                    title: title.clone(),
                     description: req.description.clone(),
                     success_criteria: req.success_criteria.clone(),
                     priority: req.priority.clone(),
                 }, project_id).await.map_err(to_mcp_err)?;
+
+                let _ = mcp_history::log_call_semantic(
+                    self.db.as_ref(),
+                    &self.semantic,
+                    None,
+                    project_id,
+                    "goal",
+                    Some(&serde_json::json!({"action": "create", "title": &title})),
+                    &format!("Created goal: {}", title),
+                    true,
+                    None,
+                ).await;
+
                 Ok(json_response(result))
             }
             "list" => {
@@ -454,14 +624,29 @@ impl MiraServer {
         let project_id = self.get_active_project().await.map(|p| p.id);
         match req.action.as_str() {
             "record" => {
+                let what_was_wrong = require!(req.what_was_wrong, "what_was_wrong required");
+                let what_is_right = require!(req.what_is_right, "what_is_right required");
                 let result = corrections::record_correction(self.db.as_ref(), &self.semantic, corrections::RecordCorrectionParams {
                     correction_type: require!(req.correction_type, "correction_type required"),
-                    what_was_wrong: require!(req.what_was_wrong, "what_was_wrong required"),
-                    what_is_right: require!(req.what_is_right, "what_is_right required"),
+                    what_was_wrong: what_was_wrong.clone(),
+                    what_is_right: what_is_right.clone(),
                     rationale: req.rationale.clone(),
                     scope: req.scope.clone(),
                     keywords: req.keywords.clone(),
                 }, project_id).await.map_err(to_mcp_err)?;
+
+                let _ = mcp_history::log_call_semantic(
+                    self.db.as_ref(),
+                    &self.semantic,
+                    None,
+                    project_id,
+                    "correction",
+                    Some(&serde_json::json!({"action": "record", "wrong": &what_was_wrong, "right": &what_is_right})),
+                    &format!("Correction: {} → {}", what_was_wrong.chars().take(50).collect::<String>(), what_is_right.chars().take(50).collect::<String>()),
+                    true,
+                    None,
+                ).await;
+
                 Ok(json_response(result))
             }
             "get" => {
@@ -690,7 +875,24 @@ impl MiraServer {
 
     #[tool(description = "Record an error fix.")]
     async fn record_error_fix(&self, Parameters(req): Parameters<RecordErrorFixRequest>) -> Result<CallToolResult, McpError> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+        let error_preview: String = req.error_pattern.chars().take(80).collect();
+        let fix_preview: String = req.fix_description.chars().take(80).collect();
+
         let result = git_intel::record_error_fix(self.db.as_ref(), &self.semantic, req).await.map_err(to_mcp_err)?;
+
+        let _ = mcp_history::log_call_semantic(
+            self.db.as_ref(),
+            &self.semantic,
+            None,
+            project_id,
+            "record_error_fix",
+            Some(&serde_json::json!({"error": &error_preview, "fix": &fix_preview})),
+            &format!("Error fix: {} → {}", error_preview, fix_preview),
+            true,
+            None,
+        ).await;
+
         Ok(json_response(result))
     }
 
@@ -706,7 +908,23 @@ impl MiraServer {
     #[tool(description = "Record a rejected approach.")]
     async fn record_rejected_approach(&self, Parameters(req): Parameters<RecordRejectedApproachRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
+        let approach_preview: String = req.approach.chars().take(80).collect();
+        let reason_preview: String = req.rejection_reason.chars().take(80).collect();
+
         let result = goals::record_rejected_approach(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
+
+        let _ = mcp_history::log_call_semantic(
+            self.db.as_ref(),
+            &self.semantic,
+            None,
+            project_id,
+            "record_rejected_approach",
+            Some(&serde_json::json!({"approach": &approach_preview, "reason": &reason_preview})),
+            &format!("Rejected: {} ({})", approach_preview, reason_preview),
+            true,
+            None,
+        ).await;
+
         Ok(json_response(result))
     }
 
