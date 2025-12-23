@@ -24,28 +24,63 @@ pub fn index_status(action: &str, path: &str, stats: Option<&Value>) -> String {
     }
 }
 
-/// Format code search results
+/// Format code search results - shows symbol name, type, file:line, and score
 pub fn code_search_results(results: &[Value]) -> String {
     if results.is_empty() {
         return "No matches.".to_string();
     }
 
+    let total = results.len();
+    let show = std::cmp::min(10, total);
+
     let mut out = format!("Found {} match{}:\n",
-        results.len(),
-        if results.len() == 1 { "" } else { "es" }
+        total,
+        if total == 1 { "" } else { "es" }
     );
 
-    for r in results {
+    for r in results.iter().take(show) {
         let file = r.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
         let symbol = r.get("symbol_name").and_then(|v| v.as_str());
+        let symbol_type = r.get("symbol_type").and_then(|v| v.as_str());
+        let start_line = r.get("start_line").and_then(|v| v.as_i64());
         let score = r.get("score").and_then(|v| v.as_f64());
 
-        let rel = score.map(|s| format!(" [{:.0}%]", s * 100.0)).unwrap_or_default();
+        // Shorten path: just filename or last component
+        let short_file = file.rsplit('/').next().unwrap_or(file);
 
-        match symbol {
-            Some(sym) => out.push_str(&format!("  {}:{}{}\n", file, sym, rel)),
-            None => out.push_str(&format!("  {}{}\n", file, rel)),
+        let score_str = score.map(|s| format!(" [{:.0}%]", s * 100.0)).unwrap_or_default();
+        let line_str = start_line.map(|l| format!(":{}", l)).unwrap_or_default();
+
+        match (symbol, symbol_type) {
+            (Some(sym), Some(typ)) => {
+                out.push_str(&format!("  {} ({}) {}{}{}\n", sym, typ, short_file, line_str, score_str))
+            }
+            (Some(sym), None) => {
+                out.push_str(&format!("  {} {}{}{}\n", sym, short_file, line_str, score_str))
+            }
+            (None, Some(typ)) => {
+                // No symbol name but has type - use content if available
+                let content = r.get("content").and_then(|v| v.as_str());
+                if let Some(c) = content {
+                    // Extract first line of content as fallback name
+                    let first_line = c.lines().next().unwrap_or("?");
+                    // Strip " (type)" suffix if content was formatted as "Name (type)"
+                    let type_suffix = format!(" ({})", typ);
+                    let name = first_line.strip_suffix(&type_suffix).unwrap_or(first_line);
+                    let short_name = if name.len() > 40 { format!("{}...", &name[..37]) } else { name.to_string() };
+                    out.push_str(&format!("  {} ({}) {}{}{}\n", short_name, typ, short_file, line_str, score_str))
+                } else {
+                    out.push_str(&format!("  ({}) {}{}{}\n", typ, short_file, line_str, score_str))
+                }
+            }
+            (None, None) => {
+                out.push_str(&format!("  {}{}{}\n", short_file, line_str, score_str))
+            }
         }
+    }
+
+    if total > show {
+        out.push_str(&format!("  ... and {} more\n", total - show));
     }
 
     out.trim_end().to_string()
