@@ -677,6 +677,404 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["message"]
             }),
         },
+        // ================================================================
+        // Code Intelligence Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "get_symbols".into(),
+            description: Some("Get code symbols (functions, classes, methods) from a file.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to analyze"
+                    },
+                    "symbol_type": {
+                        "type": "string",
+                        "description": "Filter by type: function, class, method, struct, enum"
+                    }
+                },
+                "required": ["file_path"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "get_call_graph".into(),
+            description: Some("Get call graph for a function - what calls it and what it calls.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Name of the function/method to analyze"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Depth of call graph traversal (default 2)"
+                    }
+                },
+                "required": ["symbol"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "semantic_code_search".into(),
+            description: Some("Search code by meaning using natural language. Finds similar code patterns and implementations.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language description of code to find"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Filter by programming language"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 10)"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "get_related_files".into(),
+            description: Some("Find files related to a given file by imports or co-change patterns.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to find related files for"
+                    },
+                    "relation_type": {
+                        "type": "string",
+                        "description": "Type: imports, cochange, or both (default)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 10)"
+                    }
+                },
+                "required": ["file_path"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "get_codebase_style".into(),
+            description: Some("Analyze codebase style metrics: function lengths, complexity, patterns.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "project_path": {
+                        "type": "string",
+                        "description": "Project path to analyze (default: current directory)"
+                    }
+                },
+                "required": []
+            }),
+        },
+        // ================================================================
+        // Git Intelligence Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "get_recent_commits".into(),
+            description: Some("Get recent indexed commits with optional filters.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Filter by file path"
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "Filter by author"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 20)"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "search_commits".into(),
+            description: Some("Search commits by message content.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for commit messages"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 20)"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "find_cochange_patterns".into(),
+            description: Some("Find files that frequently change together with a given file.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "File to find co-change patterns for"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 10)"
+                    }
+                },
+                "required": ["file_path"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "find_similar_fixes".into(),
+            description: Some("Find past fixes for similar errors. Uses semantic search to match error patterns.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "error": {
+                        "type": "string",
+                        "description": "Error message to find similar fixes for"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Filter by error category"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Filter by programming language"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 5)"
+                    }
+                },
+                "required": ["error"]
+            }),
+        },
+        Tool {
+            tool_type: "function".into(),
+            name: "record_error_fix".into(),
+            description: Some("Record an error fix for future learning. Helps find solutions when similar errors occur.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "error_pattern": {
+                        "type": "string",
+                        "description": "The error pattern/message"
+                    },
+                    "fix_description": {
+                        "type": "string",
+                        "description": "How the error was fixed"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Error category: compile, runtime, test, lint"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Programming language"
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "File pattern where this applies"
+                    },
+                    "fix_diff": {
+                        "type": "string",
+                        "description": "Diff of the fix"
+                    }
+                },
+                "required": ["error_pattern", "fix_description"]
+            }),
+        },
+        // ================================================================
+        // Build Tracking Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "build".into(),
+            description: Some("Track build runs and errors. Actions: record, record_error, get_errors, resolve.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: record/record_error/get_errors/resolve"
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Build command (for record)"
+                    },
+                    "success": {
+                        "type": "boolean",
+                        "description": "Whether build succeeded (for record)"
+                    },
+                    "duration_ms": {
+                        "type": "integer",
+                        "description": "Build duration in milliseconds"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Error message (for record_error)"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Error category"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Error severity: error/warning"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "File path for error"
+                    },
+                    "line_number": {
+                        "type": "integer",
+                        "description": "Line number for error"
+                    },
+                    "error_id": {
+                        "type": "integer",
+                        "description": "Error ID (for resolve)"
+                    },
+                    "include_resolved": {
+                        "type": "boolean",
+                        "description": "Include resolved errors (for get_errors)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (for get_errors)"
+                    }
+                },
+                "required": ["action"]
+            }),
+        },
+        // ================================================================
+        // Document Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "document".into(),
+            description: Some("Manage indexed documents. Actions: list, search, get, delete.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: list/search/get/delete"
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "description": "Document ID (for get/delete)"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (for search)"
+                    },
+                    "doc_type": {
+                        "type": "string",
+                        "description": "Filter by type: pdf/markdown/text/code"
+                    },
+                    "include_content": {
+                        "type": "boolean",
+                        "description": "Include full content (for get)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results"
+                    }
+                },
+                "required": ["action"]
+            }),
+        },
+        // ================================================================
+        // Index Tools
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "index".into(),
+            description: Some("Index code and git history. Actions: project, file, status, cleanup.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: project/file/status/cleanup"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Path to index (for project/file)"
+                    },
+                    "include_git": {
+                        "type": "boolean",
+                        "description": "Include git history (for project, default true)"
+                    },
+                    "commit_limit": {
+                        "type": "integer",
+                        "description": "Max commits to index (default 500)"
+                    },
+                    "parallel": {
+                        "type": "boolean",
+                        "description": "Use parallel processing (default true)"
+                    }
+                },
+                "required": ["action"]
+            }),
+        },
+        // ================================================================
+        // Proactive Context Tool
+        // ================================================================
+        Tool {
+            tool_type: "function".into(),
+            name: "get_proactive_context".into(),
+            description: Some("Get all relevant context for the current work: corrections, goals, rejected approaches, similar errors, code relationships.".into()),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Files you're working with"
+                    },
+                    "topics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Topics/concepts you're working on"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Current task description"
+                    },
+                    "error": {
+                        "type": "string",
+                        "description": "Error message if debugging"
+                    },
+                    "limit_per_category": {
+                        "type": "integer",
+                        "description": "Max items per category (default 3)"
+                    }
+                },
+                "required": []
+            }),
+        },
     ]
 }
 
@@ -687,8 +1085,9 @@ mod tests {
     #[test]
     fn test_get_tools() {
         let tools = get_tools();
-        // 10 core + 5 power armor + 4 git + 1 test + 2 artifact + 4 council = 26
-        assert_eq!(tools.len(), 26);
+        // 10 core + 5 power armor + 4 git + 1 test + 2 artifact + 4 council
+        // + 5 code intel + 5 git intel + 1 build + 1 document + 1 index + 1 proactive = 40
+        assert_eq!(tools.len(), 40);
         assert_eq!(tools[0].name, "read_file");
         assert_eq!(tools[5].name, "edit_file");
         assert_eq!(tools[8].name, "remember");
@@ -701,18 +1100,22 @@ mod tests {
         assert_eq!(tools[14].name, "record_rejected_approach");
         // Git tools
         assert_eq!(tools[15].name, "git_status");
-        assert_eq!(tools[16].name, "git_diff");
-        assert_eq!(tools[17].name, "git_commit");
-        assert_eq!(tools[18].name, "git_log");
         // Test tools
         assert_eq!(tools[19].name, "run_tests");
-        // Artifact tools
-        assert_eq!(tools[20].name, "fetch_artifact");
-        assert_eq!(tools[21].name, "search_artifact");
         // Council tools
         assert_eq!(tools[22].name, "council");
-        assert_eq!(tools[23].name, "ask_gpt");
-        assert_eq!(tools[24].name, "ask_opus");
-        assert_eq!(tools[25].name, "ask_gemini");
+        // Code intel tools
+        assert_eq!(tools[26].name, "get_symbols");
+        assert_eq!(tools[27].name, "get_call_graph");
+        // Git intel tools
+        assert_eq!(tools[31].name, "get_recent_commits");
+        // Build tracking
+        assert_eq!(tools[36].name, "build");
+        // Document management
+        assert_eq!(tools[37].name, "document");
+        // Index
+        assert_eq!(tools[38].name, "index");
+        // Proactive context
+        assert_eq!(tools[39].name, "get_proactive_context");
     }
 }
