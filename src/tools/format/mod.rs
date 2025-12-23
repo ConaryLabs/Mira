@@ -22,7 +22,7 @@ pub use entities::{
 };
 pub use code::{
     index_status, code_search_results, symbols_list,
-    commit_list, related_files, call_graph,
+    commit_list, related_files, cochange_patterns, call_graph,
     style_report,
 };
 pub use admin::{project_set, table_list, query_results, build_errors, guidelines};
