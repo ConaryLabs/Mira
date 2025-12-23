@@ -538,7 +538,7 @@ impl CodeIndexer {
 
                             let mut metadata = std::collections::HashMap::new();
                             metadata.insert("file_path".to_string(), serde_json::json!(file_path_str.clone()));
-                            metadata.insert("name".to_string(), serde_json::json!(symbol.name.clone()));
+                            metadata.insert("symbol_name".to_string(), serde_json::json!(symbol.name.clone()));
                             metadata.insert("symbol_type".to_string(), serde_json::json!(symbol.symbol_type.clone()));
                             metadata.insert("language".to_string(), serde_json::json!(symbol.language.clone()));
                             metadata.insert("start_line".to_string(), serde_json::json!(symbol.start_line));
@@ -684,7 +684,7 @@ impl CodeIndexer {
 
                             let mut metadata = std::collections::HashMap::new();
                             metadata.insert("file_path".to_string(), serde_json::json!(file_path_str.clone()));
-                            metadata.insert("name".to_string(), serde_json::json!(symbol.name.clone()));
+                            metadata.insert("symbol_name".to_string(), serde_json::json!(symbol.name.clone()));
                             metadata.insert("symbol_type".to_string(), serde_json::json!(symbol.symbol_type.clone()));
                             metadata.insert("language".to_string(), serde_json::json!(symbol.language.clone()));
                             metadata.insert("start_line".to_string(), serde_json::json!(symbol.start_line));

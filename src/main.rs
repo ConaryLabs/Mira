@@ -300,11 +300,30 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         None
     };
 
-    // Start background indexer (watches current directory)
-    let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    info!("Indexer watching: {}", project_path.display());
+    // Start background indexer - watch registered projects from database
+    let project_paths: Vec<PathBuf> = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT path FROM projects ORDER BY last_accessed DESC LIMIT 10"
+    )
+    .fetch_all(&*db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(PathBuf::from)
+    .filter(|p| p.exists())
+    .collect();
+
+    let project_paths = if project_paths.is_empty() {
+        // Fallback to current directory if no projects registered
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        info!("No projects in database, watching current directory: {}", cwd.display());
+        vec![cwd]
+    } else {
+        info!("Watching {} registered projects: {:?}", project_paths.len(), project_paths);
+        project_paths
+    };
+
     let daemon = daemon::Daemon::with_shared(
-        vec![project_path],
+        project_paths,
         (*db).clone(),
         semantic.clone(),
     );

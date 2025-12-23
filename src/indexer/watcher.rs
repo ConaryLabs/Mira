@@ -76,8 +76,10 @@ impl Watcher {
 
             let mut watcher = match RecommendedWatcher::new(
                 move |res: Result<Event, notify::Error>| {
-                    if let Ok(event) = res {
-                        for path in event.paths {
+                    match res {
+                        Ok(event) => {
+                            tracing::debug!("File event: {:?} - {:?}", event.kind, event.paths);
+                            for path in event.paths {
                             if let Some(ext) = path.extension() {
                                 let ext = ext.to_string_lossy();
                                 let is_code = matches!(ext.as_ref(), "rs" | "py" | "ts" | "tsx" | "js" | "jsx");
@@ -104,6 +106,10 @@ impl Watcher {
                                 }
                             }
                         }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Watcher error: {}", e);
+                        }
                     }
                 },
                 Config::default().with_poll_interval(Duration::from_secs(2)),
@@ -119,6 +125,8 @@ impl Watcher {
                 tracing::error!("Failed to start watching {}: {}", path.display(), e);
                 return;
             }
+
+            tracing::info!("Watcher thread started for {}", path.display());
 
             // Keep thread alive
             loop {
@@ -145,82 +153,90 @@ impl Watcher {
             loop {
                 tokio::select! {
                     Some(event) = event_rx.recv() => {
-                        // Debounce: wait a bit in case there are more changes
+                        // Debounce: collect events for 500ms before processing
                         tokio::time::sleep(Duration::from_millis(500)).await;
 
-                        // Drain any pending events (simple debounce)
-                        while event_rx.try_recv().is_ok() {}
+                        // Collect all pending events into sets (deduplicate)
+                        use std::collections::HashSet;
+                        let mut code_changed: HashSet<PathBuf> = HashSet::new();
+                        let mut code_deleted: HashSet<PathBuf> = HashSet::new();
+                        let mut doc_changed: HashSet<PathBuf> = HashSet::new();
+                        let mut doc_deleted: HashSet<PathBuf> = HashSet::new();
 
-                        match event {
-                            FileEvent::CodeChanged(path) => {
-                                match indexer.index_file(&path).await {
-                                    Ok(stats) => {
-                                        if stats.embeddings_generated > 0 {
-                                            tracing::info!(
-                                                "Indexed {}: {} symbols, {} imports, {} embeddings",
-                                                path.display(),
-                                                stats.symbols_found,
-                                                stats.imports_found,
-                                                stats.embeddings_generated
-                                            );
-                                        } else {
-                                            tracing::debug!(
-                                                "Indexed {}: {} symbols, {} imports",
-                                                path.display(),
-                                                stats.symbols_found,
-                                                stats.imports_found
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("Failed to index {}: {}", path.display(), e);
-                                    }
-                                }
+                        // Add the first event
+                        match &event {
+                            FileEvent::CodeChanged(p) => { code_changed.insert(p.clone()); }
+                            FileEvent::CodeDeleted(p) => { code_deleted.insert(p.clone()); }
+                            FileEvent::DocChanged(p) => { doc_changed.insert(p.clone()); }
+                            FileEvent::DocDeleted(p) => { doc_deleted.insert(p.clone()); }
+                        }
+
+                        // Drain remaining events
+                        while let Ok(e) = event_rx.try_recv() {
+                            match e {
+                                FileEvent::CodeChanged(p) => { code_changed.insert(p); }
+                                FileEvent::CodeDeleted(p) => { code_deleted.insert(p); }
+                                FileEvent::DocChanged(p) => { doc_changed.insert(p); }
+                                FileEvent::DocDeleted(p) => { doc_deleted.insert(p); }
                             }
-                            FileEvent::CodeDeleted(path) => {
-                                match indexer.delete_file(&path).await {
-                                    Ok(()) => {
-                                        tracing::info!("Cleaned up deleted code file: {}", path.display());
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("Failed to clean up {}: {}", path.display(), e);
-                                    }
-                                }
-                            }
-                            FileEvent::DocChanged(path) => {
-                                let path_str = path.to_string_lossy();
-                                let semantic_ref = semantic_for_docs.as_deref();
-                                match ingest::update_document(&db_for_docs, semantic_ref, &path_str).await {
-                                    Ok(Some(result)) => {
+                        }
+
+                        // Process all collected code changes
+                        for path in code_changed {
+                            match indexer.index_file(&path).await {
+                                Ok(stats) => {
+                                    if stats.embeddings_generated > 0 {
                                         tracing::info!(
-                                            "Ingested document {}: {} chunks, ~{} tokens",
-                                            result.name,
-                                            result.chunk_count,
-                                            result.total_tokens
+                                            "Indexed {}: {} symbols, {} embeddings",
+                                            path.display(),
+                                            stats.symbols_found,
+                                            stats.embeddings_generated
                                         );
                                     }
-                                    Ok(None) => {
-                                        tracing::debug!("Document unchanged: {}", path.display());
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("Failed to ingest document {}: {}", path.display(), e);
-                                    }
                                 }
-                            }
-                            FileEvent::DocDeleted(path) => {
-                                let path_str = path.to_string_lossy();
-                                let semantic_ref = semantic_for_docs.as_deref();
-                                match ingest::delete_document_by_path(&db_for_docs, semantic_ref, &path_str).await {
-                                    Ok(true) => {
-                                        tracing::info!("Removed deleted document: {}", path.display());
-                                    }
-                                    Ok(false) => {}
-                                    Err(e) => {
-                                        tracing::warn!("Failed to remove document {}: {}", path.display(), e);
-                                    }
+                                Err(e) => {
+                                    tracing::warn!("Failed to index {}: {}", path.display(), e);
                                 }
                             }
                         }
+
+                        // Process all code deletions
+                        for path in code_deleted {
+                            if let Err(e) = indexer.delete_file(&path).await {
+                                tracing::warn!("Failed to clean up {}: {}", path.display(), e);
+                            }
+                        }
+
+                        // Process all doc changes
+                        for path in doc_changed {
+                            let path_str = path.to_string_lossy();
+                            let semantic_ref = semantic_for_docs.as_deref();
+                            match ingest::update_document(&db_for_docs, semantic_ref, &path_str).await {
+                                Ok(Some(result)) => {
+                                    tracing::info!(
+                                        "Ingested {}: {} chunks",
+                                        result.name,
+                                        result.chunk_count
+                                    );
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    tracing::warn!("Failed to ingest {}: {}", path.display(), e);
+                                }
+                            }
+                        }
+
+                        // Process all doc deletions
+                        for path in doc_deleted {
+                            let path_str = path.to_string_lossy();
+                            let semantic_ref = semantic_for_docs.as_deref();
+                            if let Err(e) = ingest::delete_document_by_path(&db_for_docs, semantic_ref, &path_str).await {
+                                tracing::warn!("Failed to remove {}: {}", path.display(), e);
+                            }
+                        }
+
+                        // Skip the original match block since we handled everything above
+                        continue;
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Watcher shutting down");
