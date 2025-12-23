@@ -9,18 +9,18 @@
 //!
 //! Tools are executed locally, results returned to GPT-5.2
 
-mod build;
-mod code_intel;
+pub mod build;
+pub mod code_intel;
 mod council;
 mod definitions;
-mod documents;
+pub mod documents;
 mod file;
 mod git;
-mod git_intel;
-mod index;
+pub mod git_intel;
+pub mod index;
 mod memory;
 mod mira;
-mod proactive;
+pub mod proactive;
 mod shell;
 mod test;
 pub mod types;

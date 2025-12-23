@@ -100,23 +100,25 @@ fn test_symbols_list_empty() {
 #[test]
 fn test_symbols_list_with_data() {
     let symbols = vec![
-        json!({"name": "MyStruct", "kind": "struct", "line": 10}),
-        json!({"name": "process", "kind": "function", "line": 25}),
+        json!({"name": "MyStruct", "symbol_type": "struct", "start_line": 10, "end_line": 20}),
+        json!({"name": "process", "symbol_type": "function", "start_line": 25, "end_line": 25}),
     ];
     let output = symbols_list(&symbols);
-    assert!(output.contains("MyStruct (struct):10"));
-    assert!(output.contains("process (function):25"));
+    assert!(output.contains("2 symbols:"));
+    assert!(output.contains("MyStruct (struct) lines 10-20"));
+    assert!(output.contains("process (function) line 25"));
 }
 
 #[test]
 fn test_commit_list() {
     let commits = vec![
-        json!({"hash": "abc123def456", "message": "Fix critical bug", "author": "alice"}),
-        json!({"hash": "xyz789", "message": "Add new feature with a very long description that should be truncated at some point to keep the output clean"}),
+        json!({"commit_hash": "abc123def456", "message": "Fix critical bug", "author": "alice"}),
+        json!({"commit_hash": "xyz789000000", "message": "Add new feature with a very long description that should be truncated at some point to keep the output clean"}),
     ];
     let output = commit_list(&commits);
+    assert!(output.contains("2 commits:"));
     assert!(output.contains("abc123d Fix critical bug (alice)"));
-    assert!(output.contains("xyz789"));
+    assert!(output.contains("xyz7890"));
     assert!(output.contains("...")); // Long message truncated
 }
 

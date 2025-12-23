@@ -51,44 +51,83 @@ pub fn code_search_results(results: &[Value]) -> String {
     out.trim_end().to_string()
 }
 
-/// Format symbols list
+/// Format symbols list - shows first 10 with details
 pub fn symbols_list(results: &[Value]) -> String {
     if results.is_empty() {
         return "No symbols.".to_string();
     }
 
-    let mut out = String::new();
-    for r in results {
-        let name = r.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
-        let line = r.get("line").and_then(|v| v.as_i64());
+    let total = results.len();
+    let show = std::cmp::min(10, total);
 
-        let loc = line.map(|l| format!(":{}", l)).unwrap_or_default();
+    let mut out = format!("{} symbol{}:\n", total, if total == 1 { "" } else { "s" });
+
+    for r in results.iter().take(show) {
+        let name = r.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        // Support "type", "symbol_type", and "kind" field names
+        let kind = r.get("type")
+            .or_else(|| r.get("symbol_type"))
+            .or_else(|| r.get("kind"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let start = r.get("start_line").and_then(|v| v.as_i64());
+        let end = r.get("end_line").and_then(|v| v.as_i64());
+
+        let loc = match (start, end) {
+            (Some(s), Some(e)) if s != e => format!(" lines {}-{}", s, e),
+            (Some(s), _) => format!(" line {}", s),
+            _ => String::new(),
+        };
         out.push_str(&format!("  {} ({}){}\n", name, kind, loc));
+    }
+
+    if total > show {
+        out.push_str(&format!("  ... and {} more\n", total - show));
     }
 
     out.trim_end().to_string()
 }
 
-/// Format commit list
+/// Format commit list - shows first 10 with details
 pub fn commit_list(results: &[Value]) -> String {
     if results.is_empty() {
         return "No commits.".to_string();
     }
 
-    let mut out = String::new();
-    for r in results {
-        let hash = r.get("hash").and_then(|v| v.as_str()).unwrap_or("?");
+    let total = results.len();
+    let show = std::cmp::min(10, total);
+
+    let mut out = format!("{} commit{}:\n", total, if total == 1 { "" } else { "s" });
+
+    for r in results.iter().take(show) {
+        // Support both "hash" and "commit_hash" field names
+        let hash = r.get("commit_hash")
+            .or_else(|| r.get("hash"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         let message = r.get("message").and_then(|v| v.as_str()).unwrap_or("?");
-        let author = r.get("author").and_then(|v| v.as_str());
+        // Support both "author" and "author_name" field names
+        let author = r.get("author")
+            .or_else(|| r.get("author_name"))
+            .and_then(|v| v.as_str());
 
         let short_hash = if hash.len() > 7 { &hash[..7] } else { hash };
-        let short_msg = if message.len() > 60 { format!("{}...", &message[..57]) } else { message.to_string() };
+        // Get first line of message, truncate if needed
+        let first_line = message.lines().next().unwrap_or(message);
+        let short_msg = if first_line.len() > 60 {
+            format!("{}...", &first_line[..57])
+        } else {
+            first_line.to_string()
+        };
 
         match author {
             Some(a) => out.push_str(&format!("  {} {} ({})\n", short_hash, short_msg, a)),
             None => out.push_str(&format!("  {} {}\n", short_hash, short_msg)),
         }
+    }
+
+    if total > show {
+        out.push_str(&format!("  ... and {} more\n", total - show));
     }
 
     out.trim_end().to_string()
@@ -100,18 +139,48 @@ pub fn related_files(results: &[Value]) -> String {
         return "No related files.".to_string();
     }
 
-    let mut out = format!("{} related file{}:\n",
-        results.len(),
-        if results.len() == 1 { "" } else { "s" }
-    );
+    let total = results.len();
+    let show = std::cmp::min(10, total);
 
-    for r in results {
+    let mut out = format!("{} related file{}:\n", total, if total == 1 { "" } else { "s" });
+
+    for r in results.iter().take(show) {
         let path = r.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
         let rel_type = r.get("relation_type").and_then(|v| v.as_str()).unwrap_or("?");
         let score = r.get("score").and_then(|v| v.as_f64());
 
         let rel = score.map(|s| format!(" ({:.0}%)", s * 100.0)).unwrap_or_default();
         out.push_str(&format!("  {} [{}]{}\n", path, rel_type, rel));
+    }
+
+    if total > show {
+        out.push_str(&format!("  ... and {} more\n", total - show));
+    }
+
+    out.trim_end().to_string()
+}
+
+/// Format cochange patterns - files that change together
+pub fn cochange_patterns(results: &[Value]) -> String {
+    if results.is_empty() {
+        return "No cochange patterns.".to_string();
+    }
+
+    let total = results.len();
+    let show = std::cmp::min(10, total);
+
+    let mut out = format!("{} cochange pattern{}:\n", total, if total == 1 { "" } else { "s" });
+
+    for r in results.iter().take(show) {
+        let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("?");
+        let count = r.get("cochange_count").and_then(|v| v.as_i64()).unwrap_or(0);
+        let confidence = r.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        out.push_str(&format!("  {} ({}x, {:.0}% confidence)\n", file, count, confidence * 100.0));
+    }
+
+    if total > show {
+        out.push_str(&format!("  ... and {} more\n", total - show));
     }
 
     out.trim_end().to_string()

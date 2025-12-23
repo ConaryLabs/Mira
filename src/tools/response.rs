@@ -247,13 +247,14 @@ fn format_vec(values: &[Value]) -> String {
             return format::correction_list(values);
         }
 
-        // Commit list
-        if first.contains_key("hash") && first.contains_key("message") {
+        // Commit list (commit_hash from core::ops::git)
+        if first.contains_key("commit_hash") && first.contains_key("message") {
             return format::commit_list(values);
         }
 
-        // Symbol list
-        if first.contains_key("name") && first.contains_key("kind") {
+        // Symbol list (type or symbol_type field)
+        if first.contains_key("name") && (first.contains_key("symbol_type") || first.contains_key("type"))
+            && first.contains_key("start_line") {
             return format::symbols_list(values);
         }
 
@@ -275,6 +276,11 @@ fn format_vec(values: &[Value]) -> String {
         // Related files
         if first.contains_key("file_path") && first.contains_key("relation_type") {
             return format::related_files(values);
+        }
+
+        // Cochange patterns (file + cochange_count + confidence)
+        if first.contains_key("file") && first.contains_key("cochange_count") {
+            return format::cochange_patterns(values);
         }
 
         // Call graph edges
