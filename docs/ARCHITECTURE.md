@@ -252,6 +252,76 @@ When a soft reset occurs, the handoff blob captures:
 | `needs_handoff` | Flag for next turn | After consumption |
 | `handoff_blob` | Context for next turn | After consumption |
 
+## Testing
+
+The test suite is organized by scope:
+
+```
+tests/
+├── daemon_e2e.rs       # MCP daemon tool E2E tests (25 tests)
+├── integration_e2e.rs  # Chat server API E2E tests (10 tests)
+└── mira_core_contract.rs # Core primitive contracts (11 tests)
+```
+
+### daemon_e2e.rs
+
+Tests all MCP tools by calling the underlying `src/tools/` functions directly with an isolated test database. Covers:
+
+- **Project/Session**: set_project, session_start, get_session_context
+- **Memory**: remember, recall, forget (with upsert semantics)
+- **Tasks**: create, list, get, update, complete, delete, subtasks
+- **Goals**: create, list, update, milestones, progress tracking
+- **Corrections**: record, get, validate workflow
+- **Build tracking**: record_build, record_error, get_errors, resolve
+- **Permissions**: save, list, delete rules
+- **Analytics**: list_tables, read-only queries
+- **Guidelines**: add, get coding guidelines
+- **Work state**: sync, get for session resume
+- **Sessions**: store_decision, store_session, search_sessions
+- **Code intel**: get_symbols, get_call_graph, semantic_code_search
+- **Git intel**: get_commits, search_commits, cochange_patterns, record_error_fix
+- **Documents**: list, get, delete
+- **Proactive context**: assembled context for tasks
+- **MCP history**: log_call, search_history
+
+### integration_e2e.rs
+
+Tests the Chat/Studio HTTP API using axum's test utilities (no server spawn). Covers:
+
+- Status endpoint
+- Message pagination and filtering
+- Sync endpoint validation and auth
+- Payload size limits
+- Concurrent request handling (semaphore)
+- Project locks (per-project serialization)
+- Archived message exclusion
+
+### mira_core_contract.rs
+
+Tests core primitive contracts (SemanticSearch, MetadataBuilder, embedding config).
+
+### Test Patterns
+
+```rust
+// Create isolated test database with migrations
+async fn create_test_db(temp_dir: &TempDir) -> SqlitePool {
+    let db_path = temp_dir.path().join("test.db");
+    let pool = create_optimized_pool(&format!("sqlite://{}?mode=rwc", db_path.display())).await?;
+    run_migrations(&pool, &migrations_path).await?;
+    pool
+}
+
+// SemanticSearch disabled for unit tests (no Qdrant dependency)
+async fn create_test_semantic() -> Arc<SemanticSearch> {
+    Arc::new(SemanticSearch::new(None, None).await)
+}
+
+// Use temp_dir path as project_path (passes validation)
+fn get_project_path(temp_dir: &TempDir) -> String {
+    temp_dir.path().to_string_lossy().to_string()
+}
+```
+
 ## Database Tables
 
 The database schema is defined in `migrations/`. Key tables:
