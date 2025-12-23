@@ -9,12 +9,18 @@
 //!
 //! Tools are executed locally, results returned to GPT-5.2
 
+mod build;
+mod code_intel;
 mod council;
 mod definitions;
+mod documents;
 mod file;
 mod git;
+mod git_intel;
+mod index;
 mod memory;
 mod mira;
+mod proactive;
 mod shell;
 mod test;
 pub mod types;
@@ -120,11 +126,17 @@ impl FileCache {
     }
 }
 
+use build::BuildTools;
+use code_intel::CodeIntelTools;
 use council::CouncilTools;
+use documents::DocumentTools;
 use file::FileTools;
 use git::GitTools;
+use git_intel::GitIntelTools;
+use index::IndexTools;
 use memory::MemoryTools;
 use mira::MiraTools;
+use proactive::ProactiveTools;
 use shell::ShellTools;
 use test::TestTools;
 use web::WebTools;
@@ -259,6 +271,32 @@ impl ToolExecutor {
                 let context = args.get("context").and_then(|v| v.as_str());
                 CouncilTools::ask_gemini(message, context).await
             }
+
+            // Code intelligence tools
+            "get_symbols" => self.code_intel_tools().get_symbols(&args).await,
+            "get_call_graph" => self.code_intel_tools().get_call_graph(&args).await,
+            "semantic_code_search" => self.code_intel_tools().semantic_code_search(&args).await,
+            "get_related_files" => self.code_intel_tools().get_related_files(&args).await,
+            "get_codebase_style" => self.code_intel_tools().get_codebase_style(&args).await,
+
+            // Git intelligence tools
+            "get_recent_commits" => self.git_intel_tools().get_recent_commits(&args).await,
+            "search_commits" => self.git_intel_tools().search_commits(&args).await,
+            "find_cochange_patterns" => self.git_intel_tools().find_cochange_patterns(&args).await,
+            "find_similar_fixes" => self.git_intel_tools().find_similar_fixes(&args).await,
+            "record_error_fix" => self.git_intel_tools().record_error_fix(&args).await,
+
+            // Build tracking tools
+            "build" => self.build_tools().build(&args).await,
+
+            // Document tools
+            "document" => self.document_tools().document(&args).await,
+
+            // Index tools
+            "index" => self.index_tools().index(&args).await,
+
+            // Proactive context
+            "get_proactive_context" => self.proactive_tools().get_proactive_context(&args).await,
 
             _ => Ok(format!("Unknown tool: {}", name)),
         }
@@ -430,6 +468,53 @@ impl ToolExecutor {
 
     fn test_tools(&self) -> TestTools<'_> {
         TestTools { cwd: &self.cwd }
+    }
+
+    fn code_intel_tools(&self) -> CodeIntelTools<'_> {
+        CodeIntelTools {
+            cwd: &self.cwd,
+            db: &self.db,
+            semantic: &self.semantic,
+        }
+    }
+
+    fn git_intel_tools(&self) -> GitIntelTools<'_> {
+        GitIntelTools {
+            cwd: &self.cwd,
+            db: &self.db,
+            semantic: &self.semantic,
+        }
+    }
+
+    fn build_tools(&self) -> BuildTools<'_> {
+        BuildTools {
+            cwd: &self.cwd,
+            db: &self.db,
+        }
+    }
+
+    fn document_tools(&self) -> DocumentTools<'_> {
+        DocumentTools {
+            cwd: &self.cwd,
+            db: &self.db,
+            semantic: &self.semantic,
+        }
+    }
+
+    fn index_tools(&self) -> IndexTools<'_> {
+        IndexTools {
+            cwd: &self.cwd,
+            db: &self.db,
+            semantic: &self.semantic,
+        }
+    }
+
+    fn proactive_tools(&self) -> ProactiveTools<'_> {
+        ProactiveTools {
+            cwd: &self.cwd,
+            db: &self.db,
+            semantic: &self.semantic,
+        }
     }
 }
 
