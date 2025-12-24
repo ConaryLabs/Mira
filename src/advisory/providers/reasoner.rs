@@ -1,20 +1,23 @@
-//! DeepSeek Reasoner Provider (Synthesizer)
-
-#![allow(dead_code)]
+//! DeepSeek Reasoner Provider (with Tool Calling)
+//!
+//! Uses the same Chat Completions API as the chat provider but adapted
+//! for the advisory system's simpler request/response types.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::{
     AdvisoryCapabilities, AdvisoryEvent, AdvisoryModel,
     AdvisoryProvider, AdvisoryRequest, AdvisoryResponse, AdvisoryRole,
-    AdvisoryUsage, get_env_var, REASONER_TIMEOUT_SECS,
+    AdvisoryUsage, ToolCallRequest, get_env_var, REASONER_TIMEOUT_SECS,
 };
+use crate::advisory::tool_bridge::{AllowedTool, openai_tool_schema};
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
 
@@ -35,16 +38,34 @@ impl ReasonerProvider {
             capabilities: AdvisoryCapabilities {
                 supports_streaming: true,
                 supports_reasoning: true,
-                supports_tools: false, // Reasoner doesn't support tools
+                supports_tools: true,
                 max_context_tokens: 128_000,
                 max_output_tokens: 64_000,
             },
         })
     }
+
+    /// Build tool definitions for the API
+    fn build_tools() -> Vec<ChatTool> {
+        AllowedTool::all()
+            .iter()
+            .map(|tool| {
+                let schema = openai_tool_schema(*tool);
+                ChatTool {
+                    tool_type: "function".to_string(),
+                    function: ChatFunction {
+                        name: schema["function"]["name"].as_str().unwrap_or("").to_string(),
+                        description: schema["function"]["description"].as_str().map(String::from),
+                        parameters: schema["function"]["parameters"].clone(),
+                    },
+                }
+            })
+            .collect()
+    }
 }
 
 // ============================================================================
-// API Types
+// API Types (OpenAI-compatible Chat Completions format)
 // ============================================================================
 
 #[derive(Serialize)]
@@ -54,12 +75,48 @@ struct DeepSeekRequest {
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ChatTool>>,
 }
 
 #[derive(Serialize)]
 struct DeepSeekMessage {
     role: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ChatToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatTool {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: ChatFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatFunction {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChatToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: ChatToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChatToolCallFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Deserialize)]
@@ -72,11 +129,13 @@ struct DeepSeekResponse {
 #[derive(Deserialize)]
 struct DeepSeekChoice {
     message: DeepSeekMessageResponse,
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct DeepSeekMessageResponse {
     content: Option<String>,
+    tool_calls: Option<Vec<ChatToolCall>>,
 }
 
 #[derive(Deserialize)]
@@ -84,12 +143,46 @@ struct DeepSeekError {
     message: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct DeepSeekUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
     #[serde(default)]
     reasoning_tokens: u32,
+}
+
+// Streaming types
+#[derive(Debug, Deserialize)]
+struct StreamChunk {
+    choices: Option<Vec<StreamChoice>>,
+    usage: Option<DeepSeekUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    delta: Option<StreamDelta>,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamDelta {
+    content: Option<String>,
+    reasoning_content: Option<String>,
+    tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCall {
+    #[serde(default)]
+    index: usize,
+    id: Option<String>,
+    function: Option<StreamFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamFunction {
+    name: Option<String>,
+    arguments: Option<String>,
 }
 
 // ============================================================================
@@ -117,7 +210,9 @@ impl AdvisoryProvider for ReasonerProvider {
         if let Some(system) = &request.system {
             messages.push(DeepSeekMessage {
                 role: "system".to_string(),
-                content: system.clone(),
+                content: Some(system.clone()),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 
@@ -128,21 +223,32 @@ impl AdvisoryProvider for ReasonerProvider {
                     AdvisoryRole::User => "user".to_string(),
                     AdvisoryRole::Assistant => "assistant".to_string(),
                 },
-                content: msg.content.clone(),
+                content: Some(msg.content.clone()),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 
         // Add current message
         messages.push(DeepSeekMessage {
             role: "user".to_string(),
-            content: request.message,
+            content: Some(request.message),
+            tool_calls: None,
+            tool_call_id: None,
         });
+
+        let tools = if request.enable_tools {
+            Some(Self::build_tools())
+        } else {
+            None
+        };
 
         let api_request = DeepSeekRequest {
             model: "deepseek-reasoner".to_string(),
             messages,
             max_tokens: 8192,
             stream: None,
+            tools,
         };
 
         let response = self.client
@@ -166,10 +272,29 @@ impl AdvisoryProvider for ReasonerProvider {
             anyhow::bail!("DeepSeek Reasoner error: {}", error.message);
         }
 
-        let text = api_response
-            .choices
-            .and_then(|c| c.into_iter().next())
-            .and_then(|c| c.message.content)
+        let choice = api_response.choices
+            .and_then(|c| c.into_iter().next());
+
+        let text = choice.as_ref()
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_default();
+
+        // Extract tool calls
+        let tool_calls = choice
+            .and_then(|c| c.message.tool_calls)
+            .map(|tcs| {
+                tcs.into_iter()
+                    .filter_map(|tc| {
+                        let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        Some(ToolCallRequest {
+                            id: tc.id,
+                            name: tc.function.name,
+                            arguments: args,
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         let usage = api_response.usage.map(|u| AdvisoryUsage {
@@ -182,7 +307,7 @@ impl AdvisoryProvider for ReasonerProvider {
             text,
             usage,
             model: AdvisoryModel::DeepSeekReasoner,
-            tool_calls: vec![],
+            tool_calls,
         })
     }
 
@@ -196,7 +321,9 @@ impl AdvisoryProvider for ReasonerProvider {
         if let Some(system) = &request.system {
             messages.push(DeepSeekMessage {
                 role: "system".to_string(),
-                content: system.clone(),
+                content: Some(system.clone()),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 
@@ -206,20 +333,31 @@ impl AdvisoryProvider for ReasonerProvider {
                     AdvisoryRole::User => "user".to_string(),
                     AdvisoryRole::Assistant => "assistant".to_string(),
                 },
-                content: msg.content.clone(),
+                content: Some(msg.content.clone()),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 
         messages.push(DeepSeekMessage {
             role: "user".to_string(),
-            content: request.message,
+            content: Some(request.message),
+            tool_calls: None,
+            tool_call_id: None,
         });
+
+        let tools = if request.enable_tools {
+            Some(Self::build_tools())
+        } else {
+            None
+        };
 
         let api_request = DeepSeekRequest {
             model: "deepseek-reasoner".to_string(),
             messages,
             max_tokens: 8192,
             stream: Some(true),
+            tools,
         };
 
         let response = self.client
@@ -241,8 +379,15 @@ impl AdvisoryProvider for ReasonerProvider {
 }
 
 // ============================================================================
-// SSE Parsing
+// SSE Parsing with Tool Call Support
 // ============================================================================
+
+/// Track in-flight tool calls during streaming
+struct InFlightCall {
+    id: String,
+    name: String,
+    args: String,
+}
 
 async fn parse_deepseek_sse(
     response: reqwest::Response,
@@ -251,6 +396,8 @@ async fn parse_deepseek_sse(
     let mut full_text = String::new();
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut tool_calls: HashMap<usize, InFlightCall> = HashMap::new();
+    let mut collected_tool_calls: Vec<ToolCallRequest> = vec![];
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
@@ -265,34 +412,79 @@ async fn parse_deepseek_sse(
             }
 
             if let Some(json_str) = line.strip_prefix("data: ") {
-                #[derive(Deserialize)]
-                struct StreamChunk {
-                    choices: Option<Vec<StreamChoice>>,
-                }
-                #[derive(Deserialize)]
-                struct StreamChoice {
-                    delta: Option<StreamDelta>,
-                }
-                #[derive(Deserialize)]
-                struct StreamDelta {
-                    content: Option<String>,
-                    reasoning_content: Option<String>,
-                }
-
                 if let Ok(chunk) = serde_json::from_str::<StreamChunk>(json_str) {
                     if let Some(choices) = chunk.choices {
                         for choice in choices {
                             if let Some(delta) = choice.delta {
-                                // Send reasoning as separate event
+                                // Handle reasoning content
                                 if let Some(reasoning) = delta.reasoning_content {
-                                    let _ = tx.send(AdvisoryEvent::ReasoningDelta(reasoning)).await;
+                                    if !reasoning.is_empty() {
+                                        let _ = tx.send(AdvisoryEvent::ReasoningDelta(reasoning)).await;
+                                    }
                                 }
+
+                                // Handle text content
                                 if let Some(content) = delta.content {
-                                    full_text.push_str(&content);
-                                    let _ = tx.send(AdvisoryEvent::TextDelta(content)).await;
+                                    if !content.is_empty() {
+                                        full_text.push_str(&content);
+                                        let _ = tx.send(AdvisoryEvent::TextDelta(content)).await;
+                                    }
+                                }
+
+                                // Handle tool calls - track by index for parallel calls
+                                if let Some(delta_tool_calls) = delta.tool_calls {
+                                    for tc in delta_tool_calls {
+                                        let idx = tc.index;
+
+                                        let call = tool_calls.entry(idx).or_insert_with(|| InFlightCall {
+                                            id: String::new(),
+                                            name: String::new(),
+                                            args: String::new(),
+                                        });
+
+                                        // Update ID if present
+                                        if let Some(ref id) = tc.id {
+                                            call.id = id.clone();
+                                        }
+
+                                        // Update name if present
+                                        if let Some(ref func) = tc.function {
+                                            if let Some(ref name) = func.name {
+                                                call.name = name.clone();
+                                            }
+                                            // Accumulate arguments
+                                            if let Some(ref args) = func.arguments {
+                                                call.args.push_str(args);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // On finish, collect all tool calls
+                            if choice.finish_reason.is_some() {
+                                for (_, call) in tool_calls.drain() {
+                                    if !call.id.is_empty() && !call.name.is_empty() {
+                                        let args: serde_json::Value = serde_json::from_str(&call.args)
+                                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                        collected_tool_calls.push(ToolCallRequest {
+                                            id: call.id,
+                                            name: call.name,
+                                            arguments: args,
+                                        });
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    // Usage info
+                    if let Some(usage) = chunk.usage {
+                        let _ = tx.send(AdvisoryEvent::Usage(AdvisoryUsage {
+                            input_tokens: usage.prompt_tokens,
+                            output_tokens: usage.completion_tokens,
+                            reasoning_tokens: usage.reasoning_tokens,
+                        })).await;
                     }
                 }
             }
@@ -300,5 +492,14 @@ async fn parse_deepseek_sse(
     }
 
     let _ = tx.send(AdvisoryEvent::Done).await;
+
+    // If we have tool calls but no text, return a marker
+    // The caller will need to handle tool execution
+    if !collected_tool_calls.is_empty() && full_text.is_empty() {
+        // Encode tool calls in the response for the caller to parse
+        // This is a workaround since stream() returns String, not AdvisoryResponse
+        full_text = format!("[TOOL_CALLS]{}", serde_json::to_string(&collected_tool_calls)?);
+    }
+
     Ok(full_text)
 }

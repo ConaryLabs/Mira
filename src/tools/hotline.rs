@@ -72,6 +72,39 @@ async fn call_deepseek(message: &str) -> Result<serde_json::Value> {
     }))
 }
 
+async fn call_deepseek_with_tools(
+    message: &str,
+    db: &SqlitePool,
+    semantic: &Arc<SemanticSearch>,
+    project_id: Option<i64>,
+) -> Result<serde_json::Value> {
+    let service = AdvisoryService::from_env()?;
+
+    // Create tool context
+    let mut ctx = tool_bridge::ToolContext::new(
+        Arc::new(db.clone()),
+        semantic.clone(),
+        project_id,
+    );
+
+    let response = service.ask_with_tools(
+        AdvisoryModel::DeepSeekReasoner,
+        message,
+        Some("You are an AI assistant with access to Mira's read-only tools. \
+              Use the tools to gather relevant context before answering. \
+              Available tools: recall (search memories), get_corrections (user preferences), \
+              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
+              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits, list_tasks.".to_string()),
+        &mut ctx,
+    ).await?;
+
+    Ok(serde_json::json!({
+        "response": response.text,
+        "provider": "deepseek-reasoner",
+        "tools_used": ctx.tracker.session_total,
+    }))
+}
+
 async fn call_gemini(message: &str) -> Result<serde_json::Value> {
     let service = AdvisoryService::from_env()?;
     let response = service.ask(AdvisoryModel::Gemini3Pro, message).await?;
@@ -495,7 +528,8 @@ pub async fn call_mira(
     let mut result = match (req.provider.as_deref(), enable_tools) {
         (Some("gemini"), true) => call_gemini_with_tools(&message, db, semantic, project_id).await?,
         (Some("gemini"), false) => call_gemini(&message).await?,
-        (Some("deepseek"), _) => call_deepseek(&message).await?,
+        (Some("deepseek"), true) => call_deepseek_with_tools(&message, db, semantic, project_id).await?,
+        (Some("deepseek"), false) => call_deepseek(&message).await?,
         (Some("council"), _) => call_council(&message).await?,
         (_, true) => call_gpt_with_tools(&message, db, semantic, project_id).await?,
         (_, false) => call_gpt(&message).await?,
