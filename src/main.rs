@@ -13,7 +13,6 @@ use axum::{
     response::Response,
 };
 use rmcp::{
-    ServiceExt,
     transport::{StreamableHttpService, StreamableHttpServerConfig},
     transport::streamable_http_server::session::local::LocalSessionManager,
 };

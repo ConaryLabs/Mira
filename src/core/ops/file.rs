@@ -13,8 +13,6 @@ use super::super::{CoreError, CoreResult};
 
 /// Maximum file size to read (1MB)
 const MAX_READ_SIZE: usize = 1024 * 1024;
-/// Maximum line length before truncation
-const MAX_LINE_LENGTH: usize = 2000;
 
 // ============================================================================
 // Input/Output Types
@@ -193,14 +191,10 @@ pub async fn edit_file(input: EditFileInput) -> CoreResult<EditFileOutput> {
 pub fn glob_files(input: GlobInput) -> CoreResult<Vec<PathBuf>> {
     let glob_pattern = format!("{}/{}", input.base_path.display(), input.pattern);
 
-    let mut matches = Vec::new();
-    for entry in glob::glob(&glob_pattern)
+    let matches: Vec<PathBuf> = glob::glob(&glob_pattern)
         .map_err(|e| CoreError::GlobPattern(e.to_string()))?
-    {
-        if let Ok(path) = entry {
-            matches.push(path);
-        }
-    }
+        .flatten()
+        .collect();
 
     Ok(matches)
 }

@@ -585,7 +585,7 @@ fn quote_unquoted_keys(input: &str) -> String {
         let c = chars[i];
 
         // After { or , look for unquoted key
-        if (c == '{' || c == ',') {
+        if c == '{' || c == ',' {
             result.push(c);
             i += 1;
 

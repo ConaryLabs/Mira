@@ -22,6 +22,7 @@ pub struct TestResult {
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
+    #[allow(dead_code)] // For future test timing display in UI
     pub duration_ms: u64,
     pub output: String,
     pub success: bool,

@@ -163,6 +163,12 @@ pub struct ToolExecutor {
     web_search_config: WebSearchConfig,
 }
 
+impl Default for ToolExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolExecutor {
     pub fn new() -> Self {
         let cwd = std::env::current_dir().unwrap_or_default();

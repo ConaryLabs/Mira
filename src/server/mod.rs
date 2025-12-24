@@ -1,5 +1,8 @@
-// src/server/mod.rs
-// Mira MCP Server - Core server implementation
+//! Mira MCP Server - Core server implementation
+//!
+//! NOTE: Some items are infrastructure for future features or external use.
+
+#![allow(dead_code)] // Server infrastructure (some items for future use)
 
 use anyhow::Result;
 use rmcp::{
@@ -980,13 +983,17 @@ impl MiraServer {
             }
             "file" => {
                 let path = req.path.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("path required")))?;
+                tracing::info!("[MCP] index action=file, path={}", path);
                 let path = std::path::Path::new(&path);
 
+                tracing::debug!("[MCP] Creating CodeIndexer...");
                 let mut code_indexer = CodeIndexer::with_semantic(
                     self.db.as_ref().clone(),
                     Some(self.semantic.clone())
                 ).map_err(to_mcp_err)?;
+                tracing::debug!("[MCP] Calling index_file...");
                 let stats = code_indexer.index_file(path).await.map_err(to_mcp_err)?;
+                tracing::info!("[MCP] index_file returned: {:?}", stats);
 
                 Ok(json_response(serde_json::json!({
                     "status": "indexed",

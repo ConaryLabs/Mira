@@ -152,6 +152,7 @@ mod tests {
 }
 
 // Types available for external use (currently internal only)
+#[allow(unused_imports)]
 pub(crate) use types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult, UsageInfo};
 
 // ============================================================================

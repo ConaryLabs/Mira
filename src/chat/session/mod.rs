@@ -12,6 +12,8 @@
 //! old code content. Semantic search is for conversation/memory only.
 //! Code compaction stores understanding metadata, not code itself.
 
+#![allow(dead_code)] // Session infrastructure (some items for future use)
+
 mod chain;
 mod code_hints;
 mod context;
@@ -31,12 +33,10 @@ use uuid::Uuid;
 use crate::chat::context::MiraContext;
 use crate::core::SemanticSearch;
 
-pub use chain::ResetDecision;
-pub use context::{DeepSeekBudget, TokenUsage};
+pub use context::DeepSeekBudget;
 pub use types::{
-    AssembledContext, CallReference, ChatMessage, Checkpoint, CodeIndexFileHint,
-    CodeIndexSymbolHint, IndexStatus, PastDecision, RejectedApproach, RelatedFile,
-    SemanticHit, SessionStats, SimilarFix,
+    AssembledContext, ChatMessage, Checkpoint, CodeIndexFileHint, CodeIndexSymbolHint,
+    SemanticHit, SessionStats,
 };
 
 /// Number of recent messages to keep raw in context (full fidelity)
@@ -831,7 +831,7 @@ impl SessionManager {
         .await
         .ok()?;
 
-        let last_indexed_ts = last_indexed.and_then(|r| Some(r.0));
+        let last_indexed_ts = last_indexed.map(|r| r.0);
 
         // Get list of files modified since last index
         let stale_files = self.get_stale_files(last_indexed_ts).await;
@@ -890,7 +890,7 @@ impl SessionManager {
     }
 
     /// Fallback: check file modification times vs index time
-    async fn check_file_mtimes(&self, since_ts: i64) -> Vec<String> {
+    async fn check_file_mtimes(&self, _since_ts: i64) -> Vec<String> {
         // Get indexed files with their analyzed_at times
         let indexed_files: Vec<(String, i64)> = sqlx::query_as(
             r#"

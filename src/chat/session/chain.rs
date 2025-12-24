@@ -299,6 +299,7 @@ impl SessionManager {
     }
 
     /// Get last failure (command, error) - used internally for handoff
+    #[allow(dead_code)] // For future handoff feature
     async fn get_last_failure(&self) -> Result<Option<(String, String)>> {
         let ctx = self.chain_context();
         let info = core_chain::get_last_failure(&ctx, &self.project_path).await?;
@@ -313,6 +314,7 @@ impl SessionManager {
     }
 
     /// Get recent artifact IDs - used internally for handoff
+    #[allow(dead_code)] // For future handoff feature
     async fn get_recent_artifact_ids(&self) -> Result<Option<Vec<String>>> {
         let ctx = self.chain_context();
         let ids = core_chain::get_recent_artifact_ids(&ctx, &self.project_path).await?;

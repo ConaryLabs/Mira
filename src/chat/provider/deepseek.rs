@@ -24,6 +24,7 @@ pub struct DeepSeekProvider {
     client: HttpClient,
     api_key: String,
     capabilities: Capabilities,
+    #[allow(dead_code)] // For future model selection (deepseek-chat, deepseek-reasoner, etc.)
     model: String,
 }
 

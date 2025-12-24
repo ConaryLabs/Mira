@@ -739,10 +739,10 @@ async fn get_index_freshness(
     .fetch_optional(db)
     .await?;
 
-    let last_indexed_ts = last_indexed.and_then(|r| Some(r.0));
+    let last_indexed_ts = last_indexed.map(|r| r.0);
 
     // Get files modified since last index (using git)
-    let stale_files = if let Some(since_ts) = last_indexed_ts {
+    let stale_files = if let Some(_since_ts) = last_indexed_ts {
         // Query for indexed files that might be stale
         let indexed_files: Vec<(String, i64)> = sqlx::query_as(
             r#"

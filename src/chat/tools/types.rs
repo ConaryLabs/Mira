@@ -39,7 +39,7 @@ impl DiffInfo {
     /// Format a new file diff
     fn format_new_file(&self) -> String {
         let mut output = String::new();
-        output.push_str(&format!("--- /dev/null\n"));
+        output.push_str("--- /dev/null\n");
         output.push_str(&format!("+++ b/{}\n", self.path));
         output.push_str("@@ -0,0 +1 @@\n");
 

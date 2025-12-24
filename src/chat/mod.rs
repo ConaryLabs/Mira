@@ -6,17 +6,14 @@
 //! - Full Mira context injection
 //! - Persistent memory and session management
 
+#![allow(dead_code)] // Some items are infrastructure for future use
+
 pub mod conductor;
-pub mod config;
 pub mod context;
 pub mod provider;
-pub mod reasoning;
 pub mod server;
 pub mod session;
 pub mod tools;
 
-/// Memory collection name (alias for backwards compatibility)
-pub const COLLECTION_MEMORY: &str = crate::core::COLLECTION_CONVERSATION;
-
 // Re-export key types for external use
-pub use server::{create_router, AppState, ProjectLocks};
+pub use server::{create_router, AppState};

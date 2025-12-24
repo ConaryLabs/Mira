@@ -249,7 +249,7 @@ pub async fn get_recent_audit_events(
         .bind(limit)
         .fetch_all(db)
         .await?
-    } else if let Some(sev) = min_severity {
+    } else if let Some(_sev) = min_severity {
         // Filter by severity (warn and error only)
         sqlx::query_as(
             r#"

@@ -3,11 +3,8 @@
 //! Combines basic git commands (status, diff, commit, log) with
 //! git intelligence (commits DB, cochange patterns, error fixes).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-
-use chrono::Utc;
-use sqlx::SqlitePool;
 
 use super::super::{CoreError, CoreResult, OpContext};
 

@@ -3,7 +3,6 @@
 //! Thin wrapper delegating to core::ops::web for shared implementation.
 
 use anyhow::Result;
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::core::ops::web as core_web;
@@ -35,11 +34,13 @@ impl WebTools {
     }
 
     /// Create WebTools with default (no Google Search) configuration
+    #[allow(dead_code)] // Utility constructor for tests and future use
     pub fn new_default() -> Self {
         Self::new(WebSearchConfig::default())
     }
 
     /// Check if Google Custom Search is configured
+    #[allow(dead_code)] // For future conditional web search UI
     pub fn has_google_search(&self) -> bool {
         self.config.google_api_key.is_some() && self.config.google_cx.is_some()
     }
@@ -89,6 +90,7 @@ impl WebTools {
 }
 
 // Re-export html_to_text for tests
+#[cfg(test)]
 pub use core_web::html_to_text;
 
 #[cfg(test)]

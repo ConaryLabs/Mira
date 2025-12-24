@@ -14,6 +14,7 @@ use crate::chat::tools::DiffInfo;
 /// Events sent to the frontend via SSE
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
+#[allow(dead_code)] // Variants for future rich streaming UI
 pub enum ChatEvent {
     // === Message Boundaries ===
     /// Start of a new message
@@ -119,20 +120,12 @@ pub enum ChatEvent {
 
 /// Chat request from frontend
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // reasoning_effort for future OpenAI o1/o3 reasoning control
 pub struct ChatRequest {
     pub message: String,
     pub project_path: String,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
-}
-
-/// Message in the endless chat
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub id: String,
-    pub role: String,
-    pub blocks: Vec<MessageBlock>,
-    pub created_at: i64,
 }
 
 /// Message with optional usage info (for API response)
