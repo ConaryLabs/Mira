@@ -67,7 +67,7 @@ if $RESTART_SERVICES; then
     echo "Restarting services..."
 
     if $BUILD_BACKEND; then
-        sudo systemctl restart mira
+        systemctl --user restart mira
         echo "✓ mira restarted"
     fi
 
@@ -83,7 +83,7 @@ echo "============================================"
 echo "Build complete!"
 echo ""
 echo "Services:"
-echo "  mira:  $(sudo systemctl is-active mira 2>/dev/null || echo 'not running')"
+echo "  mira:  $(systemctl --user is-active mira 2>/dev/null || echo 'not running')"
 echo "  nginx: $(sudo systemctl is-active nginx)"
 echo ""
 if $BUILD_BACKEND && $RESTART_SERVICES; then
