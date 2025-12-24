@@ -1,490 +1,62 @@
 // src/tools/hotline.rs
 // Hotline - Talk to other AI models for collaboration/second opinion
+// Uses the unified AdvisoryService for all provider calls
 // Supports: GPT-5.2 (default), DeepSeek (chat), Gemini 3 Pro
-// Council mode: GPT-5.2 + DeepSeek Reasoner + Gemini 3 Pro (no Opus - we're already on Opus)
-// All providers are called directly via their APIs (no mira-chat dependency)
+// Council mode: GPT-5.2 + Gemini 3 Pro, synthesized by DeepSeek Reasoner
+// (Opus excluded from council when running in Claude Code MCP context)
 
 use anyhow::Result;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use super::proactive;
 use super::git_intel;
+use crate::advisory::{AdvisoryService, AdvisoryModel};
 use crate::core::SemanticSearch;
 use std::sync::Arc;
 use super::types::{HotlineRequest, GetProactiveContextRequest, GetRecentCommitsRequest};
 
-const DOTENV_PATH: &str = "/home/peter/Mira/.env";
-const TIMEOUT_SECS: u64 = 120;
-
-// API endpoints
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
-const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
-const GEMINI_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent";
-
 // ============================================================================
-// Environment helpers
+// Provider Functions (using AdvisoryService)
 // ============================================================================
-
-fn get_env_var(name: &str) -> Option<String> {
-    // First try env var
-    if let Ok(val) = std::env::var(name) {
-        return Some(val);
-    }
-
-    // Fallback: read from .env file
-    if let Ok(contents) = std::fs::read_to_string(DOTENV_PATH) {
-        let prefix = format!("{}=", name);
-        for line in contents.lines() {
-            if let Some(value) = line.strip_prefix(&prefix) {
-                return Some(value.trim().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-// ============================================================================
-// OpenAI API (GPT 5.2)
-// ============================================================================
-
-#[derive(Serialize)]
-struct OpenAIRequest {
-    model: String,
-    messages: Vec<OpenAIMessage>,
-    max_completion_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning_effort: Option<String>,
-}
-
-#[derive(Serialize)]
-struct OpenAIMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct OpenAIResponse {
-    choices: Option<Vec<OpenAIChoice>>,
-    error: Option<OpenAIError>,
-    usage: Option<OpenAIUsage>,
-}
-
-#[derive(Deserialize)]
-struct OpenAIChoice {
-    message: OpenAIMessageResponse,
-}
-
-#[derive(Deserialize)]
-struct OpenAIMessageResponse {
-    content: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct OpenAIError {
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct OpenAIUsage {
-    prompt_tokens: u32,
-    completion_tokens: u32,
-}
 
 async fn call_gpt(message: &str) -> Result<serde_json::Value> {
-    let api_key = get_env_var("OPENAI_API_KEY")
-        .ok_or_else(|| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
+    let service = AdvisoryService::from_env()?;
+    let response = service.ask(AdvisoryModel::Gpt52, message).await?;
 
-    let client = Client::new();
-
-    let request = OpenAIRequest {
-        model: "gpt-5.2".to_string(),
-        messages: vec![OpenAIMessage {
-            role: "user".to_string(),
-            content: message.to_string(),
-        }],
-        max_completion_tokens: 32000,
-        reasoning_effort: Some("high".to_string()),
-    };
-
-    let response = client
-        .post(OPENAI_API_URL)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("OpenAI API error: {} - {}", status, body);
-    }
-
-    let api_response: OpenAIResponse = response.json().await?;
-
-    if let Some(error) = api_response.error {
-        anyhow::bail!("OpenAI error: {}", error.message);
-    }
-
-    let text = api_response
-        .choices
-        .and_then(|c| c.into_iter().next())
-        .and_then(|c| c.message.content)
-        .unwrap_or_default();
-
-    let mut result = serde_json::json!({
-        "response": text,
+    Ok(serde_json::json!({
+        "response": response.text,
         "provider": "gpt-5.2",
-    });
-
-    if let Some(usage) = api_response.usage {
-        result["tokens"] = serde_json::json!({
-            "input": usage.prompt_tokens,
-            "output": usage.completion_tokens,
-        });
-    }
-
-    Ok(result)
-}
-
-// ============================================================================
-// DeepSeek API (V3.2)
-// ============================================================================
-
-#[derive(Serialize)]
-struct DeepSeekRequest {
-    model: String,
-    messages: Vec<DeepSeekMessage>,
-    max_tokens: u32,
-}
-
-#[derive(Serialize)]
-struct DeepSeekMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct DeepSeekResponse {
-    choices: Option<Vec<DeepSeekChoice>>,
-    error: Option<DeepSeekError>,
-    usage: Option<DeepSeekUsage>,
-}
-
-#[derive(Deserialize)]
-struct DeepSeekChoice {
-    message: DeepSeekMessageResponse,
-}
-
-#[derive(Deserialize)]
-struct DeepSeekMessageResponse {
-    content: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct DeepSeekError {
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct DeepSeekUsage {
-    prompt_tokens: u32,
-    completion_tokens: u32,
+    }))
 }
 
 async fn call_deepseek(message: &str) -> Result<serde_json::Value> {
-    let api_key = get_env_var("DEEPSEEK_API_KEY")
-        .ok_or_else(|| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
+    let service = AdvisoryService::from_env()?;
+    let response = service.ask(AdvisoryModel::DeepSeekReasoner, message).await?;
 
-    let client = Client::new();
-
-    let request = DeepSeekRequest {
-        model: "deepseek-chat".to_string(),
-        messages: vec![DeepSeekMessage {
-            role: "user".to_string(),
-            content: message.to_string(),
-        }],
-        max_tokens: 8192,
-    };
-
-    let response = client
-        .post(DEEPSEEK_API_URL)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("DeepSeek API error: {} - {}", status, body);
-    }
-
-    let api_response: DeepSeekResponse = response.json().await?;
-
-    if let Some(error) = api_response.error {
-        anyhow::bail!("DeepSeek error: {}", error.message);
-    }
-
-    let text = api_response
-        .choices
-        .and_then(|c| c.into_iter().next())
-        .and_then(|c| c.message.content)
-        .unwrap_or_default();
-
-    let mut result = serde_json::json!({
-        "response": text,
-        "provider": "deepseek",
-    });
-
-    if let Some(usage) = api_response.usage {
-        result["tokens"] = serde_json::json!({
-            "input": usage.prompt_tokens,
-            "output": usage.completion_tokens,
-        });
-    }
-
-    Ok(result)
-}
-
-// ============================================================================
-// DeepSeek Reasoner (for council - needs more thinking time)
-// ============================================================================
-
-async fn call_deepseek_reasoner(message: &str) -> Result<serde_json::Value> {
-    let api_key = get_env_var("DEEPSEEK_API_KEY")
-        .ok_or_else(|| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-
-    let client = Client::new();
-
-    let request = DeepSeekRequest {
-        model: "deepseek-reasoner".to_string(),
-        messages: vec![DeepSeekMessage {
-            role: "user".to_string(),
-            content: message.to_string(),
-        }],
-        max_tokens: 8192, // Reasoner has same limit
-    };
-
-    let response = client
-        .post(DEEPSEEK_API_URL)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .timeout(std::time::Duration::from_secs(180)) // Longer timeout for reasoning
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("DeepSeek Reasoner API error: {} - {}", status, body);
-    }
-
-    let api_response: DeepSeekResponse = response.json().await?;
-
-    if let Some(error) = api_response.error {
-        anyhow::bail!("DeepSeek Reasoner error: {}", error.message);
-    }
-
-    let text = api_response
-        .choices
-        .and_then(|c| c.into_iter().next())
-        .and_then(|c| c.message.content)
-        .unwrap_or_default();
-
-    let mut result = serde_json::json!({
-        "response": text,
+    Ok(serde_json::json!({
+        "response": response.text,
         "provider": "deepseek-reasoner",
-    });
-
-    if let Some(usage) = api_response.usage {
-        result["tokens"] = serde_json::json!({
-            "input": usage.prompt_tokens,
-            "output": usage.completion_tokens,
-        });
-    }
-
-    Ok(result)
-}
-
-// ============================================================================
-// Google API (Gemini 3 Pro)
-// ============================================================================
-
-#[derive(Serialize)]
-struct GeminiRequest {
-    contents: Vec<GeminiContent>,
-    #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
-    generation_config: Option<GeminiGenerationConfig>,
-}
-
-#[derive(Serialize)]
-struct GeminiContent {
-    parts: Vec<GeminiPart>,
-}
-
-#[derive(Serialize)]
-struct GeminiPart {
-    text: String,
-}
-
-#[derive(Serialize)]
-struct GeminiGenerationConfig {
-    #[serde(rename = "thinkingConfig")]
-    thinking_config: GeminiThinkingConfig,
-}
-
-#[derive(Serialize)]
-struct GeminiThinkingConfig {
-    #[serde(rename = "thinkingLevel")]
-    thinking_level: String,
-}
-
-#[derive(Deserialize)]
-struct GeminiResponse {
-    candidates: Option<Vec<GeminiCandidate>>,
-    #[serde(rename = "usageMetadata")]
-    usage_metadata: Option<GeminiUsage>,
-    error: Option<GeminiError>,
-}
-
-#[derive(Deserialize)]
-struct GeminiCandidate {
-    content: GeminiContentResponse,
-}
-
-#[derive(Deserialize)]
-struct GeminiContentResponse {
-    parts: Vec<GeminiPartResponse>,
-}
-
-#[derive(Deserialize)]
-struct GeminiPartResponse {
-    text: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GeminiUsage {
-    #[serde(rename = "promptTokenCount")]
-    prompt_token_count: Option<u32>,
-    #[serde(rename = "candidatesTokenCount")]
-    candidates_token_count: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct GeminiError {
-    message: String,
+    }))
 }
 
 async fn call_gemini(message: &str) -> Result<serde_json::Value> {
-    let api_key = get_env_var("GEMINI_API_KEY")
-        .ok_or_else(|| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
-
-    let client = Client::new();
-    let url = format!("{}?key={}", GEMINI_API_URL, api_key);
-
-    let request = GeminiRequest {
-        contents: vec![GeminiContent {
-            parts: vec![GeminiPart {
-                text: message.to_string(),
-            }],
-        }],
-        generation_config: Some(GeminiGenerationConfig {
-            thinking_config: GeminiThinkingConfig {
-                thinking_level: "high".to_string(),  // Maximum reasoning depth
-            },
-        }),
-    };
-
-    let response = client
-        .post(&url)
-        .json(&request)
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Gemini API error: {} - {}", status, body);
-    }
-
-    let api_response: GeminiResponse = response.json().await?;
-
-    if let Some(error) = api_response.error {
-        anyhow::bail!("Gemini error: {}", error.message);
-    }
-
-    let text = api_response
-        .candidates
-        .and_then(|c| c.into_iter().next())
-        .map(|c| {
-            c.content
-                .parts
-                .into_iter()
-                .filter_map(|p| p.text)
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .unwrap_or_default();
-
-    let mut result = serde_json::json!({
-        "response": text,
-        "provider": "gemini",
-    });
-
-    if let Some(usage) = api_response.usage_metadata {
-        result["tokens"] = serde_json::json!({
-            "input": usage.prompt_token_count.unwrap_or(0),
-            "output": usage.candidates_token_count.unwrap_or(0),
-        });
-    }
-
-    Ok(result)
-}
-
-// ============================================================================
-// Council - All models in parallel
-// ============================================================================
-
-async fn call_council(message: &str) -> Result<serde_json::Value> {
-    // Run all three in parallel
-    // Note: Using deepseek-reasoner for council (reasoning power)
-    // Opus is omitted since we're already running on Opus in Claude Code
-    let (gpt_result, deepseek_result, gemini_result) = tokio::join!(
-        call_gpt(message),
-        call_deepseek_reasoner(message),
-        call_gemini(message)
-    );
-
-    // Format responses, handling errors gracefully
-    let gpt = match gpt_result {
-        Ok(r) => r["response"].as_str().unwrap_or("(error)").to_string(),
-        Err(e) => format!("(error: {})", e),
-    };
-    let deepseek = match deepseek_result {
-        Ok(r) => r["response"].as_str().unwrap_or("(error)").to_string(),
-        Err(e) => format!("(error: {})", e),
-    };
-    let gemini = match gemini_result {
-        Ok(r) => r["response"].as_str().unwrap_or("(error)").to_string(),
-        Err(e) => format!("(error: {})", e),
-    };
+    let service = AdvisoryService::from_env()?;
+    let response = service.ask(AdvisoryModel::Gemini3Pro, message).await?;
 
     Ok(serde_json::json!({
-        "council": {
-            "gpt-5.2": gpt,
-            "deepseek-reasoner": deepseek,
-            "gemini-3-pro": gemini,
-        }
+        "response": response.text,
+        "provider": "gemini-3-pro",
     }))
+}
+
+async fn call_council(message: &str) -> Result<serde_json::Value> {
+    let service = AdvisoryService::from_env()?;
+
+    // Exclude Opus since we're already running on Opus in Claude Code MCP context
+    // Council = GPT-5.2 + Gemini 3 Pro, synthesized by DeepSeek Reasoner
+    let response = service.council(message, Some(AdvisoryModel::Opus45)).await?;
+
+    Ok(response.to_json())
 }
 
 // ============================================================================
@@ -752,6 +324,8 @@ fn format_context_for_llm(
 ///
 /// If inject_context is true (default), automatically injects project context
 /// (corrections, goals, decisions, memories, rejected approaches, recent commits)
+///
+/// If session_id is provided, resumes a multi-turn conversation with history.
 pub async fn call_mira(
     req: HotlineRequest,
     db: &SqlitePool,
@@ -760,7 +334,74 @@ pub async fn call_mira(
     project_name: Option<&str>,
     project_type: Option<&str>,
 ) -> Result<serde_json::Value> {
+    use crate::advisory::session::{
+        SessionMode, assemble_context, format_as_history,
+        add_message, create_session, get_session, summarize_older_turns,
+    };
+
     let mut context_parts = vec![];
+
+    // Handle session - create or resume
+    let session_id = if let Some(sid) = &req.session_id {
+        // Resume existing session
+        if get_session(db, sid).await?.is_none() {
+            anyhow::bail!("Session {} not found", sid);
+        }
+        sid.clone()
+    } else if req.provider.as_deref() == Some("council") {
+        // Auto-create session for council mode
+        let mode = SessionMode::Council;
+        create_session(db, project_id, mode, None, Some("Advisory council session")).await?
+    } else {
+        // No session for single-shot calls
+        String::new()
+    };
+
+    let has_session = !session_id.is_empty();
+
+    // If we have a session, get session context and add user message
+    // Note: session_history is built for future use with history-aware API calls
+    let _session_history = if has_session {
+        // Add user message to session
+        add_message(db, &session_id, "user", &req.message, None, None).await?;
+
+        // Check if we need to summarize older turns
+        let service = AdvisoryService::from_env()?;
+        let _ = summarize_older_turns(db, &session_id, &service).await;
+
+        // Get assembled context
+        let ctx = assemble_context(db, &session_id).await?;
+
+        // Format as history for the API call (excludes the current message we just added)
+        let history = format_as_history(&ctx);
+
+        // Build session context string for non-history-aware calls
+        let mut session_ctx = vec![];
+        for summary in &ctx.summaries {
+            session_ctx.push(format!("[Previous discussion (turns {}-{})]: {}",
+                summary.turn_range_start, summary.turn_range_end, summary.summary));
+        }
+        if !ctx.pins.is_empty() {
+            let pins: Vec<String> = ctx.pins.iter()
+                .map(|p| format!("- [{}] {}", p.pin_type, p.content))
+                .collect();
+            session_ctx.push(format!("[Pinned constraints]\n{}", pins.join("\n")));
+        }
+        if !ctx.decisions.is_empty() {
+            let decisions: Vec<String> = ctx.decisions.iter()
+                .map(|d| format!("- [{}] {}", d.decision_type, d.topic))
+                .collect();
+            session_ctx.push(format!("[Decisions]\n{}", decisions.join("\n")));
+        }
+
+        if !session_ctx.is_empty() {
+            context_parts.push(session_ctx.join("\n\n"));
+        }
+
+        Some(history)
+    } else {
+        None
+    };
 
     // Auto-inject project context unless explicitly disabled
     if req.inject_context.unwrap_or(true) {
@@ -784,12 +425,40 @@ pub async fn call_mira(
     };
 
     // Route based on provider
-    match req.provider.as_deref() {
-        Some("gemini") => call_gemini(&message).await,
-        Some("deepseek") => call_deepseek(&message).await,
-        Some("council") => call_council(&message).await,
-        _ => call_gpt(&message).await, // default to GPT-5.2
+    let mut result = match req.provider.as_deref() {
+        Some("gemini") => call_gemini(&message).await?,
+        Some("deepseek") => call_deepseek(&message).await?,
+        Some("council") => call_council(&message).await?,
+        _ => call_gpt(&message).await?,
+    };
+
+    // If we have a session, store the response and add session_id to result
+    if has_session {
+        // Store assistant response(s) in session
+        if let Some(council) = result.get("council") {
+            // Council mode - store each response
+            if let Some(obj) = council.as_object() {
+                for (provider, response) in obj {
+                    if let Some(text) = response.as_str() {
+                        add_message(db, &session_id, "assistant", text, Some(provider), None).await?;
+                    }
+                }
+            }
+            // Store synthesis if present
+            if let Some(synthesis) = result.get("synthesis").and_then(|s| s.as_str()) {
+                add_message(db, &session_id, "synthesis", synthesis, Some("deepseek-reasoner"), None).await?;
+            }
+        } else if let Some(response) = result.get("response").and_then(|r| r.as_str()) {
+            // Single provider - store the response
+            let provider = result.get("provider").and_then(|p| p.as_str());
+            add_message(db, &session_id, "assistant", response, provider, None).await?;
+        }
+
+        // Add session_id to result
+        result["session_id"] = serde_json::Value::String(session_id);
     }
+
+    Ok(result)
 }
 
 // Tests removed - require database and API keys.

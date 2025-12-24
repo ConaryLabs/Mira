@@ -18,6 +18,32 @@ pub struct HotlineRequest {
     pub provider: Option<String>,
     #[schemars(description = "Auto-inject project context (corrections, goals, decisions, etc). Default: true")]
     pub inject_context: Option<bool>,
+    #[schemars(description = "Session ID to resume a multi-turn conversation. Omit to start fresh.")]
+    pub session_id: Option<String>,
+}
+
+// ============================================================================
+// Advisory Session Tool - Manage multi-turn advisory sessions
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AdvisorySessionRequest {
+    #[schemars(description = "Action: list/get/close/pin/decide")]
+    pub action: String,
+    #[schemars(description = "Session ID (required for get/close/pin/decide)")]
+    pub session_id: Option<String>,
+    #[schemars(description = "Content to pin (for 'pin' action)")]
+    pub content: Option<String>,
+    #[schemars(description = "Pin type: constraint/decision/requirement (for 'pin' action)")]
+    pub pin_type: Option<String>,
+    #[schemars(description = "Decision type: accepted/rejected/deferred (for 'decide' action)")]
+    pub decision_type: Option<String>,
+    #[schemars(description = "Topic of the decision (for 'decide' action)")]
+    pub topic: Option<String>,
+    #[schemars(description = "Rationale for the decision (for 'decide' action)")]
+    pub rationale: Option<String>,
+    #[schemars(description = "Max results (for 'list' action)")]
+    pub limit: Option<i64>,
 }
 
 // ============================================================================

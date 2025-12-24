@@ -340,3 +340,97 @@ The database schema is defined in `migrations/`. Key tables:
 | `chat_messages` | Studio conversation history |
 | `chat_summaries` | Studio context compression |
 | `chat_context` | Studio session state |
+| `advisory_sessions` | Multi-turn advisory conversations |
+| `advisory_messages` | Advisory conversation history |
+| `advisory_pins` | Pinned constraints in advisory sessions |
+| `advisory_decisions` | Decisions made in advisory sessions |
+| `advisory_summaries` | Compressed older turns in sessions |
+
+## Advisory Module
+
+The `src/advisory/` module provides a unified abstraction for consulting external LLMs.
+
+### Architecture
+
+```
+src/advisory/
+├── mod.rs           # AdvisoryService - main entry point
+├── provider.rs      # AdvisoryProvider trait + implementations
+├── session.rs       # Multi-turn sessions with tiered memory
+├── synthesis.rs     # Structured synthesis with provenance
+├── streaming.rs     # SSE parsing for all providers
+└── tool_bridge.rs   # Agentic tool calling with budget governance
+```
+
+### AdvisoryService
+
+Single entry point for all advisory functionality:
+
+```rust
+let service = AdvisoryService::from_env()?;
+
+// Single model query
+let response = service.ask(AdvisoryModel::Gpt52, "question").await?;
+
+// Council query (multiple models + synthesis)
+let council = service.council("question", Some(AdvisoryModel::Opus45)).await?;
+```
+
+### Providers
+
+| Model | Provider | Role |
+|-------|----------|------|
+| GPT-5.2 | OpenAI | Council member, reasoning |
+| Opus 4.5 | Anthropic | Council member, extended thinking |
+| Gemini 3 Pro | Google | Council member, thinking mode |
+| DeepSeek Reasoner | DeepSeek | Synthesizer (not in council) |
+
+### Council Flow
+
+```
+┌─────────┐  ┌─────────┐  ┌─────────┐
+│ GPT-5.2 │  │ Opus4.5 │  │ Gemini  │   ← Council members (parallel)
+└────┬────┘  └────┬────┘  └────┬────┘
+     │            │            │
+     └────────────┼────────────┘
+                  │
+                  ▼
+         ┌────────────────┐
+         │ DeepSeek       │   ← Synthesizer
+         │ Reasoner       │
+         └────────┬───────┘
+                  │
+                  ▼
+         ┌────────────────┐
+         │ CouncilSynthesis│  ← Structured output
+         │ - consensus     │     with provenance
+         │ - disagreements │
+         │ - unique_insights│
+         │ - recommendation│
+         └────────────────┘
+```
+
+### Multi-Turn Sessions
+
+Sessions support tiered memory for long conversations:
+
+1. **Recent turns** (verbatim) - last 6-12 messages
+2. **Summaries** - compressed older turns
+3. **Pins** - explicit constraints/requirements
+4. **Decisions** - what was decided and why
+
+### Agentic Tool Calling
+
+External LLMs can call read-only Mira tools via `tool_bridge.rs`:
+
+**Allowed tools** (9 read-only):
+- `recall`, `get_corrections`, `get_goals`
+- `semantic_code_search`, `get_symbols`, `get_related_files`
+- `find_similar_fixes`, `get_recent_commits`, `search_commits`
+
+**Security features**:
+- Whitelist enforcement
+- Budget governance (3 per-call, 10 per-session)
+- Query cooldown (same fingerprint blocked for 3 turns)
+- Loop prevention (hotline/council calls blocked)
+- Output wrapped as untrusted data
