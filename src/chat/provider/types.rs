@@ -138,6 +138,10 @@ pub struct ToolContinueRequest {
 
     /// Available tools (for next iteration)
     pub tools: Vec<ToolDefinition>,
+
+    /// Reasoning content from the assistant's response that produced tool calls.
+    /// DeepSeek Reasoner requires this to be passed back for continued reasoning.
+    pub reasoning_content: Option<String>,
 }
 
 /// Result of a tool execution

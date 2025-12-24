@@ -200,6 +200,9 @@ async fn process_deepseek_chat(
     // Agentic loop (max 10 iterations)
     let mut assistant_blocks: Vec<MessageBlock> = Vec::new();
     let mut accumulated_text = String::new();
+    // Accumulated reasoning content - must be passed back during tool continuations
+    // (DeepSeek Reasoner requires this for continued reasoning, omission triggers 400 errors)
+    let mut accumulated_reasoning = String::new();
     // Markdown parser for typed code block events
     let mut markdown_parser = MarkdownStreamParser::new();
 
@@ -226,6 +229,8 @@ async fn process_deepseek_chat(
                     }
                 }
                 ProviderStreamEvent::ReasoningDelta(delta) => {
+                    // Accumulate reasoning for passback during tool continuations
+                    accumulated_reasoning.push_str(&delta);
                     // Stream reasoning content to frontend (displayed collapsed)
                     tx.send(ChatEvent::ReasoningDelta { delta }).await?;
                 }
@@ -419,6 +424,13 @@ async fn process_deepseek_chat(
 
             tracing::debug!("DeepSeek iteration {}: continuing with {} tool results", iteration, current_tool_results.len());
 
+            // Pass accumulated reasoning content - DeepSeek Reasoner requires this for continued reasoning
+            let reasoning_for_continuation = if accumulated_reasoning.is_empty() {
+                None
+            } else {
+                Some(accumulated_reasoning.clone())
+            };
+
             let continue_request = ToolContinueRequest {
                 model: "deepseek-reasoner".into(),
                 system: system_prompt.clone(),
@@ -427,7 +439,12 @@ async fn process_deepseek_chat(
                 tool_results: current_tool_results,
                 reasoning_effort: None,
                 tools: tools.clone(),
+                reasoning_content: reasoning_for_continuation,
             };
+
+            // Clear accumulated reasoning after using it (per DeepSeek docs:
+            // "between conversation turns, clear historical reasoning_content")
+            accumulated_reasoning.clear();
 
             rx = provider.continue_with_tools_stream(continue_request).await?;
 
@@ -446,6 +463,8 @@ async fn process_deepseek_chat(
                     }
                 }
                 ProviderStreamEvent::ReasoningDelta(delta) => {
+                    // Accumulate reasoning for next tool continuation if needed
+                    accumulated_reasoning.push_str(&delta);
                     // Stream reasoning content to frontend (displayed collapsed)
                     tx.send(ChatEvent::ReasoningDelta { delta }).await?;
                 }
@@ -660,7 +679,7 @@ async fn process_deepseek_chat(
             let _ = sqlx::query(
                 r#"
                 INSERT INTO token_usage (id, message_id, model, input_tokens, output_tokens, reasoning_tokens, cached_tokens, created_at)
-                VALUES ($1, $2, 'deepseek-chat', $3, $4, $5, 0, $6)
+                VALUES ($1, $2, 'deepseek-reasoner', $3, $4, $5, 0, $6)
                 "#,
             )
             .bind(&usage_id)

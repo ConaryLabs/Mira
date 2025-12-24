@@ -57,6 +57,7 @@ impl DeepSeekProvider {
         messages.push(ChatMessage {
             role: "system".into(),
             content: Some(request.system.clone()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -66,6 +67,7 @@ impl DeepSeekProvider {
             messages.push(ChatMessage {
                 role: msg.role.as_str().into(),
                 content: Some(msg.content.clone()),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -75,6 +77,7 @@ impl DeepSeekProvider {
         messages.push(ChatMessage {
             role: "user".into(),
             content: Some(request.input.clone()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -90,6 +93,7 @@ impl DeepSeekProvider {
         messages.push(ChatMessage {
             role: "system".into(),
             content: Some(request.system.clone()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -99,6 +103,7 @@ impl DeepSeekProvider {
             messages.push(ChatMessage {
                 role: msg.role.as_str().into(),
                 content: Some(msg.content.clone()),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
@@ -106,6 +111,8 @@ impl DeepSeekProvider {
 
         // Assistant message with tool_calls (required before tool results)
         // Reconstruct from tool_results - the API requires this ordering
+        // CRITICAL: Include reasoning_content from the response that produced these tool calls
+        // DeepSeek Reasoner requires this for continued reasoning (omission triggers 400 errors)
         if !request.tool_results.is_empty() {
             let tool_calls: Vec<ChatToolCall> = request
                 .tool_results
@@ -123,6 +130,7 @@ impl DeepSeekProvider {
             messages.push(ChatMessage {
                 role: "assistant".into(),
                 content: None,
+                reasoning_content: request.reasoning_content.clone(),
                 tool_calls: Some(tool_calls),
                 tool_call_id: None,
             });
@@ -133,6 +141,7 @@ impl DeepSeekProvider {
             messages.push(ChatMessage {
                 role: "tool".into(),
                 content: Some(result.output.clone()),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: Some(result.call_id.clone()),
             });
@@ -159,6 +168,7 @@ impl DeepSeekProvider {
         messages.push(ChatMessage {
             role: "user".into(),
             content: Some(nudge),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -527,6 +537,9 @@ struct ChatMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    /// Reasoning content for DeepSeek Reasoner - must be passed back during tool continuations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ChatToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]

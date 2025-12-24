@@ -100,7 +100,7 @@ impl ModelSpec {
             max_context_tokens: 128_000,
             max_output_tokens: 64_000,
             default_output_tokens: 32_000,
-            supports_tools: false,  // Reasoner has no tool support
+            supports_tools: true,  // V3.2 supports tool calls (confirmed 2025-12-23)
             supports_reasoning: true,
             input_cost_per_million: 0.55,
             output_cost_per_million: 2.19,
@@ -131,7 +131,7 @@ mod tests {
 
         let ds_reason = ModelSpec::deepseek_reasoner();
         assert_eq!(ds_reason.max_output_tokens, 64_000);
-        assert!(!ds_reason.supports_tools);
+        assert!(ds_reason.supports_tools);
     }
 
     #[test]
