@@ -2,13 +2,9 @@
 //!
 //! Code analysis: symbols, call graphs, related files, semantic search.
 
-use std::sync::Arc;
+use crate::core::primitives::semantic::COLLECTION_CODE;
 
-use sqlx::SqlitePool;
-
-use crate::core::primitives::semantic::{SemanticSearch, COLLECTION_CODE};
-
-use super::super::{CoreError, CoreResult, OpContext};
+use super::super::{CoreResult, OpContext};
 
 // ============================================================================
 // Input/Output Types
@@ -394,7 +390,7 @@ pub async fn semantic_code_search(ctx: &OpContext, input: SemanticSearchInput) -
         .fetch_all(db)
         .await?;
 
-    Ok(rows.into_iter().map(|(id, file_path, name, qualified_name, symbol_type, language, start_line, end_line, signature, documentation)| {
+    Ok(rows.into_iter().map(|(_id, file_path, name, _qualified_name, symbol_type, language, start_line, _end_line, signature, documentation)| {
         SemanticSearchResult {
             content: signature.or(documentation).unwrap_or_default(),
             score: 1.0,

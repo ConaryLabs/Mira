@@ -10,6 +10,10 @@
 //! - **secrets**: Secret detection and redaction
 //! - **streaming**: SSE decoder
 //! - **limits**: Shared constants and thresholds
+//!
+//! NOTE: Re-exports are provided for external/library use. Some may be unused internally.
+
+#![allow(unused_imports)] // Re-exports for external use
 
 pub mod limits;
 pub mod secrets;

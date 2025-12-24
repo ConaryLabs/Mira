@@ -3,7 +3,7 @@
 //! Delegates to the MCP proactive implementation for shared logic.
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;

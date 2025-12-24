@@ -1,5 +1,8 @@
-// src/tools/mod.rs
-// MCP Tool modules - organized by domain for Claude Code augmentation
+//! MCP Tool modules - organized by domain for Claude Code augmentation
+//!
+//! NOTE: Some items are infrastructure for future features or external use.
+
+#![allow(dead_code)] // Tool infrastructure (some items for future use)
 
 pub mod analytics;
 pub mod helpers;
@@ -25,7 +28,6 @@ pub mod work_state;
 
 // Re-export from core primitives for backward compatibility
 pub use crate::core::primitives::semantic;
-pub use crate::core::primitives::semantic_helpers;
 
 // Re-export for use in main.rs
 pub use types::*;

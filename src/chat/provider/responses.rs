@@ -175,38 +175,6 @@ pub enum StreamEvent {
     Error(String),
 }
 
-/// Raw SSE event data
-#[derive(Debug, Deserialize)]
-struct SseEventData {
-    #[serde(rename = "type")]
-    event_type: String,
-    #[serde(default)]
-    delta: Option<String>,
-    #[serde(default)]
-    response: Option<ResponsesResponse>,
-    #[serde(default)]
-    item: Option<StreamOutputItem>,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    call_id: Option<String>,
-    #[serde(default)]
-    arguments: Option<String>,
-}
-
-/// Streaming output item (simplified for parsing)
-#[derive(Debug, Clone, Deserialize)]
-struct StreamOutputItem {
-    #[serde(rename = "type")]
-    item_type: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    call_id: Option<String>,
-    #[serde(default)]
-    arguments: Option<String>,
-}
-
 // ============================================================================
 // Client
 // ============================================================================
@@ -413,10 +381,10 @@ impl Client {
                     let line = buffer[..newline_pos].trim().to_string();
                     buffer = buffer[newline_pos + 1..].to_string();
 
-                    if line.starts_with("event:") {
-                        current_event = line[6..].trim().to_string();
-                    } else if line.starts_with("data:") {
-                        let data = line[5..].trim();
+                    if let Some(event) = line.strip_prefix("event:") {
+                        current_event = event.trim().to_string();
+                    } else if let Some(data) = line.strip_prefix("data:") {
+                        let data = data.trim();
                         if let Some(event) = parse_sse_event(&current_event, data, &mut function_calls) {
                             if tx.send(event).await.is_err() {
                                 return;

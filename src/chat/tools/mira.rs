@@ -48,10 +48,9 @@ impl<'a> MiraTools<'a> {
     /// Task management - create, list, update, complete tasks
     pub async fn task(&self, args: &Value) -> Result<String> {
         let action = args["action"].as_str().unwrap_or("list");
-        let db = match &self.db {
-            Some(db) => db,
-            None => return Ok("Error: database not configured".into()),
-        };
+        if self.db.is_none() {
+            return Ok("Error: database not configured".into());
+        }
 
         let ctx = self.make_context();
 
@@ -215,10 +214,9 @@ impl<'a> MiraTools<'a> {
     /// Goal management - create, list, update goals with milestones
     pub async fn goal(&self, args: &Value) -> Result<String> {
         let action = args["action"].as_str().unwrap_or("list");
-        let db = match &self.db {
-            Some(_) => {}
-            None => return Ok("Error: database not configured".into()),
-        };
+        if self.db.is_none() {
+            return Ok("Error: database not configured".into());
+        }
 
         let ctx = self.make_context();
         let project_id = self.get_project_id().await;
@@ -408,10 +406,9 @@ impl<'a> MiraTools<'a> {
     /// Correction management - record when user corrects the assistant
     pub async fn correction(&self, args: &Value) -> Result<String> {
         let action = args["action"].as_str().unwrap_or("record");
-        let db = match &self.db {
-            Some(_) => {}
-            None => return Ok("Error: database not configured".into()),
-        };
+        if self.db.is_none() {
+            return Ok("Error: database not configured".into());
+        }
 
         let ctx = self.make_context();
         let project_id = self.get_project_id().await;
@@ -511,10 +508,9 @@ impl<'a> MiraTools<'a> {
             return Ok("Error: key and decision are required".into());
         }
 
-        let db = match &self.db {
-            Some(_) => {}
-            None => return Ok("Error: database not configured".into()),
-        };
+        if self.db.is_none() {
+            return Ok("Error: database not configured".into());
+        }
 
         let ctx = self.make_context();
         let project_id = self.get_project_id().await;
@@ -550,10 +546,9 @@ impl<'a> MiraTools<'a> {
             );
         }
 
-        let db = match &self.db {
-            Some(_) => {}
-            None => return Ok("Error: database not configured".into()),
-        };
+        if self.db.is_none() {
+            return Ok("Error: database not configured".into());
+        }
 
         let ctx = self.make_context();
         let project_id = self.get_project_id().await;

@@ -3,6 +3,10 @@
 //! The main agentic loop that handles conversation flow, tool execution,
 //! and message persistence.
 
+// TODO: The outer iteration loop (line ~208) always breaks - needs investigation
+// whether multi-iteration tool loops should be supported
+#![allow(clippy::never_loop)]
+
 use anyhow::Result;
 use chrono::Utc;
 use serde_json::{json, Value};

@@ -295,7 +295,7 @@ fn chunk_text(text: &str, target_tokens: usize, overlap_tokens: usize) -> Vec<St
         // Handle very long paragraphs by splitting on sentences
         if para.len() > target_chars {
             let sentences: Vec<&str> = para
-                .split(|c| c == '.' || c == '!' || c == '?')
+                .split(['.', '!', '?'])
                 .filter(|s| !s.trim().is_empty())
                 .collect();
 
@@ -327,7 +327,7 @@ fn chunk_text(text: &str, target_tokens: usize, overlap_tokens: usize) -> Vec<St
 /// Estimate token count for a string (rough approximation)
 fn estimate_tokens(text: &str) -> usize {
     // Rough heuristic: ~4 characters per token on average
-    (text.len() + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
+    text.len().div_ceil(CHARS_PER_TOKEN)
 }
 
 /// Delete a document and all its chunks

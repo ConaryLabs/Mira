@@ -7,14 +7,15 @@
 //! - Tool calling support
 //! - Reasoning capabilities
 
+#![allow(dead_code)] // Provider infrastructure (some items for future use)
+
 mod capabilities;
 mod deepseek;
 pub mod responses;
 mod types;
 
-pub use capabilities::{Capabilities, StateMode, UsageReporting};
+pub use capabilities::Capabilities;
 pub use deepseek::DeepSeekProvider;
-pub use responses::Client as ResponsesClient;
 pub use types::*;
 
 use anyhow::Result;

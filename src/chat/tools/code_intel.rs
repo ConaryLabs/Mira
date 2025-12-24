@@ -139,10 +139,9 @@ impl<'a> CodeIntelTools<'a> {
 
     /// Semantic code search - find code by natural language description
     pub async fn semantic_code_search(&self, args: &Value) -> Result<String> {
-        let db = match &self.db {
-            Some(db) => db,
-            None => return Ok("Error: database not configured".into()),
-        };
+        if self.db.is_none() {
+            return Ok("Error: database not configured".into());
+        }
 
         let query = args["query"].as_str().unwrap_or("");
         if query.is_empty() {

@@ -241,10 +241,11 @@ impl Usage {
 }
 
 /// Why the response finished
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     /// Natural end of response
+    #[default]
     Stop,
     /// Hit token limit
     Length,
@@ -254,12 +255,6 @@ pub enum FinishReason {
     ContentFilter,
     /// Error occurred
     Error,
-}
-
-impl Default for FinishReason {
-    fn default() -> Self {
-        Self::Stop
-    }
 }
 
 #[cfg(test)]

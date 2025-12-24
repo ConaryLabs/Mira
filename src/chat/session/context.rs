@@ -168,7 +168,7 @@ impl AssembledContext {
     ///
     /// Priority order (highest to lowest):
     /// 1. Corrections (always include - they're rules)
-    /// 1.5. Anti-amnesia: rejected approaches + past decisions (prevent repeating mistakes)
+    ///    - Anti-amnesia: rejected approaches + past decisions (prevent repeating mistakes)
     /// 2. Goals (capped)
     /// 3. Recent messages (capped, most recent first)
     /// 4. Summaries (capped)

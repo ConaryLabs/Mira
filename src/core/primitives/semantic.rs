@@ -1,4 +1,5 @@
 //! Semantic search with Qdrant + Gemini embeddings
+//! Test index: 2025-12-23 v3
 //!
 //! High-level semantic search operations including:
 //! - Embedding via Google Gemini (single and batch)
@@ -342,9 +343,16 @@ impl SemanticSearch {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
-        // Get all embeddings in one batch call
+        // Get all embeddings in one batch call (with timeout to prevent hanging)
         let texts: Vec<String> = items.iter().map(|(_, content, _)| content.clone()).collect();
-        let embeddings = self.embed_batch(&texts).await?;
+        tracing::debug!("[SEMANTIC] Calling embed_batch for {} items...", texts.len());
+        let embeddings = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.embed_batch(&texts)
+        ).await
+            .map_err(|_| anyhow::anyhow!("Gemini embedding API timeout after 30s"))?
+            ?;
+        tracing::debug!("[SEMANTIC] embed_batch complete: {} embeddings", embeddings.len());
 
         if embeddings.len() != items.len() {
             anyhow::bail!(
@@ -387,13 +395,17 @@ impl SemanticSearch {
 
         let count = points.len();
 
-        // Upsert all points at once
-        qdrant
-            .upsert_points(UpsertPointsBuilder::new(collection, points).wait(true))
-            .await
+        // Upsert all points at once (with timeout to prevent hanging)
+        tracing::debug!("[SEMANTIC] Upserting {} points to Qdrant...", count);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            qdrant.upsert_points(UpsertPointsBuilder::new(collection, points).wait(true))
+        ).await
+            .map_err(|_| anyhow::anyhow!("Qdrant upsert timeout after 30s"))?
             .context("Failed to batch store points")?;
 
         debug!("Batch stored {} points in {}", count, collection);
+        tracing::debug!("[SEMANTIC] Qdrant upsert complete");
         Ok(count)
     }
 
@@ -542,18 +554,27 @@ impl SemanticSearch {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Qdrant not available"))?;
 
-        // Check if collection exists first
-        if !qdrant.collection_exists(collection).await? {
+        // Check if collection exists first (with timeout)
+        let exists = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            qdrant.collection_exists(collection)
+        ).await
+            .map_err(|_| anyhow::anyhow!("Qdrant collection_exists timeout"))?
+            ?;
+        if !exists {
             return Ok(0);
         }
 
-        let result = qdrant
-            .delete_points(
+        // Delete with timeout to prevent hanging
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            qdrant.delete_points(
                 DeletePointsBuilder::new(collection)
                     .points(Filter::must([Condition::matches(field, value.to_string())]))
                     .wait(true),
             )
-            .await
+        ).await
+            .map_err(|_| anyhow::anyhow!("Qdrant delete_points timeout after 30s"))?
             .context("Failed to delete points by filter")?;
 
         let deleted = result.result.map(|r| r.status).unwrap_or(0) as u64;

@@ -279,29 +279,36 @@ impl CodeIndexer {
 
     /// Index a single file
     pub async fn index_file(&mut self, path: &Path) -> Result<IndexStats> {
+        tracing::info!("[INDEX] ENTER index_file: {}", path.display());
         let mut stats = IndexStats::default();
         stats.files_processed = 1;
 
+        tracing::debug!("[INDEX] Reading file content...");
         let content = std::fs::read_to_string(path)?;
+        tracing::debug!("[INDEX] File read complete: {} bytes", content.len());
         let content_hash = format!("{:x}", md5_hash(&content));
         let file_path_str = path.to_string_lossy().to_string();
 
         // Check if file has changed
+        tracing::debug!("[INDEX] Checking content hash in DB...");
         let existing: Option<(String,)> = sqlx::query_as(
             "SELECT content_hash FROM code_symbols WHERE file_path = $1 LIMIT 1"
         )
         .bind(&file_path_str)
         .fetch_optional(&self.db)
         .await?;
+        tracing::debug!("[INDEX] Hash check complete");
 
         if let Some((existing_hash,)) = existing {
             if existing_hash == content_hash {
                 // File unchanged, skip
+                tracing::info!("[INDEX] File unchanged, skipping: {}", file_path_str);
                 return Ok(stats);
             }
         }
 
         // Delete old symbols for this file
+        tracing::debug!("[INDEX] Deleting old symbols...");
         sqlx::query("DELETE FROM code_symbols WHERE file_path = $1")
             .bind(&file_path_str)
             .execute(&self.db)
@@ -311,10 +318,12 @@ impl CodeIndexer {
             .bind(&file_path_str)
             .execute(&self.db)
             .await?;
+        tracing::debug!("[INDEX] Old symbols deleted");
 
         // Delete old embeddings from Qdrant (if available)
         if let Some(ref semantic) = self.semantic {
             if semantic.is_available() {
+                tracing::debug!("[INDEX] Deleting old embeddings from Qdrant...");
                 if let Err(e) = semantic.delete_by_field(
                     crate::tools::COLLECTION_CODE,
                     "file_path",
@@ -322,10 +331,12 @@ impl CodeIndexer {
                 ).await {
                     tracing::warn!("Failed to delete old embeddings for {}: {}", file_path_str, e);
                 }
+                tracing::debug!("[INDEX] Qdrant delete complete");
             }
         }
 
         // Parse based on extension
+        tracing::debug!("[INDEX] Parsing file with tree-sitter...");
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let (symbols, imports, calls) = match ext {
             "rs" => self.parse_rust(&content)?,
@@ -335,6 +346,7 @@ impl CodeIndexer {
             "go" => self.parse_go(&content)?,
             _ => return Ok(stats),
         };
+        tracing::debug!("[INDEX] Parse complete: {} symbols, {} imports, {} calls", symbols.len(), imports.len(), calls.len());
 
         let now = Utc::now().timestamp();
 
@@ -508,10 +520,12 @@ impl CodeIndexer {
         }
 
         // Try to resolve any pending unresolved calls that might now be resolvable
+        tracing::debug!("[INDEX] Resolving pending calls...");
         let resolved = self.resolve_pending_calls().await.unwrap_or(0);
         if resolved > 0 {
             tracing::debug!("Resolved {} previously unresolved calls", resolved);
         }
+        tracing::debug!("[INDEX] Pending calls resolved");
 
         stats.calls_found = calls_inserted;
         stats.unresolved_calls = unresolved_inserted;
@@ -520,10 +534,12 @@ impl CodeIndexer {
         // Use batch embedding for better performance
         if let Some(ref semantic) = self.semantic {
             if semantic.is_available() {
+                tracing::debug!("[INDEX] Ensuring Qdrant collection exists...");
                 // Ensure collection exists
                 if let Err(e) = semantic.ensure_collection(crate::tools::COLLECTION_CODE).await {
                     tracing::warn!("Failed to ensure code collection: {}", e);
                 } else {
+                    tracing::debug!("[INDEX] Collection ensured");
                     // Collect embeddable symbols
                     let embeddable: Vec<_> = symbols.iter()
                         .filter(|s| matches!(s.symbol_type.as_str(),
@@ -531,6 +547,7 @@ impl CodeIndexer {
                         .collect();
 
                     if !embeddable.is_empty() {
+                        tracing::debug!("[INDEX] Building {} embeddable items...", embeddable.len());
                         // Build batch items: (id, content, metadata)
                         let batch_items: Vec<_> = embeddable.iter().map(|symbol| {
                             let text = Self::symbol_to_text(symbol, &file_path_str);
@@ -552,8 +569,10 @@ impl CodeIndexer {
                         }).collect();
 
                         // Store all symbols in one batch operation
+                        tracing::info!("[INDEX] Calling store_batch with {} items (Gemini API + Qdrant)...", batch_items.len());
                         match semantic.store_batch(crate::tools::COLLECTION_CODE, batch_items).await {
                             Ok(count) => {
+                                tracing::info!("[INDEX] store_batch complete: {} embeddings generated", count);
                                 stats.embeddings_generated = count;
                             }
                             Err(e) => {
@@ -565,6 +584,8 @@ impl CodeIndexer {
             }
         }
 
+        tracing::info!("[INDEX] EXIT index_file: {} - {} symbols, {} embeddings",
+            path.display(), stats.symbols_found, stats.embeddings_generated);
         Ok(stats)
     }
 
