@@ -361,13 +361,9 @@ fn load_debounce() -> serde_json::Value {
 
 /// Check if a file is a working document worth tracking
 fn is_working_doc(path: &str) -> bool {
-    let path_lower = path.to_lowercase();
+    let path_obj = std::path::Path::new(path);
 
-    // Track markdown, text, and common doc files
-    let doc_extensions = [".md", ".txt", ".markdown", ".rst", ".org"];
-    let is_doc = doc_extensions.iter().any(|ext| path_lower.ends_with(ext));
-
-    // Skip certain paths
+    // Skip certain paths first
     let skip_patterns = [
         "/node_modules/",
         "/.git/",
@@ -381,22 +377,47 @@ fn is_working_doc(path: &str) -> bool {
         "CHANGELOG",
         "LICENSE",
     ];
-    let should_skip = skip_patterns.iter().any(|p| path.contains(p));
+    if skip_patterns.iter().any(|p| path.contains(p)) {
+        return false;
+    }
 
-    // Include known working doc names regardless of extension
+    // Get extension (lowercase) and filename
+    let extension = path_obj
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+
+    let filename = path_obj
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    // Check 1: Is it explicitly a doc file by extension?
+    let doc_extensions = ["md", "txt", "markdown", "rst", "org"];
+    let has_doc_ext = extension
+        .as_ref()
+        .map_or(false, |ext| doc_extensions.contains(&ext.as_str()));
+
+    // Check 2: Is it an extensionless file with a working doc name?
+    // (e.g., README, TODO, NOTES - common in repos)
+    let has_no_ext = extension.is_none();
+
+    // Working doc names - only apply to extensionless files
     let working_doc_names = [
         "PLAN", "TODO", "NOTES", "SCRATCH", "DRAFT", "WIP",
         "RESEARCH", "ANALYSIS", "DESIGN", "SPEC", "README",
-        "SESSION", "CONTEXT", "SUMMARY",
+        "SUMMARY",
     ];
-    let filename = std::path::Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    let is_working_name = working_doc_names.iter()
-        .any(|n| filename.to_uppercase().contains(n));
 
-    (is_doc || is_working_name) && !should_skip
+    let matches_working_name = working_doc_names
+        .iter()
+        .any(|n| filename.to_uppercase() == *n);
+
+    // Logic:
+    // - Doc extension (.md, .txt, etc.) → always eligible
+    // - No extension + matches working doc name → eligible
+    // - Any other extension (.rs, .py, .js, etc.) → NOT a working doc
+    has_doc_ext || (has_no_ext && matches_working_name)
 }
 
 /// Save a working document for seamless resume

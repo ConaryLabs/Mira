@@ -566,7 +566,7 @@ pub async fn list_goals(ctx: &OpContext, input: ListGoalsInput) -> CoreResult<Ve
             SELECT id, title, description, status, priority, progress_percent, progress_mode, blockers,
                    datetime(updated_at, 'unixepoch', 'localtime') as updated
             FROM goals
-            WHERE (project_id IS NULL OR project_id = $1)
+            WHERE ($1 IS NULL OR project_id IS NULL OR project_id = $1)
               AND ($2 IS NULL OR status = $2)
             ORDER BY
                 CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'planning' THEN 3 ELSE 4 END,
@@ -579,7 +579,7 @@ pub async fn list_goals(ctx: &OpContext, input: ListGoalsInput) -> CoreResult<Ve
             SELECT id, title, description, status, priority, progress_percent, progress_mode, blockers,
                    datetime(updated_at, 'unixepoch', 'localtime') as updated
             FROM goals
-            WHERE (project_id IS NULL OR project_id = $1)
+            WHERE ($1 IS NULL OR project_id IS NULL OR project_id = $1)
               AND status IN ('planning', 'in_progress', 'blocked')
               AND ($2 IS NULL OR status = $2)
             ORDER BY

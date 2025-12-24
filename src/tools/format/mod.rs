@@ -16,7 +16,7 @@ mod tests;
 pub use memory::{remember, recall_results, forgotten};
 pub use entities::{
     task_list, task_action,
-    goal_list, goal_action,
+    goal_list, goal_action, goal_detail, milestone_added,
     correction_recorded, correction_list,
     permission_saved, permission_list, permission_deleted,
 };
