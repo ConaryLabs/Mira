@@ -40,8 +40,10 @@ pub use semantic_helpers::MetadataBuilder;
 pub use artifacts::{ArtifactDecision, ArtifactRef, ArtifactStore, FetchResult};
 
 pub use memory::{
-    forget_memory_fact, make_memory_key, recall_memory_facts, recall_text_search,
-    upsert_memory_fact, MemoryFact, MemoryScope, RecallConfig, SearchType,
+    compute_final_score, compute_freshness, forget_memory_fact, make_memory_key,
+    recall_memory_facts, recall_text_search, upsert_memory_fact,
+    upsert_memory_fact_with_confidence, MemoryFact, MemoryScope, RecallConfig,
+    SearchType, Validity,
 };
 
 pub use streaming::{SseDecoder, SseFrame};

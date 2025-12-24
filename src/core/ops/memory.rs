@@ -8,7 +8,7 @@
 use crate::core::{CoreError, CoreResult, OpContext};
 use crate::core::primitives::semantic::COLLECTION_CONVERSATION;
 use crate::core::primitives::semantic_helpers::{store_with_logging, MetadataBuilder};
-use crate::core::primitives::{make_memory_key, forget_memory_fact, recall_memory_facts, upsert_memory_fact};
+use crate::core::primitives::{make_memory_key, forget_memory_fact, recall_memory_facts, upsert_memory_fact_with_confidence};
 use crate::core::primitives::{MemoryFact, MemoryScope, RecallConfig};
 
 // ============================================================================
@@ -30,6 +30,8 @@ pub struct RememberInput {
     pub project_id: Option<i64>,
     /// Source identifier (e.g., "claude-code", "mira-chat")
     pub source: String,
+    /// Confidence/truthiness (0.0-1.0, default 1.0). Use 0.8 for compaction.
+    pub confidence: Option<f64>,
 }
 
 /// Input for recall operation
@@ -114,7 +116,7 @@ pub async fn remember(ctx: &OpContext, input: RememberInput) -> CoreResult<Remem
     };
 
     // Store in database
-    let id = upsert_memory_fact(
+    let id = upsert_memory_fact_with_confidence(
         db,
         scope,
         &key,
@@ -122,6 +124,7 @@ pub async fn remember(ctx: &OpContext, input: RememberInput) -> CoreResult<Remem
         &fact_type,
         input.category.as_deref(),
         &input.source,
+        input.confidence,
     )
     .await?;
 

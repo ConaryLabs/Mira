@@ -86,6 +86,10 @@ echo "Services:"
 echo "  mira:  $(sudo systemctl is-active mira 2>/dev/null || echo 'not running')"
 echo "  nginx: $(sudo systemctl is-active nginx)"
 echo ""
+if $BUILD_BACKEND && $RESTART_SERVICES; then
+    echo "NOTE: Restart Claude Code to reconnect MCP"
+    echo ""
+fi
 echo "URLs:"
 echo "  MCP:    https://mira.conarylabs.com/mcp"
 echo "  Studio: https://mira.conarylabs.com/"

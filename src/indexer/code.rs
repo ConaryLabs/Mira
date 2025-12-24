@@ -307,6 +307,9 @@ impl CodeIndexer {
             }
         }
 
+        // File has changed - invalidate any memories scoped to this file
+        let _ = invalidate_file_memories(&self.db, &file_path_str).await;
+
         // Delete old symbols for this file
         tracing::debug!("[INDEX] Deleting old symbols...");
         sqlx::query("DELETE FROM code_symbols WHERE file_path = $1")
@@ -611,6 +614,9 @@ impl CodeIndexer {
             }
         }
 
+        // File has changed - invalidate any memories scoped to this file
+        let _ = invalidate_file_memories(&self.db, &file_path_str).await;
+
         // Delete old symbols for this file
         sqlx::query("DELETE FROM code_symbols WHERE file_path = $1")
             .bind(&file_path_str)
@@ -818,6 +824,32 @@ fn md5_hash(content: &str) -> u128 {
         hash = hash.wrapping_mul(31).wrapping_add(byte as u128);
     }
     hash
+}
+
+/// Invalidate file-scoped memories when a file is re-indexed
+///
+/// Marks memories referencing this file as 'stale' (but NOT decisions/preferences).
+/// This ensures code-related context gets downranked after file changes.
+pub async fn invalidate_file_memories(db: &SqlitePool, file_path: &str) -> Result<usize> {
+    let result = sqlx::query(
+        r#"
+        UPDATE memory_facts
+        SET validity = 'stale', updated_at = $2
+        WHERE file_path = $1
+          AND validity = 'active'
+          AND fact_type NOT IN ('decision', 'preference')
+        "#,
+    )
+    .bind(file_path)
+    .bind(Utc::now().timestamp())
+    .execute(db)
+    .await?;
+
+    let count = result.rows_affected() as usize;
+    if count > 0 {
+        tracing::debug!("Invalidated {} file-scoped memories for {}", count, file_path);
+    }
+    Ok(count)
 }
 
 /// Standalone file indexer for parallel processing

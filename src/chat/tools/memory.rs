@@ -43,6 +43,7 @@ impl<'a> MemoryTools<'a> {
         }
 
         // Convert to core input
+        let confidence = args["confidence"].as_f64();
         let input = core_memory::RememberInput {
             content: content.to_string(),
             fact_type: fact_type.map(|s| s.to_string()),
@@ -50,6 +51,7 @@ impl<'a> MemoryTools<'a> {
             key: None,
             project_id: None, // mira-chat doesn't use project scoping
             source: "mira-chat".to_string(),
+            confidence,
         };
 
         // Call core operation

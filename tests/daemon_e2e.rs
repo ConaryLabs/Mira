@@ -127,6 +127,7 @@ async fn test_e2e_remember_and_recall() {
         &db,
         &semantic,
         RememberRequest {
+            confidence: None,
             content: "The API uses JWT tokens for authentication".to_string(),
             category: Some("architecture".to_string()),
             fact_type: Some("decision".to_string()),
@@ -189,6 +190,7 @@ async fn test_e2e_remember_with_key_upsert() {
         &db,
         &semantic,
         RememberRequest {
+            confidence: None,
             content: "Version 1".to_string(),
             category: None,
             fact_type: None,
@@ -207,6 +209,7 @@ async fn test_e2e_remember_with_key_upsert() {
         &db,
         &semantic,
         RememberRequest {
+            confidence: None,
             content: "Version 2".to_string(),
             category: None,
             fact_type: None,
@@ -255,6 +258,7 @@ async fn test_e2e_forget() {
         &db,
         &semantic,
         RememberRequest {
+            confidence: None,
             content: "Temporary note to forget".to_string(),
             category: None,
             fact_type: None,
