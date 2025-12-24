@@ -7,20 +7,26 @@
 //! - Streaming responses
 //! - Agentic tool calling (read-only)
 
-mod provider;
+mod providers;
 pub mod session;
 pub mod streaming;
 pub mod synthesis;
 pub mod tool_bridge;
 
-pub use provider::{
+// Re-exports for external use (some items only used externally)
+#[allow(unused_imports)]
+pub use providers::{
     AdvisoryProvider, AdvisoryRequest, AdvisoryResponse, AdvisoryEvent,
-    AdvisoryModel, GptProvider, GeminiProvider, OpusProvider, ReasonerProvider,
+    AdvisoryModel, AdvisoryCapabilities, AdvisoryUsage, AdvisoryMessage,
+    AdvisoryRole, ToolCallRequest,
+    GptProvider, GeminiProvider, OpusProvider, ReasonerProvider,
 };
+#[allow(unused_imports)]
 pub use synthesis::{
     CouncilSynthesis, ConsensusPoint, Citation, Disagreement,
     ModelPosition, UniqueInsight, SynthesisConfidence,
 };
+#[allow(unused_imports)]
 pub use streaming::{
     StreamingCouncilResult, CouncilProgress,
     DEFAULT_STREAM_TIMEOUT, REASONER_STREAM_TIMEOUT,
@@ -80,6 +86,7 @@ impl AdvisoryService {
             message: message.to_string(),
             system: None,
             history: vec![],
+            enable_tools: false,
         }).await
     }
 
@@ -112,6 +119,7 @@ impl AdvisoryService {
                     message: msg,
                     system: None,
                     history: vec![],
+                    enable_tools: false,
                 }).await;
                 (*model, result)
             }
@@ -145,6 +153,7 @@ impl AdvisoryService {
                 message: synthesis_prompt,
                 system: Some(synthesis::SYNTHESIS_SYSTEM_PROMPT.to_string()),
                 history: vec![],
+                enable_tools: false,
             }).await {
                 Ok(response) => {
                     let raw = response.text;
@@ -177,6 +186,7 @@ impl AdvisoryService {
     }
 
     /// Check which providers are available
+    #[allow(dead_code)]
     pub fn available_models(&self) -> Vec<AdvisoryModel> {
         self.providers.keys().copied().collect()
     }
@@ -211,6 +221,7 @@ impl AdvisoryService {
                     message: msg,
                     system: None,
                     history: vec![],
+                    enable_tools: false,
                 }).await;
                 (*model, result)
             }
@@ -239,6 +250,7 @@ impl AdvisoryService {
     ///
     /// This version uses configurable timeouts and returns a StreamingCouncilResult
     /// that indicates which providers succeeded, timed out, or errored.
+    #[allow(dead_code)]
     pub async fn council_with_timeout(
         &self,
         message: &str,
@@ -278,6 +290,7 @@ impl AdvisoryService {
                         message: msg,
                         system: None,
                         history: vec![],
+                        enable_tools: false,
                     }),
                 ).await;
 
@@ -310,6 +323,7 @@ impl AdvisoryService {
     ///
     /// Sends progress events to the provided channel as each model responds.
     /// Returns the final result with all responses.
+    #[allow(dead_code)]
     pub async fn council_streaming(
         &self,
         message: &str,
@@ -350,7 +364,7 @@ impl AdvisoryService {
                 let _ = progress.send(streaming::CouncilProgress::ModelStarted(model)).await;
 
                 // Create a channel for streaming events
-                let (tx, mut rx) = mpsc::channel::<provider::AdvisoryEvent>(100);
+                let (tx, mut rx) = mpsc::channel::<AdvisoryEvent>(100);
 
                 // Spawn the streaming task
                 let stream_handle = tokio::spawn({
@@ -360,6 +374,7 @@ impl AdvisoryService {
                             message: msg,
                             system: None,
                             history: vec![],
+                            enable_tools: false,
                         }, tx).await
                     }
                 });
@@ -369,12 +384,12 @@ impl AdvisoryService {
                 let forward_handle = tokio::spawn(async move {
                     while let Some(event) = rx.recv().await {
                         match event {
-                            provider::AdvisoryEvent::TextDelta(delta) => {
+                            AdvisoryEvent::TextDelta(delta) => {
                                 let _ = progress_clone.send(
                                     streaming::CouncilProgress::ModelDelta { model, delta }
                                 ).await;
                             }
-                            provider::AdvisoryEvent::Done => break,
+                            AdvisoryEvent::Done => break,
                             _ => {}
                         }
                     }
@@ -487,11 +502,13 @@ impl CouncilResponse {
     }
 
     /// Get a human-readable synthesis summary
+    #[allow(dead_code)]
     pub fn synthesis_markdown(&self) -> Option<String> {
         self.synthesis.as_ref().map(|s| s.to_markdown())
     }
 
     /// Check if synthesis has high confidence
+    #[allow(dead_code)]
     pub fn is_high_confidence(&self) -> bool {
         self.synthesis.as_ref()
             .map(|s| s.confidence == SynthesisConfidence::High)

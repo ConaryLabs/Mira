@@ -9,6 +9,8 @@
 //! - Loop prevention (no recursive hotline/council calls)
 //! - Tool output treated as untrusted data
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
