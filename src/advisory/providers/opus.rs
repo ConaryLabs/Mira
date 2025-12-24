@@ -1,4 +1,7 @@
-//! Opus 4.5 Provider (Anthropic)
+//! Opus 4.5 Provider (Anthropic) with tool calling support
+//!
+//! Uses Anthropic's Messages API with extended thinking.
+//! Tool calling is compatible with extended thinking when tool_choice is "auto".
 
 #![allow(dead_code)]
 
@@ -7,14 +10,16 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::{
     AdvisoryCapabilities, AdvisoryEvent, AdvisoryModel,
     AdvisoryProvider, AdvisoryRequest, AdvisoryResponse, AdvisoryRole,
-    AdvisoryUsage, get_env_var, DEFAULT_TIMEOUT_SECS,
+    AdvisoryUsage, ToolCallRequest, get_env_var, DEFAULT_TIMEOUT_SECS,
 };
+use crate::advisory::tool_bridge;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -35,7 +40,7 @@ impl OpusProvider {
             capabilities: AdvisoryCapabilities {
                 supports_streaming: true,
                 supports_reasoning: true, // Extended thinking
-                supports_tools: false,    // Not implemented yet
+                supports_tools: true,     // Now implemented
                 max_context_tokens: 200_000,
                 max_output_tokens: 64_000,
             },
@@ -57,6 +62,8 @@ struct AnthropicRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<AnthropicTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
 
@@ -67,24 +74,108 @@ struct ThinkingConfig {
     budget_tokens: u32,
 }
 
-#[derive(Serialize)]
-struct AnthropicMessage {
-    role: String,
-    content: String,
+#[derive(Serialize, Clone, Debug)]
+pub struct AnthropicMessage {
+    pub role: String,
+    pub content: AnthropicContent,
+}
+
+/// Content can be a simple string or array of content blocks
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum AnthropicContent {
+    Text(String),
+    Blocks(Vec<AnthropicContentBlock>),
+}
+
+/// Content block types for Anthropic API
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum AnthropicContentBlock {
+    /// Text content
+    Text {
+        text: String,
+    },
+    /// Tool use request from Claude
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    /// Tool result from user
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
+    /// Thinking block (extended thinking)
+    /// When sending back in multi-turn, the signature is required.
+    Thinking {
+        thinking: String,
+        /// Signature from the original response (required for multi-turn)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+}
+
+/// Tool definition for Anthropic API
+#[derive(Serialize, Clone, Debug)]
+struct AnthropicTool {
+    name: String,
+    description: String,
+    input_schema: Value,
 }
 
 #[derive(Deserialize)]
 struct AnthropicResponse {
-    content: Option<Vec<AnthropicContent>>,
+    content: Option<Vec<AnthropicResponseBlock>>,
     error: Option<AnthropicError>,
     usage: Option<AnthropicUsage>,
+    stop_reason: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct AnthropicContent {
+/// Response content block (different from request)
+#[derive(Deserialize, Clone, Debug)]
+pub struct AnthropicResponseBlock {
     #[serde(rename = "type")]
-    content_type: Option<String>,
+    content_type: String,
+    // For text blocks
     text: Option<String>,
+    // For tool_use blocks
+    id: Option<String>,
+    name: Option<String>,
+    input: Option<Value>,
+    // For thinking blocks
+    thinking: Option<String>,
+    /// Signature for thinking blocks (required for multi-turn with extended thinking)
+    signature: Option<String>,
+}
+
+impl AnthropicResponseBlock {
+    /// Check if this is a thinking block
+    pub fn is_thinking(&self) -> bool {
+        self.content_type == "thinking"
+    }
+
+    /// Get thinking content if this is a thinking block
+    pub fn get_thinking(&self) -> Option<&str> {
+        if self.is_thinking() {
+            self.thinking.as_deref()
+        } else {
+            None
+        }
+    }
+
+    /// Get thinking content with signature (required for multi-turn)
+    pub fn get_thinking_with_signature(&self) -> Option<(&str, Option<&str>)> {
+        if self.is_thinking() {
+            self.thinking.as_deref().map(|t| (t, self.signature.as_deref()))
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -99,52 +190,147 @@ struct AnthropicUsage {
 }
 
 // ============================================================================
+// Tool Schema Generation
+// ============================================================================
+
+/// Convert Mira's allowed tools to Anthropic tool format
+fn anthropic_tool_definitions() -> Vec<AnthropicTool> {
+    tool_bridge::AllowedTool::all()
+        .into_iter()
+        .map(|tool| {
+            let schema = tool_bridge::openai_tool_schema(tool);
+            let func = &schema["function"];
+            AnthropicTool {
+                name: func["name"].as_str().unwrap_or(tool.name()).to_string(),
+                description: func["description"].as_str().unwrap_or(tool.description()).to_string(),
+                input_schema: func["parameters"].clone(),
+            }
+        })
+        .collect()
+}
+
+// ============================================================================
+// Input Item Types (for tool loop)
+// ============================================================================
+
+/// Input item for Opus tool loop
+#[derive(Clone, Debug)]
+pub enum OpusInputItem {
+    /// User message
+    UserMessage(String),
+    /// Assistant message with optional tool use
+    /// When extended thinking is enabled, assistant messages in multi-turn
+    /// conversations must include the thinking block from the original response,
+    /// including the signature which is required for API validation.
+    AssistantMessage {
+        thinking: Option<String>,
+        /// Signature from the thinking block (required for multi-turn with extended thinking)
+        thinking_signature: Option<String>,
+        text: Option<String>,
+        tool_uses: Vec<OpusToolUse>,
+    },
+    /// Tool result
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
+}
+
+/// Tool use from assistant response
+#[derive(Clone, Debug)]
+pub struct OpusToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+}
+
+impl OpusInputItem {
+    /// Convert to AnthropicMessage for API request
+    pub fn to_message(&self) -> AnthropicMessage {
+        match self {
+            OpusInputItem::UserMessage(text) => AnthropicMessage {
+                role: "user".to_string(),
+                content: AnthropicContent::Text(text.clone()),
+            },
+            OpusInputItem::AssistantMessage { thinking, thinking_signature, text, tool_uses } => {
+                let mut blocks = vec![];
+                // Thinking block MUST come first when extended thinking is enabled
+                // This is required by the Anthropic API for multi-turn conversations
+                // The signature is required when sending thinking back for multi-turn
+                if let Some(t) = thinking {
+                    blocks.push(AnthropicContentBlock::Thinking {
+                        thinking: t.clone(),
+                        signature: thinking_signature.clone(),
+                    });
+                }
+                if let Some(t) = text {
+                    blocks.push(AnthropicContentBlock::Text { text: t.clone() });
+                }
+                for tu in tool_uses {
+                    blocks.push(AnthropicContentBlock::ToolUse {
+                        id: tu.id.clone(),
+                        name: tu.name.clone(),
+                        input: tu.input.clone(),
+                    });
+                }
+                AnthropicMessage {
+                    role: "assistant".to_string(),
+                    content: AnthropicContent::Blocks(blocks),
+                }
+            }
+            OpusInputItem::ToolResult { tool_use_id, content, is_error } => {
+                AnthropicMessage {
+                    role: "user".to_string(),
+                    content: AnthropicContent::Blocks(vec![
+                        AnthropicContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content: content.clone(),
+                            is_error: if *is_error { Some(true) } else { None },
+                        }
+                    ]),
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Provider Implementation
 // ============================================================================
 
-#[async_trait]
-impl AdvisoryProvider for OpusProvider {
-    fn name(&self) -> &'static str {
-        "Opus 4.5"
-    }
+impl OpusProvider {
+    /// Complete with raw input items (for tool loop)
+    ///
+    /// Uses lower thinking budget when tools are enabled for faster tool routing,
+    /// higher budget for final response without tools.
+    pub async fn complete_with_items(
+        &self,
+        items: Vec<OpusInputItem>,
+        system: Option<String>,
+        enable_tools: bool,
+    ) -> Result<(AdvisoryResponse, Vec<AnthropicResponseBlock>)> {
+        let tools = if enable_tools {
+            Some(anthropic_tool_definitions())
+        } else {
+            None
+        };
 
-    fn model(&self) -> AdvisoryModel {
-        AdvisoryModel::Opus45
-    }
+        // Use lower thinking budget for tool routing (faster), higher for final response
+        let thinking_budget = if enable_tools { 10000 } else { 32000 };
 
-    fn capabilities(&self) -> &AdvisoryCapabilities {
-        &self.capabilities
-    }
-
-    async fn complete(&self, request: AdvisoryRequest) -> Result<AdvisoryResponse> {
-        let mut messages = vec![];
-
-        // Add history
-        for msg in &request.history {
-            messages.push(AnthropicMessage {
-                role: match msg.role {
-                    AdvisoryRole::User => "user".to_string(),
-                    AdvisoryRole::Assistant => "assistant".to_string(),
-                },
-                content: msg.content.clone(),
-            });
-        }
-
-        // Add current message
-        messages.push(AnthropicMessage {
-            role: "user".to_string(),
-            content: request.message,
-        });
+        let messages: Vec<AnthropicMessage> = items.iter().map(|i| i.to_message()).collect();
 
         let api_request = AnthropicRequest {
             model: "claude-opus-4-5-20251101".to_string(),
             max_tokens: 64000,
             messages,
-            system: request.system,
+            system,
             thinking: Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
-                budget_tokens: 32000,
+                budget_tokens: thinking_budget,
             }),
+            tools,
             stream: None,
         };
 
@@ -170,30 +356,179 @@ impl AdvisoryProvider for OpusProvider {
             anyhow::bail!("Anthropic error: {}", error.message);
         }
 
-        // Extract text from content blocks (skip thinking blocks)
-        let text = api_response
-            .content
-            .map(|contents| {
-                contents
-                    .into_iter()
-                    .filter(|c| c.content_type.as_deref() == Some("text"))
-                    .filter_map(|c| c.text)
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
-            .unwrap_or_default();
+        // Extract text and tool calls from content blocks
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
+        let mut raw_blocks: Vec<AnthropicResponseBlock> = vec![];
+
+        if let Some(contents) = api_response.content {
+            for block in contents {
+                raw_blocks.push(block.clone());
+
+                match block.content_type.as_str() {
+                    "text" => {
+                        if let Some(t) = block.text {
+                            text.push_str(&t);
+                        }
+                    }
+                    "tool_use" => {
+                        if let (Some(id), Some(name), Some(input)) =
+                            (block.id, block.name, block.input)
+                        {
+                            tool_calls.push(ToolCallRequest {
+                                id,
+                                name,
+                                arguments: input,
+                            });
+                        }
+                    }
+                    "thinking" => {
+                        // Skip thinking blocks - they're internal reasoning
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let usage = api_response.usage.map(|u| AdvisoryUsage {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
-            reasoning_tokens: 0, // Anthropic doesn't separate thinking tokens
+            reasoning_tokens: 0, // Anthropic doesn't separate thinking tokens in usage
+        });
+
+        Ok((
+            AdvisoryResponse {
+                text,
+                usage,
+                model: AdvisoryModel::Opus45,
+                tool_calls,
+            },
+            raw_blocks,
+        ))
+    }
+}
+
+#[async_trait]
+impl AdvisoryProvider for OpusProvider {
+    fn name(&self) -> &'static str {
+        "Opus 4.5"
+    }
+
+    fn model(&self) -> AdvisoryModel {
+        AdvisoryModel::Opus45
+    }
+
+    fn capabilities(&self) -> &AdvisoryCapabilities {
+        &self.capabilities
+    }
+
+    async fn complete(&self, request: AdvisoryRequest) -> Result<AdvisoryResponse> {
+        let mut messages = vec![];
+
+        // Add history
+        for msg in &request.history {
+            messages.push(AnthropicMessage {
+                role: match msg.role {
+                    AdvisoryRole::User => "user".to_string(),
+                    AdvisoryRole::Assistant => "assistant".to_string(),
+                },
+                content: AnthropicContent::Text(msg.content.clone()),
+            });
+        }
+
+        // Add current message
+        messages.push(AnthropicMessage {
+            role: "user".to_string(),
+            content: AnthropicContent::Text(request.message),
+        });
+
+        // Build tools if enabled
+        let tools = if request.enable_tools {
+            Some(anthropic_tool_definitions())
+        } else {
+            None
+        };
+
+        // Use lower thinking budget when tools are enabled
+        let thinking_budget = if request.enable_tools { 10000 } else { 32000 };
+
+        let api_request = AnthropicRequest {
+            model: "claude-opus-4-5-20251101".to_string(),
+            max_tokens: 64000,
+            messages,
+            system: request.system,
+            thinking: Some(ThinkingConfig {
+                thinking_type: "enabled".to_string(),
+                budget_tokens: thinking_budget,
+            }),
+            tools,
+            stream: None,
+        };
+
+        let response = self.client
+            .post(ANTHROPIC_API_URL)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&api_request)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic API error: {} - {}", status, body);
+        }
+
+        let api_response: AnthropicResponse = response.json().await?;
+
+        if let Some(error) = api_response.error {
+            anyhow::bail!("Anthropic error: {}", error.message);
+        }
+
+        // Extract text and tool calls from content blocks
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
+
+        if let Some(contents) = api_response.content {
+            for block in contents {
+                match block.content_type.as_str() {
+                    "text" => {
+                        if let Some(t) = block.text {
+                            text.push_str(&t);
+                        }
+                    }
+                    "tool_use" => {
+                        if let (Some(id), Some(name), Some(input)) =
+                            (block.id, block.name, block.input)
+                        {
+                            tool_calls.push(ToolCallRequest {
+                                id,
+                                name,
+                                arguments: input,
+                            });
+                        }
+                    }
+                    "thinking" => {
+                        // Skip thinking blocks
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let usage = api_response.usage.map(|u| AdvisoryUsage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            reasoning_tokens: 0,
         });
 
         Ok(AdvisoryResponse {
             text,
             usage,
             model: AdvisoryModel::Opus45,
-            tool_calls: vec![],
+            tool_calls,
         })
     }
 
@@ -210,15 +545,16 @@ impl AdvisoryProvider for OpusProvider {
                     AdvisoryRole::User => "user".to_string(),
                     AdvisoryRole::Assistant => "assistant".to_string(),
                 },
-                content: msg.content.clone(),
+                content: AnthropicContent::Text(msg.content.clone()),
             });
         }
 
         messages.push(AnthropicMessage {
             role: "user".to_string(),
-            content: request.message,
+            content: AnthropicContent::Text(request.message),
         });
 
+        // Note: Streaming with tools is more complex - for now, tools only work with complete()
         let api_request = AnthropicRequest {
             model: "claude-opus-4-5-20251101".to_string(),
             max_tokens: 64000,
@@ -228,6 +564,7 @@ impl AdvisoryProvider for OpusProvider {
                 thinking_type: "enabled".to_string(),
                 budget_tokens: 32000,
             }),
+            tools: None, // Tools not supported in streaming mode yet
             stream: Some(true),
         };
 
