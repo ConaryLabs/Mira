@@ -82,6 +82,39 @@ async fn call_gemini(message: &str) -> Result<serde_json::Value> {
     }))
 }
 
+async fn call_gemini_with_tools(
+    message: &str,
+    db: &SqlitePool,
+    semantic: &Arc<SemanticSearch>,
+    project_id: Option<i64>,
+) -> Result<serde_json::Value> {
+    let service = AdvisoryService::from_env()?;
+
+    // Create tool context
+    let mut ctx = tool_bridge::ToolContext::new(
+        Arc::new(db.clone()),
+        semantic.clone(),
+        project_id,
+    );
+
+    let response = service.ask_with_tools(
+        AdvisoryModel::Gemini3Pro,
+        message,
+        Some("You are an AI assistant with access to Mira's read-only tools. \
+              Use the tools to gather relevant context before answering. \
+              Available tools: recall (search memories), get_corrections (user preferences), \
+              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
+              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits.".to_string()),
+        &mut ctx,
+    ).await?;
+
+    Ok(serde_json::json!({
+        "response": response.text,
+        "provider": "gemini-3-pro",
+        "tools_used": ctx.tracker.session_total,
+    }))
+}
+
 async fn call_council(message: &str) -> Result<serde_json::Value> {
     let service = AdvisoryService::from_env()?;
 
@@ -458,15 +491,14 @@ pub async fn call_mira(
     };
 
     // Route based on provider (and tools if enabled)
-    let mut result = match req.provider.as_deref() {
-        Some("gemini") => call_gemini(&message).await?,
-        Some("deepseek") => call_deepseek(&message).await?,
-        Some("council") => call_council(&message).await?,
-        _ if req.enable_tools.unwrap_or(false) => {
-            // GPT with tool calling enabled
-            call_gpt_with_tools(&message, db, semantic, project_id).await?
-        }
-        _ => call_gpt(&message).await?,
+    let enable_tools = req.enable_tools.unwrap_or(false);
+    let mut result = match (req.provider.as_deref(), enable_tools) {
+        (Some("gemini"), true) => call_gemini_with_tools(&message, db, semantic, project_id).await?,
+        (Some("gemini"), false) => call_gemini(&message).await?,
+        (Some("deepseek"), _) => call_deepseek(&message).await?,
+        (Some("council"), _) => call_council(&message).await?,
+        (_, true) => call_gpt_with_tools(&message, db, semantic, project_id).await?,
+        (_, false) => call_gpt(&message).await?,
     };
 
     // If we have a session, store the response and add session_id to result
