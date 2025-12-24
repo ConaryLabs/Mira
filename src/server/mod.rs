@@ -228,6 +228,88 @@ impl MiraServer {
         }
     }
 
+    #[tool(description = "Manage advisory sessions. Actions: list/get/close/pin/decide")]
+    async fn advisory_session(&self, Parameters(req): Parameters<AdvisorySessionRequest>) -> Result<CallToolResult, McpError> {
+        use crate::advisory::session::{
+            list_sessions, get_session, get_all_messages, get_pins, get_decisions,
+            update_status, SessionStatus, add_pin, add_decision,
+        };
+
+        let project_id = self.get_active_project().await.map(|p| p.id);
+
+        match req.action.as_str() {
+            "list" => {
+                let limit = req.limit.unwrap_or(10);
+                let sessions = list_sessions(self.db.as_ref(), project_id, false, limit).await.map_err(to_mcp_err)?;
+                let result: Vec<serde_json::Value> = sessions.iter().map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "topic": s.topic,
+                        "mode": s.mode.as_str(),
+                        "status": s.status.as_str(),
+                        "total_turns": s.total_turns,
+                    })
+                }).collect();
+                Ok(json_response(serde_json::json!({ "sessions": result })))
+            }
+            "get" => {
+                let session_id = require!(req.session_id, "session_id required");
+                let session = get_session(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?
+                    .ok_or_else(|| to_mcp_err(anyhow::anyhow!("Session not found")))?;
+                let messages = get_all_messages(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?;
+                let pins = get_pins(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?;
+                let decisions = get_decisions(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?;
+
+                let result = serde_json::json!({
+                    "session": {
+                        "id": session.id,
+                        "topic": session.topic,
+                        "mode": session.mode.as_str(),
+                        "status": session.status.as_str(),
+                        "total_turns": session.total_turns,
+                    },
+                    "messages": messages.iter().map(|m| serde_json::json!({
+                        "turn": m.turn_number,
+                        "role": m.role,
+                        "provider": m.provider,
+                        "content": m.content,
+                    })).collect::<Vec<_>>(),
+                    "pins": pins.iter().map(|p| serde_json::json!({
+                        "type": p.pin_type,
+                        "content": p.content,
+                    })).collect::<Vec<_>>(),
+                    "decisions": decisions.iter().map(|d| serde_json::json!({
+                        "type": d.decision_type,
+                        "topic": d.topic,
+                        "rationale": d.rationale,
+                    })).collect::<Vec<_>>(),
+                });
+                Ok(json_response(result))
+            }
+            "close" => {
+                let session_id = require!(req.session_id, "session_id required");
+                update_status(self.db.as_ref(), &session_id, SessionStatus::Archived).await.map_err(to_mcp_err)?;
+                Ok(json_response(serde_json::json!({ "status": "closed", "session_id": session_id })))
+            }
+            "pin" => {
+                let session_id = require!(req.session_id, "session_id required");
+                let content = require!(req.content, "content required for pin");
+                let pin_type = req.pin_type.as_deref().unwrap_or("constraint");
+                add_pin(self.db.as_ref(), &session_id, &content, pin_type, None).await.map_err(to_mcp_err)?;
+                Ok(json_response(serde_json::json!({ "status": "pinned", "content": content })))
+            }
+            "decide" => {
+                let session_id = require!(req.session_id, "session_id required");
+                let decision_type = require!(req.decision_type, "decision_type required");
+                let topic = require!(req.topic, "topic required");
+                let rationale = req.rationale.as_deref();
+                add_decision(self.db.as_ref(), &session_id, &decision_type, &topic, rationale, None).await.map_err(to_mcp_err)?;
+                Ok(json_response(serde_json::json!({ "status": "recorded", "topic": topic })))
+            }
+            _ => Ok(unknown_action(&req.action, "list/get/close/pin/decide")),
+        }
+    }
+
     // === Memory (core - high usage) ===
 
     #[tool(description = "Store a fact/decision/preference for future recall. Scoped to active project.")]
