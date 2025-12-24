@@ -78,9 +78,6 @@ src/
 │   │   ├── chain.rs         # → core::ops::chat_chain
 │   │   └── ...
 │   │
-│   └── conductor/           # DeepSeek orchestration
-│       ├── mira_intel.rs    # → core::ops::{build, git, mira}
-│       └── ...
 │
 └── server/                  # MCP server entry point
 ```
