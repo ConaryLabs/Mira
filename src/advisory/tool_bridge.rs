@@ -44,6 +44,8 @@ pub enum AllowedTool {
     GetRecentCommits,
     /// Search commits by message
     SearchCommits,
+    /// List tasks from task management
+    ListTasks,
 }
 
 impl AllowedTool {
@@ -58,6 +60,7 @@ impl AllowedTool {
             AllowedTool::GetRelatedFiles => "get_related_files",
             AllowedTool::GetRecentCommits => "get_recent_commits",
             AllowedTool::SearchCommits => "search_commits",
+            AllowedTool::ListTasks => "list_tasks",
         }
     }
 
@@ -72,6 +75,7 @@ impl AllowedTool {
             AllowedTool::GetRelatedFiles => "Find files related to a given file",
             AllowedTool::GetRecentCommits => "Get recent git commits",
             AllowedTool::SearchCommits => "Search commits by message content",
+            AllowedTool::ListTasks => "List tasks from task management system",
         }
     }
 
@@ -86,6 +90,7 @@ impl AllowedTool {
             "get_related_files" => Some(AllowedTool::GetRelatedFiles),
             "get_recent_commits" => Some(AllowedTool::GetRecentCommits),
             "search_commits" => Some(AllowedTool::SearchCommits),
+            "list_tasks" => Some(AllowedTool::ListTasks),
             _ => None,
         }
     }
@@ -102,6 +107,7 @@ impl AllowedTool {
             AllowedTool::GetRelatedFiles,
             AllowedTool::GetRecentCommits,
             AllowedTool::SearchCommits,
+            AllowedTool::ListTasks,
         ]
     }
 }
@@ -322,6 +328,26 @@ pub fn openai_tool_schema(tool: AllowedTool) -> Value {
                         }
                     },
                     "required": ["query"]
+                }
+            }
+        }),
+        AllowedTool::ListTasks => serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "list_tasks",
+                "description": "List tasks from the task management system",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "include_completed": {
+                            "type": "boolean",
+                            "description": "Include completed tasks (default: false)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum tasks to return (default: 20)"
+                        }
+                    }
                 }
             }
         }),
@@ -579,7 +605,7 @@ async fn execute_allowed_tool(
     semantic: &Arc<SemanticSearch>,
     project_id: Option<i64>,
 ) -> Result<String> {
-    use crate::tools::{memory, corrections, git_intel, code_intel, goals};
+    use crate::tools::{memory, corrections, git_intel, code_intel, goals, tasks};
 
     match tool {
         AllowedTool::Recall => {
@@ -766,6 +792,26 @@ async fn execute_allowed_tool(
                 db,
                 crate::tools::types::SearchCommitsRequest {
                     query: query.to_string(),
+                    limit,
+                },
+            ).await?;
+
+            Ok(serde_json::to_string_pretty(&results)?)
+        }
+
+        AllowedTool::ListTasks => {
+            let include_completed = args.get("include_completed")
+                .and_then(|v| v.as_bool());
+            let limit = args.get("limit")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i64);
+
+            let results = tasks::list_tasks(
+                db,
+                tasks::ListTasksParams {
+                    status: None,
+                    parent_id: None,
+                    include_completed,
                     limit,
                 },
             ).await?;

@@ -12,7 +12,11 @@ mod reasoner;
 
 pub use gpt::{GptProvider, ResponsesInputItem};
 pub use opus::OpusProvider;
-pub use gemini::GeminiProvider;
+pub use gemini::{
+    GeminiProvider, GeminiInputItem, GeminiContent, GeminiPart, GeminiPartResponse,
+    GeminiFunctionCallResponse, GeminiTextPart, GeminiFunctionCallPart, GeminiFunctionCall,
+    GeminiFunctionResponsePart, GeminiFunctionResponse,
+};
 pub use reasoner::ReasonerProvider;
 
 use anyhow::Result;

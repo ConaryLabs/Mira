@@ -20,6 +20,9 @@ pub use providers::{
     AdvisoryModel, AdvisoryCapabilities, AdvisoryUsage, AdvisoryMessage,
     AdvisoryRole, ToolCallRequest, ResponsesInputItem,
     GptProvider, GeminiProvider, OpusProvider, ReasonerProvider,
+    // Gemini types for tool loop
+    GeminiContent, GeminiPart, GeminiPartResponse, GeminiFunctionCallResponse,
+    GeminiInputItem,
 };
 #[allow(unused_imports)]
 pub use synthesis::{
@@ -94,7 +97,7 @@ impl AdvisoryService {
     ///
     /// The model can call read-only Mira tools to gather context before responding.
     /// Tool calls are limited by the budget in ToolContext.
-    /// Currently only supports GPT-5.2 (uses Responses API format).
+    /// Supports GPT-5.2 (Responses API) and Gemini 3 Pro (with thought signatures).
     pub async fn ask_with_tools(
         &self,
         model: AdvisoryModel,
@@ -107,13 +110,23 @@ impl AdvisoryService {
             anyhow::bail!("Recursive advisory calls are not allowed");
         }
 
-        // For now, only GPT-5.2 supports the Responses API tool format
-        if model != AdvisoryModel::Gpt52 {
-            // Fall back to simple ask for other providers
-            return self.ask(model, message).await;
+        match model {
+            AdvisoryModel::Gpt52 => self.ask_with_tools_gpt(message, system, ctx).await,
+            AdvisoryModel::Gemini3Pro => self.ask_with_tools_gemini(message, system, ctx).await,
+            _ => {
+                // Fall back to simple ask for other providers
+                self.ask(model, message).await
+            }
         }
+    }
 
-        // Get GPT provider directly for tool loop
+    /// GPT-5.2 tool loop using Responses API
+    async fn ask_with_tools_gpt(
+        &self,
+        message: &str,
+        system: Option<String>,
+        ctx: &mut tool_bridge::ToolContext,
+    ) -> Result<AdvisoryResponse> {
         let gpt = GptProvider::from_env()?;
 
         const MAX_TOOL_ROUNDS: usize = 5;
@@ -189,6 +202,160 @@ impl AdvisoryService {
         tracing::warn!("Hit max tool rounds ({}), forcing final response", MAX_TOOL_ROUNDS);
         let final_response = gpt.complete_with_items(
             items,
+            system,
+            false,
+        ).await?;
+
+        Ok(final_response)
+    }
+
+    /// Gemini 3 Pro tool loop with thought signature preservation
+    ///
+    /// Has an overall timeout of 2 minutes to prevent runaway tool loops.
+    async fn ask_with_tools_gemini(
+        &self,
+        message: &str,
+        system: Option<String>,
+        ctx: &mut tool_bridge::ToolContext,
+    ) -> Result<AdvisoryResponse> {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        // Overall timeout for the entire tool loop (2 minutes)
+        const TOOL_LOOP_TIMEOUT_SECS: u64 = 120;
+
+        timeout(
+            Duration::from_secs(TOOL_LOOP_TIMEOUT_SECS),
+            self.ask_with_tools_gemini_inner(message, system, ctx),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Gemini tool loop timed out after {} seconds", TOOL_LOOP_TIMEOUT_SECS))?
+    }
+
+    /// Inner implementation of Gemini tool loop
+    async fn ask_with_tools_gemini_inner(
+        &self,
+        message: &str,
+        system: Option<String>,
+        ctx: &mut tool_bridge::ToolContext,
+    ) -> Result<AdvisoryResponse> {
+        use providers::{GeminiTextPart, GeminiFunctionCallPart, GeminiFunctionCall,
+            GeminiFunctionResponsePart, GeminiFunctionResponse};
+
+        let gemini = GeminiProvider::from_env()?;
+
+        const MAX_TOOL_ROUNDS: usize = 5;
+        let mut contents: Vec<GeminiContent> = vec![];
+        let mut total_tool_calls = 0;
+
+        tracing::info!("Starting Gemini tool loop for: {}...", &message[..message.len().min(50)]);
+
+        // Start with user message
+        contents.push(GeminiContent {
+            role: "user".to_string(),
+            parts: vec![GeminiPart::Text(GeminiTextPart { text: message.to_string() })],
+        });
+
+        for round in 0..MAX_TOOL_ROUNDS {
+            ctx.tracker.new_call();
+
+            let round_start = std::time::Instant::now();
+            tracing::info!("Gemini tool loop round {} starting...", round + 1);
+
+            let (response, raw_parts) = gemini.complete_with_contents(
+                contents.clone(),
+                system.clone(),
+                true,
+            ).await?;
+
+            let elapsed = round_start.elapsed();
+            tracing::info!("Gemini round {} API call took {:?}", round + 1, elapsed);
+
+            // If no tool calls, we're done
+            if response.tool_calls.is_empty() {
+                tracing::info!("Gemini tool loop complete after {} rounds, {} tool calls", round + 1, total_tool_calls);
+                return Ok(response);
+            }
+
+            tracing::info!(
+                "Round {}: Gemini requested {} tool calls: {:?}",
+                round + 1,
+                response.tool_calls.len(),
+                response.tool_calls.iter().map(|c| &c.name).collect::<Vec<_>>()
+            );
+
+            // Build model response with function calls (preserving thought signatures)
+            let mut model_parts: Vec<GeminiPart> = vec![];
+
+            // Map tool call IDs to thought signatures from raw_parts
+            let mut thought_sigs: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+            for (idx, part) in raw_parts.iter().enumerate() {
+                if part.function_call.is_some() {
+                    let call_id = format!("gemini_{}", idx);
+                    thought_sigs.insert(call_id, part.thought_signature.clone());
+                }
+            }
+
+            // Add function call parts with thought signatures
+            for call in &response.tool_calls {
+                let thought_sig = thought_sigs.get(&call.id).cloned().flatten();
+                model_parts.push(GeminiPart::FunctionCall(GeminiFunctionCallPart {
+                    function_call: GeminiFunctionCall {
+                        name: call.name.clone(),
+                        args: call.arguments.clone(),
+                    },
+                    thought_signature: thought_sig,
+                }));
+            }
+
+            // Add model's function call response
+            contents.push(GeminiContent {
+                role: "model".to_string(),
+                parts: model_parts,
+            });
+
+            // Execute tools and build function responses
+            let mut response_parts: Vec<GeminiPart> = vec![];
+            for call in &response.tool_calls {
+                let tool_call = tool_bridge::ToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                };
+                let result = tool_bridge::execute_tool(ctx, &tool_call).await;
+                total_tool_calls += 1;
+
+                response_parts.push(GeminiPart::FunctionResponse(GeminiFunctionResponsePart {
+                    function_response: GeminiFunctionResponse {
+                        name: call.name.clone(),
+                        response: serde_json::json!({ "result": result.content }),
+                    },
+                }));
+            }
+
+            // Add user turn with function responses
+            contents.push(GeminiContent {
+                role: "user".to_string(),
+                parts: response_parts,
+            });
+
+            // Check if we've hit budget limits
+            if !ctx.tracker.can_call(&ctx.budget) {
+                tracing::warn!("Tool budget exhausted after {} calls", total_tool_calls);
+                // Do one more call without tools to get final response
+                let (final_response, _) = gemini.complete_with_contents(
+                    contents,
+                    system,
+                    false,
+                ).await?;
+                return Ok(final_response);
+            }
+        }
+
+        // If we hit max rounds, do a final call without tools
+        tracing::warn!("Hit max tool rounds ({}), forcing final response", MAX_TOOL_ROUNDS);
+        let (final_response, _) = gemini.complete_with_contents(
+            contents,
             system,
             false,
         ).await?;

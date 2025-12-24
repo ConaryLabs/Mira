@@ -423,8 +423,8 @@ Sessions support tiered memory for long conversations:
 
 External LLMs can call read-only Mira tools via `tool_bridge.rs`:
 
-**Allowed tools** (9 read-only):
-- `recall`, `get_corrections`, `get_goals`
+**Allowed tools** (10 read-only):
+- `recall`, `get_corrections`, `get_goals`, `list_tasks`
 - `semantic_code_search`, `get_symbols`, `get_related_files`
 - `find_similar_fixes`, `get_recent_commits`, `search_commits`
 
