@@ -20,6 +20,8 @@ pub struct HotlineRequest {
     pub inject_context: Option<bool>,
     #[schemars(description = "Session ID to resume a multi-turn conversation. Omit to start fresh.")]
     pub session_id: Option<String>,
+    #[schemars(description = "Enable tool calling (GPT-5.2 only). Allows the model to call Mira's read-only tools (recall, get_corrections, semantic_code_search, etc). Default: false")]
+    pub enable_tools: Option<bool>,
 }
 
 // ============================================================================
