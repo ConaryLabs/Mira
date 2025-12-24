@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 
 use super::proactive;
 use super::git_intel;
-use crate::advisory::{AdvisoryService, AdvisoryModel};
+use crate::advisory::{AdvisoryService, AdvisoryModel, tool_bridge};
 use crate::core::SemanticSearch;
 use std::sync::Arc;
 use super::types::{HotlineRequest, GetProactiveContextRequest, GetRecentCommitsRequest};
@@ -26,6 +26,39 @@ async fn call_gpt(message: &str) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
         "response": response.text,
         "provider": "gpt-5.2",
+    }))
+}
+
+async fn call_gpt_with_tools(
+    message: &str,
+    db: &SqlitePool,
+    semantic: &Arc<SemanticSearch>,
+    project_id: Option<i64>,
+) -> Result<serde_json::Value> {
+    let service = AdvisoryService::from_env()?;
+
+    // Create tool context
+    let mut ctx = tool_bridge::ToolContext::new(
+        Arc::new(db.clone()),
+        semantic.clone(),
+        project_id,
+    );
+
+    let response = service.ask_with_tools(
+        AdvisoryModel::Gpt52,
+        message,
+        Some("You are an AI assistant with access to Mira's read-only tools. \
+              Use the tools to gather relevant context before answering. \
+              Available tools: recall (search memories), get_corrections (user preferences), \
+              get_goals (active goals), semantic_code_search (find code), get_symbols (file analysis), \
+              find_similar_fixes (past error solutions), get_related_files, get_recent_commits, search_commits.".to_string()),
+        &mut ctx,
+    ).await?;
+
+    Ok(serde_json::json!({
+        "response": response.text,
+        "provider": "gpt-5.2",
+        "tools_used": ctx.tracker.session_total,
     }))
 }
 
@@ -424,11 +457,15 @@ pub async fn call_mira(
         format!("{}\n\n---\n\n{}", context_parts.join("\n\n"), req.message)
     };
 
-    // Route based on provider
+    // Route based on provider (and tools if enabled)
     let mut result = match req.provider.as_deref() {
         Some("gemini") => call_gemini(&message).await?,
         Some("deepseek") => call_deepseek(&message).await?,
         Some("council") => call_council(&message).await?,
+        _ if req.enable_tools.unwrap_or(false) => {
+            // GPT with tool calling enabled
+            call_gpt_with_tools(&message, db, semantic, project_id).await?
+        }
         _ => call_gpt(&message).await?,
     };
 

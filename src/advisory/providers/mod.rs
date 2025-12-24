@@ -10,7 +10,7 @@ mod opus;
 mod gemini;
 mod reasoner;
 
-pub use gpt::GptProvider;
+pub use gpt::{GptProvider, ResponsesInputItem};
 pub use opus::OpusProvider;
 pub use gemini::GeminiProvider;
 pub use reasoner::ReasonerProvider;

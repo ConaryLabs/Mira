@@ -18,7 +18,7 @@ pub mod tool_bridge;
 pub use providers::{
     AdvisoryProvider, AdvisoryRequest, AdvisoryResponse, AdvisoryEvent,
     AdvisoryModel, AdvisoryCapabilities, AdvisoryUsage, AdvisoryMessage,
-    AdvisoryRole, ToolCallRequest,
+    AdvisoryRole, ToolCallRequest, ResponsesInputItem,
     GptProvider, GeminiProvider, OpusProvider, ReasonerProvider,
 };
 #[allow(unused_imports)]
@@ -88,6 +88,112 @@ impl AdvisoryService {
             history: vec![],
             enable_tools: false,
         }).await
+    }
+
+    /// Query with tool calling - executes tools in a loop until final response
+    ///
+    /// The model can call read-only Mira tools to gather context before responding.
+    /// Tool calls are limited by the budget in ToolContext.
+    /// Currently only supports GPT-5.2 (uses Responses API format).
+    pub async fn ask_with_tools(
+        &self,
+        model: AdvisoryModel,
+        message: &str,
+        system: Option<String>,
+        ctx: &mut tool_bridge::ToolContext,
+    ) -> Result<AdvisoryResponse> {
+        // Check for recursive advisory calls
+        if ctx.is_recursive() {
+            anyhow::bail!("Recursive advisory calls are not allowed");
+        }
+
+        // For now, only GPT-5.2 supports the Responses API tool format
+        if model != AdvisoryModel::Gpt52 {
+            // Fall back to simple ask for other providers
+            return self.ask(model, message).await;
+        }
+
+        // Get GPT provider directly for tool loop
+        let gpt = GptProvider::from_env()?;
+
+        const MAX_TOOL_ROUNDS: usize = 5;
+        let mut items: Vec<ResponsesInputItem> = vec![];
+        let mut total_tool_calls = 0;
+
+        // Start with user message
+        items.push(ResponsesInputItem::Message {
+            role: "user".to_string(),
+            content: message.to_string(),
+        });
+
+        for round in 0..MAX_TOOL_ROUNDS {
+            ctx.tracker.new_call();
+
+            let response = gpt.complete_with_items(
+                items.clone(),
+                system.clone(),
+                true,
+            ).await?;
+
+            // If no tool calls, we're done
+            if response.tool_calls.is_empty() {
+                return Ok(response);
+            }
+
+            tracing::debug!(
+                "Round {}: GPT requested {} tool calls",
+                round + 1,
+                response.tool_calls.len()
+            );
+
+            // Add function_call items and execute tools
+            for call in &response.tool_calls {
+                // Add the function_call item (required by Responses API)
+                items.push(ResponsesInputItem::FunctionCall {
+                    call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: serde_json::to_string(&call.arguments)
+                        .unwrap_or_else(|_| "{}".to_string()),
+                });
+
+                // Execute the tool
+                let tool_call = tool_bridge::ToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                };
+                let result = tool_bridge::execute_tool(ctx, &tool_call).await;
+                total_tool_calls += 1;
+
+                // Add function_call_output item
+                items.push(ResponsesInputItem::FunctionCallOutput {
+                    call_id: call.id.clone(),
+                    output: result.content,
+                });
+            }
+
+            // Check if we've hit budget limits
+            if !ctx.tracker.can_call(&ctx.budget) {
+                tracing::warn!("Tool budget exhausted after {} calls", total_tool_calls);
+                // Do one more call without tools to get final response
+                let final_response = gpt.complete_with_items(
+                    items,
+                    system,
+                    false,
+                ).await?;
+                return Ok(final_response);
+            }
+        }
+
+        // If we hit max rounds, do a final call without tools
+        tracing::warn!("Hit max tool rounds ({}), forcing final response", MAX_TOOL_ROUNDS);
+        let final_response = gpt.complete_with_items(
+            items,
+            system,
+            false,
+        ).await?;
+
+        Ok(final_response)
     }
 
     /// Council query - multiple models in parallel, synthesized by Reasoner

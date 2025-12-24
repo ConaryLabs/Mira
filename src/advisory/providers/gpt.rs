@@ -1,4 +1,9 @@
-//! GPT-5.2 Provider with tool calling support
+//! GPT-5.2 Provider using the Responses API
+//!
+//! Uses OpenAI's Responses API (released March 2025) which provides:
+//! - Better performance (3% improvement on SWE-bench)
+//! - Lower costs (40-80% better cache utilization)
+//! - Native tool calling with function_call_output
 
 #![allow(dead_code)]
 
@@ -18,7 +23,7 @@ use super::{
 };
 use crate::advisory::tool_bridge;
 
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
+const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 
 pub struct GptProvider {
     client: Client,
@@ -46,80 +51,216 @@ impl GptProvider {
 }
 
 // ============================================================================
-// API Types
+// Responses API Types
 // ============================================================================
 
+/// Input item for the Responses API
+#[derive(Serialize, Clone, Debug)]
+#[serde(untagged)]
+enum ResponsesInput {
+    /// Simple string input
+    Text(String),
+    /// Structured input with roles and types
+    Items(Vec<ResponsesInputItem>),
+}
+
+/// An input item (message, function call, function call output, etc.)
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum ResponsesInputItem {
+    /// User or system message
+    Message {
+        role: String,
+        content: String,
+    },
+    /// Function call from the model (must be included before output)
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// Function call output (tool result)
+    FunctionCallOutput {
+        call_id: String,
+        output: String,
+    },
+}
+
+/// Request to the Responses API
 #[derive(Serialize)]
-struct OpenAIRequest {
+struct ResponsesRequest {
     model: String,
-    messages: Vec<OpenAIMessage>,
-    max_completion_tokens: u32,
+    input: ResponsesInput,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning_effort: Option<String>,
+    instructions: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
+    max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<ReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
 }
 
-#[derive(Serialize, Clone)]
-struct OpenAIMessage {
-    role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OpenAIToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
+#[derive(Serialize)]
+struct ReasoningConfig {
+    effort: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct OpenAIToolCall {
-    id: String,
+/// Response from the Responses API
+#[derive(Deserialize, Debug)]
+struct ResponsesResponse {
+    id: Option<String>,
+    output: Option<Vec<ResponsesOutputItem>>,
+    #[serde(default)]
+    output_text: Option<String>,
+    error: Option<ResponsesError>,
+    usage: Option<ResponsesUsage>,
+}
+
+/// An output item from the response
+#[derive(Deserialize, Debug)]
+struct ResponsesOutputItem {
     #[serde(rename = "type")]
-    call_type: String,
-    function: OpenAIFunction,
+    item_type: String,
+    /// For message items
+    content: Option<Vec<ContentPart>>,
+    /// For function_call items
+    call_id: Option<String>,
+    name: Option<String>,
+    arguments: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct OpenAIFunction {
-    name: String,
-    arguments: String,
+#[derive(Deserialize, Debug)]
+struct ContentPart {
+    #[serde(rename = "type")]
+    part_type: String,
+    text: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct OpenAIResponse {
-    choices: Option<Vec<OpenAIChoice>>,
-    error: Option<OpenAIError>,
-    usage: Option<OpenAIUsage>,
-}
-
-#[derive(Deserialize)]
-struct OpenAIChoice {
-    message: OpenAIMessageResponse,
-    finish_reason: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct OpenAIMessageResponse {
-    content: Option<String>,
-    tool_calls: Option<Vec<OpenAIToolCall>>,
-}
-
-#[derive(Deserialize)]
-struct OpenAIError {
+#[derive(Deserialize, Debug)]
+struct ResponsesError {
     message: String,
+    code: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct OpenAIUsage {
-    prompt_tokens: u32,
-    completion_tokens: u32,
+#[derive(Deserialize, Debug)]
+struct ResponsesUsage {
+    input_tokens: u32,
+    output_tokens: u32,
+    #[serde(default)]
+    reasoning_tokens: u32,
 }
 
 // ============================================================================
 // Provider Implementation
 // ============================================================================
+
+impl GptProvider {
+    /// Complete with raw input items (for tool loop)
+    pub async fn complete_with_items(
+        &self,
+        items: Vec<ResponsesInputItem>,
+        instructions: Option<String>,
+        enable_tools: bool,
+    ) -> Result<AdvisoryResponse> {
+        let tools = if enable_tools {
+            Some(tool_bridge::all_openai_schemas())
+        } else {
+            None
+        };
+
+        let api_request = ResponsesRequest {
+            model: "gpt-5.2".to_string(),
+            input: ResponsesInput::Items(items),
+            instructions,
+            max_output_tokens: Some(32000),
+            reasoning: Some(ReasoningConfig {
+                effort: "high".to_string(),
+            }),
+            tools,
+            stream: None,
+        };
+
+        let response = self.client
+            .post(OPENAI_RESPONSES_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&api_request)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("OpenAI Responses API error: {} - {}", status, body);
+        }
+
+        let api_response: ResponsesResponse = response.json().await?;
+
+        if let Some(error) = api_response.error {
+            anyhow::bail!("OpenAI error: {} (code: {:?})", error.message, error.code);
+        }
+
+        // Extract text and tool calls from output
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
+
+        if let Some(output) = &api_response.output {
+            for item in output {
+                match item.item_type.as_str() {
+                    "message" => {
+                        if let Some(content) = &item.content {
+                            for part in content {
+                                if part.part_type == "output_text" || part.part_type == "text" {
+                                    if let Some(t) = &part.text {
+                                        text.push_str(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "function_call" => {
+                        if let (Some(call_id), Some(name), Some(args_str)) =
+                            (&item.call_id, &item.name, &item.arguments)
+                        {
+                            let args: Value = serde_json::from_str(args_str)
+                                .unwrap_or(Value::Object(serde_json::Map::new()));
+                            tool_calls.push(ToolCallRequest {
+                                id: call_id.clone(),
+                                name: name.clone(),
+                                arguments: args,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(output_text) = api_response.output_text {
+                text = output_text;
+            }
+        }
+
+        let usage = api_response.usage.map(|u| AdvisoryUsage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            reasoning_tokens: u.reasoning_tokens,
+        });
+
+        Ok(AdvisoryResponse {
+            text,
+            usage,
+            model: AdvisoryModel::Gpt52,
+            tool_calls,
+        })
+    }
+}
 
 #[async_trait]
 impl AdvisoryProvider for GptProvider {
@@ -136,37 +277,24 @@ impl AdvisoryProvider for GptProvider {
     }
 
     async fn complete(&self, request: AdvisoryRequest) -> Result<AdvisoryResponse> {
-        let mut messages = vec![];
-
-        // Add system message if provided
-        if let Some(system) = &request.system {
-            messages.push(OpenAIMessage {
-                role: "system".to_string(),
-                content: Some(system.clone()),
-                tool_calls: None,
-                tool_call_id: None,
-            });
-        }
+        // Build input items
+        let mut items: Vec<ResponsesInputItem> = vec![];
 
         // Add history
         for msg in &request.history {
-            messages.push(OpenAIMessage {
+            items.push(ResponsesInputItem::Message {
                 role: match msg.role {
                     AdvisoryRole::User => "user".to_string(),
                     AdvisoryRole::Assistant => "assistant".to_string(),
                 },
-                content: Some(msg.content.clone()),
-                tool_calls: None,
-                tool_call_id: None,
+                content: msg.content.clone(),
             });
         }
 
         // Add current message
-        messages.push(OpenAIMessage {
+        items.push(ResponsesInputItem::Message {
             role: "user".to_string(),
-            content: Some(request.message.clone()),
-            tool_calls: None,
-            tool_call_id: None,
+            content: request.message.clone(),
         });
 
         // Build tools list if enabled
@@ -176,17 +304,20 @@ impl AdvisoryProvider for GptProvider {
             None
         };
 
-        let api_request = OpenAIRequest {
+        let api_request = ResponsesRequest {
             model: "gpt-5.2".to_string(),
-            messages,
-            max_completion_tokens: 32000,
-            reasoning_effort: Some("high".to_string()),
-            stream: None,
+            input: ResponsesInput::Items(items),
+            instructions: request.system.clone(),
+            max_output_tokens: Some(32000),
+            reasoning: Some(ReasoningConfig {
+                effort: "high".to_string(),
+            }),
             tools,
+            stream: None,
         };
 
         let response = self.client
-            .post(OPENAI_API_URL)
+            .post(OPENAI_RESPONSES_URL)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&api_request)
@@ -197,43 +328,66 @@ impl AdvisoryProvider for GptProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI API error: {} - {}", status, body);
+            anyhow::bail!("OpenAI Responses API error: {} - {}", status, body);
         }
 
-        let api_response: OpenAIResponse = response.json().await?;
+        let api_response: ResponsesResponse = response.json().await?;
 
         if let Some(error) = api_response.error {
-            anyhow::bail!("OpenAI error: {}", error.message);
+            anyhow::bail!("OpenAI error: {} (code: {:?})", error.message, error.code);
         }
 
-        let choice = api_response.choices
-            .and_then(|c| c.into_iter().next());
+        // Extract text and tool calls from output
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallRequest> = vec![];
 
-        let text = choice.as_ref()
-            .and_then(|c| c.message.content.clone())
-            .unwrap_or_default();
-
-        // Extract tool calls if present
-        let tool_calls = choice.as_ref()
-            .and_then(|c| c.message.tool_calls.as_ref())
-            .map(|calls| {
-                calls.iter().map(|tc| {
-                    // Parse arguments JSON string into Value
-                    let args: Value = serde_json::from_str(&tc.function.arguments)
-                        .unwrap_or(Value::Object(serde_json::Map::new()));
-                    ToolCallRequest {
-                        id: tc.id.clone(),
-                        name: tc.function.name.clone(),
-                        arguments: args,
+        if let Some(output) = &api_response.output {
+            for item in output {
+                match item.item_type.as_str() {
+                    "message" => {
+                        // Extract text from content parts
+                        if let Some(content) = &item.content {
+                            for part in content {
+                                if part.part_type == "output_text" || part.part_type == "text" {
+                                    if let Some(t) = &part.text {
+                                        text.push_str(t);
+                                    }
+                                }
+                            }
+                        }
                     }
-                }).collect()
-            })
-            .unwrap_or_default();
+                    "function_call" => {
+                        // Extract function call
+                        if let (Some(call_id), Some(name), Some(args_str)) =
+                            (&item.call_id, &item.name, &item.arguments)
+                        {
+                            let args: Value = serde_json::from_str(args_str)
+                                .unwrap_or(Value::Object(serde_json::Map::new()));
+                            tool_calls.push(ToolCallRequest {
+                                id: call_id.clone(),
+                                name: name.clone(),
+                                arguments: args,
+                            });
+                        }
+                    }
+                    _ => {
+                        // Ignore other item types (reasoning, etc.)
+                    }
+                }
+            }
+        }
+
+        // Fallback to output_text if available
+        if text.is_empty() {
+            if let Some(output_text) = api_response.output_text {
+                text = output_text;
+            }
+        }
 
         let usage = api_response.usage.map(|u| AdvisoryUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-            reasoning_tokens: 0,
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            reasoning_tokens: u.reasoning_tokens,
         });
 
         Ok(AdvisoryResponse {
@@ -249,48 +403,39 @@ impl AdvisoryProvider for GptProvider {
         request: AdvisoryRequest,
         tx: mpsc::Sender<AdvisoryEvent>,
     ) -> Result<String> {
-        let mut messages = vec![];
-
-        if let Some(system) = &request.system {
-            messages.push(OpenAIMessage {
-                role: "system".to_string(),
-                content: Some(system.clone()),
-                tool_calls: None,
-                tool_call_id: None,
-            });
-        }
+        // Build input items
+        let mut items: Vec<ResponsesInputItem> = vec![];
 
         for msg in &request.history {
-            messages.push(OpenAIMessage {
+            items.push(ResponsesInputItem::Message {
                 role: match msg.role {
                     AdvisoryRole::User => "user".to_string(),
                     AdvisoryRole::Assistant => "assistant".to_string(),
                 },
-                content: Some(msg.content.clone()),
-                tool_calls: None,
-                tool_call_id: None,
+                content: msg.content.clone(),
             });
         }
 
-        messages.push(OpenAIMessage {
+        items.push(ResponsesInputItem::Message {
             role: "user".to_string(),
-            content: Some(request.message.clone()),
-            tool_calls: None,
-            tool_call_id: None,
+            content: request.message.clone(),
         });
 
         // Note: Streaming with tools is more complex - for now, tools only work with complete()
-        let api_request = OpenAIRequest {
+        let api_request = ResponsesRequest {
             model: "gpt-5.2".to_string(),
-            messages,
-            max_completion_tokens: 32000,
-            reasoning_effort: Some("high".to_string()),
-            stream: Some(true),
+            input: ResponsesInput::Items(items),
+            instructions: request.system.clone(),
+            max_output_tokens: Some(32000),
+            reasoning: Some(ReasoningConfig {
+                effort: "high".to_string(),
+            }),
             tools: None, // Tools not supported in streaming mode yet
+            stream: Some(true),
         };
 
         let response = self.client
-            .post(OPENAI_API_URL)
+            .post(OPENAI_RESPONSES_URL)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&api_request)
@@ -300,18 +445,18 @@ impl AdvisoryProvider for GptProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI API error: {} - {}", status, body);
+            anyhow::bail!("OpenAI Responses API error: {} - {}", status, body);
         }
 
-        parse_openai_sse(response, tx).await
+        parse_responses_sse(response, tx).await
     }
 }
 
 // ============================================================================
-// SSE Parsing
+// SSE Parsing for Responses API
 // ============================================================================
 
-async fn parse_openai_sse(
+async fn parse_responses_sse(
     response: reqwest::Response,
     tx: mpsc::Sender<AdvisoryEvent>,
 ) -> Result<String> {
@@ -332,28 +477,23 @@ async fn parse_openai_sse(
             }
 
             if let Some(json_str) = line.strip_prefix("data: ") {
+                // Responses API streaming format
                 #[derive(Deserialize)]
-                struct StreamChunk {
-                    choices: Option<Vec<StreamChoice>>,
-                }
-                #[derive(Deserialize)]
-                struct StreamChoice {
+                struct StreamEvent {
+                    #[serde(rename = "type")]
+                    event_type: Option<String>,
                     delta: Option<StreamDelta>,
                 }
                 #[derive(Deserialize)]
                 struct StreamDelta {
-                    content: Option<String>,
+                    text: Option<String>,
                 }
 
-                if let Ok(chunk) = serde_json::from_str::<StreamChunk>(json_str) {
-                    if let Some(choices) = chunk.choices {
-                        for choice in choices {
-                            if let Some(delta) = choice.delta {
-                                if let Some(content) = delta.content {
-                                    full_text.push_str(&content);
-                                    let _ = tx.send(AdvisoryEvent::TextDelta(content)).await;
-                                }
-                            }
+                if let Ok(event) = serde_json::from_str::<StreamEvent>(json_str) {
+                    if let Some(delta) = event.delta {
+                        if let Some(text) = delta.text {
+                            full_text.push_str(&text);
+                            let _ = tx.send(AdvisoryEvent::TextDelta(text)).await;
                         }
                     }
                 }
