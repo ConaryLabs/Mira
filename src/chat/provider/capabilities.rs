@@ -90,11 +90,11 @@ impl Capabilities {
         }
     }
 
-    /// DeepSeek Reasoner (no tools, large output)
+    /// DeepSeek Reasoner (V3.2 supports tools, large output)
     pub fn deepseek_reasoner() -> Self {
         Self {
             state_mode: StateMode::Client,
-            supports_tools: false,  // Reasoner has no tool support
+            supports_tools: true,  // V3.2 supports tool calls (confirmed 2025-12-23)
             supports_streaming: true,
             supports_cached_tokens: false,
             supports_json_mode: true,
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(chat.recommended_turn_budget, 12_000);
 
         let reasoner = Capabilities::deepseek_reasoner();
-        assert!(!reasoner.supports_tools);
+        assert!(reasoner.supports_tools);  // V3.2 supports tools
         assert_eq!(reasoner.max_output_tokens, 64_000);
     }
 
