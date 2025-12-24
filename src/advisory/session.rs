@@ -6,13 +6,13 @@
 //! - Pinned facts/constraints
 //! - Decision log
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use super::{AdvisoryService, AdvisoryModel};
-use super::provider::AdvisoryMessage as ProviderMessage;
-use super::provider::AdvisoryRole;
+use super::{AdvisoryService, AdvisoryModel, AdvisoryMessage as ProviderMessage, AdvisoryRole};
 
 // ============================================================================
 // Constants

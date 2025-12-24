@@ -3,6 +3,8 @@
 //! Handles server-sent events (SSE) parsing for different providers
 //! and streaming council orchestration with timeouts.
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use futures::StreamExt;
 use reqwest::Response;
@@ -13,8 +15,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use super::{AdvisoryModel, AdvisoryRequest, AdvisoryProvider};
-use super::provider::AdvisoryEvent;
+use super::{AdvisoryModel, AdvisoryRequest, AdvisoryProvider, AdvisoryEvent};
 
 /// Default timeout per provider (60 seconds)
 pub const DEFAULT_STREAM_TIMEOUT: Duration = Duration::from_secs(60);

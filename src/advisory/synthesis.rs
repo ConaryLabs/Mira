@@ -3,6 +3,8 @@
 //! Provides typed synthesis output with provenance tracking.
 //! DeepSeek Reasoner outputs JSON which is parsed into CouncilSynthesis.
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::AdvisoryModel;
