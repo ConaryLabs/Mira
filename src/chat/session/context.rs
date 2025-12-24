@@ -166,22 +166,35 @@ impl AssembledContext {
 
     /// Format context for DeepSeek with budget awareness
     ///
-    /// Priority order (highest to lowest):
-    /// 1. Corrections (always include - they're rules)
-    ///    - Anti-amnesia: rejected approaches + past decisions (prevent repeating mistakes)
-    /// 2. Goals (capped)
-    /// 3. Recent messages (capped, most recent first)
-    /// 4. Summaries (capped)
-    /// 5. Semantic context (capped, highest score first)
-    /// 6. Memories (aggressively capped)
+    /// IMPORTANT: Order is optimized for LLM KV caching (prefix matching).
+    /// DeepSeek caches prompt prefixes automatically - content that matches
+    /// previous requests costs 90% less. We order from MOST STABLE to LEAST:
     ///
-    /// Skips code_compaction (OpenAI-specific) and code_index_hints (usually verbose).
+    /// STABLE (rarely change within session - high cache hit rate):
+    ///   1. Corrections (rules - almost never change)
+    ///   2. Constraints (rejected approaches + decisions)
+    ///   3. Goals (change occasionally)
+    ///   4. Memories (change occasionally)
+    ///   5. Summaries (stable between summarizations)
+    ///
+    /// DYNAMIC (change frequently - low cache hit rate, put LAST):
+    ///   6. Git activity (changes with commits)
+    ///   7. Code relationships (changes per query)
+    ///   8. Similar fixes (changes per query)
+    ///   9. Semantic context (changes per query)
+    ///   10. Recent messages (changes EVERY turn - MUST BE LAST)
+    ///
+    /// Skips code_compaction (OpenAI-specific) and code_index_hints (verbose).
     pub fn format_for_deepseek(&self, budget: &super::context::DeepSeekBudget) -> String {
         let mut sections = Vec::new();
         let mut estimated_tokens = 0;
 
         // Helper to estimate tokens (rough: 1 token ≈ 4 chars)
         let estimate_tokens = |s: &str| s.len() / 4;
+
+        // ========================================================================
+        // STABLE SECTION - rarely changes, maximizes cache hits
+        // ========================================================================
 
         // 1. Corrections - ALWAYS include (they're rules to follow)
         if !self.mira_context.corrections.is_empty() {
@@ -195,14 +208,12 @@ impl AssembledContext {
             sections.push(section);
         }
 
-        // 1.5. Anti-amnesia: rejected approaches and past decisions
-        // These prevent repeating mistakes and ensure past decisions are respected
+        // 2. Anti-amnesia: rejected approaches and past decisions
         let half_constraints = budget.max_constraints / 2;
 
         if !self.rejected_approaches.is_empty() {
             let mut lines = vec!["## Constraints (DO NOT repeat these approaches)".to_string()];
             for ra in self.rejected_approaches.iter().take(half_constraints) {
-                // Format: [!] problem: approach → reason
                 let problem_preview = if ra.problem_context.len() > 60 {
                     format!("{}...", &ra.problem_context[..60])
                 } else {
@@ -245,7 +256,7 @@ impl AssembledContext {
             }
         }
 
-        // 2. Goals - capped
+        // 3. Goals - change occasionally
         if !self.mira_context.goals.is_empty() {
             let mut lines = vec!["## Active Goals".to_string()];
             for g in self.mira_context.goals.iter().take(budget.max_goals) {
@@ -263,137 +274,10 @@ impl AssembledContext {
             }
         }
 
-        // 2.5. Git activity - recent commits and changes
-        // This gives the LLM awareness of "what just happened" in the codebase
-        if let Some(ref activity) = self.repo_activity {
-            if !activity.is_empty() {
-                let mut lines = vec!["## Recent Project Activity".to_string()];
-
-                // Recent commits
-                if !activity.recent_commits.is_empty() {
-                    lines.push("Commits:".to_string());
-                    for commit in activity.recent_commits.iter().take(5) {
-                        lines.push(format!("- {}: \"{}\" ({})",
-                            commit.hash, commit.message, commit.relative_time));
-                    }
-                }
-
-                // Changed files (show stat summary, not full diff)
-                if !activity.changed_files.is_empty() {
-                    lines.push(String::new());
-                    lines.push("Changed files:".to_string());
-                    for file in activity.changed_files.iter().take(15) {
-                        let change = if file.is_new {
-                            format!("{} (new file, +{} lines)", file.path, file.insertions)
-                        } else {
-                            format!("{} (+{}, -{})", file.path, file.insertions, file.deletions)
-                        };
-                        lines.push(format!("  {}", change));
-                    }
-                    if activity.changed_files.len() > 15 {
-                        lines.push(format!("  ... and {} more files",
-                            activity.changed_files.len() - 15));
-                    }
-                }
-
-                // Note uncommitted changes
-                if activity.has_uncommitted {
-                    lines.push(String::new());
-                    lines.push("[Uncommitted changes present]".to_string());
-                }
-
-                let section = lines.join("\n");
-                estimated_tokens += estimate_tokens(&section);
-                if estimated_tokens < budget.token_budget {
-                    sections.push(section);
-                }
-            }
-        }
-
-        // 3. Recent messages - capped, for conversation continuity
-        if !self.recent_messages.is_empty() {
-            let mut lines = vec!["## Recent".to_string()];
-            // Take most recent N messages
-            let recent: Vec<_> = self.recent_messages.iter()
-                .rev()
-                .take(budget.max_recent_messages)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-
-            for msg in recent {
-                let role = if msg.role == "user" { "U" } else { "A" };
-                // Truncate to 800 chars - enough for substantial responses
-                let content = if msg.content.len() > 800 {
-                    let mut end = 800;
-                    while !msg.content.is_char_boundary(end) && end > 0 {
-                        end -= 1;
-                    }
-                    format!("{}…", &msg.content[..end])
-                } else {
-                    msg.content.clone()
-                };
-                lines.push(format!("[{}] {}", role, content));
-            }
-            let section = lines.join("\n");
-            estimated_tokens += estimate_tokens(&section);
-            if estimated_tokens < budget.token_budget {
-                sections.push(section);
-            }
-        }
-
-        // 4. Summaries - capped
-        if !self.summaries.is_empty() {
-            let mut lines = vec!["## Context Summary".to_string()];
-            for s in self.summaries.iter().take(budget.max_summaries) {
-                // Truncate long summaries to 1000 chars
-                let summary = if s.len() > 1000 {
-                    let mut end = 1000;
-                    while !s.is_char_boundary(end) && end > 0 {
-                        end -= 1;
-                    }
-                    format!("{}…", &s[..end])
-                } else {
-                    s.clone()
-                };
-                lines.push(format!("- {}", summary));
-            }
-            let section = lines.join("\n");
-            estimated_tokens += estimate_tokens(&section);
-            if estimated_tokens < budget.token_budget {
-                sections.push(section);
-            }
-        }
-
-        // 5. Semantic context - capped, highest score first
-        if !self.semantic_context.is_empty() {
-            let mut lines = vec!["## Related Context".to_string()];
-            // semantic_context should already be sorted by score
-            for hit in self.semantic_context.iter().take(budget.max_semantic_hits) {
-                let preview = if hit.content.len() > 400 {
-                    let mut end = 400;
-                    while !hit.content.is_char_boundary(end) && end > 0 {
-                        end -= 1;
-                    }
-                    format!("{}…", &hit.content[..end])
-                } else {
-                    hit.content.clone()
-                };
-                lines.push(format!("- {}", preview));
-            }
-            let section = lines.join("\n");
-            estimated_tokens += estimate_tokens(&section);
-            if estimated_tokens < budget.token_budget {
-                sections.push(section);
-            }
-        }
-
-        // 6. Memories - capped but not aggressively
+        // 4. Memories/Preferences - change occasionally
         if !self.mira_context.memories.is_empty() {
             let mut lines = vec!["## Preferences".to_string()];
             for m in self.mira_context.memories.iter().take(budget.max_memories) {
-                // 200 chars is enough for most memory items
                 let content = if m.content.len() > 200 {
                     let mut end = 200;
                     while !m.content.is_char_boundary(end) && end > 0 {
@@ -412,16 +296,110 @@ impl AssembledContext {
             }
         }
 
-        // 7. Code Relationships - cochange patterns and call graph
-        // Shows what files/functions are related to current focus
+        // 5. Summaries - stable between batch summarizations
+        if !self.summaries.is_empty() {
+            let mut lines = vec!["## Context Summary".to_string()];
+            for s in self.summaries.iter().take(budget.max_summaries) {
+                let summary = if s.len() > 1000 {
+                    let mut end = 1000;
+                    while !s.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &s[..end])
+                } else {
+                    s.clone()
+                };
+                lines.push(format!("- {}", summary));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
+
+        // 6. Index Status - rarely changes (only when files become stale)
+        if let Some(ref status) = self.index_status {
+            if !status.stale_files.is_empty() {
+                let mut lines = vec!["## Index Status".to_string()];
+                lines.push(format!("[!] {} files may have outdated symbol info:", status.stale_files.len()));
+
+                for file in status.stale_files.iter().take(5) {
+                    let short = file
+                        .split('/')
+                        .skip_while(|p| *p != "src" && *p != "lib" && *p != "studio")
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    let display = if short.is_empty() { file.as_str() } else { &short };
+                    lines.push(format!("  - {}", display));
+                }
+
+                if status.stale_files.len() > 5 {
+                    lines.push(format!("  ... and {} more", status.stale_files.len() - 5));
+                }
+
+                let section = lines.join("\n");
+                estimated_tokens += estimate_tokens(&section);
+                if estimated_tokens < budget.token_budget {
+                    sections.push(section);
+                }
+            }
+        }
+
+        // ========================================================================
+        // DYNAMIC SECTION - changes frequently, put LAST for cache efficiency
+        // ========================================================================
+
+        // 7. Git activity - changes with commits
+        if let Some(ref activity) = self.repo_activity {
+            if !activity.is_empty() {
+                let mut lines = vec!["## Recent Project Activity".to_string()];
+
+                if !activity.recent_commits.is_empty() {
+                    lines.push("Commits:".to_string());
+                    for commit in activity.recent_commits.iter().take(5) {
+                        lines.push(format!("- {}: \"{}\" ({})",
+                            commit.hash, commit.message, commit.relative_time));
+                    }
+                }
+
+                if !activity.changed_files.is_empty() {
+                    lines.push(String::new());
+                    lines.push("Changed files:".to_string());
+                    for file in activity.changed_files.iter().take(15) {
+                        let change = if file.is_new {
+                            format!("{} (new file, +{} lines)", file.path, file.insertions)
+                        } else {
+                            format!("{} (+{}, -{})", file.path, file.insertions, file.deletions)
+                        };
+                        lines.push(format!("  {}", change));
+                    }
+                    if activity.changed_files.len() > 15 {
+                        lines.push(format!("  ... and {} more files",
+                            activity.changed_files.len() - 15));
+                    }
+                }
+
+                if activity.has_uncommitted {
+                    lines.push(String::new());
+                    lines.push("[Uncommitted changes present]".to_string());
+                }
+
+                let section = lines.join("\n");
+                estimated_tokens += estimate_tokens(&section);
+                if estimated_tokens < budget.token_budget {
+                    sections.push(section);
+                }
+            }
+        }
+
+        // 8. Code Relationships - changes per query focus
         if !self.related_files.is_empty() || !self.call_context.is_empty() {
             let mut lines = vec!["## Code Relationships".to_string()];
 
-            // Related files from cochange patterns
             if !self.related_files.is_empty() {
                 lines.push("Files that change together:".to_string());
                 for rf in self.related_files.iter().take(5) {
-                    // Shorten file path for display
                     let short_path = rf.file_path
                         .split('/')
                         .skip_while(|p| *p != "src" && *p != "lib" && *p != "studio")
@@ -432,14 +410,12 @@ impl AssembledContext {
                 }
             }
 
-            // Call graph context
             if !self.call_context.is_empty() {
                 if !self.related_files.is_empty() {
                     lines.push(String::new());
                 }
                 lines.push("Call relationships:".to_string());
 
-                // Group by direction
                 let callers: Vec<_> = self.call_context.iter()
                     .filter(|c| c.direction == "caller")
                     .take(5)
@@ -470,20 +446,17 @@ impl AssembledContext {
             }
         }
 
-        // 8. Similar Fixes - proactive error pattern matching
-        // When errors are detected, show relevant past fixes
+        // 9. Similar Fixes - changes based on detected errors
         if !self.similar_fixes.is_empty() {
             let mut lines = vec!["## Relevant Past Fixes".to_string()];
             lines.push("Similar errors have been fixed before:".to_string());
 
             for fix in self.similar_fixes.iter().take(3) {
-                // Truncate error pattern for display
                 let error_preview = if fix.error_pattern.len() > 60 {
                     format!("{}...", &fix.error_pattern[..60])
                 } else {
                     fix.error_pattern.clone()
                 };
-                // Truncate fix description
                 let fix_preview = if fix.fix_description.len() > 150 {
                     format!("{}...", &fix.fix_description[..150])
                 } else {
@@ -500,32 +473,56 @@ impl AssembledContext {
             }
         }
 
-        // 9. Index Freshness - warn about potentially stale code intelligence
-        if let Some(ref status) = self.index_status {
-            if !status.stale_files.is_empty() {
-                let mut lines = vec!["## Index Status".to_string()];
-                lines.push(format!("[!] {} files may have outdated symbol info:", status.stale_files.len()));
+        // 10. Semantic context - changes per query
+        if !self.semantic_context.is_empty() {
+            let mut lines = vec!["## Related Context".to_string()];
+            for hit in self.semantic_context.iter().take(budget.max_semantic_hits) {
+                let preview = if hit.content.len() > 400 {
+                    let mut end = 400;
+                    while !hit.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &hit.content[..end])
+                } else {
+                    hit.content.clone()
+                };
+                lines.push(format!("- {}", preview));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
+            }
+        }
 
-                for file in status.stale_files.iter().take(5) {
-                    // Shorten path for display
-                    let short = file
-                        .split('/')
-                        .skip_while(|p| *p != "src" && *p != "lib" && *p != "studio")
-                        .collect::<Vec<_>>()
-                        .join("/");
-                    let display = if short.is_empty() { file.as_str() } else { &short };
-                    lines.push(format!("  - {}", display));
-                }
+        // 11. Recent messages - changes EVERY TURN (MUST BE LAST for cache efficiency)
+        if !self.recent_messages.is_empty() {
+            let mut lines = vec!["## Recent".to_string()];
+            let recent: Vec<_> = self.recent_messages.iter()
+                .rev()
+                .take(budget.max_recent_messages)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
 
-                if status.stale_files.len() > 5 {
-                    lines.push(format!("  ... and {} more", status.stale_files.len() - 5));
-                }
-
-                let section = lines.join("\n");
-                estimated_tokens += estimate_tokens(&section);
-                if estimated_tokens < budget.token_budget {
-                    sections.push(section);
-                }
+            for msg in recent {
+                let role = if msg.role == "user" { "U" } else { "A" };
+                let content = if msg.content.len() > 800 {
+                    let mut end = 800;
+                    while !msg.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}…", &msg.content[..end])
+                } else {
+                    msg.content.clone()
+                };
+                lines.push(format!("[{}] {}", role, content));
+            }
+            let section = lines.join("\n");
+            estimated_tokens += estimate_tokens(&section);
+            if estimated_tokens < budget.token_budget {
+                sections.push(section);
             }
         }
 
