@@ -83,8 +83,8 @@ async fn process_deepseek_chat(
     let deepseek_key = std::env::var("DEEPSEEK_API_KEY")
         .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
 
-    // Create DeepSeek provider (Chat model for tool support)
-    let provider = DeepSeekProvider::new_chat(deepseek_key);
+    // Create DeepSeek provider (Reasoner model - thinking + tools)
+    let provider = DeepSeekProvider::new_reasoner(deepseek_key);
 
     // Build system prompt with FULL assembled context (same as GPT-5.2)
     // DeepSeek doesn't have server-side chain state, so we use checkpoints for continuity
@@ -204,7 +204,7 @@ async fn process_deepseek_chat(
     let mut markdown_parser = MarkdownStreamParser::new();
 
     // First request
-    let initial_request = ProviderChatRequest::new("deepseek-chat", &system_prompt, &request.message)
+    let initial_request = ProviderChatRequest::new("deepseek-reasoner", &system_prompt, &request.message)
         .with_messages(conversation_messages.clone())
         .with_tools(tools.clone());
     let mut rx = provider.create_stream(initial_request).await?;
@@ -224,6 +224,10 @@ async fn process_deepseek_chat(
                     for event in markdown_parser.feed(&delta) {
                         tx.send(event).await?;
                     }
+                }
+                ProviderStreamEvent::ReasoningDelta(delta) => {
+                    // Stream reasoning content to frontend (displayed collapsed)
+                    tx.send(ChatEvent::ReasoningDelta { delta }).await?;
                 }
                 ProviderStreamEvent::FunctionCallStart { call_id, name } => {
                     pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
@@ -416,7 +420,7 @@ async fn process_deepseek_chat(
             tracing::debug!("DeepSeek iteration {}: continuing with {} tool results", iteration, current_tool_results.len());
 
             let continue_request = ToolContinueRequest {
-                model: "deepseek-chat".into(),
+                model: "deepseek-reasoner".into(),
                 system: system_prompt.clone(),
                 previous_response_id: None,
                 messages: conversation_messages.clone(),
@@ -440,6 +444,10 @@ async fn process_deepseek_chat(
                     for event in markdown_parser.feed(&delta) {
                         tx.send(event).await?;
                     }
+                }
+                ProviderStreamEvent::ReasoningDelta(delta) => {
+                    // Stream reasoning content to frontend (displayed collapsed)
+                    tx.send(ChatEvent::ReasoningDelta { delta }).await?;
                 }
                 ProviderStreamEvent::FunctionCallStart { call_id, name } => {
                     pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
