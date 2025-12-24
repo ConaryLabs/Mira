@@ -34,6 +34,7 @@ pub async fn remember(
         key: req.key,
         project_id,
         source: "claude-code".to_string(),
+        confidence: req.confidence,
     };
 
     // Call core operation

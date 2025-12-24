@@ -452,7 +452,7 @@ async fn save_to_mira(
     )
     .await?;
 
-    // Store files modified
+    // Store files modified (confidence 0.8 for compaction summaries)
     if !context.files_modified.is_empty() {
         let files: Vec<_> = context.files_modified.iter().take(20).cloned().collect();
         let content = format!("Files modified before compaction ({}): {}", trigger, files.join(", "));
@@ -467,13 +467,14 @@ async fn save_to_mira(
                 "content": content,
                 "fact_type": "context",
                 "category": "compaction",
-                "key": format!("compaction-files-{}", snapshot_id)
+                "key": format!("compaction-files-{}", snapshot_id),
+                "confidence": 0.8
             }),
         )
         .await?;
     }
 
-    // Store decisions
+    // Store decisions (confidence 0.8 for compaction summaries)
     if !context.decisions.is_empty() {
         let decisions: Vec<_> = context.decisions.iter().take(15).cloned().collect();
         let content = format!(
@@ -492,13 +493,14 @@ async fn save_to_mira(
                 "content": content,
                 "fact_type": "decision",
                 "category": "compaction",
-                "key": format!("compaction-decisions-{}", snapshot_id)
+                "key": format!("compaction-decisions-{}", snapshot_id),
+                "confidence": 0.8
             }),
         )
         .await?;
     }
 
-    // Store user requests
+    // Store user requests (confidence 0.8 for compaction summaries)
     if !context.user_requests.is_empty() {
         let requests: Vec<_> = context
             .user_requests
@@ -522,7 +524,8 @@ async fn save_to_mira(
                 "content": content,
                 "fact_type": "context",
                 "category": "compaction",
-                "key": format!("compaction-requests-{}", snapshot_id)
+                "key": format!("compaction-requests-{}", snapshot_id),
+                "confidence": 0.8
             }),
         )
         .await?;

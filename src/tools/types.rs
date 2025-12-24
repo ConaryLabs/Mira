@@ -34,6 +34,8 @@ pub struct RememberRequest {
     pub category: Option<String>,
     #[schemars(description = "Key for upsert")]
     pub key: Option<String>,
+    #[schemars(description = "Confidence/truthiness (0.0-1.0, default 1.0). Use 0.8 for compaction summaries.")]
+    pub confidence: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
