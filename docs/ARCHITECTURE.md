@@ -423,6 +423,8 @@ Sessions support tiered memory for long conversations:
 
 External LLMs can call read-only Mira tools via `tool_bridge.rs`:
 
+**Supported providers**: GPT-5.2, Gemini 3 Pro, DeepSeek Reasoner
+
 **Allowed tools** (10 read-only):
 - `recall`, `get_corrections`, `get_goals`, `list_tasks`
 - `semantic_code_search`, `get_symbols`, `get_related_files`
