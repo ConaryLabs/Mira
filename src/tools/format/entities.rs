@@ -50,11 +50,17 @@ pub fn goal_list(results: &[Value]) -> String {
             "completed" => "✓",
             "in_progress" => "→",
             "blocked" => "✗",
-            "abandoned" => "✗",
+            "abandoned" => "⊘",
             _ => "○",
         };
 
-        out.push_str(&format!("{} {} ({}%)\n", icon, title, progress));
+        let suffix = match status {
+            "abandoned" => " (abandoned)".to_string(),
+            "completed" | "in_progress" | "blocked" => format!(" ({}%)", progress),
+            _ => format!(" ({})", status),
+        };
+
+        out.push_str(&format!("{} {}{}\n", icon, title, suffix));
     }
 
     out.trim_end().to_string()
@@ -63,6 +69,50 @@ pub fn goal_list(results: &[Value]) -> String {
 /// Format goal action
 pub fn goal_action(action: &str, goal_id: &str, title: &str) -> String {
     format!("Goal {}: {} ({})", action, title, &goal_id[..8])
+}
+
+/// Format milestone added
+pub fn milestone_added(milestone_id: &str, title: &str) -> String {
+    let id_short = if milestone_id.len() > 8 { &milestone_id[..8] } else { milestone_id };
+    format!("Milestone added: {} ({})", title, id_short)
+}
+
+/// Format goal detail (from get action)
+pub fn goal_detail(v: &Value) -> String {
+    let obj = match v.as_object() {
+        Some(o) => o,
+        None => return "Invalid goal".to_string(),
+    };
+
+    let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+    let status = obj.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+    let priority = obj.get("priority").and_then(|v| v.as_str()).unwrap_or("medium");
+    let progress = obj.get("progress_percent").and_then(|v| v.as_i64()).unwrap_or(0);
+    let completed = obj.get("milestones_completed").and_then(|v| v.as_i64()).unwrap_or(0);
+    let total = obj.get("milestones_total").and_then(|v| v.as_i64()).unwrap_or(0);
+    let description = obj.get("description").and_then(|v| v.as_str());
+
+    let icon = match status {
+        "completed" => "✓",
+        "in_progress" => "→",
+        "blocked" => "✗",
+        "abandoned" => "⊘",
+        _ => "○",
+    };
+
+    let mut out = format!("{} {} [{}] ({}%)\n", icon, title, priority, progress);
+
+    if let Some(desc) = description {
+        if !desc.is_empty() {
+            out.push_str(&format!("  {}\n", desc));
+        }
+    }
+
+    if total > 0 {
+        out.push_str(&format!("  Milestones: {}/{}\n", completed, total));
+    }
+
+    out.trim_end().to_string()
 }
 
 /// Format correction recorded

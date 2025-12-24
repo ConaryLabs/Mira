@@ -99,12 +99,24 @@ fn format_value(v: &Value) -> String {
             return format::task_action(status, task_id, title);
         }
 
-        // Goal created/updated
-        if obj.contains_key("status") && obj.contains_key("goal_id") {
+        // Milestone added (check BEFORE goal - has milestone_id)
+        if obj.contains_key("status") && obj.contains_key("milestone_id") && obj.contains_key("goal_id") {
+            let milestone_id = obj.get("milestone_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+            return format::milestone_added(milestone_id, title);
+        }
+
+        // Goal created/updated (has goal_id but NOT milestone_id)
+        if obj.contains_key("status") && obj.contains_key("goal_id") && !obj.contains_key("milestone_id") {
             let status = obj.get("status").and_then(|v| v.as_str()).unwrap_or("?");
             let goal_id = obj.get("goal_id").and_then(|v| v.as_str()).unwrap_or("?");
             let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("?");
             return format::goal_action(status, goal_id, title);
+        }
+
+        // Goal detail (from get action - has id, title, status, progress_percent)
+        if obj.contains_key("id") && obj.contains_key("title") && obj.contains_key("progress_percent") {
+            return format::goal_detail(v);
         }
 
         // Correction recorded
