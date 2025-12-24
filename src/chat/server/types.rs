@@ -30,6 +30,10 @@ pub enum ChatEvent {
     #[serde(rename = "text_delta")]
     TextDelta { delta: String },
 
+    /// Streaming reasoning content from DeepSeek Reasoner
+    #[serde(rename = "reasoning_delta")]
+    ReasoningDelta { delta: String },
+
     // === Code Block Streaming ===
     /// Code block started (detected ```)
     #[serde(rename = "code_block_start")]

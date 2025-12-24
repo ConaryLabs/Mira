@@ -262,6 +262,7 @@ pub async fn chat_sync_handler(
             }
             ChatEvent::Done => break,
             ChatEvent::Reasoning { .. } => {} // Ignore reasoning summaries for sync
+            ChatEvent::ReasoningDelta { .. } => {} // Ignore reasoning deltas for sync endpoint
             // New typed events - handle for sync endpoint
             ChatEvent::MessageStart { .. } | ChatEvent::MessageEnd { .. } => {} // Ignore boundaries
             ChatEvent::CodeBlockStart { id, language, filename } => {
