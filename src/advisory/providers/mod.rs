@@ -54,6 +54,49 @@ impl AdvisoryModel {
             AdvisoryModel::DeepSeekReasoner => "deepseek-reasoner",
         }
     }
+
+    /// Get display name for UI
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AdvisoryModel::Gpt52 => "GPT-5.2",
+            AdvisoryModel::Opus45 => "Opus 4.5",
+            AdvisoryModel::Gemini3Pro => "Gemini 3 Pro",
+            AdvisoryModel::DeepSeekReasoner => "DeepSeek Reasoner",
+        }
+    }
+
+    /// Get color for UI (hex without #)
+    pub fn color(&self) -> &'static str {
+        match self {
+            AdvisoryModel::Gpt52 => "10a37f",        // OpenAI green
+            AdvisoryModel::Opus45 => "d97706",       // Anthropic orange/amber
+            AdvisoryModel::Gemini3Pro => "4285f4",   // Google blue
+            AdvisoryModel::DeepSeekReasoner => "6366f1", // Indigo
+        }
+    }
+
+    /// Get metadata as JSON for API responses
+    pub fn metadata(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.as_str(),
+            "display_name": self.display_name(),
+            "color": self.color(),
+        })
+    }
+
+    /// Get all council models (excludes DeepSeek which is the moderator)
+    pub fn council_models() -> Vec<Self> {
+        vec![Self::Gpt52, Self::Gemini3Pro, Self::Opus45]
+    }
+
+    /// Get model metadata map for all council models
+    pub fn council_metadata() -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for model in Self::council_models() {
+            map.insert(model.as_str().to_string(), model.metadata());
+        }
+        serde_json::Value::Object(map)
+    }
 }
 
 /// Request to an advisory provider

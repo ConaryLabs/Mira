@@ -111,10 +111,78 @@ impl CouncilSynthesis {
     }
 
     /// Parse synthesis from JSON response
+    ///
+    /// Handles multiple response formats:
+    /// 1. Structured format with ConsensusPoint/Disagreement objects
+    /// 2. Simpler format with plain strings (auto-converts to structured)
     pub fn parse(json_text: &str) -> Result<Self, serde_json::Error> {
         // Try to extract JSON from markdown code blocks if present
         let json_str = extract_json_block(json_text);
-        serde_json::from_str(json_str)
+
+        // First try the expected structured format
+        if let Ok(synthesis) = serde_json::from_str::<Self>(json_str) {
+            return Ok(synthesis);
+        }
+
+        // Try the simpler format with plain strings
+        Self::parse_simple_format(json_str)
+    }
+
+    /// Parse the simpler format where consensus/disagreements are plain strings
+    fn parse_simple_format(json_str: &str) -> Result<Self, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct SimpleFormat {
+            consensus: Option<Vec<String>>,
+            disagreements: Option<Vec<String>>,
+            unique_insights: Option<Vec<String>>,
+            recommendation: Option<String>,
+            confidence: Option<String>,
+            confidence_reason: Option<String>,
+        }
+
+        let simple: SimpleFormat = serde_json::from_str(json_str)?;
+
+        // Convert simple strings to structured format
+        let consensus = simple.consensus.unwrap_or_default()
+            .into_iter()
+            .map(|s| ConsensusPoint {
+                point: s,
+                citations: vec![], // Citations are embedded in the string
+            })
+            .collect();
+
+        let disagreements = simple.disagreements.unwrap_or_default()
+            .into_iter()
+            .map(|s| Disagreement {
+                topic: s,
+                positions: vec![], // Positions are embedded in the string
+            })
+            .collect();
+
+        let unique_insights = simple.unique_insights.unwrap_or_default()
+            .into_iter()
+            .map(|s| UniqueInsight {
+                model: "council".to_string(), // Model attribution embedded in string
+                insight: s,
+            })
+            .collect();
+
+        let confidence = match simple.confidence.as_deref() {
+            Some("high") => SynthesisConfidence::High,
+            Some("medium") => SynthesisConfidence::Medium,
+            Some("low") => SynthesisConfidence::Low,
+            Some("insufficient") => SynthesisConfidence::Insufficient,
+            _ => SynthesisConfidence::Medium,
+        };
+
+        Ok(Self {
+            consensus,
+            disagreements,
+            unique_insights,
+            recommendation: simple.recommendation,
+            confidence,
+            confidence_reason: simple.confidence_reason,
+        })
     }
 
     /// Check if this synthesis has meaningful content

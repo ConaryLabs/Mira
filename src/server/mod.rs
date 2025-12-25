@@ -5,7 +5,7 @@
 #![allow(dead_code)] // Server infrastructure (some items for future use)
 
 mod db;
-mod handlers;
+pub mod handlers;
 
 use anyhow::Result;
 use rmcp::{

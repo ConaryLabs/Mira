@@ -7,6 +7,7 @@ use crate::advisory::session::{
     list_sessions, get_session, get_all_messages, get_pins, get_decisions,
     update_status, SessionStatus, add_pin, add_decision, get_deliberation_progress,
 };
+use crate::advisory::AdvisoryModel;
 use crate::tools::AdvisorySessionRequest;
 
 /// List active advisory sessions
@@ -51,19 +52,21 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
                     progress.models_responded.len(),
                     progress.status
                 ),
+                "model_metadata": AdvisoryModel::council_metadata(),
             }));
         }
     }
 
     // For completed/failed sessions, include the result if available
-    let deliberation_result = if session.status == SessionStatus::Active || session.status == SessionStatus::Failed {
+    let (deliberation_result, duration_seconds) = if session.status == SessionStatus::Active || session.status == SessionStatus::Failed {
         if let Some(progress) = get_deliberation_progress(db, session_id).await? {
-            progress.result
+            let duration = progress.duration_seconds();
+            (progress.result, duration)
         } else {
-            None
+            (None, None)
         }
     } else {
-        None
+        (None, None)
     };
 
     let messages = get_all_messages(db, session_id).await?;
@@ -98,6 +101,12 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
     // Include deliberation result for completed council sessions
     if let Some(delib_result) = deliberation_result {
         result["deliberation_result"] = delib_result;
+        // Add model metadata for frontend rendering
+        result["model_metadata"] = AdvisoryModel::council_metadata();
+        // Add duration if available
+        if let Some(duration) = duration_seconds {
+            result["duration_seconds"] = serde_json::json!(duration);
+        }
     }
 
     Ok(result)

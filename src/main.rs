@@ -425,6 +425,10 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
         base_router = base_router.merge(chat);
     }
 
+    // Add advisory REST routes
+    let advisory_router = chat::server::advisory::create_router(db.clone());
+    base_router = base_router.merge(advisory_router);
+
     // Add MCP routes with auth
     let token = auth_token.clone();
     let app = base_router

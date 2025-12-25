@@ -736,6 +736,9 @@ pub struct DeliberationProgress {
     pub models_responded: Vec<String>,
     pub error: Option<String>,
     pub started_at: i64,
+    /// Timestamp when deliberation completed/failed
+    #[serde(default)]
+    pub finished_at: Option<i64>,
     /// Final result as JSON (when complete)
     pub result: Option<serde_json::Value>,
 }
@@ -759,6 +762,7 @@ impl DeliberationProgress {
             models_responded: vec![],
             error: None,
             started_at: chrono::Utc::now().timestamp(),
+            finished_at: None,
             result: None,
         }
     }
@@ -787,12 +791,19 @@ impl DeliberationProgress {
 
     pub fn complete(&mut self, result: serde_json::Value) {
         self.status = DeliberationProgressStatus::Complete;
+        self.finished_at = Some(chrono::Utc::now().timestamp());
         self.result = Some(result);
     }
 
     pub fn fail(&mut self, error: String) {
         self.status = DeliberationProgressStatus::Failed;
+        self.finished_at = Some(chrono::Utc::now().timestamp());
         self.error = Some(error);
+    }
+
+    /// Get duration in seconds (if completed/failed)
+    pub fn duration_seconds(&self) -> Option<i64> {
+        self.finished_at.map(|f| f - self.started_at)
     }
 }
 

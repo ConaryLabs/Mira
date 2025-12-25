@@ -6,6 +6,7 @@
 //! - POST /api/chat/sync - Synchronous chat (for Claude-to-Mira)
 //! - GET /api/messages - Paginated message history
 
+pub mod advisory;
 mod chat;
 mod handlers;
 mod markdown_parser;
