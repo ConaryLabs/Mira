@@ -15,10 +15,11 @@ mod types;
 use anyhow::Result;
 use axum::{
     extract::DefaultBodyLimit,
-    http::{header, Method},
+    http::{header, HeaderValue, Method},
     routing::{get, post},
     Router,
 };
+use tower_http::set_header::SetResponseHeaderLayer;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -181,12 +182,21 @@ const SYNC_MAX_BODY_BYTES: usize = 64 * 1024;
 /// Max concurrent sync requests
 const SYNC_MAX_CONCURRENT: usize = 3;
 
+/// API version - increment on breaking changes
+pub const API_VERSION: &str = "2025.12.1";
+
 /// Create the router with all endpoints
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+
+    // API version header on all responses
+    let version_header = SetResponseHeaderLayer::if_not_present(
+        header::HeaderName::from_static("x-api-version"),
+        HeaderValue::from_static(API_VERSION),
+    );
 
     Router::new()
         .route("/api/status", get(handlers::status_handler))
@@ -196,6 +206,7 @@ pub fn create_router(state: AppState) -> Router {
             post(stream::chat_sync_handler).layer(DefaultBodyLimit::max(SYNC_MAX_BODY_BYTES)),
         )
         .route("/api/messages", get(handlers::messages_handler))
+        .layer(version_header)
         .layer(cors)
         .with_state(state)
 }
