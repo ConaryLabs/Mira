@@ -2,3 +2,4 @@
 
 pub mod advisory;
 pub mod indexing;
+pub mod proposals;
