@@ -4,6 +4,9 @@
 
 #![allow(dead_code)] // Server infrastructure (some items for future use)
 
+mod db;
+mod handlers;
+
 use anyhow::Result;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
@@ -12,16 +15,15 @@ use rmcp::{
     model::*,
     tool, tool_router, tool_handler,
 };
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
-use sqlx::migrate::Migrator;
+use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
-use std::path::Path;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
-use std::time::Duration;
+use tracing::info;
 
 use crate::tools::*;
-use crate::indexer::{CodeIndexer, GitIndexer};
+
+// Re-export database utilities
+pub use db::{create_optimized_pool, run_migrations, get_schema_version};
 
 /// Macro to extract a required field from a request, returning an error if missing.
 /// Usage: `require!(req.title, "title required for create")`
@@ -36,68 +38,6 @@ fn unknown_action(action: &str, valid_actions: &str) -> CallToolResult {
     CallToolResult::error(vec![Content::text(format!(
         "Unknown action: {}. Use {}", action, valid_actions
     ))])
-}
-
-// === Database Pool Configuration ===
-
-/// Create an optimized SQLite connection pool
-pub async fn create_optimized_pool(database_url: &str) -> Result<SqlitePool> {
-    SqlitePoolOptions::new()
-        // SQLite is single-writer, but can have multiple readers
-        .max_connections(10)
-        // Keep some connections ready
-        .min_connections(2)
-        // Don't wait too long for a connection
-        .acquire_timeout(Duration::from_secs(10))
-        // Recycle connections periodically
-        .max_lifetime(Duration::from_secs(1800)) // 30 minutes
-        // Close idle connections after a while
-        .idle_timeout(Duration::from_secs(600)) // 10 minutes
-        .connect(database_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))
-}
-
-/// Run database migrations from a directory
-///
-/// Applies any pending migrations from the specified directory.
-/// Uses SQLite's `_sqlx_migrations` table to track applied migrations.
-pub async fn run_migrations(pool: &SqlitePool, migrations_path: &Path) -> Result<()> {
-    if !migrations_path.exists() {
-        warn!("Migrations directory not found: {}", migrations_path.display());
-        return Ok(());
-    }
-
-    let migrator = Migrator::new(migrations_path)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load migrations: {}", e))?;
-
-    let pending = migrator.migrations.iter()
-        .filter(|m| !m.migration_type.is_down_migration())
-        .count();
-
-    if pending > 0 {
-        info!("Running {} pending migrations...", pending);
-    }
-
-    migrator
-        .run(pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
-
-    info!("Migrations complete");
-    Ok(())
-}
-
-/// Get current schema version (number of applied migrations)
-pub async fn get_schema_version(pool: &SqlitePool) -> Result<i64> {
-    let result: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM _sqlx_migrations WHERE success = 1"
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(result.map(|(c,)| c).unwrap_or(0))
 }
 
 // === Project Context ===
@@ -230,83 +170,10 @@ impl MiraServer {
 
     #[tool(description = "Manage advisory sessions. Actions: list/get/close/pin/decide")]
     async fn advisory_session(&self, Parameters(req): Parameters<AdvisorySessionRequest>) -> Result<CallToolResult, McpError> {
-        use crate::advisory::session::{
-            list_sessions, get_session, get_all_messages, get_pins, get_decisions,
-            update_status, SessionStatus, add_pin, add_decision,
-        };
-
         let project_id = self.get_active_project().await.map(|p| p.id);
-
-        match req.action.as_str() {
-            "list" => {
-                let limit = req.limit.unwrap_or(10);
-                let sessions = list_sessions(self.db.as_ref(), project_id, false, limit).await.map_err(to_mcp_err)?;
-                let result: Vec<serde_json::Value> = sessions.iter().map(|s| {
-                    serde_json::json!({
-                        "id": s.id,
-                        "topic": s.topic,
-                        "mode": s.mode.as_str(),
-                        "status": s.status.as_str(),
-                        "total_turns": s.total_turns,
-                    })
-                }).collect();
-                Ok(json_response(serde_json::json!({ "sessions": result })))
-            }
-            "get" => {
-                let session_id = require!(req.session_id, "session_id required");
-                let session = get_session(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?
-                    .ok_or_else(|| to_mcp_err(anyhow::anyhow!("Session not found")))?;
-                let messages = get_all_messages(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?;
-                let pins = get_pins(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?;
-                let decisions = get_decisions(self.db.as_ref(), &session_id).await.map_err(to_mcp_err)?;
-
-                let result = serde_json::json!({
-                    "session": {
-                        "id": session.id,
-                        "topic": session.topic,
-                        "mode": session.mode.as_str(),
-                        "status": session.status.as_str(),
-                        "total_turns": session.total_turns,
-                    },
-                    "messages": messages.iter().map(|m| serde_json::json!({
-                        "turn": m.turn_number,
-                        "role": m.role,
-                        "provider": m.provider,
-                        "content": m.content,
-                    })).collect::<Vec<_>>(),
-                    "pins": pins.iter().map(|p| serde_json::json!({
-                        "type": p.pin_type,
-                        "content": p.content,
-                    })).collect::<Vec<_>>(),
-                    "decisions": decisions.iter().map(|d| serde_json::json!({
-                        "type": d.decision_type,
-                        "topic": d.topic,
-                        "rationale": d.rationale,
-                    })).collect::<Vec<_>>(),
-                });
-                Ok(json_response(result))
-            }
-            "close" => {
-                let session_id = require!(req.session_id, "session_id required");
-                update_status(self.db.as_ref(), &session_id, SessionStatus::Archived).await.map_err(to_mcp_err)?;
-                Ok(json_response(serde_json::json!({ "status": "closed", "session_id": session_id })))
-            }
-            "pin" => {
-                let session_id = require!(req.session_id, "session_id required");
-                let content = require!(req.content, "content required for pin");
-                let pin_type = req.pin_type.as_deref().unwrap_or("constraint");
-                add_pin(self.db.as_ref(), &session_id, &content, pin_type, None).await.map_err(to_mcp_err)?;
-                Ok(json_response(serde_json::json!({ "status": "pinned", "content": content })))
-            }
-            "decide" => {
-                let session_id = require!(req.session_id, "session_id required");
-                let decision_type = require!(req.decision_type, "decision_type required");
-                let topic = require!(req.topic, "topic required");
-                let rationale = req.rationale.as_deref();
-                add_decision(self.db.as_ref(), &session_id, &decision_type, &topic, rationale, None).await.map_err(to_mcp_err)?;
-                Ok(json_response(serde_json::json!({ "status": "recorded", "topic": topic })))
-            }
-            _ => Ok(unknown_action(&req.action, "list/get/close/pin/decide")),
+        match handlers::advisory::handle(self.db.as_ref(), project_id, &req).await {
+            Ok(result) => Ok(json_response(result)),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 
@@ -1017,170 +884,19 @@ impl MiraServer {
 
     #[tool(description = "Index code and git history. Actions: project/file/status/cleanup")]
     async fn index(&self, Parameters(req): Parameters<IndexRequest>) -> Result<CallToolResult, McpError> {
-        let action = req.action.as_str();
-        match action {
-            "project" => {
-                let path = req.path.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("path required")))?;
-                let path = std::path::Path::new(&path);
+        use handlers::indexing;
 
-                // Use parallel indexing by default for better performance
-                let use_parallel = req.parallel.unwrap_or(true);
-                let max_workers = req.max_workers.unwrap_or(4) as usize;
+        let result = match req.action.as_str() {
+            "project" => indexing::index_project(self.db.as_ref(), self.semantic.clone(), &req).await,
+            "file" => indexing::index_file(self.db.as_ref(), self.semantic.clone(), &req).await,
+            "status" => indexing::index_status(self.db.as_ref()).await,
+            "cleanup" => indexing::index_cleanup(self.db.as_ref()).await,
+            action => return Ok(unknown_action(action, "project/file/status/cleanup")),
+        };
 
-                let mut stats = if use_parallel {
-                    CodeIndexer::index_directory_parallel(
-                        self.db.as_ref().clone(),
-                        Some(self.semantic.clone()),
-                        path,
-                        max_workers,
-                    ).await.map_err(to_mcp_err)?
-                } else {
-                    let mut code_indexer = CodeIndexer::with_semantic(
-                        self.db.as_ref().clone(),
-                        Some(self.semantic.clone())
-                    ).map_err(to_mcp_err)?;
-                    code_indexer.index_directory(path).await.map_err(to_mcp_err)?
-                };
-
-                // Index git if requested (default: true)
-                if req.include_git.unwrap_or(true) {
-                    let git_indexer = GitIndexer::new(self.db.as_ref().clone());
-                    let commit_limit = req.commit_limit.unwrap_or(500) as usize;
-                    let git_stats = git_indexer.index_repository(path, commit_limit).await.map_err(to_mcp_err)?;
-                    stats.merge(git_stats);
-                }
-
-                Ok(json_response(serde_json::json!({
-                    "status": "indexed",
-                    "parallel": use_parallel,
-                    "workers": max_workers,
-                    "files_processed": stats.files_processed,
-                    "symbols_found": stats.symbols_found,
-                    "imports_found": stats.imports_found,
-                    "embeddings_generated": stats.embeddings_generated,
-                    "commits_indexed": stats.commits_indexed,
-                    "cochange_patterns": stats.cochange_patterns,
-                    "errors": stats.errors,
-                })))
-            }
-            "file" => {
-                let path = req.path.clone().ok_or_else(|| to_mcp_err(anyhow::anyhow!("path required")))?;
-                tracing::info!("[MCP] index action=file, path={}", path);
-                let path = std::path::Path::new(&path);
-
-                tracing::debug!("[MCP] Creating CodeIndexer...");
-                let mut code_indexer = CodeIndexer::with_semantic(
-                    self.db.as_ref().clone(),
-                    Some(self.semantic.clone())
-                ).map_err(to_mcp_err)?;
-                tracing::debug!("[MCP] Calling index_file...");
-                let stats = code_indexer.index_file(path).await.map_err(to_mcp_err)?;
-                tracing::info!("[MCP] index_file returned: {:?}", stats);
-
-                Ok(json_response(serde_json::json!({
-                    "status": "indexed",
-                    "file": req.path,
-                    "symbols_found": stats.symbols_found,
-                    "imports_found": stats.imports_found,
-                    "embeddings_generated": stats.embeddings_generated,
-                })))
-            }
-            "status" => {
-                // Get indexing status from database
-                let symbols: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM code_symbols")
-                    .fetch_one(self.db.as_ref())
-                    .await
-                    .map_err(|e| to_mcp_err(e.into()))?;
-                let imports: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM imports")
-                    .fetch_one(self.db.as_ref())
-                    .await
-                    .map_err(|e| to_mcp_err(e.into()))?;
-                let commits: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM git_commits")
-                    .fetch_one(self.db.as_ref())
-                    .await
-                    .map_err(|e| to_mcp_err(e.into()))?;
-                let cochange: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cochange_patterns")
-                    .fetch_one(self.db.as_ref())
-                    .await
-                    .map_err(|e| to_mcp_err(e.into()))?;
-
-                Ok(json_response(serde_json::json!({
-                    "symbols_indexed": symbols.0,
-                    "imports_indexed": imports.0,
-                    "commits_indexed": commits.0,
-                    "cochange_patterns": cochange.0,
-                })))
-            }
-            "cleanup" => {
-                // Remove stale data from excluded directories and orphaned entries
-                let excluded_patterns = vec![
-                    "%/target/%",
-                    "%/node_modules/%",
-                    "%/__pycache__/%",
-                    "%/.git/%",
-                ];
-
-                let mut symbols_removed = 0i64;
-                let mut calls_removed = 0i64;
-                let mut imports_removed = 0i64;
-
-                for pattern in &excluded_patterns {
-                    // Remove call_graph entries first (foreign key constraints)
-                    let result = sqlx::query(
-                        "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE file_path LIKE $1)"
-                    )
-                    .bind(pattern)
-                    .execute(self.db.as_ref())
-                    .await
-                    .map_err(|e| to_mcp_err(e.into()))?;
-                    calls_removed += result.rows_affected() as i64;
-
-                    let result = sqlx::query(
-                        "DELETE FROM call_graph WHERE callee_id IN (SELECT id FROM code_symbols WHERE file_path LIKE $1)"
-                    )
-                    .bind(pattern)
-                    .execute(self.db.as_ref())
-                    .await
-                    .map_err(|e| to_mcp_err(e.into()))?;
-                    calls_removed += result.rows_affected() as i64;
-
-                    // Remove symbols
-                    let result = sqlx::query("DELETE FROM code_symbols WHERE file_path LIKE $1")
-                        .bind(pattern)
-                        .execute(self.db.as_ref())
-                        .await
-                        .map_err(|e| to_mcp_err(e.into()))?;
-                    symbols_removed += result.rows_affected() as i64;
-
-                    // Remove imports
-                    let result = sqlx::query("DELETE FROM imports WHERE file_path LIKE $1")
-                        .bind(pattern)
-                        .execute(self.db.as_ref())
-                        .await
-                        .map_err(|e| to_mcp_err(e.into()))?;
-                    imports_removed += result.rows_affected() as i64;
-                }
-
-                // Also clean up orphaned call_graph entries (where caller or callee no longer exists)
-                let result = sqlx::query(
-                    "DELETE FROM call_graph WHERE caller_id NOT IN (SELECT id FROM code_symbols) OR callee_id NOT IN (SELECT id FROM code_symbols)"
-                )
-                .execute(self.db.as_ref())
-                .await
-                .map_err(|e| to_mcp_err(e.into()))?;
-                let orphans_removed = result.rows_affected() as i64;
-
-                Ok(json_response(serde_json::json!({
-                    "status": "cleaned",
-                    "symbols_removed": symbols_removed,
-                    "calls_removed": calls_removed + orphans_removed,
-                    "imports_removed": imports_removed,
-                    "patterns_cleaned": excluded_patterns,
-                })))
-            }
-            _ => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Unknown action: {}. Use project/file/status/cleanup", action
-            ))])),
+        match result {
+            Ok(r) => Ok(json_response(r)),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 }
