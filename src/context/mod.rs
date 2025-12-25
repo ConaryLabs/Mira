@@ -11,4 +11,8 @@
 
 mod carousel;
 
-pub use carousel::{ContextCarousel, ContextCategory, ROTATION_INTERVAL};
+pub use carousel::{
+    ContextCarousel, ContextCategory, CarouselMode, CarouselState,
+    CarouselTrigger, CarouselDecision, AnchorItem,
+    ROTATION_INTERVAL, MAX_STARVATION_TURNS, ANCHOR_MAX_TOKENS, ANCHOR_MAX_ITEMS,
+};

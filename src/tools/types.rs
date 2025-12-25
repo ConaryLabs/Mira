@@ -573,12 +573,16 @@ pub struct ProposalRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CarouselRequest {
-    #[schemars(description = "Action: status/pin/unpin/advance")]
+    #[schemars(description = "Action: status/pin/unpin/advance/focus/panic/exit_panic/anchor/log")]
     pub action: String,
-    #[schemars(description = "Category to pin: goals/decisions/memories/git/code/system/errors/patterns")]
+    #[schemars(description = "Category: goals/decisions/memories/git/code/system/errors/patterns")]
     pub category: Option<String>,
-    #[schemars(description = "Pin duration in minutes (default: 30)")]
+    #[schemars(description = "Duration in minutes (for pin/focus, default: 30)")]
     pub duration_minutes: Option<i64>,
+    #[schemars(description = "Content to anchor (for anchor action)")]
+    pub content: Option<String>,
+    #[schemars(description = "Reason for anchoring or panic")]
+    pub reason: Option<String>,
 }
 
 // ============================================================================

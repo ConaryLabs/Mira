@@ -1,42 +1,50 @@
 // src/context/carousel.rs
-//! Carousel-based context rotation
+//! Carousel-based context rotation v2
 //!
-//! Rotates through context categories across tool calls, with critical items
-//! always breaking through. State is persisted globally for session continuity.
+//! Rotates through context categories across tool calls with intelligent
+//! mode switching based on triggers and semantic analysis.
 //!
 //! Features:
-//! - Throttled rotation (advances every N calls, not every call)
-//! - Cold start uses LRU category selection
-//! - Pin override to lock a category during focused work
-//! - 8 categories including RecentErrors and UserPatterns
+//! - State machine: Cruising / Focus / Panic modes
+//! - Semantic interrupts: Query matching forces relevant categories
+//! - Trigger overrides: File edits, errors, planning language
+//! - Anchor slot: Critical items carry across rotations
+//! - Starvation prevention: Force-flash categories after N turns unseen
+//! - Observability: Every decision is logged with rationale
 
-use rand::Rng;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
+use tracing::{debug, info, warn};
 
-/// How many tool calls before rotating to next category
+/// How many tool calls before rotating to next category (in Cruising mode)
 pub const ROTATION_INTERVAL: u64 = 4;
+
+/// Maximum turns a category can go unseen before forced injection
+pub const MAX_STARVATION_TURNS: u64 = 12;
+
+/// Maximum tokens for anchor slot (critical carryover)
+pub const ANCHOR_MAX_TOKENS: usize = 200;
+
+/// Maximum items in anchor slot
+pub const ANCHOR_MAX_ITEMS: usize = 2;
+
+// ============================================================================
+// Core Types
+// ============================================================================
 
 /// Categories of context that rotate through the carousel
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextCategory {
-    /// Active goals and their progress
     Goals,
-    /// Recent decisions and their rationale
     Decisions,
-    /// Relevant memories (preferences, context)
     Memories,
-    /// Recent commits and git activity
     GitActivity,
-    /// Code context (related files, symbols)
     CodeContext,
-    /// System status (index freshness, etc.)
     SystemStatus,
-    /// Recent errors, mispredictions, wrong assumptions
     RecentErrors,
-    /// User patterns - recurring topics, preferences
     UserPatterns,
 }
 
@@ -61,6 +69,20 @@ impl ContextCategory {
         }
     }
 
+    /// Keywords that trigger this category via semantic interrupt
+    pub fn trigger_keywords(&self) -> &'static [&'static str] {
+        match self {
+            Self::Goals => &["goal", "milestone", "progress", "objective", "target", "plan"],
+            Self::Decisions => &["decision", "decided", "chose", "rationale", "why did we"],
+            Self::Memories => &["remember", "preference", "prefer", "usually", "always"],
+            Self::GitActivity => &["commit", "git", "push", "branch", "merge", "diff", "change"],
+            Self::CodeContext => &["file", "function", "class", "symbol", "code", "implement"],
+            Self::SystemStatus => &["index", "status", "system", "carousel", "mira"],
+            Self::RecentErrors => &["error", "fail", "crash", "bug", "fix", "broken", "issue", "wrong"],
+            Self::UserPatterns => &["pattern", "habit", "recurring", "often", "frequent"],
+        }
+    }
+
     /// Parse from string (for pin command)
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -77,11 +99,89 @@ impl ContextCategory {
     }
 }
 
+/// Carousel operating mode (state machine)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CarouselMode {
+    /// Normal rotation based on ticks/turns
+    Cruising,
+    /// Focused on a specific category (user pinned or trigger-activated)
+    Focus(ContextCategory),
+    /// Emergency mode - errors/code locked until resolved
+    Panic,
+}
+
+impl Default for CarouselMode {
+    fn default() -> Self {
+        Self::Cruising
+    }
+}
+
+/// Triggers that can force mode/category changes
+#[derive(Debug, Clone, PartialEq)]
+pub enum CarouselTrigger {
+    /// File was edited/opened
+    FileEdit(String),
+    /// Build/test failure detected
+    BuildFailure(String),
+    /// Panic/crash detected
+    CrashDetected(String),
+    /// Planning language in query ("let's implement", "TODO", etc.)
+    PlanningLanguage,
+    /// User query matched category keywords
+    SemanticMatch(ContextCategory, f32),
+    /// User explicitly requested focus
+    UserFocus(ContextCategory),
+    /// Error was resolved, exit panic mode
+    ErrorResolved,
+}
+
+/// An item in the anchor slot (carries across rotations)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnchorItem {
+    /// The content to carry over
+    pub content: String,
+    /// Why this was anchored
+    pub reason: String,
+    /// Category it came from
+    pub source_category: ContextCategory,
+    /// When it was anchored
+    pub anchored_at: i64,
+    /// Turns remaining before it expires
+    pub ttl_turns: u32,
+}
+
+/// Decision log entry for observability
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CarouselDecision {
+    /// Timestamp of decision
+    pub timestamp: i64,
+    /// The mode we're in
+    pub mode: CarouselMode,
+    /// Category chosen
+    pub category: ContextCategory,
+    /// Why this category was chosen
+    pub reason: String,
+    /// Triggers that fired (if any)
+    pub triggers: Vec<String>,
+    /// Runner-up category (what would have been shown otherwise)
+    pub runner_up: Option<ContextCategory>,
+    /// Was this a starvation prevention injection?
+    pub starvation_rescue: bool,
+}
+
+// ============================================================================
+// Carousel State
+// ============================================================================
+
 /// Persistent carousel state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CarouselState {
     /// Current position in the rotation (0-based index)
     pub index: usize,
+    /// Current operating mode
+    #[serde(default)]
+    pub mode: CarouselMode,
     /// Total tool calls tracked
     pub call_count: u64,
     /// Calls since last rotation (for throttling)
@@ -92,28 +192,45 @@ pub struct CarouselState {
     pub pinned_category: Option<ContextCategory>,
     /// When the pin expires (unix timestamp)
     pub pin_expires_at: Option<i64>,
-    /// Last shown timestamp for each category (for LRU)
+    /// Last shown turn for each category (for starvation prevention)
     #[serde(default)]
-    pub category_last_shown: HashMap<String, i64>,
-    /// Whether this is a fresh/cold start
+    pub category_last_shown: HashMap<String, u64>,
+    /// Anchor slot - critical items that carry across rotations
     #[serde(default)]
-    pub is_cold_start: bool,
+    pub anchor_items: Vec<AnchorItem>,
+    /// Last N decision logs for observability
+    #[serde(default)]
+    pub decision_log: Vec<CarouselDecision>,
+    /// Whether panic mode is active (separate from mode for persistence)
+    #[serde(default)]
+    pub panic_active: bool,
+    /// What triggered panic mode (for exit detection)
+    #[serde(default)]
+    pub panic_trigger: Option<String>,
 }
 
 impl Default for CarouselState {
     fn default() -> Self {
         Self {
             index: 0,
+            mode: CarouselMode::Cruising,
             call_count: 0,
             calls_since_advance: 0,
             last_advanced: 0,
             pinned_category: None,
             pin_expires_at: None,
             category_last_shown: HashMap::new(),
-            is_cold_start: true,
+            anchor_items: Vec::new(),
+            decision_log: Vec::new(),
+            panic_active: false,
+            panic_trigger: None,
         }
     }
 }
+
+// ============================================================================
+// Context Carousel
+// ============================================================================
 
 /// The context carousel - manages rotation through context categories
 pub struct ContextCarousel {
@@ -147,111 +264,384 @@ impl ContextCarousel {
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_default();
 
-        // Handle cold start - pick LRU or random category
-        if state.is_cold_start || state.category_last_shown.is_empty() {
-            state.index = Self::pick_lru_or_random(&state);
-            state.is_cold_start = false;
-            state.calls_since_advance = 0;
+        // Restore mode from panic_active flag
+        if state.panic_active {
+            state.mode = CarouselMode::Panic;
         }
 
         // Check if pin has expired
         if let Some(expires) = state.pin_expires_at {
-            if chrono::Utc::now().timestamp() > expires {
+            if Utc::now().timestamp() > expires {
                 state.pinned_category = None;
                 state.pin_expires_at = None;
+                if matches!(state.mode, CarouselMode::Focus(_)) {
+                    state.mode = CarouselMode::Cruising;
+                }
             }
+        }
+
+        // Expire old anchor items
+        state.anchor_items.retain(|item| item.ttl_turns > 0);
+
+        // Trim decision log to last 20 entries
+        if state.decision_log.len() > 20 {
+            state.decision_log = state.decision_log.split_off(state.decision_log.len() - 20);
         }
 
         Ok(Self { state, db, project_id })
     }
 
-    /// Pick least-recently-used category, or random if no history
-    fn pick_lru_or_random(state: &CarouselState) -> usize {
-        let rotation = ContextCategory::rotation();
+    // ========================================================================
+    // Trigger Processing
+    // ========================================================================
 
-        if state.category_last_shown.is_empty() {
-            // No history - pick random
-            let mut rng = rand::rng();
-            return rng.random_range(0..rotation.len());
+    /// Process triggers and update mode/category accordingly
+    pub fn process_triggers(&mut self, triggers: &[CarouselTrigger]) -> Option<CarouselDecision> {
+        if triggers.is_empty() {
+            return None;
         }
 
-        // Find least recently shown category
-        let mut oldest_time = i64::MAX;
-        let mut oldest_idx = 0;
+        let mut decision_triggers = Vec::new();
 
-        for (idx, cat) in rotation.iter().enumerate() {
-            let cat_key = format!("{:?}", cat).to_lowercase();
-            let last_shown = state.category_last_shown.get(&cat_key).copied().unwrap_or(0);
-            if last_shown < oldest_time {
-                oldest_time = last_shown;
-                oldest_idx = idx;
-            }
-        }
-
-        oldest_idx
-    }
-
-    /// Get the current category (respects pinning)
-    pub fn current(&self) -> ContextCategory {
-        // If pinned and not expired, return pinned category
-        if let Some(pinned) = self.state.pinned_category {
-            if let Some(expires) = self.state.pin_expires_at {
-                if chrono::Utc::now().timestamp() <= expires {
-                    return pinned;
+        for trigger in triggers {
+            match trigger {
+                CarouselTrigger::CrashDetected(msg) | CarouselTrigger::BuildFailure(msg) => {
+                    info!("[CAROUSEL] Panic mode activated: {}", msg);
+                    self.state.mode = CarouselMode::Panic;
+                    self.state.panic_active = true;
+                    self.state.panic_trigger = Some(msg.clone());
+                    decision_triggers.push(format!("panic:{}", truncate(msg, 30)));
+                }
+                CarouselTrigger::FileEdit(path) => {
+                    if !self.state.panic_active {
+                        info!("[CAROUSEL] File edit trigger: {}", path);
+                        self.state.mode = CarouselMode::Focus(ContextCategory::CodeContext);
+                        decision_triggers.push(format!("file_edit:{}", truncate(path, 30)));
+                    }
+                }
+                CarouselTrigger::PlanningLanguage => {
+                    if !self.state.panic_active {
+                        info!("[CAROUSEL] Planning language detected");
+                        self.state.mode = CarouselMode::Focus(ContextCategory::Goals);
+                        decision_triggers.push("planning_language".to_string());
+                    }
+                }
+                CarouselTrigger::SemanticMatch(cat, match_count) => {
+                    // Already filtered to 2+ matches in detect_semantic_interrupt
+                    if !self.state.panic_active {
+                        info!("[CAROUSEL] Semantic match: {:?} ({} keywords)", cat, *match_count as usize);
+                        self.state.mode = CarouselMode::Focus(*cat);
+                        decision_triggers.push(format!("semantic:{:?}:{}", cat, *match_count as usize));
+                    }
+                }
+                CarouselTrigger::UserFocus(cat) => {
+                    info!("[CAROUSEL] User focus requested: {:?}", cat);
+                    self.state.mode = CarouselMode::Focus(*cat);
+                    self.state.panic_active = false;
+                    decision_triggers.push(format!("user_focus:{:?}", cat));
+                }
+                CarouselTrigger::ErrorResolved => {
+                    if self.state.panic_active {
+                        info!("[CAROUSEL] Exiting panic mode - error resolved");
+                        self.state.mode = CarouselMode::Cruising;
+                        self.state.panic_active = false;
+                        self.state.panic_trigger = None;
+                        decision_triggers.push("error_resolved".to_string());
+                    }
                 }
             }
         }
 
-        let rotation = ContextCategory::rotation();
-        rotation[self.state.index % rotation.len()]
+        if !decision_triggers.is_empty() {
+            Some(CarouselDecision {
+                timestamp: Utc::now().timestamp(),
+                mode: self.state.mode,
+                category: self.current(),
+                reason: format!("Triggers fired: {}", decision_triggers.join(", ")),
+                triggers: decision_triggers,
+                runner_up: None,
+                starvation_rescue: false,
+            })
+        } else {
+            None
+        }
     }
 
-    /// Tick the carousel - may advance if throttle interval reached
-    /// Returns the current category after potential advancement
-    pub async fn tick_and_maybe_advance(&mut self) -> anyhow::Result<ContextCategory> {
+    /// Detect semantic interrupts from user query
+    ///
+    /// Triggers when 2+ keywords match (absolute count, not proportional).
+    /// This prevents single-word false positives while still being responsive
+    /// to relevant queries like "fix the error" or "check my goals".
+    pub fn detect_semantic_interrupt(&self, query: &str) -> Option<CarouselTrigger> {
+        let query_lower = query.to_lowercase();
+        let mut best_match: Option<(ContextCategory, usize)> = None;
+
+        for cat in ContextCategory::rotation() {
+            let keywords = cat.trigger_keywords();
+            let match_count = keywords.iter()
+                .filter(|kw| query_lower.contains(*kw))
+                .count();
+
+            // Require 2+ keyword matches for semantic interrupt
+            if match_count >= 2 {
+                if best_match.map(|(_, c)| match_count > c).unwrap_or(true) {
+                    best_match = Some((*cat, match_count));
+                }
+            }
+        }
+
+        // Also check for planning language
+        let planning_keywords = ["let's implement", "let's add", "let's build", "todo", "we need to", "we should"];
+        if planning_keywords.iter().any(|kw| query_lower.contains(kw)) {
+            // Planning language overrides other matches unless error-related
+            if !best_match.map(|(c, _)| c == ContextCategory::RecentErrors).unwrap_or(false) {
+                return Some(CarouselTrigger::PlanningLanguage);
+            }
+        }
+
+        best_match.map(|(cat, count)| CarouselTrigger::SemanticMatch(cat, count as f32))
+    }
+
+    // ========================================================================
+    // Starvation Prevention
+    // ========================================================================
+
+    /// Check if any category is starving and needs forced injection
+    fn check_starvation(&self) -> Option<ContextCategory> {
+        let current_turn = self.state.call_count;
+
+        for cat in ContextCategory::rotation() {
+            let cat_key = format!("{:?}", cat).to_lowercase();
+            let last_shown = self.state.category_last_shown.get(&cat_key).copied().unwrap_or(0);
+            let turns_unseen = current_turn.saturating_sub(last_shown);
+
+            if turns_unseen >= MAX_STARVATION_TURNS {
+                debug!("[CAROUSEL] Starvation detected: {:?} unseen for {} turns", cat, turns_unseen);
+                return Some(*cat);
+            }
+        }
+        None
+    }
+
+    // ========================================================================
+    // Anchor Slot
+    // ========================================================================
+
+    /// Add an item to the anchor slot
+    pub fn anchor_item(&mut self, content: String, reason: String, source: ContextCategory, ttl: u32) {
+        // Check token budget (rough estimate: 4 chars per token)
+        let current_tokens: usize = self.state.anchor_items.iter()
+            .map(|i| i.content.len() / 4)
+            .sum();
+        let new_tokens = content.len() / 4;
+
+        if current_tokens + new_tokens > ANCHOR_MAX_TOKENS {
+            // Remove oldest items to make room
+            while self.state.anchor_items.len() > 0
+                && current_tokens + new_tokens > ANCHOR_MAX_TOKENS
+            {
+                self.state.anchor_items.remove(0);
+            }
+        }
+
+        // Enforce max items
+        while self.state.anchor_items.len() >= ANCHOR_MAX_ITEMS {
+            self.state.anchor_items.remove(0);
+        }
+
+        info!("[CAROUSEL] Anchoring item from {:?}: {}", source, truncate(&reason, 40));
+        self.state.anchor_items.push(AnchorItem {
+            content,
+            reason,
+            source_category: source,
+            anchored_at: Utc::now().timestamp(),
+            ttl_turns: ttl,
+        });
+    }
+
+    /// Decrement anchor TTLs and remove expired items
+    fn tick_anchors(&mut self) {
+        for item in &mut self.state.anchor_items {
+            item.ttl_turns = item.ttl_turns.saturating_sub(1);
+        }
+        self.state.anchor_items.retain(|item| item.ttl_turns > 0);
+    }
+
+    /// Render anchor slot content
+    pub fn render_anchor(&self) -> Option<String> {
+        if self.state.anchor_items.is_empty() {
+            return None;
+        }
+
+        let mut lines = vec!["📌 ANCHORED:".to_string()];
+        for item in &self.state.anchor_items {
+            lines.push(format!("  • {}", truncate(&item.content, 70)));
+        }
+        Some(lines.join("\n"))
+    }
+
+    // ========================================================================
+    // Core Rotation Logic
+    // ========================================================================
+
+    /// Get the current category based on mode and state
+    pub fn current(&self) -> ContextCategory {
+        match self.state.mode {
+            CarouselMode::Panic => ContextCategory::RecentErrors,
+            CarouselMode::Focus(cat) => cat,
+            CarouselMode::Cruising => {
+                // Check pinned first
+                if let Some(pinned) = self.state.pinned_category {
+                    if let Some(expires) = self.state.pin_expires_at {
+                        if Utc::now().timestamp() <= expires {
+                            return pinned;
+                        }
+                    }
+                }
+                let rotation = ContextCategory::rotation();
+                rotation[self.state.index % rotation.len()]
+            }
+        }
+    }
+
+    /// Get categories to render for this turn (handles panic mode showing multiple)
+    pub fn categories_to_render(&self) -> Vec<ContextCategory> {
+        match self.state.mode {
+            CarouselMode::Panic => {
+                // In panic mode, show both errors and code
+                vec![ContextCategory::RecentErrors, ContextCategory::CodeContext]
+            }
+            _ => vec![self.current()],
+        }
+    }
+
+    /// Tick the carousel with optional triggers and query
+    /// Returns the decision made and categories to render
+    pub async fn tick_with_context(
+        &mut self,
+        triggers: &[CarouselTrigger],
+        query: Option<&str>,
+    ) -> anyhow::Result<(CarouselDecision, Vec<ContextCategory>)> {
         self.state.call_count += 1;
         self.state.calls_since_advance += 1;
 
-        // Record when this category was shown
-        let current = self.current();
-        let cat_key = format!("{:?}", current).to_lowercase();
-        self.state.category_last_shown.insert(cat_key, chrono::Utc::now().timestamp());
+        // Process explicit triggers first
+        let trigger_decision = self.process_triggers(triggers);
 
-        // Check if we should advance (only if not pinned)
-        if self.state.pinned_category.is_none() && self.state.calls_since_advance >= ROTATION_INTERVAL {
-            let rotation = ContextCategory::rotation();
-            self.state.index = (self.state.index + 1) % rotation.len();
-            self.state.calls_since_advance = 0;
-            self.state.last_advanced = chrono::Utc::now().timestamp();
+        // Check semantic interrupt from query
+        let semantic_trigger = query.and_then(|q| self.detect_semantic_interrupt(q));
+        if let Some(trigger) = semantic_trigger {
+            self.process_triggers(&[trigger]);
         }
 
+        // Check starvation
+        let starving_cat = self.check_starvation();
+        let starvation_rescue = starving_cat.is_some();
+
+        // Determine final category
+        let (category, reason, runner_up) = if starvation_rescue {
+            let starving = starving_cat.unwrap();
+            (starving, format!("Starvation rescue: {:?} unseen too long", starving), Some(self.current()))
+        } else {
+            match self.state.mode {
+                CarouselMode::Panic => {
+                    (ContextCategory::RecentErrors, "Panic mode active".to_string(), None)
+                }
+                CarouselMode::Focus(cat) => {
+                    (cat, format!("Focus mode on {:?}", cat), None)
+                }
+                CarouselMode::Cruising => {
+                    // Check if we should advance
+                    if self.state.pinned_category.is_none()
+                        && self.state.calls_since_advance >= ROTATION_INTERVAL
+                    {
+                        let rotation = ContextCategory::rotation();
+                        let old_idx = self.state.index;
+                        self.state.index = (self.state.index + 1) % rotation.len();
+                        self.state.calls_since_advance = 0;
+                        self.state.last_advanced = Utc::now().timestamp();
+
+                        let runner = rotation[old_idx % rotation.len()];
+                        (self.current(), "Rotation advanced".to_string(), Some(runner))
+                    } else if let Some(pinned) = self.state.pinned_category {
+                        (pinned, format!("Pinned: {:?}", pinned), None)
+                    } else {
+                        (self.current(), "Cruising".to_string(), None)
+                    }
+                }
+            }
+        };
+
+        // Record when this category was shown
+        let cat_key = format!("{:?}", category).to_lowercase();
+        self.state.category_last_shown.insert(cat_key, self.state.call_count);
+
+        // Tick anchors
+        self.tick_anchors();
+
+        // Build decision log
+        let decision = trigger_decision.unwrap_or_else(|| CarouselDecision {
+            timestamp: Utc::now().timestamp(),
+            mode: self.state.mode,
+            category,
+            reason: reason.clone(),
+            triggers: Vec::new(),
+            runner_up,
+            starvation_rescue,
+        });
+
+        // Log the decision
+        info!(
+            "[CAROUSEL] {} → {:?} | Mode: {:?} | Reason: {}{}",
+            self.state.call_count,
+            category,
+            self.state.mode,
+            &decision.reason,
+            if starvation_rescue { " [STARVATION RESCUE]" } else { "" }
+        );
+
+        // Store in decision log
+        self.state.decision_log.push(decision.clone());
+        if self.state.decision_log.len() > 20 {
+            self.state.decision_log.remove(0);
+        }
+
+        // Save state
         self.save().await?;
-        Ok(self.current())
+
+        Ok((decision, self.categories_to_render()))
+    }
+
+    /// Simple tick without context (backwards compatible)
+    pub async fn tick_and_maybe_advance(&mut self) -> anyhow::Result<ContextCategory> {
+        let (decision, _) = self.tick_with_context(&[], None).await?;
+        Ok(decision.category)
     }
 
     /// Force advance to next category (ignores throttle)
     pub async fn force_advance(&mut self) -> anyhow::Result<ContextCategory> {
+        // Exit focus/panic modes
+        self.state.mode = CarouselMode::Cruising;
+        self.state.panic_active = false;
+
         let rotation = ContextCategory::rotation();
         self.state.index = (self.state.index + 1) % rotation.len();
         self.state.calls_since_advance = 0;
-        self.state.last_advanced = chrono::Utc::now().timestamp();
+        self.state.last_advanced = Utc::now().timestamp();
         self.state.call_count += 1;
 
+        info!("[CAROUSEL] Force advanced to {:?}", self.current());
         self.save().await?;
         Ok(self.current())
     }
 
-    /// Increment call count without advancing (for skipped injections)
-    pub async fn tick(&mut self) -> anyhow::Result<()> {
-        self.state.call_count += 1;
-        self.save().await
-    }
-
     /// Pin a category for the specified duration (in minutes)
     pub async fn pin(&mut self, category: ContextCategory, duration_minutes: i64) -> anyhow::Result<()> {
-        let expires = chrono::Utc::now().timestamp() + (duration_minutes * 60);
+        let expires = Utc::now().timestamp() + (duration_minutes * 60);
         self.state.pinned_category = Some(category);
         self.state.pin_expires_at = Some(expires);
+        self.state.mode = CarouselMode::Focus(category);
+        info!("[CAROUSEL] Pinned {:?} for {} minutes", category, duration_minutes);
         self.save().await
     }
 
@@ -259,18 +649,54 @@ impl ContextCarousel {
     pub async fn unpin(&mut self) -> anyhow::Result<()> {
         self.state.pinned_category = None;
         self.state.pin_expires_at = None;
+        self.state.mode = CarouselMode::Cruising;
+        info!("[CAROUSEL] Unpinned, returning to Cruising mode");
         self.save().await
     }
 
     /// Check if a category is currently pinned
     pub fn is_pinned(&self) -> Option<(ContextCategory, i64)> {
         if let (Some(cat), Some(expires)) = (self.state.pinned_category, self.state.pin_expires_at) {
-            let now = chrono::Utc::now().timestamp();
+            let now = Utc::now().timestamp();
             if now <= expires {
                 return Some((cat, expires - now));
             }
         }
         None
+    }
+
+    /// Enter panic mode manually
+    pub async fn enter_panic(&mut self, reason: &str) -> anyhow::Result<()> {
+        self.state.mode = CarouselMode::Panic;
+        self.state.panic_active = true;
+        self.state.panic_trigger = Some(reason.to_string());
+        warn!("[CAROUSEL] Entering panic mode: {}", reason);
+        self.save().await
+    }
+
+    /// Exit panic mode
+    pub async fn exit_panic(&mut self) -> anyhow::Result<()> {
+        self.state.mode = CarouselMode::Cruising;
+        self.state.panic_active = false;
+        self.state.panic_trigger = None;
+        info!("[CAROUSEL] Exiting panic mode");
+        self.save().await
+    }
+
+    /// Get current mode
+    pub fn mode(&self) -> CarouselMode {
+        self.state.mode
+    }
+
+    /// Get decision log for observability
+    pub fn decision_log(&self) -> &[CarouselDecision] {
+        &self.state.decision_log
+    }
+
+    /// Increment call count without advancing (for skipped injections)
+    pub async fn tick(&mut self) -> anyhow::Result<()> {
+        self.state.call_count += 1;
+        self.save().await
     }
 
     /// Save state to database
@@ -296,8 +722,11 @@ impl ContextCarousel {
         &self.state
     }
 
+    // ========================================================================
+    // Rendering
+    // ========================================================================
+
     /// Render context for the current category
-    /// Returns None if no relevant context exists for this category
     pub async fn render_current(&self) -> anyhow::Result<Option<String>> {
         self.render_category(self.current()).await
     }
@@ -494,7 +923,6 @@ impl ContextCarousel {
     }
 
     async fn render_code_context(&self) -> anyhow::Result<Option<String>> {
-        // Get recently touched files from symbols table
         let recent_files: Vec<(String, i64)> = sqlx::query_as(
             r#"
             SELECT file_path, COUNT(*) as symbol_count
@@ -515,7 +943,6 @@ impl ContextCarousel {
 
         let mut lines = vec!["📂 CODE CONTEXT:".to_string()];
         for (path, count) in recent_files {
-            // Extract just the filename for brevity
             let filename = path.rsplit('/').next().unwrap_or(&path);
             lines.push(format!("  • {} ({} symbols)", filename, count));
         }
@@ -524,7 +951,6 @@ impl ContextCarousel {
     }
 
     async fn render_system_status(&self) -> anyhow::Result<Option<String>> {
-        // Get index stats
         let symbol_count: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM code_symbols WHERE project_id = $1",
         )
@@ -549,11 +975,19 @@ impl ContextCarousel {
         .await
         .unwrap_or((0,));
 
+        let mode_str = match self.state.mode {
+            CarouselMode::Cruising => "Cruising",
+            CarouselMode::Focus(cat) => return Ok(Some(format!(
+                "⚙️ SYSTEM:\n  • Mode: Focus({:?})\n  • {} symbols | {} commits | {} memories",
+                cat, symbol_count.0, commit_count.0, memory_count.0
+            ))),
+            CarouselMode::Panic => "🚨 PANIC",
+        };
+
         let mut lines = vec![
             "⚙️ SYSTEM:".to_string(),
-            format!("  • {} symbols indexed", symbol_count.0),
-            format!("  • {} commits tracked", commit_count.0),
-            format!("  • {} memories stored", memory_count.0),
+            format!("  • Mode: {}", mode_str),
+            format!("  • {} symbols | {} commits | {} memories", symbol_count.0, commit_count.0, memory_count.0),
             format!("  • Carousel: {}/{} (every {} calls)",
                 self.state.index + 1,
                 ContextCategory::rotation().len(),
@@ -561,16 +995,18 @@ impl ContextCarousel {
             ),
         ];
 
-        // Show pin status if active
         if let Some((cat, remaining)) = self.is_pinned() {
             lines.push(format!("  • 📌 Pinned: {:?} ({}m left)", cat, remaining / 60));
+        }
+
+        if !self.state.anchor_items.is_empty() {
+            lines.push(format!("  • ⚓ {} anchored items", self.state.anchor_items.len()));
         }
 
         Ok(Some(lines.join("\n")))
     }
 
     async fn render_recent_errors(&self) -> anyhow::Result<Option<String>> {
-        // Get recent build errors
         let build_errors: Vec<(String, String, String)> = sqlx::query_as(
             r#"
             SELECT file_path, message, severity
@@ -586,7 +1022,6 @@ impl ContextCarousel {
         .await
         .unwrap_or_default();
 
-        // Get rejected approaches (wrong assumptions)
         let rejected: Vec<(String, String)> = sqlx::query_as(
             r#"
             SELECT problem_context, rejection_reason
@@ -620,7 +1055,6 @@ impl ContextCarousel {
     }
 
     async fn render_user_patterns(&self) -> anyhow::Result<Option<String>> {
-        // Get most-used memories (frequent preferences)
         let frequent: Vec<(String, String, i64)> = sqlx::query_as(
             r#"
             SELECT key, value, times_used
@@ -637,7 +1071,6 @@ impl ContextCarousel {
         .await
         .unwrap_or_default();
 
-        // Get recent session topics (recurring themes)
         let topics: Vec<(String,)> = sqlx::query_as(
             r#"
             SELECT topics
@@ -664,7 +1097,6 @@ impl ContextCarousel {
             lines.push(format!("  • {} (used {}x)", truncate(&key, 40), uses));
         }
 
-        // Extract unique topic keywords from recent sessions
         let mut topic_counts: HashMap<String, usize> = HashMap::new();
         for (topic_str,) in topics {
             for topic in topic_str.split(',').map(|s| s.trim().to_lowercase()) {
@@ -683,6 +1115,30 @@ impl ContextCarousel {
         }
 
         Ok(Some(lines.join("\n")))
+    }
+
+    /// Render full context: anchor + critical + current categories
+    pub async fn render_full_context(&self) -> anyhow::Result<String> {
+        let mut parts = Vec::new();
+
+        // Anchor slot first (most critical carryover)
+        if let Some(anchor) = self.render_anchor() {
+            parts.push(anchor);
+        }
+
+        // Critical context (corrections, blocked goals)
+        if let Some(critical) = self.render_critical().await? {
+            parts.push(critical);
+        }
+
+        // Current category/categories
+        for cat in self.categories_to_render() {
+            if let Some(content) = self.render_category(cat).await? {
+                parts.push(content);
+            }
+        }
+
+        Ok(parts.join("\n\n"))
     }
 }
 
@@ -719,5 +1175,17 @@ mod tests {
         let state = CarouselState::default();
         assert_eq!(state.index, 0);
         assert_eq!(state.call_count, 0);
+        assert_eq!(state.mode, CarouselMode::Cruising);
+    }
+
+    #[test]
+    fn test_semantic_keywords() {
+        assert!(ContextCategory::Goals.trigger_keywords().contains(&"goal"));
+        assert!(ContextCategory::RecentErrors.trigger_keywords().contains(&"error"));
+    }
+
+    #[test]
+    fn test_mode_default() {
+        assert_eq!(CarouselMode::default(), CarouselMode::Cruising);
     }
 }
