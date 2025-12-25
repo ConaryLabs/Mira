@@ -21,6 +21,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::tools::*;
+use crate::context::ContextCarousel;
 
 // Re-export database utilities
 pub use db::{create_optimized_pool, run_migrations};
@@ -59,6 +60,7 @@ pub struct MiraServer {
     pub semantic: Arc<SemanticSearch>,
     pub tool_router: ToolRouter<Self>,
     pub active_project: Arc<RwLock<Option<ProjectContext>>>,
+    pub carousel: Arc<RwLock<Option<ContextCarousel>>>,
 }
 
 impl MiraServer {
@@ -79,6 +81,7 @@ impl MiraServer {
             semantic: Arc::new(semantic),
             tool_router: Self::tool_router(),
             active_project: Arc::new(RwLock::new(None)),
+            carousel: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -95,6 +98,62 @@ impl MiraServer {
     /// Get the tool router (public wrapper for macro-generated function)
     pub fn get_tool_router() -> ToolRouter<Self> {
         Self::tool_router()
+    }
+
+    /// Get carousel context for injection into tool responses
+    ///
+    /// Returns a formatted string with:
+    /// 1. Critical items (corrections, blocked goals) - always included
+    /// 2. One rotating category (goals, decisions, memories, etc.)
+    ///
+    /// Advances the carousel position after each call.
+    pub async fn get_carousel_context(&self) -> Option<String> {
+        let project_id = self.get_active_project().await.map(|p| p.id);
+
+        // Initialize or get carousel
+        let mut carousel_guard = self.carousel.write().await;
+        let carousel = match carousel_guard.as_mut() {
+            Some(c) => c,
+            None => {
+                // Initialize carousel
+                match ContextCarousel::load(self.db.as_ref().clone(), project_id).await {
+                    Ok(c) => {
+                        *carousel_guard = Some(c);
+                        carousel_guard.as_mut().expect("just set")
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load carousel: {}", e);
+                        return None;
+                    }
+                }
+            }
+        };
+
+        // Update project_id in case it changed
+        // (carousel stores project_id at construction, this is a simplification)
+
+        let mut parts = Vec::new();
+
+        // 1. Always include critical items
+        if let Ok(Some(critical)) = carousel.render_critical().await {
+            parts.push(critical);
+        }
+
+        // 2. Get rotating category context
+        if let Ok(Some(rotating)) = carousel.render_current().await {
+            parts.push(rotating);
+        }
+
+        // 3. Tick carousel (may advance after ROTATION_INTERVAL calls)
+        if let Err(e) = carousel.tick_and_maybe_advance().await {
+            tracing::warn!("Failed to tick carousel: {}", e);
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        }
     }
 }
 
@@ -225,7 +284,10 @@ impl MiraServer {
             Some(start.elapsed().as_millis() as i64),
         ).await;
 
-        Ok(vec_response(result, format!("No memories found matching '{}'", query)))
+        // Inject carousel context into response
+        let response = vec_response(result, format!("No memories found matching '{}'", query));
+        let carousel_ctx = self.get_carousel_context().await;
+        Ok(with_carousel_context(response, carousel_ctx))
     }
 
     #[tool(description = "Delete a memory by ID.")]
@@ -249,15 +311,28 @@ impl MiraServer {
         };
         self.set_active_project(Some(ctx)).await;
 
-        // Return formatted output
-        Ok(text_response(format::session_start(&result)))
+        // Initialize carousel for this session
+        {
+            let mut carousel_guard = self.carousel.write().await;
+            match ContextCarousel::load(self.db.as_ref().clone(), Some(result.project_id)).await {
+                Ok(c) => { *carousel_guard = Some(c); }
+                Err(e) => { tracing::warn!("Failed to init carousel: {}", e); }
+            }
+        }
+
+        // Return formatted output with carousel context
+        let response = text_response(format::session_start(&result));
+        let carousel_ctx = self.get_carousel_context().await;
+        Ok(with_carousel_context(response, carousel_ctx))
     }
 
     #[tool(description = "Get context from previous sessions. Call at session start.")]
     async fn get_session_context(&self, Parameters(req): Parameters<GetSessionContextRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::get_session_context(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
+        let response = json_response(result);
+        let carousel_ctx = self.get_carousel_context().await;
+        Ok(with_carousel_context(response, carousel_ctx))
     }
 
     #[tool(description = "Store session summary. Call at session end.")]
@@ -355,6 +430,68 @@ impl MiraServer {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = sessions::get_work_state(self.db.as_ref(), req, project_id).await.map_err(to_mcp_err)?;
         Ok(vec_response(result, "No work state found".to_string()))
+    }
+
+    // === Carousel Control ===
+
+    #[tool(description = "Control context carousel. Actions: status/pin/unpin/advance")]
+    async fn carousel(&self, Parameters(req): Parameters<CarouselRequest>) -> Result<CallToolResult, McpError> {
+        use crate::context::ContextCategory;
+
+        let project_id = self.get_active_project().await.map(|p| p.id);
+
+        // Initialize or get carousel
+        let mut carousel_guard = self.carousel.write().await;
+        let carousel = match carousel_guard.as_mut() {
+            Some(c) => c,
+            None => {
+                match ContextCarousel::load(self.db.as_ref().clone(), project_id).await {
+                    Ok(c) => {
+                        *carousel_guard = Some(c);
+                        carousel_guard.as_mut().expect("just set")
+                    }
+                    Err(e) => return Ok(CallToolResult::error(vec![Content::text(format!("Failed to load carousel: {}", e))])),
+                }
+            }
+        };
+
+        match req.action.as_str() {
+            "status" => {
+                let current = carousel.current();
+                let stats = carousel.stats();
+                let mut status = format!(
+                    "Carousel Status:\n  Current: {:?}\n  Position: {}/{}\n  Calls since advance: {}/{}\n  Total calls: {}",
+                    current,
+                    stats.index + 1,
+                    ContextCategory::rotation().len(),
+                    stats.calls_since_advance,
+                    crate::context::ROTATION_INTERVAL,
+                    stats.call_count
+                );
+                if let Some((cat, remaining)) = carousel.is_pinned() {
+                    status.push_str(&format!("\n  📌 Pinned: {:?} ({}m remaining)", cat, remaining / 60));
+                }
+                Ok(text_response(status))
+            }
+            "pin" => {
+                let cat_str = req.category.as_deref().ok_or_else(||
+                    to_mcp_err(anyhow::anyhow!("category required for pin action")))?;
+                let category = ContextCategory::from_str(cat_str).ok_or_else(||
+                    to_mcp_err(anyhow::anyhow!("Invalid category: {}. Use: goals/decisions/memories/git/code/system/errors/patterns", cat_str)))?;
+                let duration = req.duration_minutes.unwrap_or(30);
+                carousel.pin(category, duration).await.map_err(to_mcp_err)?;
+                Ok(text_response(format!("📌 Pinned {:?} for {} minutes", category, duration)))
+            }
+            "unpin" => {
+                carousel.unpin().await.map_err(to_mcp_err)?;
+                Ok(text_response("Unpinned carousel - rotation resumed"))
+            }
+            "advance" => {
+                let next = carousel.force_advance().await.map_err(to_mcp_err)?;
+                Ok(text_response(format!("Advanced to: {:?}", next)))
+            }
+            _ => Ok(unknown_action(&req.action, "status/pin/unpin/advance")),
+        }
     }
 
     // === Project ===
@@ -976,7 +1113,9 @@ impl MiraServer {
     async fn semantic_code_search(&self, Parameters(req): Parameters<SemanticCodeSearchRequest>) -> Result<CallToolResult, McpError> {
         let query = req.query.clone();
         let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.clone(), req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No code found for '{}'", query)))
+        let response = vec_response(result, format!("No code found for '{}'", query));
+        let carousel_ctx = self.get_carousel_context().await;
+        Ok(with_carousel_context(response, carousel_ctx))
     }
 
     #[tool(description = "Get codebase style metrics.")]
@@ -1047,7 +1186,9 @@ impl MiraServer {
     async fn get_proactive_context(&self, Parameters(req): Parameters<GetProactiveContextRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         let result = proactive::get_proactive_context(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
-        Ok(json_response(result))
+        let response = json_response(result);
+        let carousel_ctx = self.get_carousel_context().await;
+        Ok(with_carousel_context(response, carousel_ctx))
     }
 
     #[tool(description = "Record a rejected approach.")]

@@ -1,10 +1,46 @@
 // src/tools/response.rs
 // Helper functions for MCP tool responses - human-readable formatting
 
-use rmcp::{ErrorData as McpError, model::{CallToolResult, Content}};
+use rmcp::{ErrorData as McpError, model::{CallToolResult, Content, RawContent}};
 use serde::Serialize;
 use serde_json::Value;
 use super::format;
+
+// ============================================================================
+// Carousel Context Injection
+// ============================================================================
+
+/// Append carousel context to an existing CallToolResult
+///
+/// This extracts the text content, appends the carousel context block,
+/// and returns a new result. Used to inject rotating context into tool responses.
+pub fn with_carousel_context(result: CallToolResult, context: Option<String>) -> CallToolResult {
+    let Some(ctx) = context else {
+        return result;
+    };
+
+    if ctx.is_empty() {
+        return result;
+    }
+
+    // Extract existing text content from the result
+    let existing_text = result.content.iter()
+        .filter_map(|c| {
+            // Content is Annotated<RawContent>, access .raw to get the enum
+            if let RawContent::Text(ref text_content) = c.raw {
+                Some(text_content.text.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Append carousel context with a separator
+    let enhanced = format!("{}\n\n─── mira ───\n{}", existing_text, ctx);
+
+    CallToolResult::success(vec![Content::text(enhanced)])
+}
 
 /// Convert an anyhow::Result to McpError
 pub fn to_mcp_err(e: anyhow::Error) -> McpError {

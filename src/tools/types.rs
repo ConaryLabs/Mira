@@ -568,6 +568,20 @@ pub struct ProposalRequest {
 }
 
 // ============================================================================
+// Carousel Tool - Control context rotation
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CarouselRequest {
+    #[schemars(description = "Action: status/pin/unpin/advance")]
+    pub action: String,
+    #[schemars(description = "Category to pin: goals/decisions/memories/git/code/system/errors/patterns")]
+    pub category: Option<String>,
+    #[schemars(description = "Pin duration in minutes (default: 30)")]
+    pub duration_minutes: Option<i64>,
+}
+
+// ============================================================================
 // Indexing Tools
 // ============================================================================
 
