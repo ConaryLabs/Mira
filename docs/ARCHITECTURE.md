@@ -1,482 +1,1596 @@
-# Mira Architecture
+# **Mira: Complete System Architecture**
 
-## Core Principle: Shared Business Logic
+| | |
+|---|---|
+| **Version** | 2.0.0 |
+| **Last Updated** | 2025-12-25 |
+| **Rust Edition** | 2024 |
+| **Document Revision** | 1.1 |
 
-All business logic lives in `src/core/ops/`. Both MCP (the Claude Code integration) and Studio (the chat interface) use the same underlying operations.
+> **Maintenance Note**: Update this document after major architectural changes. Bump revision for minor updates, version for breaking changes.
 
-```
-┌─────────────────┐     ┌─────────────────┐
-│   MCP Server    │     │  Studio/Chat    │
-│  (src/tools/)   │     │  (src/chat/)    │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         │   Thin wrappers       │
-         │                       │
-         └───────────┬───────────┘
-                     │
-                     ▼
-         ┌───────────────────────┐
-         │     core::ops         │
-         │  (Business Logic)     │
-         └───────────┬───────────┘
-                     │
-                     ▼
-         ┌───────────────────────┐
-         │   core::primitives    │
-         │  (Utilities/Helpers)  │
-         └───────────────────────┘
-```
+## 1. **Executive Summary**
 
-## Directory Structure
+**Core Principle**: All business logic lives in `src/core/ops/`. Both MCP (Claude Code integration) and Studio/Chat are thin wrappers over shared operations.
 
+> **What "thin wrapper" means**: MCP and Chat layers handle only protocol translation (JSON-RPC ↔ HTTP/SSE), authentication, and request routing. They do NOT contain business logic, state management, or persistence calls. All of that lives in `core/ops/`. If you're adding a feature, it goes in `core/ops/`—the wrappers just expose it.
+
+**Project timeline**: Multiple iterations before July 2025, current codebase started 2025-07-18.
+
+**Key architectural phases**:
+1. **2025-07**: Foundation - GPT-4.1, Qdrant, persona system, semantic memory
+2. **2025-08**: GPT-5 migration, modularization, tool integration
+3. **2025-09-10**: Claude -> DeepSeek experiments, code intelligence, layered context
+4. **2025-11**: Architecture overhaul, GPT 5.1, intelligence milestones 2-9
+5. **2025-12**: MCP/Studio convergence, core/ops unification, Carousel v2
+
+**System boundaries**:
+- **Inputs**: MCP protocol (rmcp), HTTP chat API, REPL commands
+- **Outputs**: LLM responses, tool execution results, persistence (SQLite, Qdrant)
+- **External**: LLM providers (OpenAI, DeepSeek, Google), Qdrant vector DB
+
+## 2. **Module Hierarchy & Responsibilities**
+
+### Complete Source Tree (`src/`)
 ```
 src/
-├── core/
-│   ├── primitives/          # Utilities, helpers, shared types
-│   │   ├── semantic.rs      # Qdrant + embedding search
-│   │   ├── memory.rs        # Memory fact data structures
-│   │   ├── artifacts.rs     # Large output storage
-│   │   ├── secrets.rs       # Secret detection
-│   │   ├── excerpts.rs      # Smart text extraction
-│   │   ├── limits.rs        # Constants & thresholds
-│   │   └── streaming.rs     # SSE decoding
-│   │
-│   ├── ops/                 # Business logic (SINGLE SOURCE OF TRUTH)
-│   │   ├── mira.rs          # Re-exports + shared helpers
-│   │   ├── tasks.rs         # Task CRUD operations
-│   │   ├── goals.rs         # Goals and milestones
-│   │   ├── corrections.rs   # Correction tracking
-│   │   ├── decisions.rs     # Decision storage
-│   │   ├── rejected.rs      # Rejected approaches
-│   │   ├── memory.rs        # Remember, recall, forget
-│   │   ├── file.rs          # Read, write, edit, glob, grep
-│   │   ├── shell.rs         # Bash execution
-│   │   ├── git.rs           # Git status, diff, commit, log, cochange
-│   │   ├── web.rs           # Web search, fetch
-│   │   ├── code_intel.rs    # Symbol lookup, call graphs, semantic search
-│   │   ├── build.rs         # Build tracking, error fixes
-│   │   ├── documents.rs     # Document management
-│   │   ├── work_state.rs    # Session state persistence
-│   │   ├── session.rs       # Session start, store, search
-│   │   ├── chat_summary.rs  # Chat summarization (Studio)
-│   │   └── chat_chain.rs    # Response chain, handoff (Studio)
-│   │
-│   ├── context.rs           # OpContext - dependency injection
-│   └── mod.rs               # Re-exports
+├── main.rs                 # Binary entry - CLI/env/TOML merge, SQLite+Qdrant init, REPL/HTTP
+├── lib.rs                  # Library root (new)
+├── daemon.rs               # Daemon logic (286 lines, lean)
+├── connect.rs              # Connection utilities
 │
-├── tools/                   # MCP tool wrappers (thin layer)
-│   ├── memory.rs            # → core::ops::memory
-│   ├── mira.rs              # → core::ops::mira (tasks, goals, etc.)
-│   ├── code_intel.rs        # → core::ops::code_intel
-│   ├── git_intel.rs         # → core::ops::git, core::ops::build
-│   └── ...
+├── advisory/               # Multi-model advisory system
+│   ├── mod.rs
+│   ├── context.rs
+│   ├── session.rs
+│   ├── streaming.rs
+│   ├── synthesis.rs
+│   ├── tool_bridge.rs     # External LLM tool bridge (155 lines)
+│   ├── providers/
+│   │   ├── mod.rs
+│   │   ├── gpt.rs
+│   │   ├── opus.rs
+│   │   ├── gemini.rs
+│   │   └── reasoner.rs    # DeepSeek Reasoner integration
+│   └── tool_loops/
+│       ├── mod.rs
+│       ├── gpt.rs
+│       ├── opus.rs
+│       ├── gemini.rs
+│       └── deepseek.rs
 │
-├── chat/                    # Studio/Chat (thin layer)
-│   ├── tools/               # Chat tool implementations
-│   │   ├── definitions.rs   # Tool struct + get_tools() aggregator
-│   │   ├── tool_defs/       # Domain-grouped tool definitions
-│   │   │   ├── file_ops.rs  # read_file, write_file, edit_file, glob, grep, bash
-│   │   │   ├── web.rs       # web_search, web_fetch
-│   │   │   ├── memory.rs    # remember, recall
-│   │   │   ├── mira.rs      # task, goal, correction, store_decision, etc.
-│   │   │   ├── git.rs       # git_status, git_diff, git_commit, git_log + intel
-│   │   │   ├── testing.rs   # run_tests, fetch_artifact, search_artifact
-│   │   │   ├── council.rs   # council, ask_gpt, ask_opus, ask_gemini
-│   │   │   └── intel.rs     # code intel, build, document, index, proactive
-│   │   ├── memory.rs        # → core::ops::memory
-│   │   ├── mira.rs          # → core::ops::mira
-│   │   ├── file.rs          # → core::ops::file
-│   │   └── ...
-│   │
-│   ├── session/             # Session management
-│   │   ├── mod.rs           # SessionManager struct, initialization
-│   │   ├── messages.rs      # Recent message loading, semantic recall
-│   │   ├── anti_amnesia.rs  # Rejected approaches, past decisions
-│   │   ├── graph.rs         # Related files, call graph context
-│   │   ├── errors.rs        # Error detection, similar fix loading
-│   │   ├── freshness.rs     # Index freshness checking
-│   │   ├── compaction.rs    # Code compaction and checkpoints
-│   │   ├── summarization.rs # → core::ops::chat_summary
-│   │   ├── chain.rs         # → core::ops::chat_chain
-│   │   └── ...
-│   │
+├── chat/                   # Chat interface (Mira-Chat)
+│   ├── mod.rs
+│   ├── context.rs
+│   ├── conductor/
+│   │   ├── mod.rs
+│   │   └── validation.rs
+│   ├── provider/          # LLM providers
+│   │   ├── mod.rs
+│   │   ├── types.rs
+│   │   ├── capabilities.rs
+│   │   ├── deepseek.rs   # DeepSeek V3.2 integration
+│   │   └── responses.rs
+│   ├── session/          # Conversation management
+│   │   ├── mod.rs
+│   │   ├── types.rs
+│   │   ├── chain.rs
+│   │   ├── context.rs
+│   │   ├── messages.rs
+│   │   ├── compaction.rs
+│   │   ├── summarization.rs
+│   │   ├── freshness.rs
+│   │   ├── git_tracker.rs
+│   │   ├── code_hints.rs
+│   │   ├── graph.rs
+│   │   ├── anti_amnesia.rs
+│   │   └── errors.rs
+│   ├── server/           # HTTP server
+│   │   ├── mod.rs
+│   │   ├── chat.rs
+│   │   ├── handlers.rs
+│   │   ├── stream.rs
+│   │   ├── types.rs
+│   │   └── markdown_parser.rs
+│   └── tools/            # Chat-accessible tools
+│       ├── mod.rs        # Tool registration (139 lines)
+│       ├── types.rs
+│       ├── mira.rs
+│       ├── memory.rs
+│       ├── file.rs
+│       ├── web.rs
+│       ├── shell.rs
+│       ├── git.rs
+│       ├── code_intel.rs
+│       ├── build.rs
+│       ├── council.rs
+│       ├── documents.rs
+│       ├── git_intel.rs
+│       ├── index.rs
+│       ├── test.rs
+│       ├── proactive.rs
+│       ├── definitions.rs
+│       └── tool_defs/
+│           ├── mod.rs
+│           ├── mira.rs
+│           ├── memory.rs
+│           ├── file_ops.rs
+│           ├── intel.rs
+│           ├── testing.rs
+│           ├── council.rs
+│           └── web.rs
 │
-├── server/                  # MCP server
-│   ├── mod.rs               # MiraServer, pool setup, tool routing
-│   ├── db.rs                # Database pool, migrations, schema version
-│   └── handlers/            # Handler implementations
-│       ├── advisory.rs      # Advisory session management
-│       └── indexing.rs      # Index tool (project/file/status/cleanup)
+├── core/                  # Shared business logic
+│   ├── mod.rs
+│   ├── context.rs
+│   ├── error.rs
+│   ├── primitives/
+│   │   ├── mod.rs
+│   │   ├── memory.rs      # Memory fact structures
+│   │   ├── semantic.rs    # Qdrant + embedding search
+│   │   ├── semantic_helpers.rs
+│   │   ├── artifacts.rs   # Large output storage
+│   │   ├── excerpts.rs
+│   │   ├── limits.rs
+│   │   ├── secrets.rs
+│   │   └── streaming.rs   # SSE decoder
+│   └── ops/              # **CENTRAL BUSINESS LOGIC**
+│       ├── mod.rs        # Operation definitions
+│       ├── memory.rs
+│       ├── file.rs
+│       ├── web.rs
+│       ├── shell.rs
+│       ├── git.rs
+│       ├── code_intel.rs
+│       ├── build.rs
+│       ├── tasks.rs
+│       ├── goals.rs
+│       ├── corrections.rs
+│       ├── decisions.rs
+│       ├── rejected.rs
+│       ├── session.rs
+│       ├── chat_chain.rs
+│       ├── chat_summary.rs
+│       ├── documents.rs
+│       ├── proposals.rs
+│       ├── work_state.rs
+│       └── audit.rs
 │
-├── advisory/                # External LLM consultation
-│   ├── mod.rs               # AdvisoryService, ask(), ask_with_tools() router
-│   ├── providers/           # Provider implementations
-│   │   ├── gpt.rs           # GPT-5.2 (Responses API)
-│   │   ├── gemini.rs        # Gemini 3 Pro
-│   │   ├── deepseek.rs      # DeepSeek Reasoner
-│   │   └── opus.rs          # Opus 4.5
-│   ├── tool_loops/          # Provider-specific tool loop implementations
-│   │   ├── gpt.rs           # GPT tool loop
-│   │   ├── gemini.rs        # Gemini tool loop (thought signatures)
-│   │   ├── deepseek.rs      # DeepSeek tool loop
-│   │   └── opus.rs          # Opus tool loop (extended thinking)
-│   ├── session.rs           # Multi-turn sessions with tiered memory
-│   ├── synthesis.rs         # Structured synthesis with provenance
-│   ├── streaming.rs         # SSE parsing for all providers
-│   └── tool_bridge.rs       # Agentic tool calling with budget governance
+├── context/              # Context management
+│   ├── mod.rs
+│   └── carousel.rs      # Carousel v2 - semantic interrupts, panic mode (1191 lines)
+│
+├── hooks/               # Runtime hooks
+│   ├── mod.rs
+│   ├── pretool.rs       # PreToolUse for auto code context
+│   ├── posttool.rs      # PostToolUse for passive context building
+│   ├── precompact.rs
+│   ├── sessionstart.rs
+│   └── permission.rs
+│
+├── indexer/             # Code/git indexing
+│   ├── mod.rs
+│   ├── code.rs
+│   ├── git.rs
+│   ├── watcher.rs
+│   └── parsers/
+│       ├── mod.rs
+│       ├── rust.rs
+│       ├── python.rs
+│       ├── typescript.rs
+│       └── go.rs
+│
+├── server/              # HTTP server components
+│   ├── mod.rs
+│   ├── db.rs
+│   └── handlers/
+│       ├── mod.rs
+│       ├── advisory.rs
+│       ├── indexing.rs
+│       └── proposals.rs
+│
+├── tools/               # MCP tool implementations
+│   ├── mod.rs
+│   ├── types.rs
+│   ├── memory.rs
+│   ├── file.rs
+│   ├── web.rs
+│   ├── shell.rs
+│   ├── git.rs
+│   ├── code_intel.rs
+│   ├── build_intel.rs
+│   ├── tasks.rs
+│   ├── goals.rs
+│   ├── corrections.rs
+│   ├── documents.rs
+│   ├── sessions.rs
+│   ├── work_state.rs
+│   ├── proactive.rs
+│   ├── project.rs
+│   ├── ingest.rs
+│   ├── hotline.rs
+│   ├── mcp_history.rs
+│   ├── response.rs
+│   ├── permissions.rs
+│   ├── helpers.rs
+│   ├── analytics.rs
+│   └── format/          # Formatting utilities
+│       ├── mod.rs
+│       ├── memory.rs
+│       ├── code.rs
+│       ├── sessions.rs
+│       ├── entities.rs
+│       ├── tests.rs
+│       ├── proactive.rs
+│       └── admin.rs
+│
+└── [root .rs files already listed]
 ```
 
-## OpContext: Dependency Injection
+### External Directories
+```
+examples/compare_tools.rs   # Tool comparison example
+tests/                      # Integration tests (daemon_e2e, integration_e2e, etc.)
+data/                       # SQLite, Qdrant persistence
+docs/ARCHITECTURE.md        # Architecture documentation
+```
 
-All `core::ops` functions take `&OpContext` as their first parameter. This provides clean dependency injection without coupling to MCP or Chat specifics.
+### Module Interdependencies
+```
+MCP Server (src/tools/) → core::ops → core::primitives
+Chat Interface (src/chat/) → core::ops → core::primitives
+Advisory System → core::ops (read-only access)
+Carousel Context → chat/session/context → core::ops
+```
 
+### Ownership Boundaries
+1. **core::ops**: Owns all business logic, data structures, persistence
+2. **core::primitives**: Utilities with no external dependencies
+3. **src/tools/**: MCP protocol adapters (type conversion only)
+4. **src/chat/tools/**: Chat protocol adapters (type conversion only)
+5. **src/advisory/**: External LLM integration layer (tool_bridge)
+
+### Cross-cutting Concerns
+- **Error handling**: `core::error.rs` defines unified error types
+- **Configuration**: CLI/env/TOML merge in `main.rs`
+- **Telemetry**: SQLite `chat_usage` table, `/usage` REPL command
+- **Security**: Whitelists, budgets, cooldowns in advisory/tool_bridge
+
+## 3. **Data Flow & State Management**
+
+Mira implements a **dual-entry architecture**: both MCP (Claude Code) and Chat (Studio/HTTP) share identical business logic in `src/core/ops/`, with only thin protocol adapters at the edges.
+
+### **3.1 Two Entry Points → One Core → Two Exit Paths**
+
+#### **MCP Entry Path (Claude Code Integration)**
+```
+Claude Code → rmcp protocol → src/tools/mod.rs (MCP tool registration)
+  ↓ calls wrapper (e.g., src/tools/memory.rs)
+  ↓ converts MCP types → common Rust types
+  ↓ calls core/ops/memory.rs::upsert_memory()
+  ↓ executes via OpContext (SQLite + Qdrant + HTTP client)
+  ↓ returns result → wrapper converts back → rmcp → Claude Code
+```
+
+**Key files**: `tools/mod.rs` registers 17 MCP tools, each wrapper (~50 lines) handles type conversion only.
+
+#### **Chat Entry Path (Studio/HTTP)**
+```
+Studio frontend → POST /api/chat/stream → src/chat/server/handlers.rs
+  ↓ parses request, creates Session
+  ↓ routes to LLM provider (GPT-5.2 or DeepSeek V3.2)
+  ↓ when tool call received: src/chat/tools/mod.rs (tool registration)
+  ↓ converts chat tool schema → common types
+  ↓ calls same core/ops/*.rs functions as MCP path
+  ↓ returns → HTTP/SSE stream → Studio
+```
+
+**Key files**: `chat/tools/mod.rs` registers same 17 tools with chat-specific schemas.
+
+### **3.2 The Convergence Point: `core/ops/`**
+Both entry paths hit **exact same functions** in `src/core/ops/`:
+- `memory.rs::upsert_memory()` / `recall_memory()`
+- `file.rs::read_file()` / `write_file()`
+- `git.rs::git_status()` / `git_commit()`
+- `code_intel.rs::find_similar_fixes()`
+- `build_intel.rs::record_build_error()`
+- etc. (18 total operation modules)
+
+**OpContext struct** bundles shared resources:
 ```rust
 pub struct OpContext {
-    pub db: Option<SqlitePool>,
-    pub semantic: Option<Arc<SemanticSearch>>,
-    pub http: reqwest::Client,
-    pub cwd: PathBuf,
-    pub project_path: String,
-    pub cancel: CancellationToken,
+    pub db: SqliteConnection,      // ~/.mira/mira.db
+    pub semantic: QdrantClient,    // Vector search
+    pub http: reqwest::Client,     // External APIs
+    pub secrets: SecretsManager,   // Encrypted credentials
 }
 ```
 
-### Construction Patterns
+### **3.3 Persistence Layer Architecture**
+
+#### **SQLite Database (`~/.mira/mira.db`)**
+```
+chat_usage          # Token telemetry (input/output/cached/chain/flags)
+artifacts           # Large tool outputs (>4KB) with smart previews
+memories            # Semantic memories (text + embedding_id)
+corrections         # Style/approach corrections
+goals               # High-level goals with milestones
+decisions           # Architecture decisions with rationale
+sessions            # Chat session state
+context_slices      # Carousel v2 context windows
+```
+
+#### **Qdrant Vector Database**
+- Memory embeddings using Gemini free-tier embeddings
+- Semantic recall via `recall_memory()` → `semantic_code_search()`
+- Context assembly pulls top-k relevant memories
+
+### **3.4 Context Management Flow (Carousel v2)**
+
+The Carousel is a **deterministic state machine** that manages what context gets injected into LLM prompts. It replaces the earlier time-based decay heuristics that caused unpredictable "amnesia."
+
+#### **State Machine**
+```
+                    ┌─────────────┐
+                    │   NORMAL    │ ← Default state
+                    └──────┬──────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+   ┌──────────┐     ┌──────────┐      ┌──────────┐
+   │  PINNED  │     │  PANIC   │      │ FOCUSED  │
+   │ (manual) │     │ (token   │      │ (semantic│
+   └──────────┘     │  spike)  │      │ interrupt)
+                    └──────────┘      └──────────┘
+```
+
+#### **Selection Algorithm**
+```
+User request → src/context/carousel.rs::select_context_slice()
+  ↓ checks in order:
+  1) Semantic interrupts (query→category match, e.g., "error" → "debugging")
+  2) Panic mode (token spike > threshold → force compact context)
+  3) Trigger overrides (manual pins via /pin command)
+  4) Starvation prevention (LRU cold start for unused contexts)
+  ↓ selects optimal context slice
+  ↓ assembles full prompt with:
+     - Corrections (always first, stable)
+     - Goals (current active)
+     - Semantic memories from Qdrant (top 5 by relevance)
+     - Artifact previews (head/tail + grep matches, not full content)
+     - Recent conversation summary
+  ↓ sends to LLM with token budget enforcement
+```
+
+#### **Context Composition Strategy**
+
+Context assembly follows a strict priority order to ensure critical information is never crowded out:
+
+| Priority | Category | Max Tokens | Rationale |
+|----------|----------|------------|-----------|
+| 1 | Corrections | 500 | Style/approach rules must always apply |
+| 2 | Active goals | 300 | Current objectives guide all work |
+| 3 | Pinned anchors | 200 | User-specified critical context |
+| 4 | Recent messages | 2000 | Conversational continuity |
+| 5 | Semantic memories | 1500 | Relevant past knowledge |
+| 6 | Summaries | 1000 | Compressed older context |
+| 7 | Artifact previews | 500 | Tool output snippets |
+
+**Token budget enforcement**: If total exceeds budget, lower-priority categories are truncated first. Corrections and goals are never truncated—if they alone exceed budget, that's a configuration error.
+
+### **3.5 Artifact System (Cost Control)**
+```
+Tool output >4KB → src/core/ops/artifact.rs::store_artifact()
+  ↓ stores full content in SQLite artifacts table
+  ↓ generates smart preview:
+     - grep top 3 matches if text searchable
+     - diff hunks if patch output
+     - bash metadata (exit code, duration) if command
+     - head (first 200 chars) + tail (last 200 chars)
+  ↓ includes preview in prompt (truncated to 1KB)
+  ↓ full content accessible via:
+     - fetch_artifact(artifact_id, offset, limit)
+     - search_artifact(artifact_id, query)
+```
+
+**Why**: Prevents 20KB git diff from blowing up token costs.
+
+### **3.6 Real Example: "Find similar errors in Rust code"**
+```
+# MCP PATH
+Claude Code → tools/code_intel.rs::handle_find_similar_fixes()
+  ↓ converts MCP params → FindSimilarFixesArgs
+  ↓ calls core/ops/code_intel.rs::find_similar_fixes()
+  ↓ searches: SQLite error_fixes + Qdrant semantic matches
+  ↓ returns Vec<ErrorFix> → MCP wrapper → rmcp → Claude
+
+# CHAT PATH  
+Studio → chat/tools/code_intel.rs::handle_find_similar_fixes()
+  ↓ converts chat tool call → same FindSimilarFixesArgs
+  ↓ calls SAME core/ops/code_intel.rs::find_similar_fixes()
+  ↓ SAME search logic
+  ↓ returns Vec<ErrorFix> → chat wrapper → HTTP/SSE → Studio
+```
+
+**Identical code path after type conversion.**
+
+### **3.7 Sync Between Instances (Claude ↔ Mira)**
+```
+Claude → POST /api/chat/sync (src/chat/server/handlers.rs)
+  - Bearer auth required
+  - Body: { messages, response_id?, previous_response_id? }
+  - Rate limiting: 1 concurrent request per session
+  - Structured JSON errors (never plain text)
+  - Returns: { response_id, previous_response_id, chain_id, request_id, timestamp }
+
+Chain tracking:
+  response_id → SHA256 of response
+  previous_response_id → links to prior response
+  chain_id → derived from thread (detects when >10 deep → soft reset)
+  Soft reset: token threshold + "handoff blob" (summary) → no obvious amnesia
+```
+
+**Prevents "split-brain"**: Multiple Mira instances share same SQLite DB via symlink `~/.mira/mira.db → /home/peter/Mira/data/mira.db`.
+
+### **3.8 State Management & Concurrency**
+- **Session state**: In-memory HashMap keyed by session_id, 24h TTL
+- **SQLite connections**: Connection pool (r2d2), max 10 connections
+- **Qdrant**: Single client, connection pooling internal
+- **Tool execution**: Sequential per session (no parallel tool calls)
+- **Memory safety**: All `unwrap()` removed from production code, `.expect()` with descriptive messages only
+
+### **3.9 Telemetry Flow**
+```
+Every LLM response → src/chat/usage.rs::record_usage()
+  ↓ inserts into chat_usage table:
+     - session_id, response_id, previous_response_id
+     - input_tokens, output_tokens, cached_tokens
+     - cache_percent, total_cost (microdollars)
+     - flags: spike, cache_drop, new_chain, tools_used
+  ↓ REPL command: `/usage` queries this table
+  ↓ Spike detection: flags.spike = true if input_tokens > 2× moving average
+```
+
+**Observability**: `/usage` shows chain visualization, cost breakdown, anomaly detection.
+
+## 4. **Configuration Inventory**
+
+Mira uses environment variables for configuration, with sensible defaults. No TOML config files.
+
+### **4.1 Environment Variables**
+
+#### **Database & Storage**
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | No | `sqlite://~/.mira/mira.db` | SQLite connection string |
+| `QDRANT_URL` | No | None (disables semantic search) | Qdrant gRPC endpoint (e.g., `http://localhost:6334`) |
+| `MIRA_MIGRATIONS_DIR` | No | `./migrations` or relative to binary | Custom migrations path |
+
+#### **API Keys (LLM Providers)**
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | For embeddings | Google Gemini API key (free tier works) |
+| `GOOGLE_API_KEY` | Fallback | Alternative to GEMINI_API_KEY |
+| `DEEPSEEK_API_KEY` | For chat | DeepSeek Reasoner API key |
+| `OPENAI_API_KEY` | For advisory | GPT-5.2 via Responses API |
+| `ANTHROPIC_API_KEY` | For advisory | Opus 4.5 via Messages API |
+
+#### **Web Search (Optional)**
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GOOGLE_API_KEY` | For web search | Google Custom Search API key |
+| `GOOGLE_CX` | For web search | Google Custom Search engine ID |
+
+#### **Server Configuration**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MIRA_PORT` | `3000` | HTTP server port |
+| `MIRA_LISTEN` | `127.0.0.1` | Bind address (`0.0.0.0` to expose externally) |
+| `MIRA_URL` | `http://localhost:3000` | Daemon URL for CLI commands |
+| `MIRA_SYNC_TOKEN` | Auto-generated | Auth token for sync endpoint (saved to `~/.mira/token`) |
+| `MIRA_CORS_ORIGINS` | `*` (localhost) | Comma-separated allowed origins |
+| `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
+
+### **4.2 CLI Commands**
+
+```bash
+# Start daemon (default command)
+mira daemon [--port 3000] [--listen 127.0.0.1]
+
+# Connect stdio to running daemon (for Claude Code MCP)
+mira connect [--url http://localhost:3000]
+
+# Check daemon status
+mira status [--url http://localhost:3000]
+
+# Stop running daemon
+mira stop [--url http://localhost:3000]
+
+# Hook handlers (called by Claude Code settings.json)
+mira hook permission    # Auto-approve based on saved rules
+mira hook precompact    # Save context before compaction
+mira hook posttool      # Auto-remember significant actions
+mira hook pretool       # Provide code context before file ops
+mira hook sessionstart  # Check for unfinished work
+```
+
+### **4.3 File Paths**
+
+| Path | Purpose |
+|------|---------|
+| `~/.mira/mira.db` | SQLite database (symlinked to project data/) |
+| `~/.mira/token` | Auto-generated auth token (32 bytes, hex-encoded) |
+| `~/.mira/.env` | Environment file (loaded by systemd service) |
+| `/home/peter/Mira/data/` | Actual data directory (symlink target) |
+| `/home/peter/Mira/migrations/` | SQLx migration files |
+
+### **4.4 Hardcoded Limits**
+
+#### **Server Limits**
+| Constant | Value | Location |
+|----------|-------|----------|
+| `DEFAULT_PORT` | 3000 | `main.rs:46` |
+| `SYNC_MAX_BODY_BYTES` | 64KB | `chat/server/mod.rs:180` |
+| `SYNC_MAX_MESSAGE_BYTES` | 32KB | `chat/server/stream.rs:82` |
+| `SYNC_MAX_CONCURRENT` | 3 | `chat/server/mod.rs:183` |
+
+#### **Tool Limits**
+| Constant | Value | Location |
+|----------|-------|----------|
+| `MAX_READ_SIZE` | 1MB | `core/ops/file.rs:15` |
+| `MAX_OUTPUT_SIZE` | 64KB | `core/ops/shell.rs:11` |
+| `MAX_FILE_SIZE` (cache) | 512KB | `chat/tools/mod.rs:210` |
+| `MAX_ENTRIES` (cache) | 100 | `chat/tools/mod.rs:209` |
+
+#### **Session/Context Limits**
+| Constant | Value | Location |
+|----------|-------|----------|
+| `RECALL_THRESHOLD` | 0.75 | `chat/session/messages.rs:15` |
+| `RECALL_LIMIT` | 3 | `chat/session/messages.rs:18` |
+| `RECENT_RAW_COUNT` | 5 | `chat/session/mod.rs:48` |
+| `SUMMARIZE_THRESHOLD` | 10 messages | `chat/session/mod.rs:54` |
+| `MAX_SUMMARIES_IN_CONTEXT` | 5 | `chat/session/mod.rs:60` |
+
+#### **Carousel Limits**
+| Constant | Value | Location |
+|----------|-------|----------|
+| `MAX_STARVATION_TURNS` | 12 | `context/carousel.rs:25` |
+| `ANCHOR_MAX_TOKENS` | 200 | `context/carousel.rs:28` |
+| `ANCHOR_MAX_ITEMS` | 2 | `context/carousel.rs:31` |
+
+#### **Ingestion/Chunking**
+| Constant | Value | Location |
+|----------|-------|----------|
+| `TARGET_CHUNK_TOKENS` | 500 | `tools/ingest.rs:40` |
+| `CHUNK_OVERLAP_TOKENS` | 50 | `tools/ingest.rs:41` |
+| `SEMANTIC_DUPLICATE_THRESHOLD` | 0.85 | `core/ops/proposals.rs:511` |
+
+### **4.5 Systemd Service**
+
+The daemon runs as a user service with security hardening:
+
+```ini
+# ~/.config/systemd/user/mira.service
+[Unit]
+Description=Mira - Memory & Intelligence Layer (MCP + Studio)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/peter/Mira/target/release/mira
+Restart=always
+RestartSec=5
+Environment=MIRA_PORT=3000
+EnvironmentFile=%h/.mira/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.mira %h/Mira/data
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
+```
+
+**Management commands:**
+```bash
+systemctl --user start mira
+systemctl --user stop mira
+systemctl --user status mira
+journalctl --user -u mira -f  # Follow logs
+```
+
+### **4.6 Claude Code Integration**
+
+MCP configuration in `.mcp.json`:
+```json
+{
+  "mcpServers": {
+    "mira": {
+      "command": "/home/peter/Mira/target/release/mira",
+      "args": ["connect"]
+    }
+  }
+}
+```
+
+Hook configuration in Claude Code `settings.json`:
+```json
+{
+  "hooks": {
+    "PreToolUse": [{"matcher": {"tool_name": "Read"}, "command": "mira hook pretool"}],
+    "PostToolUse": [{"matcher": {}, "command": "mira hook posttool"}],
+    "SessionStart": [{"command": "mira hook sessionstart"}]
+  }
+}
+```
+
+## 5. **Decision Ledger**
+
+Chronological record of architectural choices, trade-offs, and rejected alternatives.
+
+**Pre-history**: Mira had ~3 earlier iterations that were nuked and restarted before the current codebase. The git history begins July 2025, but the conceptual work predates this.
+
+---
+
+### **Phase 1: Foundation (July 2025)**
+
+#### **2025-07-18: Project Inception - GPT-4.1 + Qdrant + Persona System**
+**Decision**: Build Mira as a Rust/Axum backend with GPT-4.1, Qdrant vector DB, and a persona overlay system.
+- **Why**: Needed a personal AI assistant with persistent semantic memory and distinct personality.
+- **Stack**: Rust 2024, Axum, SQLite for sessions, Qdrant for embeddings, GPT-4.1 for chat.
+- **Key innovation**: Persona overlays with mood/intensity tracking, sub-100ms response times.
+
+#### **2025-07-22: Sprint 1 & 2 Complete - Memory Pipeline**
+**Decision**: Implement full semantic memory with persona switching, memory decay, and emotional asides.
+- **Why**: Wanted Mira to remember conversations and have emotional range.
+- **Features**: 3072-dimension embeddings, eternal session mode, structured JSON API.
+
+#### **2025-07-25: VPS Migration + Memory Importer**
+**Decision**: Deploy to Oregon VPS, build batch importer for ChatGPT history.
+- **Why**: Needed production deployment and wanted to bootstrap Mira with existing conversation history.
+- **Result**: `mira-import` tool for batch import, retcon, and evaluation.
+
+#### **2025-07-29: Service Layer Extraction**
+**Decision**: Extract service layer to eliminate REST/WebSocket duplication.
+- **Why**: Code was duplicated between HTTP and WebSocket handlers.
+- **Pattern**: Shared service layer called by both transport layers.
+
+---
+
+### **Phase 2: API Migrations (August 2025)**
+
+#### **2025-07-31: Migrate to OpenAI Responses API**
+**Decision**: Move from deprecated Assistants API to Responses API.
+- **Why**: OpenAI deprecated Assistants; Responses API offered better tool integration.
+- **Trade-off**: Significant refactoring required.
+
+#### **2025-08-04: Web Search Integration**
+**Decision**: Add web search via OpenAI function calling (Tavily).
+- **Why**: Mira needed access to current information beyond training data.
+
+#### **2025-08-09: Brief Claude Experiment (Reverted)**
+**Decision**: Attempted migration to Claude + Midjourney.
+- **Why**: Exploring alternatives to OpenAI.
+- **Outcome**: Reverted after 2 days - API differences too significant.
+- **Lesson**: Stick with OpenAI ecosystem for now.
+
+#### **2025-08-11-13: GPT-5 Migration**
+**Decision**: Migrate entire backend from GPT-4.1 to GPT-5 Responses API.
+- **Why**: GPT-5 offered superior reasoning and tool use.
+- **Pain**: 47 build errors to fix post-migration.
+- **Result**: All modules updated, unified on `/v1/responses` endpoint.
+
+#### **2025-08-15: Conversation Summarization**
+**Decision**: Implement automatic conversation summarization.
+- **Why**: Long conversations exceeded context limits; needed compression.
+
+#### **2025-08-17: Hybrid JSON/Plain Text Approach**
+**Decision**: Use structured JSON for metadata, plain text for message bodies.
+- **Why**: OpenAI's structured output had 1280 token cap; messages often exceeded this.
+- **Trade-off**: More complex parsing, but no token limit issues.
+
+#### **2025-08-22: Major Modularization**
+**Decision**: Refactor monolithic handlers into focused modules.
+- **Results**:
+  - WebSocket: 750 lines -> 4 modules (73% reduction)
+  - LLM client: 650 lines -> 5 modules (77% reduction)
+  - Git client: Split into modules with centralized error handling
+- **Why**: Maintainability was becoming impossible.
+
+#### **2025-08-23: Tool Integration - Image Gen + File Search**
+**Decision**: Add DALL-E image generation and file search tools.
+- **Why**: Expand Mira's capabilities beyond chat.
+
+#### **2025-08-29: Multi-Head Memory Architecture**
+**Decision**: Implement multi-collection support with multi-head embeddings.
+- **Why**: Different types of memories (facts, preferences, code) need different treatment.
+- **Phases**: Collection support -> Multi-head embeddings -> Rich metadata tagging.
+
+---
+
+### **Phase 3: Intelligence Systems (September-October 2025)**
+
+#### **2025-10-01: Claude Sonnet 4.5 Migration**
+**Decision**: Migrate from GPT-5 to Claude Sonnet 4.5.
+- **Why**: Better code generation, prompt caching support.
+- **Features**: Prompt caching implemented for cost reduction.
+
+#### **2025-10-02: Code Intelligence System**
+**Decision**: Build AST-based code intelligence with TypeScript/JavaScript parsing.
+- **Why**: Mira needed to understand code structure, not just text.
+- **Implementation**: SWC-based parsing, cross-language dependency tracking.
+
+#### **2025-10-07: Layered Context Architecture**
+**Decision**: Implement 5-phase memory system with layered context.
+- **Phases**:
+  1. Layered context with summaries
+  2. Enhanced summary quality + personal context
+  3. Efficiency tools + caching
+  4. Simplified scoring
+  5. Higher limits
+- **Why**: Memory retrieval was too simplistic; needed sophistication.
+
+#### **2025-10-08: Claude -> DeepSeek/GPT-5 Dual Architecture**
+**Decision**: Replace Claude with DeepSeek + GPT-5 dual-model system.
+- **Why**: Cost optimization - use DeepSeek for code, GPT-5 for voice.
+- **Architecture**: GPT-5 as primary voice, DeepSeek as internal reasoning tool.
+- **Phases**: Delete Claude -> Provider infrastructure -> Router -> Task classification.
+
+#### **2025-10-09-10: GPT-5 Consolidation + ChatOrchestrator**
+**Decision**: Remove DeepSeek, consolidate to GPT-5 only with ChatOrchestrator.
+- **Why**: Dual-model complexity wasn't worth the cost savings.
+- **Features**: Dynamic reasoning levels, SSE streaming, code intelligence layers.
+
+---
+
+### **Phase 4: Architecture Overhaul (November 2025)**
+
+#### **2025-11-16: DeepSeek Integration (47 commits in one day!)**
+**Decision**: Re-integrate DeepSeek with dual-model orchestration.
+- **Why**: Revisited cost analysis; DeepSeek's 64K context window valuable.
+- **Features**: Smart routing, activity panel, JWT auth, file operations.
+- **Outcome**: Then migrated to DeepSeek-only architecture (removed GPT-5).
+
+#### **2025-11-24: Fresh Schema + GPT 5.1 Architecture**
+**Decision**: Complete architecture rewrite with fresh database schema.
+- **Why**: Technical debt had accumulated; needed clean slate.
+- **Features**: GPT 5.1 with reasoning effort support, new session system.
+
+#### **2025-11-25-26: Intelligence Milestones 2-7**
+**Decision**: Implement code intelligence, git intelligence, tool synthesis, build system, reasoning patterns.
+- **Milestones**:
+  - M2: Code Intelligence
+  - M3: Git Intelligence
+  - M4: Tool Synthesis
+  - M5: Build System Integration
+  - M6: Reasoning Pattern Learning
+  - M7: Context Oracle with budget-aware config
+
+#### **2025-11-27-28: File System + Guidelines**
+**Decision**: Add real-time file watching, guidelines management, task tracking.
+- **Milestones**:
+  - M8: Real-time file watching
+  - M9: Build errors, tools dashboard, enhanced file browser
+
+---
+
+### **Phase 5: MCP + Studio Convergence (December 2025)**
+
+#### **2025-12-03: Hooks System Foundation**
+**Decision**: Add extensible hooks system for pre/post tool execution.
+- **Why**: Need automatic context injection and passive learning without modifying core tool logic.
+- **Trade-off**: Adds indirection layer, slightly increases tool call latency.
+
+#### **2025-12-11: Switch from OpenAI to Gemini Embeddings**
+**Decision**: Replace OpenAI text-embedding-3-small with Gemini's free-tier embeddings.
+- **Why**: Cost elimination (~$0.0001/1K tokens -> $0).
+- **Trade-off**: Slightly slower batch encoding.
+
+#### **2025-12-12: PreToolUse/PostToolUse Hooks in Rust**
+**Decision**: Rewrite Python hooks in Rust for Claude Code integration.
+- **Why**: Python hooks were slow; Rust provides type safety and speed.
+- **Features**: Auto code-context injection, passive memory-building.
+
+#### **2025-12-16: Launch mira-chat (Studio Backend)**
+**Decision**: Build dedicated chat backend separate from MCP tooling.
+- **Why**: Claude Code MCP is read-heavy; Studio needs streaming, multi-turn, direct model access.
+- **Trade-off**: Two entry points (later unified via core/ops).
+
+#### **2025-12-17: Artifact System + Chain Management**
+**Decision**: Store large tool outputs (>4KB) in SQLite with smart previews.
+- **Why**: Runaway token costs from huge outputs.
+- **Also**: Smooth handoff resets, `/api/chat/sync` endpoint.
+
+#### **2025-12-18: Hotline + Full Context Assembly**
+**Decision**: Multi-provider support (GPT-5.2, DeepSeek V3.2, Gemini 3 Pro, Council).
+- **Why**: Different tasks need different models.
+- **Also**: Every model gets full context (corrections, goals, memories, summaries).
+
+#### **2025-12-19: Unified Core/Ops + Daemon Architecture**
+**Decision**: Extract all business logic into shared `core/ops/` module.
+- **Why**: MCP and Chat had duplicate implementations causing drift.
+- **Also**: Single systemd service for all components.
+
+#### **2025-12-20: SQLite Symlink Consolidation**
+**Decision**: Symlink `~/.mira/mira.db` -> `/home/peter/Mira/data/mira.db`.
+- **Why**: Multiple DB paths caused "split-brain" state.
+
+#### **2025-12-23: DeepSeek Reasoner V3.2**
+**Decision**: Route all chat traffic through DeepSeek Reasoner.
+- **Why**: V3.2 added tool-call support, eliminating dual-model routing need.
+
+#### **2025-12-24: Unified Advisory System**
+**Decision**: Single advisory service with tool calling for all 4 providers.
+- **Why**: Bespoke integrations caused drift and maintenance burden.
+
+#### **2025-12-25: Carousel v2**
+**Decision**: Replace context-decay heuristics with deterministic state machine.
+- **Features**: Semantic interrupts, panic mode, explicit overrides, starvation prevention.
+- **Why**: Implicit context "bleed" confused users and models.
+
+---
+
+**Summary Statistics**:
+- **Duration**: 5+ months (July 18 - December 25, 2025)
+- **Total commits**: ~800+
+- **Major migrations**: GPT-4.1 -> GPT-5 -> Claude -> DeepSeek -> GPT 5.1 -> DeepSeek Reasoner
+- **Architecture rewrites**: 3 (August refactor, November fresh schema, December core/ops)
+- **Peak activity**: October 10 (24 commits), November 16 (47 commits)
+
+## 6. **External Integrations**
+
+### **6.1 LLM Providers**
+
+Mira integrates with 4 LLM providers through the unified `AdvisoryProvider` trait.
+
+#### **OpenAI GPT-5.2**
+| Property | Value |
+|----------|-------|
+| API | Responses API (`/v1/responses`) |
+| Model ID | `gpt-5.2` |
+| Endpoint | `https://api.openai.com/v1/responses` |
+| Auth | Bearer token (`OPENAI_API_KEY`) |
+| Features | Streaming, tool calling, reasoning |
+| Timeout | 60s |
+
+**Usage**: Primary voice for advisory system, high-quality reasoning tasks.
+
+#### **Anthropic Opus 4.5**
+| Property | Value |
+|----------|-------|
+| API | Messages API (`/v1/messages`) |
+| Model ID | `claude-opus-4-5-20251101` |
+| Endpoint | `https://api.anthropic.com/v1/messages` |
+| Auth | `x-api-key` header (`ANTHROPIC_API_KEY`) |
+| Features | Streaming, tool calling, extended thinking |
+| Timeout | 60s |
+
+**Usage**: Advisory system for code review, architectural decisions.
+
+#### **Google Gemini 3 Pro**
+| Property | Value |
+|----------|-------|
+| API | GenerateContent API |
+| Model ID | `gemini-3-pro-preview` |
+| Endpoint | `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent` |
+| Auth | API key in URL (`GEMINI_API_KEY`) |
+| Features | Streaming (SSE), tool calling |
+| Timeout | 60s |
+
+**Usage**: Advisory system, cost-effective alternative.
+
+#### **DeepSeek Reasoner V3.2**
+| Property | Value |
+|----------|-------|
+| API | Chat Completions API |
+| Model ID | `deepseek-reasoner` |
+| Endpoint | `https://api.deepseek.com/v1/chat/completions` |
+| Auth | Bearer token (`DEEPSEEK_API_KEY`) |
+| Features | Streaming, tool calling, reasoning tokens |
+| Timeout | 180s (reasoning can be slow) |
+
+**Usage**: Primary chat model (Studio), advisory system. Cost-effective with 128K context.
+
+#### **Council Mode**
+When `provider=council`, Mira calls GPT-5.2, Gemini 3 Pro, and DeepSeek Reasoner in parallel, then synthesizes responses. Useful for:
+- Architectural decisions (get multiple perspectives)
+- Validation (cross-check reasoning)
+- Complex problems (ensemble approach)
+
+### **6.2 Embeddings (Gemini)**
+
+| Property | Value |
+|----------|-------|
+| Model | `gemini-embedding-001` |
+| Dimensions | 3072 |
+| Endpoint | `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent` |
+| Batch endpoint | `...gemini-embedding-001:batchEmbedContents` |
+| Auth | API key in URL (`GEMINI_API_KEY`) |
+| Cost | Free tier |
+| Max batch | 50 items |
+| Max text | 8000 chars |
+
+**Why Gemini**: Free tier with good quality. Switched from OpenAI embeddings (2025-12-11) to eliminate costs.
+
+### **6.3 Qdrant Vector Database**
+
+| Property | Value |
+|----------|-------|
+| Protocol | gRPC |
+| Default URL | `http://localhost:6334` |
+| Client | `qdrant_client` crate |
+| Distance | Cosine similarity |
+
+#### **Collections**
+| Collection | Purpose |
+|------------|---------|
+| `mira_code` | Code symbols, functions, classes |
+| `mira_conversation` | Chat messages, summaries |
+| `mira_docs` | Ingested documents (PDF, markdown) |
+
+#### **Search Parameters**
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `SEMANTIC_SEARCH_MIN_SCORE` | 0.3 | Minimum similarity threshold |
+| `SEMANTIC_SEARCH_DEFAULT_LIMIT` | 10 | Default results per query |
+| `SEMANTIC_SEARCH_MAX_LIMIT` | 100 | Maximum results |
+
+**Graceful degradation**: If Qdrant is unavailable, Mira falls back to SQL-based search (slower, less accurate but functional).
+
+### **6.4 MCP Protocol (Claude Code)**
+
+| Property | Value |
+|----------|-------|
+| Crate | `rmcp` |
+| Transport | `StreamableHttpService` |
+| Session manager | `LocalSessionManager` |
+| Default config | `StreamableHttpServerConfig::default()` |
+
+#### **MCP Architecture**
+```
+Claude Code → mira connect (stdio) → HTTP POST → Daemon → MiraServer
+                                                    ↓
+                                              Tool Router
+                                                    ↓
+                                              core::ops/*
+```
+
+**Key files**:
+- `src/main.rs`: MCP service setup with `StreamableHttpService`
+- `src/tools/mod.rs`: Tool router with 30+ registered tools
+- `src/connect.rs`: Stdio-to-HTTP bridge for `mira connect`
+
+#### **Registered MCP Tools**
+| Category | Tools |
+|----------|-------|
+| Memory | `remember`, `recall`, `forget` |
+| Session | `session_start`, `get_session_context`, `store_session`, `search_sessions` |
+| Tasks | `task`, `goal`, `proposal` |
+| Corrections | `correction`, `store_decision`, `record_rejected_approach` |
+| Code Intel | `get_symbols`, `get_call_graph`, `semantic_code_search`, `get_related_files`, `find_cochange_patterns` |
+| Git Intel | `get_recent_commits`, `search_commits` |
+| Build | `build`, `find_similar_fixes`, `record_error_fix` |
+| Documents | `document` (list/search/get/ingest/delete) |
+| Index | `index` (project/file/status/cleanup) |
+| Context | `carousel`, `get_proactive_context`, `get_work_state`, `sync_work_state` |
+| Advisory | `hotline`, `advisory_session` |
+| Admin | `get_project`, `set_project`, `permission`, `get_guidelines`, `add_guideline`, `query`, `list_tables` |
+
+#### **Interface Direction Clarification**
+
+> **Inbound vs Outbound**: Section 6.1 (LLM Providers) describes **outbound** calls—Mira calling external LLMs. The MCP tools above are **inbound** interfaces—Claude Code (or other MCP clients) calling into Mira.
+
+The `hotline` tool is particularly notable: it's an **inbound MCP call** that triggers **outbound LLM calls**. When Claude Code invokes `hotline(message, provider="council")`, Mira:
+1. Receives the MCP request (inbound)
+2. Calls GPT-5.2, Gemini, and DeepSeek in parallel (outbound)
+3. Synthesizes responses
+4. Returns via MCP (inbound response)
+
+This bidirectional pattern enables Claude to consult other models through Mira's infrastructure.
+
+### **6.5 Web Search (Google Custom Search)**
+
+| Property | Value |
+|----------|-------|
+| API | Custom Search JSON API |
+| Endpoint | `https://www.googleapis.com/customsearch/v1` |
+| Auth | API key (`GOOGLE_API_KEY`) + Search Engine ID (`GOOGLE_CX`) |
+
+**Usage**: DeepSeek chat can invoke web search for current information. Requires both API key and custom search engine ID.
+
+### **6.6 External API Patterns**
+
+All external calls follow consistent patterns:
 
 ```rust
-// Minimal context
-let ctx = OpContext::new(cwd);
+// Timeout handling
+let client = reqwest::Client::builder()
+    .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))  // 30s default
+    .build()?;
 
-// With database
-let ctx = OpContext::new(cwd).with_db(db);
+// Retry with backoff
+for attempt in 0..EMBED_RETRY_ATTEMPTS {  // 2 attempts
+    match api_call().await {
+        Ok(result) => return Ok(result),
+        Err(e) if attempt < EMBED_RETRY_ATTEMPTS - 1 => {
+            tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;  // 500ms
+        }
+        Err(e) => return Err(e),
+    }
+}
 
-// With semantic search
-let ctx = OpContext::new(cwd)
-    .with_db(db)
-    .with_semantic(semantic);
-
-// Convenience for DB-only ops
-let ctx = OpContext::just_db(db);
+// Graceful degradation
+if !semantic.is_available() {
+    // Fall back to SQL search
+}
 ```
 
-## Adding New Operations
+**Error handling**: All external calls return `Result<T>` with descriptive errors. Transient failures retry; permanent failures degrade gracefully.
 
-1. **Define types** in `core/ops/your_module.rs`:
-   ```rust
-   pub struct YourInput { ... }
-   pub struct YourOutput { ... }
-   ```
+## 7. **Operational Characteristics**
 
-2. **Implement the operation**:
-   ```rust
-   pub async fn your_operation(ctx: &OpContext, input: YourInput) -> CoreResult<YourOutput> {
-       let db = ctx.require_db()?;
-       // ... business logic
-   }
-   ```
+### **7.1 Resource Usage**
 
-3. **Add thin wrapper** in `tools/` or `chat/`:
-   ```rust
-   pub async fn your_operation(&self, req: Request) -> Result<Response> {
-       let ctx = OpContext::new(cwd).with_db(self.db.clone());
-       let input = YourInput { ... };
-       let output = core_ops::your_operation(&ctx, input).await?;
-       Ok(Response { ... })
-   }
-   ```
+#### **SQLite Connection Pool**
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `max_connections` | 10 | SQLite is single-writer; more readers than writers |
+| `min_connections` | 2 | Keep connections warm |
+| `acquire_timeout` | 10s | Fail fast if pool exhausted |
+| `max_lifetime` | 30 min | Recycle to prevent stale connections |
+| `idle_timeout` | 10 min | Release unused connections |
 
-## Why This Architecture?
+#### **Memory Footprint**
+| Component | Typical Usage |
+|-----------|---------------|
+| Base daemon | ~30-50 MB |
+| Per-project watcher | ~5-10 MB |
+| Qdrant client | ~10 MB |
+| HTTP client pool | ~5 MB |
+| File cache (30s TTL) | Up to 50 MB (100 files × 512KB max) |
 
-1. **Single source of truth** - Business logic exists in one place
-2. **Testability** - core::ops can be tested without MCP/Chat overhead
-3. **Consistency** - Same behavior whether accessed via MCP or Studio
-4. **Maintainability** - Changes to logic only need to happen once
-5. **Flexibility** - Easy to add new interfaces (CLI, API, etc.)
+#### **Concurrency Controls**
+| Control | Value | Purpose |
+|---------|-------|---------|
+| `sync_semaphore` | 3 permits | Limit concurrent `/api/chat/sync` requests |
+| `ProjectLocks` | Per-project mutex | Prevent concurrent writes to same project |
+| `RwLock` on `active_project` | Reader-writer | Allow concurrent reads, exclusive writes |
+| `RwLock` on `carousel` | Reader-writer | Context carousel state |
 
-## Design Decisions
+### **7.2 Background Tasks**
 
-### User-Facing Strings
-`core::ops` does **not** construct user-facing display strings. All formatting for prompts, UI, or responses happens in the adapter layers (MCP tools, Chat session). The ops return structured data types.
+The daemon spawns several background tasks:
 
-Exceptions:
-- Error messages in `CoreError` (technical, not user-facing)
-- Metadata strings for semantic search storage
+#### **File Watcher (per project)**
+- Uses `notify` crate for filesystem events
+- Debounces rapid changes
+- Re-indexes modified files automatically
+- Handles file deletions (removes from index)
 
-### Auth/Policy Enforcement
-Authorization and policy checks happen in the **adapter layer**, not in `core::ops`. Operations assume they're being called by authorized code.
+#### **Git Sync (every 5 minutes)**
+- Fetches from origin
+- Fast-forward pulls if possible
+- Re-indexes changed files
+- Updates commit history and cochange patterns
 
-- MCP: Tool permissions managed via `permissions` tool in `server/mod.rs`
-- Studio: Session-scoped (no cross-user access)
+#### **Initial Index (on startup)**
+- Runs if no symbols exist for a project
+- Indexes all code files (AST parsing)
+- Indexes git history (500 commits)
+- Generates embeddings for Qdrant
 
-### OpContext Size
-Current `OpContext` has 6 fields - intentionally minimal:
-- `db: Option<SqlitePool>` - database access
-- `semantic: Option<Arc<SemanticSearch>>` - vector search
-- `http: reqwest::Client` - external API calls
-- `cwd: PathBuf` - file operations root
-- `project_path: String` - scoping
-- `cancel: CancellationToken` - cancellation
+### **7.3 Performance Characteristics**
 
-If this grows beyond ~10 fields, consider splitting into capability traits (`HasDb`, `HasSemantic`, etc.).
+#### **Latency Targets**
+| Operation | Target | Notes |
+|-----------|--------|-------|
+| Health check | <10ms | Simple status JSON |
+| Memory recall | <100ms | Qdrant query + DB lookup |
+| Code search | <200ms | Embedding + vector search |
+| Tool execution (simple) | <50ms | DB read/write |
+| LLM advisory call | 2-30s | Network-bound, model-dependent |
+| Chat streaming | First token <2s | DeepSeek Reasoner |
 
-## Chat Chain Invariants
+#### **Throughput**
+| Metric | Value |
+|--------|-------|
+| Concurrent MCP sessions | Unlimited (each is stateless) |
+| Concurrent chat streams | Limited by sync_semaphore (3) |
+| SQLite writes | ~1000/s (single-threaded) |
+| Qdrant inserts | ~100/s (embedding generation is bottleneck) |
 
-The `chat_chain` module manages response chain state with these invariants:
+### **7.4 Failure Modes & Recovery**
 
-### Reset Decision State Machine
+#### **External Service Failures**
 
-```
-                          ┌──────────────────┐
-                          │   Every Turn     │
-                          └────────┬─────────┘
-                                   │
-                    ┌──────────────▼───────────────┐
-                    │ Check: turns_since_reset     │
-                    │        < COOLDOWN (3)?       │
-                    └──────────────┬───────────────┘
-                            yes    │    no
-                    ┌──────────────┴───────────────┐
-                    ▼                              ▼
-            ┌───────────┐              ┌───────────────────┐
-            │ Cooldown  │              │ Check: tokens >   │
-            │ (skip)    │              │ HARD_CEILING(420k)│
-            └───────────┘              └─────────┬─────────┘
-                                          yes    │    no
-                                    ┌────────────┴────────────┐
-                                    ▼                         ▼
-                            ┌───────────┐        ┌────────────────────┐
-                            │ HardReset │        │ Check: tokens >    │
-                            └───────────┘        │ THRESHOLD(400k) && │
-                                                 │ cache < 30%        │
-                                                 └─────────┬──────────┘
-                                                    yes    │    no
-                                        ┌──────────────────┴─────────────┐
-                                        ▼                                ▼
-                              ┌─────────────────────┐          ┌─────────────────┐
-                              │ consecutive_low++   │          │ consecutive_low │
-                              │ Check: >= HYSTER(2) │          │ = 0             │
-                              └─────────┬───────────┘          └─────────────────┘
-                                 yes    │    no
-                              ┌─────────┴─────────┐
-                              ▼                   ▼
-                      ┌───────────┐       ┌───────────┐
-                      │ SoftReset │       │ NoReset   │
-                      └───────────┘       └───────────┘
-```
+| Service | Failure Mode | Recovery Strategy |
+|---------|--------------|-------------------|
+| Qdrant down | Semantic search unavailable | Fall back to SQL LIKE queries |
+| Gemini API error | Embedding fails | Retry 2x with 500ms backoff, then skip |
+| DeepSeek timeout | Chat stalls | 180s timeout, return error to user |
+| OpenAI/Anthropic error | Advisory fails | Return error, other providers unaffected |
 
-### Key Invariants
+#### **Database Failures**
 
-1. **Cooldown**: After any reset, wait `COOLDOWN_TURNS` (3) before considering another
-2. **Hard ceiling**: If tokens > 420k, always reset (quality guard)
-3. **Hysteresis**: Soft reset requires `HYSTERESIS_TURNS` (2) consecutive low-cache turns
-4. **Cache threshold**: Low cache = below 30%
-5. **Handoff preservation**: On soft reset, `build_handoff_blob()` captures context before clearing
+| Failure | Detection | Recovery |
+|---------|-----------|----------|
+| Connection pool exhausted | `acquire_timeout` (10s) | Return 503, client retries |
+| Migration failure | Startup check | Daemon refuses to start, logs error |
+| Corrupted database | Query errors | Manual restore from backup |
 
-### Handoff Blob Contents
+#### **Process Failures**
 
-When a soft reset occurs, the handoff blob captures:
-1. Recent conversation (last 6 messages, truncated to 500 chars each)
-2. Latest summary (older context)
-3. Active goals (up to 3)
-4. Recent decisions (up to 5)
-5. Working set (touched files, up to 10)
-6. Last failure (if any)
-7. Recent artifacts (up to 5)
-8. Continuity note
+| Failure | Detection | Recovery |
+|---------|-----------|----------|
+| Daemon crash | systemd watchdog | Auto-restart after 5s (`Restart=always`) |
+| OOM kill | systemd journal | Restart, investigate memory leak |
+| File watcher crash | Task panic | Other watchers unaffected, manual restart |
 
-### State Variables
+### **7.5 Health Endpoint**
 
-| Variable | Purpose | Reset on |
-|----------|---------|----------|
-| `consecutive_low_cache_turns` | Hysteresis counter | Reset or good cache turn |
-| `turns_since_reset` | Cooldown tracking | Every reset |
-| `needs_handoff` | Flag for next turn | After consumption |
-| `handoff_blob` | Context for next turn | After consumption |
+`GET /health` returns component status:
 
-## Testing
-
-The test suite is organized by scope:
-
-```
-tests/
-├── daemon_e2e.rs       # MCP daemon tool E2E tests (25 tests)
-├── integration_e2e.rs  # Chat server API E2E tests (10 tests)
-└── mira_core_contract.rs # Core primitive contracts (11 tests)
+```json
+{
+  "status": "ok",           // or "degraded"
+  "database": "ok",         // or "error"
+  "semantic_search": "ok",  // or "unavailable" or "error"
+  "version": "2.0.0"
+}
 ```
 
-### daemon_e2e.rs
+**Status meanings**:
+- `ok`: All systems operational
+- `degraded`: Core functionality works, some features disabled (e.g., no Qdrant)
+- `error`: Critical failure, investigate immediately
 
-Tests all MCP tools by calling the underlying `src/tools/` functions directly with an isolated test database. Covers:
+### **7.6 Observability**
 
-- **Project/Session**: set_project, session_start, get_session_context
-- **Memory**: remember, recall, forget (with upsert semantics)
-- **Tasks**: create, list, get, update, complete, delete, subtasks
-- **Goals**: create, list, update, milestones, progress tracking
-- **Corrections**: record, get, validate workflow
-- **Build tracking**: record_build, record_error, get_errors, resolve
-- **Permissions**: save, list, delete rules
-- **Analytics**: list_tables, read-only queries
-- **Guidelines**: add, get coding guidelines
-- **Work state**: sync, get for session resume
-- **Sessions**: store_decision, store_session, search_sessions
-- **Code intel**: get_symbols, get_call_graph, semantic_code_search
-- **Git intel**: get_commits, search_commits, cochange_patterns, record_error_fix
-- **Documents**: list, get, delete
-- **Proactive context**: assembled context for tasks
-- **MCP history**: log_call, search_history
+#### **Logging**
+- Framework: `tracing` crate with `FmtSubscriber`
+- Output: systemd journal (`journalctl --user -u mira`)
+- Levels: `RUST_LOG=info` (default), `debug` for verbose
 
-### integration_e2e.rs
+#### **Key Log Events**
+| Event | Level | Example |
+|-------|-------|---------|
+| Startup | INFO | `Starting Mira Daemon on 127.0.0.1:3000...` |
+| DB connect | INFO | `Database connected: sqlite://...` |
+| Index complete | INFO | `Initial index complete: 1234 symbols` |
+| Git sync | INFO | `Git sync: 5 commits, 12 cochange patterns` |
+| API error | WARN | `DeepSeek API error: rate limited` |
+| Auth failure | WARN | `Unauthorized request to /api/chat/sync` |
+| Fatal error | ERROR | `Migration failed: ...` |
 
-Tests the Chat/Studio HTTP API using axum's test utilities (no server spawn). Covers:
+#### **Metrics (via /health)**
+- Database connectivity
+- Semantic search availability
+- Schema version (migration count)
 
-- Status endpoint
-- Message pagination and filtering
-- Sync endpoint validation and auth
-- Payload size limits
-- Concurrent request handling (semaphore)
-- Project locks (per-project serialization)
-- Archived message exclusion
+### **7.7 Scaling Considerations**
 
-### mira_core_contract.rs
+Mira is designed as a **single-user, single-machine** tool. Scaling horizontally is not a goal.
 
-Tests core primitive contracts (SemanticSearch, MetadataBuilder, embedding config).
+#### **Vertical Scaling**
+| Resource | Impact |
+|----------|--------|
+| More RAM | Larger file cache, more concurrent operations |
+| Faster SSD | Faster SQLite, faster Qdrant |
+| More CPU | Faster embedding generation, faster indexing |
 
-### Test Patterns
+#### **Limits**
+| Resource | Practical Limit | Bottleneck |
+|----------|-----------------|------------|
+| Projects watched | ~10 | File watcher memory |
+| Code symbols indexed | ~100K | SQLite query time |
+| Memories stored | ~50K | Qdrant search time |
+| Concurrent users | 1 | By design (personal assistant) |
+
+#### **What Won't Scale**
+- Multiple users (auth is single-token)
+- Multiple machines (SQLite is local)
+- Very large codebases (>1M LoC) without tuning
+
+## 8. **Security & Compliance**
+
+> **Note**: Mira is designed as a personal tool, not a multi-tenant service. Security is oriented toward protecting the single user's data, not isolation between users.
+
+### **8.1 Authentication**
+
+#### **Token-Based Auth**
+| Property | Value |
+|----------|-------|
+| Token format | UUID v4 (36 chars) |
+| Storage | `~/.mira/token` (file permissions: 0600) |
+| Generation | Auto-generated on first run |
+| Headers | `Authorization: Bearer <token>` or `X-Auth-Token: <token>` |
+
+#### **Auth Middleware Behavior**
+| Bind Address | `/health` | `/api/*` | `/mcp` |
+|--------------|-----------|----------|--------|
+| `127.0.0.1` (localhost) | Public | **No auth** (trusted) | Requires auth |
+| `0.0.0.0` (exposed) | Public | Requires auth | Requires auth |
+
+**Rationale**: When bound to localhost only, `/api/*` endpoints skip auth for convenience. When exposed externally, everything except `/health` requires auth.
+
+#### **Current Gaps** ⚠️
+- No user accounts or role-based access
+- No session expiry or token rotation
+- No rate limiting
+- mira.conarylabs.com currently has no auth protection
+
+### **8.2 Secret Detection & Redaction**
+
+Mira automatically detects and handles secrets in tool output.
+
+#### **Detected Patterns**
+| Category | Patterns |
+|----------|----------|
+| Private keys | RSA, EC, OpenSSH, PGP, generic |
+| API keys | OpenAI (`sk-proj-`), Anthropic (`sk-ant-`), Google (`AIzaSy`) |
+| GitHub | PAT (`ghp_`), OAuth (`gho_`), User (`ghu_`), Server (`ghs_`) |
+| AWS | Access keys (`AKIA`), secret keys |
+| Payment | Stripe (`sk_live_`, `sk_test_`), Twilio |
+| Messaging | Slack (`xoxb-`, `xoxp-`), Discord |
+| Generic | `bearer `, `token=`, `password=`, `API_KEY=` |
+
+#### **Handling**
+1. **Detection**: `detect_secrets()` scans output for patterns
+2. **Flagging**: Artifacts marked with `contains_secrets: true`
+3. **Redaction**: `redact_secrets()` replaces with `[REDACTED: kind]`
+4. **TTL reduction**: Secret-containing artifacts expire in 24h (vs 7 days default)
 
 ```rust
-// Create isolated test database with migrations
-async fn create_test_db(temp_dir: &TempDir) -> SqlitePool {
-    let db_path = temp_dir.path().join("test.db");
-    let pool = create_optimized_pool(&format!("sqlite://{}?mode=rwc", db_path.display())).await?;
-    run_migrations(&pool, &migrations_path).await?;
-    pool
-}
-
-// SemanticSearch disabled for unit tests (no Qdrant dependency)
-async fn create_test_semantic() -> Arc<SemanticSearch> {
-    Arc::new(SemanticSearch::new(None, None).await)
-}
-
-// Use temp_dir path as project_path (passes validation)
-fn get_project_path(temp_dir: &TempDir) -> String {
-    temp_dir.path().to_string_lossy().to_string()
-}
+// Example redaction
+"token: sk-proj-abc123xyz789"
+→ "token: [REDACTED: openai_key]"
 ```
 
-## Database Tables
+### **8.3 Data Protection**
 
-The database schema is defined in `migrations/`. Key tables:
+#### **At Rest**
+| Data | Protection |
+|------|------------|
+| SQLite database | File permissions (user-only) |
+| API keys in .env | File permissions, not in git |
+| Auth token | `~/.mira/token` with 0600 permissions |
+| Qdrant vectors | Local only, no auth (single-user assumption) |
 
-| Table | Purpose |
-|-------|---------|
-| `projects` | Project metadata and paths |
-| `memory_facts` | Semantic memory (remember/recall) |
-| `memory_entries` | Session summaries |
-| `tasks` | Task tracking |
-| `goals` | Goal/milestone tracking |
-| `corrections` | User corrections for learning |
-| `coding_guidelines` | Per-project coding standards |
-| `code_symbols` | Indexed code symbols |
-| `git_commits` | Indexed git history |
-| `cochange_patterns` | Files that change together |
-| `error_fixes` | Learned error solutions |
-| `rejected_approaches` | Approaches to avoid |
-| `chat_messages` | Studio conversation history |
-| `chat_summaries` | Studio context compression |
-| `chat_context` | Studio session state |
-| `advisory_sessions` | Multi-turn advisory conversations |
-| `advisory_messages` | Advisory conversation history |
-| `advisory_pins` | Pinned constraints in advisory sessions |
-| `advisory_decisions` | Decisions made in advisory sessions |
-| `advisory_summaries` | Compressed older turns in sessions |
+#### **In Transit**
+| Path | Protection |
+|------|------------|
+| Localhost connections | Unencrypted (trusted network) |
+| External API calls | HTTPS/TLS |
+| mira.conarylabs.com | Should use HTTPS (nginx) |
 
-## Advisory Module
+#### **Artifact Security**
+| Feature | Implementation |
+|---------|----------------|
+| Auto-expiry | TTL per artifact type (7d/30d/24h for secrets) |
+| Secret detection | Pattern matching before storage |
+| Size limits | 10MB max artifact, 64KB sync messages |
 
-The `src/advisory/` module provides a unified abstraction for consulting external LLMs.
+### **8.4 Systemd Hardening**
 
-### Architecture
+The daemon runs with restricted capabilities:
 
-```
-src/advisory/
-├── mod.rs           # AdvisoryService - main entry point
-├── provider.rs      # AdvisoryProvider trait + implementations
-├── session.rs       # Multi-turn sessions with tiered memory
-├── synthesis.rs     # Structured synthesis with provenance
-├── streaming.rs     # SSE parsing for all providers
-└── tool_bridge.rs   # Agentic tool calling with budget governance
+```ini
+# Security hardening in mira.service
+NoNewPrivileges=true      # Prevent privilege escalation
+ProtectSystem=strict      # Read-only /usr, /boot, /etc
+ProtectHome=read-only     # Read-only home except...
+ReadWritePaths=%h/.mira %h/Mira/data  # ...these paths
+PrivateTmp=true           # Isolated /tmp
 ```
 
-### AdvisoryService
+### **8.5 Input Validation**
 
-Single entry point for all advisory functionality:
+| Layer | Validation |
+|-------|------------|
+| MCP | Schema validation via `rmcp` |
+| HTTP | Axum extractors, content-length limits |
+| SQL | Parameterized queries (sqlx), no raw SQL |
+| File paths | Canonicalization, project-scoped access |
 
-```rust
-let service = AdvisoryService::from_env()?;
+### **8.6 Audit Logging**
 
-// Single model query
-let response = service.ask(AdvisoryModel::Gpt52, "question").await?;
+Currently minimal:
 
-// Council query (multiple models + synthesis)
-let council = service.council("question", Some(AdvisoryModel::Opus45)).await?;
+| What's Logged | Where |
+|---------------|-------|
+| Auth failures | journalctl (WARN) |
+| API errors | journalctl (WARN/ERROR) |
+| Tool calls | Not logged (privacy) |
+| Database queries | Not logged |
+
+#### **Future Considerations**
+- MCP call history table exists (`mcp_tool_calls`) but not fully utilized
+- Could add opt-in audit mode for debugging
+- No GDPR/compliance features currently
+
+### **8.7 Threat Model**
+
+| Threat | Mitigation | Status |
+|--------|------------|--------|
+| Unauthorized access | Token auth | ✅ (localhost), ⚠️ (exposed) |
+| Secret leakage | Detection + redaction | ✅ |
+| SQL injection | Parameterized queries | ✅ |
+| Path traversal | Canonicalization | ✅ |
+| Privilege escalation | systemd NoNewPrivileges | ✅ |
+| Man-in-the-middle | HTTPS for external APIs | ✅ |
+| Local access by other users | File permissions | ✅ |
+| Remote attacks on public instance | Rate limiting, WAF | ❌ Not implemented |
+
+### **8.8 Recommendations for Production**
+
+If deploying Mira externally:
+
+1. **Always use HTTPS** via nginx/Cloudflare
+2. **Rotate auth token** periodically
+3. **Add rate limiting** at nginx level
+4. **Enable UFW** to restrict ports
+5. **Monitor logs** for auth failures
+6. **Consider Cloudflare Access** for additional auth layer
+7. **Don't expose** unless necessary (use SSH tunnels instead)
+
+## 9. **Development Workflow**
+
+### **9.1 Project Structure**
+
+```
+/home/peter/Mira/
+├── src/                    # Rust source code
+│   ├── main.rs             # CLI entry point
+│   ├── lib.rs              # Library root
+│   ├── advisory/           # LLM provider integrations
+│   ├── chat/               # Studio chat backend
+│   ├── context/            # Carousel, context assembly
+│   ├── core/               # Shared ops, primitives
+│   ├── daemon.rs           # Background tasks
+│   ├── hooks/              # Claude Code hooks
+│   ├── indexer/            # Code/git indexing
+│   ├── server/             # MCP server, DB pool
+│   └── tools/              # MCP tool implementations
+├── studio/                 # SvelteKit frontend
+│   ├── src/                # Svelte components
+│   └── static/             # Static assets
+├── migrations/             # SQLx migrations (21 files)
+├── tests/                  # Integration tests
+├── docs/                   # Documentation
+├── data/                   # SQLite database (symlinked)
+└── .sqlx/                  # Offline query cache
 ```
 
-### Providers
+### **9.2 Build System**
 
-| Model | Provider | Role |
-|-------|----------|------|
-| GPT-5.2 | OpenAI | Council member, reasoning |
-| Opus 4.5 | Anthropic | Council member, extended thinking |
-| Gemini 3 Pro | Google | Council member, thinking mode |
-| DeepSeek Reasoner | DeepSeek | Synthesizer (not in council) |
+#### **Rust Backend**
+| Property | Value |
+|----------|-------|
+| Edition | 2024 |
+| Rust version | 1.92+ |
+| Package version | 2.0.0 |
+| Offline mode | `SQLX_OFFLINE=true` (queries pre-checked) |
 
-### Council Flow
+```bash
+# Development build
+cargo build
 
-```
-┌─────────┐  ┌─────────┐  ┌─────────┐
-│ GPT-5.2 │  │ Opus4.5 │  │ Gemini  │   ← Council members (parallel)
-└────┬────┘  └────┬────┘  └────┬────┘
-     │            │            │
-     └────────────┼────────────┘
-                  │
-                  ▼
-         ┌────────────────┐
-         │ DeepSeek       │   ← Synthesizer
-         │ Reasoner       │
-         └────────┬───────┘
-                  │
-                  ▼
-         ┌────────────────┐
-         │ CouncilSynthesis│  ← Structured output
-         │ - consensus     │     with provenance
-         │ - disagreements │
-         │ - unique_insights│
-         │ - recommendation│
-         └────────────────┘
+# Release build (optimized)
+SQLX_OFFLINE=true cargo build --release
+
+# Check without building
+cargo check
+
+# Clippy lints
+cargo clippy
 ```
 
-### Multi-Turn Sessions
+#### **Studio Frontend**
+| Property | Value |
+|----------|-------|
+| Framework | SvelteKit 2 + Svelte 5 |
+| Build tool | Vite 6 |
+| CSS | Tailwind 4 |
+| Adapter | Static (pre-rendered) |
 
-Sessions support tiered memory for long conversations:
+```bash
+cd studio
+npm run dev      # Development server
+npm run build    # Production build
+npm run preview  # Preview production build
+```
 
-1. **Recent turns** (verbatim) - last 6-12 messages
-2. **Summaries** - compressed older turns
-3. **Pins** - explicit constraints/requirements
-4. **Decisions** - what was decided and why
+#### **Full Rebuild Script**
+```bash
+./rebuild.sh                 # Rebuild everything, restart services
+./rebuild.sh --backend-only  # Just Mira backend
+./rebuild.sh --frontend-only # Just Studio frontend
+./rebuild.sh --no-restart    # Build without restarting
+```
 
-### Agentic Tool Calling
+### **9.3 Testing**
 
-External LLMs can call read-only Mira tools via `tool_bridge.rs`:
+#### **Test Counts**
+| Category | Count |
+|----------|-------|
+| Unit tests (`#[test]`) | ~180 |
+| Integration test files | 4 |
+| SQLx migrations | 21 |
 
-**Supported providers**: GPT-5.2, Gemini 3 Pro, DeepSeek Reasoner
+#### **Test Suites**
+| File | Purpose |
+|------|---------|
+| `tests/daemon_e2e.rs` | Daemon startup, background tasks |
+| `tests/integration_e2e.rs` | Full API integration |
+| `tests/mira_core_contract.rs` | Core ops behavior contracts |
+| `tests/tool_parity.rs` | MCP ↔ Chat tool equivalence |
 
-**Allowed tools** (10 read-only):
-- `recall`, `get_corrections`, `get_goals`, `list_tasks`
-- `semantic_code_search`, `get_symbols`, `get_related_files`
-- `find_similar_fixes`, `get_recent_commits`, `search_commits`
+#### **Running Tests**
+```bash
+# All tests
+cargo test
 
-**Security features**:
-- Whitelist enforcement
-- Budget governance (3 per-call, 10 per-session)
-- Query cooldown (same fingerprint blocked for 3 turns)
-- Loop prevention (hotline/council calls blocked)
-- Output wrapped as untrusted data
+# Specific test
+cargo test test_remember
+
+# With output
+cargo test -- --nocapture
+
+# Integration tests only
+cargo test --test integration_e2e
+```
+
+### **9.4 Database Migrations**
+
+SQLx handles schema migrations automatically:
+
+```bash
+# Create new migration
+sqlx migrate add <name>
+
+# Run pending migrations (happens on daemon start)
+sqlx migrate run
+
+# Revert last migration
+sqlx migrate revert
+
+# Check migration status
+sqlx migrate info
+```
+
+#### **Offline Mode**
+Queries are pre-checked at compile time via `.sqlx/` cache:
+
+```bash
+# Regenerate offline cache (requires running DB)
+cargo sqlx prepare
+
+# Build with offline mode (no DB needed)
+SQLX_OFFLINE=true cargo build
+```
+
+### **9.5 Development Commands**
+
+#### **Quick Reference**
+```bash
+# Start daemon (foreground, for debugging)
+cargo run
+
+# Start daemon (background, via systemd)
+systemctl --user start mira
+
+# Watch logs
+journalctl --user -u mira -f
+
+# Check status
+mira status
+
+# Connect via MCP (test)
+mira connect
+
+# Run with debug logging
+RUST_LOG=debug cargo run
+```
+
+### **9.6 Code Organization Conventions**
+
+#### **Module Structure**
+- `mod.rs` exports public API
+- `types.rs` for data structures
+- One file per logical component
+- Tests in same file (`#[cfg(test)]` module)
+
+#### **Error Handling**
+- Use `anyhow::Result` for fallible functions
+- Use `thiserror` for custom error types in `core/error.rs`
+- Prefer `.context()` over `.unwrap()` for better error messages
+
+#### **Async Patterns**
+- Tokio runtime throughout
+- `Arc<T>` for shared state
+- `RwLock` for read-heavy shared state
+- `Mutex` for write-heavy or simple cases
+- `spawn_blocking` for CPU-bound work (git2, parsing)
+
+### **9.7 Deployment**
+
+#### **Local Development**
+1. Clone repo
+2. Copy `.env.example` to `.env`, fill in API keys
+3. `cargo build --release`
+4. `./rebuild.sh`
+
+#### **Production (VPS)**
+1. SSH to server
+2. `git pull`
+3. `./rebuild.sh`
+4. Verify: `mira status`, `curl localhost:3000/health`
+
+#### **Install Script**
+```bash
+# Fresh install (uses Docker)
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+```
+
+### **9.8 Documentation**
+
+| File | Purpose |
+|------|---------|
+| `README.md` | Project overview, quick start |
+| `CLAUDE.md` | Instructions for Claude Code |
+| `docs/ARCHITECTURE.md` | This document |
+| `MCP_DEBUG_STATUS.md` | Debugging notes |
+
+### **9.9 No CI/CD (Yet)**
+
+Currently no automated CI/CD pipeline. Deployment is manual:
+
+1. Develop locally
+2. Test with `cargo test`
+3. Push to GitHub
+4. SSH to VPS, `git pull && ./rebuild.sh`
+
+#### **Future Considerations**
+- GitHub Actions for `cargo test` on PR
+- Automated deployment on push to main
+- Docker image publishing
+
+---
+
+## **Document Statistics**
+
+| Metric | Value |
+|--------|-------|
+| Document lines | ~1,595 |
+| Major sections | 9 |
+| Subsections | ~65 |
+| Decision ledger entries | 17 (spanning 5 months) |
+| Code references | ~50 file paths |
+
+### **Codebase Counts**
+| Component | Count |
+|-----------|-------|
+| Source files | ~90 |
+| Core ops modules | 18 |
+| MCP tools | 30+ |
+| Chat tools | 17 + 8 tool_defs |
+| Advisory providers | 4 |
+| Unit tests | ~180 |
+| Integration tests | 4 |
+| SQLx migrations | 21 |
+
+---
+
+### **Revision History**
+
+| Date | Rev | Author | Changes |
+|------|-----|--------|---------|
+| 2025-12-25 | 1.0 | Peter + Claude | Initial comprehensive documentation. All 9 sections complete. |
+| 2025-12-25 | 1.1 | Peter + Claude | Council review feedback: added Carousel state machine diagram, context composition strategy, Hotline interface clarification. |
+
+---
+
+*This document is the authoritative reference for Mira's architecture. Keep it updated.*
