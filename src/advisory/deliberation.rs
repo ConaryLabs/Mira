@@ -162,8 +162,19 @@ impl DeliberatedSynthesis {
 // Prompt Building
 // ============================================================================
 
-/// System prompt for all deliberation rounds (cached)
-pub const DELIBERATION_SYSTEM_PROMPT: &str = r#"You are participating in a multi-round council deliberation alongside GPT-5.2, Gemini 3 Pro, and Opus 4.5.
+/// Build model-specific system prompt with identity marker
+///
+/// Each model needs to know which one it is so it can properly reference itself
+/// and others during multi-round deliberation.
+pub fn build_deliberation_system_prompt(model: AdvisoryModel) -> String {
+    let (identity, others) = match model {
+        AdvisoryModel::Gpt52 => ("GPT-5.2", "Gemini 3 Pro and Opus 4.5"),
+        AdvisoryModel::Gemini3Pro => ("Gemini 3 Pro", "GPT-5.2 and Opus 4.5"),
+        AdvisoryModel::Opus45 => ("Opus 4.5", "GPT-5.2 and Gemini 3 Pro"),
+        AdvisoryModel::DeepSeekReasoner => ("DeepSeek Reasoner", "GPT-5.2, Gemini 3 Pro, and Opus 4.5"),
+    };
+
+    format!(r#"You are {identity}. You are participating in a multi-round council deliberation with {others}.
 
 Rules:
 - Round 1: Initial positions. Be specific, take clear stances.
@@ -172,7 +183,8 @@ Rules:
 
 DeepSeek Reasoner moderates between rounds, identifying disagreements and focus questions.
 
-Your goal: Reach the best answer through genuine deliberation, not mere agreement. Disagree respectfully when warranted. Change your mind when persuaded by better arguments."#;
+Your goal: Reach the best answer through genuine deliberation, not mere agreement. Disagree respectfully when warranted. Change your mind when persuaded by better arguments."#)
+}
 
 /// Build the user message for a specific round
 pub fn build_round_prompt(
@@ -454,5 +466,24 @@ mod tests {
         assert_eq!(config.max_rounds, 4);
         assert_eq!(config.models.len(), 3);
         assert!(config.models.contains(&AdvisoryModel::Opus45));
+    }
+
+    #[test]
+    fn test_identity_markers() {
+        // GPT-5.2 should know it's GPT-5.2
+        let gpt_prompt = build_deliberation_system_prompt(AdvisoryModel::Gpt52);
+        assert!(gpt_prompt.contains("You are GPT-5.2"));
+        assert!(gpt_prompt.contains("Gemini 3 Pro and Opus 4.5"));
+        assert!(!gpt_prompt.contains("GPT-5.2 and")); // GPT shouldn't list itself as "other"
+
+        // Gemini should know it's Gemini
+        let gemini_prompt = build_deliberation_system_prompt(AdvisoryModel::Gemini3Pro);
+        assert!(gemini_prompt.contains("You are Gemini 3 Pro"));
+        assert!(gemini_prompt.contains("GPT-5.2 and Opus 4.5"));
+
+        // Opus should know it's Opus
+        let opus_prompt = build_deliberation_system_prompt(AdvisoryModel::Opus45);
+        assert!(opus_prompt.contains("You are Opus 4.5"));
+        assert!(opus_prompt.contains("GPT-5.2 and Gemini 3 Pro"));
     }
 }
