@@ -193,16 +193,63 @@ async fn call_opus_with_tools(
     }))
 }
 
-/// Council with full deliberation - all 3 models discuss across multiple rounds
-async fn call_council(message: &str) -> Result<serde_json::Value> {
-    let service = AdvisoryService::from_env()?;
+/// Spawn async council deliberation - returns immediately with session info
+///
+/// Deliberation runs in background, progress tracked in database.
+/// Use advisory_session(action: "get", session_id: ...) to check status.
+async fn spawn_council_deliberation(
+    message: String,
+    db: SqlitePool,
+    session_id: String,
+) -> Result<serde_json::Value> {
+    use crate::advisory::session::{SessionStatus, update_status, DeliberationProgress, update_deliberation_progress};
 
-    // Multi-round deliberation with all 3 models (including Opus - fresh perspective)
-    // Up to 4 rounds, stops early on consensus
-    // DeepSeek Reasoner moderates between rounds
-    let response = service.council_deliberate(message, None).await?;
+    // Set session status to Deliberating
+    update_status(&db, &session_id, SessionStatus::Deliberating).await?;
 
-    Ok(response.to_json())
+    // Initialize progress
+    let progress = DeliberationProgress::new(4); // max_rounds from default config
+    update_deliberation_progress(&db, &session_id, &progress).await?;
+
+    // Spawn the deliberation task in background
+    let db_clone = db.clone();
+    let session_id_clone = session_id.clone();
+    let message_clone = message.clone();
+
+    tokio::spawn(async move {
+        tracing::info!(session_id = %session_id_clone, "Starting background council deliberation");
+
+        let result = async {
+            let service = AdvisoryService::from_env()?;
+            service.council_deliberate_with_progress(
+                &message_clone,
+                None,
+                &db_clone,
+                &session_id_clone,
+            ).await
+        }.await;
+
+        match result {
+            Ok(_) => {
+                // Progress already updated by council_deliberate_with_progress
+                // Just update session status to Active (deliberation complete)
+                let _ = update_status(&db_clone, &session_id_clone, SessionStatus::Active).await;
+                tracing::info!(session_id = %session_id_clone, "Council deliberation complete");
+            }
+            Err(e) => {
+                tracing::error!(session_id = %session_id_clone, error = %e, "Council deliberation failed");
+                let _ = update_status(&db_clone, &session_id_clone, SessionStatus::Failed).await;
+            }
+        }
+    });
+
+    // Return immediately with session info
+    Ok(serde_json::json!({
+        "status": "deliberating",
+        "session_id": session_id,
+        "message": "Council deliberation started in background. Use advisory_session(action: 'get', session_id: '...') to check progress.",
+        "provider": "council"
+    }))
 }
 
 /// Legacy single-shot council (for backward compatibility if needed)
@@ -334,7 +381,10 @@ pub async fn call_mira(
         (Some("deepseek"), false) => call_deepseek(&message).await?,
         (Some("opus"), true) => call_opus_with_tools(&message, db, semantic, project_id).await?,
         (Some("opus"), false) => call_opus(&message).await?,
-        (Some("council"), _) => call_council(&message).await?,
+        (Some("council"), _) => {
+            // Council mode: spawn async deliberation, return immediately
+            return spawn_council_deliberation(message, db.clone(), session_id).await;
+        },
         (_, true) => call_gpt_with_tools(&message, db, semantic, project_id).await?,
         (_, false) => call_gpt(&message).await?,
     };
