@@ -432,6 +432,217 @@ impl AdvisoryService {
         }
     }
 
+    /// Council deliberation with progress updates for async execution
+    ///
+    /// Updates progress in the database after each significant event:
+    /// - Each model responding in a round
+    /// - Moderator analysis complete
+    /// - Synthesis starting
+    /// - Completion or failure
+    pub async fn council_deliberate_with_progress(
+        &self,
+        message: &str,
+        config: Option<DeliberationConfig>,
+        db: &sqlx::SqlitePool,
+        session_id: &str,
+    ) -> Result<DeliberatedSynthesis> {
+        use std::time::Duration;
+        use tokio::time::timeout;
+        use session::{DeliberationProgress, update_deliberation_progress};
+
+        let config = config.unwrap_or_default();
+        let mut rounds: Vec<DeliberationRound> = Vec::new();
+        let mut previous_responses: HashMap<AdvisoryModel, Vec<String>> = HashMap::new();
+        let mut moderator_analyses: Vec<ModeratorAnalysis> = Vec::new();
+
+        // Initialize progress
+        let mut progress = DeliberationProgress::new(config.max_rounds);
+        let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+        tracing::info!(
+            max_rounds = config.max_rounds,
+            models = ?config.models,
+            session_id = session_id,
+            "Starting async council deliberation"
+        );
+
+        for round_num in 1..=config.max_rounds {
+            // Update progress: starting new round
+            progress.start_round(round_num);
+            let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+            tracing::info!(round = round_num, "Starting deliberation round");
+
+            // Build prompt for this round
+            let prompt = deliberation::build_round_prompt(
+                message,
+                round_num,
+                config.max_rounds,
+                &previous_responses,
+                moderator_analyses.last(),
+            );
+
+            // Query all models in parallel
+            let per_model_timeout = Duration::from_secs(config.per_model_timeout_secs);
+            let mut round_responses: HashMap<AdvisoryModel, String> = HashMap::new();
+            let mut round_errors: Vec<String> = Vec::new();
+
+            let futures: Vec<_> = config.models.iter().filter_map(|model| {
+                self.providers.get(model).map(|provider| {
+                    let provider = provider.clone();
+                    let prompt = prompt.clone();
+                    let model = *model;
+                    let system_prompt = deliberation::build_deliberation_system_prompt(model);
+                    async move {
+                        let result = timeout(
+                            per_model_timeout,
+                            provider.complete(AdvisoryRequest {
+                                message: prompt,
+                                system: Some(system_prompt),
+                                history: vec![],
+                                enable_tools: false,
+                            }),
+                        ).await;
+                        (model, result)
+                    }
+                })
+            }).collect();
+
+            let results = futures::future::join_all(futures).await;
+
+            for (model, result) in results {
+                match result {
+                    Ok(Ok(response)) => {
+                        tracing::debug!(model = ?model, "Model responded");
+                        round_responses.insert(model, response.text.clone());
+                        previous_responses.entry(model).or_default().push(response.text);
+
+                        // Update progress: model responded
+                        progress.model_responded(model.as_str());
+                        let _ = update_deliberation_progress(db, session_id, &progress).await;
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(model = ?model, error = %e, "Model error");
+                        round_errors.push(format!("{:?}: {}", model, e));
+                    }
+                    Err(_) => {
+                        tracing::warn!(model = ?model, "Model timeout");
+                        round_errors.push(format!("{:?}: timeout", model));
+                    }
+                }
+            }
+
+            if round_responses.is_empty() {
+                let error = format!("All models failed in round {}: {:?}", round_num, round_errors);
+                progress.fail(error.clone());
+                let _ = update_deliberation_progress(db, session_id, &progress).await;
+                anyhow::bail!(error);
+            }
+
+            // Update progress: round complete, starting moderator analysis
+            progress.round_complete(round_num);
+            let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+            // Get moderator analysis (skip for final round)
+            let analysis = if round_num < config.max_rounds {
+                if let Some(reasoner) = self.providers.get(&AdvisoryModel::DeepSeekReasoner) {
+                    let moderator_prompt = deliberation::build_moderator_prompt(
+                        message,
+                        round_num,
+                        &round_responses,
+                        &moderator_analyses,
+                    );
+
+                    match reasoner.complete(AdvisoryRequest {
+                        message: moderator_prompt,
+                        system: Some(deliberation::MODERATOR_SYSTEM_PROMPT.to_string()),
+                        history: vec![],
+                        enable_tools: false,
+                    }).await {
+                        Ok(response) => {
+                            match ModeratorAnalysis::parse(&response.text) {
+                                Ok(a) => {
+                                    tracing::info!(
+                                        should_continue = a.should_continue,
+                                        disagreements = a.disagreements.len(),
+                                        resolved = a.resolved_points.len(),
+                                        "Moderator analysis complete"
+                                    );
+                                    Some(a)
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to parse moderator analysis");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Moderator error");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Record this round
+            let now = chrono::Utc::now().timestamp();
+            let round_data = DeliberationRound {
+                round: round_num,
+                responses: round_responses.iter()
+                    .map(|(m, r)| (m.as_str().to_string(), r.clone()))
+                    .collect(),
+                moderator_analysis: analysis.clone(),
+                timestamp: now,
+            };
+            rounds.push(round_data);
+
+            // Check if we should continue
+            if let Some(ref a) = analysis {
+                if !a.should_continue {
+                    tracing::info!(
+                        round = round_num,
+                        reason = ?a.early_exit_reason,
+                        "Early consensus reached"
+                    );
+                    moderator_analyses.push(a.clone());
+                    break;
+                }
+                moderator_analyses.push(a.clone());
+            }
+        }
+
+        // Update progress: starting synthesis
+        progress.start_synthesis();
+        let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+        // Final synthesis with deliberation context
+        let synthesis = self.synthesize_deliberation(message, &rounds).await?;
+        let early_consensus = rounds.len() < config.max_rounds as usize;
+
+        tracing::info!(
+            rounds_completed = rounds.len(),
+            early_consensus = early_consensus,
+            "Deliberation complete"
+        );
+
+        let result = DeliberatedSynthesis {
+            synthesis,
+            rounds_completed: rounds.len() as u8,
+            early_consensus,
+            rounds,
+        };
+
+        // Update progress: complete with result
+        progress.complete(result.to_json());
+        let _ = update_deliberation_progress(db, session_id, &progress).await;
+
+        Ok(result)
+    }
+
     /// Check which providers are available
     #[allow(dead_code)]
     pub fn available_models(&self) -> Vec<AdvisoryModel> {

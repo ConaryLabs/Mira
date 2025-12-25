@@ -61,24 +61,35 @@ impl SessionMode {
 /// Session status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStatus {
+    /// Deliberation in progress (async council mode)
+    Deliberating,
+    /// Ready for interaction
     Active,
+    /// Older turns have been summarized
     Summarized,
+    /// Session closed/expired
     Archived,
+    /// Deliberation failed
+    Failed,
 }
 
 impl SessionStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
+            SessionStatus::Deliberating => "deliberating",
             SessionStatus::Active => "active",
             SessionStatus::Summarized => "summarized",
             SessionStatus::Archived => "archived",
+            SessionStatus::Failed => "failed",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
+            "deliberating" => SessionStatus::Deliberating,
             "summarized" => SessionStatus::Summarized,
             "archived" => SessionStatus::Archived,
+            "failed" => SessionStatus::Failed,
             _ => SessionStatus::Active,
         }
     }
@@ -710,4 +721,116 @@ pub async fn summarize_older_turns(
     .await?;
 
     Ok(Some(summary))
+}
+
+// ============================================================================
+// Deliberation Progress Tracking
+// ============================================================================
+
+/// Deliberation progress for async council mode
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeliberationProgress {
+    pub current_round: u8,
+    pub max_rounds: u8,
+    pub status: DeliberationProgressStatus,
+    pub models_responded: Vec<String>,
+    pub error: Option<String>,
+    pub started_at: i64,
+    /// Final result as JSON (when complete)
+    pub result: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliberationProgressStatus {
+    RoundInProgress,
+    ModeratorAnalyzing,
+    Synthesizing,
+    Complete,
+    Failed,
+}
+
+impl DeliberationProgress {
+    pub fn new(max_rounds: u8) -> Self {
+        Self {
+            current_round: 1,
+            max_rounds,
+            status: DeliberationProgressStatus::RoundInProgress,
+            models_responded: vec![],
+            error: None,
+            started_at: chrono::Utc::now().timestamp(),
+            result: None,
+        }
+    }
+
+    pub fn round_complete(&mut self, round: u8) {
+        self.current_round = round;
+        self.models_responded.clear();
+        self.status = DeliberationProgressStatus::ModeratorAnalyzing;
+    }
+
+    pub fn model_responded(&mut self, model: &str) {
+        if !self.models_responded.contains(&model.to_string()) {
+            self.models_responded.push(model.to_string());
+        }
+    }
+
+    pub fn start_round(&mut self, round: u8) {
+        self.current_round = round;
+        self.models_responded.clear();
+        self.status = DeliberationProgressStatus::RoundInProgress;
+    }
+
+    pub fn start_synthesis(&mut self) {
+        self.status = DeliberationProgressStatus::Synthesizing;
+    }
+
+    pub fn complete(&mut self, result: serde_json::Value) {
+        self.status = DeliberationProgressStatus::Complete;
+        self.result = Some(result);
+    }
+
+    pub fn fail(&mut self, error: String) {
+        self.status = DeliberationProgressStatus::Failed;
+        self.error = Some(error);
+    }
+}
+
+/// Update deliberation progress for a session
+pub async fn update_deliberation_progress(
+    db: &SqlitePool,
+    session_id: &str,
+    progress: &DeliberationProgress,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let progress_json = serde_json::to_string(progress)?;
+
+    sqlx::query(
+        "UPDATE advisory_sessions SET deliberation_progress = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(&progress_json)
+    .bind(now)
+    .bind(session_id)
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+/// Get deliberation progress for a session
+pub async fn get_deliberation_progress(
+    db: &SqlitePool,
+    session_id: &str,
+) -> Result<Option<DeliberationProgress>> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT deliberation_progress FROM advisory_sessions WHERE id = ?"
+    )
+    .bind(session_id)
+    .fetch_optional(db)
+    .await?;
+
+    match row {
+        Some((Some(json),)) => Ok(Some(serde_json::from_str(&json)?)),
+        _ => Ok(None),
+    }
 }

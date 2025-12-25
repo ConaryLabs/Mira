@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 
 use crate::advisory::session::{
     list_sessions, get_session, get_all_messages, get_pins, get_decisions,
-    update_status, SessionStatus, add_pin, add_decision,
+    update_status, SessionStatus, add_pin, add_decision, get_deliberation_progress,
 };
 use crate::tools::AdvisorySessionRequest;
 
@@ -25,14 +25,52 @@ pub async fn list(db: &SqlitePool, project_id: Option<i64>, limit: i64) -> Resul
 }
 
 /// Get a specific session with all its messages, pins, and decisions
+/// For deliberating sessions, includes progress information
 pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value> {
     let session = get_session(db, session_id).await?
         .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+    // For deliberating sessions, return progress info prominently
+    if session.status == SessionStatus::Deliberating {
+        if let Some(progress) = get_deliberation_progress(db, session_id).await? {
+            let elapsed = chrono::Utc::now().timestamp() - progress.started_at;
+            return Ok(serde_json::json!({
+                "status": "deliberating",
+                "session_id": session_id,
+                "progress": {
+                    "current_round": progress.current_round,
+                    "max_rounds": progress.max_rounds,
+                    "phase": progress.status,
+                    "models_responded": progress.models_responded,
+                    "elapsed_seconds": elapsed,
+                },
+                "message": format!(
+                    "Round {}/{}: {} models responded. Phase: {:?}",
+                    progress.current_round,
+                    progress.max_rounds,
+                    progress.models_responded.len(),
+                    progress.status
+                ),
+            }));
+        }
+    }
+
+    // For completed/failed sessions, include the result if available
+    let deliberation_result = if session.status == SessionStatus::Active || session.status == SessionStatus::Failed {
+        if let Some(progress) = get_deliberation_progress(db, session_id).await? {
+            progress.result
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let messages = get_all_messages(db, session_id).await?;
     let pins = get_pins(db, session_id).await?;
     let decisions = get_decisions(db, session_id).await?;
 
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "session": {
             "id": session.id,
             "topic": session.topic,
@@ -55,7 +93,14 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
             "topic": d.topic,
             "rationale": d.rationale,
         })).collect::<Vec<_>>(),
-    }))
+    });
+
+    // Include deliberation result for completed council sessions
+    if let Some(delib_result) = deliberation_result {
+        result["deliberation_result"] = delib_result;
+    }
+
+    Ok(result)
 }
 
 /// Close/archive a session
