@@ -147,6 +147,7 @@ pub struct AdvisorySession {
     pub provider: Option<String>,
     pub status: SessionStatus,
     pub total_turns: i32,
+    pub created_at: i64,
 }
 
 // ============================================================================
@@ -187,9 +188,9 @@ pub async fn create_session(
 
 /// Get an existing session
 pub async fn get_session(db: &SqlitePool, session_id: &str) -> Result<Option<AdvisorySession>> {
-    let row = sqlx::query_as::<_, (String, Option<i64>, Option<String>, String, Option<String>, String, i32)>(
+    let row = sqlx::query_as::<_, (String, Option<i64>, Option<String>, String, Option<String>, String, i32, i64)>(
         r#"
-        SELECT id, project_id, topic, mode, provider, status, total_turns
+        SELECT id, project_id, topic, mode, provider, status, total_turns, created_at
         FROM advisory_sessions
         WHERE id = ?
         "#
@@ -198,7 +199,7 @@ pub async fn get_session(db: &SqlitePool, session_id: &str) -> Result<Option<Adv
     .fetch_optional(db)
     .await?;
 
-    Ok(row.map(|(id, project_id, topic, mode, provider, status, total_turns)| {
+    Ok(row.map(|(id, project_id, topic, mode, provider, status, total_turns, created_at)| {
         AdvisorySession {
             id,
             project_id,
@@ -207,6 +208,7 @@ pub async fn get_session(db: &SqlitePool, session_id: &str) -> Result<Option<Adv
             provider,
             status: SessionStatus::from_str(&status),
             total_turns,
+            created_at,
         }
     }))
 }
@@ -226,7 +228,7 @@ pub async fn list_sessions(
 
     let query = format!(
         r#"
-        SELECT id, project_id, topic, mode, provider, status, total_turns
+        SELECT id, project_id, topic, mode, provider, status, total_turns, created_at
         FROM advisory_sessions
         WHERE ({}) AND (project_id = ? OR ? IS NULL)
         ORDER BY updated_at DESC
@@ -235,14 +237,14 @@ pub async fn list_sessions(
         status_filter
     );
 
-    let rows = sqlx::query_as::<_, (String, Option<i64>, Option<String>, String, Option<String>, String, i32)>(&query)
+    let rows = sqlx::query_as::<_, (String, Option<i64>, Option<String>, String, Option<String>, String, i32, i64)>(&query)
         .bind(project_id)
         .bind(project_id)
         .bind(limit)
         .fetch_all(db)
         .await?;
 
-    Ok(rows.into_iter().map(|(id, project_id, topic, mode, provider, status, total_turns)| {
+    Ok(rows.into_iter().map(|(id, project_id, topic, mode, provider, status, total_turns, created_at)| {
         AdvisorySession {
             id,
             project_id,
@@ -251,6 +253,7 @@ pub async fn list_sessions(
             provider,
             status: SessionStatus::from_str(&status),
             total_turns,
+            created_at,
         }
     }).collect())
 }
@@ -538,6 +541,22 @@ pub async fn update_status(db: &SqlitePool, session_id: &str, status: SessionSta
         "UPDATE advisory_sessions SET status = ?, updated_at = ? WHERE id = ?"
     )
     .bind(status.as_str())
+    .bind(now)
+    .bind(session_id)
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+/// Update session topic (used after synthesis generates a title)
+pub async fn update_topic(db: &SqlitePool, session_id: &str, topic: &str) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+
+    sqlx::query(
+        "UPDATE advisory_sessions SET topic = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(topic)
     .bind(now)
     .bind(session_id)
     .execute(db)

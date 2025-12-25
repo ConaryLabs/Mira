@@ -71,6 +71,9 @@ pub enum SynthesisConfidence {
 /// Structured synthesis output from DeepSeek Reasoner
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CouncilSynthesis {
+    /// Short memorable title for the session (3-6 words)
+    #[serde(default)]
+    pub session_title: Option<String>,
     /// Points where 2+ models agree
     pub consensus: Vec<ConsensusPoint>,
     /// Topics where models disagree
@@ -89,6 +92,7 @@ impl CouncilSynthesis {
     /// Create an empty synthesis (for when parsing fails)
     pub fn empty() -> Self {
         Self {
+            session_title: None,
             consensus: vec![],
             disagreements: vec![],
             unique_insights: vec![],
@@ -101,6 +105,7 @@ impl CouncilSynthesis {
     /// Create synthesis from raw text (fallback when JSON parsing fails)
     pub fn from_raw_text(text: &str) -> Self {
         Self {
+            session_title: None,
             consensus: vec![],
             disagreements: vec![],
             unique_insights: vec![],
@@ -132,6 +137,7 @@ impl CouncilSynthesis {
     fn parse_simple_format(json_str: &str) -> Result<Self, serde_json::Error> {
         #[derive(Deserialize)]
         struct SimpleFormat {
+            session_title: Option<String>,
             consensus: Option<Vec<String>>,
             disagreements: Option<Vec<String>>,
             unique_insights: Option<Vec<String>>,
@@ -176,6 +182,7 @@ impl CouncilSynthesis {
         };
 
         Ok(Self {
+            session_title: simple.session_title,
             consensus,
             disagreements,
             unique_insights,

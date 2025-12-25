@@ -20,6 +20,7 @@ pub async fn list(db: &SqlitePool, project_id: Option<i64>, limit: i64) -> Resul
             "mode": s.mode.as_str(),
             "status": s.status.as_str(),
             "total_turns": s.total_turns,
+            "created_at": s.created_at,
         })
     }).collect();
     Ok(serde_json::json!({ "sessions": result }))
@@ -151,6 +152,7 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
             "mode": session.mode.as_str(),
             "status": session.status.as_str(),
             "total_turns": session.total_turns,
+            "created_at": session.created_at,
         },
         "messages": message_data,
         "pins": pins.iter().map(|p| serde_json::json!({
