@@ -404,7 +404,7 @@ async fn process_deepseek_chat(
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
                         reasoning_tokens: usage.reasoning_tokens,
-                        cached_tokens: 0, // DeepSeek doesn't report cached tokens
+                        cached_tokens: usage.cached_tokens,
                     }).await?;
                 }
                 ProviderStreamEvent::Error(e) => {
