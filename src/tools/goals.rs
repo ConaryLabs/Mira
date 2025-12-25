@@ -235,6 +235,12 @@ pub async fn record_rejected_approach(
     }))
 }
 
+/// Delete a goal and its milestones
+pub async fn delete_goal(db: &SqlitePool, goal_id: &str) -> anyhow::Result<Option<String>> {
+    let ctx = OpContext::new(std::env::current_dir().unwrap_or_default()).with_db(db.clone());
+    Ok(core_mira::delete_goal(&ctx, goal_id).await?)
+}
+
 /// Get progress summary for goals
 pub async fn get_goal_progress(
     db: &SqlitePool,

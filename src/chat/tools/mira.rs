@@ -396,8 +396,25 @@ impl<'a> MiraTools<'a> {
                 }
             }
 
+"delete" => {
+                let goal_id = args["goal_id"].as_str().unwrap_or("");
+                if goal_id.is_empty() {
+                    return Ok("Error: goal_id is required".into());
+                }
+
+                match core_mira::delete_goal(&ctx, goal_id).await {
+                    Ok(Some(title)) => Ok(json!({
+                        "status": "deleted",
+                        "goal_id": goal_id,
+                        "title": title,
+                    }).to_string()),
+                    Ok(None) => Ok(json!({"error": "Goal not found"}).to_string()),
+                    Err(e) => Ok(format!("Error: {}", e)),
+                }
+            }
+
             _ => Ok(format!(
-                "Unknown action: {}. Use create/list/update/add_milestone/complete_milestone/progress",
+                "Unknown action: {}. Use create/list/update/delete/add_milestone/complete_milestone/progress",
                 action
             )),
         }

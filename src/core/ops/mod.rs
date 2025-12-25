@@ -41,6 +41,9 @@ pub mod chat_chain;
 // Phase 6: Observability
 pub mod audit;
 
+// Phase 7: Proactive Organization
+pub mod proposals;
+
 // Future phases:
 // pub mod council;
 // pub mod index;

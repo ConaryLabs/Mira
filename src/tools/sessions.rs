@@ -580,6 +580,28 @@ pub async fn session_start(
     })
     .collect();
 
+    // 13. Get pending proposals for review
+    let pending_proposals = sqlx::query_as::<_, (String, String, String, f64)>(r#"
+        SELECT id, proposal_type, content, confidence
+        FROM proposals
+        WHERE (project_id IS NULL OR project_id = $1)
+          AND status = 'pending'
+        ORDER BY confidence DESC
+        LIMIT 5
+    "#)
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, proposal_type, content, confidence)| ProposalSummary {
+        id,
+        proposal_type,
+        content,
+        confidence,
+    })
+    .collect();
+
     Ok(SessionStartResult {
         project_id,
         project_name: name,
@@ -601,6 +623,7 @@ pub async fn session_start(
         active_plan,
         working_docs,
         recent_mcp_history,
+        pending_proposals,
         index_fresh,
         stale_file_count: stale_count,
     })
@@ -700,6 +723,7 @@ pub struct SessionStartResult {
     pub active_plan: Option<ActivePlan>,
     pub working_docs: Vec<WorkingDoc>,
     pub recent_mcp_history: Vec<McpHistorySummary>,
+    pub pending_proposals: Vec<ProposalSummary>,
     pub index_fresh: bool,
     pub stale_file_count: usize,
 }
@@ -728,4 +752,12 @@ pub struct GoalSummary {
 pub struct TaskSummary {
     pub title: String,
     pub status: String,
+}
+
+#[derive(Debug)]
+pub struct ProposalSummary {
+    pub id: String,
+    pub proposal_type: String,
+    pub content: String,
+    pub confidence: f64,
 }

@@ -42,10 +42,12 @@ pub async fn query(db: &SqlitePool, req: QueryRequest) -> anyhow::Result<serde_j
         anyhow::bail!("Only SELECT queries are allowed for safety");
     }
 
-    // Prevent dangerous operations
+    // Prevent dangerous operations - check for whole words only
     let forbidden = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "TRUNCATE", "EXEC", "EXECUTE"];
+    // Split on non-alphanumeric chars to check whole words (avoids matching CREATE in CREATED_AT)
+    let words: Vec<&str> = sql_upper.split(|c: char| !c.is_alphanumeric() && c != '_').collect();
     for word in forbidden {
-        if sql_upper.contains(word) {
+        if words.contains(&word) {
             anyhow::bail!("Query contains forbidden keyword: {}", word);
         }
     }
