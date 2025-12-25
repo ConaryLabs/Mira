@@ -228,6 +228,10 @@ struct AnthropicError {
 struct AnthropicUsage {
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(default)]
+    cache_creation_input_tokens: u32,
+    #[serde(default)]
+    cache_read_input_tokens: u32,
 }
 
 // ============================================================================
@@ -438,6 +442,8 @@ impl OpusProvider {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
             reasoning_tokens: 0, // Anthropic doesn't separate thinking tokens in usage
+            cache_read_tokens: u.cache_read_input_tokens,
+            cache_write_tokens: u.cache_creation_input_tokens,
         });
 
         Ok((
@@ -569,6 +575,8 @@ impl AdvisoryProvider for OpusProvider {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
             reasoning_tokens: 0,
+            cache_read_tokens: u.cache_read_input_tokens,
+            cache_write_tokens: u.cache_creation_input_tokens,
         });
 
         Ok(AdvisoryResponse {

@@ -297,6 +297,8 @@ impl GeminiProvider {
             input_tokens: u.prompt_token_count.unwrap_or(0),
             output_tokens: u.candidates_token_count.unwrap_or(0),
             reasoning_tokens: 0,
+            cache_read_tokens: 0,  // Gemini 3 Pro preview: no caching yet
+            cache_write_tokens: 0,
         });
 
         Ok((
@@ -412,6 +414,8 @@ impl AdvisoryProvider for GeminiProvider {
             input_tokens: u.prompt_token_count.unwrap_or(0),
             output_tokens: u.candidates_token_count.unwrap_or(0),
             reasoning_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         });
 
         Ok(AdvisoryResponse {

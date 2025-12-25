@@ -105,6 +105,7 @@ pub struct AdvisoryMessage {
     pub content: String,
     pub token_count: Option<i32>,
     pub synthesis_data: Option<String>,
+    pub usage_json: Option<String>,
 }
 
 /// A pinned constraint or fact
@@ -263,6 +264,19 @@ pub async fn add_message(
     provider: Option<&str>,
     synthesis_data: Option<&str>,
 ) -> Result<String> {
+    add_message_with_usage(db, session_id, role, content, provider, synthesis_data, None).await
+}
+
+/// Add a message with usage data
+pub async fn add_message_with_usage(
+    db: &SqlitePool,
+    session_id: &str,
+    role: &str,
+    content: &str,
+    provider: Option<&str>,
+    synthesis_data: Option<&str>,
+    usage_json: Option<&str>,
+) -> Result<String> {
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
 
@@ -285,8 +299,8 @@ pub async fn add_message(
 
     sqlx::query(
         r#"
-        INSERT INTO advisory_messages (id, session_id, turn_number, role, provider, content, token_count, synthesis_data, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO advisory_messages (id, session_id, turn_number, role, provider, content, token_count, synthesis_data, usage_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#
     )
     .bind(&id)
@@ -297,6 +311,7 @@ pub async fn add_message(
     .bind(content)
     .bind(token_count)
     .bind(synthesis_data)
+    .bind(usage_json)
     .bind(now)
     .execute(db)
     .await?;
@@ -324,9 +339,9 @@ pub async fn get_recent_messages(
     session_id: &str,
     limit: i64,
 ) -> Result<Vec<AdvisoryMessage>> {
-    let rows = sqlx::query_as::<_, (String, i32, String, Option<String>, String, Option<i32>, Option<String>)>(
+    let rows = sqlx::query_as::<_, (String, i32, String, Option<String>, String, Option<i32>, Option<String>, Option<String>)>(
         r#"
-        SELECT id, turn_number, role, provider, content, token_count, synthesis_data
+        SELECT id, turn_number, role, provider, content, token_count, synthesis_data, usage_json
         FROM advisory_messages
         WHERE session_id = ?
         ORDER BY turn_number DESC, created_at DESC
@@ -339,7 +354,7 @@ pub async fn get_recent_messages(
     .await?;
 
     // Reverse to get chronological order
-    Ok(rows.into_iter().rev().map(|(id, turn_number, role, provider, content, token_count, synthesis_data)| {
+    Ok(rows.into_iter().rev().map(|(id, turn_number, role, provider, content, token_count, synthesis_data, usage_json)| {
         AdvisoryMessage {
             id,
             turn_number,
@@ -348,15 +363,16 @@ pub async fn get_recent_messages(
             content,
             token_count,
             synthesis_data,
+            usage_json,
         }
     }).collect())
 }
 
 /// Get all messages for a session (for debugging/export)
 pub async fn get_all_messages(db: &SqlitePool, session_id: &str) -> Result<Vec<AdvisoryMessage>> {
-    let rows = sqlx::query_as::<_, (String, i32, String, Option<String>, String, Option<i32>, Option<String>)>(
+    let rows = sqlx::query_as::<_, (String, i32, String, Option<String>, String, Option<i32>, Option<String>, Option<String>)>(
         r#"
-        SELECT id, turn_number, role, provider, content, token_count, synthesis_data
+        SELECT id, turn_number, role, provider, content, token_count, synthesis_data, usage_json
         FROM advisory_messages
         WHERE session_id = ?
         ORDER BY turn_number ASC, created_at ASC
@@ -366,7 +382,7 @@ pub async fn get_all_messages(db: &SqlitePool, session_id: &str) -> Result<Vec<A
     .fetch_all(db)
     .await?;
 
-    Ok(rows.into_iter().map(|(id, turn_number, role, provider, content, token_count, synthesis_data)| {
+    Ok(rows.into_iter().map(|(id, turn_number, role, provider, content, token_count, synthesis_data, usage_json)| {
         AdvisoryMessage {
             id,
             turn_number,
@@ -375,6 +391,7 @@ pub async fn get_all_messages(db: &SqlitePool, session_id: &str) -> Result<Vec<A
             content,
             token_count,
             synthesis_data,
+            usage_json,
         }
     }).collect())
 }
