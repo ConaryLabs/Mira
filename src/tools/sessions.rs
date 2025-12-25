@@ -584,12 +584,12 @@ pub async fn session_start(
     let pending_proposals = sqlx::query_as::<_, (String, String, String, f64)>(r#"
         SELECT id, proposal_type, content, confidence
         FROM proposals
-        WHERE (project_id IS NULL OR project_id = $1)
+        WHERE (project_path IS NULL OR project_path = $1)
           AND status = 'pending'
         ORDER BY confidence DESC
         LIMIT 5
     "#)
-    .bind(project_id)
+    .bind(&path_str)
     .fetch_all(db)
     .await
     .unwrap_or_default()
