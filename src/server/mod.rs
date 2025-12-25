@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::tools::*;
-use crate::context::ContextCarousel;
+use crate::context::{ContextCarousel, CarouselTrigger};
 
 // Re-export database utilities
 pub use db::{create_optimized_pool, run_migrations};
@@ -100,14 +100,27 @@ impl MiraServer {
         Self::tool_router()
     }
 
-    /// Get carousel context for injection into tool responses
-    ///
-    /// Returns a formatted string with:
-    /// 1. Critical items (corrections, blocked goals) - always included
-    /// 2. One rotating category (goals, decisions, memories, etc.)
-    ///
-    /// Advances the carousel position after each call.
+    /// Get carousel context for injection into tool responses (simple version)
     pub async fn get_carousel_context(&self) -> Option<String> {
+        self.get_carousel_context_with_query(None, &[]).await
+    }
+
+    /// Get carousel context with semantic interrupt detection
+    ///
+    /// Pass the tool's query/input text to enable semantic interrupts:
+    /// - Query containing "error", "fail", "bug" → forces RecentErrors category
+    /// - Query containing "goal", "milestone" → forces Goals category
+    /// - etc.
+    ///
+    /// Pass triggers for explicit mode changes:
+    /// - FileEdit(path) → focus CodeContext
+    /// - BuildFailure(msg) → enter Panic mode
+    /// - etc.
+    pub async fn get_carousel_context_with_query(
+        &self,
+        query: Option<&str>,
+        triggers: &[CarouselTrigger],
+    ) -> Option<String> {
         let project_id = self.get_active_project().await.map(|p| p.id);
 
         // Initialize or get carousel
@@ -129,9 +142,6 @@ impl MiraServer {
             }
         };
 
-        // Update project_id in case it changed
-        // (carousel stores project_id at construction, this is a simplification)
-
         let mut parts = Vec::new();
 
         // 1. Always include critical items
@@ -144,9 +154,21 @@ impl MiraServer {
             parts.push(rotating);
         }
 
-        // 3. Tick carousel (may advance after ROTATION_INTERVAL calls)
-        if let Err(e) = carousel.tick_and_maybe_advance().await {
-            tracing::warn!("Failed to tick carousel: {}", e);
+        // 3. Tick carousel with context (enables semantic interrupts)
+        match carousel.tick_with_context(triggers, query).await {
+            Ok((decision, _categories)) => {
+                // Log semantic interrupt if it happened
+                if !decision.triggers.is_empty() {
+                    tracing::info!(
+                        "[CAROUSEL] Semantic interrupt: {:?} → {:?}",
+                        decision.triggers,
+                        decision.category
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to tick carousel: {}", e);
+            }
         }
 
         if parts.is_empty() {
@@ -284,9 +306,9 @@ impl MiraServer {
             Some(start.elapsed().as_millis() as i64),
         ).await;
 
-        // Inject carousel context into response
+        // Inject carousel context into response (with query for semantic interrupts)
         let response = vec_response(result, format!("No memories found matching '{}'", query));
-        let carousel_ctx = self.get_carousel_context().await;
+        let carousel_ctx = self.get_carousel_context_with_query(Some(&query), &[]).await;
         Ok(with_carousel_context(response, carousel_ctx))
     }
 
@@ -434,9 +456,9 @@ impl MiraServer {
 
     // === Carousel Control ===
 
-    #[tool(description = "Control context carousel. Actions: status/pin/unpin/advance")]
+    #[tool(description = "Control context carousel. Actions: status/pin/unpin/advance/focus/panic/exit_panic/anchor/log")]
     async fn carousel(&self, Parameters(req): Parameters<CarouselRequest>) -> Result<CallToolResult, McpError> {
-        use crate::context::ContextCategory;
+        use crate::context::{ContextCategory, CarouselMode};
 
         let project_id = self.get_active_project().await.map(|p| p.id);
 
@@ -459,8 +481,14 @@ impl MiraServer {
             "status" => {
                 let current = carousel.current();
                 let stats = carousel.stats();
+                let mode_str = match carousel.mode() {
+                    CarouselMode::Cruising => "Cruising".to_string(),
+                    CarouselMode::Focus(cat) => format!("Focus({:?})", cat),
+                    CarouselMode::Panic => "🚨 PANIC".to_string(),
+                };
                 let mut status = format!(
-                    "Carousel Status:\n  Current: {:?}\n  Position: {}/{}\n  Calls since advance: {}/{}\n  Total calls: {}",
+                    "Carousel Status:\n  Mode: {}\n  Current: {:?}\n  Position: {}/{}\n  Calls since advance: {}/{}\n  Total calls: {}",
+                    mode_str,
                     current,
                     stats.index + 1,
                     ContextCategory::rotation().len(),
@@ -470,6 +498,13 @@ impl MiraServer {
                 );
                 if let Some((cat, remaining)) = carousel.is_pinned() {
                     status.push_str(&format!("\n  📌 Pinned: {:?} ({}m remaining)", cat, remaining / 60));
+                }
+                if !stats.anchor_items.is_empty() {
+                    status.push_str(&format!("\n  ⚓ Anchored: {} items", stats.anchor_items.len()));
+                    for item in &stats.anchor_items {
+                        let content_preview = if item.content.len() > 40 { format!("{}...", &item.content[..40]) } else { item.content.clone() };
+                        status.push_str(&format!("\n    • {} (TTL: {} turns)", content_preview, item.ttl_turns));
+                    }
                 }
                 Ok(text_response(status))
             }
@@ -490,7 +525,62 @@ impl MiraServer {
                 let next = carousel.force_advance().await.map_err(to_mcp_err)?;
                 Ok(text_response(format!("Advanced to: {:?}", next)))
             }
-            _ => Ok(unknown_action(&req.action, "status/pin/unpin/advance")),
+            "focus" => {
+                // Aggressive focus - like pin but enters Focus mode
+                let cat_str = req.category.as_deref().ok_or_else(||
+                    to_mcp_err(anyhow::anyhow!("category required for focus action")))?;
+                let category = ContextCategory::from_str(cat_str).ok_or_else(||
+                    to_mcp_err(anyhow::anyhow!("Invalid category: {}. Use: goals/decisions/memories/git/code/system/errors/patterns", cat_str)))?;
+                let duration = req.duration_minutes.unwrap_or(30);
+                carousel.pin(category, duration).await.map_err(to_mcp_err)?;
+                Ok(text_response(format!("🎯 Focus mode: {:?} for {} minutes (suppresses rotation)", category, duration)))
+            }
+            "panic" => {
+                let reason = req.reason.as_deref().unwrap_or("Manual panic mode");
+                carousel.enter_panic(reason).await.map_err(to_mcp_err)?;
+                Ok(text_response(format!("🚨 Panic mode activated: {}\nContext locked to: errors + code", reason)))
+            }
+            "exit_panic" => {
+                carousel.exit_panic().await.map_err(to_mcp_err)?;
+                Ok(text_response("✅ Exited panic mode - returning to Cruising"))
+            }
+            "anchor" => {
+                let content = req.content.as_deref().ok_or_else(||
+                    to_mcp_err(anyhow::anyhow!("content required for anchor action")))?;
+                let reason = req.reason.as_deref().unwrap_or("User anchored");
+                let category = req.category.as_deref()
+                    .and_then(ContextCategory::from_str)
+                    .unwrap_or(carousel.current());
+                carousel.anchor_item(content.to_string(), reason.to_string(), category, 5);
+                Ok(text_response(format!("⚓ Anchored item (TTL: 5 turns): {}", if content.len() > 50 { format!("{}...", &content[..50]) } else { content.to_string() })))
+            }
+            "log" => {
+                let log = carousel.decision_log();
+                if log.is_empty() {
+                    return Ok(text_response("No decisions logged yet"));
+                }
+                let mut output = format!("Last {} decisions:\n", log.len());
+                for (i, decision) in log.iter().rev().take(10).enumerate() {
+                    let mode_str = match decision.mode {
+                        CarouselMode::Cruising => "Cruise",
+                        CarouselMode::Focus(_) => "Focus",
+                        CarouselMode::Panic => "PANIC",
+                    };
+                    output.push_str(&format!(
+                        "\n{}. [{}] {:?} - {}{}",
+                        i + 1,
+                        mode_str,
+                        decision.category,
+                        decision.reason,
+                        if decision.starvation_rescue { " [RESCUE]" } else { "" }
+                    ));
+                    if !decision.triggers.is_empty() {
+                        output.push_str(&format!("\n   Triggers: {}", decision.triggers.join(", ")));
+                    }
+                }
+                Ok(text_response(output))
+            }
+            _ => Ok(unknown_action(&req.action, "status/pin/unpin/advance/focus/panic/exit_panic/anchor/log")),
         }
     }
 
@@ -1053,22 +1143,37 @@ impl MiraServer {
     async fn build(&self, Parameters(req): Parameters<BuildRequest>) -> Result<CallToolResult, McpError> {
         match req.action.as_str() {
             "record" => {
+                let command = require!(req.command, "command required");
+                let success = require!(req.success, "success required");
                 let result = build_intel::record_build(self.db.as_ref(), build_intel::RecordBuildParams {
-                    command: require!(req.command, "command required"),
-                    success: require!(req.success, "success required"),
+                    command: command.clone(),
+                    success,
                     duration_ms: req.duration_ms,
                 }).await.map_err(to_mcp_err)?;
+
+                // Trigger panic mode on build failure
+                if !success {
+                    let triggers = vec![CarouselTrigger::BuildFailure(command.clone())];
+                    let _ = self.get_carousel_context_with_query(Some(&command), &triggers).await;
+                }
+
                 Ok(json_response(result))
             }
             "record_error" => {
+                let message = require!(req.message, "message required");
                 let result = build_intel::record_build_error(self.db.as_ref(), build_intel::RecordBuildErrorParams {
-                    message: require!(req.message, "message required"),
+                    message: message.clone(),
                     category: req.category.clone(),
                     severity: req.severity.clone(),
                     file_path: req.file_path.clone(),
                     line_number: req.line_number,
                     code: req.code.clone(),
                 }).await.map_err(to_mcp_err)?;
+
+                // Trigger panic mode on error recording
+                let triggers = vec![CarouselTrigger::BuildFailure(message.clone())];
+                let _ = self.get_carousel_context_with_query(Some(&message), &triggers).await;
+
                 Ok(json_response(result))
             }
             "get_errors" => {
@@ -1081,7 +1186,13 @@ impl MiraServer {
                 Ok(vec_response(result, "No build errors found."))
             }
             "resolve" => {
-                let result = build_intel::resolve_error(self.db.as_ref(), require!(req.error_id, "error_id required")).await.map_err(to_mcp_err)?;
+                let error_id = require!(req.error_id, "error_id required");
+                let result = build_intel::resolve_error(self.db.as_ref(), error_id).await.map_err(to_mcp_err)?;
+
+                // Trigger to exit panic mode when error resolved
+                let triggers = vec![CarouselTrigger::ErrorResolved];
+                let _ = self.get_carousel_context_with_query(None, &triggers).await;
+
                 Ok(json_response(result))
             }
             action => Ok(unknown_action(action, "record/record_error/get_errors/resolve")),
@@ -1114,7 +1225,8 @@ impl MiraServer {
         let query = req.query.clone();
         let result = code_intel::semantic_code_search(self.db.as_ref(), self.semantic.clone(), req).await.map_err(to_mcp_err)?;
         let response = vec_response(result, format!("No code found for '{}'", query));
-        let carousel_ctx = self.get_carousel_context().await;
+        // Pass query for semantic interrupt (code search → CodeContext)
+        let carousel_ctx = self.get_carousel_context_with_query(Some(&query), &[]).await;
         Ok(with_carousel_context(response, carousel_ctx))
     }
 
@@ -1154,7 +1266,10 @@ impl MiraServer {
     async fn find_similar_fixes(&self, Parameters(req): Parameters<FindSimilarFixesRequest>) -> Result<CallToolResult, McpError> {
         let error = req.error.clone();
         let result = git_intel::find_similar_fixes(self.db.as_ref(), &self.semantic, req).await.map_err(to_mcp_err)?;
-        Ok(vec_response(result, format!("No fixes for: {}", error)))
+        let response = vec_response(result, format!("No fixes for: {}", error));
+        // Error queries should trigger RecentErrors context
+        let carousel_ctx = self.get_carousel_context_with_query(Some(&error), &[]).await;
+        Ok(with_carousel_context(response, carousel_ctx))
     }
 
     #[tool(description = "Record an error fix.")]
@@ -1185,9 +1300,13 @@ impl MiraServer {
     #[tool(description = "Get all context for current work: corrections, decisions, goals, errors.")]
     async fn get_proactive_context(&self, Parameters(req): Parameters<GetProactiveContextRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
+        // Build query from task/error for semantic interrupt (clone before move)
+        let query = req.task.clone()
+            .or_else(|| req.error.clone())
+            .unwrap_or_default();
         let result = proactive::get_proactive_context(self.db.as_ref(), &self.semantic, req, project_id).await.map_err(to_mcp_err)?;
         let response = json_response(result);
-        let carousel_ctx = self.get_carousel_context().await;
+        let carousel_ctx = self.get_carousel_context_with_query(Some(&query), &[]).await;
         Ok(with_carousel_context(response, carousel_ctx))
     }
 
