@@ -200,7 +200,7 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
                 p.content.clone()
             };
             out.push_str(&format!("  [{}] {} ({:.0}%): {}\n",
-                &p.id[..12], p.proposal_type, p.confidence * 100.0, content_preview));
+                &p.id, p.proposal_type, p.confidence * 100.0, content_preview));
         }
         out.push_str("Use proposal(action: \"confirm\"/\"reject\", proposal_id: \"...\") to process.\n");
     }
