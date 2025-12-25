@@ -23,6 +23,7 @@ mod mira;
 pub mod proactive;
 mod shell;
 mod test;
+mod tool_defs;
 pub mod types;
 mod web;
 
