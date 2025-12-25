@@ -23,7 +23,7 @@ use tracing::info;
 use crate::tools::*;
 
 // Re-export database utilities
-pub use db::{create_optimized_pool, run_migrations, get_schema_version};
+pub use db::{create_optimized_pool, run_migrations};
 
 /// Macro to extract a required field from a request, returning an error if missing.
 /// Usage: `require!(req.title, "title required for create")`
