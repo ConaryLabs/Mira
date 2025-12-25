@@ -1,11 +1,43 @@
 //! Server types for HTTP API
 //!
 //! Contains request/response types and SSE events.
+//!
+//! API Version: 2025.12.2 (breaking change - structured events)
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::chat::tools::DiffInfo;
+
+/// API version for capability detection
+pub const API_VERSION: &str = "2025.12.2";
+
+/// Tool categories for filtering in UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCategory {
+    File,
+    Shell,
+    Memory,
+    Web,
+    Git,
+    Mira,
+    Other,
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolCategory::File => write!(f, "file"),
+            ToolCategory::Shell => write!(f, "shell"),
+            ToolCategory::Memory => write!(f, "memory"),
+            ToolCategory::Web => write!(f, "web"),
+            ToolCategory::Git => write!(f, "git"),
+            ToolCategory::Mira => write!(f, "mira"),
+            ToolCategory::Other => write!(f, "other"),
+        }
+    }
+}
 
 // ============================================================================
 // SSE Event Types
@@ -71,6 +103,16 @@ pub enum ChatEvent {
         call_id: String,
         name: String,
         arguments: Value,
+        /// Parent message ID for correlation
+        message_id: String,
+        /// Monotonic sequence number for ordering
+        seq: u64,
+        /// Timestamp in milliseconds
+        ts_ms: u64,
+        /// Human-readable summary (e.g., "Reading src/main.rs")
+        summary: String,
+        /// Tool category for filtering
+        category: ToolCategory,
     },
 
     /// Tool result (may include diff for file operations)
@@ -79,9 +121,49 @@ pub enum ChatEvent {
         call_id: String,
         name: String,
         success: bool,
+        /// Output preview (truncated if large)
         output: String,
+        /// Execution duration in milliseconds
+        duration_ms: u64,
+        /// Whether output was truncated
+        truncated: bool,
+        /// Total output size in bytes
+        total_bytes: usize,
         #[serde(skip_serializing_if = "Option::is_none")]
         diff: Option<DiffInfo>,
+        /// Reference ID to fetch full output on demand
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_ref: Option<String>,
+        /// Exit code (shell commands only)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        /// Stderr output (shell commands only)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
+    },
+
+    /// Artifact created (file, diff, or large output stored)
+    #[serde(rename = "artifact_created")]
+    ArtifactCreated {
+        artifact_id: String,
+        /// Artifact kind: "file", "diff", "patch", "log"
+        kind: String,
+        /// Tool call that created this artifact
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_call_id: Option<String>,
+        /// Display title
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// File path if applicable
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_path: Option<String>,
+        /// Programming language for syntax highlighting
+        #[serde(skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        /// Preview content
+        preview: String,
+        /// Total size in bytes
+        total_bytes: usize,
     },
 
     // === Metadata ===
@@ -182,17 +264,38 @@ pub enum MessageBlock {
         call_id: String,
         name: String,
         arguments: Value,
+        /// Human-readable summary
+        summary: String,
+        /// Tool category for filtering
+        category: ToolCategory,
         #[serde(skip_serializing_if = "Option::is_none")]
-        result: Option<ToolCallResult>,
+        result: Option<ToolCallResultData>,
     },
 }
 
+/// Tool call result for message persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallResult {
+pub struct ToolCallResultData {
     pub success: bool,
+    /// Output preview (truncated if large)
     pub output: String,
+    /// Execution duration in milliseconds
+    pub duration_ms: u64,
+    /// Whether output was truncated
+    pub truncated: bool,
+    /// Total output size in bytes
+    pub total_bytes: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<DiffInfo>,
+    /// Reference ID to fetch full output on demand
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<String>,
+    /// Exit code (shell commands only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    /// Stderr output (shell commands only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
 }
 
 /// Pagination query params

@@ -14,8 +14,17 @@ export interface DiffInfo {
 export interface ToolCallResult {
   success: boolean;
   output: string;
+  duration_ms: number;
+  truncated: boolean;
+  total_bytes: number;
   diff?: DiffInfo;
+  output_ref?: string;
+  exit_code?: number;
+  stderr?: string;
 }
+
+// Tool categories from backend
+export type ToolCategory = 'file' | 'shell' | 'memory' | 'web' | 'git' | 'mira' | 'other';
 
 export interface CouncilResponses {
   gpt?: string;
@@ -30,6 +39,9 @@ export interface MessageBlock {
   name?: string;
   arguments?: Record<string, unknown>;
   result?: ToolCallResult;
+  // Tool call metadata
+  summary?: string;
+  category?: ToolCategory;
   // Code block fields
   language?: string;
   code?: string;
@@ -86,11 +98,47 @@ export type ChatEvent =
   | { type: 'code_block_end'; id: string }
   // Council (multi-model)
   | { type: 'council'; gpt?: string; opus?: string; gemini?: string }
-  // Tool execution
-  | { type: 'tool_call_start'; call_id: string; name: string; arguments: Record<string, unknown> }
-  | { type: 'tool_call_result'; call_id: string; name: string; success: boolean; output: string; diff?: DiffInfo }
+  // Tool execution (enhanced with correlation IDs and metadata)
+  | {
+      type: 'tool_call_start';
+      call_id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+      message_id: string;
+      seq: number;
+      ts_ms: number;
+      summary: string;
+      category: ToolCategory;
+    }
+  | {
+      type: 'tool_call_result';
+      call_id: string;
+      name: string;
+      success: boolean;
+      output: string;
+      duration_ms: number;
+      truncated: boolean;
+      total_bytes: number;
+      diff?: DiffInfo;
+      output_ref?: string;
+      exit_code?: number;
+      stderr?: string;
+    }
+  // Artifact created (files, diffs, outputs)
+  | {
+      type: 'artifact_created';
+      artifact_id: string;
+      kind: string;
+      source_call_id?: string;
+      title?: string;
+      file_path?: string;
+      language?: string;
+      preview: string;
+      total_bytes: number;
+    }
   // Metadata
   | { type: 'reasoning'; effort: string; summary?: string }
+  | { type: 'reasoning_delta'; delta: string }
   | { type: 'usage'; input_tokens: number; output_tokens: number; reasoning_tokens: number; cached_tokens: number }
   | { type: 'chain'; response_id?: string; previous_response_id?: string }
   | { type: 'done' }
@@ -341,6 +389,8 @@ export function createMessageBuilder(id: string): {
           call_id: event.call_id,
           name: event.name,
           arguments: event.arguments,
+          summary: event.summary,
+          category: event.category,
         });
         break;
       }
@@ -353,10 +403,26 @@ export function createMessageBuilder(id: string): {
             block.result = {
               success: event.success,
               output: event.output,
+              duration_ms: event.duration_ms,
+              truncated: event.truncated,
+              total_bytes: event.total_bytes,
               diff: event.diff,
+              output_ref: event.output_ref,
+              exit_code: event.exit_code,
+              stderr: event.stderr,
             };
           }
         }
+        break;
+      }
+
+      case 'artifact_created': {
+        // Artifacts are tracked separately - no action needed in message builder
+        break;
+      }
+
+      case 'reasoning_delta': {
+        // Reasoning deltas could be accumulated if needed
         break;
       }
 

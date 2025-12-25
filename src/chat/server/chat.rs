@@ -31,8 +31,9 @@ use crate::chat::{
 };
 
 use super::markdown_parser::MarkdownStreamParser;
-use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult};
+use super::types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResultData};
 use super::AppState;
+use crate::chat::tools::{tool_category, tool_summary};
 
 /// Process a chat request through the agentic loop (DeepSeek V3.2)
 pub async fn process_chat(
@@ -206,6 +207,13 @@ async fn process_deepseek_chat(
     // Markdown parser for typed code block events
     let mut markdown_parser = MarkdownStreamParser::new();
 
+    // Correlation tracking for structured frontend events
+    let message_id = Uuid::new_v4().to_string();
+    let mut seq: u64 = 0;  // Monotonic sequence number for event ordering
+
+    // Track tool execution start times for duration calculation
+    let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
+
     // First request
     let initial_request = ProviderChatRequest::new("deepseek-reasoner", &system_prompt, &request.message)
         .with_messages(conversation_messages.clone())
@@ -236,10 +244,17 @@ async fn process_deepseek_chat(
                 }
                 ProviderStreamEvent::FunctionCallStart { call_id, name } => {
                     pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
+                    tool_start_times.insert(call_id.clone(), std::time::Instant::now());
+                    seq += 1;
                     tx.send(ChatEvent::ToolCallStart {
                         call_id,
-                        name,
+                        name: name.clone(),
                         arguments: json!({}),
+                        message_id: message_id.clone(),
+                        seq,
+                        ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+                        summary: tool_summary(&name, &json!({})),
+                        category: tool_category(&name),
                     }).await?;
                 }
                 ProviderStreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
@@ -299,14 +314,36 @@ async fn process_deepseek_chat(
                             }
                         }
 
+                        // Calculate duration
+                        let duration_ms = tool_start_times
+                            .remove(&call_id)
+                            .map(|start| start.elapsed().as_millis() as u64)
+                            .unwrap_or(0);
+
+                        // Truncation handling for large outputs
+                        let total_bytes = output.len();
+                        let (truncated, output_preview) = if total_bytes > 8192 {
+                            (true, format!("{}...", &output[..8192]))
+                        } else {
+                            (false, output.clone())
+                        };
+
                         assistant_blocks.push(MessageBlock::ToolCall {
                             call_id: call_id.clone(),
                             name: name.clone(),
                             arguments: args_value,
-                            result: Some(ToolCallResult {
+                            summary: tool_summary(&name, &final_args),
+                            category: tool_category(&name),
+                            result: Some(ToolCallResultData {
                                 success,
-                                output: output.clone(),
+                                output: output_preview.clone(),
+                                duration_ms,
+                                truncated,
+                                total_bytes,
                                 diff: diff.clone(),
+                                output_ref: None, // TODO: implement on-demand fetch
+                                exit_code: None,  // TODO: extract from bash executor
+                                stderr: None,
                             }),
                         });
 
@@ -348,8 +385,14 @@ async fn process_deepseek_chat(
                             call_id,
                             name,
                             success,
-                            output,
+                            output: output_preview,
+                            duration_ms,
+                            truncated,
+                            total_bytes,
                             diff,
+                            output_ref: None,
+                            exit_code: None,
+                            stderr: None,
                         }).await?;
                     }
                 }
@@ -470,10 +513,17 @@ async fn process_deepseek_chat(
                 }
                 ProviderStreamEvent::FunctionCallStart { call_id, name } => {
                     pending_calls.insert(call_id.clone(), (name.clone(), String::new()));
+                    tool_start_times.insert(call_id.clone(), std::time::Instant::now());
+                    seq += 1;
                     tx.send(ChatEvent::ToolCallStart {
                         call_id,
-                        name,
+                        name: name.clone(),
                         arguments: json!({}),
+                        message_id: message_id.clone(),
+                        seq,
+                        ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+                        summary: tool_summary(&name, &json!({})),
+                        category: tool_category(&name),
                     }).await?;
                 }
                 ProviderStreamEvent::FunctionCallDelta { call_id, arguments_delta } => {
@@ -529,14 +579,36 @@ async fn process_deepseek_chat(
                             }
                         }
 
+                        // Calculate duration
+                        let duration_ms = tool_start_times
+                            .remove(&call_id)
+                            .map(|start| start.elapsed().as_millis() as u64)
+                            .unwrap_or(0);
+
+                        // Truncation handling for large outputs
+                        let total_bytes = output.len();
+                        let (truncated, output_preview) = if total_bytes > 8192 {
+                            (true, format!("{}...", &output[..8192]))
+                        } else {
+                            (false, output.clone())
+                        };
+
                         assistant_blocks.push(MessageBlock::ToolCall {
                             call_id: call_id.clone(),
                             name: name.clone(),
                             arguments: args_value,
-                            result: Some(ToolCallResult {
+                            summary: tool_summary(&name, &final_args),
+                            category: tool_category(&name),
+                            result: Some(ToolCallResultData {
                                 success,
-                                output: output.clone(),
+                                output: output_preview.clone(),
+                                duration_ms,
+                                truncated,
+                                total_bytes,
                                 diff: diff.clone(),
+                                output_ref: None,
+                                exit_code: None,
+                                stderr: None,
                             }),
                         });
 
@@ -576,8 +648,14 @@ async fn process_deepseek_chat(
                             call_id,
                             name,
                             success,
-                            output,
+                            output: output_preview,
+                            duration_ms,
+                            truncated,
+                            total_bytes,
                             diff,
+                            output_ref: None,
+                            exit_code: None,
+                            stderr: None,
                         }).await?;
                     }
                 }

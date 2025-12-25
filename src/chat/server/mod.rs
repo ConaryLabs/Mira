@@ -10,7 +10,7 @@ mod chat;
 mod handlers;
 mod markdown_parser;
 mod stream;
-mod types;
+pub mod types;
 
 use anyhow::Result;
 use axum::{
@@ -154,7 +154,7 @@ mod tests {
 
 // Types available for external use (currently internal only)
 #[allow(unused_imports)]
-pub(crate) use types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResult, UsageInfo};
+pub(crate) use types::{ChatEvent, ChatRequest, MessageBlock, ToolCallResultData, UsageInfo};
 
 // ============================================================================
 // Server State
@@ -182,8 +182,8 @@ const SYNC_MAX_BODY_BYTES: usize = 64 * 1024;
 /// Max concurrent sync requests
 const SYNC_MAX_CONCURRENT: usize = 3;
 
-/// API version - increment on breaking changes
-pub const API_VERSION: &str = "2025.12.1";
+/// API version - re-export from types module
+pub use types::API_VERSION;
 
 /// Create the router with all endpoints
 pub fn create_router(state: AppState) -> Router {
