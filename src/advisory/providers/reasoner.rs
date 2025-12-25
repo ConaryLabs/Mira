@@ -149,6 +149,10 @@ struct DeepSeekUsage {
     completion_tokens: u32,
     #[serde(default)]
     reasoning_tokens: u32,
+    #[serde(default)]
+    prompt_cache_hit_tokens: u32,
+    #[serde(default)]
+    prompt_cache_miss_tokens: u32,
 }
 
 // Streaming types
@@ -301,6 +305,8 @@ impl AdvisoryProvider for ReasonerProvider {
             input_tokens: u.prompt_tokens,
             output_tokens: u.completion_tokens,
             reasoning_tokens: u.reasoning_tokens,
+            cache_read_tokens: u.prompt_cache_hit_tokens,
+            cache_write_tokens: u.prompt_cache_miss_tokens, // miss = new cache writes
         });
 
         Ok(AdvisoryResponse {
@@ -484,6 +490,8 @@ async fn parse_deepseek_sse(
                             input_tokens: usage.prompt_tokens,
                             output_tokens: usage.completion_tokens,
                             reasoning_tokens: usage.reasoning_tokens,
+                            cache_read_tokens: usage.prompt_cache_hit_tokens,
+                            cache_write_tokens: usage.prompt_cache_miss_tokens,
                         })).await;
                     }
                 }

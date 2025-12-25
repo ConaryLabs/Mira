@@ -7,7 +7,7 @@ use crate::advisory::session::{
     list_sessions, get_session, get_all_messages, get_pins, get_decisions,
     update_status, SessionStatus, add_pin, add_decision, get_deliberation_progress,
 };
-use crate::advisory::AdvisoryModel;
+use crate::advisory::{AdvisoryModel, AdvisoryUsage};
 use crate::tools::AdvisorySessionRequest;
 
 /// List active advisory sessions
@@ -73,6 +73,77 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
     let pins = get_pins(db, session_id).await?;
     let decisions = get_decisions(db, session_id).await?;
 
+    // Calculate usage and costs per provider
+    let mut total_cost_usd = 0.0;
+    let mut provider_costs: std::collections::HashMap<String, (AdvisoryUsage, f64)> = std::collections::HashMap::new();
+
+    let message_data: Vec<serde_json::Value> = messages.iter().map(|m| {
+        // Parse usage from JSON if available
+        let (usage, cost) = if let Some(ref usage_str) = m.usage_json {
+            if let Ok(usage) = serde_json::from_str::<AdvisoryUsage>(usage_str) {
+                // Get model from provider string
+                let model = m.provider.as_deref()
+                    .and_then(|p| AdvisoryModel::from_provider_str(p));
+                let cost = model.map(|m| m.calculate_cost(&usage)).unwrap_or(0.0);
+                total_cost_usd += cost;
+
+                // Aggregate by provider
+                if let Some(provider) = &m.provider {
+                    let entry = provider_costs.entry(provider.clone()).or_insert((AdvisoryUsage::default(), 0.0));
+                    entry.0.input_tokens += usage.input_tokens;
+                    entry.0.output_tokens += usage.output_tokens;
+                    entry.0.reasoning_tokens += usage.reasoning_tokens;
+                    entry.0.cache_read_tokens += usage.cache_read_tokens;
+                    entry.0.cache_write_tokens += usage.cache_write_tokens;
+                    entry.1 += cost;
+                }
+
+                (Some(usage), Some(cost))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let mut msg = serde_json::json!({
+            "turn": m.turn_number,
+            "role": m.role,
+            "provider": m.provider,
+            "content": m.content,
+        });
+
+        if let Some(usage) = usage {
+            msg["usage"] = serde_json::json!(usage);
+        }
+        if let Some(cost) = cost {
+            msg["cost_usd"] = serde_json::json!(cost);
+        }
+
+        msg
+    }).collect();
+
+    // Build provider usage summary
+    let usage_by_provider: serde_json::Value = provider_costs.iter().map(|(provider, (usage, cost))| {
+        let model = AdvisoryModel::from_provider_str(provider);
+        serde_json::json!({
+            "provider": provider,
+            "model_id": model.map(|m| m.as_str()),
+            "display_name": model.map(|m| m.display_name()),
+            "usage": usage,
+            "cost_usd": cost,
+            "pricing": model.map(|m| {
+                let p = m.pricing();
+                serde_json::json!({
+                    "input_per_m": p.input_per_m,
+                    "output_per_m": p.output_per_m,
+                    "cache_read_per_m": p.cache_read_per_m,
+                    "reasoning_per_m": p.reasoning_per_m,
+                })
+            }),
+        })
+    }).collect();
+
     let mut result = serde_json::json!({
         "session": {
             "id": session.id,
@@ -81,12 +152,7 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
             "status": session.status.as_str(),
             "total_turns": session.total_turns,
         },
-        "messages": messages.iter().map(|m| serde_json::json!({
-            "turn": m.turn_number,
-            "role": m.role,
-            "provider": m.provider,
-            "content": m.content,
-        })).collect::<Vec<_>>(),
+        "messages": message_data,
         "pins": pins.iter().map(|p| serde_json::json!({
             "type": p.pin_type,
             "content": p.content,
@@ -96,6 +162,8 @@ pub async fn get(db: &SqlitePool, session_id: &str) -> Result<serde_json::Value>
             "topic": d.topic,
             "rationale": d.rationale,
         })).collect::<Vec<_>>(),
+        "usage_by_provider": usage_by_provider,
+        "total_cost_usd": total_cost_usd,
     });
 
     // Include deliberation result for completed council sessions

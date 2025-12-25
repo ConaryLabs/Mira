@@ -152,6 +152,14 @@ struct ResponsesUsage {
     output_tokens: u32,
     #[serde(default)]
     reasoning_tokens: u32,
+    #[serde(default)]
+    input_token_details: Option<InputTokenDetails>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct InputTokenDetails {
+    #[serde(default)]
+    cached_tokens: u32,
 }
 
 // ============================================================================
@@ -251,6 +259,8 @@ impl GptProvider {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
             reasoning_tokens: u.reasoning_tokens,
+            cache_read_tokens: u.input_token_details.map(|d| d.cached_tokens).unwrap_or(0),
+            cache_write_tokens: 0, // OpenAI doesn't report cache write separately
         });
 
         Ok(AdvisoryResponse {
@@ -388,6 +398,8 @@ impl AdvisoryProvider for GptProvider {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
             reasoning_tokens: u.reasoning_tokens,
+            cache_read_tokens: u.input_token_details.map(|d| d.cached_tokens).unwrap_or(0),
+            cache_write_tokens: 0,
         });
 
         Ok(AdvisoryResponse {

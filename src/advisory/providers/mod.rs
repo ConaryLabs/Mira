@@ -55,6 +55,17 @@ impl AdvisoryModel {
         }
     }
 
+    /// Parse model from provider string
+    pub fn from_provider_str(s: &str) -> Option<Self> {
+        match s {
+            "gpt-5.2" => Some(AdvisoryModel::Gpt52),
+            "opus-4.5" => Some(AdvisoryModel::Opus45),
+            "gemini-3-pro" => Some(AdvisoryModel::Gemini3Pro),
+            "deepseek-reasoner" => Some(AdvisoryModel::DeepSeekReasoner),
+            _ => None,
+        }
+    }
+
     /// Get display name for UI
     pub fn display_name(&self) -> &'static str {
         match self {
@@ -166,12 +177,108 @@ pub struct ToolCallRequest {
     pub arguments: serde_json::Value,
 }
 
-/// Token usage information
-#[derive(Debug, Clone, Default)]
+/// Token usage information with cache tracking
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AdvisoryUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub reasoning_tokens: u32,
+    /// Tokens read from cache (charged at discounted rate)
+    pub cache_read_tokens: u32,
+    /// Tokens written to cache (charged at premium rate for some providers)
+    pub cache_write_tokens: u32,
+}
+
+impl AdvisoryUsage {
+    /// Calculate cost in USD for this usage based on the model
+    pub fn cost_usd(&self, model: AdvisoryModel) -> f64 {
+        model.calculate_cost(self)
+    }
+}
+
+// ============================================================================
+// Pricing (as of 2025-12-25)
+// ============================================================================
+
+/// Pricing per 1M tokens in USD
+#[derive(Debug, Clone, Copy)]
+pub struct ModelPricing {
+    pub input_per_m: f64,
+    pub output_per_m: f64,
+    /// Cached input tokens rate (per 1M)
+    pub cache_read_per_m: f64,
+    /// Cache write rate (per 1M) - some providers charge extra for cache creation
+    pub cache_write_per_m: f64,
+    /// Reasoning/thinking tokens rate (per 1M) - usually same as output
+    pub reasoning_per_m: f64,
+}
+
+impl AdvisoryModel {
+    /// Get pricing for this model (as of 2025-12-25)
+    pub fn pricing(&self) -> ModelPricing {
+        match self {
+            // GPT-5.2: $1.75 input, $14 output, 90% cache discount
+            // Source: https://openai.com/api/pricing/
+            AdvisoryModel::Gpt52 => ModelPricing {
+                input_per_m: 1.75,
+                output_per_m: 14.0,
+                cache_read_per_m: 0.175,  // 90% discount
+                cache_write_per_m: 1.75,   // same as input
+                reasoning_per_m: 14.0,     // reasoning billed as output
+            },
+            // Gemini 3 Pro: $2 input, $12 output (≤200K context)
+            // Source: https://ai.google.dev/gemini-api/docs/pricing
+            AdvisoryModel::Gemini3Pro => ModelPricing {
+                input_per_m: 2.0,
+                output_per_m: 12.0,
+                cache_read_per_m: 2.0,     // no cache discount in preview
+                cache_write_per_m: 2.0,
+                reasoning_per_m: 12.0,
+            },
+            // DeepSeek V3.2 (reasoner): $0.28 input (miss), $0.42 output, $0.028 cache hit
+            // Source: https://api-docs.deepseek.com/quick_start/pricing
+            AdvisoryModel::DeepSeekReasoner => ModelPricing {
+                input_per_m: 0.28,
+                output_per_m: 0.42,
+                cache_read_per_m: 0.028,   // 90% cache discount
+                cache_write_per_m: 0.28,
+                reasoning_per_m: 0.42,
+            },
+            // Claude Opus 4.5: $5 input, $25 output, 90% cache read discount
+            // Source: https://docs.anthropic.com/en/docs/about-claude/pricing
+            AdvisoryModel::Opus45 => ModelPricing {
+                input_per_m: 5.0,
+                output_per_m: 25.0,
+                cache_read_per_m: 0.5,     // 90% discount (0.1x)
+                cache_write_per_m: 6.25,   // 1.25x for 5-min cache
+                reasoning_per_m: 25.0,
+            },
+        }
+    }
+
+    /// Calculate cost in USD for given usage
+    pub fn calculate_cost(&self, usage: &AdvisoryUsage) -> f64 {
+        let pricing = self.pricing();
+        let m = 1_000_000.0;
+
+        // Regular input tokens (excluding cached)
+        let regular_input = usage.input_tokens.saturating_sub(usage.cache_read_tokens);
+        let input_cost = (regular_input as f64 / m) * pricing.input_per_m;
+
+        // Cache read tokens
+        let cache_read_cost = (usage.cache_read_tokens as f64 / m) * pricing.cache_read_per_m;
+
+        // Cache write tokens
+        let cache_write_cost = (usage.cache_write_tokens as f64 / m) * pricing.cache_write_per_m;
+
+        // Output tokens
+        let output_cost = (usage.output_tokens as f64 / m) * pricing.output_per_m;
+
+        // Reasoning tokens (if separate from output)
+        let reasoning_cost = (usage.reasoning_tokens as f64 / m) * pricing.reasoning_per_m;
+
+        input_cost + cache_read_cost + cache_write_cost + output_cost + reasoning_cost
+    }
 }
 
 /// Streaming event from advisory provider
