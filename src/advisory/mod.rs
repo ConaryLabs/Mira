@@ -439,6 +439,8 @@ impl AdvisoryService {
     /// - Moderator analysis complete
     /// - Synthesis starting
     /// - Completion or failure
+    ///
+    /// After synthesis, updates the session topic with the generated title.
     pub async fn council_deliberate_with_progress(
         &self,
         message: &str,
@@ -448,7 +450,7 @@ impl AdvisoryService {
     ) -> Result<DeliberatedSynthesis> {
         use std::time::Duration;
         use tokio::time::timeout;
-        use session::{DeliberationProgress, update_deliberation_progress};
+        use session::{DeliberationProgress, update_deliberation_progress, update_topic};
 
         let config = config.unwrap_or_default();
         let mut rounds: Vec<DeliberationRound> = Vec::new();
@@ -635,6 +637,13 @@ impl AdvisoryService {
             early_consensus,
             rounds,
         };
+
+        // Update session topic from synthesized title
+        if let Some(title) = &result.synthesis.session_title {
+            if let Err(e) = update_topic(db, session_id, title).await {
+                tracing::warn!(error = %e, "Failed to update session topic");
+            }
+        }
 
         // Update progress: complete with result
         progress.complete(result.to_json());

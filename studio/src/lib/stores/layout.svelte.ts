@@ -9,7 +9,7 @@
 
 import { browser } from '$app/environment';
 
-export type DrawerTab = 'timeline' | 'workspace';
+export type DrawerTab = 'timeline' | 'workspace' | 'advisory';
 
 export interface LayoutState {
   contextDrawer: {

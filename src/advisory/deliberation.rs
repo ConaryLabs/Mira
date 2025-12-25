@@ -395,7 +395,9 @@ Track:
 3. Key insights that emerged through debate
 4. Final unified recommendation
 
-Output as JSON with the standard synthesis format (consensus, disagreements, unique_insights, recommendation, confidence)."#);
+Output as JSON with:
+- session_title: A short, memorable title (3-6 words) that captures the essence of what was discussed. Examples: "Caching Strategy Deep Dive", "Auth Flow Redesign", "Error Handling Patterns"
+- consensus, disagreements, unique_insights, recommendation, confidence (standard synthesis format)"#);
 
     prompt
 }
