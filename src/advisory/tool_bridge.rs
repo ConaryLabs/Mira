@@ -138,215 +138,196 @@ pub fn is_blocked_tool(name: &str) -> bool {
 // Tool Schemas (for LLM function calling)
 // ============================================================================
 
-/// Generate OpenAI-compatible tool schema
+/// Generate OpenAI Responses API tool schema
+/// Note: Responses API uses flat structure, not nested "function" object
 pub fn openai_tool_schema(tool: AllowedTool) -> Value {
     match tool {
         AllowedTool::Recall => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "recall",
-                "description": "Search memories and facts semantically. Returns relevant stored information.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query to find relevant memories"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum results to return (default: 5)"
-                        }
+            "name": "recall",
+            "description": "Search memories and facts semantically. Returns relevant stored information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query to find relevant memories"
                     },
-                    "required": ["query"]
-                }
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results to return (default: 5)"
+                    }
+                },
+                "required": ["query"]
             }
         }),
         AllowedTool::GetCorrections => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "get_corrections",
-                "description": "Get active style corrections and user preferences",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum corrections to return (default: 10)"
-                        }
+            "name": "get_corrections",
+            "description": "Get active style corrections and user preferences",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum corrections to return (default: 10)"
                     }
                 }
             }
         }),
         AllowedTool::GetGoals => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "get_goals",
-                "description": "Get active goals and their milestones",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "include_completed": {
-                            "type": "boolean",
-                            "description": "Include completed goals (default: false)"
-                        }
+            "name": "get_goals",
+            "description": "Get active goals and their milestones",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "include_completed": {
+                        "type": "boolean",
+                        "description": "Include completed goals (default: false)"
                     }
                 }
             }
         }),
         AllowedTool::SemanticCodeSearch => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "semantic_code_search",
-                "description": "Search codebase by meaning/concept. Finds relevant code snippets.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Semantic search query describing what you're looking for"
-                        },
-                        "language": {
-                            "type": "string",
-                            "description": "Filter by programming language (optional)"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum results (default: 10)"
-                        }
+            "name": "semantic_code_search",
+            "description": "Search codebase by meaning/concept. Finds relevant code snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Semantic search query describing what you're looking for"
                     },
-                    "required": ["query"]
-                }
+                    "language": {
+                        "type": "string",
+                        "description": "Filter by programming language (optional)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default: 10)"
+                    }
+                },
+                "required": ["query"]
             }
         }),
         AllowedTool::GetSymbols => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "get_symbols",
-                "description": "Get functions, classes, and other symbols from a file",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Path to the file to analyze"
-                        },
-                        "symbol_type": {
-                            "type": "string",
-                            "description": "Filter by symbol type: function, class, method, etc."
-                        }
+            "name": "get_symbols",
+            "description": "Get functions, classes, and other symbols from a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to analyze"
                     },
-                    "required": ["file_path"]
-                }
+                    "symbol_type": {
+                        "type": "string",
+                        "description": "Filter by symbol type: function, class, method, etc."
+                    }
+                },
+                "required": ["file_path"]
             }
         }),
         AllowedTool::FindSimilarFixes => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "find_similar_fixes",
-                "description": "Find past fixes for similar errors",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "error": {
-                            "type": "string",
-                            "description": "Error message to find similar fixes for"
-                        },
-                        "language": {
-                            "type": "string",
-                            "description": "Programming language (optional)"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum results (default: 5)"
-                        }
+            "name": "find_similar_fixes",
+            "description": "Find past fixes for similar errors",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "error": {
+                        "type": "string",
+                        "description": "Error message to find similar fixes for"
                     },
-                    "required": ["error"]
-                }
+                    "language": {
+                        "type": "string",
+                        "description": "Programming language (optional)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default: 5)"
+                    }
+                },
+                "required": ["error"]
             }
         }),
         AllowedTool::GetRelatedFiles => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "get_related_files",
-                "description": "Find files related to a given file via imports or co-change patterns",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Path to find related files for"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum results (default: 10)"
-                        }
+            "name": "get_related_files",
+            "description": "Find files related to a given file via imports or co-change patterns",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to find related files for"
                     },
-                    "required": ["file_path"]
-                }
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default: 10)"
+                    }
+                },
+                "required": ["file_path"]
             }
         }),
         AllowedTool::GetRecentCommits => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "get_recent_commits",
-                "description": "Get recent git commits",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum commits (default: 10)"
-                        },
-                        "author": {
-                            "type": "string",
-                            "description": "Filter by author (optional)"
-                        },
-                        "file_path": {
-                            "type": "string",
-                            "description": "Filter by file path (optional)"
-                        }
+            "name": "get_recent_commits",
+            "description": "Get recent git commits",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum commits (default: 10)"
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "Filter by author (optional)"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Filter by file path (optional)"
                     }
                 }
             }
         }),
         AllowedTool::SearchCommits => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "search_commits",
-                "description": "Search commits by message content",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query for commit messages"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum results (default: 10)"
-                        }
+            "name": "search_commits",
+            "description": "Search commits by message content",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for commit messages"
                     },
-                    "required": ["query"]
-                }
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default: 10)"
+                    }
+                },
+                "required": ["query"]
             }
         }),
         AllowedTool::ListTasks => serde_json::json!({
             "type": "function",
-            "function": {
-                "name": "list_tasks",
-                "description": "List tasks from the task management system",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "include_completed": {
-                            "type": "boolean",
-                            "description": "Include completed tasks (default: false)"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum tasks to return (default: 20)"
-                        }
+            "name": "list_tasks",
+            "description": "List tasks from the task management system",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "include_completed": {
+                        "type": "boolean",
+                        "description": "Include completed tasks (default: false)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum tasks to return (default: 20)"
                     }
                 }
             }
@@ -357,6 +338,20 @@ pub fn openai_tool_schema(tool: AllowedTool) -> Value {
 /// Get all tool schemas for OpenAI format
 pub fn all_openai_schemas() -> Vec<Value> {
     AllowedTool::all().into_iter().map(openai_tool_schema).collect()
+}
+
+/// Generate tool schema for Chat Completions API (DeepSeek, etc.)
+/// Uses nested format: {"type": "function", "function": {"name": ..., "parameters": ...}}
+pub fn chat_completions_tool_schema(tool: AllowedTool) -> Value {
+    let flat = openai_tool_schema(tool);
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": flat["name"],
+            "description": flat["description"],
+            "parameters": flat["parameters"]
+        }
+    })
 }
 
 // ============================================================================
@@ -888,8 +883,9 @@ mod tests {
     #[test]
     fn test_openai_schema() {
         let schema = openai_tool_schema(AllowedTool::Recall);
-        assert_eq!(schema["function"]["name"], "recall");
-        assert!(schema["function"]["parameters"]["properties"]["query"].is_object());
+        // Responses API uses flat structure (not nested "function")
+        assert_eq!(schema["name"], "recall");
+        assert!(schema["parameters"]["properties"]["query"].is_object());
     }
 
     #[test]
