@@ -57,14 +57,55 @@ struct AnthropicRequest {
     model: String,
     max_tokens: u32,
     messages: Vec<AnthropicMessage>,
+    /// System prompt as content blocks (supports cache_control)
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<Vec<SystemBlock>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<AnthropicTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+}
+
+/// System prompt block with optional cache control
+#[derive(Serialize, Clone, Debug)]
+struct SystemBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+/// Cache control marker for prompt caching
+#[derive(Serialize, Clone, Debug)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    cache_type: String,
+}
+
+impl SystemBlock {
+    /// Create a cacheable system block
+    fn cacheable(text: String) -> Self {
+        Self {
+            block_type: "text".to_string(),
+            text,
+            cache_control: Some(CacheControl {
+                cache_type: "ephemeral".to_string(),
+            }),
+        }
+    }
+
+    /// Create a non-cached system block
+    #[allow(dead_code)]
+    fn plain(text: String) -> Self {
+        Self {
+            block_type: "text".to_string(),
+            text,
+            cache_control: None,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -321,11 +362,14 @@ impl OpusProvider {
 
         let messages: Vec<AnthropicMessage> = items.iter().map(|i| i.to_message()).collect();
 
+        // Convert system prompt to cacheable block
+        let system_blocks = system.map(|s| vec![SystemBlock::cacheable(s)]);
+
         let api_request = AnthropicRequest {
             model: "claude-opus-4-5-20251101".to_string(),
             max_tokens: 64000,
             messages,
-            system,
+            system: system_blocks,
             thinking: Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
                 budget_tokens: thinking_budget,
@@ -452,11 +496,14 @@ impl AdvisoryProvider for OpusProvider {
         // Use lower thinking budget when tools are enabled
         let thinking_budget = if request.enable_tools { 10000 } else { 32000 };
 
+        // Convert system prompt to cacheable block
+        let system_blocks = request.system.map(|s| vec![SystemBlock::cacheable(s)]);
+
         let api_request = AnthropicRequest {
             model: "claude-opus-4-5-20251101".to_string(),
             max_tokens: 64000,
             messages,
-            system: request.system,
+            system: system_blocks,
             thinking: Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
                 budget_tokens: thinking_budget,
@@ -554,12 +601,15 @@ impl AdvisoryProvider for OpusProvider {
             content: AnthropicContent::Text(request.message),
         });
 
+        // Convert system prompt to cacheable block
+        let system_blocks = request.system.map(|s| vec![SystemBlock::cacheable(s)]);
+
         // Note: Streaming with tools is more complex - for now, tools only work with complete()
         let api_request = AnthropicRequest {
             model: "claude-opus-4-5-20251101".to_string(),
             max_tokens: 64000,
             messages,
-            system: request.system,
+            system: system_blocks,
             thinking: Some(ThinkingConfig {
                 thinking_type: "enabled".to_string(),
                 budget_tokens: 32000,
