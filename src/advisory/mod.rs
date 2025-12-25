@@ -272,12 +272,14 @@ impl AdvisoryService {
                     let provider = provider.clone();
                     let prompt = prompt.clone();
                     let model = *model;
+                    // Each model gets its own identity-aware system prompt
+                    let system_prompt = deliberation::build_deliberation_system_prompt(model);
                     async move {
                         let result = timeout(
                             per_model_timeout,
                             provider.complete(AdvisoryRequest {
                                 message: prompt,
-                                system: Some(deliberation::DELIBERATION_SYSTEM_PROMPT.to_string()),
+                                system: Some(system_prompt),
                                 history: vec![],
                                 enable_tools: false,
                             }),
