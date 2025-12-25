@@ -42,8 +42,13 @@ src/
 │   │   └── streaming.rs     # SSE decoding
 │   │
 │   ├── ops/                 # Business logic (SINGLE SOURCE OF TRUTH)
+│   │   ├── mira.rs          # Re-exports + shared helpers
+│   │   ├── tasks.rs         # Task CRUD operations
+│   │   ├── goals.rs         # Goals and milestones
+│   │   ├── corrections.rs   # Correction tracking
+│   │   ├── decisions.rs     # Decision storage
+│   │   ├── rejected.rs      # Rejected approaches
 │   │   ├── memory.rs        # Remember, recall, forget
-│   │   ├── mira.rs          # Tasks, goals, corrections, decisions
 │   │   ├── file.rs          # Read, write, edit, glob, grep
 │   │   ├── shell.rs         # Bash execution
 │   │   ├── git.rs           # Git status, diff, commit, log, cochange
@@ -61,25 +66,64 @@ src/
 │
 ├── tools/                   # MCP tool wrappers (thin layer)
 │   ├── memory.rs            # → core::ops::memory
-│   ├── mira.rs              # → core::ops::mira
+│   ├── mira.rs              # → core::ops::mira (tasks, goals, etc.)
 │   ├── code_intel.rs        # → core::ops::code_intel
 │   ├── git_intel.rs         # → core::ops::git, core::ops::build
 │   └── ...
 │
 ├── chat/                    # Studio/Chat (thin layer)
 │   ├── tools/               # Chat tool implementations
+│   │   ├── definitions.rs   # Tool struct + get_tools() aggregator
+│   │   ├── tool_defs/       # Domain-grouped tool definitions
+│   │   │   ├── file_ops.rs  # read_file, write_file, edit_file, glob, grep, bash
+│   │   │   ├── web.rs       # web_search, web_fetch
+│   │   │   ├── memory.rs    # remember, recall
+│   │   │   ├── mira.rs      # task, goal, correction, store_decision, etc.
+│   │   │   ├── git.rs       # git_status, git_diff, git_commit, git_log + intel
+│   │   │   ├── testing.rs   # run_tests, fetch_artifact, search_artifact
+│   │   │   ├── council.rs   # council, ask_gpt, ask_opus, ask_gemini
+│   │   │   └── intel.rs     # code intel, build, document, index, proactive
 │   │   ├── memory.rs        # → core::ops::memory
 │   │   ├── mira.rs          # → core::ops::mira
 │   │   ├── file.rs          # → core::ops::file
 │   │   └── ...
 │   │
 │   ├── session/             # Session management
+│   │   ├── mod.rs           # SessionManager struct, initialization
+│   │   ├── messages.rs      # Recent message loading, semantic recall
+│   │   ├── anti_amnesia.rs  # Rejected approaches, past decisions
+│   │   ├── graph.rs         # Related files, call graph context
+│   │   ├── errors.rs        # Error detection, similar fix loading
+│   │   ├── freshness.rs     # Index freshness checking
+│   │   ├── compaction.rs    # Code compaction and checkpoints
 │   │   ├── summarization.rs # → core::ops::chat_summary
 │   │   ├── chain.rs         # → core::ops::chat_chain
 │   │   └── ...
 │   │
 │
-└── server/                  # MCP server entry point
+├── server/                  # MCP server
+│   ├── mod.rs               # MiraServer, pool setup, tool routing
+│   ├── db.rs                # Database pool, migrations, schema version
+│   └── handlers/            # Handler implementations
+│       ├── advisory.rs      # Advisory session management
+│       └── indexing.rs      # Index tool (project/file/status/cleanup)
+│
+├── advisory/                # External LLM consultation
+│   ├── mod.rs               # AdvisoryService, ask(), ask_with_tools() router
+│   ├── providers/           # Provider implementations
+│   │   ├── gpt.rs           # GPT-5.2 (Responses API)
+│   │   ├── gemini.rs        # Gemini 3 Pro
+│   │   ├── deepseek.rs      # DeepSeek Reasoner
+│   │   └── opus.rs          # Opus 4.5
+│   ├── tool_loops/          # Provider-specific tool loop implementations
+│   │   ├── gpt.rs           # GPT tool loop
+│   │   ├── gemini.rs        # Gemini tool loop (thought signatures)
+│   │   ├── deepseek.rs      # DeepSeek tool loop
+│   │   └── opus.rs          # Opus tool loop (extended thinking)
+│   ├── session.rs           # Multi-turn sessions with tiered memory
+│   ├── synthesis.rs         # Structured synthesis with provenance
+│   ├── streaming.rs         # SSE parsing for all providers
+│   └── tool_bridge.rs       # Agentic tool calling with budget governance
 ```
 
 ## OpContext: Dependency Injection
