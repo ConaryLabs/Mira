@@ -32,4 +32,4 @@ pub use crate::core::primitives::semantic;
 // Re-export for use in main.rs
 pub use types::*;
 pub use crate::core::{SemanticSearch, COLLECTION_CODE};
-pub use response::{to_mcp_err, json_response, text_response, vec_response, option_response};
+pub use response::{to_mcp_err, json_response, text_response, vec_response, option_response, with_carousel_context};

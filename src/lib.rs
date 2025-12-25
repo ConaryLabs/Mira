@@ -8,6 +8,7 @@
 
 pub mod advisory;
 pub mod chat;
+pub mod context;
 pub mod core;
 pub mod indexer;
 pub mod server;

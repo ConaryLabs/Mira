@@ -28,6 +28,7 @@ use std::time::Duration;
 
 mod advisory;
 mod chat;
+mod context;
 mod core;
 mod tools;
 mod indexer;
@@ -274,6 +275,7 @@ async fn run_daemon(port: u16, listen: &str) -> Result<()> {
                     semantic: semantic.clone(),
                     tool_router: MiraServer::get_tool_router(),
                     active_project: Arc::new(RwLock::new(None)),
+                    carousel: Arc::new(RwLock::new(None)),
                 })
             }
         },
