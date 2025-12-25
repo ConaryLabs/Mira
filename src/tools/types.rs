@@ -546,6 +546,28 @@ pub struct GetWorkStateRequest {
 }
 
 // ============================================================================
+// Proposal Tools (Proactive Organization System)
+// ============================================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ProposalRequest {
+    #[schemars(description = "Action: extract/list/confirm/reject/review")]
+    pub action: String,
+    #[schemars(description = "Proposal ID (for confirm/reject)")]
+    pub proposal_id: Option<String>,
+    #[schemars(description = "Text to extract proposals from (for extract)")]
+    pub text: Option<String>,
+    #[schemars(description = "Base confidence for extraction (0.0-1.0, default 0.5)")]
+    pub base_confidence: Option<f64>,
+    #[schemars(description = "Filter by type: goal/task/decision/summary")]
+    pub proposal_type: Option<String>,
+    #[schemars(description = "Filter by status: pending/confirmed/rejected/auto_committed")]
+    pub status: Option<String>,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// ============================================================================
 // Indexing Tools
 // ============================================================================
 

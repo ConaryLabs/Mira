@@ -496,7 +496,7 @@ impl MiraServer {
 
     // === Consolidated Goal Tool (7→1) ===
 
-    #[tool(description = "Manage goals/milestones. Actions: create/list/get/update/add_milestone/complete_milestone/progress")]
+    #[tool(description = "Manage goals/milestones. Actions: create/list/get/update/delete/add_milestone/complete_milestone/progress")]
     async fn goal(&self, Parameters(req): Parameters<GoalRequest>) -> Result<CallToolResult, McpError> {
         let project_id = self.get_active_project().await.map(|p| p.id);
         match req.action.as_str() {
@@ -565,7 +565,200 @@ impl MiraServer {
                 let result = goals::get_goal_progress(self.db.as_ref(), req.goal_id.clone(), project_id).await.map_err(to_mcp_err)?;
                 Ok(json_response(result))
             }
-            action => Ok(unknown_action(action, "create/list/get/update/add_milestone/complete_milestone/progress")),
+            "delete" => {
+                let goal_id = require!(req.goal_id, "goal_id required");
+                match goals::delete_goal(self.db.as_ref(), &goal_id).await.map_err(to_mcp_err)? {
+                    Some(title) => Ok(json_response(serde_json::json!({
+                        "status": "deleted",
+                        "goal_id": goal_id,
+                        "title": title,
+                    }))),
+                    None => Ok(text_response(format!("Goal {} not found", goal_id))),
+                }
+            }
+            action => Ok(unknown_action(action, "create/list/get/update/delete/add_milestone/complete_milestone/progress")),
+        }
+    }
+
+    // === Proposal Tool (Proactive Organization System) ===
+
+    #[tool(description = "Manage proposals (auto-extracted goals/tasks/decisions). Actions: extract/list/confirm/reject/review")]
+    async fn proposal(&self, Parameters(req): Parameters<types::ProposalRequest>) -> Result<CallToolResult, McpError> {
+        use crate::core::ops::proposals;
+
+        let ctx = crate::core::OpContext::new(std::env::current_dir().unwrap_or_default())
+            .with_db(self.db.as_ref().clone());
+
+        match req.action.as_str() {
+            "extract" => {
+                let text = require!(req.text, "text required for extract");
+                let base_confidence = req.base_confidence.unwrap_or(0.5);
+
+                // First try pattern-based extraction
+                let matches = proposals::extract_from_text(&ctx, &text, base_confidence)
+                    .await.map_err(|e| to_mcp_err(e.into()))?;
+
+                let mut created = Vec::new();
+                let mut extraction_method = "pattern";
+
+                let mut skipped_dupes = 0;
+
+                if matches.is_empty() {
+                    // Fallback to LLM-based extraction
+                    extraction_method = "llm";
+                    match proposals::extract_with_llm(&text).await {
+                        Ok(llm_results) if !llm_results.is_empty() => {
+                            for r in llm_results {
+                                // Check for duplicate before creating
+                                if let Ok(Some(existing_id)) = proposals::find_duplicate(&ctx, &r.content).await {
+                                    tracing::debug!("Skipping duplicate proposal, matches: {}", existing_id);
+                                    skipped_dupes += 1;
+                                    continue;
+                                }
+
+                                let ptype: proposals::ProposalType = r.proposal_type.parse()
+                                    .unwrap_or(proposals::ProposalType::Task);
+
+                                let evidence = serde_json::json!({
+                                    "source": "llm",
+                                    "llm_confidence": r.confidence,
+                                });
+
+                                let proposal = proposals::create_proposal(
+                                    &ctx,
+                                    ptype,
+                                    &r.content,
+                                    r.title.as_deref(),
+                                    r.confidence.min(0.7), // Cap LLM confidence at 0.7
+                                    Some(&evidence.to_string()),
+                                    Some("extract_llm"),
+                                    None,
+                                ).await.map_err(|e| to_mcp_err(e.into()))?;
+
+                                created.push(serde_json::json!({
+                                    "id": proposal.id,
+                                    "type": proposal.proposal_type.to_string(),
+                                    "content": proposal.content,
+                                    "confidence": proposal.confidence,
+                                    "status": proposal.status.to_string(),
+                                }));
+                            }
+                        }
+                        Ok(_) => {
+                            return Ok(text_response("No proposals detected in text."));
+                        }
+                        Err(e) => {
+                            return Ok(text_response(format!("Pattern extraction found nothing, LLM fallback failed: {}", e)));
+                        }
+                    }
+                } else {
+                    // Process pattern matches
+                    for m in matches {
+                        // Check for duplicate before creating
+                        if let Ok(Some(existing_id)) = proposals::find_duplicate(&ctx, &m.full_context).await {
+                            tracing::debug!("Skipping duplicate proposal, matches: {}", existing_id);
+                            skipped_dupes += 1;
+                            continue;
+                        }
+
+                        let evidence = serde_json::json!({
+                            "pattern_id": m.pattern_id,
+                            "matched_text": m.matched_text,
+                            "context": m.full_context,
+                        });
+
+                        let proposal = proposals::create_proposal(
+                            &ctx,
+                            m.proposal_type,
+                            &m.full_context,
+                            None,
+                            m.confidence,
+                            Some(&evidence.to_string()),
+                            Some("extract"),
+                            None,
+                        ).await.map_err(|e| to_mcp_err(e.into()))?;
+
+                        created.push(serde_json::json!({
+                            "id": proposal.id,
+                            "type": proposal.proposal_type.to_string(),
+                            "content": proposal.content,
+                            "confidence": proposal.confidence,
+                            "status": proposal.status.to_string(),
+                        }));
+                    }
+                }
+
+                let mut response = serde_json::json!({
+                    "extracted": created.len(),
+                    "method": extraction_method,
+                    "proposals": created,
+                });
+                if skipped_dupes > 0 {
+                    response["skipped_duplicates"] = serde_json::json!(skipped_dupes);
+                }
+                Ok(json_response(response))
+            }
+            "list" => {
+                let status = req.status.as_ref().and_then(|s| s.parse().ok());
+                let ptype = req.proposal_type.as_ref().and_then(|t| t.parse().ok());
+                let limit = req.limit.unwrap_or(20);
+
+                let props = proposals::list_proposals(&ctx, status, ptype, limit)
+                    .await.map_err(|e| to_mcp_err(e.into()))?;
+
+                if props.is_empty() {
+                    return Ok(text_response("No proposals found."));
+                }
+
+                let results: Vec<_> = props.iter().map(|p| serde_json::json!({
+                    "id": p.id,
+                    "type": p.proposal_type.to_string(),
+                    "content": if p.content.len() > 100 { format!("{}...", &p.content[..100]) } else { p.content.clone() },
+                    "confidence": p.confidence,
+                    "status": p.status.to_string(),
+                })).collect();
+
+                Ok(vec_response(results, "No proposals found."))
+            }
+            "confirm" => {
+                let proposal_id = require!(req.proposal_id, "proposal_id required");
+                match proposals::confirm_proposal(&ctx, &proposal_id).await.map_err(|e| to_mcp_err(e.into()))? {
+                    Some(msg) => Ok(text_response(msg)),
+                    None => Ok(text_response(format!("Proposal {} not found", proposal_id))),
+                }
+            }
+            "reject" => {
+                let proposal_id = require!(req.proposal_id, "proposal_id required");
+                match proposals::reject_proposal(&ctx, &proposal_id).await.map_err(|e| to_mcp_err(e.into()))? {
+                    Some(msg) => Ok(text_response(msg)),
+                    None => Ok(text_response(format!("Proposal {} not found or already processed", proposal_id))),
+                }
+            }
+            "review" => {
+                // Get pending proposals for batch review
+                let limit = req.limit.unwrap_or(10);
+                let pending = proposals::get_pending_review(&ctx, limit)
+                    .await.map_err(|e| to_mcp_err(e.into()))?;
+
+                if pending.is_empty() {
+                    return Ok(text_response("No pending proposals to review."));
+                }
+
+                let mut output = format!("{} pending proposals:\n\n", pending.len());
+                for p in &pending {
+                    output.push_str(&format!(
+                        "- [{}] {} ({:.0}% confidence)\n  {}\n\n",
+                        p.id,
+                        p.proposal_type,
+                        p.confidence * 100.0,
+                        if p.content.len() > 80 { format!("{}...", &p.content[..80]) } else { p.content.clone() },
+                    ));
+                }
+                output.push_str("Use confirm/reject with proposal_id to process.");
+
+                Ok(text_response(output))
+            }
+            action => Ok(unknown_action(action, "extract/list/confirm/reject/review")),
         }
     }
 

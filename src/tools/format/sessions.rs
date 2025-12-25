@@ -186,6 +186,25 @@ pub fn session_start(result: &crate::tools::sessions::SessionStartResult) -> Str
         }
     }
 
+    // Pending proposals (need review)
+    if !result.pending_proposals.is_empty() {
+        out.push('\n');
+        out.push_str(&format!("⚡ {} pending proposal{} for review:\n",
+            result.pending_proposals.len(),
+            if result.pending_proposals.len() == 1 { "" } else { "s" }
+        ));
+        for p in &result.pending_proposals {
+            let content_preview = if p.content.len() > 50 {
+                format!("{}...", &p.content[..47])
+            } else {
+                p.content.clone()
+            };
+            out.push_str(&format!("  [{}] {} ({:.0}%): {}\n",
+                &p.id[..12], p.proposal_type, p.confidence * 100.0, content_preview));
+        }
+        out.push_str("Use proposal(action: \"confirm\"/\"reject\", proposal_id: \"...\") to process.\n");
+    }
+
     // Index status
     if !result.index_fresh {
         out.push('\n');

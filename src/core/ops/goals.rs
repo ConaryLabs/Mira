@@ -409,6 +409,40 @@ pub async fn complete_milestone(
     }))
 }
 
+/// Delete a goal and its milestones
+pub async fn delete_goal(ctx: &OpContext, goal_id: &str) -> CoreResult<Option<String>> {
+    if goal_id.is_empty() {
+        return Err(CoreError::MissingField("goal_id"));
+    }
+
+    let db = ctx.require_db()?;
+
+    // Get the goal title before deleting
+    let goal = sqlx::query_as::<_, (String,)>("SELECT title FROM goals WHERE id = $1")
+        .bind(goal_id)
+        .fetch_optional(db)
+        .await?;
+
+    match goal {
+        Some((title,)) => {
+            // Delete milestones first
+            sqlx::query("DELETE FROM milestones WHERE goal_id = $1")
+                .bind(goal_id)
+                .execute(db)
+                .await?;
+
+            // Delete the goal itself
+            sqlx::query("DELETE FROM goals WHERE id = $1")
+                .bind(goal_id)
+                .execute(db)
+                .await?;
+
+            Ok(Some(title))
+        }
+        None => Ok(None),
+    }
+}
+
 // Helper functions
 
 async fn calculate_goal_progress(
