@@ -11,6 +11,7 @@
 mod providers;
 mod tool_loops;
 pub mod context;
+pub mod deliberation;
 pub mod session;
 pub mod streaming;
 pub mod synthesis;
@@ -33,6 +34,11 @@ pub use providers::{
 pub use synthesis::{
     CouncilSynthesis, ConsensusPoint, Citation, Disagreement,
     ModelPosition, UniqueInsight, SynthesisConfidence,
+};
+#[allow(unused_imports)]
+pub use deliberation::{
+    DeliberationConfig, DeliberationRound, ModeratorAnalysis,
+    DisagreementFocus, DeliberatedSynthesis,
 };
 #[allow(unused_imports)]
 pub use streaming::{
@@ -216,6 +222,212 @@ impl AdvisoryService {
             synthesis,
             errors: if errors.is_empty() { None } else { Some(errors) },
         })
+    }
+
+    /// Multi-round council deliberation
+    ///
+    /// Models engage in actual discussion rather than just parallel responses:
+    /// - Up to 4 rounds (stops early on consensus)
+    /// - All 3 models (GPT-5.2, Gemini 3 Pro, Opus 4.5) always participate
+    /// - DeepSeek Reasoner moderates between rounds
+    /// - Cache-optimized prompts for cost efficiency
+    pub async fn council_deliberate(
+        &self,
+        message: &str,
+        config: Option<DeliberationConfig>,
+    ) -> Result<DeliberatedSynthesis> {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let config = config.unwrap_or_default();
+        let mut rounds: Vec<DeliberationRound> = Vec::new();
+        let mut previous_responses: HashMap<AdvisoryModel, Vec<String>> = HashMap::new();
+        let mut moderator_analyses: Vec<ModeratorAnalysis> = Vec::new();
+
+        tracing::info!(
+            max_rounds = config.max_rounds,
+            models = ?config.models,
+            "Starting council deliberation"
+        );
+
+        for round_num in 1..=config.max_rounds {
+            tracing::info!(round = round_num, "Starting deliberation round");
+
+            // Build prompt for this round
+            let prompt = deliberation::build_round_prompt(
+                message,
+                round_num,
+                config.max_rounds,
+                &previous_responses,
+                moderator_analyses.last(),
+            );
+
+            // Query all models in parallel
+            let per_model_timeout = Duration::from_secs(config.per_model_timeout_secs);
+            let mut round_responses: HashMap<AdvisoryModel, String> = HashMap::new();
+            let mut round_errors: Vec<String> = Vec::new();
+
+            let futures: Vec<_> = config.models.iter().filter_map(|model| {
+                self.providers.get(model).map(|provider| {
+                    let provider = provider.clone();
+                    let prompt = prompt.clone();
+                    let model = *model;
+                    async move {
+                        let result = timeout(
+                            per_model_timeout,
+                            provider.complete(AdvisoryRequest {
+                                message: prompt,
+                                system: Some(deliberation::DELIBERATION_SYSTEM_PROMPT.to_string()),
+                                history: vec![],
+                                enable_tools: false,
+                            }),
+                        ).await;
+                        (model, result)
+                    }
+                })
+            }).collect();
+
+            let results = futures::future::join_all(futures).await;
+
+            for (model, result) in results {
+                match result {
+                    Ok(Ok(response)) => {
+                        tracing::debug!(model = ?model, "Model responded");
+                        round_responses.insert(model, response.text.clone());
+                        previous_responses.entry(model).or_default().push(response.text);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(model = ?model, error = %e, "Model error");
+                        round_errors.push(format!("{:?}: {}", model, e));
+                    }
+                    Err(_) => {
+                        tracing::warn!(model = ?model, "Model timeout");
+                        round_errors.push(format!("{:?}: timeout", model));
+                    }
+                }
+            }
+
+            if round_responses.is_empty() {
+                anyhow::bail!("All models failed in round {}: {:?}", round_num, round_errors);
+            }
+
+            // Get moderator analysis (skip for final round)
+            let analysis = if round_num < config.max_rounds {
+                if let Some(reasoner) = self.providers.get(&AdvisoryModel::DeepSeekReasoner) {
+                    let moderator_prompt = deliberation::build_moderator_prompt(
+                        message,
+                        round_num,
+                        &round_responses,
+                        &moderator_analyses,
+                    );
+
+                    match reasoner.complete(AdvisoryRequest {
+                        message: moderator_prompt,
+                        system: Some(deliberation::MODERATOR_SYSTEM_PROMPT.to_string()),
+                        history: vec![],
+                        enable_tools: false,
+                    }).await {
+                        Ok(response) => {
+                            match ModeratorAnalysis::parse(&response.text) {
+                                Ok(a) => {
+                                    tracing::info!(
+                                        should_continue = a.should_continue,
+                                        disagreements = a.disagreements.len(),
+                                        resolved = a.resolved_points.len(),
+                                        "Moderator analysis complete"
+                                    );
+                                    Some(a)
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Failed to parse moderator analysis");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Moderator analysis failed");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Convert responses to string keys for serialization
+            let responses_str: HashMap<String, String> = round_responses
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                .collect();
+
+            rounds.push(DeliberationRound {
+                round: round_num,
+                responses: responses_str,
+                moderator_analysis: analysis.clone(),
+                timestamp: chrono::Utc::now().timestamp(),
+            });
+
+            // Check for early consensus
+            if let Some(ref a) = analysis {
+                if !a.should_continue {
+                    tracing::info!(
+                        round = round_num,
+                        reason = ?a.early_exit_reason,
+                        "Early consensus reached"
+                    );
+                    moderator_analyses.push(a.clone());
+                    break;
+                }
+                moderator_analyses.push(a.clone());
+            }
+        }
+
+        // Final synthesis with deliberation context
+        let synthesis = self.synthesize_deliberation(message, &rounds).await?;
+        let early_consensus = rounds.len() < config.max_rounds as usize;
+
+        tracing::info!(
+            rounds_completed = rounds.len(),
+            early_consensus = early_consensus,
+            "Deliberation complete"
+        );
+
+        Ok(DeliberatedSynthesis {
+            synthesis,
+            rounds_completed: rounds.len() as u8,
+            early_consensus,
+            rounds,
+        })
+    }
+
+    /// Synthesize deliberation into final recommendation
+    async fn synthesize_deliberation(
+        &self,
+        message: &str,
+        rounds: &[DeliberationRound],
+    ) -> Result<CouncilSynthesis> {
+        let reasoner = self.providers.get(&AdvisoryModel::DeepSeekReasoner)
+            .ok_or_else(|| anyhow::anyhow!("DeepSeek Reasoner not available for synthesis"))?;
+
+        let synthesis_prompt = deliberation::build_deliberation_synthesis_prompt(message, rounds);
+
+        let response = reasoner.complete(AdvisoryRequest {
+            message: synthesis_prompt,
+            system: Some(synthesis::SYNTHESIS_SYSTEM_PROMPT.to_string()),
+            history: vec![],
+            enable_tools: false,
+        }).await?;
+
+        // Try to parse as structured JSON, fall back to raw text
+        match CouncilSynthesis::parse(&response.text) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to parse synthesis JSON, using raw text");
+                Ok(CouncilSynthesis::from_raw_text(&response.text))
+            }
+        }
     }
 
     /// Check which providers are available

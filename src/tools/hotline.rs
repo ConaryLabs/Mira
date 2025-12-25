@@ -3,8 +3,11 @@
 // Uses the unified AdvisoryService for all provider calls
 // Supports: GPT-5.2 (default), DeepSeek Reasoner, Gemini 3 Pro, Opus 4.5
 // All providers support agentic tool calling with 10 read-only Mira tools
-// Council mode: GPT-5.2 + Gemini 3 Pro, synthesized by DeepSeek Reasoner
-// (Opus excluded from council when running in Claude Code MCP context)
+//
+// Council mode: Multi-round deliberation with all 3 models (GPT, Gemini, Opus)
+// - Up to 4 rounds of actual discussion (stops early on consensus)
+// - DeepSeek Reasoner moderates between rounds, identifying disagreements
+// - All models participate, including Opus (fresh perspective even in MCP context)
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -190,11 +193,24 @@ async fn call_opus_with_tools(
     }))
 }
 
+/// Council with full deliberation - all 3 models discuss across multiple rounds
 async fn call_council(message: &str) -> Result<serde_json::Value> {
     let service = AdvisoryService::from_env()?;
 
-    // Exclude Opus since we're already running on Opus in Claude Code MCP context
-    // Council = GPT-5.2 + Gemini 3 Pro, synthesized by DeepSeek Reasoner
+    // Multi-round deliberation with all 3 models (including Opus - fresh perspective)
+    // Up to 4 rounds, stops early on consensus
+    // DeepSeek Reasoner moderates between rounds
+    let response = service.council_deliberate(message, None).await?;
+
+    Ok(response.to_json())
+}
+
+/// Legacy single-shot council (for backward compatibility if needed)
+#[allow(dead_code)]
+async fn call_council_single_shot(message: &str) -> Result<serde_json::Value> {
+    let service = AdvisoryService::from_env()?;
+
+    // Single-shot: exclude Opus in MCP context, GPT + Gemini only
     let response = service.council(message, Some(AdvisoryModel::Opus45)).await?;
 
     Ok(response.to_json())
