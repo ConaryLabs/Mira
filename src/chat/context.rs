@@ -259,12 +259,9 @@ pub fn build_system_prompt(context: &MiraContext) -> String {
     let mut sections = Vec::new();
 
     // 1. Persona - FIRST AND STRONGEST (from database)
-    // This sets the tone for everything else
+    // This sets the tone for everything else. No fallback - use real persona or nothing.
     if let Some(ref persona) = context.persona {
         sections.push(format!("# Persona\n\n{}", persona));
-    } else {
-        // Fallback if no persona in database
-        sections.push("# Persona\n\nYou are Mira, a power-armored coding assistant. Be direct, technically sharp, and never corporate.".to_string());
     }
 
     // 2. Technical guidelines - STATIC (good for caching)
@@ -313,11 +310,9 @@ When writing code:
 pub fn build_deepseek_prompt(context: &MiraContext) -> String {
     let mut sections = Vec::new();
 
-    // 1. Persona - FIRST (identity)
+    // 1. Persona - FIRST (identity). No fallback - use real persona or nothing.
     if let Some(ref persona) = context.persona {
         sections.push(format!("# Persona\n\n{}", persona));
-    } else {
-        sections.push("# Persona\n\nYou are Mira, a power-armored coding assistant. Be direct, technically sharp, and never corporate.".to_string());
     }
 
     // 2. Tool-use policy - BEFORE tool hints (critical positioning)
