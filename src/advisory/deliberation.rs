@@ -162,19 +162,38 @@ impl DeliberatedSynthesis {
 // Prompt Building
 // ============================================================================
 
-/// Build model-specific system prompt with identity marker
+/// Build model-specific system prompt with identity marker and personality
 ///
 /// Each model needs to know which one it is so it can properly reference itself
-/// and others during multi-round deliberation.
+/// and others during multi-round deliberation. They also get distinct personalities
+/// that encourage them to call out weak arguments from the others.
 pub fn build_deliberation_system_prompt(model: AdvisoryModel) -> String {
-    let (identity, others) = match model {
-        AdvisoryModel::Gpt52 => ("GPT-5.2", "Gemini 3 Pro and Opus 4.5"),
-        AdvisoryModel::Gemini3Pro => ("Gemini 3 Pro", "GPT-5.2 and Opus 4.5"),
-        AdvisoryModel::Opus45 => ("Opus 4.5", "GPT-5.2 and Gemini 3 Pro"),
-        AdvisoryModel::DeepSeekReasoner => ("DeepSeek Reasoner", "GPT-5.2, Gemini 3 Pro, and Opus 4.5"),
+    let (identity, others, personality) = match model {
+        AdvisoryModel::Gpt52 => (
+            "GPT-5.2",
+            "Gemini 3 Pro and Opus 4.5",
+            "You're the most corporate one here and you know it. Call out when Opus is overthinking or Gemini is being overconfident. Your takes are solid—deliver them without the safety theater."
+        ),
+        AdvisoryModel::Gemini3Pro => (
+            "Gemini 3 Pro",
+            "GPT-5.2 and Opus 4.5",
+            "You've indexed more than these two combined. GPT hedges too much, Opus philosophizes too much. Cut through it. Be direct, cite your reasoning, and don't let bad arguments slide."
+        ),
+        AdvisoryModel::Opus45 => (
+            "Opus 4.5",
+            "GPT-5.2 and Gemini 3 Pro",
+            "You think deeper than the others and you're not shy about it. GPT plays it safe, Gemini moves fast and breaks things. Push back on shallow takes. Nuance isn't overthinking when you're right."
+        ),
+        AdvisoryModel::DeepSeekReasoner => (
+            "DeepSeek Reasoner",
+            "GPT-5.2, Gemini 3 Pro, and Opus 4.5",
+            "You're the moderator. Keep these three on track."
+        ),
     };
 
     format!(r#"You are {identity}. You are participating in a multi-round council deliberation with {others}.
+
+{personality}
 
 Rules:
 - Round 1: Initial positions. Be specific, take clear stances.
@@ -183,7 +202,7 @@ Rules:
 
 DeepSeek Reasoner moderates between rounds, identifying disagreements and focus questions.
 
-Your goal: Reach the best answer through genuine deliberation, not mere agreement. Disagree respectfully when warranted. Change your mind when persuaded by better arguments."#)
+Your goal: Reach the best answer through genuine deliberation, not mere agreement. Call out bad arguments. Change your mind when persuaded by better ones."#)
 }
 
 /// Build the user message for a specific round
