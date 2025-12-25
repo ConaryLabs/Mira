@@ -17,7 +17,7 @@ use super::{
     AdvisoryProvider, AdvisoryRequest, AdvisoryResponse, AdvisoryRole,
     AdvisoryUsage, ToolCallRequest, get_env_var, REASONER_TIMEOUT_SECS,
 };
-use crate::advisory::tool_bridge::{AllowedTool, openai_tool_schema};
+use crate::advisory::tool_bridge::{AllowedTool, chat_completions_tool_schema};
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1/chat/completions";
 
@@ -50,7 +50,7 @@ impl ReasonerProvider {
         AllowedTool::all()
             .iter()
             .map(|tool| {
-                let schema = openai_tool_schema(*tool);
+                let schema = chat_completions_tool_schema(*tool);
                 ChatTool {
                     tool_type: "function".to_string(),
                     function: ChatFunction {
