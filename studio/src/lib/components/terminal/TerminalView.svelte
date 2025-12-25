@@ -1,18 +1,6 @@
 <script lang="ts">
   import type { Message, MessageBlock, UsageInfo } from '$lib/api/client';
-  import type { CouncilResponses } from '$lib/types/content';
-  import TerminalToolCall from './TerminalToolCall.svelte';
-  import { ContentBlock, StreamingTextBlock, CodeBlock, CouncilView } from '$lib/components/content';
-  import { parseTextContent } from '$lib/parser/contentParser';
-
-  // Convert MessageBlock council fields to CouncilResponses format
-  function toCouncilResponses(block: MessageBlock): CouncilResponses {
-    return {
-      'gpt-5.2': block.gpt,
-      'opus-4.5': block.opus,
-      'gemini-3-pro': block.gemini,
-    };
-  }
+  import BlockRenderer from '$lib/components/chat/BlockRenderer.svelte';
 
   interface Props {
     messages: Message[];
@@ -50,10 +38,6 @@
     if (target.scrollTop < 100 && hasMore && !loadingMore && onLoadMore) {
       onLoadMore();
     }
-  }
-
-  function isToolCallLoading(block: MessageBlock): boolean {
-    return block.type === 'tool_call' && !block.result;
   }
 
   export function scrollToBottom() {
@@ -121,34 +105,10 @@
           <!-- Assistant message -->
           <div class="pl-4 border-l-2 border-[var(--term-border)]">
             {#each message.blocks as block, blockIndex}
-              {#if block.type === 'text'}
-                <!-- Parse completed text blocks into rich content (isStreaming=false for caching) -->
-                {@const parsed = parseTextContent(block.content || '', `${message.id}-${blockIndex}`, false)}
-                {#each parsed.segments as segment (segment.id)}
-                  <ContentBlock content={segment} />
-                {/each}
-              {:else if block.type === 'code_block'}
-                <!-- Typed code block from backend - no parsing needed -->
-                <CodeBlock
-                  id={`${message.id}-${blockIndex}`}
-                  language={block.language || ''}
-                  code={block.code || ''}
-                  filename={block.filename}
-                />
-              {:else if block.type === 'council'}
-                <!-- Typed council from backend - no parsing needed -->
-                <CouncilView
-                  id={`${message.id}-${blockIndex}`}
-                  responses={toCouncilResponses(block)}
-                />
-              {:else if block.type === 'tool_call'}
-                <TerminalToolCall
-                  name={block.name || 'unknown'}
-                  arguments={block.arguments || {}}
-                  result={block.result}
-                  isLoading={isToolCallLoading(block)}
-                />
-              {/if}
+              <BlockRenderer
+                {block}
+                blockId={`${message.id}-${blockIndex}`}
+              />
             {/each}
             <!-- Usage stats -->
             {#if message.usage}
@@ -177,34 +137,11 @@
             <span class="text-[var(--term-accent)] animate-pulse">_</span>
           {:else}
             {#each streamingMessage.blocks as block, blockIndex}
-              {#if block.type === 'text'}
-                <!-- Debounced streaming parser - only parses when content stabilizes -->
-                <StreamingTextBlock
-                  content={block.content || ''}
-                  blockId={`streaming-${blockIndex}`}
-                />
-              {:else if block.type === 'code_block'}
-                <!-- Streaming code block from backend -->
-                <CodeBlock
-                  id={`streaming-${blockIndex}`}
-                  language={block.language || ''}
-                  code={block.code || ''}
-                  filename={block.filename}
-                />
-              {:else if block.type === 'council'}
-                <!-- Streaming council from backend -->
-                <CouncilView
-                  id={`streaming-${blockIndex}`}
-                  responses={toCouncilResponses(block)}
-                />
-              {:else if block.type === 'tool_call'}
-                <TerminalToolCall
-                  name={block.name || 'unknown'}
-                  arguments={block.arguments || {}}
-                  result={block.result}
-                  isLoading={isToolCallLoading(block)}
-                />
-              {/if}
+              <BlockRenderer
+                {block}
+                blockId={`streaming-${blockIndex}`}
+                isStreaming={true}
+              />
             {/each}
             <span class="text-[var(--term-accent)] animate-pulse">_</span>
           {/if}

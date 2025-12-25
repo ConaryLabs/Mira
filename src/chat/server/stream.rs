@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::chat::process_chat;
 use super::types::{
     ChatEvent, ChatRequest, MessageBlock, SyncChatResponse, SyncErrorResponse,
-    ToolCallResult, UsageInfo,
+    ToolCallResultData, UsageInfo,
 };
 use super::AppState;
 use crate::core::ops::audit::{AuditEvent, AuditEventType, AuditSource};
@@ -213,23 +213,31 @@ pub async fn chat_sync_handler(
             ChatEvent::TextDelta { delta } => {
                 content.push_str(&delta);
             }
-            ChatEvent::ToolCallStart { call_id, name, arguments } => {
+            ChatEvent::ToolCallStart { call_id, name, arguments, summary, category, .. } => {
                 blocks.push(MessageBlock::ToolCall {
                     call_id,
                     name,
                     arguments,
+                    summary,
+                    category,
                     result: None,
                 });
             }
-            ChatEvent::ToolCallResult { call_id, success, output, diff, .. } => {
+            ChatEvent::ToolCallResult { call_id, name: _, success, output, duration_ms, truncated, total_bytes, diff, output_ref, exit_code, stderr } => {
                 // Update the matching block with the result
                 for block in &mut blocks {
                     if let MessageBlock::ToolCall { call_id: id, result, .. } = block {
                         if id == &call_id {
-                            *result = Some(ToolCallResult {
+                            *result = Some(ToolCallResultData {
                                 success,
                                 output: output.clone(),
+                                duration_ms,
+                                truncated,
+                                total_bytes,
                                 diff: diff.clone(),
+                                output_ref: output_ref.clone(),
+                                exit_code,
+                                stderr: stderr.clone(),
                             });
                             break;
                         }
@@ -291,6 +299,9 @@ pub async fn chat_sync_handler(
             }
             ChatEvent::Council { gpt, opus, gemini } => {
                 blocks.push(MessageBlock::Council { gpt, opus, gemini });
+            }
+            ChatEvent::ArtifactCreated { .. } => {
+                // Artifacts are tracked separately - ignore for sync response content
             }
         }
     }

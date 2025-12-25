@@ -49,11 +49,28 @@ Restart Claude Code and you're ready.
 │   (/mcp)                         (/api/chat/*)         │
 │   for Claude Code                for Studio            │
 └─────────────────────────────────────────────────────────┘
-           │
-           ▼
-    mira connect
-    (stdio shim)
+           │                             │
+           ▼                             ▼
+    mira connect                   Mira Studio
+    (stdio shim)                  (SvelteKit web UI)
 ```
+
+## Mira Studio
+
+A web-based chat interface for Mira. Provides a modern terminal-style UI with:
+- Streaming chat with GPT-5.2
+- Tool call visualization with Timeline panel
+- File artifact tracking with Workspace panel
+- Mobile-responsive with bottom sheet panels
+
+```bash
+cd studio
+npm install
+npm run dev
+# Open http://localhost:5173
+```
+
+See [studio/README.md](studio/README.md) for full documentation.
 
 The daemon provides:
 - **MCP endpoint** at `/mcp` for Claude Code integration

@@ -10,11 +10,13 @@
   } from '$lib/api/client';
   import { settings } from '$lib/stores/settings';
   import { streamState } from '$lib/stores/streamState.svelte';
-  import SettingsSidebar from './sidebar/SettingsSidebar.svelte';
+  import { toolActivityStore } from '$lib/stores/toolActivity.svelte';
+  import AppShell from './layout/AppShell.svelte';
   import TerminalView from './terminal/TerminalView.svelte';
   import TerminalPrompt from './terminal/TerminalPrompt.svelte';
   import ArtifactViewer from './ArtifactViewer.svelte';
-  import { artifactViewer } from '$lib/stores/artifacts.svelte';
+  import { artifactViewer, artifactStore } from '$lib/stores/artifacts.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
 
   // State
   let messages = $state<Message[]>([]);
@@ -23,22 +25,11 @@
   let loadingMore = $state(false);
   let initialLoadComplete = $state(false);
 
-  // Mobile sidebar state (transient, not persisted)
-  let mobileSidebarOpen = $state(false);
-  let isMobile = $state(false);
-
   // Reference to terminal view for scrolling
   let terminalView: { scrollToBottom: () => void; forceScrollToBottom: () => void };
 
   // Reference to terminal prompt for keyboard shortcuts
   let terminalPrompt: { focus: () => void };
-
-  function checkMobile() {
-    isMobile = window.innerWidth < 768;
-    if (!isMobile) {
-      mobileSidebarOpen = false;
-    }
-  }
 
   // Global keyboard shortcuts
   function handleGlobalKeydown(event: KeyboardEvent) {
@@ -49,18 +40,43 @@
       return;
     }
 
-    // Escape - Cancel streaming (when not focused on input)
-    if (event.key === 'Escape' && streamState.canCancel) {
+    // Cmd/Ctrl + \ - Toggle drawer
+    if ((event.metaKey || event.ctrlKey) && event.key === '\\') {
       event.preventDefault();
-      streamState.cancelStream();
+      layoutStore.toggleDrawer();
       return;
+    }
+
+    // Cmd/Ctrl + 1 - Timeline tab
+    if ((event.metaKey || event.ctrlKey) && event.key === '1') {
+      event.preventDefault();
+      layoutStore.setDrawerTab('timeline');
+      return;
+    }
+
+    // Cmd/Ctrl + 2 - Workspace tab
+    if ((event.metaKey || event.ctrlKey) && event.key === '2') {
+      event.preventDefault();
+      layoutStore.setDrawerTab('workspace');
+      return;
+    }
+
+    // Escape - Cancel streaming or close drawer
+    if (event.key === 'Escape') {
+      if (streamState.canCancel) {
+        event.preventDefault();
+        streamState.cancelStream();
+        return;
+      }
+      if (layoutStore.contextDrawer.open) {
+        event.preventDefault();
+        layoutStore.closeDrawer();
+        return;
+      }
     }
   }
 
   onMount(async () => {
-    // Check if mobile on mount and resize
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
     window.addEventListener('keydown', handleGlobalKeydown);
 
     // Get project from URL if available
@@ -78,7 +94,6 @@
     }
 
     return () => {
-      window.removeEventListener('resize', checkMobile);
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
   });
@@ -167,6 +182,15 @@
 
       for await (const event of streamChatEvents(request)) {
         handleEvent(event);
+
+        // Forward tool events to stores
+        if (event.type === 'tool_call_start') {
+          toolActivityStore.toolStarted(event);
+        } else if (event.type === 'tool_call_result') {
+          toolActivityStore.toolCompleted(event);
+          artifactStore.processToolResult(event);
+        }
+
         scheduleUpdate();
       }
 
@@ -215,45 +239,8 @@
   }
 </script>
 
-<div class="flex h-full w-full bg-[var(--term-bg)]">
-  <!-- Mobile backdrop -->
-  {#if isMobile && mobileSidebarOpen}
-    <button
-      class="mobile-backdrop"
-      onclick={() => mobileSidebarOpen = false}
-      aria-label="Close sidebar"
-    ></button>
-  {/if}
-
-  <!-- Settings Sidebar -->
-  <div class="{isMobile ? (mobileSidebarOpen ? 'mobile-overlay' : 'hidden') : ''}">
-    <SettingsSidebar status={apiStatus} onClose={() => mobileSidebarOpen = false} {isMobile} />
-  </div>
-
-  <!-- Main Terminal Area -->
-  <main class="flex-1 flex flex-col min-w-0">
-    <!-- Mobile header with menu button -->
-    {#if isMobile}
-      <div class="flex items-center gap-2 px-3 py-2 bg-[var(--term-bg-secondary)] border-b border-[var(--term-border)]">
-        <button
-          onclick={() => mobileSidebarOpen = true}
-          class="p-1.5 rounded hover:bg-[var(--term-bg)] text-[var(--term-text-dim)] hover:text-[var(--term-text)] transition-colors"
-          aria-label="Open menu"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
-        <span class="text-[var(--term-accent)] font-mono font-bold">M</span>
-        <span class="text-[var(--term-text)] font-mono text-sm">Mira</span>
-        <!-- Status dot -->
-        <span
-          class="ml-auto w-2 h-2 rounded-full {apiStatus?.status === 'ok' ? 'bg-[var(--term-success)]' : 'bg-[var(--term-error)]'}"
-          title={apiStatus?.status === 'ok' ? 'Connected' : 'Disconnected'}
-        ></span>
-      </div>
-    {/if}
-
+<AppShell {apiStatus}>
+  <div class="chat-area">
     <TerminalView
       bind:this={terminalView}
       {messages}
@@ -270,8 +257,8 @@
       isStreaming={streamState.isLoading}
       placeholder={streamState.isLoading ? 'Processing...' : 'Enter command...'}
     />
-  </main>
-</div>
+  </div>
+</AppShell>
 
 <!-- Artifact viewer modal -->
 <ArtifactViewer
@@ -281,3 +268,13 @@
   code={artifactViewer.code}
   onClose={artifactViewer.close}
 />
+
+<style>
+  .chat-area {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+</style>

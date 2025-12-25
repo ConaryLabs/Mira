@@ -39,6 +39,145 @@ pub use definitions::get_tools;
 pub use types::{DiffInfo, RichToolResult};
 
 use crate::chat::provider::ToolDefinition;
+use crate::chat::server::types::ToolCategory;
+
+/// Get the category for a tool (for UI filtering)
+pub fn tool_category(name: &str) -> ToolCategory {
+    match name {
+        // File operations
+        "read_file" | "write_file" | "edit_file" | "glob" | "grep" | "list_files" | "search" => {
+            ToolCategory::File
+        }
+        // Shell execution
+        "bash" | "run_tests" => ToolCategory::Shell,
+        // Memory operations
+        "remember" | "recall" => ToolCategory::Memory,
+        // Web operations
+        "web_search" | "web_fetch" => ToolCategory::Web,
+        // Git operations
+        "git_status" | "git_diff" | "git_commit" | "git_log" | "get_recent_commits"
+        | "search_commits" | "find_cochange_patterns" => ToolCategory::Git,
+        // Mira power armor
+        "task" | "goal" | "correction" | "store_decision" | "record_rejected_approach"
+        | "get_symbols" | "get_call_graph" | "semantic_code_search" | "get_related_files"
+        | "get_codebase_style" | "find_similar_fixes" | "record_error_fix" | "build"
+        | "document" | "index" | "get_proactive_context" | "council" | "ask_gpt" | "ask_opus"
+        | "ask_gemini" => ToolCategory::Mira,
+        // Default
+        _ => ToolCategory::Other,
+    }
+}
+
+/// Generate a human-readable summary for a tool call
+pub fn tool_summary(name: &str, args: &Value) -> String {
+    fn truncate(s: &str, max_len: usize) -> String {
+        if s.len() <= max_len {
+            s.to_string()
+        } else {
+            format!("{}...", &s[..max_len.saturating_sub(3)])
+        }
+    }
+
+    fn get_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+        args.get(key).and_then(|v| v.as_str())
+    }
+
+    match name {
+        // File operations
+        "read_file" => {
+            let path = get_str(args, "path").unwrap_or("file");
+            format!("Reading {}", truncate(path, 50))
+        }
+        "write_file" => {
+            let path = get_str(args, "path").unwrap_or("file");
+            format!("Writing {}", truncate(path, 50))
+        }
+        "edit_file" => {
+            let path = get_str(args, "path").unwrap_or("file");
+            format!("Editing {}", truncate(path, 50))
+        }
+        "glob" => {
+            let pattern = get_str(args, "pattern").unwrap_or("*");
+            format!("Finding {}", truncate(pattern, 40))
+        }
+        "grep" => {
+            let pattern = get_str(args, "pattern").unwrap_or("");
+            format!("Searching for \"{}\"", truncate(pattern, 30))
+        }
+
+        // Shell
+        "bash" => {
+            let cmd = get_str(args, "command").unwrap_or("");
+            format!("$ {}", truncate(cmd, 50))
+        }
+        "run_tests" => {
+            let pattern = get_str(args, "pattern").unwrap_or("all");
+            format!("Running tests: {}", truncate(pattern, 30))
+        }
+
+        // Memory
+        "remember" => {
+            let content = get_str(args, "content").unwrap_or("");
+            format!("Storing: {}", truncate(content, 40))
+        }
+        "recall" => {
+            let query = get_str(args, "query").unwrap_or("");
+            format!("Recalling \"{}\"", truncate(query, 40))
+        }
+
+        // Web
+        "web_search" => {
+            let query = get_str(args, "query").unwrap_or("");
+            format!("Searching web: {}", truncate(query, 40))
+        }
+        "web_fetch" => {
+            let url = get_str(args, "url").unwrap_or("");
+            format!("Fetching {}", truncate(url, 50))
+        }
+
+        // Git
+        "git_status" => "Checking git status".to_string(),
+        "git_diff" => {
+            let path = get_str(args, "path");
+            match path {
+                Some(p) => format!("Git diff: {}", truncate(p, 40)),
+                None => "Git diff".to_string(),
+            }
+        }
+        "git_commit" => {
+            let msg = get_str(args, "message").unwrap_or("");
+            format!("Committing: {}", truncate(msg, 40))
+        }
+        "git_log" => "Git log".to_string(),
+
+        // Mira tools
+        "task" => {
+            let action = get_str(args, "action").unwrap_or("manage");
+            format!("Task: {}", action)
+        }
+        "goal" => {
+            let action = get_str(args, "action").unwrap_or("manage");
+            format!("Goal: {}", action)
+        }
+        "council" => "Consulting council".to_string(),
+        "ask_gpt" => "Asking GPT-5.2".to_string(),
+        "ask_opus" => "Asking Opus 4.5".to_string(),
+        "ask_gemini" => "Asking Gemini 3 Pro".to_string(),
+
+        // Code intelligence
+        "get_symbols" => {
+            let path = get_str(args, "file_path").unwrap_or("file");
+            format!("Getting symbols: {}", truncate(path, 40))
+        }
+        "semantic_code_search" => {
+            let query = get_str(args, "query").unwrap_or("");
+            format!("Code search: {}", truncate(query, 40))
+        }
+
+        // Default: just show tool name
+        _ => name.to_string(),
+    }
+}
 
 /// Get tool definitions in Provider-compatible format (for DeepSeek, etc.)
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
