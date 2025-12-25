@@ -14,6 +14,13 @@
 pub mod memory;
 
 // Phase 2: Mira tools (task, goal, correction, decision, rejected_approach)
+pub mod tasks;
+pub mod goals;
+pub mod corrections;
+pub mod decisions;
+pub mod rejected;
+
+// Re-export from mira module for backwards compatibility
 pub mod mira;
 
 // Phase 3: File, shell, git, web, code intelligence
